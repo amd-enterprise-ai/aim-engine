@@ -1,0 +1,12 @@
+## Append samples of your project ##
+resources:
+- aim_v1alpha1_aimclustermodel.yaml
+- aim_v1alpha1_aimclusterruntimeconfig.yaml
+- aim_v1alpha1_aimclusterservicetemplate.yaml
+- aim_v1alpha1_aimmodelcache.yaml
+- aim_v1alpha1_aimmodel.yaml
+- aim_v1alpha1_aimruntimeconfig.yaml
+- aim_v1alpha1_aimservice.yaml
+- aim_v1alpha1_aimservicetemplate.yaml
+- aim_v1alpha1_aimtemplatecache.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

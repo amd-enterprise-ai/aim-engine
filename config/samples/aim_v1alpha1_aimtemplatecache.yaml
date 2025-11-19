@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMTemplateCache
+metadata:
+  labels:
+    app.kubernetes.io/name: aim-engine
+    app.kubernetes.io/managed-by: kustomize
+  name: aimtemplatecache-sample
+spec:
+  # TODO(user): Add fields here

@@ -1,0 +1,52 @@
+resources:
+# All RBAC will be applied under this service account in
+# the deployment namespace. You may comment out this resource
+# if your manager will use a service account that exists at
+# runtime. Be sure to update RoleBinding and ClusterRoleBinding
+# subjects if changing service account names.
+- service_account.yaml
+- role.yaml
+- role_binding.yaml
+- leader_election_role.yaml
+- leader_election_role_binding.yaml
+# The following RBAC configurations are used to protect
+# the metrics endpoint with authn/authz. These configurations
+# ensure that only authorized users and service accounts
+# can access the metrics endpoint. Comment the following
+# permissions if you want to disable this protection.
+# More info: https://book.kubebuilder.io/reference/metrics.html
+- metrics_auth_role.yaml
+- metrics_auth_role_binding.yaml
+- metrics_reader_role.yaml
+# For each CRD, "Admin", "Editor" and "Viewer" roles are scaffolded by
+# default, aiding admins in cluster management. Those roles are
+# not used by the aim-engine itself. You can comment the following lines
+# if you do not want those helpers be installed with your Project.
+- aimtemplatecache_admin_role.yaml
+- aimtemplatecache_editor_role.yaml
+- aimtemplatecache_viewer_role.yaml
+- aimservicetemplate_admin_role.yaml
+- aimservicetemplate_editor_role.yaml
+- aimservicetemplate_viewer_role.yaml
+- aimservice_admin_role.yaml
+- aimservice_editor_role.yaml
+- aimservice_viewer_role.yaml
+- aimruntimeconfig_admin_role.yaml
+- aimruntimeconfig_editor_role.yaml
+- aimruntimeconfig_viewer_role.yaml
+- aimmodel_admin_role.yaml
+- aimmodel_editor_role.yaml
+- aimmodel_viewer_role.yaml
+- aimmodelcache_admin_role.yaml
+- aimmodelcache_editor_role.yaml
+- aimmodelcache_viewer_role.yaml
+- aimclusterservicetemplate_admin_role.yaml
+- aimclusterservicetemplate_editor_role.yaml
+- aimclusterservicetemplate_viewer_role.yaml
+- aimclusterruntimeconfig_admin_role.yaml
+- aimclusterruntimeconfig_editor_role.yaml
+- aimclusterruntimeconfig_viewer_role.yaml
+- aimclustermodel_admin_role.yaml
+- aimclustermodel_editor_role.yaml
+- aimclustermodel_viewer_role.yaml
+
