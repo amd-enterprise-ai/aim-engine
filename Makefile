@@ -1,5 +1,6 @@
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "latest")
+IMG ?= ghcr.io/amd-enterprise-ai/aim-engine:$(TAG)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
