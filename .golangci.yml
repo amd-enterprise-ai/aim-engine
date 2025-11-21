@@ -1,0 +1,53 @@
+version: "2"
+run:
+  allow-parallel-runners: true
+linters:
+  enable:
+  - copyloopvar
+  - dupl
+  - ginkgolinter
+  - goconst
+  - gocyclo
+  - goheader
+  - lll
+  - misspell
+  - nakedret
+  - unconvert
+  - unparam
+  settings:
+    goheader:
+      template-path: .copyright-template
+    lll:
+      line-length: 500
+  exclusions:
+    generated: lax
+    rules:
+    - linters:
+      - lll
+      path: apis/*
+    - linters:
+      - dupl
+      - lll
+      path: internal/*
+    paths:
+    - python
+    - third_party$
+    - builtin$
+    - examples$
+issues:
+  fix: true
+formatters:
+  enable:
+  - gofumpt
+  - goimports
+  settings:
+    goimports:
+      local-prefixes:
+      - github.com/amd-enterprise-ai/aim-engine
+  exclusions:
+    generated: lax
+    paths:
+    - python
+    - third_party$
+    - builtin$
+    - examples$

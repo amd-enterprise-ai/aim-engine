@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  labels:
+    app.kubernetes.io/name: aim-engine
+    app.kubernetes.io/managed-by: kustomize
+  name: aimclusterruntimeconfig-sample
+spec:
+  # TODO(user): Add fields here

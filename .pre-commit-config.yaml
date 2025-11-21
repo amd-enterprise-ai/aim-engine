@@ -1,0 +1,42 @@
+repos:
+- repo: local
+  hooks:
+  - id: make-generate
+    name: Run make generate
+    entry: make generate
+    language: system
+    pass_filenames: false
+
+  - id: make-manifests
+    name: Run make manifests
+    entry: make manifests
+    language: system
+    pass_filenames: false
+
+  # - id: build-crds
+  #   name: Build CRDs for Helm chart
+  #   entry: bash -lc 'kubectl kustomize config/crd/ > crd/crds.yaml'
+  #   language: system
+  #   pass_filenames: false
+
+  # - id: make-generate-crd-docs
+  #   name: Run make generate-crd-docs
+  #   entry: make generate-crd-docs
+  #   language: system
+  #   pass_filenames: false
+
+  - id: golangci-lint
+    name: golangci-lint
+    description: Fast linters runner for Go. Note that only modified files are linted, so linters like 'unused' that need to scan all files won't work as expected.
+    entry: golangci-lint run --timeout 10m
+    types: [ go ]
+    language: golang
+    require_serial: true
+    pass_filenames: false
+
+- repo: https://github.com/jumanjihouse/pre-commit-hook-yamlfmt
+  rev: 0.2.3
+  hooks:
+  - id: yamlfmt
+    args: [ --offset, "0", --sequence, "2", --mapping, "2", "--width", "4096", "--preserve-quotes", "--implicit_start", "--preserve_null" ]
+    exclude: "(^config/prometheus/.*\\.ya?ml$)|(^docs/mkdocs\\.ya?ml$)|(^config/crd/.*\\.ya?ml$)||(^install.ya?ml$)|(^crd/.*\\.ya?ml$)|(^chart/templates/.*\\.(ya?ml|tpl)$)|(^.*/templates/.*\\.(ya?ml|tpl)$)"

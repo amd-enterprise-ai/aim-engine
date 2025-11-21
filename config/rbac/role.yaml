@@ -1,0 +1,56 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - aim.eai.amd.com
+  resources:
+  - aimclustermodels
+  - aimclusterruntimeconfigs
+  - aimclusterservicetemplates
+  - aimmodelcaches
+  - aimmodels
+  - aimruntimeconfigs
+  - aimservices
+  - aimservicetemplates
+  - aimtemplatecaches
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - aim.eai.amd.com
+  resources:
+  - aimclustermodels/finalizers
+  - aimclusterruntimeconfigs/finalizers
+  - aimclusterservicetemplates/finalizers
+  - aimmodelcaches/finalizers
+  - aimmodels/finalizers
+  - aimruntimeconfigs/finalizers
+  - aimservices/finalizers
+  - aimservicetemplates/finalizers
+  - aimtemplatecaches/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - aim.eai.amd.com
+  resources:
+  - aimclustermodels/status
+  - aimclusterruntimeconfigs/status
+  - aimclusterservicetemplates/status
+  - aimmodelcaches/status
+  - aimmodels/status
+  - aimruntimeconfigs/status
+  - aimservices/status
+  - aimservicetemplates/status
+  - aimtemplatecaches/status
+  verbs:
+  - get
+  - patch
+  - update
