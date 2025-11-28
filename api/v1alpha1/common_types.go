@@ -60,9 +60,11 @@ type AIMResolvedReference struct {
 	UID types.UID `json:"uid,omitempty"`
 }
 
-// AIMServiceResolvedTemplate retains the historical name while reusing the shared structure.
-type AIMServiceResolvedTemplate struct {
-	AIMResolvedReference `json:",inline"`
+func (r *AIMResolvedReference) NamespacedName() types.NamespacedName {
+	return types.NamespacedName{
+		Name:      r.Name,
+		Namespace: r.Namespace,
+	}
 }
 
 // AIMServiceTemplateScope is retained for backwards compatibility with existing consumers.
@@ -77,3 +79,5 @@ const (
 	// AIMServiceTemplateScopeUnknown denotes that the scope could not be resolved.
 	AIMServiceTemplateScopeUnknown AIMServiceTemplateScope = AIMServiceTemplateScope(AIMResolutionScopeUnknown)
 )
+
+// Model-related shared types and constants

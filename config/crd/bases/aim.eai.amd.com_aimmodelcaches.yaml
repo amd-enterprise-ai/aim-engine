@@ -8,16 +8,34 @@ metadata:
 spec:
   group: aim.eai.amd.com
   names:
+    categories:
+    - aim
+    - all
     kind: AIMModelCache
     listKind: AIMModelCacheList
     plural: aimmodelcaches
+    shortNames:
+    - aimmc
     singular: aimmodelcache
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.size
+      name: Cache Size
+      type: string
+    - jsonPath: .status.status
+      name: Status
+      type: string
+    - jsonPath: .status.persistentVolumeClaim
+      name: PVC
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: AIMModelCache is the Schema for the aimmodelcaches API
+        description: AIMModelCache is the Schema for the modelcaches API
         properties:
           apiVersion:
             description: |-
@@ -37,27 +55,194 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of AIMModelCache
+            description: AIMModelCacheSpec defines the desired state of AIMModelCache
             properties:
-              foo:
-                description: foo is an example field of AIMModelCache. Edit aimmodelcache_types.go
-                  to remove/update
+              env:
+                description: |-
+                  Env lists the environment variables to use for authentication when downloading models.
+                  These variables are used for authentication with model registries (e.g., HuggingFace tokens).
+                items:
+                  description: EnvVar represents an environment variable present in
+                    a Container.
+                  properties:
+                    name:
+                      description: Name of the environment variable. Must be a C_IDENTIFIER.
+                      type: string
+                    value:
+                      description: |-
+                        Variable references $(VAR_NAME) are expanded
+                        using the previously defined environment variables in the container and
+                        any service environment variables. If a variable cannot be resolved,
+                        the reference in the input string will be unchanged. Double $$ are reduced
+                        to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                        "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                        Escaped references will never be expanded, regardless of whether the variable
+                        exists or not.
+                        Defaults to "".
+                      type: string
+                    valueFrom:
+                      description: Source for the environment variable's value. Cannot
+                        be used if value is not empty.
+                      properties:
+                        configMapKeyRef:
+                          description: Selects a key of a ConfigMap.
+                          properties:
+                            key:
+                              description: The key to select.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the ConfigMap or its key
+                                must be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        fieldRef:
+                          description: |-
+                            Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                            spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                          properties:
+                            apiVersion:
+                              description: Version of the schema the FieldPath is
+                                written in terms of, defaults to "v1".
+                              type: string
+                            fieldPath:
+                              description: Path of the field to select in the specified
+                                API version.
+                              type: string
+                          required:
+                          - fieldPath
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        resourceFieldRef:
+                          description: |-
+                            Selects a resource of the container: only resources limits and requests
+                            (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                          properties:
+                            containerName:
+                              description: 'Container name: required for volumes,
+                                optional for env vars'
+                              type: string
+                            divisor:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: Specifies the output format of the exposed
+                                resources, defaults to "1"
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            resource:
+                              description: 'Required: resource to select'
+                              type: string
+                          required:
+                          - resource
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        secretKeyRef:
+                          description: Selects a key of a secret in the pod's namespace
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              imagePullSecrets:
+                description: ImagePullSecrets references secrets for pulling AIM container
+                  images.
+                items:
+                  description: |-
+                    LocalObjectReference contains enough information to let you locate the
+                    referenced object inside the same namespace.
+                  properties:
+                    name:
+                      default: ""
+                      description: |-
+                        Name of the referent.
+                        This field is effectively required, but due to backwards compatibility is
+                        allowed to be empty. Instances of this type with an empty value here are
+                        almost certainly wrong.
+                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      type: string
+                  type: object
+                  x-kubernetes-map-type: atomic
+                type: array
+              modelDownloadImage:
+                default: kserve/storage-initializer:v0.16.0-rc0
+                description: ModelDownloadImage is the image used to download the
+                  model
                 type: string
+              runtimeConfigName:
+                default: default
+                description: |-
+                  RuntimeConfigName references the AIM runtime configuration (by name) to use for this model cache.
+                  This determines PVC headroom and other runtime settings.
+                type: string
+              size:
+                anyOf:
+                - type: integer
+                - type: string
+                description: Size specifies the size of the cache volume
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
+              sourceUri:
+                description: |-
+                  SourceURI is the source of the model to be downloaded. This is the only
+                  identifier
+                minLength: 1
+                pattern: ^(hf|s3)://[^ \t\r\n]+$
+                type: string
+                x-kubernetes-validations:
+                - message: sourceUri is immutable
+                  rule: self == oldSelf
+              storageClassName:
+                description: StorageClassName specifies the storage class for the
+                  cache volume
+                type: string
+            required:
+            - modelDownloadImage
+            - size
+            - sourceUri
             type: object
           status:
-            description: status defines the observed state of AIMModelCache
+            description: AIMModelCacheStatus defines the observed state of AIMModelCache
             properties:
               conditions:
-                description: |-
-                  conditions represent the current state of the AIMModelCache resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                description: Conditions represent the latest available observations
+                  of the model cache's state
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -116,9 +301,28 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastUsed:
+                description: LastUsed represents the last time a model was deployed
+                  that used this cache
+                format: date-time
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              persistentVolumeClaim:
+                description: PersistentVolumeClaim represents the name of the created
+                  PVC
+                type: string
+              status:
+                default: Pending
+                description: Status represents the current status of the model cache
+                enum:
+                - Pending
+                - Progressing
+                - Available
+                - Failed
+                type: string
             type: object
-        required:
-        - spec
         type: object
     served: true
     storage: true

@@ -27,45 +27,84 @@ package controller
 import (
 	"context"
 
+	"k8s.io/client-go/tools/record"
+
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	aimv1alpha1 "eai.amd.com/aim/api/v1alpha1"
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimmodelcache"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
 // AIMModelCacheReconciler reconciles a AIMModelCache object
 type AIMModelCacheReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme    *runtime.Scheme
+	Recorder  record.EventRecorder
+	Clientset kubernetes.Interface
+
+	reconciler *aimmodelcache.Reconciler
+	pipeline   controllerutils.Pipeline[*aimv1alpha1.AIMModelCache, *aimv1alpha1.AIMModelCacheStatus, aimmodelcache.FetchResult, aimmodelcache.Observation]
 }
 
+// RBAC markers
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimmodelcaches,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimmodelcaches/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimmodelcaches/finalizers,verbs=update
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the AIMModelCache object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
+const (
+	modelCacheFieldOwner = "modelcache-controller"
+)
+
 func (r *AIMModelCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	logger := log.FromContext(ctx)
 
-	// TODO(user): your logic here
+	// Fetch CR
+	var cache aimv1alpha1.AIMModelCache
+	if err := r.Get(ctx, req.NamespacedName, &cache); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	logger.V(1).Info("Reconciling AIMModelCache", "name", cache.Name, "namespace", cache.Namespace)
+
+	if err := r.pipeline.Run(ctx, &cache); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
 func (r *AIMModelCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.Recorder = mgr.GetEventRecorderFor("modelcache-controller")
+
+	r.reconciler = &aimmodelcache.Reconciler{
+		Scheme:    r.Scheme,
+		Clientset: r.Clientset,
+	}
+
+	r.pipeline = controllerutils.Pipeline[*aimv1alpha1.AIMModelCache, *aimv1alpha1.AIMModelCacheStatus, aimmodelcache.FetchResult, aimmodelcache.Observation]{
+		Client:       r.Client,
+		StatusClient: r.Status(),
+		Recorder:     r.Recorder,
+		FieldOwner:   modelCacheFieldOwner,
+		Domain:       r.reconciler,
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMModelCache{}).
-		Named("aimmodelcache").
+		Owns(&corev1.PersistentVolumeClaim{}).
+		Owns(&batchv1.Job{}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: 2}).
+		Named("modelcache-controller").
 		Complete(r)
 }

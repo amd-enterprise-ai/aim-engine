@@ -43,8 +43,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	aimv1alpha1 "eai.amd.com/aim/api/v1alpha1"
-	"eai.amd.com/aim/internal/controller"
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -193,13 +193,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterModel")
 		os.Exit(1)
 	}
-	if err := (&controller.AIMClusterRuntimeConfigReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterRuntimeConfig")
-		os.Exit(1)
-	}
+	// Note: AIMClusterRuntimeConfig has no controller - it's a data-only resource
 	if err := (&controller.AIMClusterServiceTemplateReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -221,13 +215,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "AIMModel")
 		os.Exit(1)
 	}
-	if err := (&controller.AIMRuntimeConfigReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMRuntimeConfig")
-		os.Exit(1)
-	}
+	// Note: AIMRuntimeConfig has no controller - it's a data-only resource
 	if err := (&controller.AIMServiceReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
