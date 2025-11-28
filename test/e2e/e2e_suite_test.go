@@ -28,7 +28,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"eai.amd.com/aim/test/utils"
+	"github.com/amd-enterprise-ai/aim-engine/test/utils"
 )
 
 var (

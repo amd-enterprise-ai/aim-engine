@@ -1,6 +1,13 @@
 repos:
 - repo: local
   hooks:
+  - id: branch-name-check
+    name: Check branch name
+    entry: bash -c 'branch=$(git rev-parse --abbrev-ref HEAD); if [[ ! "$branch" =~ ^(fix|feat|build|chore|ci|docs|refactor|perf|test)/.+ ]]; then echo "Error - Branch name must start with one of fix, feat, build, chore, ci, docs, refactor, perf, test, followed by / and descriptive text"; echo "Current branch is $branch"; exit 1; fi'
+    language: system
+    pass_filenames: false
+    always_run: true
+
   - id: make-generate
     name: Run make generate
     entry: make generate
