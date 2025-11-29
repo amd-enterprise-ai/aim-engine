@@ -328,33 +328,3 @@ func projectServiceCaching(
 
 	return false
 }
-
-//
-
-//// setupCacheCondition sets the cache condition based on whether caching is requested.
-//func setupCacheCondition(
-//	service *aimv1alpha1.AIMService,
-//	setCondition func(conditionType string, conditionStatus metav1.ConditionStatus, reason, message string),
-//) {
-//	if !service.Spec.CacheModel {
-//		setCondition(aimv1alpha1.AIMServiceConditionCacheReady, metav1.ConditionTrue, aimv1alpha1.AIMServiceReasonCacheWarm, "Caching not requested")
-//	} else {
-//		setCondition(aimv1alpha1.AIMServiceConditionCacheReady, metav1.ConditionFalse, aimv1alpha1.AIMServiceReasonWaitingForCache, "Waiting for cache warm-up")
-//	}
-//}
-//
-//// setupResolvedTemplate populates the resolved template reference in status.
-//func setupResolvedTemplate(obs *aimservicetemplate2.ServiceObservation, status *aimv1alpha1.AIMServiceStatus) {
-//	status.ResolvedTemplate = nil
-//	if obs != nil && obs.TemplateName != "" {
-//		status.ResolvedTemplate = &aimv1alpha1.AIMResolvedReference{
-//			Name:      obs.TemplateName,
-//			Namespace: obs.TemplateNamespace,
-//			Scope:     convertTemplateScope(obs.Scope),
-//			Kind:      "AIMServiceTemplate",
-//		}
-//	}
-//	// Don't set resolvedTemplate if no template was actually resolved
-//}
-//
-//

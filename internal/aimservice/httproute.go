@@ -193,7 +193,7 @@ func observeServiceHTTPRoute(
 // PLAN
 // ============================================================================
 
-//nolint:unparam,unused // error return kept for API consistency, will be used when Plan phase is fully implemented
+//nolint:unparam // error return kept for API consistency with other plan functions
 func planServiceHTTPRoute(
 	service *aimv1alpha1.AIMService,
 	obs ServiceHTTPRouteObservation,
@@ -209,8 +209,6 @@ func planServiceHTTPRoute(
 }
 
 // buildHTTPRoute creates a Gateway API HTTPRoute for the AIMService
-//
-//nolint:unused // will be used when Plan phase is fully implemented
 func buildHTTPRoute(
 	service *aimv1alpha1.AIMService,
 	obs ServiceHTTPRouteObservation,

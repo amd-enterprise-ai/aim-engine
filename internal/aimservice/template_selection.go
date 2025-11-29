@@ -195,3 +195,57 @@ func precisionRank(p aimv1alpha1.AIMPrecision) int {
 		return 999
 	}
 }
+
+// findTemplateMatchingOverrides searches for an existing template that matches the service's overrides
+// Returns the template name if found, empty string if not
+func findTemplateMatchingOverrides(service *aimv1alpha1.AIMService, modelFetchResult ServiceModelFetchResult) string {
+	if service.Spec.Overrides == nil {
+		return ""
+	}
+
+	// Check namespace templates first
+	for _, template := range modelFetchResult.NamespaceTemplatesForModel {
+		if templateMatchesOverrides(&template.Spec.AIMServiceTemplateSpecCommon, service.Spec.Overrides) {
+			return template.Name
+		}
+	}
+
+	// Check cluster templates
+	for _, template := range modelFetchResult.ClusterTemplatesForModel {
+		if templateMatchesOverrides(&template.Spec.AIMServiceTemplateSpecCommon, service.Spec.Overrides) {
+			return template.Name
+		}
+	}
+
+	return ""
+}
+
+// templateMatchesOverrides checks if a template's spec matches the service's overrides
+// Only checks fields that are set in overrides (ignores unset fields)
+func templateMatchesOverrides(templateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon, overrides *aimv1alpha1.AIMServiceOverrides) bool {
+	// Check Metric
+	if overrides.Metric != nil && (templateSpec.Metric == nil || *templateSpec.Metric != *overrides.Metric) {
+		return false
+	}
+
+	// Check Precision
+	if overrides.Precision != nil && (templateSpec.Precision == nil || *templateSpec.Precision != *overrides.Precision) {
+		return false
+	}
+
+	// Check GpuSelector
+	if overrides.GpuSelector != nil {
+		if templateSpec.GpuSelector == nil {
+			return false
+		}
+		// Compare GPU selector fields
+		if templateSpec.GpuSelector.Count != overrides.GpuSelector.Count {
+			return false
+		}
+		if templateSpec.GpuSelector.Model != overrides.GpuSelector.Model {
+			return false
+		}
+	}
+
+	return true
+}
