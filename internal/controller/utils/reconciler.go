@@ -68,9 +68,12 @@ type Pipeline[T ObjectWithStatus[S], S StatusWithConditions, F any, Obs any] str
 // - deletion / finalizers
 // Those remain in the controller's Reconcile.
 func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
-	// 1) Snapshot old status
-	status := obj.GetStatus() // S, e.g. *AIMModelStatus
+	// 1) Get current status pointer (will be mutated)
+	status := obj.GetStatus() // S, e.g. *AIMServiceStatus
 
+	// 2) Deep copy the entire object to capture old status for comparison
+	oldObj := obj.DeepCopyObject().(T)
+	oldStatus := oldObj.GetStatus()
 	oldConditions := append([]metav1.Condition(nil), status.GetConditions()...)
 
 	// Condition manager from existing conditions
@@ -117,17 +120,14 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	status.SetConditions(cm.Conditions())
 
 	// Emit events based on condition transitions
-	newStatus := status
 	transitions := DiffConditionTransitions(
 		oldConditions,
-		newStatus.GetConditions(),
+		status.GetConditions(),
 	)
 	EmitConditionTransitions(p.Recorder, any(obj).(client.Object), transitions, cm)
 
-	// TODO new status
-
-	// Update status if changed
-	if !equality.Semantic.DeepEqual(status, newStatus) {
+	// Update status only if changed (compare with deep copied old status)
+	if !equality.Semantic.DeepEqual(oldStatus, status) {
 		if err := p.StatusClient.Update(ctx, any(obj).(client.Object)); err != nil {
 			return err
 		}
