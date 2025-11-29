@@ -167,6 +167,13 @@ func (r *Reconciler) Project(status *aimv1alpha1.AIMModelCacheStatus, cm *contro
 		return
 	}
 
+	sh := controllerutils.NewStatusHelper(status, cm)
+
+	// Project RuntimeConfig first - if it fails, we can't plan resources
+	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, obs.RuntimeConfig); fatal {
+		return
+	}
+
 	// Project PVC reference
 	projectPVC(status, obs)
 
