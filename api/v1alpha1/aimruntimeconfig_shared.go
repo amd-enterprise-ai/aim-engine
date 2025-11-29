@@ -87,12 +87,16 @@ type AIMRuntimeConfigCommon struct {
 	// For backward compatibility, if this field is set and Storage.DefaultStorageClassName is not set,
 	// the value will be automatically migrated.
 	// +optional
+	// +kubebuilder:validation:Deprecated
+	// +kubebuilder:validation:DeprecatedMessage="Use Storage.DefaultStorageClassName instead. This field will be removed in a future version."
 	DefaultStorageClassName string `json:"defaultStorageClassName,omitempty"`
 
 	// DEPRECATED: Use Storage.PVCHeadroomPercent instead. This field will be removed in a future version.
 	// For backward compatibility, if this field is set and Storage.PVCHeadroomPercent is not set,
 	// the value will be automatically migrated.
 	// +optional
+	// +kubebuilder:validation:Deprecated
+	// +kubebuilder:validation:DeprecatedMessage="Use Storage.PVCHeadroomPercent instead. This field will be removed in a future version."
 	PVCHeadroomPercent *int32 `json:"pvcHeadroomPercent,omitempty"`
 }
 
