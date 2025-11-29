@@ -216,6 +216,14 @@ func (r *Reconciler) Plan(
 		}
 	}
 
+	// 0. Plan model auto-creation
+	if obs.Model.ShouldCreateModel {
+		modelObj := planServiceModel(obs.Model, service)
+		if modelObj != nil {
+			objectsToApply = append(objectsToApply, modelObj)
+		}
+	}
+
 	// 1. Plan caching (TemplateCache creation)
 	if obs.Caching.ShouldCreateCache && templateName != "" {
 		cacheObj, err := planServiceCache(service, obs.Caching, templateName, templateNamespace, &obs.MergedConfig)
