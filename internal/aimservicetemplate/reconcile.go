@@ -285,5 +285,6 @@ func (r *ServiceTemplateReconciler) Project(
 	}
 	projectDiscovery(status, cm, sh, observation.Discovery)
 
-	aimruntimeconfig.ProjectRuntimeConfigObservation(cm, observation.RuntimeConfig)
+	// Project runtime config - if it fails, status is already set
+	aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.RuntimeConfig)
 }
