@@ -122,6 +122,7 @@ func observeServicePVC(
 // PLAN
 // ============================================================================
 
+//nolint:unused // will be used when Plan phase is fully implemented
 func planServicePVC(
 	service *aimv1alpha1.AIMService,
 	obs ServicePVCObservation,
@@ -179,6 +180,8 @@ func planServicePVC(
 // calculateRequiredStorageSize computes the total storage needed for model sources.
 // Returns sum of all model sizes plus the specified headroom percentage, or an error if sizes aren't specified.
 // headroomPercent represents the percentage (0-100) of extra space to add. For example, 10 means 10% extra.
+//
+//nolint:unused // will be used when Plan phase is fully implemented
 func calculateRequiredStorageSize(templateStatus *aimv1alpha1.AIMServiceTemplateStatus, headroomPercent int32) (resource.Quantity, error) {
 	if templateStatus == nil || len(templateStatus.ModelSources) == 0 {
 		return resource.Quantity{}, fmt.Errorf("no model sources available in template")
@@ -204,8 +207,9 @@ func calculateRequiredStorageSize(templateStatus *aimv1alpha1.AIMServiceTemplate
 // PROJECT
 // ============================================================================
 
+//nolint:unparam // bool return kept for API consistency with other project functions
 func projectServicePVC(
-	status *aimv1alpha1.AIMServiceStatus,
+	_ *aimv1alpha1.AIMServiceStatus,
 	cm *controllerutils.ConditionManager,
 	h *controllerutils.StatusHelper,
 	obs ServicePVCObservation,
@@ -239,6 +243,8 @@ func projectServicePVC(
 // ============================================================================
 
 // addServicePVCMount adds a service PVC volume mount to an InferenceService.
+//
+//nolint:unused // will be used when Plan phase is fully implemented
 func addServicePVCMount(inferenceService *servingv1beta1.InferenceService, pvcName string) {
 	volumeName := "model-storage"
 

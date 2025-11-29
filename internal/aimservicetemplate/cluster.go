@@ -86,7 +86,7 @@ func observeServiceTemplateCluster(result ServiceTemplateClusterFetchResult, tem
 // ============================================================================
 
 // TODO
-func projectServiceTemplateCluster(status *aimv1alpha1.AIMServiceTemplateStatus, cm *controllerutils.ConditionManager, h *controllerutils.StatusHelper, observation ServiceTemplateClusterObservation) bool {
+func projectServiceTemplateCluster(_ *aimv1alpha1.AIMServiceTemplateStatus, _ *controllerutils.ConditionManager, _ *controllerutils.StatusHelper, observation ServiceTemplateClusterObservation) bool {
 	if !observation.GpuModelAvailable {
 		// status.Status = constants.AIMStatusNotAvailable
 		return false

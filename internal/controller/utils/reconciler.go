@@ -105,7 +105,7 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 				p.Scheme,
 				desiredObjects,
 			); err != nil {
-				planErr = err
+				return err
 			}
 		}
 	}

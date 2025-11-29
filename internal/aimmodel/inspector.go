@@ -194,6 +194,7 @@ func (e *MetadataFormatError) Error() string {
 	return "image metadata malformed"
 }
 
+//nolint:unused // will be used in future metadata validation
 func newMetadataFormatError(reason, message string) *MetadataFormatError {
 	if reason == "" {
 		reason = "MetadataMalformed"

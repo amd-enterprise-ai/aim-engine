@@ -120,15 +120,15 @@ func shouldDiscoveryRun(status aimv1alpha1.AIMServiceTemplateStatus) bool {
 
 const (
 	// Kubernetes name limit
-	kubernetesNameMaxLength = 63
+	kubernetesNameMaxLength = 63 //nolint:unused // will be used in future discovery job naming
 
 	// Job name components
-	discoveryJobPrefix = "discover-"
-	discoveryJobSuffix = "-"
+	discoveryJobPrefix = "discover-" //nolint:unused // will be used in future discovery job naming
+	discoveryJobSuffix = "-"         //nolint:unused // will be used in future discovery job naming
 
 	// Hash length for job uniqueness (4 bytes = 8 hex chars)
-	discoveryJobHashLength = 4
-	discoveryJobHashHexLen = 8
+	discoveryJobHashLength = 4 //nolint:unused // will be used in future discovery job naming
+	discoveryJobHashHexLen = 8 //nolint:unused // will be used in future discovery job naming
 
 	// DiscoveryJobBackoffLimit is the number of retries before marking the discovery job as failed
 	DiscoveryJobBackoffLimit = 3

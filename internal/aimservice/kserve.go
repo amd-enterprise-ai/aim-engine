@@ -162,6 +162,7 @@ func checkPodImagePullErrors(pods []corev1.Pod) *utils.ImagePullError {
 // PLAN
 // ============================================================================
 
+//nolint:unparam,unused // error return kept for API consistency, will be used when Plan phase is fully implemented
 func planServiceInferenceService(
 	service *aimv1alpha1.AIMService,
 	obs ServiceKServeObservation,
@@ -190,12 +191,14 @@ func planServiceInferenceService(
 }
 
 // buildInferenceService creates a KServe InferenceService for the AIMService inline (no separate ServingRuntime).
+//
+//nolint:unused // will be used when Plan phase is fully implemented
 func buildInferenceService(
 	service *aimv1alpha1.AIMService,
 	modelImage string,
 	modelName string,
 	templateName string,
-	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
+	_ *aimv1alpha1.AIMServiceTemplateSpec,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
 	pvcObs ServicePVCObservation,
 	cachingObs ServiceCachingObservation,
@@ -325,6 +328,8 @@ func buildInferenceService(
 
 // buildResourceRequirements builds resource requirements for the container.
 // Service-level resources override template defaults.
+//
+//nolint:unused // will be used when Plan phase is fully implemented
 func buildResourceRequirements(service *aimv1alpha1.AIMService, templateStatus *aimv1alpha1.AIMServiceTemplateStatus) corev1.ResourceRequirements {
 	// Start with service resources if specified
 	if service.Spec.Resources != nil {
@@ -363,6 +368,8 @@ func buildResourceRequirements(service *aimv1alpha1.AIMService, templateStatus *
 }
 
 // addVolumeMounts adds PVC and model cache volume mounts to the InferenceService.
+//
+//nolint:unused // will be used when Plan phase is fully implemented
 func addVolumeMounts(isvc *servingv1beta1.InferenceService, pvcObs ServicePVCObservation, cachingObs ServiceCachingObservation) {
 	// Add service PVC mount if using PVC (not using cache)
 	if pvcObs.ShouldUsePVC && pvcObs.PVCReady && pvcObs.PVCName != "" {
@@ -376,6 +383,8 @@ func addVolumeMounts(isvc *servingv1beta1.InferenceService, pvcObs ServicePVCObs
 }
 
 // addModelCacheMount adds a model cache PVC volume mount to an InferenceService.
+//
+//nolint:unused // will be used when Plan phase is fully implemented
 func addModelCacheMount(isvc *servingv1beta1.InferenceService, modelCache aimv1alpha1.AIMModelCache, modelName string) {
 	// Sanitize volume name for Kubernetes (no dots allowed in volume names, only lowercase alphanumeric and '-')
 	volumeName := utils.MakeRFC1123Compliant(modelCache.Name)

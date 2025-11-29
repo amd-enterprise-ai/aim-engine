@@ -25,7 +25,6 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	apisv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -1301,7 +1300,7 @@ func (in *AIMServiceTemplateStatus) DeepCopyInto(out *AIMServiceTemplateStatus) 
 	}
 	if in.DiscoveryJobRef != nil {
 		in, out := &in.DiscoveryJobRef, &out.DiscoveryJobRef
-		*out = new(types.NamespacedName)
+		*out = new(AIMResolvedReference)
 		**out = **in
 	}
 }

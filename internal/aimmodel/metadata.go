@@ -114,6 +114,8 @@ func ObserveModelMetadata(
 
 // projectModelMetadata projects metadata observation into status conditions and overall status.
 // Returns true if a fatal error occurred and reconciliation should stop, false otherwise.
+//
+//nolint:unparam // bool return kept for API consistency with other project functions
 func projectModelMetadata(
 	cm *controllerutils.ConditionManager,
 	h *controllerutils.StatusHelper,

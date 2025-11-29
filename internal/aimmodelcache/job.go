@@ -155,7 +155,7 @@ func canCreateJob(obs Observation) bool {
 }
 
 // buildDownloadJob creates a Job to download the model into the PVC.
-func buildDownloadJob(cache *aimv1alpha1.AIMModelCache, obs Observation) *batchv1.Job {
+func buildDownloadJob(cache *aimv1alpha1.AIMModelCache, _ Observation) *batchv1.Job {
 	mountPath := "/cache"
 	downloadImage := aimv1alpha1.DefaultDownloadImage
 	if len(cache.Spec.ModelDownloadImage) > 0 {

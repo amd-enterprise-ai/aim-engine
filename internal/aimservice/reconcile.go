@@ -201,11 +201,10 @@ func (r *Reconciler) Plan(
 	var objectsToApply []client.Object
 
 	// Handle cache retry deletions BEFORE planning new objects
-	if obs.Caching.ShouldRequestCacheRetry {
-		// Note: Cache retry deletion should be handled in a pre-plan phase
-		// For now, we document this as a TODO for the controller to handle
-		// The controller should delete failed model caches before calling Plan
-	}
+	// Note: Cache retry deletion should be handled in a pre-plan phase
+	// The controller should delete failed model caches before calling Plan
+	// See HandleCacheRetryDeletion() function below
+	_ = obs.Caching.ShouldRequestCacheRetry // Handled by controller before Plan phase
 
 	// Get template name for resource creation
 	_, _ = getResolvedTemplateName(service, ServiceTemplateFetchResult{
@@ -320,10 +319,8 @@ func (r *Reconciler) Project(
 	}
 
 	// 6. HTTPRoute projection
-	blocking = projectServiceHTTPRoute(status, cm, h, obs.HTTPRoute)
-	if blocking {
-		return
-	}
+	_ = projectServiceHTTPRoute(status, cm, h, obs.HTTPRoute)
+	// Note: HTTPRoute projection currently never blocks
 
 	// TODO: Set overall service status based on all conditions
 	// For now, individual domain projections handle their own status

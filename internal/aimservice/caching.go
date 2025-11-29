@@ -215,6 +215,7 @@ func matchModelCachesWithSources(modelCaches []aimv1alpha1.AIMModelCache, modelS
 // PLAN
 // ============================================================================
 
+//nolint:unparam,unused // error return kept for API consistency, will be used when Plan phase is fully implemented
 func planServiceCache(
 	service *aimv1alpha1.AIMService,
 	obs ServiceCachingObservation,
@@ -234,6 +235,8 @@ func planServiceCache(
 }
 
 // buildTemplateCache creates an AIMTemplateCache object
+//
+//nolint:unused // will be used when Plan phase is fully implemented
 func buildTemplateCache(
 	service *aimv1alpha1.AIMService,
 	templateName string,
@@ -258,13 +261,11 @@ func buildTemplateCache(
 
 	// Only set owner reference for namespace-scoped templates
 	// Cluster-scoped templates cannot be owned by namespace-scoped resources
-	if templateNamespace != "" {
-		// Template is namespace-scoped, we can set owner reference to the template
-		// Note: We intentionally do NOT set owner reference to the AIMService
-		// because we want the cache to persist even if the service is deleted
-		// The cache will be owned by the template instead
-		// This is handled in a separate step by fetching the template
-	}
+	// Note: We intentionally do NOT set owner reference to the AIMService
+	// because we want the cache to persist even if the service is deleted
+	// The cache will be owned by the template instead (namespace-scoped only)
+	// This is handled in a separate step by fetching the template
+	_ = templateNamespace // Used for future owner reference logic
 
 	return cache
 }

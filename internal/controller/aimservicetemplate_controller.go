@@ -50,9 +50,9 @@ import (
 )
 
 const (
-	namespaceTemplateFieldOwner            = "aim-namespace-template-controller"
-	namespaceTemplateRuntimeConfigIndexKey = ".spec.runtimeConfigName"
-	templateCacheTemplateNameIndexKey      = ".spec.templateName"
+	namespaceTemplateFieldOwner            = "aim-namespace-template-controller" //nolint:unused // will be used when SetupWithManager is implemented
+	namespaceTemplateRuntimeConfigIndexKey = ".spec.runtimeConfigName"           //nolint:unused // will be used for indexing
+	templateCacheTemplateNameIndexKey      = ".spec.templateName"                //nolint:unused // will be used for indexing
 )
 
 // AIMServiceTemplateReconciler reconciles a AIMServiceTemplate object
