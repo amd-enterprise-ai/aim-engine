@@ -47,12 +47,16 @@ const (
 type RuntimeConfigFetchResult struct {
 	ClusterConfig   *aimv1alpha1.AIMClusterRuntimeConfig
 	NamespaceConfig *aimv1alpha1.AIMRuntimeConfig
+	// ConfigName is the name of the requested config (used for NotFound detection)
+	ConfigName string
 }
 
 // FetchRuntimeConfig fetches both namespace and cluster-scoped runtime configs.
 // This is the entry point for runtime config resolution.
 func FetchRuntimeConfig(ctx context.Context, c client.Client, name string, namespace string) (RuntimeConfigFetchResult, error) {
-	result := RuntimeConfigFetchResult{}
+	result := RuntimeConfigFetchResult{
+		ConfigName: name,
+	}
 
 	// Fetch namespace-scoped config if namespace provided
 	if namespace != "" {
@@ -72,15 +76,8 @@ func FetchRuntimeConfig(ctx context.Context, c client.Client, name string, names
 		result.ClusterConfig = clusterConfig
 	}
 
-	// If the name is not `default` and no config was found, return NotFound error
-	if name != DefaultRuntimeConfigName && result.ClusterConfig == nil && result.NamespaceConfig == nil {
-		groupResource := schema.GroupResource{
-			Group:    aimv1alpha1.GroupVersion.Group,
-			Resource: "aimruntimeconfigs",
-		}
-		return result, apierrors.NewNotFound(groupResource, name)
-	}
-
+	// Don't return error for NotFound - let Observe phase handle it
+	// This ensures status gets updated even when config is not found
 	return result, nil
 }
 
@@ -106,6 +103,23 @@ type RuntimeConfigObservation struct {
 func ObserveRuntimeConfig(fetchResult RuntimeConfigFetchResult, configName string) RuntimeConfigObservation {
 	obs := RuntimeConfigObservation{}
 
+	// Check if config was not found
+	if fetchResult.ClusterConfig == nil && fetchResult.NamespaceConfig == nil {
+		if configName != DefaultRuntimeConfigName {
+			// Non-default config not found - this is an error
+			obs.ConfigNotFound = true
+			obs.Error = apierrors.NewNotFound(
+				schema.GroupResource{
+					Group:    aimv1alpha1.GroupVersion.Group,
+					Resource: "aimruntimeconfigs",
+				},
+				configName,
+			)
+		}
+		// Default config not found is fine - MergedConfig will be nil
+		return obs
+	}
+
 	var clusterCommon *aimv1alpha1.AIMRuntimeConfigCommon
 	var namespaceCommon *aimv1alpha1.AIMRuntimeConfigCommon
 
@@ -124,11 +138,6 @@ func ObserveRuntimeConfig(fetchResult RuntimeConfigFetchResult, configName strin
 	// Merge configs (namespace takes precedence over cluster)
 	obs.MergedConfig = MergeRuntimeConfigs(namespaceCommon, clusterCommon)
 
-	// Check if config was not found (only matters for non-default configs)
-	if configName != DefaultRuntimeConfigName && fetchResult.ClusterConfig == nil && fetchResult.NamespaceConfig == nil {
-		obs.ConfigNotFound = true
-	}
-
 	return obs
 }
 
@@ -136,12 +145,57 @@ func ObserveRuntimeConfig(fetchResult RuntimeConfigFetchResult, configName strin
 // PROJECT
 // ============================================================================
 
-func ProjectRuntimeConfigObservation(cm *controllerutils.ConditionManager, observation RuntimeConfigObservation) {
+func ProjectRuntimeConfigObservation(
+	cm *controllerutils.ConditionManager,
+	sh *controllerutils.StatusHelper,
+	observation RuntimeConfigObservation,
+) bool {
 	if err := observation.Error; err != nil {
-		cm.Set(aimv1alpha1.AIMModelConditionRuntimeResolved, metav1.ConditionFalse, "Error", err.Error(), controllerutils.LevelWarning)
-	} else {
-		cm.Set(aimv1alpha1.AIMModelConditionRuntimeResolved, metav1.ConditionTrue, "Resolved", "Runtime config resolved", controllerutils.LevelNone)
+		if observation.ConfigNotFound {
+			// Non-default config not found - this is a fatal error
+			cm.Set(
+				aimv1alpha1.AIMModelConditionRuntimeResolved,
+				metav1.ConditionFalse,
+				"ConfigNotFound",
+				err.Error(),
+				controllerutils.LevelWarning,
+			)
+			sh.Failed("ConfigNotFound", err.Error())
+			return true // Fatal - stop reconciliation
+		}
+		// Other error (e.g., API error)
+		cm.Set(
+			aimv1alpha1.AIMModelConditionRuntimeResolved,
+			metav1.ConditionFalse,
+			"Error",
+			err.Error(),
+			controllerutils.LevelWarning,
+		)
+		sh.Degraded("RuntimeConfigError", err.Error())
+		return true // Stop reconciliation
 	}
+
+	// Success - differentiate between config found vs using defaults
+	if observation.MergedConfig == nil {
+		// Default config not found, using system defaults
+		cm.Set(
+			aimv1alpha1.AIMModelConditionRuntimeResolved,
+			metav1.ConditionTrue,
+			"UsingDefaults",
+			"Runtime config 'default' not found, using system defaults",
+			controllerutils.LevelNone,
+		)
+	} else {
+		// Config found and merged
+		cm.Set(
+			aimv1alpha1.AIMModelConditionRuntimeResolved,
+			metav1.ConditionTrue,
+			"Resolved",
+			"Runtime config resolved successfully",
+			controllerutils.LevelNone,
+		)
+	}
+	return false // Continue reconciliation
 }
 
 // ============================================================================

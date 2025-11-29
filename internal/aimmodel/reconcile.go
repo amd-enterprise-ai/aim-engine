@@ -226,9 +226,17 @@ func (r *ClusterModelReconciler) Project(
 ) {
 	sh := controllerutils.NewStatusHelper(status, cm)
 
-	aimruntimeconfig.ProjectRuntimeConfigObservation(cm, observation.RuntimeConfig)
+	// Project runtime config first - if it fails, don't proceed
+	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.RuntimeConfig); fatal {
+		return
+	}
 
-	projectModelMetadata(cm, sh, observation.Metadata)
+	// Project metadata - if it fails fatally, don't proceed
+	if fatal := projectModelMetadata(cm, sh, observation.Metadata); fatal {
+		return
+	}
+
+	// Only project template status if no higher-priority errors
 	var templateStatuses []aimv1alpha1.AIMServiceTemplateStatus
 	for _, templateStatus := range observation.Templates.ExistingTemplates {
 		templateStatuses = append(templateStatuses, templateStatus.Status)
@@ -244,9 +252,17 @@ func (r *ModelReconciler) Project(
 ) {
 	sh := controllerutils.NewStatusHelper(status, cm)
 
-	aimruntimeconfig.ProjectRuntimeConfigObservation(cm, observation.RuntimeConfig)
+	// Project runtime config first - if it fails, don't proceed
+	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.RuntimeConfig); fatal {
+		return
+	}
 
-	projectModelMetadata(cm, sh, observation.Metadata)
+	// Project metadata - if it fails fatally, don't proceed
+	if fatal := projectModelMetadata(cm, sh, observation.Metadata); fatal {
+		return
+	}
+
+	// Only project template status if no higher-priority errors
 	var templateStatuses []aimv1alpha1.AIMServiceTemplateStatus
 	for _, templateStatus := range observation.Templates.ExistingTemplates {
 		templateStatuses = append(templateStatuses, templateStatus.Status)
