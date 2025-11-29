@@ -158,7 +158,18 @@ func projectModelMetadata(
 			)
 			// Keep going
 		}
+	} else if observation.ExtractedMetadata != nil {
+		// Success - metadata was extracted
+		cm.Set(
+			aimv1alpha1.AIMModelConditionMetadataExtracted,
+			metav1.ConditionTrue,
+			"MetadataExtracted",
+			"Successfully extracted image metadata",
+			controllerutils.LevelNone,
+		)
 	}
+	// Note: If Error is nil and ExtractedMetadata is nil, metadata extraction was not attempted
+	// (e.g., already cached in status), so we don't update the condition
 
 	return false
 }
