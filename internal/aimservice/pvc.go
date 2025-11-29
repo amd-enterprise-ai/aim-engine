@@ -185,8 +185,6 @@ func planServicePVC(
 // calculateRequiredStorageSize computes the total storage needed for model sources.
 // Returns sum of all model sizes plus the specified headroom percentage, or an error if sizes aren't specified.
 // headroomPercent represents the percentage (0-100) of extra space to add. For example, 10 means 10% extra.
-//
-//nolint:unused // will be used when Plan phase is fully implemented
 func calculateRequiredStorageSize(templateStatus *aimv1alpha1.AIMServiceTemplateStatus, headroomPercent int32) (resource.Quantity, error) {
 	if templateStatus == nil || len(templateStatus.ModelSources) == 0 {
 		return resource.Quantity{}, fmt.Errorf("no model sources available in template")
@@ -248,8 +246,6 @@ func projectServicePVC(
 // ============================================================================
 
 // addServicePVCMount adds a service PVC volume mount to an InferenceService.
-//
-//nolint:unused // will be used when Plan phase is fully implemented
 func addServicePVCMount(inferenceService *servingv1beta1.InferenceService, pvcName string) {
 	volumeName := "model-storage"
 
