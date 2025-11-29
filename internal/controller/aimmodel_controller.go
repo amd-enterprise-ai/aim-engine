@@ -29,6 +29,8 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimmodel"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -40,10 +42,6 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
-)
-
-const (
-	serviceTemplateModelNameIndexKey = ".spec.modelName"
 )
 
 // AIMModelReconciler reconciles an AIMModel object
@@ -87,7 +85,7 @@ func (r *AIMModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
-	r.Recorder = mgr.GetEventRecorderFor("aim-image-controller")
+	r.Recorder = mgr.GetEventRecorderFor("aim-model-controller")
 
 	r.reconciler = &aimmodel.ModelReconciler{
 		Clientset: r.Clientset,
@@ -103,11 +101,12 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		StatusClient: mgr.GetClient().Status(),
 		Recorder:     r.Recorder,
 		FieldOwner:   "aim-model-controller",
-		Domain:       r.reconciler,
+		Reconciler:   r.reconciler,
+		Scheme:       r.Scheme,
 	}
 
 	// Index AIMServiceTemplate by modelName for efficient lookup
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMServiceTemplate{}, serviceTemplateModelNameIndexKey, func(obj client.Object) []string {
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMServiceTemplate{}, constants.ServiceTemplateModelNameIndexKey, func(obj client.Object) []string {
 		template, ok := obj.(*aimv1alpha1.AIMServiceTemplate)
 		if !ok {
 			return nil
@@ -120,6 +119,6 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMModel{}).
 		Owns(&aimv1alpha1.AIMServiceTemplate{}).
-		Named("aim-image").
+		Named("aim-model").
 		Complete(r)
 }

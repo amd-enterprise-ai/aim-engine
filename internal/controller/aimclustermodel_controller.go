@@ -49,8 +49,8 @@ type AIMClusterModelReconciler struct {
 	Recorder  record.EventRecorder
 	Clientset kubernetes.Interface
 
-	modelDomain controllerutils.DomainReconciler[*aimv1alpha1.AIMClusterModel, *aimv1alpha1.AIMModelStatus, aimmodel.ClusterModelFetchResult, aimmodel.ClusterModelObservation]
-	pipeline    controllerutils.Pipeline[*aimv1alpha1.AIMClusterModel, *aimv1alpha1.AIMModelStatus, aimmodel.ClusterModelFetchResult, aimmodel.ClusterModelObservation]
+	reconciler controllerutils.DomainReconciler[*aimv1alpha1.AIMClusterModel, *aimv1alpha1.AIMModelStatus, aimmodel.ClusterModelFetchResult, aimmodel.ClusterModelObservation]
+	pipeline   controllerutils.Pipeline[*aimv1alpha1.AIMClusterModel, *aimv1alpha1.AIMModelStatus, aimmodel.ClusterModelFetchResult, aimmodel.ClusterModelObservation]
 }
 
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclustermodels,verbs=get;list;watch;create;update;patch;delete
@@ -83,9 +83,9 @@ func (r *AIMClusterModelReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 func (r *AIMClusterModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
-	r.Recorder = mgr.GetEventRecorderFor("aim-cluster-image-controller")
+	r.Recorder = mgr.GetEventRecorderFor("aim-cluster-model-controller")
 
-	r.modelDomain = &aimmodel.ClusterModelReconciler{
+	r.reconciler = &aimmodel.ClusterModelReconciler{
 		Clientset: r.Clientset,
 		Scheme:    r.Scheme,
 	}
@@ -99,7 +99,8 @@ func (r *AIMClusterModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		StatusClient: mgr.GetClient().Status(),
 		Recorder:     r.Recorder,
 		FieldOwner:   "aim-cluster-model-controller",
-		Domain:       r.modelDomain,
+		Reconciler:   r.reconciler,
+		Scheme:       r.Scheme,
 	}
 
 	// Index AIMClusterServiceTemplate by modelName for efficient lookup

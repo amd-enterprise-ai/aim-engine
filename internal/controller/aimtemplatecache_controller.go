@@ -101,7 +101,8 @@ func (r *AIMTemplateCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		StatusClient: r.Status(),
 		Recorder:     r.Recorder,
 		FieldOwner:   templateCacheFieldOwner,
-		Domain:       r.reconciler,
+		Reconciler:   r.reconciler,
+		Scheme:       r.Scheme,
 	}
 
 	modelCacheHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {

@@ -106,13 +106,13 @@ func (r *ModelReconciler) Fetch(
 
 	templates, templatesErr := fetchModelServiceTemplateResult(ctx, c, *model)
 	if templatesErr != nil {
-		return result, fmt.Errorf("failed to fetch cluster model service templates: %w", templatesErr)
+		return result, fmt.Errorf("failed to fetch model service templates: %w", templatesErr)
 	}
 	result.ServiceTemplates = templates
 
 	// Fetch image metadata if needed
 	if ShouldExtractMetadata(&model.Status) {
-		metadataResult := FetchModelMetadataResult(ctx, r.Clientset, model.Spec, constants.GetOperatorNamespace())
+		metadataResult := FetchModelMetadataResult(ctx, r.Clientset, model.Spec, model.Namespace)
 		result.ImageMetadata = &metadataResult
 	}
 

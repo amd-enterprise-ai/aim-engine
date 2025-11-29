@@ -140,6 +140,7 @@ func projectModelMetadata(
 			if err.Type == utils.ImagePullErrorNotFound {
 				// Fatal, image not found
 				h.Failed(reasonForRegistry(err), err.Error())
+				return true
 			} else {
 				// Recoverable, image found but auth / other error
 				h.Degraded(reasonForRegistry(err), err.Error())
