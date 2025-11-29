@@ -37,6 +37,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+// PlanResult contains the desired state changes from the Plan phase.
+type PlanResult struct {
+	// Apply are objects to create or update via Server-Side Apply
+	Apply []client.Object
+
+	// Delete are objects to delete
+	Delete []client.Object
+}
+
 // DomainReconciler is implemented by domain-specific logic for a CRD.
 type DomainReconciler[T ObjectWithStatus[S], S StatusWithConditions, F any, Obs any] interface {
 	// Fetch can hit the API via client and returns the fetched objects.
@@ -45,8 +54,8 @@ type DomainReconciler[T ObjectWithStatus[S], S StatusWithConditions, F any, Obs 
 	// Observe interprets the fetched objects into a meaningful observation.
 	Observe(ctx context.Context, obj T, fetched F) (Obs, error)
 
-	// Plan must be pure-ish: no client, just derive a list of objects to create based on the object + observed state.
-	Plan(ctx context.Context, obj T, obs Obs) ([]client.Object, error)
+	// Plan must be pure: no client calls, just derive desired state changes based on the object + observed state.
+	Plan(ctx context.Context, obj T, obs Obs) (PlanResult, error)
 
 	// Project mutates obj.Status via the ConditionManager based on obs/plan/errors.
 	Project(status S, cm *ConditionManager, obs Obs)
@@ -99,22 +108,30 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 		return obsErr
 	}
 
-	// Plan phase - derive desired objects based on observations
+	// Plan phase - derive desired state changes based on observations
 	// Should be pure - no client calls, just logic based on current state
-	desiredObjects, planErr := p.Reconciler.Plan(ctx, obj, obs)
+	planResult, planErr := p.Reconciler.Plan(ctx, obj, obs)
 	if planErr != nil {
 		// Planning error - return for retry
 		return planErr
 	}
 
+	// Delete phase - delete objects before applying new state
+	for _, objToDelete := range planResult.Delete {
+		if err := p.Client.Delete(ctx, objToDelete); client.IgnoreNotFound(err) != nil {
+			// Deletion failed - return for retry
+			return err
+		}
+	}
+
 	// Apply phase - use Server-Side Apply to create/update desired objects
-	if len(desiredObjects) > 0 {
+	if len(planResult.Apply) > 0 {
 		if err := ApplyDesiredState(
 			ctx,
 			p.Client,
 			p.FieldOwner,
 			p.Scheme,
-			desiredObjects,
+			planResult.Apply,
 		); err != nil {
 			// Apply failed - return for retry
 			return err

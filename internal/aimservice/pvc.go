@@ -123,20 +123,24 @@ func observeServicePVC(
 // PLAN
 // ============================================================================
 
-//nolint:unused // will be used when Plan phase is fully implemented
 func planServicePVC(
 	service *aimv1alpha1.AIMService,
 	obs ServicePVCObservation,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
-	// TODO unified config
-	storageClassName string,
-	headroomPercent int32,
+	mergedConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) (client.Object, error) {
 	if !obs.ShouldCreatePVC {
 		return nil, nil
 	}
 
 	pvcName := PvcNameForService(service)
+
+	// Extract storage config from mergedConfig
+	storageClassName := utils.ResolveStorageClass("", mergedConfig)
+	headroomPercent := utils.DefaultPVCHeadroomPercent
+	if mergedConfig != nil && mergedConfig.Storage != nil && mergedConfig.Storage.PVCHeadroomPercent != nil {
+		headroomPercent = *mergedConfig.Storage.PVCHeadroomPercent
+	}
 
 	// Calculate required size from model sources
 	size, err := calculateRequiredStorageSize(templateStatus, headroomPercent)

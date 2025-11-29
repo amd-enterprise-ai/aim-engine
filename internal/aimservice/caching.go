@@ -88,16 +88,6 @@ func fetchServiceCachingResult(
 // ============================================================================
 
 // ServiceCachingObservation contains the observed state of caching for a service.
-//
-// Note: FailedModelCachesToRetry should be handled in the reconciler BEFORE the plan phase:
-//
-//	if cachingObs.ShouldRequestCacheRetry {
-//	    for _, mc := range cachingObs.FailedModelCachesToRetry {
-//	        if err := r.Delete(ctx, &mc); err != nil && !errors.IsNotFound(err) {
-//	            return ctrl.Result{}, err
-//	        }
-//	    }
-//	}
 type ServiceCachingObservation struct {
 	TemplateCache            *aimv1alpha1.AIMTemplateCache
 	TemplateCacheReady       bool
@@ -215,37 +205,44 @@ func matchModelCachesWithSources(modelCaches []aimv1alpha1.AIMModelCache, modelS
 // PLAN
 // ============================================================================
 
-//nolint:unparam,unused // error return kept for API consistency, will be used when Plan phase is fully implemented
+//nolint:unparam // error return kept for API consistency with other plan functions
 func planServiceCache(
 	service *aimv1alpha1.AIMService,
 	obs ServiceCachingObservation,
 	templateName string,
 	templateNamespace string,
-	storageClassName string,
+	mergedConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) (client.Object, error) {
-	// Note: Cache retry (deletion of failed ModelCaches) is handled in the reconciler
-	// before the plan phase, based on obs.FailedModelCachesToRetry
-
-	// Create new cache
+	// Create new cache if needed
 	if obs.ShouldCreateCache && templateName != "" {
-		return buildTemplateCache(service, templateName, templateNamespace, storageClassName), nil
+		return buildTemplateCache(service, templateName, templateNamespace, mergedConfig), nil
 	}
 
 	return nil, nil
 }
 
 // buildTemplateCache creates an AIMTemplateCache object
-//
-//nolint:unused // will be used when Plan phase is fully implemented
 func buildTemplateCache(
 	service *aimv1alpha1.AIMService,
 	templateName string,
 	templateNamespace string,
-	storageClassName string,
+	mergedConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) *aimv1alpha1.AIMTemplateCache {
+	// Extract storage class from merged config
+	storageClassName := ""
+	if mergedConfig != nil && mergedConfig.Storage != nil && mergedConfig.Storage.DefaultStorageClassName != nil {
+		storageClassName = *mergedConfig.Storage.DefaultStorageClassName
+	}
+
+	// Determine template scope based on namespace
+	templateScope := aimv1alpha1.AIMServiceTemplateScopeNamespace
+	if templateNamespace == "" {
+		templateScope = aimv1alpha1.AIMServiceTemplateScopeCluster
+	}
+
 	cache := &aimv1alpha1.AIMTemplateCache{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "aim.silogen.ai/v1alpha1",
+			APIVersion: aimv1alpha1.GroupVersion.String(),
 			Kind:       "AIMTemplateCache",
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -254,18 +251,11 @@ func buildTemplateCache(
 		},
 		Spec: aimv1alpha1.AIMTemplateCacheSpec{
 			TemplateName:     templateName,
+			TemplateScope:    templateScope,
 			StorageClassName: storageClassName,
 			Env:              service.Spec.Env,
 		},
 	}
-
-	// Only set owner reference for namespace-scoped templates
-	// Cluster-scoped templates cannot be owned by namespace-scoped resources
-	// Note: We intentionally do NOT set owner reference to the AIMService
-	// because we want the cache to persist even if the service is deleted
-	// The cache will be owned by the template instead (namespace-scoped only)
-	// This is handled in a separate step by fetching the template
-	_ = templateNamespace // Used for future owner reference logic
 
 	return cache
 }

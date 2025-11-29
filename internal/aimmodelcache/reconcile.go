@@ -141,7 +141,7 @@ func (r *Reconciler) Observe(
 
 // Plan determines what Kubernetes objects should be created or updated
 // based on the current observation.
-func (r *Reconciler) Plan(ctx context.Context, cache *aimv1alpha1.AIMModelCache, obs Observation) ([]client.Object, error) {
+func (r *Reconciler) Plan(ctx context.Context, cache *aimv1alpha1.AIMModelCache, obs Observation) (controllerutils.PlanResult, error) {
 	var objects []client.Object
 
 	// Plan PVC
@@ -154,7 +154,7 @@ func (r *Reconciler) Plan(ctx context.Context, cache *aimv1alpha1.AIMModelCache,
 		objects = append(objects, jobObj)
 	}
 
-	return objects, nil
+	return controllerutils.PlanResult{Apply: objects}, nil
 }
 
 // ============================================================================
