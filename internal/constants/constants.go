@@ -82,3 +82,16 @@ func GetOperatorNamespace() string {
 	})
 	return operatorNamespace
 }
+
+const (
+	ServiceTemplateModelNameIndexKey = ".spec.modelName"
+)
+
+// AMD GPU node label keys
+const (
+	// NodeLabelAMDGPUDeviceID is the primary node label for AMD GPU device IDs (e.g., "74a1" for MI300X)
+	NodeLabelAMDGPUDeviceID = "amd.com/gpu.device-id"
+
+	// NodeLabelBetaAMDGPUDeviceID is the legacy/beta node label for AMD GPU device IDs
+	NodeLabelBetaAMDGPUDeviceID = "beta.amd.com/gpu.device-id"
+)

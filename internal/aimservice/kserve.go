@@ -323,6 +323,9 @@ func buildInferenceService(
 	// Add volumes and volume mounts
 	addVolumeMounts(isvc, pvcObs, cachingObs)
 
+	// Add GPU node selector based on template GPU model
+	addGPUNodeSelector(isvc, templateStatus)
+
 	return isvc
 }
 
@@ -409,6 +412,72 @@ func addModelCacheMount(isvc *servingv1beta1.InferenceService, modelCache aimv1a
 		corev1.VolumeMount{
 			Name:      volumeName,
 			MountPath: mountPath,
+		},
+	)
+}
+
+// addGPUNodeSelector adds node selector based on GPU model from template.
+// Uses AMD GPU device ID labels to ensure the pod lands on compatible nodes.
+// Supports multiple device IDs per GPU model (e.g., MI300X has 74a1, 74a9, 74b5, 74bd).
+// Uses node affinity with RequiredDuringSchedulingIgnoredDuringExecution for strict placement.
+//
+//nolint:unused // will be used when Plan phase is fully implemented
+func addGPUNodeSelector(isvc *servingv1beta1.InferenceService, templateStatus *aimv1alpha1.AIMServiceTemplateStatus) {
+	// TODO determine if an error should be raised if GPU lookup fails
+
+	if templateStatus == nil || templateStatus.Profile == nil {
+		return
+	}
+
+	gpuModel := templateStatus.Profile.Metadata.GPU
+	if gpuModel == "" {
+		return
+	}
+
+	// Get all device IDs that match this GPU model
+	deviceIDs := utils.GetAMDDeviceIDsForModel(gpuModel)
+	if len(deviceIDs) == 0 {
+		// Not an AMD GPU or unknown model - skip node selector
+		return
+	}
+
+	// Always use node affinity (handles both single and multiple device IDs uniformly)
+	addGPUNodeAffinity(isvc, deviceIDs)
+}
+
+// addGPUNodeAffinity adds node affinity rules to match any of the given AMD GPU device IDs.
+// Uses RequiredDuringSchedulingIgnoredDuringExecution for strict placement requirements.
+// Works for both single device IDs (e.g., MI300A) and multiple device IDs (e.g., MI300X).
+//
+//nolint:unused // will be used when Plan phase is fully implemented
+func addGPUNodeAffinity(isvc *servingv1beta1.InferenceService, deviceIDs []string) {
+	// Build match expression for device ID label
+	var matchExpressions []corev1.NodeSelectorRequirement
+
+	// Match against primary label (amd.com/gpu.device-id) with In operator
+	// This allows matching any of the provided device IDs
+	matchExpressions = append(matchExpressions, corev1.NodeSelectorRequirement{
+		Key:      constants.NodeLabelAMDGPUDeviceID,
+		Operator: corev1.NodeSelectorOpIn,
+		Values:   deviceIDs,
+	})
+
+	// Initialize affinity if not present
+	if isvc.Spec.Predictor.Affinity == nil {
+		isvc.Spec.Predictor.Affinity = &corev1.Affinity{}
+	}
+	if isvc.Spec.Predictor.Affinity.NodeAffinity == nil {
+		isvc.Spec.Predictor.Affinity.NodeAffinity = &corev1.NodeAffinity{}
+	}
+	if isvc.Spec.Predictor.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		isvc.Spec.Predictor.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = &corev1.NodeSelector{}
+	}
+
+	// Add node selector term with match expressions
+	isvc.Spec.Predictor.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = append(
+		isvc.Spec.Predictor.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms,
+		corev1.NodeSelectorTerm{
+			MatchExpressions: matchExpressions,
 		},
 	)
 }
