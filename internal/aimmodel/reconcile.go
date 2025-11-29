@@ -37,10 +37,6 @@ import (
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
-const (
-	ServiceTemplateModelNameIndexKey = ".spec.modelName"
-)
-
 type ClusterModelReconciler struct {
 	Clientset kubernetes.Interface
 	Scheme    *runtime.Scheme
