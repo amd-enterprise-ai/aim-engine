@@ -169,11 +169,15 @@ func planPVC(cache *aimv1alpha1.AIMModelCache, obs Observation, scheme *runtime.
 
 // buildPVC creates a PersistentVolumeClaim for the model cache.
 func buildPVC(cache *aimv1alpha1.AIMModelCache, obs Observation) *corev1.PersistentVolumeClaim {
-	// TODO handle nil pointers
-	headroomPercent := obs.RuntimeConfig.MergedConfig.Storage.PVCHeadroomPercent
+	// Handle nil MergedConfig (e.g., default config not found)
+	var headroomPercent *int32
+	if obs.RuntimeConfig.MergedConfig != nil && obs.RuntimeConfig.MergedConfig.Storage != nil {
+		headroomPercent = obs.RuntimeConfig.MergedConfig.Storage.PVCHeadroomPercent
+	}
 	if headroomPercent == nil {
 		headroomPercent = ptr.To(utils.DefaultPVCHeadroomPercent)
 	}
+
 	storageClassName := utils.ResolveStorageClass(cache.Spec.StorageClassName, obs.RuntimeConfig.MergedConfig)
 	pvcSize := utils.QuantityWithHeadroom(cache.Spec.Size.Value(), *headroomPercent)
 
