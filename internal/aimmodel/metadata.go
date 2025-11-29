@@ -188,6 +188,37 @@ func setMetadataExtractionConditionFromRegistry(
 	)
 }
 
+// ShouldRequeueForMetadataRetry checks if metadata extraction failed with a recoverable error
+// and should be retried after a delay.
+func ShouldRequeueForMetadataRetry(status *aimv1alpha1.AIMModelStatus) bool {
+	// If metadata already extracted, no need to retry
+	if status.ImageMetadata != nil {
+		return false
+	}
+
+	// Check the MetadataExtracted condition
+	for _, cond := range status.Conditions {
+		if cond.Type == aimv1alpha1.AIMModelConditionMetadataExtracted && cond.Status == metav1.ConditionFalse {
+			// Retry for recoverable errors (auth failures, transient network issues)
+			// Don't retry for fatal errors (image not found, invalid format)
+			switch cond.Reason {
+			case aimv1alpha1.AIMModelReasonImageNotFound:
+				// Fatal - image doesn't exist
+				return false
+			case aimv1alpha1.AIMModelReasonImagePullAuthFailure,
+				aimv1alpha1.AIMModelReasonMetadataExtractionFailed:
+				// Recoverable - could be transient network/auth issues
+				return true
+			default:
+				// For format errors or unknown reasons, don't retry
+				return false
+			}
+		}
+	}
+
+	return false
+}
+
 // ==============
 // UTILS
 // ==============
