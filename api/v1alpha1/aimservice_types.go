@@ -27,6 +27,33 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// AIMCachingMode controls caching behavior for a service.
+// +kubebuilder:validation:Enum=Auto;Always;Never
+type AIMCachingMode string
+
+const (
+	// CachingModeAuto uses cache if it exists, but doesn't create one.
+	// This is the default mode.
+	CachingModeAuto AIMCachingMode = "Auto"
+
+	// CachingModeAlways always uses cache, creating one if it doesn't exist.
+	CachingModeAlways AIMCachingMode = "Always"
+
+	// CachingModeNever never uses cache, even if one exists.
+	CachingModeNever AIMCachingMode = "Never"
+)
+
+// AIMServiceCachingConfig controls caching behavior for a service.
+type AIMServiceCachingConfig struct {
+	// Mode controls when to use caching.
+	// - Auto (default): Use cache if it exists, but don't create one
+	// - Always: Always use cache, create if it doesn't exist
+	// - Never: Don't use cache even if it exists
+	// +kubebuilder:default=Auto
+	// +optional
+	Mode AIMCachingMode `json:"mode,omitempty"`
+}
+
 // AIMServiceModel specifies which model to deploy. Exactly one field must be set.
 // +kubebuilder:validation:XValidation:rule="(has(self.ref) && !has(self.image) && !has(self.custom)) || (!has(self.ref) && has(self.image) && !has(self.custom)) || (!has(self.ref) && !has(self.image) && has(self.custom))",message="exactly one of ref, image, or custom must be specified"
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="model selection is immutable after creation"
@@ -99,11 +126,17 @@ type AIMServiceSpec struct {
 	// The template selects the runtime profile and GPU parameters.
 	TemplateName string `json:"templateName,omitempty"`
 
-	// CacheModel requests that model sources be cached when starting the service
-	// if the template itself does not warm the cache.
-	// When `warmCache: false` on the template, this setting ensures caching is
-	// performed before the service becomes ready.
-	// +kubebuilder:default=false
+	// Caching controls caching behavior for this service.
+	// When nil, defaults to Auto mode (use cache if available, don't create).
+	// +optional
+	Caching *AIMServiceCachingConfig `json:"caching,omitempty"`
+
+	// DEPRECATED: Use Caching.Mode instead. This field will be removed in a future version.
+	// For backward compatibility, if Caching is not set, this field is used.
+	// Tri-state logic: nil=Auto, true=Always, false=Never
+	// +optional
+	// +kubebuilder:validation:Deprecated
+	// +kubebuilder:validation:DeprecatedMessage="Use Caching.Mode instead. This field will be removed in a future version."
 	CacheModel *bool `json:"cacheModel,omitempty"`
 
 	// Replicas overrides the number of replicas for this service.
@@ -331,6 +364,27 @@ type AIMServiceRoutingStatus struct {
 // GetStatus returns a pointer to the AIMService status.
 func (svc *AIMService) GetStatus() *AIMServiceStatus {
 	return &svc.Status
+}
+
+// GetCachingMode returns the effective caching mode for this service.
+// It checks the new Caching.Mode field first, then falls back to the deprecated
+// CacheModel field for backward compatibility.
+func (spec *AIMServiceSpec) GetCachingMode() AIMCachingMode {
+	// Prefer new Caching.Mode field
+	if spec.Caching != nil && spec.Caching.Mode != "" {
+		return spec.Caching.Mode
+	}
+
+	// Fall back to deprecated CacheModel field
+	if spec.CacheModel != nil {
+		if *spec.CacheModel {
+			return CachingModeAlways
+		}
+		return CachingModeNever
+	}
+
+	// Default to Auto
+	return CachingModeAuto
 }
 
 func init() {

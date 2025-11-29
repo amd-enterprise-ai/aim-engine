@@ -95,14 +95,15 @@ func observeServicePVC(
 
 	// Determine if PVC should be used:
 	// - If template cache exists (ready or not), use cache instead of PVC
-	// - If no template cache exists and CacheModel=false, use PVC
-	// - If no template cache exists and CacheModel=true, wait for cache (no PVC)
+	// - If caching mode is Never, use PVC
+	// - If caching mode is Always, wait for cache (no PVC)
+	// - If caching mode is Auto and no cache exists, use PVC
 
 	templateCacheExists := cachingObs.TemplateCache != nil
+	cachingMode := service.Spec.GetCachingMode()
 
-	// Use PVC only when no template cache exists and CacheModel is false
-	cacheModel := service.Spec.CacheModel != nil && *service.Spec.CacheModel
-	obs.ShouldUsePVC = !templateCacheExists && !cacheModel
+	// Use PVC when no template cache exists and caching is not Always
+	obs.ShouldUsePVC = !templateCacheExists && cachingMode != aimv1alpha1.CachingModeAlways
 
 	if result.TemporaryServicePVC != nil {
 		obs.PVCName = result.TemporaryServicePVC.Name
