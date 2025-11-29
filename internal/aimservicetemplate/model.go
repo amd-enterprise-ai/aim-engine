@@ -127,7 +127,8 @@ func ObserveServiceTemplateModel(result ServiceTemplateModelFetchResult) Service
 // PROJECT
 // ============================================================================
 
-// projectServiceTemplateModel projects the model's
+// projectServiceTemplateModel projects the model observation.
+// Returns true if a fatal error occurred (should stop reconciliation), false otherwise.
 func projectServiceTemplateModel(
 	status *aimv1alpha1.AIMServiceTemplateStatus,
 	cm *controllerutils.ConditionManager,
@@ -138,10 +139,10 @@ func projectServiceTemplateModel(
 		msg := fmt.Sprintf("Model %s not found in scope", obs.ModelName)
 		h.Degraded("ModelNotFound", msg)
 		cm.MarkFalse("ModelFound", "ModelNotFound", msg, controllerutils.LevelWarning)
-		return false
-	} else {
-		cm.MarkTrue("ModelFound", "ModelFound", fmt.Sprintf("Model '%s' found", obs.ModelName), controllerutils.LevelNone)
-		status.ResolvedModel = obs.ResolvedModel
-		return true
+		return true // Fatal - stop reconciliation
 	}
+
+	cm.MarkTrue("ModelFound", "ModelFound", fmt.Sprintf("Model '%s' found", obs.ModelName), controllerutils.LevelNone)
+	status.ResolvedModel = obs.ResolvedModel
+	return false // Continue
 }

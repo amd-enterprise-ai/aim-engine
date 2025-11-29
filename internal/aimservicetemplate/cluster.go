@@ -24,6 +24,7 @@ package aimservicetemplate
 
 import (
 	"context"
+	"fmt"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -85,11 +86,13 @@ func observeServiceTemplateCluster(result ServiceTemplateClusterFetchResult, tem
 // PROJECT
 // ============================================================================
 
-// TODO
-func projectServiceTemplateCluster(_ *aimv1alpha1.AIMServiceTemplateStatus, _ *controllerutils.ConditionManager, _ *controllerutils.StatusHelper, observation ServiceTemplateClusterObservation) bool {
+// projectServiceTemplateCluster projects the cluster GPU availability observation.
+// Returns true if a fatal error occurred (should stop reconciliation), false otherwise.
+func projectServiceTemplateCluster(_ *aimv1alpha1.AIMServiceTemplateStatus, _ *controllerutils.ConditionManager, h *controllerutils.StatusHelper, observation ServiceTemplateClusterObservation) bool {
 	if !observation.GpuModelAvailable {
-		// status.Status = constants.AIMStatusNotAvailable
-		return false
+		h.Degraded("GpuNotAvailable", fmt.Sprintf("GPU model '%s' not available in cluster", observation.GpuModelRequested))
+		return true // Fatal - stop reconciliation
 	}
-	return true
+	// TODOremovecondition otherwise
+	return false // Continue
 }

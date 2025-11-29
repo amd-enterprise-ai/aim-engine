@@ -134,6 +134,7 @@ func observeServiceTemplateCache(result ServiceTemplateCacheFetchResult, service
 // ============================================================================
 
 func buildServiceTemplateCache(serviceTemplate aimv1alpha1.AIMServiceTemplate, config *aimv1alpha1.AIMRuntimeConfigCommon) *aimv1alpha1.AIMTemplateCache {
+	// Handle nil config (e.g., default RuntimeConfig not found)
 	storageClassName := utils.ResolveStorageClass("", config)
 	templateCache := &aimv1alpha1.AIMTemplateCache{
 		TypeMeta: metav1.TypeMeta{
@@ -158,6 +159,8 @@ func buildServiceTemplateCache(serviceTemplate aimv1alpha1.AIMServiceTemplate, c
 // PROJECT
 // ============================================================================
 
+// projectServiceTemplateCache projects the cache observation.
+// Returns true if a fatal error occurred (should stop reconciliation), false otherwise.
 func projectServiceTemplateCache(
 	status *aimv1alpha1.AIMServiceTemplateStatus,
 	cm *controllerutils.ConditionManager,
@@ -184,12 +187,12 @@ func projectServiceTemplateCache(
 		case constants.AIMStatusDegraded:
 			cm.MarkFalse(aimv1alpha1.AIMTemplateCacheWarmConditionType, string(constants.AIMStatusReady), "Cache degraded", controllerutils.LevelWarning)
 			h.Degraded("CacheDegraded", "Cache is degraded")
-			return true
+			return true // Fatal - stop reconciliation
 		case constants.AIMStatusFailed:
 			cm.MarkFalse(aimv1alpha1.AIMTemplateCacheWarmConditionType, string(constants.AIMStatusReady), "Cache failed", controllerutils.LevelWarning)
 			h.Failed("CacheFailed", "Cache has failed")
-			return true
+			return true // Fatal - stop reconciliation
 		}
 	}
-	return false
+	return false // Continue
 }

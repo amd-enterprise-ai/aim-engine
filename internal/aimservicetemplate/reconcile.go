@@ -258,12 +258,22 @@ func (r *ClusterServiceTemplateReconciler) Project(
 ) {
 	sh := controllerutils.NewStatusHelper(status, cm)
 
-	if !projectServiceTemplateModel(status, cm, sh, observation.Model) {
+	// Project RuntimeConfig first - highest priority
+	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.RuntimeConfig); fatal {
 		return
 	}
-	if !projectServiceTemplateCluster(status, cm, sh, observation.Cluster) {
+
+	// Project model - if not found, stop
+	if fatal := projectServiceTemplateModel(status, cm, sh, observation.Model); fatal {
 		return
 	}
+
+	// Project cluster GPU availability
+	if fatal := projectServiceTemplateCluster(status, cm, sh, observation.Cluster); fatal {
+		return
+	}
+
+	// Project discovery (lowest priority)
 	projectDiscovery(status, cm, sh, observation.Discovery)
 }
 
@@ -274,17 +284,26 @@ func (r *ServiceTemplateReconciler) Project(
 ) {
 	sh := controllerutils.NewStatusHelper(status, cm)
 
-	if !projectServiceTemplateModel(status, cm, sh, observation.Model) {
+	// Project RuntimeConfig first - highest priority
+	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.RuntimeConfig); fatal {
 		return
 	}
-	if !projectServiceTemplateCluster(status, cm, sh, observation.Cluster) {
-		return
-	}
-	if !projectServiceTemplateCache(status, cm, sh, observation.Cache) {
-		return
-	}
-	projectDiscovery(status, cm, sh, observation.Discovery)
 
-	// Project runtime config - if it fails, status is already set
-	aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.RuntimeConfig)
+	// Project model - if not found, stop
+	if fatal := projectServiceTemplateModel(status, cm, sh, observation.Model); fatal {
+		return
+	}
+
+	// Project cluster GPU availability
+	if fatal := projectServiceTemplateCluster(status, cm, sh, observation.Cluster); fatal {
+		return
+	}
+
+	// Project cache status
+	if fatal := projectServiceTemplateCache(status, cm, sh, observation.Cache); fatal {
+		return
+	}
+
+	// Project discovery (lowest priority)
+	projectDiscovery(status, cm, sh, observation.Discovery)
 }
