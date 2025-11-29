@@ -86,7 +86,8 @@ func (m *ConditionManager) SetCondition(cond metav1.Condition, level EventLevel)
 
 	existing := m.conditions[idx]
 	// If status and reason are unchanged, preserve LastTransitionTime.
-	if existing.Status == cond.Status && existing.Reason == cond.Reason && existing.Message == cond.Message {
+	// Message changes are informational and don't constitute a state transition.
+	if existing.Status == cond.Status && existing.Reason == cond.Reason {
 		cond.LastTransitionTime = existing.LastTransitionTime
 	}
 
@@ -121,6 +122,15 @@ func (m *ConditionManager) MarkUnknown(condType, reason, message string, level E
 	}, level)
 }
 
+// Delete removes a condition by type if it exists.
+// This is useful when a condition becomes irrelevant (e.g., cache condition when caching is disabled).
+func (m *ConditionManager) Delete(condType string) {
+	idx := indexOfCondition(m.conditions, condType)
+	if idx != -1 {
+		m.conditions = append(m.conditions[:idx], m.conditions[idx+1:]...)
+	}
+}
+
 // AllConditionsTrue checks if all the given condition types are true
 func (m *ConditionManager) AllConditionsTrue(conditionTypes ...string) bool {
 	for _, conditionType := range conditionTypes {
@@ -130,6 +140,28 @@ func (m *ConditionManager) AllConditionsTrue(conditionTypes ...string) bool {
 		}
 	}
 	return true
+}
+
+// AnyConditionTrue checks if any of the given condition types are true
+func (m *ConditionManager) AnyConditionTrue(conditionTypes ...string) bool {
+	for _, conditionType := range conditionTypes {
+		condition := m.Get(conditionType)
+		if condition != nil && condition.Status == metav1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+// AnyConditionFalse checks if any of the given condition types are false
+func (m *ConditionManager) AnyConditionFalse(conditionTypes ...string) bool {
+	for _, conditionType := range conditionTypes {
+		condition := m.Get(conditionType)
+		if condition != nil && condition.Status == metav1.ConditionFalse {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *ConditionManager) Get(condType string) *metav1.Condition {
@@ -179,8 +211,8 @@ func DiffConditionTransitions(oldConditions, newConditions []metav1.Condition) [
 	}
 
 	// Look at new conditions (added or changed)
-	for transition, newCondition := range newByType {
-		oldCondition, found := oldByType[transition]
+	for condType, newCondition := range newByType {
+		oldCondition, found := oldByType[condType]
 		if !found {
 			transitions = append(transitions, ConditionTransition{
 				Old: nil,
@@ -232,12 +264,14 @@ func (h *StatusHelper) Progressing(reason, msg string) {
 
 func (h *StatusHelper) Degraded(reason, msg string) {
 	h.status.SetStatus(string(constants.AIMStatusDegraded))
-	h.cm.Set(string(constants.AIMStatusReady), metav1.ConditionFalse, reason, msg, LevelWarning)
+	h.cm.Set(string(constants.AIMStatusReady), metav1.ConditionFalse, reason, msg, LevelNone)
+	h.cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionFalse, reason, msg, LevelNone)
 	h.cm.Set(string(constants.AIMStatusDegraded), metav1.ConditionTrue, reason, msg, LevelWarning)
 }
 
 func (h *StatusHelper) Failed(reason, msg string) {
 	h.status.SetStatus(string(constants.AIMStatusFailed))
-	h.cm.Set(string(constants.AIMStatusReady), metav1.ConditionFalse, reason, msg, LevelWarning)
+	h.cm.Set(string(constants.AIMStatusReady), metav1.ConditionFalse, reason, msg, LevelNone)
+	h.cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionFalse, reason, msg, LevelNone)
 	h.cm.Set(string(constants.AIMStatusDegraded), metav1.ConditionTrue, reason, msg, LevelWarning)
 }
