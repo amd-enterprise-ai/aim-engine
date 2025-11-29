@@ -197,12 +197,12 @@ func (r *ClusterServiceTemplateReconciler) Plan(
 	ctx context.Context,
 	clusterServiceTemplate *aimv1alpha1.AIMClusterServiceTemplate,
 	observation ClusterServiceTemplateObservation,
-) ([]client.Object, error) {
+) (controllerutils.PlanResult, error) {
 	var objects []client.Object
 
 	if !observation.Model.ModelFound {
 		// Return early if the model doesn't exist
-		return objects, nil
+		return controllerutils.PlanResult{Apply: objects}, nil
 	}
 
 	if observation.Discovery.ShouldRun {
@@ -217,14 +217,14 @@ func (r *ClusterServiceTemplateReconciler) Plan(
 		_ = controllerutil.SetOwnerReference(clusterServiceTemplate, discoveryJob, r.Scheme)
 		objects = append(objects, discoveryJob)
 	}
-	return objects, nil
+	return controllerutils.PlanResult{Apply: objects}, nil
 }
 
 func (r *ServiceTemplateReconciler) Plan(
 	ctx context.Context,
 	serviceTemplate *aimv1alpha1.AIMServiceTemplate,
 	observation ServiceTemplateObservation,
-) ([]client.Object, error) {
+) (controllerutils.PlanResult, error) {
 	var objects []client.Object
 	if observation.Cache.ShouldCreateCache {
 		templateCache := buildServiceTemplateCache(*serviceTemplate, observation.RuntimeConfig.MergedConfig)
@@ -244,7 +244,7 @@ func (r *ServiceTemplateReconciler) Plan(
 		objects = append(objects, discoveryJob)
 	}
 
-	return objects, nil
+	return controllerutils.PlanResult{Apply: objects}, nil
 }
 
 // ============================================================================

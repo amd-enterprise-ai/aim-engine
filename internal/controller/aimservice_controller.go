@@ -63,18 +63,17 @@ type AIMServiceReconciler struct {
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
 
-	//nolint:unused // will be used when pipeline-based reconciliation is implemented
 	reconciler controllerutils.DomainReconciler[
 		*aimv1alpha1.AIMService,
 		*aimv1alpha1.AIMServiceStatus,
-		aimservice.ServiceTemplateFetchResult,
-		aimservice.ServiceTemplateObservation,
+		aimservice.ServiceFetchResult,
+		aimservice.ServiceObservation,
 	]
 	pipeline controllerutils.Pipeline[
 		*aimv1alpha1.AIMService,
 		*aimv1alpha1.AIMServiceStatus,
-		aimservice.ServiceTemplateFetchResult,
-		aimservice.ServiceTemplateObservation,
+		aimservice.ServiceFetchResult,
+		aimservice.ServiceObservation,
 	]
 }
 
@@ -432,6 +431,26 @@ func (r *AIMServiceReconciler) clusterModelPredicate() predicate.Funcs {
 
 func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
+
+	// Initialize domain reconciler
+	r.reconciler = &aimservice.Reconciler{
+		Scheme: r.Scheme,
+	}
+
+	// Initialize pipeline
+	r.pipeline = controllerutils.Pipeline[
+		*aimv1alpha1.AIMService,
+		*aimv1alpha1.AIMServiceStatus,
+		aimservice.ServiceFetchResult,
+		aimservice.ServiceObservation,
+	]{
+		Client:       mgr.GetClient(),
+		StatusClient: mgr.GetClient().Status(),
+		Recorder:     r.Recorder,
+		FieldOwner:   aimServiceFieldOwner,
+		Reconciler:   r.reconciler,
+		Scheme:       r.Scheme,
+	}
 
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMService{}, aimServiceTemplateIndexKey, r.templateIndexFunc); err != nil {
 		return err

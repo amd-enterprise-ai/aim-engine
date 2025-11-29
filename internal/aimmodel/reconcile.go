@@ -173,10 +173,10 @@ func (r *ClusterModelReconciler) Plan(
 	ctx context.Context,
 	obj *aimv1alpha1.AIMClusterModel,
 	obs ClusterModelObservation,
-) ([]client.Object, error) {
+) (controllerutils.PlanResult, error) {
 	// Return if nothing to create
 	if !obs.Templates.ShouldCreateTemplates {
-		return nil, nil
+		return controllerutils.PlanResult{}, nil
 	}
 
 	var templates []client.Object
@@ -184,22 +184,22 @@ func (r *ClusterModelReconciler) Plan(
 	clusterServiceTemplates := planClusterModelServiceTemplates(obs.Templates, obs.Metadata, *obj)
 	for _, template := range clusterServiceTemplates {
 		if err := controllerutil.SetOwnerReference(obj, template, r.Scheme, controllerutil.WithBlockOwnerDeletion(false)); err != nil {
-			return templates, err
+			return controllerutils.PlanResult{}, err
 		}
 		templates = append(templates, template)
 	}
 
-	return templates, nil
+	return controllerutils.PlanResult{Apply: templates}, nil
 }
 
 func (r *ModelReconciler) Plan(
 	ctx context.Context,
 	obj *aimv1alpha1.AIMModel,
 	obs ModelObservation,
-) ([]client.Object, error) {
+) (controllerutils.PlanResult, error) {
 	// Return if nothing to create
 	if !obs.Templates.ShouldCreateTemplates {
-		return nil, nil
+		return controllerutils.PlanResult{}, nil
 	}
 
 	var templates []client.Object
@@ -207,12 +207,12 @@ func (r *ModelReconciler) Plan(
 	serviceTemplates := planModelServiceTemplates(obs.Templates, obs.Metadata, *obj)
 	for _, template := range serviceTemplates {
 		if err := controllerutil.SetOwnerReference(obj, template, r.Scheme, controllerutil.WithBlockOwnerDeletion(false)); err != nil {
-			return templates, err
+			return controllerutils.PlanResult{}, err
 		}
 		templates = append(templates, template)
 	}
 
-	return templates, nil
+	return controllerutils.PlanResult{Apply: templates}, nil
 }
 
 // ============================================================================

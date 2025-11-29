@@ -27,7 +27,6 @@ package aimservice
 import (
 	"context"
 
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -197,46 +196,47 @@ func (r *Reconciler) Plan(
 	ctx context.Context,
 	service *aimv1alpha1.AIMService,
 	obs ServiceObservation,
-) ([]client.Object, error) {
+) (controllerutils.PlanResult, error) {
 	var objectsToApply []client.Object
+	var objectsToDelete []client.Object
 
-	// Handle cache retry deletions BEFORE planning new objects
-	// Note: Cache retry deletion should be handled in a pre-plan phase
-	// The controller should delete failed model caches before calling Plan
-	// See HandleCacheRetryDeletion() function below
-	_ = obs.Caching.ShouldRequestCacheRetry // Handled by controller before Plan phase
+	// RuntimeConfig is NOW available in obs.MergedConfig
 
 	// Get template name for resource creation
-	_, _ = getResolvedTemplateName(service, ServiceTemplateFetchResult{
+	templateName, templateNamespace := getResolvedTemplateName(service, ServiceTemplateFetchResult{
 		// We don't have fetch result here, so we rely on status
 	})
 
-	// TODO: All plan functions need RuntimeConfig inputs
-	// Until RuntimeConfig is available, we cannot complete planning
+	// Handle cache retry deletions - delete failed model caches to allow retry
+	if obs.Caching.ShouldRequestCacheRetry {
+		for _, mc := range obs.Caching.FailedModelCachesToRetry {
+			// Create a copy to avoid issues with range variable addresses
+			mcCopy := mc
+			objectsToDelete = append(objectsToDelete, &mcCopy)
+		}
+	}
 
 	// 1. Plan caching (TemplateCache creation)
-	// Need: service, cachingObs, templateName, templateNamespace, storageClassName
-	// if obs.Caching.ShouldCreateCache && templateName != "" {
-	// 	cacheObj, err := planServiceCache(service, obs.Caching, templateName, templateNamespace, storageClassName)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	if cacheObj != nil {
-	// 		objectsToApply = append(objectsToApply, cacheObj)
-	// 	}
-	// }
+	if obs.Caching.ShouldCreateCache && templateName != "" {
+		cacheObj, err := planServiceCache(service, obs.Caching, templateName, templateNamespace, &obs.MergedConfig)
+		if err != nil {
+			return controllerutils.PlanResult{}, err
+		}
+		if cacheObj != nil {
+			objectsToApply = append(objectsToApply, cacheObj)
+		}
+	}
 
 	// 2. Plan PVC (temporary service PVC)
-	// Need: service, pvcObs, templateStatus, storageClassName, headroomPercent
-	// if obs.PVC.ShouldCreatePVC {
-	// 	pvcObj, err := planServicePVC(service, obs.PVC, obs.Template.TemplateStatus, storageClassName, headroomPercent)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	if pvcObj != nil {
-	// 		objectsToApply = append(objectsToApply, pvcObj)
-	// 	}
-	// }
+	if obs.PVC.ShouldCreatePVC {
+		pvcObj, err := planServicePVC(service, obs.PVC, obs.Template.TemplateStatus, &obs.MergedConfig)
+		if err != nil {
+			return controllerutils.PlanResult{}, err
+		}
+		if pvcObj != nil {
+			objectsToApply = append(objectsToApply, pvcObj)
+		}
+	}
 
 	// 3. Plan KServe InferenceService
 	// Need: service, kserveObs, modelImage, modelName, templateName, templateSpec, templateStatus, pvcObs, cachingObs
@@ -248,7 +248,7 @@ func (r *Reconciler) Plan(
 	// 		obs.PVC, obs.Caching,
 	// 	)
 	// 	if err != nil {
-	// 		return nil, err
+	// 		return controllerutils.PlanResult{}, err
 	// 	}
 	// 	if kserveObj != nil {
 	// 		objectsToApply = append(objectsToApply, kserveObj)
@@ -264,14 +264,17 @@ func (r *Reconciler) Plan(
 	// 		obs.Model.ModelName, templateName,
 	// 	)
 	// 	if err != nil {
-	// 		return nil, err
+	// 		return controllerutils.PlanResult{}, err
 	// 	}
 	// 	if httprouteObj != nil {
 	// 		objectsToApply = append(objectsToApply, httprouteObj)
 	// 	}
 	// }
 
-	return objectsToApply, nil
+	return controllerutils.PlanResult{
+		Apply:  objectsToApply,
+		Delete: objectsToDelete,
+	}, nil
 }
 
 // ============================================================================
@@ -287,6 +290,11 @@ func (r *Reconciler) Project(
 
 	// Project in order, checking for blocking errors after each domain
 	// Each project function returns true if it's a blocking error
+
+	// 0. RuntimeConfig projection (highest priority)
+	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, h, obs.RuntimeConfig); fatal {
+		return
+	}
 
 	// 1. Model projection
 	blocking := projectServiceModel(status, cm, h, obs.Model)
@@ -346,28 +354,4 @@ func getResolvedTemplateName(service *aimv1alpha1.AIMService, fetchResult Servic
 	}
 
 	return "", ""
-}
-
-// ============================================================================
-// CACHE RETRY DELETION HANDLER
-// ============================================================================
-
-// HandleCacheRetryDeletion deletes failed model caches for retry.
-// This should be called by the controller BEFORE calling Plan.
-func HandleCacheRetryDeletion(
-	ctx context.Context,
-	c client.Client,
-	obs ServiceObservation,
-) error {
-	if !obs.Caching.ShouldRequestCacheRetry {
-		return nil
-	}
-
-	for _, mc := range obs.Caching.FailedModelCachesToRetry {
-		if err := c.Delete(ctx, &mc); err != nil && !errors.IsNotFound(err) {
-			return err
-		}
-	}
-
-	return nil
 }

@@ -262,23 +262,23 @@ func (r *Reconciler) Observe(ctx context.Context, cache *aimv1alpha1.AIMTemplate
 
 // Plan determines what Kubernetes objects should be created or updated
 // based on the current observation.
-func (r *Reconciler) Plan(ctx context.Context, cache *aimv1alpha1.AIMTemplateCache, obs Observation) ([]client.Object, error) {
+func (r *Reconciler) Plan(ctx context.Context, cache *aimv1alpha1.AIMTemplateCache, obs Observation) (controllerutils.PlanResult, error) {
 	var objects []client.Object
 
 	// Only create model caches if template was found
 	if !obs.Template.Found {
-		return objects, nil
+		return controllerutils.PlanResult{Apply: objects}, nil
 	}
 
 	// Create missing model caches with owner references
 	for _, mc := range buildMissingModelCaches(cache, obs) {
 		if err := controllerutil.SetOwnerReference(cache, mc, r.Scheme); err != nil {
-			return objects, fmt.Errorf("set owner reference for model cache: %w", err)
+			return controllerutils.PlanResult{}, fmt.Errorf("set owner reference for model cache: %w", err)
 		}
 		objects = append(objects, mc)
 	}
 
-	return objects, nil
+	return controllerutils.PlanResult{Apply: objects}, nil
 }
 
 // ----- Plan Helpers -----
