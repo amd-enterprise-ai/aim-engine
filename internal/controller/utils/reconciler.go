@@ -79,41 +79,50 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	// Condition manager from existing conditions
 	cm := NewConditionManager(oldConditions)
 
+	// Fetch phase - get all resources needed for observation
+	// Returns errors only for transient infrastructure issues (network, API server).
+	// Semantic errors (NotFound, Invalid) should be included in fetch result and
+	// handled in Observe phase to update status appropriately.
 	fetched, fetchError := p.Domain.Fetch(ctx, p.Client, obj)
 	if fetchError != nil {
+		// Infrastructure error - return for exponential backoff.
+		// Status is NOT updated to avoid noise from transient issues.
 		return fetchError
 	}
 
-	// TODO clarify flow (when to return)
-
-	// Observe
+	// Observe phase - interpret fetched resources into domain observations
+	// Domain reconcilers should handle semantic issues (NotFound) in observations,
+	// returning errors only for unexpected failures.
 	obs, obsErr := p.Domain.Observe(ctx, obj, fetched)
-
-	// Plan
-	var (
-		desiredObjects []client.Object
-		planErr        error
-	)
-	if obsErr == nil {
-		desiredObjects, planErr = p.Domain.Plan(ctx, obj, obs)
+	if obsErr != nil {
+		// Unexpected observation error - return for retry
+		return obsErr
 	}
 
-	// Apply desired children if both observe and plan succeeded
-	if obsErr == nil && planErr == nil {
-		if len(desiredObjects) > 0 {
-			if err := ApplyDesiredState(
-				ctx,
-				p.Client,
-				p.FieldOwner,
-				p.Scheme,
-				desiredObjects,
-			); err != nil {
-				return err
-			}
+	// Plan phase - derive desired objects based on observations
+	// Should be pure - no client calls, just logic based on current state
+	desiredObjects, planErr := p.Domain.Plan(ctx, obj, obs)
+	if planErr != nil {
+		// Planning error - return for retry
+		return planErr
+	}
+
+	// Apply phase - use Server-Side Apply to create/update desired objects
+	if len(desiredObjects) > 0 {
+		if err := ApplyDesiredState(
+			ctx,
+			p.Client,
+			p.FieldOwner,
+			p.Scheme,
+			desiredObjects,
+		); err != nil {
+			// Apply failed - return for retry
+			return err
 		}
 	}
 
-	// Project conditions + status
+	// Project phase - always runs to update status based on observations
+	// Domain reconciler updates conditions to reflect current state
 	p.Domain.Project(status, cm, obs)
 
 	// Update conditions from manager
@@ -124,11 +133,11 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 		oldConditions,
 		status.GetConditions(),
 	)
-	EmitConditionTransitions(p.Recorder, any(obj).(client.Object), transitions, cm)
+	EmitConditionTransitions(p.Recorder, obj, transitions, cm)
 
 	// Update status only if changed (compare with deep copied old status)
 	if !equality.Semantic.DeepEqual(oldStatus, status) {
-		if err := p.StatusClient.Update(ctx, any(obj).(client.Object)); err != nil {
+		if err := p.StatusClient.Update(ctx, obj); err != nil {
 			return err
 		}
 	}
@@ -190,8 +199,7 @@ func ApplyDesiredState(
 			ctx,
 			obj,
 			client.Apply,
-			// TODO
-			// client.WithFieldOwner(k8sClient, fieldOwner),
+			client.FieldOwner(fieldOwner),
 			client.ForceOwnership,
 		); err != nil {
 			return fmt.Errorf("failed to apply %s %s: %w", gvk.Kind, key.Name, err)
