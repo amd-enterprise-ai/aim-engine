@@ -348,7 +348,7 @@ func (r *Reconciler) projectTemplateCondition(cm *controllerutils.ConditionManag
 		cm.Set("TemplateNotFound", metav1.ConditionTrue, "AwaitingTemplate",
 			fmt.Sprintf("Waiting for template to be created: %s", obs.Template.Error), controllerutils.LevelNormal)
 	} else {
-		cm.Set("TemplateNotFound", metav1.ConditionFalse, "TemplateFound", "", controllerutils.LevelWarning)
+		cm.Set("TemplateNotFound", metav1.ConditionFalse, "TemplateFound", "", controllerutils.LevelNone)
 	}
 }
 
