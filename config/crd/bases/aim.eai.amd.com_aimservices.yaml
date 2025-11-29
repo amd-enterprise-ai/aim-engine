@@ -68,13 +68,29 @@ spec:
               customization.
             properties:
               cacheModel:
-                default: false
                 description: |-
-                  CacheModel requests that model sources be cached when starting the service
-                  if the template itself does not warm the cache.
-                  When `warmCache: false` on the template, this setting ensures caching is
-                  performed before the service becomes ready.
+                  DEPRECATED: Use Caching.Mode instead. This field will be removed in a future version.
+                  For backward compatibility, if Caching is not set, this field is used.
+                  Tri-state logic: nil=Auto, true=Always, false=Never
                 type: boolean
+              caching:
+                description: |-
+                  Caching controls caching behavior for this service.
+                  When nil, defaults to Auto mode (use cache if available, don't create).
+                properties:
+                  mode:
+                    default: Auto
+                    description: |-
+                      Mode controls when to use caching.
+                      - Auto (default): Use cache if it exists, but don't create one
+                      - Always: Always use cache, create if it doesn't exist
+                      - Never: Don't use cache even if it exists
+                    enum:
+                    - Auto
+                    - Always
+                    - Never
+                    type: string
+                type: object
               env:
                 description: |-
                   Env specifies environment variables to use for authentication when downloading models.

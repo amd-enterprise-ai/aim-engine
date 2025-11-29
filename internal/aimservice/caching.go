@@ -123,26 +123,26 @@ func observeServiceCaching(
 ) ServiceCachingObservation {
 	obs := ServiceCachingObservation{}
 
-	// Determine if caching is requested based on tri-state logic:
-	// - service.Spec.CacheModel == nil: auto (use if exists, don't create)
-	// - service.Spec.CacheModel == true: always use (create if needed)
-	// - service.Spec.CacheModel == false: never use
-	cacheModel := service.Spec.CacheModel
+	// Get effective caching mode (handles backward compatibility with CacheModel)
+	cachingMode := service.Spec.GetCachingMode()
 	templateCachingEnabled := templateSpec != nil && templateSpec.Caching != nil && templateSpec.Caching.Enabled
 
-	// Determine if we should use/create cache
+	// Determine if we should use/create cache based on mode
 	var shouldUseCache, shouldCreateCache bool
 
-	if cacheModel != nil && !*cacheModel {
-		// Explicit false - never use cache
+	switch cachingMode {
+	case aimv1alpha1.CachingModeNever:
+		// Never use cache
 		shouldUseCache = false
 		shouldCreateCache = false
-	} else if cacheModel != nil && *cacheModel {
-		// Explicit true - always use, create if needed
+
+	case aimv1alpha1.CachingModeAlways:
+		// Always use cache, create if needed
 		shouldUseCache = true
 		shouldCreateCache = result.TemplateCache == nil
-	} else {
-		// nil (auto) or template has caching enabled
+
+	case aimv1alpha1.CachingModeAuto:
+		// Auto mode: use if exists, create only if template requests it
 		shouldUseCache = result.TemplateCache != nil || templateCachingEnabled
 		shouldCreateCache = result.TemplateCache == nil && templateCachingEnabled
 	}
