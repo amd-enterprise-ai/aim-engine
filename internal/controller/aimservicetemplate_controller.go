@@ -27,8 +27,6 @@ package controller
 import (
 	"context"
 
-	"github.com/amd-enterprise-ai/aim-engine/internal/aimservicetemplate"
-	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	servingv1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -43,6 +41,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimservicetemplate"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
@@ -109,231 +110,230 @@ func (r *AIMServiceTemplateReconciler) Reconcile(ctx context.Context, req ctrl.R
 	return ctrl.Result{}, nil
 }
 
-//
-//type serviceTemplateReconciler struct {
-//	Clientset kubernetes.Interface
-//	Scheme    *runtime.Scheme
-//}
-//
-//func (s *serviceTemplateReconciler) Observe(ctx context.Context, c client.Client, obj *aimv1alpha1.AIMServiceTemplate) (ServiceTemplateObservation, error) {
-//	obs := ServiceTemplateObservation{}
-//
-//	// Fetch runtime config
-//	obs.RuntimeConfig = aimconfig.GetAimRuntimeConfigObservation(ctx, c, types.NamespacedName{Namespace: obj.Namespace, Name: obj.Spec.RuntimeConfigName})
-//
-//	// Parent model
-//	modelObs, err := s.observeModel(ctx, c, obj)
-//	if err != nil {
-//		return obs, err
-//	}
-//	obs.Model = modelObs
-//
-//	// Discovery job
-//	discoveryObs, err := observeDiscoveryJob(ctx, c, s.Clientset, obj.Namespace, obj.Name, &obj.Status)
-//	if err != nil {
-//		return obs, err
-//	}
-//	obs.Discovery = discoveryObs
-//
-//	// Caching
-//	cacheObs, err := s.observeTemplateCache(ctx, c, obj)
-//	if err != nil {
-//		return obs, err
-//	}
-//	obs.Cache = cacheObs
-//
-//	clusterObs, err := s.observeClusterGpuAvailability(ctx, c, obj)
-//	if err != nil {
-//		return obs, err
-//	}
-//	obs.Cluster = clusterObs
-//
-//	return obs, nil
-//}
-//
-//func (s *serviceTemplateReconciler) observeModel(ctx context.Context, c client.Client, template *aimv1alpha1.AIMServiceTemplate) (ServiceTemplateModelObservation, error) {
-//	key := types.NamespacedName{Namespace: template.Namespace, Name: template.Spec.ModelName}
-//	model := &aimv1alpha1.AIMModel{}
-//	err := c.Get(ctx, key, model)
-//
-//	// Only treat "hard client errors" as Reconcile errors:
-//	if err != nil && !errors.IsNotFound(err) {
-//		return ServiceTemplateModelObservation{}, err
+//	type serviceTemplateReconciler struct {
+//		Clientset kubernetes.Interface
+//		Scheme    *runtime.Scheme
 //	}
 //
-//	// Extract image if model was found
-//	var image string
-//	if err == nil && model != nil {
-//		image = model.Spec.Image
+//	func (s *serviceTemplateReconciler) Observe(ctx context.Context, c client.Client, obj *aimv1alpha1.AIMServiceTemplate) (ServiceTemplateObservation, error) {
+//		obs := ServiceTemplateObservation{}
+//
+//		// Fetch runtime config
+//		obs.RuntimeConfig = aimconfig.GetAimRuntimeConfigObservation(ctx, c, types.NamespacedName{Namespace: obj.Namespace, Name: obj.Spec.RuntimeConfigName})
+//
+//		// Parent model
+//		modelObs, err := s.observeModel(ctx, c, obj)
+//		if err != nil {
+//			return obs, err
+//		}
+//		obs.Model = modelObs
+//
+//		// Discovery job
+//		discoveryObs, err := observeDiscoveryJob(ctx, c, s.Clientset, obj.Namespace, obj.Name, &obj.Status)
+//		if err != nil {
+//			return obs, err
+//		}
+//		obs.Discovery = discoveryObs
+//
+//		// Caching
+//		cacheObs, err := s.observeTemplateCache(ctx, c, obj)
+//		if err != nil {
+//			return obs, err
+//		}
+//		obs.Cache = cacheObs
+//
+//		clusterObs, err := s.observeClusterGpuAvailability(ctx, c, obj)
+//		if err != nil {
+//			return obs, err
+//		}
+//		obs.Cluster = clusterObs
+//
+//		return obs, nil
 //	}
 //
-//	return buildModelObservation(serviceTemplateModelObservationInputs{
-//		model: model,
-//		image: image,
-//		scope: aimv1alpha1.AIMResolutionScopeNamespace,
-//		error: err,
-//	}), nil
-//}
+//	func (s *serviceTemplateReconciler) observeModel(ctx context.Context, c client.Client, template *aimv1alpha1.AIMServiceTemplate) (ServiceTemplateModelObservation, error) {
+//		key := types.NamespacedName{Namespace: template.Namespace, Name: template.Spec.ModelName}
+//		model := &aimv1alpha1.AIMModel{}
+//		err := c.Get(ctx, key, model)
 //
-//// observeTemplateCache observes the AIM Template Cache resource
-//func (s *serviceTemplateReconciler) observeTemplateCache(ctx context.Context, c client.Client, template *aimv1alpha1.AIMServiceTemplate) (ServiceTemplateCacheObservation, error) {
-//	var caches aimv1alpha1.AIMTemplateCacheList
+//		// Only treat "hard client errors" as Reconcile errors:
+//		if err != nil && !errors.IsNotFound(err) {
+//			return ServiceTemplateModelObservation{}, err
+//		}
 //
-//	// If the cache is already set, check its status
-//	if template.Status.ResolvedCache != nil {
-//		templateCache := &aimv1alpha1.AIMTemplateCache{}
-//		if err := c.Get(ctx, template.Status.ResolvedCache.NamespacedName(), templateCache); err != nil {
-//			if errors.IsNotFound(err) {
-//				// TODO Cache was deleted, should recreate
+//		// Extract image if model was found
+//		var image string
+//		if err == nil && model != nil {
+//			image = model.Spec.Image
+//		}
+//
+//		return buildModelObservation(serviceTemplateModelObservationInputs{
+//			model: model,
+//			image: image,
+//			scope: aimv1alpha1.AIMResolutionScopeNamespace,
+//			error: err,
+//		}), nil
+//	}
+//
+// // observeTemplateCache observes the AIM Template Cache resource
+//
+//	func (s *serviceTemplateReconciler) observeTemplateCache(ctx context.Context, c client.Client, template *aimv1alpha1.AIMServiceTemplate) (ServiceTemplateCacheObservation, error) {
+//		var caches aimv1alpha1.AIMTemplateCacheList
+//
+//		// If the cache is already set, check its status
+//		if template.Status.ResolvedCache != nil {
+//			templateCache := &aimv1alpha1.AIMTemplateCache{}
+//			if err := c.Get(ctx, template.Status.ResolvedCache.NamespacedName(), templateCache); err != nil {
+//				if errors.IsNotFound(err) {
+//					// TODO Cache was deleted, should recreate
+//				}
 //			}
 //		}
-//	}
 //
-//	if err := c.List(ctx, &caches,
-//		client.InNamespace(template.Namespace),
-//		client.MatchingFields{
-//			templateCacheTemplateNameIndexKey: template.Name,
-//		},
-//	); err != nil {
-//		return ServiceTemplateCacheObservation{}, err
-//	}
-//
-//	// Filter for namespace-scoped template caches only
-//	namespaceScopedCaches := make([]aimv1alpha1.AIMTemplateCache, 0, len(caches.Items))
-//	for i := range caches.Items {
-//		if caches.Items[i].Spec.TemplateScope == aimv1alpha1.AIMServiceTemplateScopeNamespace {
-//			namespaceScopedCaches = append(namespaceScopedCaches, caches.Items[i])
+//		if err := c.List(ctx, &caches,
+//			client.InNamespace(template.Namespace),
+//			client.MatchingFields{
+//				templateCacheTemplateNameIndexKey: template.Name,
+//			},
+//		); err != nil {
+//			return ServiceTemplateCacheObservation{}, err
 //		}
-//	}
 //
-//	return buildTemplateCacheObservation(serviceTemplateCacheObservationInputs{
-//		existingTemplateCaches: namespaceScopedCaches,
-//		cachingEnabled:         template.Spec.Caching.Enabled,
-//		listError:              nil,
-//	}), nil
-//}
-//
-//func (s *serviceTemplateReconciler) observeClusterGpuAvailability(ctx context.Context, c client.Client, template *aimv1alpha1.AIMServiceTemplate) (ServiceTemplateClusterObservation, error) {
-//	var gpuModel string
-//	if gpuSelector := template.Spec.GpuSelector; gpuSelector != nil {
-//		gpuModel = gpuSelector.Model
-//	}
-//
-//	return observeClusterGpuAvailability(ctx, c, gpuModel), nil
-//}
-//
-//func (s *serviceTemplateReconciler) Plan(ctx context.Context, obj *aimv1alpha1.AIMServiceTemplate, obs ServiceTemplateObservation) ([]client.Object, error) {
-//	var objects []client.Object
-//
-//	if obs.Discovery.ShouldRunDiscovery {
-//		job := BuildDiscoveryJob(DiscoveryJobBuilderInputs{
-//			TemplateName: obj.Name,
-//			TemplateSpec: obj.Spec.AIMServiceTemplateSpecCommon,
-//			Env:          obj.Spec.Env,
-//			Namespace:    obj.Namespace,
-//			Image:        obs.Model.Image,
-//			OwnerRef:     utils.BuildOwnerReference(obj, s.Scheme),
-//		})
-//		objects = append(objects, job)
-//	}
-//
-//	// TODO
-//	if obs.Cache.ShouldCreateCache {
-//		// TODO skip caching if template is not otherwise ready
-//		cache := buildTemplateCache(obj, obs.RuntimeConfig)
-//		objects = append(objects, cache)
-//	}
-//
-//	return objects, nil
-//}
-//
-//func (s *serviceTemplateReconciler) Project(status *aimv1alpha1.AIMServiceTemplateStatus, cm *controllerutils.ConditionManager, obs ServiceTemplateObservation) {
-//	if status == nil {
-//		return
-//	}
-//
-//	h := controllerutils.NewStatusHelper(status, cm)
-//
-//	if s.projectModel(status, cm, h, obs) {
-//		return
-//	}
-//	if s.projectCluster(status, cm, h, obs) {
-//		return
-//	}
-//	if s.projectDiscovery(status, cm, h, obs) {
-//		return
-//	}
-//	if s.projectCache(status, cm, h, obs) {
-//		return
-//	}
-//}
-//
-//func (s *serviceTemplateReconciler) projectModel(status *aimv1alpha1.AIMServiceTemplateStatus, cm *controllerutils.ConditionManager, h *controllerutils.StatusHelper, obs ServiceTemplateObservation) bool {
-//	if obs.Model.Error != nil {
-//		if errors.IsNotFound(obs.Model.Error) {
-//			h.Degraded("ModelNotFound", obs.Model.Error.Error())
-//		} else {
-//			h.Degraded("UnknownModelError", obs.Model.Error.Error())
+//		// Filter for namespace-scoped template caches only
+//		namespaceScopedCaches := make([]aimv1alpha1.AIMTemplateCache, 0, len(caches.Items))
+//		for i := range caches.Items {
+//			if caches.Items[i].Spec.TemplateScope == aimv1alpha1.AIMServiceTemplateScopeNamespace {
+//				namespaceScopedCaches = append(namespaceScopedCaches, caches.Items[i])
+//			}
 //		}
-//		return true
-//	} else {
-//		status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
-//			Name:      obs.Model.Model.GetName(),
-//			Namespace: obs.Model.Model.GetNamespace(),
-//			Scope:     obs.Model.Scope,
-//			Kind:      "AIMModel",
-//			UID:       obs.Model.Model.GetUID(),
-//		}
-//	}
-//	return false
-//}
 //
-//func (s *serviceTemplateReconciler) projectCluster(status *aimv1alpha1.AIMServiceTemplateStatus, cm *controllerutils.ConditionManager, h *controllerutils.StatusHelper, obs ServiceTemplateObservation) bool {
-//	// Cluster GPUs
-//	if obs.Cluster.Error != nil {
+//		return buildTemplateCacheObservation(serviceTemplateCacheObservationInputs{
+//			existingTemplateCaches: namespaceScopedCaches,
+//			cachingEnabled:         template.Spec.Caching.Enabled,
+//			listError:              nil,
+//		}), nil
+//	}
+//
+//	func (s *serviceTemplateReconciler) observeClusterGpuAvailability(ctx context.Context, c client.Client, template *aimv1alpha1.AIMServiceTemplate) (ServiceTemplateClusterObservation, error) {
+//		var gpuModel string
+//		if gpuSelector := template.Spec.GpuSelector; gpuSelector != nil {
+//			gpuModel = gpuSelector.Model
+//		}
+//
+//		return observeClusterGpuAvailability(ctx, c, gpuModel), nil
+//	}
+//
+//	func (s *serviceTemplateReconciler) Plan(ctx context.Context, obj *aimv1alpha1.AIMServiceTemplate, obs ServiceTemplateObservation) ([]client.Object, error) {
+//		var objects []client.Object
+//
+//		if obs.Discovery.ShouldRunDiscovery {
+//			job := BuildDiscoveryJob(DiscoveryJobBuilderInputs{
+//				TemplateName: obj.Name,
+//				TemplateSpec: obj.Spec.AIMServiceTemplateSpecCommon,
+//				Env:          obj.Spec.Env,
+//				Namespace:    obj.Namespace,
+//				Image:        obs.Model.Image,
+//				OwnerRef:     utils.BuildOwnerReference(obj, s.Scheme),
+//			})
+//			objects = append(objects, job)
+//		}
+//
 //		// TODO
+//		if obs.Cache.ShouldCreateCache {
+//			// TODO skip caching if template is not otherwise ready
+//			cache := buildTemplateCache(obj, obs.RuntimeConfig)
+//			objects = append(objects, cache)
+//		}
+//
+//		return objects, nil
 //	}
 //
-//	if !obs.Cluster.GpuModelAvailable {
-//		status.Status = aimv1alpha1.AIMTemplateStatusNotAvailable
-//		message := fmt.Sprintf("This cluster does not have '%s' GPUs", obs.Cluster.GpuModelRequested)
-//		h.Degraded("GpuNotAvailable", message)
-//		return true
+//	func (s *serviceTemplateReconciler) Project(status *aimv1alpha1.AIMServiceTemplateStatus, cm *controllerutils.ConditionManager, obs ServiceTemplateObservation) {
+//		if status == nil {
+//			return
+//		}
+//
+//		h := controllerutils.NewStatusHelper(status, cm)
+//
+//		if s.projectModel(status, cm, h, obs) {
+//			return
+//		}
+//		if s.projectCluster(status, cm, h, obs) {
+//			return
+//		}
+//		if s.projectDiscovery(status, cm, h, obs) {
+//			return
+//		}
+//		if s.projectCache(status, cm, h, obs) {
+//			return
+//		}
 //	}
 //
-//	return false
-//}
-//
-//func (s *serviceTemplateReconciler) projectDiscovery(status *aimv1alpha1.AIMServiceTemplateStatus, cm *controllerutils.ConditionManager, h *controllerutils.StatusHelper, obs ServiceTemplateObservation) bool {
-//	if obs.Discovery.Error != nil {
-//		h.Failed(aimv1alpha1.AIMTemplateDiscoveryConditionType, obs.Discovery.Error.Error())
-//		return true
-//	} else if obs.Discovery.DiscoveryJob == nil {
-//		h.Progressing("AwaitingDiscoveryJobStart", "Waiting for DiscoveryJob to start")
-//	} else if obs.Discovery.DiscoveryResult != nil {
-//
-//	}
-//	return false
-//}
-//
-//func (s *serviceTemplateReconciler) projectCache(status *aimv1alpha1.AIMServiceTemplateStatus, cm *controllerutils.ConditionManager, h *controllerutils.StatusHelper, obs ServiceTemplateObservation) bool {
-//
-//	// Cache
-//	// TODO should cache, but not exists
-//	if obs.Cache.ShouldCreateCache {
-//
+//	func (s *serviceTemplateReconciler) projectModel(status *aimv1alpha1.AIMServiceTemplateStatus, cm *controllerutils.ConditionManager, h *controllerutils.StatusHelper, obs ServiceTemplateObservation) bool {
+//		if obs.Model.Error != nil {
+//			if errors.IsNotFound(obs.Model.Error) {
+//				h.Degraded("ModelNotFound", obs.Model.Error.Error())
+//			} else {
+//				h.Degraded("UnknownModelError", obs.Model.Error.Error())
+//			}
+//			return true
+//		} else {
+//			status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
+//				Name:      obs.Model.Model.GetName(),
+//				Namespace: obs.Model.Model.GetNamespace(),
+//				Scope:     obs.Model.Scope,
+//				Kind:      "AIMModel",
+//				UID:       obs.Model.Model.GetUID(),
+//			}
+//		}
+//		return false
 //	}
 //
-//	// If resolved cache is set, just monitor it
+//	func (s *serviceTemplateReconciler) projectCluster(status *aimv1alpha1.AIMServiceTemplateStatus, cm *controllerutils.ConditionManager, h *controllerutils.StatusHelper, obs ServiceTemplateObservation) bool {
+//		// Cluster GPUs
+//		if obs.Cluster.Error != nil {
+//			// TODO
+//		}
 //
-//	// If a cache exists
-//	if cache := obs.Cache.BestTemplateCache; cache != nil {
+//		if !obs.Cluster.GpuModelAvailable {
+//			status.Status = aimv1alpha1.AIMTemplateStatusNotAvailable
+//			message := fmt.Sprintf("This cluster does not have '%s' GPUs", obs.Cluster.GpuModelRequested)
+//			h.Degraded("GpuNotAvailable", message)
+//			return true
+//		}
 //
+//		return false
 //	}
 //
-//	return false
-//}
+//	func (s *serviceTemplateReconciler) projectDiscovery(status *aimv1alpha1.AIMServiceTemplateStatus, cm *controllerutils.ConditionManager, h *controllerutils.StatusHelper, obs ServiceTemplateObservation) bool {
+//		if obs.Discovery.Error != nil {
+//			h.Failed(aimv1alpha1.AIMTemplateDiscoveryConditionType, obs.Discovery.Error.Error())
+//			return true
+//		} else if obs.Discovery.DiscoveryJob == nil {
+//			h.Progressing("AwaitingDiscoveryJobStart", "Waiting for DiscoveryJob to start")
+//		} else if obs.Discovery.DiscoveryResult != nil {
 //
+//		}
+//		return false
+//	}
+//
+// func (s *serviceTemplateReconciler) projectCache(status *aimv1alpha1.AIMServiceTemplateStatus, cm *controllerutils.ConditionManager, h *controllerutils.StatusHelper, obs ServiceTemplateObservation) bool {
+//
+//		// Cache
+//		// TODO should cache, but not exists
+//		if obs.Cache.ShouldCreateCache {
+//
+//		}
+//
+//		// If resolved cache is set, just monitor it
+//
+//		// If a cache exists
+//		if cache := obs.Cache.BestTemplateCache; cache != nil {
+//
+//		}
+//
+//		return false
+//	}
 func requestsFromNamespaceTemplates(templates []aimv1alpha1.AIMServiceTemplate) []reconcile.Request {
 	if len(templates) == 0 {
 		return nil
@@ -485,8 +485,8 @@ func (r *AIMServiceTemplateReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		Owns(&batchv1.Job{}).
 		Owns(&servingv1alpha1.ServingRuntime{}).
 		Owns(&aimv1alpha1.AIMTemplateCache{}).
-		//Watches(&aimv1alpha1.AIMRuntimeConfig{}, runtimeConfigHandler).
-		//Watches(&aimv1alpha1.AIMClusterRuntimeConfig{}, clusterRuntimeConfigHandler).
+		// Watches(&aimv1alpha1.AIMRuntimeConfig{}, runtimeConfigHandler).
+		// Watches(&aimv1alpha1.AIMClusterRuntimeConfig{}, clusterRuntimeConfigHandler).
 		Watches(&corev1.Node{}, nodeHandler, builder.WithPredicates(utils.NodeGPUChangePredicate())).
 		Named("aim-namespace-template").
 		Complete(r)

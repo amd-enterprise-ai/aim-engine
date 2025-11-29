@@ -191,7 +191,7 @@ func ApplyDesiredState(
 			obj,
 			client.Apply,
 			// TODO
-			//client.WithFieldOwner(k8sClient, fieldOwner),
+			// client.WithFieldOwner(k8sClient, fieldOwner),
 			client.ForceOwnership,
 		); err != nil {
 			return fmt.Errorf("failed to apply %s %s: %w", gvk.Kind, key.Name, err)
@@ -246,5 +246,5 @@ func sortObjects(objects []client.Object) []client.Object {
 // FetchResult is used to wrap a result with an error for the fetch stage
 type FetchResult[T any] struct {
 	Result T
-	Error error
+	Error  error
 }

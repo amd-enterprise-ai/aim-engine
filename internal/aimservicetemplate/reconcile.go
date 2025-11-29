@@ -1,16 +1,39 @@
+// MIT License
+//
+// Copyright (c) 2025 Advanced Micro Devices, Inc.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 package aimservicetemplate
 
 import (
 	"context"
 	"fmt"
 
-	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	"github.com/amd-enterprise-ai/aim-engine/internal/aimruntimeconfig"
-	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimruntimeconfig"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
 type ClusterServiceTemplateReconciler struct {
@@ -29,9 +52,9 @@ type ServiceTemplateReconciler struct {
 
 type ClusterServiceTemplateFetchResult struct {
 	RuntimeConfig aimruntimeconfig.RuntimeConfigFetchResult
-	Discovery *ServiceTemplateDiscoveryFetchResult
-	Cluster   ServiceTemplateClusterFetchResult
-	Model     ClusterServiceTemplateModelFetchResult
+	Discovery     *ServiceTemplateDiscoveryFetchResult
+	Cluster       ServiceTemplateClusterFetchResult
+	Model         ClusterServiceTemplateModelFetchResult
 }
 
 func (r *ClusterServiceTemplateReconciler) Fetch(
@@ -123,9 +146,9 @@ func (r *ServiceTemplateReconciler) Fetch(
 
 type ClusterServiceTemplateObservation struct {
 	RuntimeConfig aimruntimeconfig.RuntimeConfigObservation
-	Cluster   ServiceTemplateClusterObservation
-	Discovery ServiceTemplateDiscoveryObservation
-	Model     ServiceTemplateModelObservation
+	Cluster       ServiceTemplateClusterObservation
+	Discovery     ServiceTemplateDiscoveryObservation
+	Model         ServiceTemplateModelObservation
 }
 
 func (r *ClusterServiceTemplateReconciler) Observe(
@@ -135,9 +158,9 @@ func (r *ClusterServiceTemplateReconciler) Observe(
 ) (ClusterServiceTemplateObservation, error) {
 	obs := ClusterServiceTemplateObservation{
 		RuntimeConfig: aimruntimeconfig.ObserveRuntimeConfig(fetchResult.RuntimeConfig, clusterServiceTemplate.Spec.RuntimeConfigName),
-		Model:     ObserveClusterServiceTemplateModel(fetchResult.Model),
-		Cluster:   observeServiceTemplateCluster(fetchResult.Cluster, clusterServiceTemplate.Spec.AIMServiceTemplateSpecCommon),
-		Discovery: observeDiscovery(fetchResult.Discovery, clusterServiceTemplate.Status),
+		Model:         ObserveClusterServiceTemplateModel(fetchResult.Model),
+		Cluster:       observeServiceTemplateCluster(fetchResult.Cluster, clusterServiceTemplate.Spec.AIMServiceTemplateSpecCommon),
+		Discovery:     observeDiscovery(fetchResult.Discovery, clusterServiceTemplate.Status),
 	}
 
 	return obs, nil
@@ -189,7 +212,7 @@ func (r *ClusterServiceTemplateReconciler) Plan(
 			Namespace:    clusterServiceTemplate.Namespace,
 			Image:        observation.Model.ModelSpec.Image,
 			// TODO should cluster service template have envs?
-			//Env:          clusterServiceTemplate.Spec.Env,
+			// Env:          clusterServiceTemplate.Spec.Env,
 		})
 		_ = controllerutil.SetOwnerReference(clusterServiceTemplate, discoveryJob, r.Scheme)
 		objects = append(objects, discoveryJob)
@@ -233,7 +256,6 @@ func (r *ClusterServiceTemplateReconciler) Project(
 	cm *controllerutils.ConditionManager,
 	observation ClusterServiceTemplateObservation,
 ) {
-
 	sh := controllerutils.NewStatusHelper(status, cm)
 
 	if !projectServiceTemplateModel(status, cm, sh, observation.Model) {
@@ -243,7 +265,6 @@ func (r *ClusterServiceTemplateReconciler) Project(
 		return
 	}
 	projectDiscovery(status, cm, sh, observation.Discovery)
-
 }
 
 func (r *ServiceTemplateReconciler) Project(

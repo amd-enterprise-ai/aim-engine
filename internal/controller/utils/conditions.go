@@ -27,8 +27,9 @@ package controllerutils
 import (
 	"time"
 
-	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
 type LevelCondition struct {

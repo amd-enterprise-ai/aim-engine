@@ -87,13 +87,13 @@ type AIMGpuSelector struct {
 	// +kubebuilder:validation:MinLength=1
 	Model string `json:"model"`
 
+	// TODO re-enable partitioning once it is supported
+
 	// ResourceName is the Kubernetes resource name for GPU resources.
 	// Defaults to "amd.com/gpu" if not specified.
 	// +optional
 	// +kubebuilder:default="amd.com/gpu"
-	ResourceName string `json:"resourceName,omitempty"`
-
-	// TODO re-enable partitioning once it is supported
+	// ResourceName string `json:"resourceName,omitempty"`
 
 	//// ComputePartitioning mode.
 	//// +kubebuilder:default="spx"

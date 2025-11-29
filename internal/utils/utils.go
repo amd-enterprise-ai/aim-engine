@@ -111,8 +111,6 @@ func BuildOwnerReference(obj client.Object, scheme *runtime.Scheme) metav1.Owner
 	}
 }
 
-
-
 // MergePullSecretRefs merges image pull secrets from base and extras, avoiding duplicates.
 // Extras take precedence when there's a name collision.
 func MergePullSecretRefs(base []corev1.LocalObjectReference, extras []corev1.LocalObjectReference) []corev1.LocalObjectReference {

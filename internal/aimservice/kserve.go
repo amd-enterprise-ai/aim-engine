@@ -30,10 +30,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
-	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
-	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -41,6 +37,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
 const (
@@ -134,8 +135,7 @@ func observeServiceKServe(result ServiceKServeFetchResult) ServiceKServeObservat
 		obs.InferenceServiceReady = result.InferenceService.Status.IsReady()
 
 		// Extract LastFailureInfo from ModelStatus if available
-		if result.InferenceService.Status.ModelStatus != nil &&
-			result.InferenceService.Status.ModelStatus.LastFailureInfo != nil {
+		if result.InferenceService.Status.ModelStatus.LastFailureInfo != nil {
 			obs.LastFailureInfo = result.InferenceService.Status.ModelStatus.LastFailureInfo
 		}
 
@@ -208,13 +208,16 @@ func buildInferenceService(
 		}
 	}
 
+	modelNameLabel, _ := utils.SanitizeLabelValue(modelName)
+	serviceNameLabel, _ := utils.SanitizeLabelValue(service.Name)
+
 	systemLabels := map[string]string{
 		"app.kubernetes.io/name":       constants.LabelValueServiceName,
 		"app.kubernetes.io/component":  constants.LabelValueServiceComponent,
 		"app.kubernetes.io/managed-by": constants.LabelValueManagedBy,
 		constants.LabelKeyTemplate:     templateName,
-		constants.LabelKeyModelName:    utils.SanitizeLabelValue(modelName),
-		constants.LabelKeyServiceName:  utils.SanitizeLabelValue(service.Name),
+		constants.LabelKeyModelName:    modelNameLabel,
+		constants.LabelKeyServiceName:  serviceNameLabel,
 	}
 	for k, v := range systemLabels {
 		labels[k] = v
@@ -350,9 +353,6 @@ func buildResourceRequirements(service *aimv1alpha1.AIMService, templateStatus *
 
 	// Add GPU resource request/limit
 	gpuResourceName := corev1.ResourceName("amd.com/gpu")
-	if templateStatus.Profile.Metadata.GpuSelector != nil && templateStatus.Profile.Metadata.GpuSelector.ResourceName != "" {
-		gpuResourceName = corev1.ResourceName(templateStatus.Profile.Metadata.GpuSelector.ResourceName)
-	}
 	requests[gpuResourceName] = *resource.NewQuantity(gpuCount, resource.DecimalSI)
 	limits[gpuResourceName] = *resource.NewQuantity(gpuCount, resource.DecimalSI)
 
@@ -479,3 +479,104 @@ func projectServiceKServe(
 
 	return false
 }
+
+// Reference
+
+//// HandleInferenceServicePodImageError checks for image pull errors in InferenceService pods.
+//// Returns true if an image pull error was detected.
+//func HandleInferenceServicePodImageError(
+//	status *aimv1alpha1.AIMServiceStatus,
+//	obs *aimservicetemplate2.ServiceObservation,
+//	setCondition func(conditionType string, conditionStatus metav1.ConditionStatus, reason, message string),
+//) bool {
+//	if obs == nil || obs.InferenceServicePodImageError == nil {
+//		return false
+//	}
+//
+//	pullErr := obs.InferenceServicePodImageError
+//
+//	// Determine the condition reason based on error type
+//	var conditionReason string
+//	switch pullErr.Type {
+//	case aimmodel2.ImagePullErrorAuth:
+//		conditionReason = aimv1alpha1.AIMServiceReasonImagePullAuthFailure
+//	case aimmodel2.ImagePullErrorNotFound:
+//		conditionReason = aimv1alpha1.AIMServiceReasonImageNotFound
+//	default:
+//		conditionReason = aimv1alpha1.AIMServiceReasonImagePullBackOff
+//	}
+//
+//	// Format detailed message
+//	containerType := "Container"
+//	if pullErr.IsInitContainer {
+//		containerType = "Init container"
+//	}
+//	detailedMessage := fmt.Sprintf("InferenceService pod %s %q is stuck in %s: %s",
+//		containerType, pullErr.Container, pullErr.Reason, pullErr.Message)
+//
+//	status.Status = aimv1alpha1.AIMServiceStatusDegraded
+//	setCondition(aimv1alpha1.AIMServiceConditionFailure, metav1.ConditionTrue, conditionReason, detailedMessage)
+//	setCondition(aimv1alpha1.AIMServiceConditionRuntimeReady, metav1.ConditionFalse, conditionReason,
+//		"InferenceService cannot run due to image pull failure")
+//	setCondition(aimv1alpha1.AIMServiceConditionProgressing, metav1.ConditionFalse, conditionReason,
+//		"Service is degraded due to image pull failure")
+//	setCondition(aimv1alpha1.AIMServiceConditionReady, metav1.ConditionFalse, conditionReason,
+//		"Service cannot be ready due to image pull failure")
+//	return true
+//}
+//
+//// EvaluateInferenceServiceStatus checks InferenceService and routing readiness.
+//// Updates status conditions based on the InferenceService and routing state.
+//func EvaluateInferenceServiceStatus(
+//	status *aimv1alpha1.AIMServiceStatus,
+//	obs *aimservicetemplate2.ServiceObservation,
+//	inferenceService *servingv1beta1.InferenceService,
+//	httpRoute *gatewayapiv1.HTTPRoute,
+//	routingEnabled bool,
+//	routingReady bool,
+//	setCondition func(conditionType string, conditionStatus metav1.ConditionStatus, reason, message string),
+//) {
+//	if inferenceService == nil {
+//		if status.Status != aimv1alpha1.AIMServiceStatusFailed {
+//			status.Status = aimv1alpha1.AIMServiceStatusStarting
+//		}
+//		setCondition(aimv1alpha1.AIMServiceConditionRuntimeReady, metav1.ConditionFalse, aimv1alpha1.AIMServiceReasonCreatingRuntime,
+//			"Waiting for InferenceService creation")
+//		setCondition(aimv1alpha1.AIMServiceConditionProgressing, metav1.ConditionTrue, aimv1alpha1.AIMServiceReasonCreatingRuntime,
+//			"Reconciling InferenceService resources")
+//		setCondition(aimv1alpha1.AIMServiceConditionReady, metav1.ConditionFalse, aimv1alpha1.AIMServiceReasonCreatingRuntime,
+//			"InferenceService not yet created")
+//		return
+//	}
+//
+//	if inferenceService.Status.IsReady() && routingReady {
+//		status.Status = aimv1alpha1.AIMServiceStatusRunning
+//		setCondition(aimv1alpha1.AIMServiceConditionRuntimeReady, metav1.ConditionTrue, aimv1alpha1.AIMServiceReasonRuntimeReady,
+//			"InferenceService is ready")
+//		setCondition(aimv1alpha1.AIMServiceConditionProgressing, metav1.ConditionFalse, aimv1alpha1.AIMServiceReasonRuntimeReady,
+//			"Service is running")
+//		setCondition(aimv1alpha1.AIMServiceConditionReady, metav1.ConditionTrue, aimv1alpha1.AIMServiceReasonRuntimeReady,
+//			"AIMService is ready to serve traffic")
+//		return
+//	}
+//
+//	if status.Status != aimv1alpha1.AIMServiceStatusFailed && status.Status != aimv1alpha1.AIMServiceStatusDegraded {
+//		status.Status = aimv1alpha1.AIMServiceStatusStarting
+//	}
+//	reason := aimv1alpha1.AIMServiceReasonCreatingRuntime
+//	message := "Waiting for InferenceService to become ready"
+//	if inferenceService.Status.ModelStatus.LastFailureInfo != nil {
+//		reason = aimv1alpha1.AIMServiceReasonRuntimeFailed
+//		message = inferenceService.Status.ModelStatus.LastFailureInfo.Message
+//		status.Status = aimv1alpha1.AIMServiceStatusDegraded
+//		setCondition(aimv1alpha1.AIMServiceConditionFailure, metav1.ConditionTrue, reason, message)
+//	}
+//	if routingEnabled && !routingReady && reason == aimv1alpha1.AIMServiceReasonCreatingRuntime {
+//		reason = aimv1alpha1.AIMServiceReasonConfiguringRoute
+//		message = "Waiting for HTTPRoute to become ready"
+//	}
+//
+//	setCondition(aimv1alpha1.AIMServiceConditionRuntimeReady, metav1.ConditionFalse, reason, message)
+//	setCondition(aimv1alpha1.AIMServiceConditionProgressing, metav1.ConditionTrue, reason, "InferenceService reconciliation in progress")
+//	setCondition(aimv1alpha1.AIMServiceConditionReady, metav1.ConditionFalse, reason, message)
+//}

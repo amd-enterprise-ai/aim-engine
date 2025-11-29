@@ -267,11 +267,11 @@ const (
 	AIMServiceReasonTemplateSelectionAmbiguous = "TemplateSelectionAmbiguous"
 
 	// Cache
-	AIMServiceReasonCacheCreating   = "CacheCreating"
-	AIMServiceReasonCacheNotReady   = "CacheNotReady"
-	AIMServiceReasonCacheReady      = "CacheReady"
-	AIMServiceReasonCacheRetrying   = "CacheRetrying"
-	AIMServiceReasonCacheFailed     = "CacheFailed"
+	AIMServiceReasonCacheCreating = "CacheCreating"
+	AIMServiceReasonCacheNotReady = "CacheNotReady"
+	AIMServiceReasonCacheReady    = "CacheReady"
+	AIMServiceReasonCacheRetrying = "CacheRetrying"
+	AIMServiceReasonCacheFailed   = "CacheFailed"
 	// TODO: Remove these old cache reasons after controller migration is complete
 	AIMServiceReasonWaitingForCache = "WaitingForCache"
 	AIMServiceReasonCacheWarming    = "CacheWarming"

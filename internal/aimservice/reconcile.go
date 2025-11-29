@@ -27,12 +27,13 @@ package aimservice
 import (
 	"context"
 
-	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	"github.com/amd-enterprise-ai/aim-engine/internal/aimruntimeconfig"
-	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimruntimeconfig"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
 // ============================================================================
@@ -207,7 +208,7 @@ func (r *Reconciler) Plan(
 	}
 
 	// Get template name for resource creation
-	templateName, templateNamespace := getResolvedTemplateName(service, ServiceTemplateFetchResult{
+	_, _ = getResolvedTemplateName(service, ServiceTemplateFetchResult{
 		// We don't have fetch result here, so we rely on status
 	})
 
@@ -340,11 +341,11 @@ func getResolvedTemplateName(service *aimv1alpha1.AIMService, fetchResult Servic
 	}
 
 	// Fall back to fetch result
-	if fetchResult.NamespaceScopedTemplate != nil {
-		return fetchResult.NamespaceScopedTemplate.Name, fetchResult.NamespaceScopedTemplate.Namespace
+	if fetchResult.NamespaceTemplate != nil {
+		return fetchResult.NamespaceTemplate.Name, fetchResult.NamespaceTemplate.Namespace
 	}
-	if fetchResult.ClusterScopedTemplate != nil {
-		return fetchResult.ClusterScopedTemplate.Name, ""
+	if fetchResult.ClusterTemplate != nil {
+		return fetchResult.ClusterTemplate.Name, ""
 	}
 
 	return "", ""

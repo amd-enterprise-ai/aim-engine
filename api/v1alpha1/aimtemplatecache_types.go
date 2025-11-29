@@ -23,9 +23,10 @@
 package v1alpha1
 
 import (
-	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
 // AIMTemplateCacheSpec defines the desired state of AIMTemplateCache

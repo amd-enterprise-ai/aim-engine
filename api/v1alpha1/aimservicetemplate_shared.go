@@ -247,10 +247,10 @@ const (
 	// AIMTemplateConditionCacheWarm is True when all requested caches have been warmed.
 	AIMTemplateCacheWarmConditionType = "CacheWarm"
 
-	AIMTemplateCacheWarmConditionPending = "Pending"
-	AIMTemplateCacheWarmConditionRequested       = "Progressing"
-	AIMTemplateReasonWarm          = "Ready"
-	AIMTemplateReasonWarmFailed    = "Failed"
+	AIMTemplateCacheWarmConditionPending   = "Pending"
+	AIMTemplateCacheWarmConditionRequested = "Progressing"
+	AIMTemplateReasonWarm                  = "Ready"
+	AIMTemplateReasonWarmFailed            = "Failed"
 )
 
 // Condition reasons for AIMServiceTemplate
