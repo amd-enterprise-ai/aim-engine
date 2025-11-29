@@ -394,7 +394,8 @@ func (r *AIMServiceTemplateReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		StatusClient: mgr.GetClient().Status(),
 		Recorder:     r.Recorder,
 		FieldOwner:   "aim-service-template-controller",
-		Domain:       r.reconciler,
+		Reconciler:   r.reconciler,
+		Scheme:       r.Scheme,
 	}
 	//
 	//if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMServiceTemplate{}, namespaceTemplateRuntimeConfigIndexKey, func(obj client.Object) []string {

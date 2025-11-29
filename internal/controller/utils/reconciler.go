@@ -58,7 +58,7 @@ type Pipeline[T ObjectWithStatus[S], S StatusWithConditions, F any, Obs any] str
 	StatusClient client.StatusWriter // usually mgr.GetClient().Status()
 	Recorder     record.EventRecorder
 	FieldOwner   string
-	Domain       DomainReconciler[T, S, F, Obs]
+	Reconciler   DomainReconciler[T, S, F, Obs]
 	Scheme       *runtime.Scheme
 }
 
@@ -83,7 +83,7 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	// Returns errors only for transient infrastructure issues (network, API server).
 	// Semantic errors (NotFound, Invalid) should be included in fetch result and
 	// handled in Observe phase to update status appropriately.
-	fetched, fetchError := p.Domain.Fetch(ctx, p.Client, obj)
+	fetched, fetchError := p.Reconciler.Fetch(ctx, p.Client, obj)
 	if fetchError != nil {
 		// Infrastructure error - return for exponential backoff.
 		// Status is NOT updated to avoid noise from transient issues.
@@ -93,7 +93,7 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	// Observe phase - interpret fetched resources into domain observations
 	// Domain reconcilers should handle semantic issues (NotFound) in observations,
 	// returning errors only for unexpected failures.
-	obs, obsErr := p.Domain.Observe(ctx, obj, fetched)
+	obs, obsErr := p.Reconciler.Observe(ctx, obj, fetched)
 	if obsErr != nil {
 		// Unexpected observation error - return for retry
 		return obsErr
@@ -101,7 +101,7 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 
 	// Plan phase - derive desired objects based on observations
 	// Should be pure - no client calls, just logic based on current state
-	desiredObjects, planErr := p.Domain.Plan(ctx, obj, obs)
+	desiredObjects, planErr := p.Reconciler.Plan(ctx, obj, obs)
 	if planErr != nil {
 		// Planning error - return for retry
 		return planErr
@@ -123,7 +123,7 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 
 	// Project phase - always runs to update status based on observations
 	// Domain reconciler updates conditions to reflect current state
-	p.Domain.Project(status, cm, obs)
+	p.Reconciler.Project(status, cm, obs)
 
 	// Update conditions from manager
 	status.SetConditions(cm.Conditions())

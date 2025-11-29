@@ -97,7 +97,8 @@ func (r *AIMModelCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		StatusClient: r.Status(),
 		Recorder:     r.Recorder,
 		FieldOwner:   modelCacheFieldOwner,
-		Domain:       r.reconciler,
+		Reconciler:   r.reconciler,
+		Scheme:       r.Scheme,
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).

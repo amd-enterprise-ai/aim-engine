@@ -65,7 +65,7 @@ func InspectImage(
 	imageURI string,
 	imagePullSecrets []corev1.LocalObjectReference,
 	clientset kubernetes.Interface,
-	namespace string,
+	secretNamespace string,
 ) (*aimv1alpha1.ImageMetadata, error) {
 	logger := ctrl.LoggerFrom(ctx)
 
@@ -79,18 +79,18 @@ func InspectImage(
 
 	// Build keychain for authentication
 	var keychain authn.Keychain
-	if clientset != nil && namespace != "" && len(imagePullSecrets) > 0 {
+	if clientset != nil && secretNamespace != "" && len(imagePullSecrets) > 0 {
 		// Convert LocalObjectReference to secret names
 		secretNames := make([]string, len(imagePullSecrets))
 		for i, secret := range imagePullSecrets {
 			secretNames[i] = secret.Name
 		}
 
-		logger.V(1).Info("Using image pull secrets for authentication", "secrets", secretNames, "namespace", namespace)
+		logger.V(1).Info("Using image pull secrets for authentication", "secrets", secretNames, "namespace", secretNamespace)
 
 		// Create k8s keychain with the provided secrets
 		kc, err := k8schain.New(ctx, clientset, k8schain.Options{
-			Namespace:          namespace,
+			Namespace:          secretNamespace,
 			ImagePullSecrets:   secretNames,
 			ServiceAccountName: kauth.NoServiceAccount,
 		})
@@ -192,17 +192,6 @@ func (e *MetadataFormatError) Error() string {
 		return e.Message
 	}
 	return "image metadata malformed"
-}
-
-//nolint:unused // will be used in future metadata validation
-func newMetadataFormatError(reason, message string) *MetadataFormatError {
-	if reason == "" {
-		reason = "MetadataMalformed"
-	}
-	return &MetadataFormatError{
-		Reason:  reason,
-		Message: message,
-	}
 }
 
 // getAMDLabel retrieves a label value, checking both new and legacy prefixes.

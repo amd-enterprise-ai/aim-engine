@@ -137,7 +137,7 @@ type TemplateBuilderOutputs struct {
 
 func planClusterModelServiceTemplates(templateObs ClusterModelServiceTemplateObservation, metadataObs ModelMetadataObservation, clusterModel aimv1alpha1.AIMClusterModel) []client.Object {
 	var templates []client.Object
-	if !templateObs.ShouldCreateTemplates || metadataObs.Error != nil {
+	if !templateObs.ShouldCreateTemplates || metadataObs.Error != nil || metadataObs.ExtractedMetadata == nil {
 		return templates
 	}
 

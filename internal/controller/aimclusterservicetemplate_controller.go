@@ -223,7 +223,8 @@ func (r *AIMClusterServiceTemplateReconciler) SetupWithManager(mgr ctrl.Manager)
 		StatusClient: mgr.GetClient().Status(),
 		Recorder:     r.Recorder,
 		FieldOwner:   clusterTemplateFieldOwner,
-		Domain:       r.reconciler,
+		Reconciler:   r.reconciler,
+		Scheme:       r.Scheme,
 	}
 
 	//if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMClusterServiceTemplate{}, clusterTemplateRuntimeConfigIndexKey, func(obj client.Object) []string {
