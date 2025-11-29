@@ -26,6 +26,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -76,6 +77,12 @@ func (r *AIMClusterModelReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	if err := r.pipeline.Run(ctx, &model); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// Check if metadata extraction failed and needs retry
+	if aimmodel.ShouldRequeueForMetadataRetry(&model.Status) {
+		logger.V(1).Info("Metadata extraction failed, requeuing for retry", "requeueAfter", "60s")
+		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
 	}
 
 	return ctrl.Result{}, nil
