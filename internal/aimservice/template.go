@@ -181,6 +181,8 @@ func observeServiceTemplate(
 }
 
 // observeExplicitTemplateWithModel handles the case where both templateRef and model are specified
+//
+//nolint:unparam // error return kept for API consistency
 func observeExplicitTemplateWithModel(
 	service *aimv1alpha1.AIMService,
 	modelObs ServiceModelObservation,
@@ -202,6 +204,8 @@ func observeExplicitTemplateWithModel(
 }
 
 // observeExplicitTemplateOnly handles the case where only templateRef is specified (no model)
+//
+//nolint:unparam // error return kept for API consistency
 func observeExplicitTemplateOnly(
 	service *aimv1alpha1.AIMService,
 	templateFetchResult ServiceTemplateFetchResult,
@@ -221,6 +225,8 @@ func observeExplicitTemplateOnly(
 }
 
 // observeAutoSelectTemplate handles the case where model is specified but no templateRef (auto-select)
+//
+//nolint:unparam // error return kept for API consistency
 func observeAutoSelectTemplate(
 	service *aimv1alpha1.AIMService,
 	modelObs ServiceModelObservation,

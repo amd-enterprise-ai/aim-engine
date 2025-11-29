@@ -139,6 +139,7 @@ func observeServiceHTTPRoute(
 // PLAN
 // ============================================================================
 
+//nolint:unparam,unused // error return kept for API consistency, will be used when Plan phase is fully implemented
 func planServiceHTTPRoute(
 	service *aimv1alpha1.AIMService,
 	obs ServiceHTTPRouteObservation,
@@ -154,6 +155,8 @@ func planServiceHTTPRoute(
 }
 
 // buildHTTPRoute creates a Gateway API HTTPRoute for the AIMService
+//
+//nolint:unused // will be used when Plan phase is fully implemented
 func buildHTTPRoute(
 	service *aimv1alpha1.AIMService,
 	obs ServiceHTTPRouteObservation,
@@ -313,7 +316,7 @@ type resolvedRoutingConfig struct {
 }
 
 // resolveRoutingConfig gets routing config from runtime config
-func resolveRoutingConfig(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) resolvedRoutingConfig {
+func resolveRoutingConfig(_ *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) resolvedRoutingConfig {
 	var resolved resolvedRoutingConfig
 	var runtimeRouting *aimv1alpha1.AIMRuntimeRoutingConfig
 

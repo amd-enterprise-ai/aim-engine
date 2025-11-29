@@ -79,9 +79,6 @@ func templateMatchesOverrides(templateSpec *aimv1alpha1.AIMServiceTemplateSpecCo
 		if templateSpec.GpuSelector.Model != overrides.GpuSelector.Model {
 			return false
 		}
-		if templateSpec.GpuSelector.ResourceName != overrides.GpuSelector.ResourceName {
-			return false
-		}
 	}
 
 	return true

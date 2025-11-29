@@ -232,7 +232,7 @@ type ServiceModelObservation struct {
 	GeneratedModelName string // Pre-computed model name for auto-creation
 }
 
-func observeServiceModel(ctx context.Context, c client.Client, service *aimv1alpha1.AIMService, result ServiceModelFetchResult) ServiceModelObservation {
+func observeServiceModel(_ context.Context, _ client.Client, service *aimv1alpha1.AIMService, result ServiceModelFetchResult) ServiceModelObservation {
 	obs := ServiceModelObservation{}
 
 	// Case 1: Model specified by Ref
@@ -320,6 +320,7 @@ func observeServiceModel(ctx context.Context, c client.Client, service *aimv1alp
 // PLAN
 // ============================================================================
 
+//nolint:unused // will be used when Plan phase is fully implemented
 func planServiceModel(obs ServiceModelObservation, service *aimv1alpha1.AIMService) client.Object {
 	// Don't create if there's an error or if we shouldn't create
 	if !obs.ShouldCreateModel || obs.ImageParseErr != nil || obs.GeneratedModelName == "" {

@@ -26,7 +26,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 type AIMServiceTemplateSpecCommon struct {
@@ -147,7 +146,7 @@ type AIMServiceTemplateStatus struct {
 	Profile *AIMProfile `json:"profile,omitempty"`
 
 	// DiscoveryJobRef is a reference to the job that was run for discovery
-	DiscoveryJobRef *types.NamespacedName `json:"discoveryJobRef,omitempty"`
+	DiscoveryJobRef *AIMResolvedReference `json:"discoveryJobRef,omitempty"`
 }
 
 func (s *AIMServiceTemplateStatus) GetConditions() []metav1.Condition {

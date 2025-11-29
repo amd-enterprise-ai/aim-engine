@@ -57,25 +57,19 @@ rules:
   - aim.eai.amd.com
   resources:
   - aimclustermodels/finalizers
-  - aimclusterruntimeconfigs/finalizers
   - aimclusterservicetemplates/finalizers
   - aimmodelcaches/finalizers
   - aimmodels/finalizers
-  - aimruntimeconfigs/finalizers
-  - aimservices/finalizers
   - aimservicetemplates/finalizers
-  - aimtemplatecaches/finalizers
   verbs:
   - update
 - apiGroups:
   - aim.eai.amd.com
   resources:
   - aimclustermodels/status
-  - aimclusterruntimeconfigs/status
   - aimclusterservicetemplates/status
   - aimmodelcaches/status
   - aimmodels/status
-  - aimruntimeconfigs/status
   - aimservices/status
   - aimservicetemplates/status
   - aimtemplatecaches/status

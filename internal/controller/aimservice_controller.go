@@ -63,6 +63,7 @@ type AIMServiceReconciler struct {
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
 
+	//nolint:unused // will be used when pipeline-based reconciliation is implemented
 	reconciler controllerutils.DomainReconciler[
 		*aimv1alpha1.AIMService,
 		*aimv1alpha1.AIMServiceStatus,
