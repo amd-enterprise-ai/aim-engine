@@ -320,7 +320,6 @@ func observeServiceModel(_ context.Context, _ client.Client, service *aimv1alpha
 // PLAN
 // ============================================================================
 
-//nolint:unused // will be used when Plan phase is fully implemented
 func planServiceModel(obs ServiceModelObservation, service *aimv1alpha1.AIMService) client.Object {
 	// Don't create if there's an error or if we shouldn't create
 	if !obs.ShouldCreateModel || obs.ImageParseErr != nil || obs.GeneratedModelName == "" {
