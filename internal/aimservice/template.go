@@ -28,10 +28,11 @@ import (
 	"context"
 	"fmt"
 
-	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
 // ============================================================================
@@ -337,7 +338,7 @@ func projectServiceTemplate(
 		// Check if it's an overrides mismatch error - this is a terminal failure
 		if obs.HasOverrides && !obs.TemplateFound {
 			h.Failed(aimv1alpha1.AIMServiceReasonValidationFailed, obs.TemplateSelectionError.Error())
-			cm.MarkFalse(aimv1alpha1.AIMServiceConditionResolved, aimv1alpha1.AIMServiceReasonValidationFailed, obs.TemplateSelectionError.Error(), controllerutils.LevelError)
+			cm.MarkFalse(aimv1alpha1.AIMServiceConditionResolved, aimv1alpha1.AIMServiceReasonValidationFailed, obs.TemplateSelectionError.Error(), controllerutils.LevelWarning)
 		} else {
 			h.Degraded("TemplateSelectionFailed", obs.TemplateSelectionError.Error())
 			cm.MarkFalse(aimv1alpha1.AIMServiceConditionResolved, "TemplateSelectionFailed", obs.TemplateSelectionError.Error(), controllerutils.LevelWarning)
@@ -385,3 +386,192 @@ func projectServiceTemplate(
 
 	return false
 }
+
+// Reference
+
+//
+//// HandleTemplateDegraded checks if the template is degraded, not available, or failed and updates status.
+//// Returns true if the template is degraded, not available, or failed.
+//func HandleTemplateDegraded(
+//	status *aimv1alpha1.AIMServiceStatus,
+//	obs *aimservicetemplate2.ServiceObservation,
+//	setCondition func(conditionType string, conditionStatus metav1.ConditionStatus, reason, message string),
+//) bool {
+//	if obs.TemplateStatus == nil {
+//		return false
+//	}
+//
+//	// Handle Degraded, NotAvailable, and Failed template statuses
+//	if obs.TemplateStatus.Status != aimv1alpha1.AIMTemplateStatusDegraded &&
+//		obs.TemplateStatus.Status != aimv1alpha1.AIMTemplateStatusNotAvailable &&
+//		obs.TemplateStatus.Status != aimv1alpha1.AIMTemplateStatusFailed {
+//		return false
+//	}
+//
+//	// Use Failed for terminal failures, Degraded for recoverable issues (including NotAvailable)
+//	if obs.TemplateStatus.Status == aimv1alpha1.AIMTemplateStatusFailed {
+//		status.Status = aimv1alpha1.AIMServiceStatusFailed
+//	} else {
+//		status.Status = aimv1alpha1.AIMServiceStatusDegraded
+//	}
+//
+//	templateReason := "TemplateDegraded"
+//	templateMessage := "Template is not available"
+//
+//	// Extract failure details from template conditions
+//	for _, cond := range obs.TemplateStatus.Conditions {
+//		if cond.Type == "Failure" && cond.Status == metav1.ConditionTrue {
+//			if cond.Message != "" {
+//				templateMessage = cond.Message
+//			}
+//			if cond.Reason != "" {
+//				templateReason = cond.Reason
+//			}
+//			break
+//		}
+//	}
+//
+//	setCondition(aimv1alpha1.AIMServiceConditionFailure, metav1.ConditionTrue, templateReason, templateMessage)
+//	setCondition(aimv1alpha1.AIMServiceConditionRuntimeReady, metav1.ConditionFalse, templateReason,
+//		"Cannot create InferenceService due to template issues")
+//	setCondition(aimv1alpha1.AIMServiceConditionProgressing, metav1.ConditionFalse, templateReason,
+//		"Service cannot proceed due to template issues")
+//	setCondition(aimv1alpha1.AIMServiceConditionReady, metav1.ConditionFalse, templateReason,
+//		"Service cannot be ready due to template issues")
+//	return true
+//}
+//
+//// HandleTemplateNotAvailable checks if the template is not available and updates status.
+//// Returns true if the template is not yet available (Pending or Progressing).
+//// Sets the service to Pending state because it's waiting for a dependency (the template).
+//func HandleTemplateNotAvailable(
+//	status *aimv1alpha1.AIMServiceStatus,
+//	obs *aimservicetemplate2.ServiceObservation,
+//	setCondition func(conditionType string, conditionStatus metav1.ConditionStatus, reason, message string),
+//) bool {
+//	if obs.TemplateAvailable {
+//		return false
+//	}
+//
+//	// Service is Pending because it's waiting for the template to become available.
+//	// The template itself may be Progressing (running discovery) or Pending.
+//	status.Status = aimv1alpha1.AIMServiceStatusPending
+//
+//	reason := "TemplateNotAvailable"
+//	setCondition(aimv1alpha1.AIMServiceConditionRuntimeReady, metav1.ConditionFalse, reason,
+//		fmt.Sprintf("Template %q is not yet Available", obs.TemplateName))
+//	setCondition(aimv1alpha1.AIMServiceConditionProgressing, metav1.ConditionTrue, reason,
+//		"Waiting for template discovery to complete")
+//	setCondition(aimv1alpha1.AIMServiceConditionReady, metav1.ConditionFalse, reason,
+//		"Template is not available")
+//	return true
+//}
+//
+//// HandleTemplateSelectionFailure reports failures during automatic template selection.
+//func HandleTemplateSelectionFailure(
+//	status *aimv1alpha1.AIMServiceStatus,
+//	obs *aimservicetemplate2.ServiceObservation,
+//	setCondition func(conditionType string, conditionStatus metav1.ConditionStatus, reason, message string),
+//) bool {
+//	if obs == nil || obs.TemplateSelectionReason == "" {
+//		return false
+//	}
+//
+//	message := obs.TemplateSelectionMessage
+//	if message == "" {
+//		message = "Template selection failed"
+//	}
+//
+//	status.Status = aimv1alpha1.AIMServiceStatusFailed
+//	reason := obs.TemplateSelectionReason
+//	setCondition(aimv1alpha1.AIMServiceConditionFailure, metav1.ConditionTrue, reason, message)
+//	setCondition(aimv1alpha1.AIMServiceConditionResolved, metav1.ConditionFalse, reason, message)
+//	setCondition(aimv1alpha1.AIMServiceConditionRuntimeReady, metav1.ConditionFalse, reason, "Cannot proceed without a unique template")
+//	setCondition(aimv1alpha1.AIMServiceConditionProgressing, metav1.ConditionFalse, reason, "Template selection failed")
+//	setCondition(aimv1alpha1.AIMServiceConditionReady, metav1.ConditionFalse, reason, message)
+//	return true
+//}
+
+//// handleTemplateNotFound handles the case when no template is found.
+//// Returns true if this handler applies.
+//func handleTemplateNotFound(
+//	obs *aimservicetemplate2.ServiceObservation,
+//	status *aimv1alpha1.AIMServiceStatus,
+//	setCondition func(conditionType string, conditionStatus metav1.ConditionStatus, reason, message string),
+//) bool {
+//	if obs != nil && obs.TemplateFound() {
+//		return false
+//	}
+//
+//	var message string
+//	if obs != nil && obs.ShouldCreateTemplate {
+//		status.Status = aimv1alpha1.AIMServiceStatusPending
+//		message = "Template not found; creating derived template"
+//		setCondition(aimv1alpha1.AIMServiceConditionResolved, metav1.ConditionFalse, aimv1alpha1.AIMServiceReasonTemplateNotFound, message)
+//		setCondition(aimv1alpha1.AIMServiceConditionRuntimeReady, metav1.ConditionFalse, aimv1alpha1.AIMServiceReasonCreatingRuntime, "Waiting for template creation")
+//		setCondition(aimv1alpha1.AIMServiceConditionProgressing, metav1.ConditionTrue, aimv1alpha1.AIMServiceReasonTemplateNotFound, "Waiting for template to be created")
+//	} else if obs != nil && obs.TemplatesExistButNotReady {
+//		// Templates exist but aren't Available yet - service should wait
+//		status.Status = aimv1alpha1.AIMServiceStatusPending
+//		message = "Waiting for templates to become Available"
+//		setCondition(aimv1alpha1.AIMServiceConditionResolved, metav1.ConditionFalse, "TemplateNotAvailable", message)
+//		setCondition(aimv1alpha1.AIMServiceConditionRuntimeReady, metav1.ConditionFalse, "TemplateNotAvailable", "Waiting for template discovery to complete")
+//		setCondition(aimv1alpha1.AIMServiceConditionProgressing, metav1.ConditionTrue, "TemplateNotAvailable", "Templates exist but are not yet Available")
+//	} else {
+//		// No template could be resolved and no derived template will be created.
+//		// This is a degraded state - the service cannot proceed.
+//		status.Status = aimv1alpha1.AIMServiceStatusDegraded
+//		if obs != nil {
+//			switch {
+//			case obs.TemplateSelectionMessage != "":
+//				message = obs.TemplateSelectionMessage
+//			case obs.BaseTemplateName == "":
+//				message = "No template reference specified and no templates are available for the selected image. Provide spec.templateRef or create templates for the image."
+//			default:
+//				message = fmt.Sprintf("Template %q not found. Create the template or verify the template name.", obs.BaseTemplateName)
+//			}
+//		} else {
+//			message = "Template not found"
+//		}
+//		setCondition(aimv1alpha1.AIMServiceConditionFailure, metav1.ConditionTrue, aimv1alpha1.AIMServiceReasonTemplateNotFound, message)
+//		setCondition(aimv1alpha1.AIMServiceConditionResolved, metav1.ConditionFalse, aimv1alpha1.AIMServiceReasonTemplateNotFound, message)
+//		setCondition(aimv1alpha1.AIMServiceConditionRuntimeReady, metav1.ConditionFalse, aimv1alpha1.AIMServiceReasonTemplateNotFound, "Referenced template does not exist")
+//		setCondition(aimv1alpha1.AIMServiceConditionProgressing, metav1.ConditionFalse, aimv1alpha1.AIMServiceReasonTemplateNotFound, "Cannot proceed without template")
+//	}
+//	setCondition(aimv1alpha1.AIMServiceConditionReady, metav1.ConditionFalse, aimv1alpha1.AIMServiceReasonTemplateNotFound, "Template missing")
+//	return true
+//}
+//
+
+//
+//// HandleMissingModelSource checks if the template is available but has no model sources.
+//// Returns true if model sources are missing (discovery succeeded but produced no usable sources).
+//func HandleMissingModelSource(
+//	status *aimv1alpha1.AIMServiceStatus,
+//	obs *aimservicetemplate2.ServiceObservation,
+//	setCondition func(conditionType string, conditionStatus metav1.ConditionStatus, reason, message string),
+//) bool {
+//	if !obs.TemplateAvailable || obs.TemplateStatus == nil {
+//		return false
+//	}
+//
+//	// Check if template is Available but has no model sources
+//	hasModelSources := len(obs.TemplateStatus.ModelSources) > 0
+//	if hasModelSources {
+//		return false
+//	}
+//
+//	status.Status = aimv1alpha1.AIMServiceStatusDegraded
+//	reason := "NoModelSources"
+//	message := fmt.Sprintf("Template %q is Available but discovery produced no usable model sources", obs.TemplateName)
+//
+//	setCondition(aimv1alpha1.AIMServiceConditionFailure, metav1.ConditionTrue, reason, message)
+//	setCondition(aimv1alpha1.AIMServiceConditionRuntimeReady, metav1.ConditionFalse, reason,
+//		"Cannot create InferenceService without model sources")
+//	setCondition(aimv1alpha1.AIMServiceConditionProgressing, metav1.ConditionFalse, reason,
+//		"Service is degraded due to missing model sources")
+//	setCondition(aimv1alpha1.AIMServiceConditionReady, metav1.ConditionFalse, reason,
+//		"Service cannot be ready without model sources")
+//	return true
+//}
+//

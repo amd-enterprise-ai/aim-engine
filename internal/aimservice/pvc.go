@@ -28,16 +28,17 @@ import (
 	"context"
 	"fmt"
 
-	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
-	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
-	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
 const (
@@ -100,7 +101,8 @@ func observeServicePVC(
 	templateCacheExists := cachingObs.TemplateCache != nil
 
 	// Use PVC only when no template cache exists and CacheModel is false
-	obs.ShouldUsePVC = !templateCacheExists && !service.Spec.CacheModel
+	cacheModel := service.Spec.CacheModel != nil && *service.Spec.CacheModel
+	obs.ShouldUsePVC = !templateCacheExists && !cacheModel
 
 	if result.TemporaryServicePVC != nil {
 		obs.PVCName = result.TemporaryServicePVC.Name
@@ -124,7 +126,7 @@ func planServicePVC(
 	service *aimv1alpha1.AIMService,
 	obs ServicePVCObservation,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
-// TODO unified config
+	// TODO unified config
 	storageClassName string,
 	headroomPercent int32,
 ) (client.Object, error) {
@@ -145,6 +147,8 @@ func planServicePVC(
 		sc = &storageClassName
 	}
 
+	serviceNameLabel, _ := utils.SanitizeLabelValue(service.Name)
+
 	return &corev1.PersistentVolumeClaim{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "v1",
@@ -156,7 +160,7 @@ func planServicePVC(
 			Labels: map[string]string{
 				"app.kubernetes.io/managed-by": "aim-service-controller",
 				"app.kubernetes.io/component":  "model-storage",
-				constants.LabelKeyServiceName:  utils.SanitizeLabelValue(service.Name),
+				constants.LabelKeyServiceName:  serviceNameLabel,
 				constants.LabelKeyCacheType:    constants.LabelValueCacheTypeTempService,
 			},
 		},

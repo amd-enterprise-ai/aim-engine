@@ -207,7 +207,7 @@ func requestsFromClusterTemplates(templates []aimv1alpha1.AIMClusterServiceTempl
 }
 
 func (r *AIMClusterServiceTemplateReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	//ctx := context.Background()
+	// ctx := context.Background()
 
 	r.reconciler = &aimservicetemplate.ClusterServiceTemplateReconciler{
 		Clientset: r.Clientset,
@@ -306,8 +306,8 @@ func (r *AIMClusterServiceTemplateReconciler) SetupWithManager(mgr ctrl.Manager)
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMClusterServiceTemplate{}).
 		Owns(&batchv1.Job{}).
-		//Watches(&aimv1alpha1.AIMClusterRuntimeConfig{}, clusterRuntimeConfigHandler).
-		//Watches(&aimv1alpha1.AIMRuntimeConfig{}, runtimeConfigHandler).
+		// Watches(&aimv1alpha1.AIMClusterRuntimeConfig{}, clusterRuntimeConfigHandler).
+		// Watches(&aimv1alpha1.AIMRuntimeConfig{}, runtimeConfigHandler).
 		Watches(&corev1.Node{}, nodeHandler, builder.WithPredicates(utils.NodeGPUChangePredicate())).
 		Named("aim-cluster-template").
 		Complete(r)

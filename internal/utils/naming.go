@@ -287,7 +287,6 @@ func SanitizeLabelValue(s string) (string, error) {
 
 	if sanitized == "" {
 		return "", fmt.Errorf("label value is empty after sanitization")
-
 	}
 
 	return sanitized, nil

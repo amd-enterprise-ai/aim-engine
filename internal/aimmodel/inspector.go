@@ -31,7 +31,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/authn/k8schain"
 	kauth "github.com/google/go-containerregistry/pkg/authn/kubernetes"
@@ -40,6 +39,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
+
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 )

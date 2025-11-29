@@ -28,12 +28,13 @@ import (
 	"context"
 	"fmt"
 
-	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
-	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
 // ============================================================================
@@ -89,13 +90,14 @@ func fetchServiceCachingResult(
 // ServiceCachingObservation contains the observed state of caching for a service.
 //
 // Note: FailedModelCachesToRetry should be handled in the reconciler BEFORE the plan phase:
-//   if cachingObs.ShouldRequestCacheRetry {
-//       for _, mc := range cachingObs.FailedModelCachesToRetry {
-//           if err := r.Delete(ctx, &mc); err != nil && !errors.IsNotFound(err) {
-//               return ctrl.Result{}, err
-//           }
-//       }
-//   }
+//
+//	if cachingObs.ShouldRequestCacheRetry {
+//	    for _, mc := range cachingObs.FailedModelCachesToRetry {
+//	        if err := r.Delete(ctx, &mc); err != nil && !errors.IsNotFound(err) {
+//	            return ctrl.Result{}, err
+//	        }
+//	    }
+//	}
 type ServiceCachingObservation struct {
 	TemplateCache            *aimv1alpha1.AIMTemplateCache
 	TemplateCacheReady       bool
@@ -335,3 +337,33 @@ func projectServiceCaching(
 
 	return false
 }
+
+//
+
+//// setupCacheCondition sets the cache condition based on whether caching is requested.
+//func setupCacheCondition(
+//	service *aimv1alpha1.AIMService,
+//	setCondition func(conditionType string, conditionStatus metav1.ConditionStatus, reason, message string),
+//) {
+//	if !service.Spec.CacheModel {
+//		setCondition(aimv1alpha1.AIMServiceConditionCacheReady, metav1.ConditionTrue, aimv1alpha1.AIMServiceReasonCacheWarm, "Caching not requested")
+//	} else {
+//		setCondition(aimv1alpha1.AIMServiceConditionCacheReady, metav1.ConditionFalse, aimv1alpha1.AIMServiceReasonWaitingForCache, "Waiting for cache warm-up")
+//	}
+//}
+//
+//// setupResolvedTemplate populates the resolved template reference in status.
+//func setupResolvedTemplate(obs *aimservicetemplate2.ServiceObservation, status *aimv1alpha1.AIMServiceStatus) {
+//	status.ResolvedTemplate = nil
+//	if obs != nil && obs.TemplateName != "" {
+//		status.ResolvedTemplate = &aimv1alpha1.AIMResolvedReference{
+//			Name:      obs.TemplateName,
+//			Namespace: obs.TemplateNamespace,
+//			Scope:     convertTemplateScope(obs.Scope),
+//			Kind:      "AIMServiceTemplate",
+//		}
+//	}
+//	// Don't set resolvedTemplate if no template was actually resolved
+//}
+//
+//

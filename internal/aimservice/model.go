@@ -28,13 +28,14 @@ import (
 	"context"
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -369,7 +370,7 @@ func projectServiceModel(
 	// Check for image parse errors (terminal error)
 	if obs.ImageParseErr != nil {
 		h.Failed("InvalidImageReference", obs.ImageParseErr.Error())
-		cm.MarkFalse("ModelResolved", "InvalidImageReference", obs.ImageParseErr.Error(), controllerutils.LevelError)
+		cm.MarkFalse("ModelResolved", "InvalidImageReference", obs.ImageParseErr.Error(), controllerutils.LevelWarning)
 		return true // Terminal error, stop reconciliation
 	}
 
@@ -408,10 +409,11 @@ func projectServiceModel(
 		Scope: aimv1alpha1.AIMResolutionScopeNamespace,
 		Kind:  "AIMModel",
 	}
-	if obs.Scope == aimv1alpha1.AIMResolutionScopeCluster {
+	switch obs.Scope {
+	case aimv1alpha1.AIMResolutionScopeCluster:
 		status.ResolvedModel.Scope = aimv1alpha1.AIMResolutionScopeCluster
 		status.ResolvedModel.Kind = "AIMClusterModel"
-	} else if obs.Scope == aimv1alpha1.AIMResolutionScopeNamespace {
+	case aimv1alpha1.AIMResolutionScopeNamespace:
 		status.ResolvedModel.Namespace = obs.ModelNamespace
 	}
 

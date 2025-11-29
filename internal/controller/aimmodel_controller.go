@@ -27,8 +27,9 @@ package controller
 import (
 	"context"
 
-	"github.com/amd-enterprise-ai/aim-engine/internal/aimmodel"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimmodel"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
