@@ -130,7 +130,7 @@ func (r *AIMServiceReconciler) findServicesByTemplate(
 
 	// Also find services doing auto-selection with the same image name
 	var servicesWithImage aimv1alpha1.AIMServiceList
-	imageListOpts := []client.ListOption{}
+	var imageListOpts []client.ListOption
 	if !isClusterScoped {
 		imageListOpts = append(imageListOpts, client.InNamespace(templateNamespace))
 	}
