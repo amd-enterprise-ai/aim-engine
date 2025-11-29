@@ -54,9 +54,9 @@ type ServiceTemplateFetchResult struct {
 func fetchServiceTemplateResult(ctx context.Context, c client.Client, service *aimv1alpha1.AIMService) (ServiceTemplateFetchResult, error) {
 	result := ServiceTemplateFetchResult{}
 
-	templateName := service.Spec.TemplateRef
+	templateName := service.Spec.TemplateName
 
-	// Only fetch if templateRef is specified but model is not
+	// Only fetch if templateName is specified but model is not
 	if templateName == "" {
 		return result, nil
 	}
@@ -138,18 +138,18 @@ func observeServiceTemplate(
 	// Check if service has overrides
 	hasOverrides := service.Spec.Overrides != nil
 
-	// Case 1: Service has explicit templateRef with model specified
-	if service.Spec.TemplateRef != "" && modelObs.ModelFound {
+	// Case 1: Service has explicit templateName with model specified
+	if service.Spec.TemplateName != "" && modelObs.ModelFound {
 		obs, err = observeExplicitTemplateWithModel(service, modelObs, modelFetchResult)
-	} else if service.Spec.TemplateRef != "" && !modelObs.ModelFound {
-		// Case 2: Service has only templateRef (no model) - use template fetch result
+	} else if service.Spec.TemplateName != "" && !modelObs.ModelFound {
+		// Case 2: Service has only templateName (no model) - use template fetch result
 		obs, err = observeExplicitTemplateOnly(service, templateFetchResult)
 	} else if modelObs.ModelFound {
-		// Case 3: No explicit templateRef - select from model's templates
+		// Case 3: No explicit templateName - select from model's templates
 		obs, err = observeAutoSelectTemplate(service, modelObs, modelFetchResult)
 	} else {
-		// No model and no templateRef - can't resolve template
-		obs.TemplateSelectionError = fmt.Errorf("cannot resolve template: no model or templateRef specified")
+		// No model and no templateName - can't resolve template
+		obs.TemplateSelectionError = fmt.Errorf("cannot resolve template: no model or templateName specified")
 		return obs, nil
 	}
 
@@ -189,7 +189,7 @@ func observeExplicitTemplateWithModel(
 	modelFetchResult ServiceModelFetchResult,
 ) (ServiceTemplateObservation, error) {
 	obs := ServiceTemplateObservation{}
-	obs.TemplateName = service.Spec.TemplateRef
+	obs.TemplateName = service.Spec.TemplateName
 
 	// Validate that this template belongs to the model
 	obs.TemplateMatchesModel = validateTemplateMatchesModel(obs.TemplateName, modelFetchResult)
@@ -211,7 +211,7 @@ func observeExplicitTemplateOnly(
 	templateFetchResult ServiceTemplateFetchResult,
 ) (ServiceTemplateObservation, error) {
 	obs := ServiceTemplateObservation{}
-	obs.TemplateName = service.Spec.TemplateRef
+	obs.TemplateName = service.Spec.TemplateName
 
 	// Use the template from fetch result
 	if templateFetchResult.NamespaceTemplate != nil {

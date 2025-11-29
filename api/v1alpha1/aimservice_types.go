@@ -95,9 +95,9 @@ type AIMServiceSpec struct {
 	// to specify a container image URI directly (which will auto-create a model if needed).
 	Model AIMServiceModel `json:"model"`
 
-	// TemplateRef is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.
+	// TemplateName is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.
 	// The template selects the runtime profile and GPU parameters.
-	TemplateRef string `json:"templateRef,omitempty"`
+	TemplateName string `json:"templateName,omitempty"`
 
 	// CacheModel requests that model sources be cached when starting the service
 	// if the template itself does not warm the cache.

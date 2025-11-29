@@ -734,9 +734,9 @@ spec:
                     minimum: 0
                     type: integer
                 type: object
-              templateRef:
+              templateName:
                 description: |-
-                  TemplateRef is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.
+                  TemplateName is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.
                   The template selects the runtime profile and GPU parameters.
                 type: string
             required:

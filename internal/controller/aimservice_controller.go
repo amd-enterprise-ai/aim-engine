@@ -154,8 +154,8 @@ func (r *AIMServiceReconciler) findServicesByTemplate(
 			continue
 		}
 
-		// Include if doing auto-selection (no templateRef) and matches resolved image
-		if strings.TrimSpace(svc.Spec.TemplateRef) == "" {
+		// Include if doing auto-selection (no templateName) and matches resolved image
+		if strings.TrimSpace(svc.Spec.TemplateName) == "" {
 			svcModelName := r.getServiceModelName(&svc)
 			if svcModelName != "" && svcModelName == strings.TrimSpace(modelName) {
 				serviceMap[key] = svc
@@ -457,7 +457,7 @@ func (r *AIMServiceReconciler) templateIndexFunc(obj client.Object) []string {
 	if !ok {
 		return nil
 	}
-	resolved := strings.TrimSpace(service.Spec.TemplateRef)
+	resolved := strings.TrimSpace(service.Spec.TemplateName)
 	if resolved == "" {
 		if service.Status.ResolvedTemplate != nil {
 			resolved = strings.TrimSpace(service.Status.ResolvedTemplate.Name)
