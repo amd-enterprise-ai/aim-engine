@@ -239,37 +239,35 @@ func (r *Reconciler) Plan(
 	}
 
 	// 3. Plan KServe InferenceService
-	// Need: service, kserveObs, modelImage, modelName, templateName, templateSpec, templateStatus, pvcObs, cachingObs
-	// if obs.Model.ModelSpec != nil && obs.Template.TemplateSpec != nil {
-	// 	kserveObj, err := planServiceInferenceService(
-	// 		service, obs.KServe,
-	// 		obs.Model.ModelSpec.Image, obs.Model.ModelName,
-	// 		templateName, obs.Template.TemplateSpec, obs.Template.TemplateStatus,
-	// 		obs.PVC, obs.Caching,
-	// 	)
-	// 	if err != nil {
-	// 		return controllerutils.PlanResult{}, err
-	// 	}
-	// 	if kserveObj != nil {
-	// 		objectsToApply = append(objectsToApply, kserveObj)
-	// 	}
-	// }
+	if obs.Model.ModelSpec != nil && obs.Template.TemplateSpec != nil {
+		kserveObj, err := planServiceInferenceService(
+			service, obs.KServe,
+			obs.Model.ModelSpec.Image, obs.Model.ModelName,
+			templateName, obs.Template.TemplateSpec, obs.Template.TemplateStatus,
+			obs.PVC, obs.Caching,
+		)
+		if err != nil {
+			return controllerutils.PlanResult{}, err
+		}
+		if kserveObj != nil {
+			objectsToApply = append(objectsToApply, kserveObj)
+		}
+	}
 
 	// 4. Plan HTTPRoute
-	// Need: service, httprouteObs, isvcName, modelName, templateName
-	// if obs.KServe.InferenceServiceExists {
-	// 	httprouteObj, err := planServiceHTTPRoute(
-	// 		service, obs.HTTPRoute,
-	// 		InferenceServiceNameForService(service),
-	// 		obs.Model.ModelName, templateName,
-	// 	)
-	// 	if err != nil {
-	// 		return controllerutils.PlanResult{}, err
-	// 	}
-	// 	if httprouteObj != nil {
-	// 		objectsToApply = append(objectsToApply, httprouteObj)
-	// 	}
-	// }
+	if obs.HTTPRoute.RoutingEnabled {
+		httprouteObj, err := planServiceHTTPRoute(
+			service, obs.HTTPRoute,
+			InferenceServiceNameForService(service),
+			obs.Model.ModelName, templateName,
+		)
+		if err != nil {
+			return controllerutils.PlanResult{}, err
+		}
+		if httprouteObj != nil {
+			objectsToApply = append(objectsToApply, httprouteObj)
+		}
+	}
 
 	return controllerutils.PlanResult{
 		Apply:  objectsToApply,
