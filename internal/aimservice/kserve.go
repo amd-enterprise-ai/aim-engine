@@ -162,7 +162,7 @@ func checkPodImagePullErrors(pods []corev1.Pod) *utils.ImagePullError {
 // PLAN
 // ============================================================================
 
-//nolint:unparam,unused // error return kept for API consistency, will be used when Plan phase is fully implemented
+//nolint:unparam // error return kept for API consistency with other plan functions
 func planServiceInferenceService(
 	service *aimv1alpha1.AIMService,
 	obs ServiceKServeObservation,
@@ -191,8 +191,6 @@ func planServiceInferenceService(
 }
 
 // buildInferenceService creates a KServe InferenceService for the AIMService inline (no separate ServingRuntime).
-//
-//nolint:unused // will be used when Plan phase is fully implemented
 func buildInferenceService(
 	service *aimv1alpha1.AIMService,
 	modelImage string,
@@ -331,8 +329,6 @@ func buildInferenceService(
 
 // buildResourceRequirements builds resource requirements for the container.
 // Service-level resources override template defaults.
-//
-//nolint:unused // will be used when Plan phase is fully implemented
 func buildResourceRequirements(service *aimv1alpha1.AIMService, templateStatus *aimv1alpha1.AIMServiceTemplateStatus) corev1.ResourceRequirements {
 	// Start with service resources if specified
 	if service.Spec.Resources != nil {
@@ -371,8 +367,6 @@ func buildResourceRequirements(service *aimv1alpha1.AIMService, templateStatus *
 }
 
 // addVolumeMounts adds PVC and model cache volume mounts to the InferenceService.
-//
-//nolint:unused // will be used when Plan phase is fully implemented
 func addVolumeMounts(isvc *servingv1beta1.InferenceService, pvcObs ServicePVCObservation, cachingObs ServiceCachingObservation) {
 	// Add service PVC mount if using PVC (not using cache)
 	if pvcObs.ShouldUsePVC && pvcObs.PVCReady && pvcObs.PVCName != "" {
@@ -386,8 +380,6 @@ func addVolumeMounts(isvc *servingv1beta1.InferenceService, pvcObs ServicePVCObs
 }
 
 // addModelCacheMount adds a model cache PVC volume mount to an InferenceService.
-//
-//nolint:unused // will be used when Plan phase is fully implemented
 func addModelCacheMount(isvc *servingv1beta1.InferenceService, modelCache aimv1alpha1.AIMModelCache, modelName string) {
 	// Sanitize volume name for Kubernetes (no dots allowed in volume names, only lowercase alphanumeric and '-')
 	volumeName := utils.MakeRFC1123Compliant(modelCache.Name)
@@ -420,8 +412,6 @@ func addModelCacheMount(isvc *servingv1beta1.InferenceService, modelCache aimv1a
 // Uses AMD GPU device ID labels to ensure the pod lands on compatible nodes.
 // Supports multiple device IDs per GPU model (e.g., MI300X has 74a1, 74a9, 74b5, 74bd).
 // Uses node affinity with RequiredDuringSchedulingIgnoredDuringExecution for strict placement.
-//
-//nolint:unused // will be used when Plan phase is fully implemented
 func addGPUNodeSelector(isvc *servingv1beta1.InferenceService, templateStatus *aimv1alpha1.AIMServiceTemplateStatus) {
 	// TODO determine if an error should be raised if GPU lookup fails
 
@@ -448,8 +438,6 @@ func addGPUNodeSelector(isvc *servingv1beta1.InferenceService, templateStatus *a
 // addGPUNodeAffinity adds node affinity rules to match any of the given AMD GPU device IDs.
 // Uses RequiredDuringSchedulingIgnoredDuringExecution for strict placement requirements.
 // Works for both single device IDs (e.g., MI300A) and multiple device IDs (e.g., MI300X).
-//
-//nolint:unused // will be used when Plan phase is fully implemented
 func addGPUNodeAffinity(isvc *servingv1beta1.InferenceService, deviceIDs []string) {
 	// Build match expression for device ID label
 	var matchExpressions []corev1.NodeSelectorRequirement
@@ -557,104 +545,3 @@ func projectServiceKServe(
 
 	return false
 }
-
-// Reference
-
-//// HandleInferenceServicePodImageError checks for image pull errors in InferenceService pods.
-//// Returns true if an image pull error was detected.
-//func HandleInferenceServicePodImageError(
-//	status *aimv1alpha1.AIMServiceStatus,
-//	obs *aimservicetemplate2.ServiceObservation,
-//	setCondition func(conditionType string, conditionStatus metav1.ConditionStatus, reason, message string),
-//) bool {
-//	if obs == nil || obs.InferenceServicePodImageError == nil {
-//		return false
-//	}
-//
-//	pullErr := obs.InferenceServicePodImageError
-//
-//	// Determine the condition reason based on error type
-//	var conditionReason string
-//	switch pullErr.Type {
-//	case aimmodel2.ImagePullErrorAuth:
-//		conditionReason = aimv1alpha1.AIMServiceReasonImagePullAuthFailure
-//	case aimmodel2.ImagePullErrorNotFound:
-//		conditionReason = aimv1alpha1.AIMServiceReasonImageNotFound
-//	default:
-//		conditionReason = aimv1alpha1.AIMServiceReasonImagePullBackOff
-//	}
-//
-//	// Format detailed message
-//	containerType := "Container"
-//	if pullErr.IsInitContainer {
-//		containerType = "Init container"
-//	}
-//	detailedMessage := fmt.Sprintf("InferenceService pod %s %q is stuck in %s: %s",
-//		containerType, pullErr.Container, pullErr.Reason, pullErr.Message)
-//
-//	status.Status = aimv1alpha1.AIMServiceStatusDegraded
-//	setCondition(aimv1alpha1.AIMServiceConditionFailure, metav1.ConditionTrue, conditionReason, detailedMessage)
-//	setCondition(aimv1alpha1.AIMServiceConditionRuntimeReady, metav1.ConditionFalse, conditionReason,
-//		"InferenceService cannot run due to image pull failure")
-//	setCondition(aimv1alpha1.AIMServiceConditionProgressing, metav1.ConditionFalse, conditionReason,
-//		"Service is degraded due to image pull failure")
-//	setCondition(aimv1alpha1.AIMServiceConditionReady, metav1.ConditionFalse, conditionReason,
-//		"Service cannot be ready due to image pull failure")
-//	return true
-//}
-//
-//// EvaluateInferenceServiceStatus checks InferenceService and routing readiness.
-//// Updates status conditions based on the InferenceService and routing state.
-//func EvaluateInferenceServiceStatus(
-//	status *aimv1alpha1.AIMServiceStatus,
-//	obs *aimservicetemplate2.ServiceObservation,
-//	inferenceService *servingv1beta1.InferenceService,
-//	httpRoute *gatewayapiv1.HTTPRoute,
-//	routingEnabled bool,
-//	routingReady bool,
-//	setCondition func(conditionType string, conditionStatus metav1.ConditionStatus, reason, message string),
-//) {
-//	if inferenceService == nil {
-//		if status.Status != aimv1alpha1.AIMServiceStatusFailed {
-//			status.Status = aimv1alpha1.AIMServiceStatusStarting
-//		}
-//		setCondition(aimv1alpha1.AIMServiceConditionRuntimeReady, metav1.ConditionFalse, aimv1alpha1.AIMServiceReasonCreatingRuntime,
-//			"Waiting for InferenceService creation")
-//		setCondition(aimv1alpha1.AIMServiceConditionProgressing, metav1.ConditionTrue, aimv1alpha1.AIMServiceReasonCreatingRuntime,
-//			"Reconciling InferenceService resources")
-//		setCondition(aimv1alpha1.AIMServiceConditionReady, metav1.ConditionFalse, aimv1alpha1.AIMServiceReasonCreatingRuntime,
-//			"InferenceService not yet created")
-//		return
-//	}
-//
-//	if inferenceService.Status.IsReady() && routingReady {
-//		status.Status = aimv1alpha1.AIMServiceStatusRunning
-//		setCondition(aimv1alpha1.AIMServiceConditionRuntimeReady, metav1.ConditionTrue, aimv1alpha1.AIMServiceReasonRuntimeReady,
-//			"InferenceService is ready")
-//		setCondition(aimv1alpha1.AIMServiceConditionProgressing, metav1.ConditionFalse, aimv1alpha1.AIMServiceReasonRuntimeReady,
-//			"Service is running")
-//		setCondition(aimv1alpha1.AIMServiceConditionReady, metav1.ConditionTrue, aimv1alpha1.AIMServiceReasonRuntimeReady,
-//			"AIMService is ready to serve traffic")
-//		return
-//	}
-//
-//	if status.Status != aimv1alpha1.AIMServiceStatusFailed && status.Status != aimv1alpha1.AIMServiceStatusDegraded {
-//		status.Status = aimv1alpha1.AIMServiceStatusStarting
-//	}
-//	reason := aimv1alpha1.AIMServiceReasonCreatingRuntime
-//	message := "Waiting for InferenceService to become ready"
-//	if inferenceService.Status.ModelStatus.LastFailureInfo != nil {
-//		reason = aimv1alpha1.AIMServiceReasonRuntimeFailed
-//		message = inferenceService.Status.ModelStatus.LastFailureInfo.Message
-//		status.Status = aimv1alpha1.AIMServiceStatusDegraded
-//		setCondition(aimv1alpha1.AIMServiceConditionFailure, metav1.ConditionTrue, reason, message)
-//	}
-//	if routingEnabled && !routingReady && reason == aimv1alpha1.AIMServiceReasonCreatingRuntime {
-//		reason = aimv1alpha1.AIMServiceReasonConfiguringRoute
-//		message = "Waiting for HTTPRoute to become ready"
-//	}
-//
-//	setCondition(aimv1alpha1.AIMServiceConditionRuntimeReady, metav1.ConditionFalse, reason, message)
-//	setCondition(aimv1alpha1.AIMServiceConditionProgressing, metav1.ConditionTrue, reason, "InferenceService reconciliation in progress")
-//	setCondition(aimv1alpha1.AIMServiceConditionReady, metav1.ConditionFalse, reason, message)
-//}
