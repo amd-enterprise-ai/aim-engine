@@ -1,31 +1,34 @@
-# Build the manager binary
-FROM golang:1.24 AS builder
-ARG TARGETOS
-ARG TARGETARCH
-
+# Base: Go env + cached deps, used by builder
+FROM golang:1.25.4 AS base
 WORKDIR /workspace
-# Copy the Go Modules manifests
-COPY go.mod go.mod
-COPY go.sum go.sum
-# cache deps before building and copying source so that we don't need to re-download as much
-# and so that source changes don't invalidate our downloaded layer
+
+COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy the Go source (relies on .dockerignore to filter)
-COPY . .
-
-# Build
-# the GOARCH has no default value to allow the binary to be built according to the host where the command
-# was called. For example, if we call make docker-build in a local env which has the Apple Silicon M1 SO
-# the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
-# by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/main.go
-
-# Use distroless as minimal base image to package the manager binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static:nonroot
-WORKDIR /
-COPY --from=builder /workspace/manager .
+# Optional: non-root for dev/builder stages
+RUN useradd -r -u 65532 -m nonroot && \
+    chown -R nonroot:nonroot /workspace
 USER 65532:65532
 
+# Single builder stage: compile the binary
+FROM base AS builder
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
+# Copy all source (rely on .dockerignore to keep context small)
+COPY --chown=nonroot:nonroot . .
+
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -a -o manager ./cmd/main.go
+
+# Dev image for Tilt: full Go env + source + binary
+FROM builder AS dev
+USER 65532:65532
+ENTRYPOINT ["/workspace/manager"]
+
+# Production image: minimal distroless + binary only
+FROM gcr.io/distroless/static:nonroot AS prod
+WORKDIR /
+COPY --from=builder /workspace/manager /manager
+USER 65532:65532
 ENTRYPOINT ["/manager"]
