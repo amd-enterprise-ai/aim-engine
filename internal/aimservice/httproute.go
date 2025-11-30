@@ -57,7 +57,7 @@ var (
 	singleQuoteBracketPattern = regexp.MustCompile(`\['([^']*)'\]`)
 )
 
-func GetRouteNameForService(service *aimv1alpha1.AIMService) string {
+func getRouteNameForService(service *aimv1alpha1.AIMService) string {
 	return service.Name
 }
 
@@ -65,18 +65,18 @@ func GetRouteNameForService(service *aimv1alpha1.AIMService) string {
 // FETCH
 // ============================================================================
 
-type ServiceHTTPRouteFetchResult struct {
-	Route *gatewayapiv1.HTTPRoute
+type serviceHTTPRouteFetchResult struct {
+	route *gatewayapiv1.HTTPRoute
 }
 
-func fetchServiceHTTPRouteResult(ctx context.Context, c client.Client, service *aimv1alpha1.AIMService) (ServiceHTTPRouteFetchResult, error) {
-	result := ServiceHTTPRouteFetchResult{}
+func fetchServiceHTTPRouteResult(ctx context.Context, c client.Client, service *aimv1alpha1.AIMService) (serviceHTTPRouteFetchResult, error) {
+	result := serviceHTTPRouteFetchResult{}
 	route := &gatewayapiv1.HTTPRoute{}
-	key := client.ObjectKey{Name: GetRouteNameForService(service), Namespace: service.Namespace}
+	key := client.ObjectKey{Name: getRouteNameForService(service), Namespace: service.Namespace}
 	if err := c.Get(ctx, key, route); err != nil && !errors.IsNotFound(err) {
 		return result, fmt.Errorf("failed to fetch HTTPRoute: %w", err)
 	} else if err == nil {
-		result.Route = route
+		result.route = route
 	}
 	return result, nil
 }
@@ -85,62 +85,62 @@ func fetchServiceHTTPRouteResult(ctx context.Context, c client.Client, service *
 // OBSERVE
 // ============================================================================
 
-type ServiceHTTPRouteObservation struct {
-	RoutingEnabled         bool
-	RouteExists            bool
-	RouteReady             bool
-	RouteAcceptedByGateway bool
-	RouteStatusReason      string
-	RouteStatusMessage     string
-	NormalizedRoutePath    string
-	RouteTimeout           *metav1.Duration
-	GatewayRef             *gatewayapiv1.ParentReference
-	Annotations            map[string]string
-	PathTemplateErr        error
-	ShouldCreateRoute      bool
+type serviceHTTPRouteObservation struct {
+	routingEnabled         bool
+	routeExists            bool
+	routeReady             bool
+	routeAcceptedByGateway bool
+	routeStatusReason      string
+	routeStatusMessage     string
+	normalizedRoutePath    string
+	routeTimeout           *metav1.Duration
+	gatewayRef             *gatewayapiv1.ParentReference
+	annotations            map[string]string
+	pathTemplateErr        error
+	shouldCreateRoute      bool
 }
 
 func observeServiceHTTPRoute(
-	result ServiceHTTPRouteFetchResult,
+	result serviceHTTPRouteFetchResult,
 	service *aimv1alpha1.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
-) ServiceHTTPRouteObservation {
-	obs := ServiceHTTPRouteObservation{}
+) serviceHTTPRouteObservation {
+	obs := serviceHTTPRouteObservation{}
 
 	// Resolve routing configuration (service overrides runtime config)
 	routingConfig := resolveRoutingConfig(service, runtimeConfig)
-	obs.RoutingEnabled = routingConfig.Enabled
-	obs.GatewayRef = routingConfig.GatewayRef
-	obs.Annotations = routingConfig.Annotations
+	obs.routingEnabled = routingConfig.enabled
+	obs.gatewayRef = routingConfig.gatewayRef
+	obs.annotations = routingConfig.annotations
 
-	if !obs.RoutingEnabled {
+	if !obs.routingEnabled {
 		// Routing not enabled, nothing to do
 		return obs
 	}
 
 	// Compute route path from path template
-	path, err := resolveRoutePath(service, routingConfig.PathTemplate)
+	path, err := resolveRoutePath(service, routingConfig.pathTemplate)
 	if err != nil {
-		obs.PathTemplateErr = err
+		obs.pathTemplateErr = err
 		return obs
 	}
-	obs.NormalizedRoutePath = path
+	obs.normalizedRoutePath = path
 
 	// Resolve route timeout
-	obs.RouteTimeout = resolveRouteTimeout(service, runtimeConfig)
+	obs.routeTimeout = resolveRouteTimeout(service, runtimeConfig)
 
 	// Check if route exists and evaluate its status
-	if result.Route != nil {
-		obs.RouteExists = true
+	if result.route != nil {
+		obs.routeExists = true
 
 		// Evaluate HTTPRoute status by checking Gateway API conditions
-		route := result.Route
+		route := result.route
 		if len(route.Status.Parents) == 0 {
 			// No parent gateway status yet
-			obs.RouteReady = false
-			obs.RouteAcceptedByGateway = false
-			obs.RouteStatusReason = aimv1alpha1.AIMServiceReasonConfiguringRoute
-			obs.RouteStatusMessage = "HTTPRoute has no parent status"
+			obs.routeReady = false
+			obs.routeAcceptedByGateway = false
+			obs.routeStatusReason = aimv1alpha1.AIMServiceReasonConfiguringRoute
+			obs.routeStatusMessage = "HTTPRoute has no parent status"
 		} else {
 			// Check all parent gateways - route is ready only if accepted by all
 			allAccepted := true
@@ -156,34 +156,34 @@ func observeServiceHTTPRoute(
 
 				if acceptedCond == nil {
 					allAccepted = false
-					obs.RouteStatusReason = aimv1alpha1.AIMServiceReasonConfiguringRoute
-					obs.RouteStatusMessage = "HTTPRoute Accepted condition not found"
+					obs.routeStatusReason = aimv1alpha1.AIMServiceReasonConfiguringRoute
+					obs.routeStatusMessage = "HTTPRoute Accepted condition not found"
 					break
 				}
 
 				if acceptedCond.Status != metav1.ConditionTrue {
 					allAccepted = false
-					obs.RouteStatusReason = acceptedCond.Reason
-					if obs.RouteStatusReason == "" {
-						obs.RouteStatusReason = aimv1alpha1.AIMServiceReasonRouteFailed
+					obs.routeStatusReason = acceptedCond.Reason
+					if obs.routeStatusReason == "" {
+						obs.routeStatusReason = aimv1alpha1.AIMServiceReasonRouteFailed
 					}
-					obs.RouteStatusMessage = acceptedCond.Message
-					if obs.RouteStatusMessage == "" {
-						obs.RouteStatusMessage = "HTTPRoute not accepted by gateway"
+					obs.routeStatusMessage = acceptedCond.Message
+					if obs.routeStatusMessage == "" {
+						obs.routeStatusMessage = "HTTPRoute not accepted by gateway"
 					}
 					break
 				}
 			}
 
 			if allAccepted {
-				obs.RouteReady = true
-				obs.RouteAcceptedByGateway = true
-				obs.RouteStatusReason = aimv1alpha1.AIMServiceReasonRouteReady
-				obs.RouteStatusMessage = "HTTPRoute is ready"
+				obs.routeReady = true
+				obs.routeAcceptedByGateway = true
+				obs.routeStatusReason = aimv1alpha1.AIMServiceReasonRouteReady
+				obs.routeStatusMessage = "HTTPRoute is ready"
 			}
 		}
 	} else {
-		obs.ShouldCreateRoute = true
+		obs.shouldCreateRoute = true
 	}
 
 	return obs
@@ -196,12 +196,12 @@ func observeServiceHTTPRoute(
 //nolint:unparam // error return kept for API consistency with other plan functions
 func planServiceHTTPRoute(
 	service *aimv1alpha1.AIMService,
-	obs ServiceHTTPRouteObservation,
+	obs serviceHTTPRouteObservation,
 	inferenceServiceName string,
 	modelName string,
 	templateName string,
 ) (client.Object, error) {
-	if !obs.RoutingEnabled || !obs.ShouldCreateRoute {
+	if !obs.routingEnabled || !obs.shouldCreateRoute {
 		return nil, nil
 	}
 
@@ -211,14 +211,14 @@ func planServiceHTTPRoute(
 // buildHTTPRoute creates a Gateway API HTTPRoute for the AIMService
 func buildHTTPRoute(
 	service *aimv1alpha1.AIMService,
-	obs ServiceHTTPRouteObservation,
+	obs serviceHTTPRouteObservation,
 	inferenceServiceName string,
 	modelName string,
 	templateName string,
 ) *gatewayapiv1.HTTPRoute {
 	annotations := make(map[string]string)
-	if len(obs.Annotations) > 0 {
-		for k, v := range obs.Annotations {
+	if len(obs.annotations) > 0 {
+		for k, v := range obs.annotations {
 			annotations[k] = v
 		}
 	}
@@ -232,7 +232,7 @@ func buildHTTPRoute(
 			Kind:       "HTTPRoute",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      GetRouteNameForService(service),
+			Name:      getRouteNameForService(service),
 			Namespace: service.Namespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/name":       constants.LabelValueServiceName,
@@ -248,8 +248,8 @@ func buildHTTPRoute(
 	}
 
 	// Set parent gateway reference
-	if obs.GatewayRef != nil {
-		parent := obs.GatewayRef.DeepCopy()
+	if obs.gatewayRef != nil {
+		parent := obs.gatewayRef.DeepCopy()
 		if parent.Group == nil || *parent.Group == "" {
 			parent.Group = ptr.To(gatewayapiv1.Group(gatewayapiv1.GroupVersion.Group))
 		}
@@ -264,11 +264,11 @@ func buildHTTPRoute(
 	}
 
 	// Path is already normalized from observation phase
-	pathPrefix := obs.NormalizedRoutePath
+	pathPrefix := obs.normalizedRoutePath
 
 	port := gatewayapiv1.PortNumber(kserveconstants.CommonDefaultHttpPort)
 
-	// Backend points to the InferenceService predictor service
+	// Backend points to the inferenceService predictor service
 	backend := gatewayapiv1.HTTPBackendRef{
 		BackendRef: gatewayapiv1.BackendRef{
 			BackendObjectReference: gatewayapiv1.BackendObjectReference{
@@ -304,8 +304,8 @@ func buildHTTPRoute(
 	}
 
 	// Set request timeout if configured
-	if obs.RouteTimeout != nil {
-		timeout := gatewayapiv1.Duration(rune(obs.RouteTimeout.Duration))
+	if obs.routeTimeout != nil {
+		timeout := gatewayapiv1.Duration(rune(obs.routeTimeout.Duration))
 		rule.Timeouts = &gatewayapiv1.HTTPRouteTimeouts{
 			Request: &timeout,
 		}
@@ -324,50 +324,50 @@ func projectServiceHTTPRoute(
 	status *aimv1alpha1.AIMServiceStatus,
 	cm *controllerutils.ConditionManager,
 	h *controllerutils.StatusHelper,
-	obs ServiceHTTPRouteObservation,
+	obs serviceHTTPRouteObservation,
 ) bool {
-	if !obs.RoutingEnabled {
+	if !obs.routingEnabled {
 		// Routing not enabled, nothing to project
 		return false
 	}
 
-	if obs.PathTemplateErr != nil {
-		h.Degraded(aimv1alpha1.AIMServiceReasonPathTemplateInvalid, obs.PathTemplateErr.Error())
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRoutingReady, aimv1alpha1.AIMServiceReasonPathTemplateInvalid, obs.PathTemplateErr.Error(), controllerutils.LevelWarning)
+	if obs.pathTemplateErr != nil {
+		h.Degraded(aimv1alpha1.AIMServiceReasonPathTemplateInvalid, obs.pathTemplateErr.Error())
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRoutingReady, aimv1alpha1.AIMServiceReasonPathTemplateInvalid, obs.pathTemplateErr.Error(), controllerutils.LevelWarning)
 		return true // Fatal error
 	}
 
-	if obs.ShouldCreateRoute {
+	if obs.shouldCreateRoute {
 		h.Progressing(aimv1alpha1.AIMServiceReasonConfiguringRoute, "Creating HTTPRoute")
 		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRoutingReady, aimv1alpha1.AIMServiceReasonConfiguringRoute, "HTTPRoute being created", controllerutils.LevelNormal)
 		return false
 	}
 
-	if obs.RouteExists {
+	if obs.routeExists {
 		// Set routing status path
 		if status.Routing == nil {
 			status.Routing = &aimv1alpha1.AIMServiceRoutingStatus{}
 		}
-		status.Routing.Path = obs.NormalizedRoutePath
+		status.Routing.Path = obs.normalizedRoutePath
 
 		// Check if route is ready (accepted by gateway)
-		if obs.RouteReady {
+		if obs.routeReady {
 			cm.MarkTrue(aimv1alpha1.AIMServiceConditionRoutingReady, aimv1alpha1.AIMServiceReasonRouteReady, "HTTPRoute is ready", controllerutils.LevelNormal)
 		} else {
 			// Route exists but not ready yet
 			level := controllerutils.LevelNormal
-			if obs.RouteStatusReason == aimv1alpha1.AIMServiceReasonRouteFailed {
+			if obs.routeStatusReason == aimv1alpha1.AIMServiceReasonRouteFailed {
 				// Gateway rejected the route - this is a degraded state
-				h.Degraded(obs.RouteStatusReason, obs.RouteStatusMessage)
+				h.Degraded(obs.routeStatusReason, obs.routeStatusMessage)
 				level = controllerutils.LevelWarning
 			} else {
 				// Route is still being configured
-				h.Progressing(obs.RouteStatusReason, obs.RouteStatusMessage)
+				h.Progressing(obs.routeStatusReason, obs.routeStatusMessage)
 			}
-			cm.MarkFalse(aimv1alpha1.AIMServiceConditionRoutingReady, obs.RouteStatusReason, obs.RouteStatusMessage, level)
+			cm.MarkFalse(aimv1alpha1.AIMServiceConditionRoutingReady, obs.routeStatusReason, obs.routeStatusMessage, level)
 
 			// Degraded state is non-fatal - gateway might accept it later
-			return obs.RouteStatusReason == aimv1alpha1.AIMServiceReasonRouteFailed
+			return obs.routeStatusReason == aimv1alpha1.AIMServiceReasonRouteFailed
 		}
 	}
 
@@ -379,10 +379,10 @@ func projectServiceHTTPRoute(
 // ============================================================================
 
 type resolvedRoutingConfig struct {
-	Enabled      bool
-	GatewayRef   *gatewayapiv1.ParentReference
-	Annotations  map[string]string
-	PathTemplate string
+	enabled      bool
+	gatewayRef   *gatewayapiv1.ParentReference
+	annotations  map[string]string
+	pathTemplate string
 }
 
 // resolveRoutingConfig gets routing config from runtime config
@@ -397,13 +397,13 @@ func resolveRoutingConfig(_ *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha1.
 	// Use runtime config for routing settings
 	if runtimeRouting != nil {
 		if runtimeRouting.Enabled != nil {
-			resolved.Enabled = *runtimeRouting.Enabled
+			resolved.enabled = *runtimeRouting.Enabled
 		}
 		if runtimeRouting.GatewayRef != nil {
-			resolved.GatewayRef = runtimeRouting.GatewayRef.DeepCopy()
+			resolved.gatewayRef = runtimeRouting.GatewayRef.DeepCopy()
 		}
 		if runtimeRouting.PathTemplate != nil {
-			resolved.PathTemplate = *runtimeRouting.PathTemplate
+			resolved.pathTemplate = *runtimeRouting.PathTemplate
 		}
 	}
 

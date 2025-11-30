@@ -82,8 +82,8 @@ package aimservicetemplate
 //	ResolvedRuntimeConfig         *aimv1alpha1.AIMResolvedReference
 //	ResolvedImage                 *aimv1alpha1.AIMResolvedReference
 //	RoutePath                     string
-//	RouteTimeout                  *string
-//	PathTemplateErr               error
+//	routeTimeout                  *string
+//	pathTemplateErr               error
 //	RuntimeConfigErr              error
 //	ImageErr                      error
 //	ModelResolutionErr            error
@@ -99,7 +99,7 @@ package aimservicetemplate
 //	ImageReady                    bool
 //	ImageReadyReason              string
 //	ImageReadyMessage             string
-//	InferenceServicePodImageError *aimtemplate.ImagePullError // Categorized image pull error from InferenceService pods
+//	InferenceServicePodImageError *aimtemplate.ImagePullError // Categorized image pull error from inferenceService pods
 //	TemplateCache                 *aimv1alpha1.AIMTemplateCache
 //	ModelCaches                   *aimv1alpha1.AIMModelCacheList
 //}
@@ -445,7 +445,7 @@ package aimservicetemplate
 //		}
 //		for i := range templateList.Items {
 //			tpl := &templateList.Items[i]
-//			if tpl.Spec.ModelName != imageName {
+//			if tpl.Spec.modelName != imageName {
 //				continue
 //			}
 //			if aimtemplate.IsDerivedTemplate(tpl.GetLabels()) {
@@ -467,7 +467,7 @@ package aimservicetemplate
 //	}
 //	for i := range clusterTemplateList.Items {
 //		tpl := &clusterTemplateList.Items[i]
-//		if tpl.Spec.ModelName != imageName {
+//		if tpl.Spec.modelName != imageName {
 //			continue
 //		}
 //		if aimtemplate.IsDerivedTemplate(tpl.GetLabels()) {
@@ -549,12 +549,12 @@ package aimservicetemplate
 //		}
 //	}
 //	obs.TemplateNamespace = template.Namespace
-//	if image, imageErr := aimmodel.LookupImageForNamespaceTemplate(ctx, k8sClient, template.Namespace, template.Spec.ModelName); imageErr == nil {
+//	if image, imageErr := aimmodel.LookupImageForNamespaceTemplate(ctx, k8sClient, template.Namespace, template.Spec.modelName); imageErr == nil {
 //		obs.ImageResources = image.Resources.DeepCopy()
 //	} else if errors.Is(imageErr, aimmodel.ErrImageNotFound) {
-//		obs.ImageErr = fmt.Errorf("AIMModel %q not found in namespace %q", template.Spec.ModelName, template.Namespace)
+//		obs.ImageErr = fmt.Errorf("AIMModel %q not found in namespace %q", template.Spec.modelName, template.Namespace)
 //	} else {
-//		return fmt.Errorf("failed to lookup AIMModel %q in namespace %q: %w", template.Spec.ModelName, template.Namespace, imageErr)
+//		return fmt.Errorf("failed to lookup AIMModel %q in namespace %q: %w", template.Spec.modelName, template.Namespace, imageErr)
 //	}
 //	return nil
 //}
@@ -592,12 +592,12 @@ package aimservicetemplate
 //	} else {
 //		return fmt.Errorf("failed to resolve AIMRuntimeConfig %q in namespace %q: %w", runtimeConfigName, service.Namespace, resolveErr)
 //	}
-//	if image, imageErr := aimmodel.LookupImageForClusterTemplate(ctx, k8sClient, template.Spec.ModelName); imageErr == nil {
+//	if image, imageErr := aimmodel.LookupImageForClusterTemplate(ctx, k8sClient, template.Spec.modelName); imageErr == nil {
 //		obs.ImageResources = image.Resources.DeepCopy()
 //	} else if errors.Is(imageErr, aimmodel.ErrImageNotFound) {
-//		obs.ImageErr = fmt.Errorf("AIMClusterModel %q not found", template.Spec.ModelName)
+//		obs.ImageErr = fmt.Errorf("AIMClusterModel %q not found", template.Spec.modelName)
 //	} else {
-//		return fmt.Errorf("failed to lookup AIMClusterModel %q: %w", template.Spec.ModelName, imageErr)
+//		return fmt.Errorf("failed to lookup AIMClusterModel %q: %w", template.Spec.modelName, imageErr)
 //	}
 //	return nil
 //}
@@ -699,7 +699,7 @@ package aimservicetemplate
 //	}
 //
 //	// Lookup image resources based on base scope
-//	if err := lookupImageResourcesForScope(ctx, k8sClient, service.Namespace, baseSpec.ModelName, baseScope, obs); err != nil {
+//	if err := lookupImageResourcesForScope(ctx, k8sClient, service.Namespace, baseSpec.modelName, baseScope, obs); err != nil {
 //		return err
 //	}
 //
@@ -729,7 +729,7 @@ package aimservicetemplate
 //		}
 //		for i := range templateList.Items {
 //			template := &templateList.Items[i]
-//			if template.Spec.ModelName != expectedSpec.ModelName {
+//			if template.Spec.modelName != expectedSpec.modelName {
 //				continue
 //			}
 //			if !apiequality.Semantic.DeepEqual(template.Spec, expectedSpec) {
@@ -750,7 +750,7 @@ package aimservicetemplate
 //	}
 //	for i := range clusterTemplateList.Items {
 //		template := &clusterTemplateList.Items[i]
-//		if template.Spec.ModelName != expectedSpec.ModelName {
+//		if template.Spec.modelName != expectedSpec.modelName {
 //			continue
 //		}
 //		if !apiequality.Semantic.DeepEqual(template.Spec.AIMServiceTemplateSpecCommon, expectedSpec.AIMServiceTemplateSpecCommon) {

@@ -35,15 +35,15 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
-type ModelMetadataFetchResult struct {
+type modelMetadataFetchResult struct {
 	ImageMetadata *aimv1alpha1.ImageMetadata
 	Error         error
 }
 
-func FetchModelMetadataResult(ctx context.Context, clientset kubernetes.Interface, modelSpec aimv1alpha1.AIMModelSpec, secretNamespace string) ModelMetadataFetchResult {
-	result := ModelMetadataFetchResult{}
+func fetchModelMetadataResult(ctx context.Context, clientset kubernetes.Interface, modelSpec aimv1alpha1.AIMModelSpec, secretNamespace string) modelMetadataFetchResult {
+	result := modelMetadataFetchResult{}
 
-	metadata, metadataErr := InspectImage(
+	metadata, metadataErr := inspectImage(
 		ctx,
 		modelSpec.Image,
 		modelSpec.ImagePullSecrets,
@@ -59,22 +59,22 @@ func FetchModelMetadataResult(ctx context.Context, clientset kubernetes.Interfac
 	return result
 }
 
-type ModelMetadataObservation struct {
+type modelMetadataObservation struct {
 	ExtractedMetadata *aimv1alpha1.ImageMetadata
 	Extracted         bool
 	Error             error
 
-	FormatError   *MetadataFormatError
+	FormatError   *metadataFormatError
 	RegistryError *utils.ImageRegistryError
 }
 
-// ObserveModelMetadata builds a metadata observation from fetched data.
+// observeModelMetadata builds a metadata observation from fetched data.
 // No client access - all fetching should happen in the Fetch phase.
-func ObserveModelMetadata(
+func observeModelMetadata(
 	status *aimv1alpha1.AIMModelStatus,
-	result *ModelMetadataFetchResult,
-) ModelMetadataObservation {
-	obs := ModelMetadataObservation{}
+	result *modelMetadataFetchResult,
+) modelMetadataObservation {
+	obs := modelMetadataObservation{}
 	if result == nil {
 		// Model metadata was not extracted or attempted
 		return obs
@@ -98,7 +98,7 @@ func ObserveModelMetadata(
 	if result.Error != nil {
 		obs.Error = result.Error
 
-		var fmtErr *MetadataFormatError
+		var fmtErr *metadataFormatError
 		var regErr *utils.ImageRegistryError
 
 		switch {
@@ -119,7 +119,7 @@ func ObserveModelMetadata(
 func projectModelMetadata(
 	cm *controllerutils.ConditionManager,
 	h *controllerutils.StatusHelper,
-	observation ModelMetadataObservation,
+	observation modelMetadataObservation,
 ) bool {
 	if observation.Error != nil {
 
@@ -234,8 +234,8 @@ func ShouldRequeueForMetadataRetry(status *aimv1alpha1.AIMModelStatus) bool {
 // UTILS
 // ==============
 
-// ShouldExtractMetadata checks if metadata extraction should be attempted.
+// shouldExtractMetadata checks if metadata extraction should be attempted.
 // Returns false if metadata already exists in status (cached).
-func ShouldExtractMetadata(status *aimv1alpha1.AIMModelStatus) bool {
+func shouldExtractMetadata(status *aimv1alpha1.AIMModelStatus) bool {
 	return status == nil || status.ImageMetadata == nil
 }

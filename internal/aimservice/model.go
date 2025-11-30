@@ -55,19 +55,19 @@ const (
 	//       })
 	ClusterModelImageIndexKey = "spec.image"
 
-	// ServiceTemplateModelNameIndexKey is the field index key for AIMServiceTemplate.Spec.ModelName
+	// ServiceTemplateModelNameIndexKey is the field index key for AIMServiceTemplate.Spec.modelName
 	// TODO: Register this indexer in the controller setup:
 	//   mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMServiceTemplate{}, ServiceTemplateModelNameIndexKey,
 	//       func(obj client.Object) []string {
-	//           return []string{obj.(*aimv1alpha1.AIMServiceTemplate).Spec.ModelName}
+	//           return []string{obj.(*aimv1alpha1.AIMServiceTemplate).Spec.modelName}
 	//       })
 	ServiceTemplateModelNameIndexKey = "spec.modelName"
 
-	// ClusterServiceTemplateModelNameIndexKey is the field index key for AIMClusterServiceTemplate.Spec.ModelName
+	// ClusterServiceTemplateModelNameIndexKey is the field index key for AIMClusterServiceTemplate.Spec.modelName
 	// TODO: Register this indexer in the controller setup:
 	//   mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMClusterServiceTemplate{}, ClusterServiceTemplateModelNameIndexKey,
 	//       func(obj client.Object) []string {
-	//           return []string{obj.(*aimv1alpha1.AIMClusterServiceTemplate).Spec.ModelName}
+	//           return []string{obj.(*aimv1alpha1.AIMClusterServiceTemplate).Spec.modelName}
 	//       })
 	ClusterServiceTemplateModelNameIndexKey = "spec.modelName"
 )
@@ -76,22 +76,22 @@ const (
 // FETCH
 // ============================================================================
 
-type ServiceModelFetchResult struct {
+type serviceModelFetchResult struct {
 	// Resolved model (either from Ref or Image lookup)
-	NamespaceModel *aimv1alpha1.AIMModel
-	ClusterModel   *aimv1alpha1.AIMClusterModel
+	namespaceModel *aimv1alpha1.AIMModel
+	clusterModel   *aimv1alpha1.AIMClusterModel
 
 	// For Image-based resolution: track if multiple models found (error case)
-	MultipleModelsFound bool
-	MultipleModelsError error
+	multipleModelsFound bool
+	multipleModelsError error
 
 	// Templates for the resolved model
-	NamespaceTemplatesForModel []aimv1alpha1.AIMServiceTemplate
-	ClusterTemplatesForModel   []aimv1alpha1.AIMClusterServiceTemplate
+	namespaceTemplatesForModel []aimv1alpha1.AIMServiceTemplate
+	clusterTemplatesForModel   []aimv1alpha1.AIMClusterServiceTemplate
 }
 
-func fetchServiceModelResult(ctx context.Context, c client.Client, service *aimv1alpha1.AIMService) (ServiceModelFetchResult, error) {
-	result := ServiceModelFetchResult{}
+func fetchServiceModelResult(ctx context.Context, c client.Client, service *aimv1alpha1.AIMService) (serviceModelFetchResult, error) {
+	result := serviceModelFetchResult{}
 
 	// Case 1: Model specified by Ref
 	if modelName := service.Spec.Model.Ref; modelName != nil && *modelName != "" {
@@ -108,15 +108,15 @@ func fetchServiceModelResult(ctx context.Context, c client.Client, service *aimv
 	return result, nil
 }
 
-func fetchServiceModelResultForModelRef(ctx context.Context, c client.Client, modelName string, namespace string) (ServiceModelFetchResult, error) {
-	result := ServiceModelFetchResult{}
+func fetchServiceModelResultForModelRef(ctx context.Context, c client.Client, modelName string, namespace string) (serviceModelFetchResult, error) {
+	result := serviceModelFetchResult{}
 
 	// Try namespace-scoped model first
 	model := &aimv1alpha1.AIMModel{}
 	if err := c.Get(ctx, client.ObjectKey{Name: modelName, Namespace: namespace}, model); err != nil && !errors.IsNotFound(err) {
 		return result, fmt.Errorf("failed to fetch namespace model: %w", err)
 	} else if err == nil {
-		result.NamespaceModel = model
+		result.namespaceModel = model
 		// Fetch templates for this namespace model
 		if err := fetchTemplatesForModel(ctx, c, modelName, namespace, &result); err != nil {
 			return result, err
@@ -129,7 +129,7 @@ func fetchServiceModelResultForModelRef(ctx context.Context, c client.Client, mo
 	if err := c.Get(ctx, client.ObjectKey{Name: modelName}, clusterModel); err != nil && !errors.IsNotFound(err) {
 		return result, fmt.Errorf("failed to fetch cluster model: %w", err)
 	} else if err == nil {
-		result.ClusterModel = clusterModel
+		result.clusterModel = clusterModel
 		// Fetch templates for this cluster model
 		if err := fetchTemplatesForModel(ctx, c, modelName, "", &result); err != nil {
 			return result, err
@@ -138,8 +138,8 @@ func fetchServiceModelResultForModelRef(ctx context.Context, c client.Client, mo
 	return result, nil
 }
 
-func fetchServiceModelResultForModelImage(ctx context.Context, c client.Client, modelImage string, namespace string) (ServiceModelFetchResult, error) {
-	result := ServiceModelFetchResult{}
+func fetchServiceModelResultForModelImage(ctx context.Context, c client.Client, modelImage string, namespace string) (serviceModelFetchResult, error) {
+	result := serviceModelFetchResult{}
 
 	// List namespace-scoped models with this image using field indexer
 	var nsModels aimv1alpha1.AIMModelList
@@ -151,13 +151,13 @@ func fetchServiceModelResultForModelImage(ctx context.Context, c client.Client, 
 	}
 
 	if len(nsModels.Items) == 1 {
-		result.NamespaceModel = &nsModels.Items[0]
+		result.namespaceModel = &nsModels.Items[0]
 		// Fetch templates for this namespace model
-		err := fetchTemplatesForModel(ctx, c, result.NamespaceModel.Name, namespace, &result)
+		err := fetchTemplatesForModel(ctx, c, result.namespaceModel.Name, namespace, &result)
 		return result, err
 	} else if len(nsModels.Items) > 1 {
-		result.MultipleModelsFound = true
-		result.MultipleModelsError = fmt.Errorf("more than one model found for image %q in the same scope", modelImage)
+		result.multipleModelsFound = true
+		result.multipleModelsError = fmt.Errorf("more than one model found for image %q in the same scope", modelImage)
 		return result, nil
 	}
 
@@ -172,14 +172,14 @@ func fetchServiceModelResultForModelImage(ctx context.Context, c client.Client, 
 	// Check: max 1 namespace model and max 1 cluster model
 	// Namespace takes precedence over cluster
 	if len(clusterModels.Items) == 1 {
-		result.ClusterModel = &clusterModels.Items[0]
+		result.clusterModel = &clusterModels.Items[0]
 		// Fetch templates for this cluster model
-		err := fetchTemplatesForModel(ctx, c, result.ClusterModel.Name, "", &result)
+		err := fetchTemplatesForModel(ctx, c, result.clusterModel.Name, "", &result)
 		return result, err
 	} else if len(clusterModels.Items) > 1 {
 		// Multiple models in same scope - error case
-		result.MultipleModelsFound = true
-		result.MultipleModelsError = fmt.Errorf("more than one model found for image %q in the same scope", modelImage)
+		result.multipleModelsFound = true
+		result.multipleModelsError = fmt.Errorf("more than one model found for image %q in the same scope", modelImage)
 		return result, nil
 	}
 	// If no models found, result will be empty (needs to be created)
@@ -189,7 +189,7 @@ func fetchServiceModelResultForModelImage(ctx context.Context, c client.Client, 
 // fetchTemplatesForModel fetches templates for a given model based on scope
 // If namespace is provided, fetches namespace-scoped templates
 // If namespace is empty, fetches cluster-scoped templates
-func fetchTemplatesForModel(ctx context.Context, c client.Client, modelName string, namespace string, result *ServiceModelFetchResult) error {
+func fetchTemplatesForModel(ctx context.Context, c client.Client, modelName string, namespace string, result *serviceModelFetchResult) error {
 	if namespace != "" {
 		// Namespace-scoped model - fetch namespace templates only
 		var nsTemplates aimv1alpha1.AIMServiceTemplateList
@@ -199,7 +199,7 @@ func fetchTemplatesForModel(ctx context.Context, c client.Client, modelName stri
 		); err != nil {
 			return fmt.Errorf("failed to list namespace templates for model: %w", err)
 		}
-		result.NamespaceTemplatesForModel = nsTemplates.Items
+		result.namespaceTemplatesForModel = nsTemplates.Items
 	} else {
 		// Cluster-scoped model - fetch cluster templates only
 		var clusterTemplates aimv1alpha1.AIMClusterServiceTemplateList
@@ -208,7 +208,7 @@ func fetchTemplatesForModel(ctx context.Context, c client.Client, modelName stri
 		); err != nil {
 			return fmt.Errorf("failed to list cluster templates for model: %w", err)
 		}
-		result.ClusterTemplatesForModel = clusterTemplates.Items
+		result.clusterTemplatesForModel = clusterTemplates.Items
 	}
 
 	return nil
@@ -218,8 +218,8 @@ func fetchTemplatesForModel(ctx context.Context, c client.Client, modelName stri
 // OBSERVE
 // ============================================================================
 
-type ServiceModelObservation struct {
-	ModelName          string
+type serviceModelObservation struct {
+	modelName          string
 	ModelNamespace     string // Namespace of the resolved model (empty for cluster-scoped models)
 	ModelFound         bool
 	ModelReady         bool
@@ -232,24 +232,24 @@ type ServiceModelObservation struct {
 	GeneratedModelName string // Pre-computed model name for auto-creation
 }
 
-func observeServiceModel(_ context.Context, _ client.Client, service *aimv1alpha1.AIMService, result ServiceModelFetchResult) ServiceModelObservation {
-	obs := ServiceModelObservation{}
+func observeServiceModel(_ context.Context, _ client.Client, service *aimv1alpha1.AIMService, result serviceModelFetchResult) serviceModelObservation {
+	obs := serviceModelObservation{}
 
 	// Case 1: Model specified by Ref
 	if service.Spec.Model.Ref != nil && *service.Spec.Model.Ref != "" {
-		if result.NamespaceModel != nil {
-			obs.ModelName = result.NamespaceModel.Name
-			obs.ModelNamespace = result.NamespaceModel.Namespace
+		if result.namespaceModel != nil {
+			obs.modelName = result.namespaceModel.Name
+			obs.ModelNamespace = result.namespaceModel.Namespace
 			obs.ModelFound = true
-			obs.ModelReady = result.NamespaceModel.Status.Status == aimv1alpha1.AIMModelStatusReady
-			obs.ModelSpec = &result.NamespaceModel.Spec
+			obs.ModelReady = result.namespaceModel.Status.Status == aimv1alpha1.AIMModelStatusReady
+			obs.ModelSpec = &result.namespaceModel.Spec
 			obs.Scope = aimv1alpha1.AIMResolutionScopeNamespace
-		} else if result.ClusterModel != nil {
-			obs.ModelName = result.ClusterModel.Name
+		} else if result.clusterModel != nil {
+			obs.modelName = result.clusterModel.Name
 			obs.ModelNamespace = "" // Cluster-scoped models have no namespace
 			obs.ModelFound = true
-			obs.ModelReady = result.ClusterModel.Status.Status == aimv1alpha1.AIMModelStatusReady
-			obs.ModelSpec = &result.ClusterModel.Spec
+			obs.ModelReady = result.clusterModel.Status.Status == aimv1alpha1.AIMModelStatusReady
+			obs.ModelSpec = &result.clusterModel.Spec
 			obs.Scope = aimv1alpha1.AIMResolutionScopeCluster
 		} else {
 			// Model ref not found
@@ -261,26 +261,26 @@ func observeServiceModel(_ context.Context, _ client.Client, service *aimv1alpha
 	// Case 2: Model specified by Image
 	if service.Spec.Model.Image != nil && *service.Spec.Model.Image != "" {
 		// Check for multiple models error from fetch
-		if result.MultipleModelsFound {
+		if result.multipleModelsFound {
 			obs.MultipleModels = true
-			obs.ModelResolutionErr = result.MultipleModelsError
+			obs.ModelResolutionErr = result.multipleModelsError
 			return obs
 		}
 
 		// Check if a model was found
-		if result.NamespaceModel != nil {
-			obs.ModelName = result.NamespaceModel.Name
-			obs.ModelNamespace = result.NamespaceModel.Namespace
+		if result.namespaceModel != nil {
+			obs.modelName = result.namespaceModel.Name
+			obs.ModelNamespace = result.namespaceModel.Namespace
 			obs.ModelFound = true
-			obs.ModelReady = result.NamespaceModel.Status.Status == aimv1alpha1.AIMModelStatusReady
-			obs.ModelSpec = &result.NamespaceModel.Spec
+			obs.ModelReady = result.namespaceModel.Status.Status == aimv1alpha1.AIMModelStatusReady
+			obs.ModelSpec = &result.namespaceModel.Spec
 			obs.Scope = aimv1alpha1.AIMResolutionScopeNamespace
-		} else if result.ClusterModel != nil {
-			obs.ModelName = result.ClusterModel.Name
+		} else if result.clusterModel != nil {
+			obs.modelName = result.clusterModel.Name
 			obs.ModelNamespace = "" // Cluster-scoped models have no namespace
 			obs.ModelFound = true
-			obs.ModelReady = result.ClusterModel.Status.Status == aimv1alpha1.AIMModelStatusReady
-			obs.ModelSpec = &result.ClusterModel.Spec
+			obs.ModelReady = result.clusterModel.Status.Status == aimv1alpha1.AIMModelStatusReady
+			obs.ModelSpec = &result.clusterModel.Spec
 			obs.Scope = aimv1alpha1.AIMResolutionScopeCluster
 		} else {
 			// No existing model found - need to create one
@@ -320,7 +320,7 @@ func observeServiceModel(_ context.Context, _ client.Client, service *aimv1alpha
 // PLAN
 // ============================================================================
 
-func planServiceModel(obs ServiceModelObservation, service *aimv1alpha1.AIMService) client.Object {
+func planServiceModel(obs serviceModelObservation, service *aimv1alpha1.AIMService) client.Object {
 	// Don't create if there's an error or if we shouldn't create
 	if !obs.ShouldCreateModel || obs.ImageParseErr != nil || obs.GeneratedModelName == "" {
 		return nil
@@ -365,7 +365,7 @@ func projectServiceModel(
 	status *aimv1alpha1.AIMServiceStatus,
 	cm *controllerutils.ConditionManager,
 	h *controllerutils.StatusHelper,
-	obs ServiceModelObservation,
+	obs serviceModelObservation,
 ) bool {
 	// Check for image parse errors (terminal error)
 	if obs.ImageParseErr != nil {
@@ -376,8 +376,8 @@ func projectServiceModel(
 
 	if obs.ModelResolutionErr != nil {
 		if obs.MultipleModels {
-			h.Degraded("MultipleModelsFound", obs.ModelResolutionErr.Error())
-			cm.MarkFalse("ModelResolved", "MultipleModelsFound", "Multiple models found with same image", controllerutils.LevelWarning)
+			h.Degraded("multipleModelsFound", obs.ModelResolutionErr.Error())
+			cm.MarkFalse("ModelResolved", "multipleModelsFound", "Multiple models found with same image", controllerutils.LevelWarning)
 		} else {
 			h.Degraded("ModelNotFound", obs.ModelResolutionErr.Error())
 			cm.MarkFalse("ModelResolved", "ModelNotFound", obs.ModelResolutionErr.Error(), controllerutils.LevelWarning)
@@ -397,15 +397,15 @@ func projectServiceModel(
 	}
 
 	if !obs.ModelReady {
-		h.Progressing("ModelNotReady", fmt.Sprintf("Model %q is not ready", obs.ModelName))
-		cm.MarkFalse("ModelResolved", "ModelNotReady", fmt.Sprintf("Model %q is not ready", obs.ModelName), controllerutils.LevelNormal)
+		h.Progressing("ModelNotReady", fmt.Sprintf("Model %q is not ready", obs.modelName))
+		cm.MarkFalse("ModelResolved", "ModelNotReady", fmt.Sprintf("Model %q is not ready", obs.modelName), controllerutils.LevelNormal)
 		return true
 	}
 
 	// Model found and ready
-	cm.MarkTrue("ModelResolved", "ModelResolved", fmt.Sprintf("Model %q is ready", obs.ModelName), controllerutils.LevelNormal)
+	cm.MarkTrue("ModelResolved", "ModelResolved", fmt.Sprintf("Model %q is ready", obs.modelName), controllerutils.LevelNormal)
 	status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
-		Name:  obs.ModelName,
+		Name:  obs.modelName,
 		Scope: aimv1alpha1.AIMResolutionScopeNamespace,
 		Kind:  "AIMModel",
 	}

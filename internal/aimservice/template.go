@@ -128,8 +128,8 @@ type ServiceTemplateObservation struct {
 
 func observeServiceTemplate(
 	service *aimv1alpha1.AIMService,
-	modelObs ServiceModelObservation,
-	modelFetchResult ServiceModelFetchResult,
+	modelObs serviceModelObservation,
+	modelFetchResult serviceModelFetchResult,
 	templateFetchResult ServiceTemplateFetchResult,
 ) (ServiceTemplateObservation, error) {
 	var obs ServiceTemplateObservation
@@ -185,8 +185,8 @@ func observeServiceTemplate(
 //nolint:unparam // error return kept for API consistency
 func observeExplicitTemplateWithModel(
 	service *aimv1alpha1.AIMService,
-	modelObs ServiceModelObservation,
-	modelFetchResult ServiceModelFetchResult,
+	modelObs serviceModelObservation,
+	modelFetchResult serviceModelFetchResult,
 ) (ServiceTemplateObservation, error) {
 	obs := ServiceTemplateObservation{}
 	obs.TemplateName = service.Spec.TemplateName
@@ -194,7 +194,7 @@ func observeExplicitTemplateWithModel(
 	// Validate that this template belongs to the model
 	obs.TemplateMatchesModel = validateTemplateMatchesModel(obs.TemplateName, modelFetchResult)
 	if !obs.TemplateMatchesModel {
-		obs.TemplateSelectionError = fmt.Errorf("template %q does not belong to model %q", obs.TemplateName, modelObs.ModelName)
+		obs.TemplateSelectionError = fmt.Errorf("template %q does not belong to model %q", obs.TemplateName, modelObs.modelName)
 		return obs, nil
 	}
 
@@ -229,8 +229,8 @@ func observeExplicitTemplateOnly(
 //nolint:unparam // error return kept for API consistency
 func observeAutoSelectTemplate(
 	service *aimv1alpha1.AIMService,
-	modelObs ServiceModelObservation,
-	modelFetchResult ServiceModelFetchResult,
+	modelObs serviceModelObservation,
+	modelFetchResult serviceModelFetchResult,
 ) (ServiceTemplateObservation, error) {
 	obs := ServiceTemplateObservation{}
 
@@ -248,16 +248,16 @@ func observeAutoSelectTemplate(
 }
 
 // validateTemplateMatchesModel checks if a template name exists in the model's templates
-func validateTemplateMatchesModel(templateName string, modelFetchResult ServiceModelFetchResult) bool {
+func validateTemplateMatchesModel(templateName string, modelFetchResult serviceModelFetchResult) bool {
 	// Check namespace templates
-	for _, template := range modelFetchResult.NamespaceTemplatesForModel {
+	for _, template := range modelFetchResult.namespaceTemplatesForModel {
 		if template.Name == templateName {
 			return true
 		}
 	}
 
 	// Check cluster templates
-	for _, template := range modelFetchResult.ClusterTemplatesForModel {
+	for _, template := range modelFetchResult.clusterTemplatesForModel {
 		if template.Name == templateName {
 			return true
 		}
@@ -267,9 +267,9 @@ func validateTemplateMatchesModel(templateName string, modelFetchResult ServiceM
 }
 
 // populateTemplateDetailsFromModel finds and populates template details from model's template list
-func populateTemplateDetailsFromModel(obs *ServiceTemplateObservation, modelFetchResult ServiceModelFetchResult) {
+func populateTemplateDetailsFromModel(obs *ServiceTemplateObservation, modelFetchResult serviceModelFetchResult) {
 	// Check namespace templates
-	for _, template := range modelFetchResult.NamespaceTemplatesForModel {
+	for _, template := range modelFetchResult.namespaceTemplatesForModel {
 		if template.Name == obs.TemplateName {
 			obs.TemplateFound = true
 			obs.TemplateNamespace = template.Namespace
@@ -286,7 +286,7 @@ func populateTemplateDetailsFromModel(obs *ServiceTemplateObservation, modelFetc
 	}
 
 	// Check cluster templates
-	for _, template := range modelFetchResult.ClusterTemplatesForModel {
+	for _, template := range modelFetchResult.clusterTemplatesForModel {
 		if template.Name == obs.TemplateName {
 			obs.TemplateFound = true
 			obs.TemplateAvailable = template.Status.Status == aimv1alpha1.AIMTemplateStatusReady

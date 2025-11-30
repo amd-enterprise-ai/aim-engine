@@ -33,13 +33,13 @@ import (
 // selectTemplateForService selects the best template from the model's templates
 func selectTemplateForService(
 	service *aimv1alpha1.AIMService,
-	modelObs ServiceModelObservation,
-	modelFetchResult ServiceModelFetchResult,
+	modelObs serviceModelObservation,
+	modelFetchResult serviceModelFetchResult,
 ) (templateName string, scope aimv1alpha1.AIMResolutionScope, err error) {
 	// Build candidate list from fetched templates
 	candidates := make([]templateCandidate, 0)
 
-	for _, template := range modelFetchResult.NamespaceTemplatesForModel {
+	for _, template := range modelFetchResult.namespaceTemplatesForModel {
 		candidates = append(candidates, templateCandidate{
 			Name:      template.Name,
 			Namespace: template.Namespace,
@@ -49,7 +49,7 @@ func selectTemplateForService(
 		})
 	}
 
-	for _, template := range modelFetchResult.ClusterTemplatesForModel {
+	for _, template := range modelFetchResult.clusterTemplatesForModel {
 		candidates = append(candidates, templateCandidate{
 			Name:   template.Name,
 			Scope:  aimv1alpha1.AIMResolutionScopeCluster,
@@ -59,13 +59,13 @@ func selectTemplateForService(
 	}
 
 	if len(candidates) == 0 {
-		return "", aimv1alpha1.AIMResolutionScopeUnknown, fmt.Errorf("no templates found for model %q", modelObs.ModelName)
+		return "", aimv1alpha1.AIMResolutionScopeUnknown, fmt.Errorf("no templates found for model %q", modelObs.modelName)
 	}
 
 	// Select best template
 	selected := selectBestTemplate(candidates, service.Spec.Overrides)
 	if selected == nil {
-		return "", aimv1alpha1.AIMResolutionScopeUnknown, fmt.Errorf("no suitable templates found for model %q", modelObs.ModelName)
+		return "", aimv1alpha1.AIMResolutionScopeUnknown, fmt.Errorf("no suitable templates found for model %q", modelObs.modelName)
 	}
 
 	return selected.Name, selected.Scope, nil
@@ -198,20 +198,20 @@ func precisionRank(p aimv1alpha1.AIMPrecision) int {
 
 // findTemplateMatchingOverrides searches for an existing template that matches the service's overrides
 // Returns the template name if found, empty string if not
-func findTemplateMatchingOverrides(service *aimv1alpha1.AIMService, modelFetchResult ServiceModelFetchResult) string {
+func findTemplateMatchingOverrides(service *aimv1alpha1.AIMService, modelFetchResult serviceModelFetchResult) string {
 	if service.Spec.Overrides == nil {
 		return ""
 	}
 
 	// Check namespace templates first
-	for _, template := range modelFetchResult.NamespaceTemplatesForModel {
+	for _, template := range modelFetchResult.namespaceTemplatesForModel {
 		if templateMatchesOverrides(&template.Spec.AIMServiceTemplateSpecCommon, service.Spec.Overrides) {
 			return template.Name
 		}
 	}
 
 	// Check cluster templates
-	for _, template := range modelFetchResult.ClusterTemplatesForModel {
+	for _, template := range modelFetchResult.clusterTemplatesForModel {
 		if templateMatchesOverrides(&template.Spec.AIMServiceTemplateSpecCommon, service.Spec.Overrides) {
 			return template.Name
 		}
