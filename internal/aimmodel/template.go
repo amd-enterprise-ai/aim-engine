@@ -39,12 +39,12 @@ import (
 // FETCH
 // ==============================
 
-type ClusterModelServiceTemplateFetchResult struct {
-	ClusterServiceTemplates []aimv1alpha1.AIMClusterServiceTemplate
+type clusterModelServiceTemplateFetchResult struct {
+	clusterServiceTemplates []aimv1alpha1.AIMClusterServiceTemplate
 }
 
-func fetchClusterModelServiceTemplateResult(ctx context.Context, c client.Client, clusterModel aimv1alpha1.AIMClusterModel) (ClusterModelServiceTemplateFetchResult, error) {
-	result := ClusterModelServiceTemplateFetchResult{}
+func fetchClusterModelServiceTemplateResult(ctx context.Context, c client.Client, clusterModel aimv1alpha1.AIMClusterModel) (clusterModelServiceTemplateFetchResult, error) {
+	result := clusterModelServiceTemplateFetchResult{}
 
 	var templates aimv1alpha1.AIMClusterServiceTemplateList
 	templatesErr := c.List(ctx, &templates,
@@ -53,16 +53,16 @@ func fetchClusterModelServiceTemplateResult(ctx context.Context, c client.Client
 	if templatesErr != nil {
 		return result, fmt.Errorf("failed to fetch cluster service templates: %w", templatesErr)
 	}
-	result.ClusterServiceTemplates = templates.Items
+	result.clusterServiceTemplates = templates.Items
 	return result, nil
 }
 
-type ModelServiceTemplateFetchResult struct {
-	ServiceTemplates []aimv1alpha1.AIMServiceTemplate
+type modelServiceTemplateFetchResult struct {
+	serviceTemplates []aimv1alpha1.AIMServiceTemplate
 }
 
-func fetchModelServiceTemplateResult(ctx context.Context, c client.Client, model aimv1alpha1.AIMModel) (ModelServiceTemplateFetchResult, error) {
-	result := ModelServiceTemplateFetchResult{}
+func fetchModelServiceTemplateResult(ctx context.Context, c client.Client, model aimv1alpha1.AIMModel) (modelServiceTemplateFetchResult, error) {
+	result := modelServiceTemplateFetchResult{}
 
 	var templates aimv1alpha1.AIMServiceTemplateList
 	templatesErr := c.List(ctx, &templates,
@@ -72,7 +72,7 @@ func fetchModelServiceTemplateResult(ctx context.Context, c client.Client, model
 	if templatesErr != nil {
 		return result, fmt.Errorf("failed to fetch service templates: %w", templatesErr)
 	}
-	result.ServiceTemplates = templates.Items
+	result.serviceTemplates = templates.Items
 	return result, nil
 }
 
@@ -80,29 +80,29 @@ func fetchModelServiceTemplateResult(ctx context.Context, c client.Client, model
 // OBSERVE
 // ==============================
 
-type ClusterModelServiceTemplateObservation struct {
-	ShouldCreateTemplates bool
-	ExistingTemplates     []aimv1alpha1.AIMClusterServiceTemplate
+type clusterModelServiceTemplateObservation struct {
+	shouldCreateTemplates bool
+	existingTemplates     []aimv1alpha1.AIMClusterServiceTemplate
 }
 
-func ObserveClusterModelServiceTemplate(fetchResult ClusterModelServiceTemplateFetchResult, clusterModel aimv1alpha1.AIMClusterModel, config *aimv1alpha1.AIMRuntimeConfigCommon) ClusterModelServiceTemplateObservation {
-	obs := ClusterModelServiceTemplateObservation{
-		ShouldCreateTemplates: shouldCreateTemplates(clusterModel.Spec, config),
-		ExistingTemplates:     fetchResult.ClusterServiceTemplates,
+func observeClusterModelServiceTemplate(fetchResult clusterModelServiceTemplateFetchResult, clusterModel aimv1alpha1.AIMClusterModel, config *aimv1alpha1.AIMRuntimeConfigCommon) clusterModelServiceTemplateObservation {
+	obs := clusterModelServiceTemplateObservation{
+		shouldCreateTemplates: shouldCreateTemplates(clusterModel.Spec, config),
+		existingTemplates:     fetchResult.clusterServiceTemplates,
 	}
 
 	return obs
 }
 
-type ModelServiceTemplateObservation struct {
-	ShouldCreateTemplates bool
-	ExistingTemplates     []aimv1alpha1.AIMServiceTemplate
+type modelServiceTemplateObservation struct {
+	shouldCreateTemplates bool
+	existingTemplates     []aimv1alpha1.AIMServiceTemplate
 }
 
-func ObserveModelServiceTemplate(fetchResult ModelServiceTemplateFetchResult, model aimv1alpha1.AIMModel, config *aimv1alpha1.AIMRuntimeConfigCommon) ModelServiceTemplateObservation {
-	obs := ModelServiceTemplateObservation{
-		ShouldCreateTemplates: shouldCreateTemplates(model.Spec, config),
-		ExistingTemplates:     fetchResult.ServiceTemplates,
+func observeModelServiceTemplate(fetchResult modelServiceTemplateFetchResult, model aimv1alpha1.AIMModel, config *aimv1alpha1.AIMRuntimeConfigCommon) modelServiceTemplateObservation {
+	obs := modelServiceTemplateObservation{
+		shouldCreateTemplates: shouldCreateTemplates(model.Spec, config),
+		existingTemplates:     fetchResult.serviceTemplates,
 	}
 
 	return obs
@@ -128,21 +128,21 @@ func shouldCreateTemplates(modelSpec aimv1alpha1.AIMModelSpec, config *aimv1alph
 // PLAN
 // ==============================
 
-// TemplateBuilderOutputs contains the common parts built by BuildTemplateComponents
-type TemplateBuilderOutputs struct {
+// templateBuilderOutputs contains the common parts built by buildTemplateComponents
+type templateBuilderOutputs struct {
 	Name   string
 	Labels map[string]string
 	Spec   aimv1alpha1.AIMServiceTemplateSpecCommon
 }
 
-func planClusterModelServiceTemplates(templateObs ClusterModelServiceTemplateObservation, metadataObs ModelMetadataObservation, clusterModel aimv1alpha1.AIMClusterModel) []client.Object {
+func planClusterModelServiceTemplates(templateObs clusterModelServiceTemplateObservation, metadataObs modelMetadataObservation, clusterModel aimv1alpha1.AIMClusterModel) []client.Object {
 	var templates []client.Object
-	if !templateObs.ShouldCreateTemplates || metadataObs.Error != nil || metadataObs.ExtractedMetadata == nil {
+	if !templateObs.shouldCreateTemplates || metadataObs.Error != nil || metadataObs.ExtractedMetadata == nil {
 		return templates
 	}
 
 	for _, recommendedDeployment := range metadataObs.ExtractedMetadata.Model.RecommendedDeployments {
-		templateComponents := BuildTemplateComponents(clusterModel.Name, clusterModel.Spec, recommendedDeployment)
+		templateComponents := buildTemplateComponents(clusterModel.Name, clusterModel.Spec, recommendedDeployment)
 		serviceTemplate := &aimv1alpha1.AIMClusterServiceTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   templateComponents.Name,
@@ -158,14 +158,14 @@ func planClusterModelServiceTemplates(templateObs ClusterModelServiceTemplateObs
 	return templates
 }
 
-func planModelServiceTemplates(templateObs ModelServiceTemplateObservation, metadataObs ModelMetadataObservation, model aimv1alpha1.AIMModel) []client.Object {
+func planModelServiceTemplates(templateObs modelServiceTemplateObservation, metadataObs modelMetadataObservation, model aimv1alpha1.AIMModel) []client.Object {
 	var templates []client.Object
-	if !templateObs.ShouldCreateTemplates || metadataObs.Error != nil {
+	if !templateObs.shouldCreateTemplates || metadataObs.Error != nil {
 		return templates
 	}
 
 	for _, recommendedDeployment := range metadataObs.ExtractedMetadata.Model.RecommendedDeployments {
-		templateComponents := BuildTemplateComponents(model.Name, model.Spec, recommendedDeployment)
+		templateComponents := buildTemplateComponents(model.Name, model.Spec, recommendedDeployment)
 		serviceTemplate := &aimv1alpha1.AIMServiceTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      templateComponents.Name,
@@ -182,8 +182,8 @@ func planModelServiceTemplates(templateObs ModelServiceTemplateObservation, meta
 	return templates
 }
 
-// BuildTemplateComponents builds the common components (name, labels, spec) for a service template
-func BuildTemplateComponents(modelName string, modelSpec aimv1alpha1.AIMModelSpec, deployment aimv1alpha1.RecommendedDeployment) TemplateBuilderOutputs {
+// buildTemplateComponents builds the common components (name, labels, spec) for a service template
+func buildTemplateComponents(modelName string, modelSpec aimv1alpha1.AIMModelSpec, deployment aimv1alpha1.RecommendedDeployment) templateBuilderOutputs {
 	// Generate template name using the specified format
 	templateName := aimservicetemplate.GenerateTemplateName(modelSpec.Image, deployment)
 
@@ -216,7 +216,7 @@ func BuildTemplateComponents(modelName string, modelSpec aimv1alpha1.AIMModelSpe
 		constants.LabelKeyModelName:     modelName,
 	}
 
-	return TemplateBuilderOutputs{
+	return templateBuilderOutputs{
 		Name:   templateName,
 		Labels: labels,
 		Spec:   commonSpec,

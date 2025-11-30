@@ -45,16 +45,16 @@ import (
 )
 
 const (
-	// DefaultSharedMemorySize is the default size allocated for /dev/shm in inference containers.
+	// defaultSharedMemorySize is the default size allocated for /dev/shm in inference containers.
 	// This is required for efficient inter-process communication in model serving workloads.
-	DefaultSharedMemorySize = "8Gi"
+	defaultSharedMemorySize = "8Gi"
 )
 
-// InferenceServiceNameForService creates a deterministic name for the KServe InferenceService based off an AIMService
-func InferenceServiceNameForService(service *aimv1alpha1.AIMService) string {
+// inferenceServiceNameForService creates a deterministic name for the KServe inferenceService based off an AIMService
+func inferenceServiceNameForService(service *aimv1alpha1.AIMService) string {
 	namespace := service.Namespace
 
-	// KServe internally appends "-{namespace}" to the InferenceService name
+	// KServe internally appends "-{namespace}" to the inferenceService name
 	// We need to ensure: len(isvcName + "-" + namespace) <= 63
 	// Include namespace in truncation calculation, then remove it
 	// Format from GenerateDerivedName: {serviceName}-{namespace}-{hash}
@@ -79,34 +79,34 @@ func InferenceServiceNameForService(service *aimv1alpha1.AIMService) string {
 // FETCH
 // ============================================================================
 
-type ServiceKServeFetchResult struct {
-	InferenceService *servingv1beta1.InferenceService
-	Pods             []corev1.Pod
+type inferenceServiceKServeFetchResult struct {
+	inferenceService *servingv1beta1.InferenceService
+	pods             []corev1.Pod
 }
 
-func fetchServiceKServeResult(ctx context.Context, c client.Client, service *aimv1alpha1.AIMService) (ServiceKServeFetchResult, error) {
-	result := ServiceKServeFetchResult{}
+func fetchServiceKServeResult(ctx context.Context, c client.Client, service *aimv1alpha1.AIMService) (inferenceServiceKServeFetchResult, error) {
+	result := inferenceServiceKServeFetchResult{}
 
 	inferenceService := &servingv1beta1.InferenceService{}
-	if err := c.Get(ctx, client.ObjectKey{Name: InferenceServiceNameForService(service), Namespace: service.Namespace}, inferenceService); err != nil && !errors.IsNotFound(err) {
-		return result, fmt.Errorf("error fetching InferenceService: %w", err)
+	if err := c.Get(ctx, client.ObjectKey{Name: inferenceServiceNameForService(service), Namespace: service.Namespace}, inferenceService); err != nil && !errors.IsNotFound(err) {
+		return result, fmt.Errorf("error fetching inferenceService: %w", err)
 	} else if err == nil {
-		result.InferenceService = inferenceService
+		result.inferenceService = inferenceService
 	}
 
-	if result.InferenceService != nil {
-		// Fetch pods for InferenceService to detect image pull errors
+	if result.inferenceService != nil {
+		// Fetch pods for inferenceService to detect image pull errors
 		// KServe creates pods with the component label
 		var podList corev1.PodList
 		if err := c.List(ctx, &podList,
 			client.InNamespace(service.Namespace),
 			client.MatchingLabels{
-				"serving.kserve.io/inferenceservice": InferenceServiceNameForService(service),
+				"serving.kserve.io/inferenceservice": inferenceServiceNameForService(service),
 			}); err != nil {
 			// Log error but don't fail - pod fetching is for diagnostics only
 			// We can still continue without pod information
 		} else {
-			result.Pods = podList.Items
+			result.pods = podList.Items
 		}
 	}
 
@@ -117,32 +117,32 @@ func fetchServiceKServeResult(ctx context.Context, c client.Client, service *aim
 // OBSERVE
 // ============================================================================
 
-type ServiceKServeObservation struct {
-	InferenceServiceExists bool
-	InferenceServiceReady  bool
-	ShouldCreateISVC       bool
-	LastFailureInfo        *servingv1beta1.FailureInfo
-	PodImagePullError      *utils.ImagePullError
+type serviceKServeObservation struct {
+	inferenceServiceExists bool
+	inferenceServiceReady  bool
+	shouldCreateISVC       bool
+	lastFailureInfo        *servingv1beta1.FailureInfo
+	podImagePullError      *utils.ImagePullError
 }
 
-func observeServiceKServe(result ServiceKServeFetchResult) ServiceKServeObservation {
-	obs := ServiceKServeObservation{}
+func observeServiceKServe(result inferenceServiceKServeFetchResult) serviceKServeObservation {
+	obs := serviceKServeObservation{}
 
-	if result.InferenceService != nil {
-		obs.InferenceServiceExists = true
+	if result.inferenceService != nil {
+		obs.inferenceServiceExists = true
 
-		// Check if InferenceService is ready using KServe's built-in status method
-		obs.InferenceServiceReady = result.InferenceService.Status.IsReady()
+		// Check if inferenceService is ready using KServe's built-in status method
+		obs.inferenceServiceReady = result.inferenceService.Status.IsReady()
 
-		// Extract LastFailureInfo from ModelStatus if available
-		if result.InferenceService.Status.ModelStatus.LastFailureInfo != nil {
-			obs.LastFailureInfo = result.InferenceService.Status.ModelStatus.LastFailureInfo
+		// Extract lastFailureInfo from ModelStatus if available
+		if result.inferenceService.Status.ModelStatus.LastFailureInfo != nil {
+			obs.lastFailureInfo = result.inferenceService.Status.ModelStatus.LastFailureInfo
 		}
 
 		// Check pod statuses for image pull errors
-		obs.PodImagePullError = checkPodImagePullErrors(result.Pods)
+		obs.podImagePullError = checkPodImagePullErrors(result.pods)
 	} else {
-		obs.ShouldCreateISVC = true
+		obs.shouldCreateISVC = true
 	}
 
 	return obs
@@ -165,16 +165,16 @@ func checkPodImagePullErrors(pods []corev1.Pod) *utils.ImagePullError {
 //nolint:unparam // error return kept for API consistency with other plan functions
 func planServiceInferenceService(
 	service *aimv1alpha1.AIMService,
-	obs ServiceKServeObservation,
+	obs serviceKServeObservation,
 	modelImage string,
 	modelName string,
 	templateName string,
 	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
 	pvcObs ServicePVCObservation,
-	cachingObs ServiceCachingObservation,
+	cachingObs serviceCachingObservation,
 ) (client.Object, error) {
-	if !obs.ShouldCreateISVC {
+	if !obs.shouldCreateISVC {
 		return nil, nil
 	}
 
@@ -190,7 +190,7 @@ func planServiceInferenceService(
 	), nil
 }
 
-// buildInferenceService creates a KServe InferenceService for the AIMService inline (no separate ServingRuntime).
+// buildInferenceService creates a KServe inferenceService for the AIMService inline (no separate ServingRuntime).
 func buildInferenceService(
 	service *aimv1alpha1.AIMService,
 	modelImage string,
@@ -199,7 +199,7 @@ func buildInferenceService(
 	_ *aimv1alpha1.AIMServiceTemplateSpec,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
 	pvcObs ServicePVCObservation,
-	cachingObs ServiceCachingObservation,
+	cachingObs serviceCachingObservation,
 ) *servingv1beta1.InferenceService {
 	// Build labels (user labels + system labels)
 	labels := make(map[string]string)
@@ -250,14 +250,14 @@ func buildInferenceService(
 	// Build resource requirements
 	resources := buildResourceRequirements(service, templateStatus)
 
-	// Create base InferenceService
+	// Create base inferenceService
 	isvc := &servingv1beta1.InferenceService{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: servingv1beta1.SchemeGroupVersion.String(),
-			Kind:       "InferenceService",
+			Kind:       "inferenceService",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        InferenceServiceNameForService(service),
+			Name:        inferenceServiceNameForService(service),
 			Namespace:   service.Namespace,
 			Labels:      labels,
 			Annotations: service.Annotations,
@@ -305,7 +305,7 @@ func buildInferenceService(
 	}
 
 	// Add shared memory volume for vLLM inter-process communication
-	dshmSizeLimit := resource.MustParse(DefaultSharedMemorySize)
+	dshmSizeLimit := resource.MustParse(defaultSharedMemorySize)
 	isvc.Spec.Predictor.Volumes = []corev1.Volume{
 		{
 			Name: "dshm",
@@ -366,20 +366,20 @@ func buildResourceRequirements(service *aimv1alpha1.AIMService, templateStatus *
 	}
 }
 
-// addVolumeMounts adds PVC and model cache volume mounts to the InferenceService.
-func addVolumeMounts(isvc *servingv1beta1.InferenceService, pvcObs ServicePVCObservation, cachingObs ServiceCachingObservation) {
+// addVolumeMounts adds PVC and model cache volume mounts to the inferenceService.
+func addVolumeMounts(isvc *servingv1beta1.InferenceService, pvcObs ServicePVCObservation, cachingObs serviceCachingObservation) {
 	// Add service PVC mount if using PVC (not using cache)
 	if pvcObs.ShouldUsePVC && pvcObs.PVCReady && pvcObs.PVCName != "" {
 		addServicePVCMount(isvc, pvcObs.PVCName)
 	}
 
 	// Add model cache mounts
-	for _, mount := range cachingObs.ModelCachesToMount {
-		addModelCacheMount(isvc, mount.Cache, mount.ModelName)
+	for _, mount := range cachingObs.modelCachesToMount {
+		addModelCacheMount(isvc, mount.cache, mount.modelName)
 	}
 }
 
-// addModelCacheMount adds a model cache PVC volume mount to an InferenceService.
+// addModelCacheMount adds a model cache PVC volume mount to an inferenceService.
 func addModelCacheMount(isvc *servingv1beta1.InferenceService, modelCache aimv1alpha1.AIMModelCache, modelName string) {
 	// Sanitize volume name for Kubernetes (no dots allowed in volume names, only lowercase alphanumeric and '-')
 	volumeName := utils.MakeRFC1123Compliant(modelCache.Name)
@@ -478,17 +478,17 @@ func projectServiceKServe(
 	status *aimv1alpha1.AIMServiceStatus,
 	cm *controllerutils.ConditionManager,
 	h *controllerutils.StatusHelper,
-	obs ServiceKServeObservation,
+	obs serviceKServeObservation,
 ) bool {
-	if obs.ShouldCreateISVC {
-		h.Progressing(aimv1alpha1.AIMServiceReasonCreatingRuntime, "Creating InferenceService")
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRuntimeReady, aimv1alpha1.AIMServiceReasonCreatingRuntime, "InferenceService being created", controllerutils.LevelNormal)
+	if obs.shouldCreateISVC {
+		h.Progressing(aimv1alpha1.AIMServiceReasonCreatingRuntime, "Creating inferenceService")
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRuntimeReady, aimv1alpha1.AIMServiceReasonCreatingRuntime, "inferenceService being created", controllerutils.LevelNormal)
 		return false
 	}
 
 	// Check for image pull errors first - these are blocking errors
-	if obs.PodImagePullError != nil {
-		pullErr := obs.PodImagePullError
+	if obs.podImagePullError != nil {
+		pullErr := obs.podImagePullError
 
 		// Determine reason based on categorized error type
 		var reason string
@@ -513,18 +513,18 @@ func projectServiceKServe(
 		return true // Blocking error
 	}
 
-	// Check for LastFailureInfo from KServe
-	if obs.LastFailureInfo != nil {
+	// Check for lastFailureInfo from KServe
+	if obs.lastFailureInfo != nil {
 		// Build detailed error message from FailureInfo
-		failureMsg := obs.LastFailureInfo.Message
-		if obs.LastFailureInfo.Reason != "" {
-			failureMsg = fmt.Sprintf("%s: %s", obs.LastFailureInfo.Reason, failureMsg)
+		failureMsg := obs.lastFailureInfo.Message
+		if obs.lastFailureInfo.Reason != "" {
+			failureMsg = fmt.Sprintf("%s: %s", obs.lastFailureInfo.Reason, failureMsg)
 		}
-		if obs.LastFailureInfo.Location != "" {
-			failureMsg = fmt.Sprintf("%s (location: %s)", failureMsg, obs.LastFailureInfo.Location)
+		if obs.lastFailureInfo.Location != "" {
+			failureMsg = fmt.Sprintf("%s (location: %s)", failureMsg, obs.lastFailureInfo.Location)
 		}
-		if obs.LastFailureInfo.ExitCode != 0 {
-			failureMsg = fmt.Sprintf("%s (exit code: %d)", failureMsg, obs.LastFailureInfo.ExitCode)
+		if obs.lastFailureInfo.ExitCode != 0 {
+			failureMsg = fmt.Sprintf("%s (exit code: %d)", failureMsg, obs.lastFailureInfo.ExitCode)
 		}
 
 		h.Degraded(aimv1alpha1.AIMServiceReasonRuntimeFailed, failureMsg)
@@ -532,15 +532,15 @@ func projectServiceKServe(
 		return true // Blocking error
 	}
 
-	if obs.InferenceServiceExists && !obs.InferenceServiceReady {
-		h.Progressing(aimv1alpha1.AIMServiceReasonCreatingRuntime, "Waiting for InferenceService to become ready")
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRuntimeReady, aimv1alpha1.AIMServiceReasonCreatingRuntime, "InferenceService is not ready", controllerutils.LevelNormal)
+	if obs.inferenceServiceExists && !obs.inferenceServiceReady {
+		h.Progressing(aimv1alpha1.AIMServiceReasonCreatingRuntime, "Waiting for inferenceService to become ready")
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRuntimeReady, aimv1alpha1.AIMServiceReasonCreatingRuntime, "inferenceService is not ready", controllerutils.LevelNormal)
 		return false
 	}
 
-	if obs.InferenceServiceReady {
+	if obs.inferenceServiceReady {
 		status.Status = aimv1alpha1.AIMServiceStatusRunning
-		cm.MarkTrue(aimv1alpha1.AIMServiceConditionRuntimeReady, aimv1alpha1.AIMServiceReasonRuntimeReady, "InferenceService is ready", controllerutils.LevelNormal)
+		cm.MarkTrue(aimv1alpha1.AIMServiceConditionRuntimeReady, aimv1alpha1.AIMServiceReasonRuntimeReady, "inferenceService is ready", controllerutils.LevelNormal)
 	}
 
 	return false

@@ -89,7 +89,7 @@ type ServicePVCObservation struct {
 func observeServicePVC(
 	result ServicePVCFetchResult,
 	service *aimv1alpha1.AIMService,
-	cachingObs ServiceCachingObservation,
+	cachingObs serviceCachingObservation,
 ) ServicePVCObservation {
 	obs := ServicePVCObservation{}
 
@@ -99,7 +99,7 @@ func observeServicePVC(
 	// - If caching mode is Always, wait for cache (no PVC)
 	// - If caching mode is Auto and no cache exists, use PVC
 
-	templateCacheExists := cachingObs.TemplateCache != nil
+	templateCacheExists := cachingObs.templateCache != nil
 	cachingMode := service.Spec.GetCachingMode()
 
 	// Use PVC when no template cache exists and caching is not Always
@@ -245,7 +245,7 @@ func projectServicePVC(
 // VOLUME MOUNT HELPERS
 // ============================================================================
 
-// addServicePVCMount adds a service PVC volume mount to an InferenceService.
+// addServicePVCMount adds a service PVC volume mount to an inferenceService.
 func addServicePVCMount(inferenceService *servingv1beta1.InferenceService, pvcName string) {
 	volumeName := "model-storage"
 

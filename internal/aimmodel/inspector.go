@@ -45,9 +45,9 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 )
 
-// InspectImage extracts metadata from a container image using the provided image pull secrets.
+// inspectImage extracts metadata from a container image using the provided image pull secrets.
 // It uses go-containerregistry to authenticate and fetch image labels, then parses them into
-// the ImageMetadata structure.
+// the imageMetadata structure.
 //
 // Parameters:
 //   - ctx: Context for the operation
@@ -57,10 +57,10 @@ import (
 //   - namespace: Namespace where the secrets are located
 //
 // Returns:
-//   - *ImageMetadata: Extracted metadata if successful
+//   - *imageMetadata: Extracted metadata if successful
 //   - error: Any error encountered during inspection (authentication, network, parsing, etc.)
 //     Registry access errors are wrapped in ImageRegistryError for categorization.
-func InspectImage(
+func inspectImage(
 	ctx context.Context,
 	imageURI string,
 	imagePullSecrets []corev1.LocalObjectReference,
@@ -181,13 +181,13 @@ func InspectImage(
 	return metadata, nil
 }
 
-// MetadataFormatError indicates the image metadata is malformed and cannot be processed.
-type MetadataFormatError struct {
+// metadataFormatError indicates the image metadata is malformed and cannot be processed.
+type metadataFormatError struct {
 	Reason  string
 	Message string
 }
 
-func (e *MetadataFormatError) Error() string {
+func (e *metadataFormatError) Error() string {
 	if e.Message != "" {
 		return e.Message
 	}

@@ -241,7 +241,7 @@ func MergeRuntimeConfigs(priority *aimv1alpha1.AIMRuntimeConfigCommon, base *aim
 }
 
 // migrateDeprecatedStorageFields migrates deprecated top-level storage fields to the new Storage struct.
-// This ensures backward compatibility with existing RuntimeConfig resources that use the old field names.
+// This ensures backward compatibility with existing runtimeConfig resources that use the old field names.
 func migrateDeprecatedStorageFields(config *aimv1alpha1.AIMRuntimeConfigCommon) {
 	// Migrate DefaultStorageClassName
 	if config.DefaultStorageClassName != "" {

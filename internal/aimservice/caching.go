@@ -42,8 +42,8 @@ import (
 // ============================================================================
 
 type ServiceCachingFetchResult struct {
-	TemplateCache *aimv1alpha1.AIMTemplateCache
-	ModelCaches   []aimv1alpha1.AIMModelCache
+	templateCache *aimv1alpha1.AIMTemplateCache
+	modelCaches   []aimv1alpha1.AIMModelCache
 }
 
 func fetchServiceCachingResult(
@@ -64,20 +64,20 @@ func fetchServiceCachingResult(
 	if err := c.Get(ctx, client.ObjectKey{Name: templateName, Namespace: templateNamespace}, templateCache); err != nil && !errors.IsNotFound(err) {
 		return result, fmt.Errorf("failed to fetch template cache: %w", err)
 	} else if err == nil {
-		result.TemplateCache = templateCache
+		result.templateCache = templateCache
 	}
 
 	// Fetch all model caches in the service namespace
 	// These will be matched with model sources in the observe phase
-	if result.TemplateCache != nil &&
-		(result.TemplateCache.Status.Status == constants.AIMStatusReady ||
-			result.TemplateCache.Status.Status == constants.AIMStatusProgressing) {
+	if result.templateCache != nil &&
+		(result.templateCache.Status.Status == constants.AIMStatusReady ||
+			result.templateCache.Status.Status == constants.AIMStatusProgressing) {
 
 		modelCacheList := &aimv1alpha1.AIMModelCacheList{}
 		if err := c.List(ctx, modelCacheList, client.InNamespace(service.Namespace)); err != nil {
 			return result, fmt.Errorf("failed to fetch model caches: %w", err)
 		}
-		result.ModelCaches = modelCacheList.Items
+		result.modelCaches = modelCacheList.Items
 	}
 
 	return result, nil
@@ -87,22 +87,22 @@ func fetchServiceCachingResult(
 // OBSERVE
 // ============================================================================
 
-// ServiceCachingObservation contains the observed state of caching for a service.
-type ServiceCachingObservation struct {
-	TemplateCache            *aimv1alpha1.AIMTemplateCache
-	TemplateCacheReady       bool
-	TemplateCacheFailed      bool
-	TemplateCacheRequested   bool
-	ShouldCreateCache        bool
-	ShouldRequestCacheRetry  bool
-	FailedModelCachesToRetry []aimv1alpha1.AIMModelCache
-	ModelCachesToMount       []ModelCacheMount
+// serviceCachingObservation contains the observed state of caching for a service.
+type serviceCachingObservation struct {
+	templateCache            *aimv1alpha1.AIMTemplateCache
+	templateCacheReady       bool
+	templateCacheFailed      bool
+	templateCacheRequested   bool
+	shouldCreateCache        bool
+	shouldRequestCacheRetry  bool
+	failedModelCachesToRetry []aimv1alpha1.AIMModelCache
+	modelCachesToMount       []modelCacheMount
 }
 
-// ModelCacheMount represents a model cache that should be mounted in the InferenceService
-type ModelCacheMount struct {
-	Cache     aimv1alpha1.AIMModelCache
-	ModelName string // From model source
+// modelCacheMount represents a model cache that should be mounted in the inferenceService
+type modelCacheMount struct {
+	cache     aimv1alpha1.AIMModelCache
+	modelName string // From model source
 }
 
 func observeServiceCaching(
@@ -110,8 +110,8 @@ func observeServiceCaching(
 	service *aimv1alpha1.AIMService,
 	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
-) ServiceCachingObservation {
-	obs := ServiceCachingObservation{}
+) serviceCachingObservation {
+	obs := serviceCachingObservation{}
 
 	// Get effective caching mode (handles backward compatibility with CacheModel)
 	cachingMode := service.Spec.GetCachingMode()
@@ -129,25 +129,25 @@ func observeServiceCaching(
 	case aimv1alpha1.CachingModeAlways:
 		// Always use cache, create if needed
 		shouldUseCache = true
-		shouldCreateCache = result.TemplateCache == nil
+		shouldCreateCache = result.templateCache == nil
 
 	case aimv1alpha1.CachingModeAuto:
 		// Auto mode: use if exists, create only if template requests it
-		shouldUseCache = result.TemplateCache != nil || templateCachingEnabled
-		shouldCreateCache = result.TemplateCache == nil && templateCachingEnabled
+		shouldUseCache = result.templateCache != nil || templateCachingEnabled
+		shouldCreateCache = result.templateCache == nil && templateCachingEnabled
 	}
 
-	obs.TemplateCacheRequested = shouldUseCache
+	obs.templateCacheRequested = shouldUseCache
 
 	// Observe template cache status
-	if result.TemplateCache != nil {
-		obs.TemplateCache = result.TemplateCache
+	if result.templateCache != nil {
+		obs.templateCache = result.templateCache
 
-		switch result.TemplateCache.Status.Status {
+		switch result.templateCache.Status.Status {
 		case constants.AIMStatusReady:
-			obs.TemplateCacheReady = true
+			obs.templateCacheReady = true
 		case constants.AIMStatusFailed:
-			obs.TemplateCacheFailed = true
+			obs.templateCacheFailed = true
 
 			// Check if this service has already attempted a retry
 			// Retry attempts are tracked in the service's own status
@@ -157,41 +157,41 @@ func observeServiceCaching(
 			}
 			if retryAttempts == 0 {
 				// Haven't retried yet - collect failed ModelCaches for deletion
-				for _, mc := range result.ModelCaches {
+				for _, mc := range result.modelCaches {
 					if mc.Status.Status == aimv1alpha1.AIMModelCacheStatusFailed {
-						obs.FailedModelCachesToRetry = append(obs.FailedModelCachesToRetry, mc)
+						obs.failedModelCachesToRetry = append(obs.failedModelCachesToRetry, mc)
 					}
 				}
-				obs.ShouldRequestCacheRetry = len(obs.FailedModelCachesToRetry) > 0
+				obs.shouldRequestCacheRetry = len(obs.failedModelCachesToRetry) > 0
 			} else {
 				// Already retried - don't try again
-				obs.ShouldRequestCacheRetry = false
+				obs.shouldRequestCacheRetry = false
 			}
 		}
 	} else if shouldCreateCache {
-		obs.ShouldCreateCache = true
+		obs.shouldCreateCache = true
 	}
 
 	// Match model caches with model sources for mounting
-	if obs.TemplateCacheReady && templateStatus != nil {
-		obs.ModelCachesToMount = matchModelCachesWithSources(result.ModelCaches, templateStatus.ModelSources)
+	if obs.templateCacheReady && templateStatus != nil {
+		obs.modelCachesToMount = matchModelCachesWithSources(result.modelCaches, templateStatus.ModelSources)
 	}
 
 	return obs
 }
 
 // matchModelCachesWithSources matches available model caches with template model sources
-func matchModelCachesWithSources(modelCaches []aimv1alpha1.AIMModelCache, modelSources []aimv1alpha1.AIMModelSource) []ModelCacheMount {
-	var mounts []ModelCacheMount
+func matchModelCachesWithSources(modelCaches []aimv1alpha1.AIMModelCache, modelSources []aimv1alpha1.AIMModelSource) []modelCacheMount {
+	var mounts []modelCacheMount
 
 	// For each model source, find a matching available cache
 	for _, source := range modelSources {
 		for _, cache := range modelCaches {
 			if cache.Spec.SourceURI == source.SourceURI &&
 				cache.Status.Status == aimv1alpha1.AIMModelCacheStatusAvailable {
-				mounts = append(mounts, ModelCacheMount{
-					Cache:     cache,
-					ModelName: source.Name,
+				mounts = append(mounts, modelCacheMount{
+					cache:     cache,
+					modelName: source.Name,
 				})
 				break // Found match for this source, move to next
 			}
@@ -208,13 +208,13 @@ func matchModelCachesWithSources(modelCaches []aimv1alpha1.AIMModelCache, modelS
 //nolint:unparam // error return kept for API consistency with other plan functions
 func planServiceCache(
 	service *aimv1alpha1.AIMService,
-	obs ServiceCachingObservation,
+	obs serviceCachingObservation,
 	templateName string,
 	templateNamespace string,
 	mergedConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) (client.Object, error) {
 	// Create new cache if needed
-	if obs.ShouldCreateCache && templateName != "" {
+	if obs.shouldCreateCache && templateName != "" {
 		return buildTemplateCache(service, templateName, templateNamespace, mergedConfig), nil
 	}
 
@@ -268,16 +268,16 @@ func projectServiceCaching(
 	status *aimv1alpha1.AIMServiceStatus,
 	cm *controllerutils.ConditionManager,
 	h *controllerutils.StatusHelper,
-	obs ServiceCachingObservation,
+	obs serviceCachingObservation,
 ) bool {
-	if !obs.TemplateCacheRequested {
+	if !obs.templateCacheRequested {
 		// Caching not requested, nothing to project
 		return false
 	}
 
-	if obs.TemplateCacheFailed {
+	if obs.templateCacheFailed {
 		// Cache failed
-		if obs.ShouldRequestCacheRetry {
+		if obs.shouldRequestCacheRetry {
 			// Increment retry counter
 			if status.Cache == nil {
 				status.Cache = &aimv1alpha1.AIMServiceCacheStatus{}
@@ -295,21 +295,21 @@ func projectServiceCaching(
 		}
 	}
 
-	if obs.ShouldCreateCache {
+	if obs.shouldCreateCache {
 		// Cache requested but doesn't exist yet - progressing
 		h.Progressing(aimv1alpha1.AIMServiceReasonCacheCreating, "Creating template cache")
 		cm.MarkFalse(aimv1alpha1.AIMServiceConditionCacheReady, aimv1alpha1.AIMServiceReasonCacheCreating, "Template cache being created", controllerutils.LevelNormal)
 		return false
 	}
 
-	if obs.TemplateCache != nil && !obs.TemplateCacheReady && !obs.TemplateCacheFailed {
+	if obs.templateCache != nil && !obs.templateCacheReady && !obs.templateCacheFailed {
 		// Cache exists but not ready - progressing
 		h.Progressing(aimv1alpha1.AIMServiceReasonCacheNotReady, "Waiting for template cache to become ready")
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionCacheReady, aimv1alpha1.AIMServiceReasonCacheNotReady, fmt.Sprintf("Template cache status: %s", obs.TemplateCache.Status.Status), controllerutils.LevelNormal)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionCacheReady, aimv1alpha1.AIMServiceReasonCacheNotReady, fmt.Sprintf("Template cache status: %s", obs.templateCache.Status.Status), controllerutils.LevelNormal)
 		return false
 	}
 
-	if obs.TemplateCacheReady {
+	if obs.templateCacheReady {
 		// Cache ready - set condition and status
 		cm.MarkTrue(aimv1alpha1.AIMServiceConditionCacheReady, aimv1alpha1.AIMServiceReasonCacheReady, "Template cache is ready", controllerutils.LevelNormal)
 
@@ -320,10 +320,10 @@ func projectServiceCaching(
 		if status.Cache.TemplateCacheRef == nil {
 			status.Cache.TemplateCacheRef = &aimv1alpha1.AIMResolvedReference{}
 		}
-		status.Cache.TemplateCacheRef.Name = obs.TemplateCache.Name
-		status.Cache.TemplateCacheRef.Namespace = obs.TemplateCache.Namespace
-		status.Cache.TemplateCacheRef.Kind = obs.TemplateCache.Kind
-		status.Cache.TemplateCacheRef.UID = obs.TemplateCache.UID
+		status.Cache.TemplateCacheRef.Name = obs.templateCache.Name
+		status.Cache.TemplateCacheRef.Namespace = obs.templateCache.Namespace
+		status.Cache.TemplateCacheRef.Kind = obs.templateCache.Kind
+		status.Cache.TemplateCacheRef.UID = obs.templateCache.UID
 	}
 
 	return false

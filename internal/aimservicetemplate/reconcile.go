@@ -258,7 +258,7 @@ func (r *ClusterServiceTemplateReconciler) Project(
 ) {
 	sh := controllerutils.NewStatusHelper(status, cm)
 
-	// Project RuntimeConfig first - highest priority
+	// Project runtimeConfig first - highest priority
 	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.RuntimeConfig); fatal {
 		return
 	}
@@ -284,7 +284,7 @@ func (r *ServiceTemplateReconciler) Project(
 ) {
 	sh := controllerutils.NewStatusHelper(status, cm)
 
-	// Project RuntimeConfig first - highest priority
+	// Project runtimeConfig first - highest priority
 	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.RuntimeConfig); fatal {
 		return
 	}

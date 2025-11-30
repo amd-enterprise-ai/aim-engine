@@ -50,12 +50,12 @@ type Reconciler struct {
 
 // ServiceFetchResult aggregates all fetched resources for an AIMService.
 type ServiceFetchResult struct {
-	Model         ServiceModelFetchResult
+	Model         serviceModelFetchResult
 	Template      ServiceTemplateFetchResult
 	Caching       ServiceCachingFetchResult
 	PVC           ServicePVCFetchResult
-	KServe        ServiceKServeFetchResult
-	HTTPRoute     ServiceHTTPRouteFetchResult
+	KServe        inferenceServiceKServeFetchResult
+	HTTPRoute     serviceHTTPRouteFetchResult
 	RuntimeConfig aimruntimeconfig.RuntimeConfigFetchResult
 }
 
@@ -104,7 +104,7 @@ func (r *Reconciler) Fetch(
 	}
 	result.PVC = pvcFetchResult
 
-	// 5. Fetch KServe InferenceService
+	// 5. Fetch KServe inferenceService
 	kserveFetchResult, err := fetchServiceKServeResult(ctx, c, service)
 	if err != nil {
 		return result, err
@@ -127,12 +127,12 @@ func (r *Reconciler) Fetch(
 
 // ServiceObservation aggregates all observed state for an AIMService.
 type ServiceObservation struct {
-	Model         ServiceModelObservation
+	Model         serviceModelObservation
 	Template      ServiceTemplateObservation
-	Caching       ServiceCachingObservation
+	Caching       serviceCachingObservation
 	PVC           ServicePVCObservation
-	KServe        ServiceKServeObservation
-	HTTPRoute     ServiceHTTPRouteObservation
+	KServe        serviceKServeObservation
+	HTTPRoute     serviceHTTPRouteObservation
 	RuntimeConfig aimruntimeconfig.RuntimeConfigObservation
 
 	// MergedConfig is the final merged runtime config including service overrides
@@ -200,7 +200,7 @@ func (r *Reconciler) Plan(
 	var objectsToApply []client.Object
 	var objectsToDelete []client.Object
 
-	// RuntimeConfig is NOW available in obs.MergedConfig
+	// runtimeConfig is NOW available in obs.MergedConfig
 
 	// Get template name for resource creation
 	templateName, templateNamespace := getResolvedTemplateName(service, ServiceTemplateFetchResult{
@@ -208,8 +208,8 @@ func (r *Reconciler) Plan(
 	})
 
 	// Handle cache retry deletions - delete failed model caches to allow retry
-	if obs.Caching.ShouldRequestCacheRetry {
-		for _, mc := range obs.Caching.FailedModelCachesToRetry {
+	if obs.Caching.shouldRequestCacheRetry {
+		for _, mc := range obs.Caching.failedModelCachesToRetry {
 			// Create a copy to avoid issues with range variable addresses
 			mcCopy := mc
 			objectsToDelete = append(objectsToDelete, &mcCopy)
@@ -225,7 +225,7 @@ func (r *Reconciler) Plan(
 	}
 
 	// 1. Plan caching (TemplateCache creation)
-	if obs.Caching.ShouldCreateCache && templateName != "" {
+	if obs.Caching.shouldCreateCache && templateName != "" {
 		cacheObj, err := planServiceCache(service, obs.Caching, templateName, templateNamespace, &obs.MergedConfig)
 		if err != nil {
 			return controllerutils.PlanResult{}, err
@@ -246,11 +246,11 @@ func (r *Reconciler) Plan(
 		}
 	}
 
-	// 3. Plan KServe InferenceService
+	// 3. Plan KServe inferenceService
 	if obs.Model.ModelSpec != nil && obs.Template.TemplateSpec != nil {
 		kserveObj, err := planServiceInferenceService(
 			service, obs.KServe,
-			obs.Model.ModelSpec.Image, obs.Model.ModelName,
+			obs.Model.ModelSpec.Image, obs.Model.modelName,
 			templateName, obs.Template.TemplateSpec, obs.Template.TemplateStatus,
 			obs.PVC, obs.Caching,
 		)
@@ -263,11 +263,11 @@ func (r *Reconciler) Plan(
 	}
 
 	// 4. Plan HTTPRoute
-	if obs.HTTPRoute.RoutingEnabled {
+	if obs.HTTPRoute.routingEnabled {
 		httprouteObj, err := planServiceHTTPRoute(
 			service, obs.HTTPRoute,
-			InferenceServiceNameForService(service),
-			obs.Model.ModelName, templateName,
+			inferenceServiceNameForService(service),
+			obs.Model.modelName, templateName,
 		)
 		if err != nil {
 			return controllerutils.PlanResult{}, err
@@ -297,7 +297,7 @@ func (r *Reconciler) Project(
 	// Project in order, checking for blocking errors after each domain
 	// Each project function returns true if it's a blocking error
 
-	// 0. RuntimeConfig projection (highest priority)
+	// 0. runtimeConfig projection (highest priority)
 	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, h, obs.RuntimeConfig); fatal {
 		return
 	}

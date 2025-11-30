@@ -48,13 +48,13 @@ import (
 // FETCH
 // ============================================================================
 
-type JobFetchResult struct {
-	Job   *batchv1.Job
-	Error error
+type jobFetchResult struct {
+	job   *batchv1.Job
+	error error
 }
 
-func fetchJob(ctx context.Context, c client.Client, cache *aimv1alpha1.AIMModelCache) (JobFetchResult, error) {
-	result := JobFetchResult{}
+func fetchJob(ctx context.Context, c client.Client, cache *aimv1alpha1.AIMModelCache) (jobFetchResult, error) {
+	result := jobFetchResult{}
 
 	jobName := jobNameForCache(cache)
 	var job batchv1.Job
@@ -64,8 +64,8 @@ func fetchJob(ctx context.Context, c client.Client, cache *aimv1alpha1.AIMModelC
 		return result, err
 	}
 
-	result.Job = &job
-	result.Error = err
+	result.job = &job
+	result.error = err
 	return result, nil
 }
 
@@ -73,41 +73,41 @@ func fetchJob(ctx context.Context, c client.Client, cache *aimv1alpha1.AIMModelC
 // OBSERVE
 // ============================================================================
 
-// JobObservation contains information about the download job.
-type JobObservation struct {
-	Found            bool
-	Job              *batchv1.Job
-	Succeeded        bool
-	Failed           bool
+// jobObservation contains information about the download job.
+type jobObservation struct {
+	found            bool
+	job              *batchv1.Job
+	succeeded        bool
+	failed           bool
 	PendingOrRunning bool
 }
 
-func observeJob(result JobFetchResult) JobObservation {
-	obs := JobObservation{}
+func observeJob(result jobFetchResult) jobObservation {
+	obs := jobObservation{}
 
-	if result.Error != nil {
-		obs.Found = false
+	if result.error != nil {
+		obs.found = false
 		return obs
 	}
 
-	obs.Found = true
-	obs.Job = result.Job
+	obs.found = true
+	obs.job = result.job
 
 	// Check job conditions
-	for _, c := range result.Job.Status.Conditions {
+	for _, c := range result.job.Status.Conditions {
 		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
-			obs.Failed = true
+			obs.failed = true
 		}
 		if c.Type == batchv1.JobComplete && c.Status == corev1.ConditionTrue {
-			obs.Succeeded = true
+			obs.succeeded = true
 		}
 	}
 
 	// Check job status counters
-	if result.Job.Status.Succeeded > 0 {
-		obs.Succeeded = true
+	if result.job.Status.Succeeded > 0 {
+		obs.succeeded = true
 	}
-	if result.Job.Status.Active > 0 || utils.ValueOrDefault(result.Job.Status.Ready) > 0 {
+	if result.job.Status.Active > 0 || utils.ValueOrDefault(result.job.Status.Ready) > 0 {
 		obs.PendingOrRunning = true
 	}
 
@@ -119,15 +119,15 @@ func observeJob(result JobFetchResult) JobObservation {
 // ============================================================================
 
 func planJob(cache *aimv1alpha1.AIMModelCache, obs Observation, scheme *runtime.Scheme) client.Object {
-	// Plan Job when storage is ready OR when PVC is pending with WaitForFirstConsumer
-	if !canCreateJob(obs) || obs.Job.Found {
+	// Plan Job when storage is ready OR when PVC is pending with waitForFirstConsumer
+	if !canCreateJob(obs) || obs.job.found {
 		return nil
 	}
 
 	logger := log.Log.WithName("aimmodelcache").WithValues("cache", cache.Name)
 	logger.V(1).Info("Planning to create download job",
-		"storageReady", obs.PVC.Ready,
-		"waitForFirstConsumer", obs.StorageClass.WaitForFirstConsumer)
+		"storageReady", obs.pvc.ready,
+		"waitForFirstConsumer", obs.storageClass.waitForFirstConsumer)
 
 	job := buildDownloadJob(cache, obs)
 	if err := controllerutil.SetOwnerReference(cache, job, scheme); err != nil {
@@ -139,15 +139,15 @@ func planJob(cache *aimv1alpha1.AIMModelCache, obs Observation, scheme *runtime.
 // canCreateJob determines if the download job can be created.
 func canCreateJob(obs Observation) bool {
 	// Can create job if storage is ready
-	if obs.PVC.Ready {
+	if obs.pvc.ready {
 		return true
 	}
 
-	// Or if PVC is pending with WaitForFirstConsumer
+	// Or if PVC is pending with waitForFirstConsumer
 	// (job will trigger the binding)
-	if obs.PVC.Found &&
-		obs.PVC.PVC.Status.Phase == corev1.ClaimPending &&
-		obs.StorageClass.WaitForFirstConsumer {
+	if obs.pvc.found &&
+		obs.pvc.pvc.Status.Phase == corev1.ClaimPending &&
+		obs.storageClass.waitForFirstConsumer {
 		return true
 	}
 
@@ -258,7 +258,7 @@ du -sh %s/.hf 2>/dev/null || true
 
 // projectReadyCondition sets the Ready condition.
 func projectReadyCondition(cm *controllerutils.ConditionManager, obs Observation, canCreate bool) {
-	ready := obs.PVC.Ready && obs.Job.Succeeded
+	ready := obs.pvc.ready && obs.job.succeeded
 
 	if ready {
 		cm.Set(aimv1alpha1.AIMModelCacheConditionReady, metav1.ConditionTrue, aimv1alpha1.AIMModelCacheReasonWarm, "", controllerutils.LevelNormal)
@@ -275,16 +275,16 @@ func projectReadyCondition(cm *controllerutils.ConditionManager, obs Observation
 
 // projectProgressingCondition sets the Progressing condition.
 func projectProgressingCondition(cm *controllerutils.ConditionManager, obs Observation, canCreate bool) {
-	ready := obs.PVC.Ready && obs.Job.Succeeded
-	failure := obs.PVC.Lost || obs.Job.Failed
+	ready := obs.pvc.ready && obs.job.succeeded
+	failure := obs.pvc.lost || obs.job.failed
 
-	progressing := !ready && !failure && (!obs.PVC.Ready || obs.Job.PendingOrRunning || (!obs.Job.Found && canCreate))
+	progressing := !ready && !failure && (!obs.pvc.ready || obs.job.PendingOrRunning || (!obs.job.found && canCreate))
 
 	if progressing {
-		if !obs.PVC.Ready && !canCreate {
+		if !obs.pvc.ready && !canCreate {
 			cm.Set(aimv1alpha1.AIMModelCacheConditionProgressing, metav1.ConditionTrue,
 				aimv1alpha1.AIMModelCacheReasonWaitingForPVC, "", controllerutils.LevelNormal)
-		} else if obs.Job.PendingOrRunning || (!obs.Job.Found && canCreate) {
+		} else if obs.job.PendingOrRunning || (!obs.job.found && canCreate) {
 			cm.Set(aimv1alpha1.AIMModelCacheConditionProgressing, metav1.ConditionTrue,
 				aimv1alpha1.AIMModelCacheReasonDownloading, "", controllerutils.LevelNormal)
 		} else {
@@ -299,7 +299,7 @@ func projectProgressingCondition(cm *controllerutils.ConditionManager, obs Obser
 
 // projectFailureCondition sets the Failure condition.
 func projectFailureCondition(cm *controllerutils.ConditionManager, obs Observation) {
-	failure := obs.PVC.Lost || obs.Job.Failed
+	failure := obs.pvc.lost || obs.job.failed
 
 	if !failure {
 		cm.Set(aimv1alpha1.AIMModelCacheConditionFailure, metav1.ConditionFalse,
@@ -308,10 +308,10 @@ func projectFailureCondition(cm *controllerutils.ConditionManager, obs Observati
 	}
 
 	// Determine specific failure reason
-	if obs.PVC.Lost {
+	if obs.pvc.lost {
 		cm.Set(aimv1alpha1.AIMModelCacheConditionFailure, metav1.ConditionTrue,
 			aimv1alpha1.AIMModelCacheReasonPVCLost, "", controllerutils.LevelWarning)
-	} else if obs.Job.Failed {
+	} else if obs.job.failed {
 		cm.Set(aimv1alpha1.AIMModelCacheConditionFailure, metav1.ConditionTrue,
 			aimv1alpha1.AIMModelCacheReasonDownloadFailed, "", controllerutils.LevelWarning)
 	}
@@ -319,12 +319,12 @@ func projectFailureCondition(cm *controllerutils.ConditionManager, obs Observati
 
 // projectOverallStatus determines the overall status enum.
 func projectOverallStatus(status *aimv1alpha1.AIMModelCacheStatus, obs Observation, canCreate bool) {
-	ready := obs.PVC.Ready && obs.Job.Succeeded
-	failure := obs.PVC.Lost || obs.Job.Failed
-	progressing := !ready && !failure && (!obs.PVC.Ready || obs.Job.PendingOrRunning || (!obs.Job.Found && canCreate))
+	ready := obs.pvc.ready && obs.job.succeeded
+	failure := obs.pvc.lost || obs.job.failed
+	progressing := !ready && !failure && (!obs.pvc.ready || obs.job.PendingOrRunning || (!obs.job.found && canCreate))
 
 	switch {
-	case failure && obs.Job.Failed:
+	case failure && obs.job.failed:
 		status.Status = aimv1alpha1.AIMModelCacheStatusFailed
 	case ready:
 		status.Status = aimv1alpha1.AIMModelCacheStatusAvailable

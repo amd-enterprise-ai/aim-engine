@@ -52,9 +52,9 @@ type ModelReconciler struct {
 // ============================================================================
 
 type ClusterModelFetchResult struct {
-	RuntimeConfig           aimruntimeconfig.RuntimeConfigFetchResult
-	ClusterServiceTemplates ClusterModelServiceTemplateFetchResult
-	ImageMetadata           *ModelMetadataFetchResult
+	runtimeConfig           aimruntimeconfig.RuntimeConfigFetchResult
+	clusterServiceTemplates clusterModelServiceTemplateFetchResult
+	imageMetadata           *modelMetadataFetchResult
 }
 
 func (r *ClusterModelReconciler) Fetch(
@@ -68,27 +68,27 @@ func (r *ClusterModelReconciler) Fetch(
 	if err != nil {
 		return result, fmt.Errorf("failed to fetch runtimeConfig: %w", err)
 	}
-	result.RuntimeConfig = runtimeConfig
+	result.runtimeConfig = runtimeConfig
 
 	templates, templatesErr := fetchClusterModelServiceTemplateResult(ctx, c, *clusterModel)
 	if templatesErr != nil {
 		return result, fmt.Errorf("failed to fetch cluster model service templates: %w", templatesErr)
 	}
-	result.ClusterServiceTemplates = templates
+	result.clusterServiceTemplates = templates
 
 	// Fetch image metadata only if needed
-	if ShouldExtractMetadata(&clusterModel.Status) {
-		metadataResult := FetchModelMetadataResult(ctx, r.Clientset, clusterModel.Spec, constants.GetOperatorNamespace())
-		result.ImageMetadata = &metadataResult
+	if shouldExtractMetadata(&clusterModel.Status) {
+		metadataResult := fetchModelMetadataResult(ctx, r.Clientset, clusterModel.Spec, constants.GetOperatorNamespace())
+		result.imageMetadata = &metadataResult
 	}
 
 	return result, nil
 }
 
 type ModelFetchResult struct {
-	RuntimeConfig    aimruntimeconfig.RuntimeConfigFetchResult
-	ServiceTemplates ModelServiceTemplateFetchResult
-	ImageMetadata    *ModelMetadataFetchResult
+	runtimeConfig    aimruntimeconfig.RuntimeConfigFetchResult
+	serviceTemplates modelServiceTemplateFetchResult
+	imageMetadata    *modelMetadataFetchResult
 }
 
 func (r *ModelReconciler) Fetch(
@@ -102,18 +102,18 @@ func (r *ModelReconciler) Fetch(
 	if err != nil {
 		return result, fmt.Errorf("failed to fetch runtimeConfig: %w", err)
 	}
-	result.RuntimeConfig = runtimeConfig
+	result.runtimeConfig = runtimeConfig
 
 	templates, templatesErr := fetchModelServiceTemplateResult(ctx, c, *model)
 	if templatesErr != nil {
 		return result, fmt.Errorf("failed to fetch model service templates: %w", templatesErr)
 	}
-	result.ServiceTemplates = templates
+	result.serviceTemplates = templates
 
 	// Fetch image metadata if needed
-	if ShouldExtractMetadata(&model.Status) {
-		metadataResult := FetchModelMetadataResult(ctx, r.Clientset, model.Spec, model.Namespace)
-		result.ImageMetadata = &metadataResult
+	if shouldExtractMetadata(&model.Status) {
+		metadataResult := fetchModelMetadataResult(ctx, r.Clientset, model.Spec, model.Namespace)
+		result.imageMetadata = &metadataResult
 	}
 
 	return result, nil
@@ -124,9 +124,9 @@ func (r *ModelReconciler) Fetch(
 // ============================================================================
 
 type ClusterModelObservation struct {
-	RuntimeConfig aimruntimeconfig.RuntimeConfigObservation
-	Metadata      ModelMetadataObservation
-	Templates     ClusterModelServiceTemplateObservation
+	runtimeConfig aimruntimeconfig.RuntimeConfigObservation
+	metadata      modelMetadataObservation
+	templates     clusterModelServiceTemplateObservation
 }
 
 func (r *ClusterModelReconciler) Observe(
@@ -135,19 +135,19 @@ func (r *ClusterModelReconciler) Observe(
 	fetchResult ClusterModelFetchResult,
 ) (ClusterModelObservation, error) {
 	obs := ClusterModelObservation{
-		RuntimeConfig: aimruntimeconfig.ObserveRuntimeConfig(fetchResult.RuntimeConfig, obj.Spec.RuntimeConfigName),
+		runtimeConfig: aimruntimeconfig.ObserveRuntimeConfig(fetchResult.runtimeConfig, obj.Spec.RuntimeConfigName),
 	}
 
-	obs.Metadata = ObserveModelMetadata(&obj.Status, fetchResult.ImageMetadata)
-	obs.Templates = ObserveClusterModelServiceTemplate(fetchResult.ClusterServiceTemplates, *obj, obs.RuntimeConfig.MergedConfig)
+	obs.metadata = observeModelMetadata(&obj.Status, fetchResult.imageMetadata)
+	obs.templates = observeClusterModelServiceTemplate(fetchResult.clusterServiceTemplates, *obj, obs.runtimeConfig.MergedConfig)
 
 	return obs, nil
 }
 
 type ModelObservation struct {
-	RuntimeConfig aimruntimeconfig.RuntimeConfigObservation
-	Metadata      ModelMetadataObservation
-	Templates     ModelServiceTemplateObservation
+	runtimeConfig aimruntimeconfig.RuntimeConfigObservation
+	metadata      modelMetadataObservation
+	templates     modelServiceTemplateObservation
 }
 
 func (r *ModelReconciler) Observe(
@@ -156,11 +156,11 @@ func (r *ModelReconciler) Observe(
 	fetchResult ModelFetchResult,
 ) (ModelObservation, error) {
 	obs := ModelObservation{
-		RuntimeConfig: aimruntimeconfig.ObserveRuntimeConfig(fetchResult.RuntimeConfig, obj.Spec.RuntimeConfigName),
+		runtimeConfig: aimruntimeconfig.ObserveRuntimeConfig(fetchResult.runtimeConfig, obj.Spec.RuntimeConfigName),
 	}
 
-	obs.Metadata = ObserveModelMetadata(&obj.Status, fetchResult.ImageMetadata)
-	obs.Templates = ObserveModelServiceTemplate(fetchResult.ServiceTemplates, *obj, obs.RuntimeConfig.MergedConfig)
+	obs.metadata = observeModelMetadata(&obj.Status, fetchResult.imageMetadata)
+	obs.templates = observeModelServiceTemplate(fetchResult.serviceTemplates, *obj, obs.runtimeConfig.MergedConfig)
 
 	return obs, nil
 }
@@ -175,13 +175,13 @@ func (r *ClusterModelReconciler) Plan(
 	obs ClusterModelObservation,
 ) (controllerutils.PlanResult, error) {
 	// Return if nothing to create
-	if !obs.Templates.ShouldCreateTemplates {
+	if !obs.templates.shouldCreateTemplates {
 		return controllerutils.PlanResult{}, nil
 	}
 
 	var templates []client.Object
 
-	clusterServiceTemplates := planClusterModelServiceTemplates(obs.Templates, obs.Metadata, *obj)
+	clusterServiceTemplates := planClusterModelServiceTemplates(obs.templates, obs.metadata, *obj)
 	for _, template := range clusterServiceTemplates {
 		if err := controllerutil.SetOwnerReference(obj, template, r.Scheme, controllerutil.WithBlockOwnerDeletion(false)); err != nil {
 			return controllerutils.PlanResult{}, err
@@ -198,13 +198,13 @@ func (r *ModelReconciler) Plan(
 	obs ModelObservation,
 ) (controllerutils.PlanResult, error) {
 	// Return if nothing to create
-	if !obs.Templates.ShouldCreateTemplates {
+	if !obs.templates.shouldCreateTemplates {
 		return controllerutils.PlanResult{}, nil
 	}
 
 	var templates []client.Object
 
-	serviceTemplates := planModelServiceTemplates(obs.Templates, obs.Metadata, *obj)
+	serviceTemplates := planModelServiceTemplates(obs.templates, obs.metadata, *obj)
 	for _, template := range serviceTemplates {
 		if err := controllerutil.SetOwnerReference(obj, template, r.Scheme, controllerutil.WithBlockOwnerDeletion(false)); err != nil {
 			return controllerutils.PlanResult{}, err
@@ -227,18 +227,18 @@ func (r *ClusterModelReconciler) Project(
 	sh := controllerutils.NewStatusHelper(status, cm)
 
 	// Project runtime config first - if it fails, don't proceed
-	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.RuntimeConfig); fatal {
+	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.runtimeConfig); fatal {
 		return
 	}
 
 	// Project metadata - if it fails fatally, don't proceed
-	if fatal := projectModelMetadata(cm, sh, observation.Metadata); fatal {
+	if fatal := projectModelMetadata(cm, sh, observation.metadata); fatal {
 		return
 	}
 
 	// Only project template status if no higher-priority errors
 	var templateStatuses []aimv1alpha1.AIMServiceTemplateStatus
-	for _, templateStatus := range observation.Templates.ExistingTemplates {
+	for _, templateStatus := range observation.templates.existingTemplates {
 		templateStatuses = append(templateStatuses, templateStatus.Status)
 	}
 
@@ -253,18 +253,18 @@ func (r *ModelReconciler) Project(
 	sh := controllerutils.NewStatusHelper(status, cm)
 
 	// Project runtime config first - if it fails, don't proceed
-	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.RuntimeConfig); fatal {
+	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.runtimeConfig); fatal {
 		return
 	}
 
 	// Project metadata - if it fails fatally, don't proceed
-	if fatal := projectModelMetadata(cm, sh, observation.Metadata); fatal {
+	if fatal := projectModelMetadata(cm, sh, observation.metadata); fatal {
 		return
 	}
 
 	// Only project template status if no higher-priority errors
 	var templateStatuses []aimv1alpha1.AIMServiceTemplateStatus
-	for _, templateStatus := range observation.Templates.ExistingTemplates {
+	for _, templateStatus := range observation.templates.existingTemplates {
 		templateStatuses = append(templateStatuses, templateStatus.Status)
 	}
 

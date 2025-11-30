@@ -46,13 +46,13 @@ import (
 // FETCH
 // ============================================================================
 
-type PVCFetchResult struct {
+type pvcFetchResult struct {
 	PVC   *corev1.PersistentVolumeClaim
-	Error error
+	error error
 }
 
-func fetchPVC(ctx context.Context, c client.Client, cache *aimv1alpha1.AIMModelCache) (PVCFetchResult, error) {
-	result := PVCFetchResult{}
+func fetchPVC(ctx context.Context, c client.Client, cache *aimv1alpha1.AIMModelCache) (pvcFetchResult, error) {
+	result := pvcFetchResult{}
 
 	pvcName := pvcNameForCache(cache)
 	var pvc corev1.PersistentVolumeClaim
@@ -63,17 +63,17 @@ func fetchPVC(ctx context.Context, c client.Client, cache *aimv1alpha1.AIMModelC
 	}
 
 	result.PVC = &pvc
-	result.Error = err
+	result.error = err
 	return result, nil
 }
 
-type StorageClassFetchResult struct {
-	StorageClass *storagev1.StorageClass
-	Error        error
+type storageClassFetchResult struct {
+	storageClass *storagev1.StorageClass
+	error        error
 }
 
-func fetchStorageClass(ctx context.Context, c client.Client, pvc *corev1.PersistentVolumeClaim) (StorageClassFetchResult, error) {
-	result := StorageClassFetchResult{}
+func fetchStorageClass(ctx context.Context, c client.Client, pvc *corev1.PersistentVolumeClaim) (storageClassFetchResult, error) {
+	result := storageClassFetchResult{}
 
 	if pvc.Spec.StorageClassName == nil || *pvc.Spec.StorageClassName == "" {
 		return result, nil
@@ -86,8 +86,8 @@ func fetchStorageClass(ctx context.Context, c client.Client, pvc *corev1.Persist
 		return result, err
 	}
 
-	result.StorageClass = &sc
-	result.Error = err
+	result.storageClass = &sc
+	result.error = err
 	return result, nil
 }
 
@@ -95,52 +95,52 @@ func fetchStorageClass(ctx context.Context, c client.Client, pvc *corev1.Persist
 // OBSERVE
 // ============================================================================
 
-// PVCObservation contains information about the PersistentVolumeClaim.
-type PVCObservation struct {
-	Found bool
-	PVC   *corev1.PersistentVolumeClaim
-	Bound bool
-	Ready bool // Phase == Bound
-	Lost  bool // Phase == Lost
+// pvcObservation contains information about the PersistentVolumeClaim.
+type pvcObservation struct {
+	found bool
+	pvc   *corev1.PersistentVolumeClaim
+	bound bool
+	ready bool // Phase == Bound
+	lost  bool // Phase == Lost
 }
 
-func observePVC(result PVCFetchResult) PVCObservation {
-	obs := PVCObservation{}
+func observePVC(result pvcFetchResult) pvcObservation {
+	obs := pvcObservation{}
 
-	if result.Error != nil {
-		obs.Found = false
+	if result.error != nil {
+		obs.found = false
 		return obs
 	}
 
-	obs.Found = true
-	obs.PVC = result.PVC
-	obs.Bound = result.PVC.Status.Phase == corev1.ClaimBound
-	obs.Ready = result.PVC.Status.Phase == corev1.ClaimBound
-	obs.Lost = result.PVC.Status.Phase == corev1.ClaimLost
+	obs.found = true
+	obs.pvc = result.PVC
+	obs.bound = result.PVC.Status.Phase == corev1.ClaimBound
+	obs.ready = result.PVC.Status.Phase == corev1.ClaimBound
+	obs.lost = result.PVC.Status.Phase == corev1.ClaimLost
 
 	return obs
 }
 
-// StorageClassObservation contains information about the StorageClass binding mode.
-type StorageClassObservation struct {
-	Found                bool
-	StorageClass         *storagev1.StorageClass
-	WaitForFirstConsumer bool
+// storageClassObservation contains information about the StorageClass binding mode.
+type storageClassObservation struct {
+	found                bool
+	storageClass         *storagev1.StorageClass
+	waitForFirstConsumer bool
 }
 
-func observeStorageClass(result StorageClassFetchResult) StorageClassObservation {
-	obs := StorageClassObservation{}
+func observeStorageClass(result storageClassFetchResult) storageClassObservation {
+	obs := storageClassObservation{}
 
-	if result.Error != nil {
-		obs.Found = false
+	if result.error != nil {
+		obs.found = false
 		return obs
 	}
 
-	obs.Found = true
-	obs.StorageClass = result.StorageClass
+	obs.found = true
+	obs.storageClass = result.storageClass
 
-	if result.StorageClass.VolumeBindingMode != nil {
-		obs.WaitForFirstConsumer = *result.StorageClass.VolumeBindingMode == storagev1.VolumeBindingWaitForFirstConsumer
+	if result.storageClass.VolumeBindingMode != nil {
+		obs.waitForFirstConsumer = *result.storageClass.VolumeBindingMode == storagev1.VolumeBindingWaitForFirstConsumer
 	}
 
 	return obs
@@ -156,7 +156,7 @@ func planPVC(cache *aimv1alpha1.AIMModelCache, obs Observation, scheme *runtime.
 	// 1. StorageClassName mutation errors (forbidden by Kubernetes)
 	// 2. Storage size shrinkage errors (forbidden by Kubernetes)
 	// 3. Unexpected PVC expansion from runtime config changes
-	if obs.PVC.Found {
+	if obs.pvc.found {
 		return nil
 	}
 
@@ -171,14 +171,14 @@ func planPVC(cache *aimv1alpha1.AIMModelCache, obs Observation, scheme *runtime.
 func buildPVC(cache *aimv1alpha1.AIMModelCache, obs Observation) *corev1.PersistentVolumeClaim {
 	// Handle nil MergedConfig (e.g., default config not found)
 	var headroomPercent *int32
-	if obs.RuntimeConfig.MergedConfig != nil && obs.RuntimeConfig.MergedConfig.Storage != nil {
-		headroomPercent = obs.RuntimeConfig.MergedConfig.Storage.PVCHeadroomPercent
+	if obs.runtimeConfig.MergedConfig != nil && obs.runtimeConfig.MergedConfig.Storage != nil {
+		headroomPercent = obs.runtimeConfig.MergedConfig.Storage.PVCHeadroomPercent
 	}
 	if headroomPercent == nil {
 		headroomPercent = ptr.To(utils.DefaultPVCHeadroomPercent)
 	}
 
-	storageClassName := utils.ResolveStorageClass(cache.Spec.StorageClassName, obs.RuntimeConfig.MergedConfig)
+	storageClassName := utils.ResolveStorageClass(cache.Spec.StorageClassName, obs.runtimeConfig.MergedConfig)
 	pvcSize := utils.QuantityWithHeadroom(cache.Spec.Size.Value(), *headroomPercent)
 
 	// Storage class: empty string means use cluster default
@@ -239,28 +239,28 @@ func buildPVC(cache *aimv1alpha1.AIMModelCache, obs Observation) *corev1.Persist
 
 // projectPVC updates the PVC reference in status.
 func projectPVC(status *aimv1alpha1.AIMModelCacheStatus, obs Observation) {
-	if obs.PVC.Found {
-		status.PersistentVolumeClaim = obs.PVC.PVC.Name
+	if obs.pvc.found {
+		status.PersistentVolumeClaim = obs.pvc.pvc.Name
 	}
 }
 
 // projectStorageReadyCondition sets the StorageReady condition.
 func projectStorageReadyCondition(cm *controllerutils.ConditionManager, obs Observation) {
 	switch {
-	case !obs.PVC.Found:
+	case !obs.pvc.found:
 		cm.Set(aimv1alpha1.AIMModelCacheConditionStorageReady, metav1.ConditionFalse,
 			aimv1alpha1.AIMModelCacheReasonPVCPending, "PVC not created yet", controllerutils.LevelNormal)
-	case obs.PVC.PVC.Status.Phase == corev1.ClaimBound:
+	case obs.pvc.pvc.Status.Phase == corev1.ClaimBound:
 		cm.Set(aimv1alpha1.AIMModelCacheConditionStorageReady, metav1.ConditionTrue,
 			aimv1alpha1.AIMModelCacheReasonPVCBound, "", controllerutils.LevelNormal)
-	case obs.PVC.PVC.Status.Phase == corev1.ClaimPending:
+	case obs.pvc.pvc.Status.Phase == corev1.ClaimPending:
 		cm.Set(aimv1alpha1.AIMModelCacheConditionStorageReady, metav1.ConditionFalse,
 			aimv1alpha1.AIMModelCacheReasonPVCProvisioning, "PVC is provisioning", controllerutils.LevelNormal)
-	case obs.PVC.PVC.Status.Phase == corev1.ClaimLost:
+	case obs.pvc.pvc.Status.Phase == corev1.ClaimLost:
 		cm.Set(aimv1alpha1.AIMModelCacheConditionStorageReady, metav1.ConditionFalse,
 			aimv1alpha1.AIMModelCacheReasonPVCLost, "PVC lost", controllerutils.LevelWarning)
 	default:
 		cm.Set(aimv1alpha1.AIMModelCacheConditionStorageReady, metav1.ConditionUnknown,
-			string(obs.PVC.PVC.Status.Phase), "", controllerutils.LevelWarning)
+			string(obs.pvc.pvc.Status.Phase), "", controllerutils.LevelWarning)
 	}
 }

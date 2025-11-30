@@ -53,10 +53,10 @@ type Reconciler struct {
 
 // FetchResult aggregates all fetched resources for an AIMModelCache.
 type FetchResult struct {
-	RuntimeConfig aimruntimeconfig.RuntimeConfigFetchResult
-	PVC           PVCFetchResult
-	StorageClass  StorageClassFetchResult
-	Job           JobFetchResult
+	runtimeConfig aimruntimeconfig.RuntimeConfigFetchResult
+	pvc           pvcFetchResult
+	storageClass  storageClassFetchResult
+	job           jobFetchResult
 }
 
 // Fetch retrieves all external dependencies for an AIMModelCache.
@@ -72,15 +72,15 @@ func (r *Reconciler) Fetch(
 	if err != nil {
 		return result, err
 	}
-	result.PVC = pvcResult
+	result.pvc = pvcResult
 
 	// Fetch StorageClass (only if PVC exists and has a storage class)
-	if pvcResult.Error == nil && pvcResult.PVC.Spec.StorageClassName != nil && *pvcResult.PVC.Spec.StorageClassName != "" {
+	if pvcResult.error == nil && pvcResult.PVC.Spec.StorageClassName != nil && *pvcResult.PVC.Spec.StorageClassName != "" {
 		scResult, err := fetchStorageClass(ctx, c, pvcResult.PVC)
 		if err != nil {
 			return result, err
 		}
-		result.StorageClass = scResult
+		result.storageClass = scResult
 	}
 
 	// Fetch Job
@@ -88,14 +88,14 @@ func (r *Reconciler) Fetch(
 	if err != nil {
 		return result, err
 	}
-	result.Job = jobResult
+	result.job = jobResult
 
-	// Fetch RuntimeConfig
+	// Fetch runtimeConfig
 	rcResult, err := aimruntimeconfig.FetchRuntimeConfig(ctx, c, cache.Spec.RuntimeConfigName, cache.Namespace)
 	if err != nil {
 		return result, err
 	}
-	result.RuntimeConfig = rcResult
+	result.runtimeConfig = rcResult
 
 	return result, nil
 }
@@ -106,10 +106,10 @@ func (r *Reconciler) Fetch(
 
 // Observation holds all observed state for an AIMModelCache.
 type Observation struct {
-	RuntimeConfig aimruntimeconfig.RuntimeConfigObservation
-	PVC           PVCObservation
-	StorageClass  StorageClassObservation
-	Job           JobObservation
+	runtimeConfig aimruntimeconfig.RuntimeConfigObservation
+	pvc           pvcObservation
+	storageClass  storageClassObservation
+	job           jobObservation
 }
 
 // Observe builds observation from fetched data.
@@ -121,16 +121,16 @@ func (r *Reconciler) Observe(
 	obs := Observation{}
 
 	// Observe PVC subdomain
-	obs.PVC = observePVC(fetchResult.PVC)
+	obs.pvc = observePVC(fetchResult.pvc)
 
 	// Observe StorageClass subdomain
-	obs.StorageClass = observeStorageClass(fetchResult.StorageClass)
+	obs.storageClass = observeStorageClass(fetchResult.storageClass)
 
 	// Observe Job subdomain
-	obs.Job = observeJob(fetchResult.Job)
+	obs.job = observeJob(fetchResult.job)
 
-	// Observe RuntimeConfig subdomain
-	obs.RuntimeConfig = aimruntimeconfig.ObserveRuntimeConfig(fetchResult.RuntimeConfig, cache.Spec.RuntimeConfigName)
+	// Observe runtimeConfig subdomain
+	obs.runtimeConfig = aimruntimeconfig.ObserveRuntimeConfig(fetchResult.runtimeConfig, cache.Spec.RuntimeConfigName)
 
 	return obs, nil
 }
@@ -169,8 +169,8 @@ func (r *Reconciler) Project(status *aimv1alpha1.AIMModelCacheStatus, cm *contro
 
 	sh := controllerutils.NewStatusHelper(status, cm)
 
-	// Project RuntimeConfig first - if it fails, we can't plan resources
-	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, obs.RuntimeConfig); fatal {
+	// Project runtimeConfig first - if it fails, we can't plan resources
+	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, obs.runtimeConfig); fatal {
 		return
 	}
 

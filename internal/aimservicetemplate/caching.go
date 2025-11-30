@@ -134,7 +134,7 @@ func observeServiceTemplateCache(result ServiceTemplateCacheFetchResult, service
 // ============================================================================
 
 func buildServiceTemplateCache(serviceTemplate aimv1alpha1.AIMServiceTemplate, config *aimv1alpha1.AIMRuntimeConfigCommon) *aimv1alpha1.AIMTemplateCache {
-	// Handle nil config (e.g., default RuntimeConfig not found)
+	// Handle nil config (e.g., default runtimeConfig not found)
 	storageClassName := utils.ResolveStorageClass("", config)
 	templateCache := &aimv1alpha1.AIMTemplateCache{
 		TypeMeta: metav1.TypeMeta{
