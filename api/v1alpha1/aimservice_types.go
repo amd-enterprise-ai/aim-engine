@@ -272,7 +272,7 @@ const (
 	// ConditionCacheReady is True when required caches are present or warmed as requested.
 	AIMServiceConditionCacheReady = "CacheReady"
 
-	// ConditionRuntimeReady is True when the underlying KServe runtime and InferenceService are ready.
+	// ConditionRuntimeReady is True when the underlying KServe runtime and inferenceService are ready.
 	AIMServiceConditionRuntimeReady = "RuntimeReady"
 
 	// ConditionRoutingReady is True when exposure and routing through the configured gateway are ready.
@@ -294,7 +294,7 @@ const (
 	AIMServiceReasonTemplateNotFound           = "TemplateNotFound"
 	AIMServiceReasonModelNotFound              = "ModelNotFound"
 	AIMServiceReasonModelNotReady              = "ModelNotReady"
-	AIMServiceReasonMultipleModelsFound        = "MultipleModelsFound"
+	AIMServiceReasonMultipleModelsFound        = "multipleModelsFound"
 	AIMServiceReasonResolved                   = "Resolved"
 	AIMServiceReasonValidationFailed           = "ValidationFailed"
 	AIMServiceReasonTemplateSelectionAmbiguous = "TemplateSelectionAmbiguous"
