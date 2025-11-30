@@ -1,0 +1,69 @@
+# Tilt ignore file - exclude files from Tilt's file watching
+# Similar to .dockerignore
+
+# Generated files that would trigger rebuild loops
+api/v1alpha1/zz_generated.deepcopy.go
+config/crd/bases/*.yaml
+
+# Git
+.git/
+.gitignore
+
+# Docker
+.dockerignore
+
+# Documentation
+*.md
+docs/
+*.txt
+
+# Test artifacts
+*.test
+coverage.out
+cover.html
+
+# Build artifacts
+bin/
+*.o
+*.a
+*.so
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Helm
+charts/
+*.tgz
+
+# Tilt
+.tiltbuild/
+
+# Go
+vendor/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.circleci/
+
+# Scripts (unless needed for build)
+scripts/
+hack/
+!hack/boilerplate.go.txt
