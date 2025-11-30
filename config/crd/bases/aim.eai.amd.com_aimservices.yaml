@@ -362,8 +362,8 @@ spec:
                       rule: size(self.modelSources) >= 1
                     - message: gpuSelector must be fully specified with model and
                         count
-                      rule: has(self.gpuSelector) && self.gpuSelector.model != ” &&
-                        self.gpuSelector.count > 0
+                      rule: has(self.gpuSelector) && self.gpuSelector.model != ""
+                        && self.gpuSelector.count > 0
                   image:
                     description: |-
                       Image specifies a container image URI directly.

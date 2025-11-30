@@ -80,7 +80,7 @@ type AIMServiceModel struct {
 // AIMServiceModelCustom specifies a custom model configuration with explicit base image,
 // model sources, and GPU requirements.
 // +kubebuilder:validation:XValidation:rule="size(self.modelSources) >= 1",message="at least one model source must be specified"
-// +kubebuilder:validation:XValidation:rule="has(self.gpuSelector) && self.gpuSelector.model != ” && self.gpuSelector.count > 0",message="gpuSelector must be fully specified with model and count"
+// +kubebuilder:validation:XValidation:rule="has(self.gpuSelector) && self.gpuSelector.model != \"\" && self.gpuSelector.count > 0",message="gpuSelector must be fully specified with model and count"
 type AIMServiceModelCustom struct {
 	// BaseImage is the container image URI for the AIM base image.
 	// This will be used as the image for the auto-created AIMModel.
