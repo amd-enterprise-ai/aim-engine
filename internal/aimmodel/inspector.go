@@ -38,7 +38,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	"github.com/amd-enterprise-ai/aim-engine/internal/registry"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
@@ -83,7 +82,7 @@ func inspectImage(
 		logger.V(1).Info("Using image pull secrets for authentication", "secrets", secretNames, "namespace", secretNamespace)
 	}
 
-	keychain, err := registry.BuildKeychain(ctx, clientset, secretNamespace, imagePullSecrets)
+	keychain, err := utils.BuildKeychain(ctx, clientset, secretNamespace, imagePullSecrets)
 	if err != nil {
 		return nil, err
 	}

@@ -107,14 +107,14 @@ var (
 )
 
 // GetOperatorNamespace returns the namespace where the AIM operator runs.
-// It reads the AIM_OPERATOR_NAMESPACE environment variable; if unset, it defaults to "kaiwo-system".
+// It reads the AIM_OPERATOR_NAMESPACE environment variable; if unset, it defaults to "aim-system".
 func GetOperatorNamespace() string {
 	operatorNamespaceOnce.Do(func() {
 		if ns := os.Getenv(operatorNamespaceEnvVar); ns != "" {
 			operatorNamespace = ns
 			return
 		}
-		operatorNamespace = "kaiwo-system"
+		operatorNamespace = "aim-system"
 	})
 	return operatorNamespace
 }
