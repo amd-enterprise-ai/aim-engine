@@ -122,6 +122,73 @@ When you're debating adding something to Observation, walk through this checklis
 **Would a future teammate understand this field without reading Observe's internals?**
 - If the name can't be made self-explanatory, either don't expose it, or move it to a method where its meaning is clear from the implementation
 
+#### Methods vs Fields in Observation
+
+Any time you feel tempted to add a new field, ask: **"Is this really a stored fact, or just a computation over existing facts?"**
+
+**Rule of thumb:**
+- If it's cheap to compute and derived from existing fields → make it a **method**
+- If it's used in multiple places or encapsulates logic → make it a **method**
+- If it's expensive to compute or represents raw fetched state → make it a **field**
+
+**Example - Prefer methods for derived state:**
+
+```go
+type InferenceObservation struct {
+    rawInferenceService *kservev1beta1.InferenceService // unexported raw state
+    Ready               bool
+    CurrentReplicas     int32
+}
+
+// Methods encapsulate derivations - no need to store these as fields
+func (o InferenceObservation) NeedsScaleUp(desiredReplicas int32) bool {
+    return o.CurrentReplicas < desiredReplicas
+}
+
+func (o InferenceObservation) IsProgressing() bool {
+    return !o.Ready && o.CurrentReplicas > 0
+}
+
+func (o InferenceObservation) HasFailedCondition() bool {
+    if o.rawInferenceService == nil {
+        return false
+    }
+    for _, cond := range o.rawInferenceService.Status.Conditions {
+        if cond.Type == "Failed" && cond.Status == "True" {
+            return true
+        }
+    }
+    return false
+}
+```
+
+**Then Plan reads cleanly:**
+
+```go
+func (r *Reconciler) Plan(ctx context.Context, service *aimv1alpha1.AIMService, obs ServiceObservation) (controllerutils.PlanResult, error) {
+    // Clear, readable logic
+    if obs.Inference.NeedsScaleUp(service.Spec.Replicas) {
+        // plan scale up...
+    }
+
+    if obs.Inference.IsProgressing() {
+        // don't make changes while progressing...
+    }
+
+    if obs.Inference.HasFailedCondition() {
+        // handle failure...
+    }
+
+    // ...
+}
+```
+
+**Benefits:**
+- You see the derivation by jumping to the method definition
+- You don't bloat the struct with a hundred one-off boolean fields
+- Logic is encapsulated and testable
+- Easy to refactor without changing the Observation API
+
 ### 3. **Plan** - Decide what actions to take
 
 Based on observations, determine **what objects to create, update, or delete**. Returns a `PlanResult` with `Apply` and `Delete` slices.
