@@ -142,7 +142,7 @@ func projectServiceTemplateModel(
 		return true // Fatal - stop reconciliation
 	}
 
-	cm.MarkTrue(aimv1alpha1.AIMServiceTemplateConditionModelFound, aimv1alpha1.AIMServiceTemplateConditionModelFound, fmt.Sprintf("Model '%s' found", obs.modelName), controllerutils.LevelNone)
+	cm.MarkTrue(aimv1alpha1.AIMServiceTemplateConditionModelFound, aimv1alpha1.AIMTemplateReasonModelFound, fmt.Sprintf("Model '%s' found", obs.modelName), controllerutils.LevelNone)
 	status.ResolvedModel = obs.resolvedModel
 	return false // Continue
 }

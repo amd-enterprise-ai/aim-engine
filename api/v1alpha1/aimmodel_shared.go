@@ -23,9 +23,10 @@
 package v1alpha1
 
 import (
-	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
 const (
@@ -37,6 +38,19 @@ const (
 
 	// AIMModelReasonMetadataExtractionFailed indicates metadata extraction failed (non-blocking, prevents retries).
 	AIMModelReasonMetadataExtractionFailed = "MetadataExtractionFailed"
+
+	// Runtime config resolution reasons
+	AIMModelReasonConfigNotFound     = "ConfigNotFound"
+	AIMModelReasonRuntimeConfigError = "RuntimeConfigError"
+	AIMModelReasonUsingDefaults      = "UsingDefaults"
+	AIMModelReasonResolved           = "Resolved"
+
+	// Template status reasons
+	AIMModelReasonAllTemplatesFailed    = "AllTemplatesFailed"
+	AIMModelReasonNoTemplatesAvailable  = "NoTemplatesAvailable"
+	AIMModelReasonSomeTemplatesDegraded = "SomeTemplatesDegraded"
+	AIMModelReasonTemplatesProgressing  = "TemplatesProgressing"
+	AIMModelReasonAllTemplatesReady     = "AllTemplatesReady"
 )
 
 // AIMModelDiscoveryConfig controls discovery behavior for a model.
@@ -55,7 +69,6 @@ type AIMModelDiscoveryConfig struct {
 	// +optional
 	AutoCreateTemplates *bool `json:"autoCreateTemplates,omitempty"`
 }
-
 
 // AIMModelSpec defines the desired state of AIMModel.
 type AIMModelSpec struct {
