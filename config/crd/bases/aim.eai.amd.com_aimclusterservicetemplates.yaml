@@ -23,7 +23,7 @@ spec:
     - jsonPath: .spec.modelName
       name: Model
       type: string
-    - jsonPath: .status.phase
+    - jsonPath: .status.status
       name: Status
       type: string
     - jsonPath: .status.profile.metadata.metric
@@ -467,6 +467,12 @@ spec:
                         - int8
                         type: string
                     type: object
+                  originalDiscoveryOutput:
+                    description: |-
+                      OriginalDiscoveryOutput contains the raw discovery job JSON output.
+                      This preserves the complete discovery result from the dry-run container,
+                      including all fields that may not be mapped to structured fields above.
+                    x-kubernetes-preserve-unknown-fields: true
                 type: object
               resolvedCache:
                 description: ResolvedCache captures metadata about which cache is

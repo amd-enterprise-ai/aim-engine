@@ -213,7 +213,7 @@ func (r *ClusterModelReconciler) Plan(
 
 	clusterServiceTemplates := planClusterModelServiceTemplates(ctx, obs.templates, obs.metadata, *obj)
 	for _, template := range clusterServiceTemplates {
-		if err := controllerutil.SetOwnerReference(obj, template, r.Scheme, controllerutil.WithBlockOwnerDeletion(false)); err != nil {
+		if err := controllerutil.SetControllerReference(obj, template, r.Scheme); err != nil {
 			return controllerutils.PlanResult{}, err
 		}
 		templates = append(templates, template)
@@ -242,7 +242,7 @@ func (r *ModelReconciler) Plan(
 
 	serviceTemplates := planModelServiceTemplates(ctx, obs.templates, obs.metadata, *obj)
 	for _, template := range serviceTemplates {
-		if err := controllerutil.SetOwnerReference(obj, template, r.Scheme, controllerutil.WithBlockOwnerDeletion(false)); err != nil {
+		if err := controllerutil.SetControllerReference(obj, template, r.Scheme); err != nil {
 			return controllerutils.PlanResult{}, err
 		}
 		templates = append(templates, template)
