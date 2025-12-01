@@ -314,8 +314,20 @@ func projectModelStatusFromTemplates(
 	h *controllerutils.StatusHelper,
 	templateStatuses []aimv1alpha1.AIMServiceTemplateStatus,
 ) {
-	if status == nil || len(templateStatuses) == 0 {
-		// Leave as pending until there are templates
+	if status == nil {
+		return
+	}
+
+	// If there are templates, process their statuses
+	if len(templateStatuses) == 0 {
+		// No templates exist
+		// Special case: metadata extracted successfully but no recommended deployments
+		// This means templates won't be auto-created, so the model should be Ready
+		if status.ImageMetadata != nil && len(status.ImageMetadata.Model.RecommendedDeployments) == 0 {
+			h.Ready(aimv1alpha1.AIMModelReasonMetadataMissingRecommendedDeployments, "Metadata extracted but no recommended deployments found")
+			return
+		}
+		// Otherwise, leave as pending until templates are created
 		return
 	}
 

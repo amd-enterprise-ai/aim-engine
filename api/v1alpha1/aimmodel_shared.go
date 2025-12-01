@@ -46,11 +46,12 @@ const (
 	AIMModelReasonResolved           = "Resolved"
 
 	// Template status reasons
-	AIMModelReasonAllTemplatesFailed    = "AllTemplatesFailed"
-	AIMModelReasonNoTemplatesAvailable  = "NoTemplatesAvailable"
-	AIMModelReasonSomeTemplatesDegraded = "SomeTemplatesDegraded"
-	AIMModelReasonTemplatesProgressing  = "TemplatesProgressing"
-	AIMModelReasonAllTemplatesReady     = "AllTemplatesReady"
+	AIMModelReasonAllTemplatesFailed                    = "AllTemplatesFailed"
+	AIMModelReasonNoTemplatesAvailable                  = "NoTemplatesAvailable"
+	AIMModelReasonSomeTemplatesDegraded                 = "SomeTemplatesDegraded"
+	AIMModelReasonTemplatesProgressing                  = "TemplatesProgressing"
+	AIMModelReasonAllTemplatesReady                     = "AllTemplatesReady"
+	AIMModelReasonMetadataMissingRecommendedDeployments = "MetadataMissingRecommendedDeployments"
 )
 
 // AIMModelDiscoveryConfig controls discovery behavior for a model.
