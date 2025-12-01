@@ -632,6 +632,13 @@ spec:
                 default: Pending
                 description: Status represents the overall status of the image based
                   on its templates
+                enum:
+                - Pending
+                - Progressing
+                - Ready
+                - Degraded
+                - Failed
+                - NotAvailable
                 type: string
             type: object
         type: object

@@ -358,7 +358,7 @@ spec:
                 enum:
                 - Pending
                 - Progressing
-                - Available
+                - Ready
                 - Failed
                 type: string
             type: object

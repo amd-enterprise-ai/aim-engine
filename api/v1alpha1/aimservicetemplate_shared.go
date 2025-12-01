@@ -135,8 +135,9 @@ type AIMServiceTemplateStatus struct {
 	ResolvedCache *AIMResolvedReference `json:"resolvedCache,omitempty"`
 
 	// Status represents the current high‑level status of the template lifecycle.
-	// Values: `Pending`, `Progressing`, `Ready`, `Failed`, `NotAvailable`.
+	// Values: `Pending`, `Progressing`, `Ready`, `Degraded`, `Failed`.
 	// +kubebuilder:default=Pending
+	// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Degraded;Failed
 	Status constants.AIMStatus `json:"status,omitempty"`
 
 	// ModelSources list the models that this template requires to run. These are the models that will be

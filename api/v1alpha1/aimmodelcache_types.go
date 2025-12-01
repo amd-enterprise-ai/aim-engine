@@ -82,7 +82,7 @@ type AIMModelCacheStatus struct {
 
 	// Status represents the current status of the model cache
 	// +kubebuilder:default=Pending
-	// +kubebuilder:validation:Enum=Pending;Progressing;Available;Failed
+	// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Failed
 	Status constants.AIMStatus `json:"status,omitempty"`
 
 	// LastUsed represents the last time a model was deployed that used this cache

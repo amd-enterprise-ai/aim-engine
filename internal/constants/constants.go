@@ -72,6 +72,7 @@ type AIMStatus string
 
 const (
 	AIMStatusPending      AIMStatus = "Pending"
+	AIMStatusStarting     AIMStatus = "Starting"
 	AIMStatusProgressing  AIMStatus = "Progressing"
 	AIMStatusReady        AIMStatus = "Ready"
 	AIMStatusRunning      AIMStatus = "Running"
@@ -83,9 +84,10 @@ const (
 // AIMStatusPriority maps AIMStatus values to priority levels.
 // Higher values indicate more desirable statuses for sorting and filtering.
 var AIMStatusPriority = map[AIMStatus]int{
-	AIMStatusRunning:      6,
-	AIMStatusReady:        5,
-	AIMStatusProgressing:  4,
+	AIMStatusRunning:      7,
+	AIMStatusReady:        6,
+	AIMStatusProgressing:  5,
+	AIMStatusStarting:     4,
 	AIMStatusPending:      3,
 	AIMStatusDegraded:     2,
 	AIMStatusNotAvailable: 1,

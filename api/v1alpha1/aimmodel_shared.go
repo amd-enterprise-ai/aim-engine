@@ -132,6 +132,7 @@ type AIMModelStatus struct {
 
 	// Status represents the overall status of the image based on its templates
 	// +kubebuilder:default=Pending
+	// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Degraded;Failed;NotAvailable
 	Status constants.AIMStatus `json:"status,omitempty"`
 
 	// Conditions represent the latest available observations of the model's state

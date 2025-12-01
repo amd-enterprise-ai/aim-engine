@@ -740,7 +740,13 @@ spec:
                 default: Pending
                 description: |-
                   Status represents the current high‑level status of the template lifecycle.
-                  Values: `Pending`, `Progressing`, `Ready`, `Failed`, `NotAvailable`.
+                  Values: `Pending`, `Progressing`, `Ready`, `Degraded`, `Failed`.
+                enum:
+                - Pending
+                - Progressing
+                - Ready
+                - Degraded
+                - Failed
                 type: string
             type: object
         type: object
