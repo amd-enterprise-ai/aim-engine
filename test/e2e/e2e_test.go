@@ -34,7 +34,7 @@ import (
 )
 
 // namespace where the project is deployed in
-const namespace = "aim-engine-system"
+const namespace = "aim-system"
 
 // serviceAccountName created for the project
 const serviceAccountName = "aim-engine-controller-manager"
