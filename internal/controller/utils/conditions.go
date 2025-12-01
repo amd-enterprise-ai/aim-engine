@@ -32,21 +32,21 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
-type LevelCondition struct {
+type ConfiguredCondition struct {
 	metav1.Condition
-	Level EventLevel
+	Config ObservabilityConfig
 }
 
 // ConditionManager wraps a slice of metav1.Condition and provides helpers.
 type ConditionManager struct {
 	now        func() time.Time
-	conditions []LevelCondition
+	conditions []ConfiguredCondition
 }
 
 func NewConditionManager(existing []metav1.Condition) *ConditionManager {
-	conditions := make([]LevelCondition, len(existing))
+	conditions := make([]ConfiguredCondition, len(existing))
 	for i := range existing {
-		conditions[i] = LevelCondition{existing[i], LevelNone}
+		conditions[i] = ConfiguredCondition{existing[i], defaultConfig()}
 	}
 	return &ConditionManager{
 		now:        time.Now,
@@ -62,24 +62,29 @@ func (m *ConditionManager) Conditions() []metav1.Condition {
 	return conditions
 }
 
-func (m *ConditionManager) Set(conditionType string, status metav1.ConditionStatus, reason, message string, level EventLevel) {
+func (m *ConditionManager) Set(conditionType string, status metav1.ConditionStatus, reason, message string, opts ...ObservabilityOption) {
 	m.SetCondition(metav1.Condition{
 		Type:    conditionType,
 		Status:  status,
 		Reason:  reason,
 		Message: message,
-	}, level)
+	}, opts...)
 }
 
 // SetCondition sets or updates a condition by type.
-func (m *ConditionManager) SetCondition(cond metav1.Condition, level EventLevel) {
+func (m *ConditionManager) SetCondition(cond metav1.Condition, opts ...ObservabilityOption) {
+	cfg := defaultConfig()
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	cond.LastTransitionTime = metav1.NewTime(m.now())
 
 	idx := indexOfCondition(m.conditions, cond.Type)
 	if idx == -1 {
-		m.conditions = append(m.conditions, LevelCondition{
+		m.conditions = append(m.conditions, ConfiguredCondition{
 			Condition: cond,
-			Level:     level,
+			Config:    cfg,
 		})
 		return
 	}
@@ -92,34 +97,34 @@ func (m *ConditionManager) SetCondition(cond metav1.Condition, level EventLevel)
 	}
 
 	m.conditions[idx].Condition = cond
-	m.conditions[idx].Level = level
+	m.conditions[idx].Config = cfg
 }
 
-func (m *ConditionManager) MarkTrue(condType, reason, message string, level EventLevel) {
+func (m *ConditionManager) MarkTrue(condType, reason, message string, opts ...ObservabilityOption) {
 	m.SetCondition(metav1.Condition{
 		Type:    condType,
 		Status:  metav1.ConditionTrue,
 		Reason:  reason,
 		Message: message,
-	}, level)
+	}, opts...)
 }
 
-func (m *ConditionManager) MarkFalse(condType, reason, message string, level EventLevel) {
+func (m *ConditionManager) MarkFalse(condType, reason, message string, opts ...ObservabilityOption) {
 	m.SetCondition(metav1.Condition{
 		Type:    condType,
 		Status:  metav1.ConditionFalse,
 		Reason:  reason,
 		Message: message,
-	}, level)
+	}, opts...)
 }
 
-func (m *ConditionManager) MarkUnknown(condType, reason, message string, level EventLevel) {
+func (m *ConditionManager) MarkUnknown(condType, reason, message string, opts ...ObservabilityOption) {
 	m.SetCondition(metav1.Condition{
 		Type:    condType,
 		Status:  metav1.ConditionUnknown,
 		Reason:  reason,
 		Message: message,
-	}, level)
+	}, opts...)
 }
 
 // Delete removes a condition by type if it exists.
@@ -173,15 +178,15 @@ func (m *ConditionManager) Get(condType string) *metav1.Condition {
 	return &condition.Condition
 }
 
-func (m *ConditionManager) EventLevelFor(condType string) EventLevel {
+func (m *ConditionManager) ConfigFor(condType string) ObservabilityConfig {
 	idx := indexOfCondition(m.conditions, condType)
 	if idx == -1 {
-		return LevelNone
+		return defaultConfig()
 	}
-	return m.conditions[idx].Level
+	return m.conditions[idx].Config
 }
 
-func indexOfCondition(conditions []LevelCondition, condType string) int {
+func indexOfCondition(conditions []ConfiguredCondition, condType string) int {
 	for i := range conditions {
 		if conditions[i].Type == condType {
 			return i
@@ -250,28 +255,28 @@ func NewStatusHelper(
 
 func (h *StatusHelper) Ready(reason, msg string) {
 	h.status.SetStatus(string(constants.AIMStatusReady))
-	h.cm.Set(string(constants.AIMStatusReady), metav1.ConditionTrue, reason, msg, LevelNormal)
-	h.cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionFalse, reason, msg, LevelNone)
-	h.cm.Set(string(constants.AIMStatusDegraded), metav1.ConditionFalse, reason, msg, LevelNone)
+	h.cm.Set(string(constants.AIMStatusReady), metav1.ConditionTrue, reason, msg, WithNormalEvent())
+	h.cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionFalse, reason, msg)
+	h.cm.Set(string(constants.AIMStatusDegraded), metav1.ConditionFalse, reason, msg)
 }
 
 func (h *StatusHelper) Progressing(reason, msg string) {
 	h.status.SetStatus(string(constants.AIMStatusProgressing))
-	h.cm.Set(string(constants.AIMStatusReady), metav1.ConditionFalse, reason, msg, LevelNone)
-	h.cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionTrue, reason, msg, LevelNormal)
-	h.cm.Set(string(constants.AIMStatusDegraded), metav1.ConditionFalse, reason, msg, LevelNone)
+	h.cm.Set(string(constants.AIMStatusReady), metav1.ConditionFalse, reason, msg)
+	h.cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionTrue, reason, msg, WithNormalEvent())
+	h.cm.Set(string(constants.AIMStatusDegraded), metav1.ConditionFalse, reason, msg)
 }
 
 func (h *StatusHelper) Degraded(reason, msg string) {
 	h.status.SetStatus(string(constants.AIMStatusDegraded))
-	h.cm.Set(string(constants.AIMStatusReady), metav1.ConditionFalse, reason, msg, LevelNone)
-	h.cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionFalse, reason, msg, LevelNone)
-	h.cm.Set(string(constants.AIMStatusDegraded), metav1.ConditionTrue, reason, msg, LevelWarning)
+	h.cm.Set(string(constants.AIMStatusReady), metav1.ConditionFalse, reason, msg)
+	h.cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionFalse, reason, msg)
+	h.cm.Set(string(constants.AIMStatusDegraded), metav1.ConditionTrue, reason, msg, WithWarningEvent(), WithErrorLog())
 }
 
 func (h *StatusHelper) Failed(reason, msg string) {
 	h.status.SetStatus(string(constants.AIMStatusFailed))
-	h.cm.Set(string(constants.AIMStatusReady), metav1.ConditionFalse, reason, msg, LevelNone)
-	h.cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionFalse, reason, msg, LevelNone)
-	h.cm.Set(string(constants.AIMStatusDegraded), metav1.ConditionTrue, reason, msg, LevelWarning)
+	h.cm.Set(string(constants.AIMStatusReady), metav1.ConditionFalse, reason, msg)
+	h.cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionFalse, reason, msg)
+	h.cm.Set(string(constants.AIMStatusDegraded), metav1.ConditionTrue, reason, msg, WithWarningEvent(), WithErrorLog())
 }

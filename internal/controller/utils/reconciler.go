@@ -145,12 +145,23 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	// Update conditions from manager
 	status.SetConditions(cm.Conditions())
 
-	// Emit events based on condition transitions
+	// Emit events and logs based on condition transitions and recurring configs
 	transitions := DiffConditionTransitions(
 		oldConditions,
 		status.GetConditions(),
 	)
+
+	// Emit events for transitions (EventOnTransition mode)
 	EmitConditionTransitions(p.Recorder, obj, transitions, cm)
+
+	// Emit recurring events (EventAlways mode)
+	EmitRecurringEvents(p.Recorder, obj, cm)
+
+	// Emit logs for transitions (LogOnTransition mode)
+	EmitConditionLogs(ctx, transitions, cm)
+
+	// Emit recurring logs (LogAlways mode)
+	EmitRecurringLogs(ctx, cm)
 
 	// Update status only if changed (compare with deep copied old status)
 	if !equality.Semantic.DeepEqual(oldStatus, status) {

@@ -315,8 +315,53 @@ Message strings (the descriptive text parameter) can and should remain as inline
 
 Use the condition manager (`cm`) and status helper (`sh` or `h`) consistently:
 
-- `cm.MarkTrue/MarkFalse/Set` - Set condition status with type, reason, message, and level
+- `cm.MarkTrue/MarkFalse/Set` - Set condition status with type, reason, message, and observability options
 - `h.Progressing/Degraded/Failed/Ready` - Set overall status with reason and message
+
+### Observability Options for Conditions
+
+By default, conditions are **silent** - they update status but don't emit events or logs. You can opt-in to observability using functional options:
+
+```go
+// Silent (default) - just update status
+cm.MarkFalse(condType, reason, msg)
+
+// Log on transition at error level (V(0))
+cm.MarkFalse(condType, reason, msg, controllerutils.WithErrorLog())
+
+// Emit warning event on transition
+cm.MarkFalse(condType, reason, msg, controllerutils.WithWarningEvent())
+
+// Both event and log (recommended for errors)
+cm.MarkFalse(condType, reason, msg,
+    controllerutils.WithWarningEvent(),
+    controllerutils.WithErrorLog())
+
+// Critical errors - always visible every reconcile
+cm.MarkFalse(condType, reason, msg, controllerutils.WithCriticalError())
+```
+
+**Available options:**
+
+- **Log Options**: `WithErrorLog()`, `WithInfoLog()`, `WithDebugLog()`, `WithLog(level)`
+- **Event Options**: `WithNormalEvent()`, `WithWarningEvent()`
+- **Recurring**: `WithRecurring()`, `WithRecurringErrorLog()`, `WithRecurringWarningEvent()`
+- **Message Overrides**: `WithEventReason()`, `WithEventMessage()`, `WithLogMessage()`
+- **Combinations**: `WithCriticalError()`
+
+**Common patterns:**
+
+| Situation | Pattern | Example |
+|-----------|---------|---------|
+| Progress update | Info log only | `WithInfoLog()` |
+| Transient error | Event + log | `WithWarningEvent(), WithErrorLog()` |
+| Critical error | Always visible | `WithCriticalError()` |
+| Internal state | Silent | (no options) |
+| Success state | Normal event | `WithNormalEvent()` |
+
+For detailed documentation, see:
+- [OBSERVABILITY.md](internal/controller/utils/OBSERVABILITY.md) - Full guide with examples
+- [MIGRATION.md](internal/controller/utils/MIGRATION.md) - Migration from old `EventLevel` API
 
 ## Pull Requests
 
