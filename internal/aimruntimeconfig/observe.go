@@ -27,7 +27,6 @@ import (
 
 	"dario.cat/mergo"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -152,49 +151,34 @@ func ProjectRuntimeConfigObservation(
 ) bool {
 	if err := observation.Error; err != nil {
 		if observation.ConfigNotFound {
-			// Non-default config not found - this is a fatal error
-			cm.Set(
-				aimv1alpha1.AIMModelConditionRuntimeResolved,
-				metav1.ConditionFalse,
-				"ConfigNotFound",
-				err.Error(),
-				controllerutils.LevelWarning,
-			)
-			sh.Failed("ConfigNotFound", err.Error())
+			sh.Failed(aimv1alpha1.AIMModelReasonConfigNotFound, err.Error())
 			return true // Fatal - stop reconciliation
 		}
-		// Other error (e.g., API error)
-		cm.Set(
-			aimv1alpha1.AIMModelConditionRuntimeResolved,
-			metav1.ConditionFalse,
-			"Error",
-			err.Error(),
-			controllerutils.LevelWarning,
-		)
-		sh.Degraded("RuntimeConfigError", err.Error())
+		sh.Degraded(aimv1alpha1.AIMModelReasonRuntimeConfigError, err.Error())
 		return true // Stop reconciliation
 	}
 
+	// TODO!
 	// Success - differentiate between config found vs using defaults
-	if observation.MergedConfig == nil {
-		// Default config not found, using system defaults
-		cm.Set(
-			aimv1alpha1.AIMModelConditionRuntimeResolved,
-			metav1.ConditionTrue,
-			"UsingDefaults",
-			"Runtime config 'default' not found, using system defaults",
-			controllerutils.LevelNone,
-		)
-	} else {
-		// Config found and merged
-		cm.Set(
-			aimv1alpha1.AIMModelConditionRuntimeResolved,
-			metav1.ConditionTrue,
-			"Resolved",
-			"Runtime config resolved successfully",
-			controllerutils.LevelNone,
-		)
-	}
+	//if observation.MergedConfig == nil {
+	//	// Default config not found, using system defaults
+	//	//cm.Set(
+	//	//	aimv1alpha1.AIMModelConditionRuntimeResolved,
+	//	//	metav1.ConditionTrue,
+	//	//	aimv1alpha1.AIMModelReasonUsingDefaults,
+	//	//	"Runtime config 'default' not found, using system defaults",
+	//	//	controllerutils.LevelNone,
+	//	//)
+	//} else {
+	//	// Config found and merged
+	//	//cm.Set(
+	//	//	aimv1alpha1.AIMModelConditionRuntimeResolved,
+	//	//	metav1.ConditionTrue,
+	//	//	aimv1alpha1.AIMModelReasonResolved,
+	//	//	"Runtime config resolved successfully",
+	//	//	controllerutils.LevelNone,
+	//	//)
+	//}
 	return false // Continue reconciliation
 }
 

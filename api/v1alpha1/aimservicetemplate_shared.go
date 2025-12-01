@@ -23,10 +23,11 @@
 package v1alpha1
 
 import (
-	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
 type AIMServiceTemplateSpecCommon struct {
@@ -217,7 +218,6 @@ type AIMProfileMetadata struct {
 const (
 	// AIMTemplateDiscoveryConditionType is True when runtime profiles have been discovered and sources resolved for the referenced model.
 	AIMTemplateDiscoveryConditionType = "Discovered"
-
 )
 
 // Caching conditions
@@ -239,11 +239,15 @@ const (
 	AIMTemplateReasonDiscoveryFailed    = "DiscoveryFailed"
 
 	AIMTemplateReasonGpuNotAvailable = "GpuNotAvailable"
-	AIMTemplateModelNotFound         = "ModelNotFound"
 
+	// Model resolution reasons
+	AIMTemplateModelNotFound    = "ModelNotFound"
+	AIMTemplateReasonModelFound = "ModelFound"
+
+	// Template resolution reasons
 	AIMTemplateReasonAwaitingTemplate = "AwaitingTemplate"
-	AIMTemplateReasonTemplateFound = "TemplateFound"
+	AIMTemplateReasonTemplateFound    = "TemplateFound"
 
-	// Model resolution
+	// Model resolution condition type
 	AIMServiceTemplateConditionModelFound = "ModelFound"
 )

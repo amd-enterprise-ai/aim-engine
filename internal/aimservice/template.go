@@ -28,9 +28,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"

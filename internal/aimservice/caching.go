@@ -158,7 +158,7 @@ func observeServiceCaching(
 			if retryAttempts == 0 {
 				// Haven't retried yet - collect failed ModelCaches for deletion
 				for _, mc := range result.modelCaches {
-					if mc.Status.Status == aimv1alpha1.AIMModelCacheStatusFailed {
+					if mc.Status.Status == aimv1alpha1.AIMServiceReasonCacheFailed {
 						obs.failedModelCachesToRetry = append(obs.failedModelCachesToRetry, mc)
 					}
 				}
@@ -188,7 +188,7 @@ func matchModelCachesWithSources(modelCaches []aimv1alpha1.AIMModelCache, modelS
 	for _, source := range modelSources {
 		for _, cache := range modelCaches {
 			if cache.Spec.SourceURI == source.SourceURI &&
-				cache.Status.Status == aimv1alpha1.AIMModelCacheStatusAvailable {
+				cache.Status.Status == constants.AIMStatusReady {
 				mounts = append(mounts, modelCacheMount{
 					cache:     cache,
 					modelName: source.Name,

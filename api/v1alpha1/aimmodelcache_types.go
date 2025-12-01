@@ -23,10 +23,11 @@
 package v1alpha1
 
 import (
-	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
 const (
@@ -111,16 +112,16 @@ func (s *AIMModelCacheStatus) SetStatus(status string) {
 const (
 	// AIMModelCacheConditionStorageReady is True when storage backing the cache is provisioned and mounted (PVC Bound)
 	AIMModelCacheConditionStorageReady = "StorageReady"
-	AIMModelCacheDownloadReady = "DownloadReady"
+	AIMModelCacheDownloadReady         = "DownloadReady"
 )
 
 // Condition reasons for AIMModelCache
 const (
 	// StorageReady-related reasons
-	AIMModelCacheReasonPVCProvisioning      = "PVCProvisioning"
-	AIMModelCacheReasonPVCBound             = "PVCBound"
-	AIMModelCacheReasonPVCPending           = "PVCPending"
-	AIMModelCacheReasonPVCLost              = "PVCLost"
+	AIMModelCacheReasonPVCProvisioning = "PVCProvisioning"
+	AIMModelCacheReasonPVCBound        = "PVCBound"
+	AIMModelCacheReasonPVCPending      = "PVCPending"
+	AIMModelCacheReasonPVCLost         = "PVCLost"
 
 	// Progressing-related reasons
 	AIMModelCacheReasonWaitingForPVC = "WaitingForPVC"

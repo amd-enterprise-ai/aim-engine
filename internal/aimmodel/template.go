@@ -255,15 +255,15 @@ func projectModelStatusFromTemplates(
 
 	switch {
 	case degradedOrFailed == total:
-		h.Failed("AllTemplatesFailed", fmt.Sprintf("All %d template(s) are degraded or failed", total))
+		h.Failed(aimv1alpha1.AIMModelReasonAllTemplatesFailed, fmt.Sprintf("All %d template(s) are degraded or failed", total))
 	case notAvailable == total:
-		h.Degraded("NoTemplatesAvailable", fmt.Sprintf("None of the %d template(s) are available", total))
+		h.Degraded(aimv1alpha1.AIMModelReasonNoTemplatesAvailable, fmt.Sprintf("None of the %d template(s) are available", total))
 	case degradedOrFailed > 0:
-		h.Degraded("SomeTemplatesDegraded", fmt.Sprintf("%d of %d template(s) are degraded or failed", degradedOrFailed, total))
+		h.Degraded(aimv1alpha1.AIMModelReasonSomeTemplatesDegraded, fmt.Sprintf("%d of %d template(s) are degraded or failed", degradedOrFailed, total))
 	case progressing > 0:
-		h.Progressing("TemplatesProgressing", fmt.Sprintf("%d of %d template(s) are progressing", progressing, total))
+		h.Progressing(aimv1alpha1.AIMModelReasonTemplatesProgressing, fmt.Sprintf("%d of %d template(s) are progressing", progressing, total))
 	case ready == total:
-		h.Ready("AllTemplatesReady", fmt.Sprintf("All %d template(s) have finished processing", total))
+		h.Ready(aimv1alpha1.AIMModelReasonAllTemplatesReady, fmt.Sprintf("All %d template(s) have finished processing", total))
 	default:
 		// leave as Pending
 	}
