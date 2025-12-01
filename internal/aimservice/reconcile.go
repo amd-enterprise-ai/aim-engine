@@ -32,6 +32,7 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimruntimeconfig"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
@@ -336,8 +337,11 @@ func (r *Reconciler) Project(
 	_ = projectServiceHTTPRoute(status, cm, h, obs.HTTPRoute)
 	// Note: HTTPRoute projection currently never blocks
 
-	// TODO: Set overall service status based on all conditions
-	// For now, individual domain projections handle their own status
+	// 7. Override overall status for AIMService-specific semantics
+	// For AIMService, when components are Progressing, the overall service status should be "Starting"
+	if status.Status == constants.AIMStatusProgressing {
+		status.Status = constants.AIMStatusStarting
+	}
 }
 
 // ============================================================================

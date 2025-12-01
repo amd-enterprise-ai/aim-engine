@@ -973,7 +973,13 @@ spec:
                 default: Pending
                 description: |-
                   Status represents the current high‑level status of the service lifecycle.
-                  Values: `Pending`, `Starting`, `Running`, `Failed`, `Degraded`.
+                  Values: `Pending`, `Starting`, `Running`, `Degraded`, `Failed`.
+                enum:
+                - Pending
+                - Starting
+                - Running
+                - Degraded
+                - Failed
                 type: string
             type: object
         type: object

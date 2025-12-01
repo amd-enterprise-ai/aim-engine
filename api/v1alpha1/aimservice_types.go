@@ -209,8 +209,9 @@ type AIMServiceStatus struct {
 	ResolvedModel *AIMResolvedReference `json:"resolvedModel,omitempty"`
 
 	// Status represents the current high‑level status of the service lifecycle.
-	// Values: `Pending`, `Starting`, `Running`, `Failed`, `Degraded`.
+	// Values: `Pending`, `Starting`, `Running`, `Degraded`, `Failed`.
 	// +kubebuilder:default=Pending
+	// +kubebuilder:validation:Enum=Pending;Starting;Running;Degraded;Failed
 	Status constants.AIMStatus `json:"status,omitempty"`
 
 	// Routing surfaces information about the configured HTTP routing, when enabled.
