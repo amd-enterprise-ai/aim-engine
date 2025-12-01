@@ -36,8 +36,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
-
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimmodel"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
@@ -111,12 +109,23 @@ func (r *AIMClusterModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	// Index AIMClusterServiceTemplate by modelName for efficient lookup
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMClusterServiceTemplate{}, constants.ServiceTemplateModelNameIndexKey, func(obj client.Object) []string {
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMClusterServiceTemplate{}, aimv1alpha1.ServiceTemplateModelNameIndexKey, func(obj client.Object) []string {
 		template, ok := obj.(*aimv1alpha1.AIMClusterServiceTemplate)
 		if !ok {
 			return nil
 		}
 		return []string{template.Spec.ModelName}
+	}); err != nil {
+		return err
+	}
+
+	// Index AIMClusterModel by image for efficient lookup
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMClusterModel{}, aimv1alpha1.ClusterModelImageIndexKey, func(obj client.Object) []string {
+		model, ok := obj.(*aimv1alpha1.AIMClusterModel)
+		if !ok {
+			return nil
+		}
+		return []string{model.Spec.Image}
 	}); err != nil {
 		return err
 	}

@@ -51,8 +51,7 @@ import (
 )
 
 const (
-	aimServiceFieldOwner       = "aim-service-controller"
-	aimServiceTemplateIndexKey = ".spec.templateRef"
+	aimServiceFieldOwner = "aim-service-controller"
 	// AIMCacheBasePath is the base directory where AIM expects to find cached models
 	AIMCacheBasePath = "/workspace/model-cache"
 )
@@ -118,7 +117,7 @@ func (r *AIMServiceReconciler) findServicesByTemplate(
 ) []aimv1alpha1.AIMService {
 	// Find services that reference this template by name (explicit templateRef or already resolved)
 	var servicesWithRef aimv1alpha1.AIMServiceList
-	listOpts := []client.ListOption{client.MatchingFields{aimServiceTemplateIndexKey: templateName}}
+	listOpts := []client.ListOption{client.MatchingFields{aimv1alpha1.AIMServiceTemplateIndexKey: templateName}}
 	if !isClusterScoped {
 		listOpts = append(listOpts, client.InNamespace(templateNamespace))
 	}
@@ -218,7 +217,7 @@ func (r *AIMServiceReconciler) templateCacheHandlerFunc() handler.MapFunc {
 		var services aimv1alpha1.AIMServiceList
 		if err := r.List(ctx, &services,
 			client.InNamespace(templateCache.Namespace),
-			client.MatchingFields{aimServiceTemplateIndexKey: templateCache.Spec.TemplateName},
+			client.MatchingFields{aimv1alpha1.AIMServiceTemplateIndexKey: templateCache.Spec.TemplateName},
 		); err != nil {
 			ctrl.LoggerFrom(ctx).Error(err, "failed to list AIMServices for AIMServiceTemplate", "template", templateCache.Name)
 			return nil
@@ -452,7 +451,7 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Scheme:       r.Scheme,
 	}
 
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMService{}, aimServiceTemplateIndexKey, r.templateIndexFunc); err != nil {
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMService{}, aimv1alpha1.AIMServiceTemplateIndexKey, r.templateIndexFunc); err != nil {
 		return err
 	}
 

@@ -138,6 +138,18 @@ func (r *AIMServiceTemplateReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		Reconciler:   r.reconciler,
 		Scheme:       r.Scheme,
 	}
+
+	// Index AIMTemplateCache by templateName for efficient lookup
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &aimv1alpha1.AIMTemplateCache{}, aimv1alpha1.TemplateCacheTemplateNameIndexKey, func(obj client.Object) []string {
+		cache, ok := obj.(*aimv1alpha1.AIMTemplateCache)
+		if !ok {
+			return nil
+		}
+		return []string{cache.Spec.TemplateName}
+	}); err != nil {
+		return err
+	}
+
 	nodeHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
 		_, ok := obj.(*corev1.Node)
 		if !ok {

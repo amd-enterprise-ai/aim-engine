@@ -26,6 +26,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	// ClusterModelImageIndexKey is the field index key for AIMClusterModel.Spec.Image
+	ClusterModelImageIndexKey = ".spec.image"
+)
+
 // AIMClusterModel is the Schema for cluster-scoped AIM model catalog entries.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status

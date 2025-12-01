@@ -29,6 +29,12 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
+const (
+	// AIMServiceTemplateIndexKey is the field index key for AIMService template reference
+	// Indexes by .spec.TemplateName or status.ResolvedTemplate.Name
+	AIMServiceTemplateIndexKey = ".spec.templateRef"
+)
+
 // AIMCachingMode controls caching behavior for a service.
 // +kubebuilder:validation:Enum=Auto;Always;Never
 type AIMCachingMode string

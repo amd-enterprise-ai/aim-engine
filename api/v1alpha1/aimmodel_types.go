@@ -26,6 +26,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	// ModelImageIndexKey is the field index key for AIMModel.Spec.Image
+	ModelImageIndexKey = ".spec.image"
+)
+
 // AIMModel is the Schema for namespace-scoped AIM model catalog entries.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status

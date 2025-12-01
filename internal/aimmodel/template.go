@@ -48,7 +48,7 @@ func fetchClusterModelServiceTemplateResult(ctx context.Context, c client.Client
 
 	var templates aimv1alpha1.AIMClusterServiceTemplateList
 	templatesErr := c.List(ctx, &templates,
-		client.MatchingFields{constants.ServiceTemplateModelNameIndexKey: clusterModel.Name},
+		client.MatchingFields{aimv1alpha1.ServiceTemplateModelNameIndexKey: clusterModel.Name},
 	)
 	if templatesErr != nil {
 		return result, fmt.Errorf("failed to fetch cluster service templates: %w", templatesErr)
@@ -67,7 +67,7 @@ func fetchModelServiceTemplateResult(ctx context.Context, c client.Client, model
 	var templates aimv1alpha1.AIMServiceTemplateList
 	templatesErr := c.List(ctx, &templates,
 		client.InNamespace(model.Namespace),
-		client.MatchingFields{constants.ServiceTemplateModelNameIndexKey: model.Name},
+		client.MatchingFields{aimv1alpha1.ServiceTemplateModelNameIndexKey: model.Name},
 	)
 	if templatesErr != nil {
 		return result, fmt.Errorf("failed to fetch service templates: %w", templatesErr)
