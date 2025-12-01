@@ -96,7 +96,7 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	if fetchError != nil {
 		// Infrastructure error - return for exponential backoff.
 		// Status is NOT updated to avoid noise from transient issues.
-		return fetchError
+		return fmt.Errorf("fetch failed: %w", fetchError)
 	}
 
 	// Observe phase - interpret fetched resources into domain observations
@@ -105,7 +105,7 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	obs, obsErr := p.Reconciler.Observe(ctx, obj, fetched)
 	if obsErr != nil {
 		// Unexpected observation error - return for retry
-		return obsErr
+		return fmt.Errorf("observe failed: %w", obsErr)
 	}
 
 	// Plan phase - derive desired state changes based on observations
@@ -113,14 +113,16 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	planResult, planErr := p.Reconciler.Plan(ctx, obj, obs)
 	if planErr != nil {
 		// Planning error - return for retry
-		return planErr
+		return fmt.Errorf("plan failed: %w", planErr)
 	}
 
 	// Delete phase - delete objects before applying new state
 	for _, objToDelete := range planResult.Delete {
 		if err := p.Client.Delete(ctx, objToDelete); client.IgnoreNotFound(err) != nil {
 			// Deletion failed - return for retry
-			return err
+			gvk := objToDelete.GetObjectKind().GroupVersionKind()
+			key := client.ObjectKeyFromObject(objToDelete)
+			return fmt.Errorf("delete failed for %s %s/%s: %w", gvk.Kind, key.Namespace, key.Name, err)
 		}
 	}
 
@@ -134,7 +136,8 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 			planResult.Apply,
 		); err != nil {
 			// Apply failed - return for retry
-			return err
+			// ApplyDesiredState already wraps with context
+			return fmt.Errorf("apply failed: %w", err)
 		}
 	}
 
@@ -166,7 +169,7 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	// Update status only if changed (compare with deep copied old status)
 	if !equality.Semantic.DeepEqual(oldStatus, status) {
 		if err := p.StatusClient.Update(ctx, obj); err != nil {
-			return err
+			return fmt.Errorf("status update failed: %w", err)
 		}
 	}
 

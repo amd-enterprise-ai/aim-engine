@@ -482,7 +482,7 @@ func projectServiceKServe(
 ) bool {
 	if obs.shouldCreateISVC {
 		h.Progressing(aimv1alpha1.AIMServiceReasonCreatingRuntime, "Creating inferenceService")
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRuntimeReady, aimv1alpha1.AIMServiceReasonCreatingRuntime, "inferenceService being created", controllerutils.LevelNormal)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRuntimeReady, aimv1alpha1.AIMServiceReasonCreatingRuntime, "inferenceService being created", controllerutils.AsInfo())
 		return false
 	}
 
@@ -509,7 +509,7 @@ func projectServiceKServe(
 		message := fmt.Sprintf("%s %q failed to pull image: %s", containerType, pullErr.Container, pullErr.Message)
 
 		h.Degraded(reason, message)
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRuntimeReady, reason, message, controllerutils.LevelWarning)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRuntimeReady, reason, message, controllerutils.AsWarning())
 		return true // Blocking error
 	}
 
@@ -528,19 +528,19 @@ func projectServiceKServe(
 		}
 
 		h.Degraded(aimv1alpha1.AIMServiceReasonRuntimeFailed, failureMsg)
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRuntimeReady, aimv1alpha1.AIMServiceReasonRuntimeFailed, failureMsg, controllerutils.LevelWarning)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRuntimeReady, aimv1alpha1.AIMServiceReasonRuntimeFailed, failureMsg, controllerutils.AsWarning())
 		return true // Blocking error
 	}
 
 	if obs.inferenceServiceExists && !obs.inferenceServiceReady {
 		h.Progressing(aimv1alpha1.AIMServiceReasonCreatingRuntime, "Waiting for inferenceService to become ready")
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRuntimeReady, aimv1alpha1.AIMServiceReasonCreatingRuntime, "inferenceService is not ready", controllerutils.LevelNormal)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRuntimeReady, aimv1alpha1.AIMServiceReasonCreatingRuntime, "inferenceService is not ready", controllerutils.AsInfo())
 		return false
 	}
 
 	if obs.inferenceServiceReady {
 		status.Status = constants.AIMStatusRunning
-		cm.MarkTrue(aimv1alpha1.AIMServiceConditionRuntimeReady, aimv1alpha1.AIMServiceReasonRuntimeReady, "inferenceService is ready", controllerutils.LevelNormal)
+		cm.MarkTrue(aimv1alpha1.AIMServiceConditionRuntimeReady, aimv1alpha1.AIMServiceReasonRuntimeReady, "inferenceService is ready", controllerutils.AsInfo())
 	}
 
 	return false

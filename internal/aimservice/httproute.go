@@ -333,13 +333,13 @@ func projectServiceHTTPRoute(
 
 	if obs.pathTemplateErr != nil {
 		h.Degraded(aimv1alpha1.AIMServiceReasonPathTemplateInvalid, obs.pathTemplateErr.Error())
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRoutingReady, aimv1alpha1.AIMServiceReasonPathTemplateInvalid, obs.pathTemplateErr.Error(), controllerutils.LevelWarning)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRoutingReady, aimv1alpha1.AIMServiceReasonPathTemplateInvalid, obs.pathTemplateErr.Error(), controllerutils.AsWarning())
 		return true // Fatal error
 	}
 
 	if obs.shouldCreateRoute {
 		h.Progressing(aimv1alpha1.AIMServiceReasonConfiguringRoute, "Creating HTTPRoute")
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRoutingReady, aimv1alpha1.AIMServiceReasonConfiguringRoute, "HTTPRoute being created", controllerutils.LevelNormal)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionRoutingReady, aimv1alpha1.AIMServiceReasonConfiguringRoute, "HTTPRoute being created", controllerutils.AsInfo())
 		return false
 	}
 
@@ -352,19 +352,18 @@ func projectServiceHTTPRoute(
 
 		// Check if route is ready (accepted by gateway)
 		if obs.routeReady {
-			cm.MarkTrue(aimv1alpha1.AIMServiceConditionRoutingReady, aimv1alpha1.AIMServiceReasonRouteReady, "HTTPRoute is ready", controllerutils.LevelNormal)
+			cm.MarkTrue(aimv1alpha1.AIMServiceConditionRoutingReady, aimv1alpha1.AIMServiceReasonRouteReady, "HTTPRoute is ready", controllerutils.AsInfo())
 		} else {
 			// Route exists but not ready yet
-			level := controllerutils.LevelNormal
 			if obs.routeStatusReason == aimv1alpha1.AIMServiceReasonRouteFailed {
 				// Gateway rejected the route - this is a degraded state
 				h.Degraded(obs.routeStatusReason, obs.routeStatusMessage)
-				level = controllerutils.LevelWarning
+				cm.MarkFalse(aimv1alpha1.AIMServiceConditionRoutingReady, obs.routeStatusReason, obs.routeStatusMessage, controllerutils.AsWarning())
 			} else {
 				// Route is still being configured
 				h.Progressing(obs.routeStatusReason, obs.routeStatusMessage)
+				cm.MarkFalse(aimv1alpha1.AIMServiceConditionRoutingReady, obs.routeStatusReason, obs.routeStatusMessage, controllerutils.AsInfo())
 			}
-			cm.MarkFalse(aimv1alpha1.AIMServiceConditionRoutingReady, obs.routeStatusReason, obs.routeStatusMessage, level)
 
 			// Degraded state is non-fatal - gateway might accept it later
 			return obs.routeStatusReason == aimv1alpha1.AIMServiceReasonRouteFailed

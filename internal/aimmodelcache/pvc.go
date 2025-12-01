@@ -249,18 +249,18 @@ func projectStorageReadyCondition(cm *controllerutils.ConditionManager, obs Obse
 	switch {
 	case !obs.pvc.found:
 		cm.Set(aimv1alpha1.AIMModelCacheConditionStorageReady, metav1.ConditionFalse,
-			aimv1alpha1.AIMModelCacheReasonPVCPending, "PVC not created yet", controllerutils.LevelNormal)
+			aimv1alpha1.AIMModelCacheReasonPVCPending, "PVC not created yet", controllerutils.AsInfo())
 	case obs.pvc.pvc.Status.Phase == corev1.ClaimBound:
 		cm.Set(aimv1alpha1.AIMModelCacheConditionStorageReady, metav1.ConditionTrue,
-			aimv1alpha1.AIMModelCacheReasonPVCBound, "", controllerutils.LevelNormal)
+			aimv1alpha1.AIMModelCacheReasonPVCBound, "", controllerutils.AsInfo())
 	case obs.pvc.pvc.Status.Phase == corev1.ClaimPending:
 		cm.Set(aimv1alpha1.AIMModelCacheConditionStorageReady, metav1.ConditionFalse,
-			aimv1alpha1.AIMModelCacheReasonPVCProvisioning, "PVC is provisioning", controllerutils.LevelNormal)
+			aimv1alpha1.AIMModelCacheReasonPVCProvisioning, "PVC is provisioning", controllerutils.AsInfo())
 	case obs.pvc.pvc.Status.Phase == corev1.ClaimLost:
 		cm.Set(aimv1alpha1.AIMModelCacheConditionStorageReady, metav1.ConditionFalse,
-			aimv1alpha1.AIMModelCacheReasonPVCLost, "PVC lost", controllerutils.LevelWarning)
+			aimv1alpha1.AIMModelCacheReasonPVCLost, "PVC lost", controllerutils.AsWarning())
 	default:
 		cm.Set(aimv1alpha1.AIMModelCacheConditionStorageReady, metav1.ConditionUnknown,
-			string(obs.pvc.pvc.Status.Phase), "", controllerutils.LevelWarning)
+			string(obs.pvc.pvc.Status.Phase), "", controllerutils.AsWarning())
 	}
 }

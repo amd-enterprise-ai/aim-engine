@@ -320,44 +320,47 @@ Use the condition manager (`cm`) and status helper (`sh` or `h`) consistently:
 
 ### Observability Options for Conditions
 
-By default, conditions are **silent** - they update status but don't emit events or logs. You can opt-in to observability using functional options:
+By default, conditions are **silent** - they update status but don't emit events or logs. You can use high-level options for common patterns:
 
 ```go
 // Silent (default) - just update status
 cm.MarkFalse(condType, reason, msg)
 
-// Log on transition at error level (V(0))
-cm.MarkFalse(condType, reason, msg, controllerutils.WithErrorLog())
+// Informational/progress updates - info log + normal event on transition
+cm.MarkTrue(condType, reason, msg, controllerutils.AsInfo())
 
-// Emit warning event on transition
-cm.MarkFalse(condType, reason, msg, controllerutils.WithWarningEvent())
+// Warnings/transient errors - error log + warning event on transition
+cm.MarkFalse(condType, reason, msg, controllerutils.AsWarning())
 
-// Both event and log (recommended for errors)
-cm.MarkFalse(condType, reason, msg,
-    controllerutils.WithWarningEvent(),
-    controllerutils.WithErrorLog())
+// Critical/persistent errors - error log + warning event EVERY reconcile
+cm.MarkFalse(condType, reason, msg, controllerutils.AsError())
 
-// Critical errors - always visible every reconcile
-cm.MarkFalse(condType, reason, msg, controllerutils.WithCriticalError())
+// Explicitly silent (for clarity)
+cm.MarkFalse(condType, reason, msg, controllerutils.Silent())
 ```
 
-**Available options:**
+**High-level options (recommended):**
+
+- **`AsInfo()`**: Info log (V(1)) + Normal event on transition - for progress/informational updates
+- **`AsWarning()`**: Error log (V(0)) + Warning event on transition - for transient errors/warnings
+- **`AsError()`**: Error log (V(0)) + Warning event RECURRING - for critical/persistent errors
+- **`Silent()`**: No events or logs (default, but explicit)
+
+**Fine-grained options** (for advanced cases):
 
 - **Log Options**: `WithErrorLog()`, `WithInfoLog()`, `WithDebugLog()`, `WithLog(level)`
 - **Event Options**: `WithNormalEvent()`, `WithWarningEvent()`
 - **Recurring**: `WithRecurring()`, `WithRecurringErrorLog()`, `WithRecurringWarningEvent()`
 - **Message Overrides**: `WithEventReason()`, `WithEventMessage()`, `WithLogMessage()`
-- **Combinations**: `WithCriticalError()`
 
 **Common patterns:**
 
-| Situation | Pattern | Example |
-|-----------|---------|---------|
-| Progress update | Info log only | `WithInfoLog()` |
-| Transient error | Event + log | `WithWarningEvent(), WithErrorLog()` |
-| Critical error | Always visible | `WithCriticalError()` |
-| Internal state | Silent | (no options) |
-| Success state | Normal event | `WithNormalEvent()` |
+| Situation | Pattern |
+|-----------|---------|
+| Progress/success | `AsInfo()` |
+| Transient error/degraded | `AsWarning()` |
+| Critical/persistent error | `AsError()` |
+| Internal state tracking | (no options - silent) |
 
 For detailed documentation, see:
 - [OBSERVABILITY.md](internal/controller/utils/OBSERVABILITY.md) - Full guide with examples

@@ -346,34 +346,34 @@ func projectServiceTemplate(
 		// Check if it's an overrides mismatch error - this is a terminal failure
 		if obs.HasOverrides && !obs.TemplateFound {
 			h.Failed(aimv1alpha1.AIMServiceReasonValidationFailed, obs.TemplateSelectionError.Error())
-			cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonValidationFailed, obs.TemplateSelectionError.Error(), controllerutils.LevelWarning)
+			cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonValidationFailed, obs.TemplateSelectionError.Error(), controllerutils.AsWarning())
 		} else {
 			h.Degraded(aimv1alpha1.AIMServiceReasonTemplateSelectionFailed, obs.TemplateSelectionError.Error())
-			cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonTemplateSelectionFailed, obs.TemplateSelectionError.Error(), controllerutils.LevelWarning)
+			cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonTemplateSelectionFailed, obs.TemplateSelectionError.Error(), controllerutils.AsWarning())
 		}
 		return true
 	}
 
 	if !obs.TemplateFound {
 		h.Degraded(aimv1alpha1.AIMServiceReasonTemplateNotFound, fmt.Sprintf("Template %q not found", obs.TemplateName))
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonTemplateNotFound, fmt.Sprintf("Template %q not found", obs.TemplateName), controllerutils.LevelWarning)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonTemplateNotFound, fmt.Sprintf("Template %q not found", obs.TemplateName), controllerutils.AsWarning())
 		return true
 	}
 
 	if !obs.TemplateMatchesModel {
 		h.Degraded(aimv1alpha1.AIMServiceReasonValidationFailed, fmt.Sprintf("Template %q does not belong to the model", obs.TemplateName))
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonValidationFailed, "Template does not match model", controllerutils.LevelWarning)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonValidationFailed, "Template does not match model", controllerutils.AsWarning())
 		return true
 	}
 
 	if !obs.TemplateAvailable {
 		h.Progressing(aimv1alpha1.AIMServiceReasonTemplateNotReady, fmt.Sprintf("Template %q is not ready", obs.TemplateName))
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonTemplateNotReady, fmt.Sprintf("Template %q status: %s", obs.TemplateName, obs.TemplateStatus.Status), controllerutils.LevelNormal)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonTemplateNotReady, fmt.Sprintf("Template %q status: %s", obs.TemplateName, obs.TemplateStatus.Status), controllerutils.AsInfo())
 		return true
 	}
 
 	// Template found and available
-	cm.MarkTrue(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonResolved, fmt.Sprintf("Using template %q", obs.TemplateName), controllerutils.LevelNormal)
+	cm.MarkTrue(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonResolved, fmt.Sprintf("Using template %q", obs.TemplateName), controllerutils.AsInfo())
 	status.ResolvedTemplate = &aimv1alpha1.AIMResolvedReference{
 		Name:      obs.TemplateName,
 		Namespace: obs.TemplateNamespace,

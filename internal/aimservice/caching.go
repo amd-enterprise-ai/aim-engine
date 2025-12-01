@@ -285,12 +285,12 @@ func projectServiceCaching(
 			status.Cache.RetryAttempts++
 
 			h.Progressing(aimv1alpha1.AIMServiceReasonCacheRetrying, "Deleting failed model caches for retry")
-			cm.MarkFalse(aimv1alpha1.AIMServiceConditionCacheReady, aimv1alpha1.AIMServiceReasonCacheRetrying, fmt.Sprintf("Retrying cache download (attempt %d)", status.Cache.RetryAttempts), controllerutils.LevelWarning)
+			cm.MarkFalse(aimv1alpha1.AIMServiceConditionCacheReady, aimv1alpha1.AIMServiceReasonCacheRetrying, fmt.Sprintf("Retrying cache download (attempt %d)", status.Cache.RetryAttempts), controllerutils.AsWarning())
 			return false
 		} else {
 			// Already retried - degrade with blocking error
 			h.Degraded(aimv1alpha1.AIMServiceReasonCacheFailed, "Template cache failed after retry")
-			cm.MarkFalse(aimv1alpha1.AIMServiceConditionCacheReady, aimv1alpha1.AIMServiceReasonCacheFailed, "Cache retry exhausted", controllerutils.LevelWarning)
+			cm.MarkFalse(aimv1alpha1.AIMServiceConditionCacheReady, aimv1alpha1.AIMServiceReasonCacheFailed, "Cache retry exhausted", controllerutils.AsWarning())
 			return true // Blocking error
 		}
 	}
@@ -298,20 +298,20 @@ func projectServiceCaching(
 	if obs.shouldCreateCache {
 		// Cache requested but doesn't exist yet - progressing
 		h.Progressing(aimv1alpha1.AIMServiceReasonCacheCreating, "Creating template cache")
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionCacheReady, aimv1alpha1.AIMServiceReasonCacheCreating, "Template cache being created", controllerutils.LevelNormal)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionCacheReady, aimv1alpha1.AIMServiceReasonCacheCreating, "Template cache being created", controllerutils.AsInfo())
 		return false
 	}
 
 	if obs.templateCache != nil && !obs.templateCacheReady && !obs.templateCacheFailed {
 		// Cache exists but not ready - progressing
 		h.Progressing(aimv1alpha1.AIMServiceReasonCacheNotReady, "Waiting for template cache to become ready")
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionCacheReady, aimv1alpha1.AIMServiceReasonCacheNotReady, fmt.Sprintf("Template cache status: %s", obs.templateCache.Status.Status), controllerutils.LevelNormal)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionCacheReady, aimv1alpha1.AIMServiceReasonCacheNotReady, fmt.Sprintf("Template cache status: %s", obs.templateCache.Status.Status), controllerutils.AsInfo())
 		return false
 	}
 
 	if obs.templateCacheReady {
 		// Cache ready - set condition and status
-		cm.MarkTrue(aimv1alpha1.AIMServiceConditionCacheReady, aimv1alpha1.AIMServiceReasonCacheReady, "Template cache is ready", controllerutils.LevelNormal)
+		cm.MarkTrue(aimv1alpha1.AIMServiceConditionCacheReady, aimv1alpha1.AIMServiceReasonCacheReady, "Template cache is ready", controllerutils.AsInfo())
 
 		// Project cache reference to status
 		if status.Cache == nil {

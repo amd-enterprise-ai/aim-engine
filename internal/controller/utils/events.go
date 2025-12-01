@@ -166,13 +166,48 @@ func WithLogMessage(msg string) ObservabilityOption {
 	}
 }
 
-// === Convenience Combinations ===
+// === High-Level Defaults ===
+
+// AsInfo is the default for informational/progress updates.
+// Emits info log (V(1)) and normal event on transition only.
+func AsInfo() ObservabilityOption {
+	return func(c *ObservabilityConfig) {
+		WithInfoLog()(c)
+		WithNormalEvent()(c)
+	}
+}
+
+// AsWarning is for transient errors or degraded states.
+// Emits error log (V(0)) and warning event on transition only.
+func AsWarning() ObservabilityOption {
+	return func(c *ObservabilityConfig) {
+		WithErrorLog()(c)
+		WithWarningEvent()(c)
+	}
+}
+
+// AsError is for critical/persistent errors.
+// Emits error log (V(0)) and warning event EVERY reconcile (recurring).
+func AsError() ObservabilityOption {
+	return func(c *ObservabilityConfig) {
+		WithRecurringErrorLog()(c)
+		WithRecurringWarningEvent()(c)
+	}
+}
+
+// Silent explicitly marks a condition as having no events or logs.
+// This is the default, but can be used for clarity or to override other options.
+func Silent() ObservabilityOption {
+	return func(c *ObservabilityConfig) {
+		c.eventMode = EventNone
+		c.logMode = LogNone
+	}
+}
+
+// === Convenience Combinations (deprecated - use AsInfo/AsWarning/AsError) ===
 
 func WithCriticalError() ObservabilityOption {
-	return func(c *ObservabilityConfig) {
-		WithRecurringWarningEvent()(c)
-		WithRecurringErrorLog()(c)
-	}
+	return AsError()
 }
 
 // === Backwards Compatibility Helpers ===
