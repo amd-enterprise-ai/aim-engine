@@ -35,6 +35,10 @@ import (
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
+const (
+	defaultGpuModel = "MI300X"
+)
+
 // ============================================================================
 // HELPER FUNCTIONS TESTS
 // ============================================================================
@@ -134,7 +138,7 @@ func TestBuildTemplateComponents(t *testing.T) {
 	deployment := aimv1alpha1.RecommendedDeployment{
 		Metric:    "throughput",
 		Precision: "fp16",
-		GPUModel:  "MI300X",
+		GPUModel:  defaultGpuModel,
 		GPUCount:  2,
 	}
 
@@ -159,7 +163,7 @@ func TestBuildTemplateComponents(t *testing.T) {
 	if result.Spec.GpuSelector == nil {
 		t.Fatal("expected GpuSelector to be set")
 	}
-	if result.Spec.GpuSelector.Model != "MI300X" {
+	if result.Spec.GpuSelector.Model != defaultGpuModel {
 		t.Errorf("expected GpuSelector.Model=MI300X, got %s", result.Spec.GpuSelector.Model)
 	}
 	if result.Spec.GpuSelector.Count != 2 {
@@ -311,13 +315,13 @@ func TestPlanClusterModelServiceTemplates_CreateTemplates(t *testing.T) {
 					{
 						Metric:    "throughput",
 						Precision: "fp16",
-						GPUModel:  "MI300X",
+						GPUModel:  defaultGpuModel,
 						GPUCount:  1,
 					},
 					{
 						Metric:    "latency",
 						Precision: "fp32",
-						GPUModel:  "MI300X",
+						GPUModel:  defaultGpuModel,
 						GPUCount:  2,
 					},
 				},
@@ -360,7 +364,7 @@ func TestPlanModelServiceTemplates_CreateTemplates(t *testing.T) {
 				RecommendedDeployments: []aimv1alpha1.RecommendedDeployment{
 					{
 						Metric:   "throughput",
-						GPUModel: "MI300X",
+						GPUModel: defaultGpuModel,
 						GPUCount: 1,
 					},
 				},
