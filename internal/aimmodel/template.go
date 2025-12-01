@@ -28,11 +28,13 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimservicetemplate"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
 // ==============================
@@ -44,16 +46,21 @@ type clusterModelServiceTemplateFetchResult struct {
 }
 
 func fetchClusterModelServiceTemplateResult(ctx context.Context, c client.Client, clusterModel aimv1alpha1.AIMClusterModel) (clusterModelServiceTemplateFetchResult, error) {
+	logger := log.FromContext(ctx).WithValues("function", "fetchClusterModelServiceTemplateResult")
 	result := clusterModelServiceTemplateFetchResult{}
+
+	utils.Debug(logger, "Fetching cluster service templates")
 
 	var templates aimv1alpha1.AIMClusterServiceTemplateList
 	templatesErr := c.List(ctx, &templates,
 		client.MatchingFields{aimv1alpha1.ServiceTemplateModelNameIndexKey: clusterModel.Name},
 	)
 	if templatesErr != nil {
+		logger.Error(templatesErr, "Failed to list cluster service templates")
 		return result, fmt.Errorf("failed to fetch cluster service templates: %w", templatesErr)
 	}
 	result.clusterServiceTemplates = templates.Items
+	utils.Debug(logger, "Fetched cluster service templates", "count", len(templates.Items))
 	return result, nil
 }
 
@@ -62,7 +69,10 @@ type modelServiceTemplateFetchResult struct {
 }
 
 func fetchModelServiceTemplateResult(ctx context.Context, c client.Client, model aimv1alpha1.AIMModel) (modelServiceTemplateFetchResult, error) {
+	logger := log.FromContext(ctx).WithValues("function", "fetchModelServiceTemplateResult")
 	result := modelServiceTemplateFetchResult{}
+
+	utils.Debug(logger, "Fetching service templates")
 
 	var templates aimv1alpha1.AIMServiceTemplateList
 	templatesErr := c.List(ctx, &templates,
@@ -70,9 +80,11 @@ func fetchModelServiceTemplateResult(ctx context.Context, c client.Client, model
 		client.MatchingFields{aimv1alpha1.ServiceTemplateModelNameIndexKey: model.Name},
 	)
 	if templatesErr != nil {
+		logger.Error(templatesErr, "Failed to list service templates")
 		return result, fmt.Errorf("failed to fetch service templates: %w", templatesErr)
 	}
 	result.serviceTemplates = templates.Items
+	utils.Debug(logger, "Fetched service templates", "count", len(templates.Items))
 	return result, nil
 }
 
@@ -85,9 +97,18 @@ type clusterModelServiceTemplateObservation struct {
 	existingTemplates     []aimv1alpha1.AIMClusterServiceTemplate
 }
 
-func observeClusterModelServiceTemplate(fetchResult clusterModelServiceTemplateFetchResult, clusterModel aimv1alpha1.AIMClusterModel, config *aimv1alpha1.AIMRuntimeConfigCommon) clusterModelServiceTemplateObservation {
+func observeClusterModelServiceTemplate(ctx context.Context, fetchResult clusterModelServiceTemplateFetchResult, clusterModel aimv1alpha1.AIMClusterModel, config *aimv1alpha1.AIMRuntimeConfigCommon) clusterModelServiceTemplateObservation {
+	logger := log.FromContext(ctx).WithValues("function", "observeClusterModelServiceTemplate")
+
+	shouldCreate := shouldCreateTemplates(clusterModel.Spec, config)
+
+	utils.Debug(logger, "Observing cluster service templates",
+		"existingCount", len(fetchResult.clusterServiceTemplates),
+		"shouldCreateTemplates", shouldCreate,
+	)
+
 	obs := clusterModelServiceTemplateObservation{
-		shouldCreateTemplates: shouldCreateTemplates(clusterModel.Spec, config),
+		shouldCreateTemplates: shouldCreate,
 		existingTemplates:     fetchResult.clusterServiceTemplates,
 	}
 
@@ -99,9 +120,18 @@ type modelServiceTemplateObservation struct {
 	existingTemplates     []aimv1alpha1.AIMServiceTemplate
 }
 
-func observeModelServiceTemplate(fetchResult modelServiceTemplateFetchResult, model aimv1alpha1.AIMModel, config *aimv1alpha1.AIMRuntimeConfigCommon) modelServiceTemplateObservation {
+func observeModelServiceTemplate(ctx context.Context, fetchResult modelServiceTemplateFetchResult, model aimv1alpha1.AIMModel, config *aimv1alpha1.AIMRuntimeConfigCommon) modelServiceTemplateObservation {
+	logger := log.FromContext(ctx).WithValues("function", "observeModelServiceTemplate")
+
+	shouldCreate := shouldCreateTemplates(model.Spec, config)
+
+	utils.Debug(logger, "Observing service templates",
+		"existingCount", len(fetchResult.serviceTemplates),
+		"shouldCreateTemplates", shouldCreate,
+	)
+
 	obs := modelServiceTemplateObservation{
-		shouldCreateTemplates: shouldCreateTemplates(model.Spec, config),
+		shouldCreateTemplates: shouldCreate,
 		existingTemplates:     fetchResult.serviceTemplates,
 	}
 
@@ -135,11 +165,35 @@ type templateBuilderOutputs struct {
 	Spec   aimv1alpha1.AIMServiceTemplateSpecCommon
 }
 
-func planClusterModelServiceTemplates(templateObs clusterModelServiceTemplateObservation, metadataObs modelMetadataObservation, clusterModel aimv1alpha1.AIMClusterModel) []client.Object {
+func planClusterModelServiceTemplates(ctx context.Context, templateObs clusterModelServiceTemplateObservation, metadataObs modelMetadataObservation, clusterModel aimv1alpha1.AIMClusterModel) []client.Object {
+	logger := log.FromContext(ctx).WithValues("function", "planClusterModelServiceTemplates")
+
 	var templates []client.Object
-	if !templateObs.shouldCreateTemplates || metadataObs.Error != nil || metadataObs.ExtractedMetadata == nil {
+
+	utils.Debug(logger, "Planning cluster service templates",
+		"shouldCreateTemplates", templateObs.shouldCreateTemplates,
+		"hasMetadataError", metadataObs.Error != nil,
+		"hasExtractedMetadata", metadataObs.ExtractedMetadata != nil,
+		"existingTemplateCount", len(templateObs.existingTemplates),
+	)
+
+	if !templateObs.shouldCreateTemplates {
+		utils.Debug(logger, "Skipping template creation: shouldCreateTemplates is false")
 		return templates
 	}
+
+	if metadataObs.Error != nil {
+		utils.Debug(logger, "Skipping template creation: metadata has error", "error", metadataObs.Error)
+		return templates
+	}
+
+	if metadataObs.ExtractedMetadata == nil {
+		utils.Debug(logger, "Skipping template creation: no extracted metadata")
+		return templates
+	}
+
+	recommendedCount := len(metadataObs.ExtractedMetadata.Model.RecommendedDeployments)
+	utils.Debug(logger, "Creating templates from metadata", "recommendedDeploymentCount", recommendedCount)
 
 	for _, recommendedDeployment := range metadataObs.ExtractedMetadata.Model.RecommendedDeployments {
 		templateComponents := buildTemplateComponents(clusterModel.Name, clusterModel.Spec, recommendedDeployment)
@@ -153,16 +207,42 @@ func planClusterModelServiceTemplates(templateObs clusterModelServiceTemplateObs
 			},
 		}
 		templates = append(templates, serviceTemplate)
+		utils.Debug(logger, "Planned cluster service template", "templateName", templateComponents.Name)
 	}
 
+	utils.Debug(logger, "Finished planning cluster service templates", "templatesPlanned", len(templates))
 	return templates
 }
 
-func planModelServiceTemplates(templateObs modelServiceTemplateObservation, metadataObs modelMetadataObservation, model aimv1alpha1.AIMModel) []client.Object {
+func planModelServiceTemplates(ctx context.Context, templateObs modelServiceTemplateObservation, metadataObs modelMetadataObservation, model aimv1alpha1.AIMModel) []client.Object {
+	logger := log.FromContext(ctx).WithValues("function", "planModelServiceTemplates")
+
 	var templates []client.Object
-	if !templateObs.shouldCreateTemplates || metadataObs.Error != nil {
+
+	utils.Debug(logger, "Planning service templates",
+		"shouldCreateTemplates", templateObs.shouldCreateTemplates,
+		"hasMetadataError", metadataObs.Error != nil,
+		"hasExtractedMetadata", metadataObs.ExtractedMetadata != nil,
+		"existingTemplateCount", len(templateObs.existingTemplates),
+	)
+
+	if !templateObs.shouldCreateTemplates {
+		utils.Debug(logger, "Skipping template creation: shouldCreateTemplates is false")
 		return templates
 	}
+
+	if metadataObs.Error != nil {
+		utils.Debug(logger, "Skipping template creation: metadata has error", "error", metadataObs.Error)
+		return templates
+	}
+
+	if metadataObs.ExtractedMetadata == nil {
+		utils.Debug(logger, "Skipping template creation: no extracted metadata")
+		return templates
+	}
+
+	recommendedCount := len(metadataObs.ExtractedMetadata.Model.RecommendedDeployments)
+	utils.Debug(logger, "Creating templates from metadata", "recommendedDeploymentCount", recommendedCount)
 
 	for _, recommendedDeployment := range metadataObs.ExtractedMetadata.Model.RecommendedDeployments {
 		templateComponents := buildTemplateComponents(model.Name, model.Spec, recommendedDeployment)
@@ -177,8 +257,10 @@ func planModelServiceTemplates(templateObs modelServiceTemplateObservation, meta
 			},
 		}
 		templates = append(templates, serviceTemplate)
+		utils.Debug(logger, "Planned service template", "templateName", templateComponents.Name)
 	}
 
+	utils.Debug(logger, "Finished planning service templates", "templatesPlanned", len(templates))
 	return templates
 }
 

@@ -1,41 +1,21 @@
-# More info: https://docs.docker.com/engine/reference/builder/#dockerignore-file
+# Dockerignore - allowlist approach
+# Exclude everything, then selectively include what's needed for build
 
-# Git
-.git
-.gitignore
+# Ignore everything by default
+*
 
-# Documentation
-*.md
-docs/
+# Allow essential build files
+!go.mod
+!go.sum
+!Dockerfile
 
-# Test files
-*_test.go
-coverage.out
-cover.html
+# Allow source directories needed for build
+!cmd/
+!internal/
+!api/
 
-# Build artifacts
-bin/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-
-# Temporary files
-tmp/
-*.tmp
-
-# Logs
-*.log
-
-# Tilt
-.tiltbuild/
-.tiltignore
-Tiltfile
-
-# CI/CD
-.github/
-
-# Scripts not needed for build
-scripts/
-
+# But exclude certain files within allowed directories
+**/*_test.go
+**/*.tmp
+**/*.tmp.*
+**/.DS_Store

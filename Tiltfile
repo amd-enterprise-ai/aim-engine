@@ -22,7 +22,6 @@ docker_build_with_restart(
     dockerfile='Dockerfile',     # dev stage inside this Dockerfile (target=dev if you use one)
     target='dev',                # drop this line if you don't use a dev stage
     entrypoint='/workspace/manager',  # command to (re)run after live_update
-    ignore=['config/**/*'],      # Don't rebuild image when K8s config changes
 
     # Live Update: everything except dependency changes
     live_update=[

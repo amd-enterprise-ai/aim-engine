@@ -78,7 +78,11 @@ func observeModelMetadata(
 ) modelMetadataObservation {
 	obs := modelMetadataObservation{}
 	if result == nil {
-		// Model metadata was not extracted or attempted
+		// Metadata extraction not attempted this cycle - check if we have it in status
+		if status != nil && status.ImageMetadata != nil {
+			obs.ExtractedMetadata = status.ImageMetadata
+			obs.Extracted = false
+		}
 		return obs
 	}
 
@@ -119,6 +123,7 @@ func observeModelMetadata(
 //
 //nolint:unparam // bool return kept for API consistency with other project functions
 func projectModelMetadata(
+	status *aimv1alpha1.AIMModelStatus,
 	cm *controllerutils.ConditionManager,
 	h *controllerutils.StatusHelper,
 	observation modelMetadataObservation,
@@ -161,13 +166,18 @@ func projectModelMetadata(
 			// Keep going
 		}
 	} else if observation.ExtractedMetadata != nil {
-		// Success - metadata was extracted
-		cm.Set(
-			aimv1alpha1.AIMModelConditionMetadataExtracted,
-			metav1.ConditionTrue,
-			"MetadataExtracted",
-			"Successfully extracted image metadata",
-		)
+		// Success - metadata was extracted or is cached in status
+		if observation.Extracted {
+			// Only update condition if we just extracted it this cycle
+			cm.Set(
+				aimv1alpha1.AIMModelConditionMetadataExtracted,
+				metav1.ConditionTrue,
+				"MetadataExtracted",
+				"Successfully extracted image metadata",
+			)
+		}
+		// Store metadata in status (whether just extracted or from cache)
+		status.ImageMetadata = observation.ExtractedMetadata
 	}
 	// Note: If Error is nil and ExtractedMetadata is nil, metadata extraction was not attempted
 	// (e.g., already cached in status), so we don't update the condition
