@@ -1,0 +1,188 @@
+// MIT License
+//
+// Copyright (c) 2025 Advanced Micro Devices, Inc.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+package v1alpha1
+
+import (
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+const (
+	// DefaultSyncInterval is the default interval between registry syncs (1 hour).
+	DefaultSyncInterval = 1 * time.Hour
+)
+
+// AIMClusterModelSource automatically discovers and syncs AI model images from container registries.
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Cluster,shortName=aimclsrc,categories=aim;all
+// +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
+// +kubebuilder:printcolumn:name="Models",type=integer,JSONPath=`.status.discoveredModels`
+// +kubebuilder:printcolumn:name="LastSync",type=date,JSONPath=`.status.lastSyncTime`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+type AIMClusterModelSource struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   AIMClusterModelSourceSpec   `json:"spec,omitempty"`
+	Status AIMClusterModelSourceStatus `json:"status,omitempty"`
+}
+
+// AIMClusterModelSourceSpec defines the desired state of AIMClusterModelSource.
+type AIMClusterModelSourceSpec struct {
+	// Registry to sync from (e.g., docker.io, ghcr.io, gcr.io).
+	// Defaults to docker.io if not specified.
+	// +kubebuilder:default=docker.io
+	// +optional
+	Registry string `json:"registry,omitempty"`
+
+	// ImagePullSecrets contains references to secrets for authenticating to private registries.
+	// Secrets must exist in the operator namespace (typically kaiwo-system).
+	// Used for both registry catalog listing and image metadata extraction.
+	// +optional
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+
+	// Filters define which images to discover and sync.
+	// Each filter specifies an image pattern with optional version constraints and exclusions.
+	// Multiple filters are combined with OR logic (any match includes the image).
+	// +kubebuilder:validation:MinItems=1
+	Filters []ModelSourceFilter `json:"filters"`
+
+	// SyncInterval defines how often to sync with the registry.
+	// Defaults to 1h. Minimum recommended interval is 15m to avoid rate limiting.
+	// Format: duration string (e.g., "30m", "1h", "2h30m").
+	// +kubebuilder:default="1h"
+	// +optional
+	SyncInterval metav1.Duration `json:"syncInterval,omitempty"`
+
+	// Versions specifies global semantic version constraints applied to all filters.
+	// Individual filters can override this with their own version constraints.
+	// Constraints use semver syntax: >=1.0.0, <2.0.0, ~1.2.0, ^1.0.0, etc.
+	// Non-semver tags (e.g., "latest", "dev") are silently skipped.
+	// +optional
+	Versions []string `json:"versions,omitempty"`
+}
+
+// ModelSourceFilter defines a pattern for discovering images.
+type ModelSourceFilter struct {
+	// Image pattern with wildcard support.
+	// Examples: "amdenterpriseai/aim-*", "*/llama-*"
+	// Wildcard: * matches any sequence of characters.
+	Image string `json:"image"`
+
+	// Exclude lists specific images to skip (exact match on repository name).
+	// Useful for excluding base images or experimental versions.
+	// Example: ["amdenterpriseai/aim-base", "amdenterpriseai/aim-experimental"]
+	// +optional
+	Exclude []string `json:"exclude,omitempty"`
+
+	// Versions specifies semantic version constraints for this filter.
+	// If specified, overrides the global Versions field.
+	// Only tags that parse as valid semver are considered.
+	// Examples: ">=1.0.0", "<2.0.0", "~1.2.0" (patch updates), "^1.0.0" (minor updates)
+	// +optional
+	Versions []string `json:"versions,omitempty"`
+}
+
+// AIMClusterModelSourceStatus defines the observed state of AIMClusterModelSource.
+type AIMClusterModelSourceStatus struct {
+	// Status represents the overall state of the model source.
+	// +kubebuilder:validation:Enum=Pending;Starting;Progressing;Ready;Running;Degraded;NotAvailable;Failed
+	// +optional
+	Status string `json:"status,omitempty"`
+
+	// LastSyncTime is the timestamp of the last successful registry sync.
+	// Updated after each successful sync operation.
+	// +optional
+	LastSyncTime *metav1.Time `json:"lastSyncTime,omitempty"`
+
+	// DiscoveredModels is the count of AIMClusterModel resources managed by this source.
+	// Includes both existing and newly created models.
+	// +optional
+	DiscoveredModels int `json:"discoveredModels,omitempty"`
+
+	// DiscoveredImages provides a summary of recently discovered images.
+	// Limited to avoid excessive status size. Typically shows the most recent 50 images.
+	// +optional
+	DiscoveredImages []DiscoveredImageInfo `json:"discoveredImages,omitempty"`
+
+	// Conditions represent the latest available observations of the source's state.
+	// Standard conditions: Ready, Syncing, RegistryReachable.
+	// +optional
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// ObservedGeneration reflects the generation of the most recently observed spec.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+}
+
+// DiscoveredImageInfo provides information about a discovered image.
+type DiscoveredImageInfo struct {
+	// Image is the full image reference (repository:tag).
+	Image string `json:"image"`
+
+	// Tag is the image tag.
+	Tag string `json:"tag"`
+
+	// ModelName is the name of the generated AIMClusterModel resource.
+	ModelName string `json:"modelName"`
+
+	// CreatedAt is when this image was first discovered.
+	CreatedAt metav1.Time `json:"createdAt"`
+}
+
+// GetStatus returns a pointer to the status for use with the controller pipeline.
+func (s *AIMClusterModelSource) GetStatus() *AIMClusterModelSourceStatus {
+	return &s.Status
+}
+
+// GetConditions returns the status conditions.
+func (s *AIMClusterModelSourceStatus) GetConditions() []metav1.Condition {
+	return s.Conditions
+}
+
+// SetConditions sets the status conditions.
+func (s *AIMClusterModelSourceStatus) SetConditions(conditions []metav1.Condition) {
+	s.Conditions = conditions
+}
+
+// SetStatus sets the overall status string.
+func (s *AIMClusterModelSourceStatus) SetStatus(status string) {
+	s.Status = status
+}
+
+// AIMClusterModelSourceList contains a list of AIMClusterModelSource.
+// +kubebuilder:object:root=true
+type AIMClusterModelSourceList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []AIMClusterModelSource `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&AIMClusterModelSource{}, &AIMClusterModelSourceList{})
+}

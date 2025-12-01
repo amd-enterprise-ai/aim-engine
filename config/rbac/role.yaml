@@ -43,6 +43,7 @@ rules:
   - aim.eai.amd.com
   resources:
   - aimclustermodels
+  - aimclustermodelsources
   - aimclusterruntimeconfigs
   - aimclusterservicetemplates
   - aimmodelcaches
@@ -63,6 +64,7 @@ rules:
   - aim.eai.amd.com
   resources:
   - aimclustermodels/finalizers
+  - aimclustermodelsources/finalizers
   - aimclusterservicetemplates/finalizers
   - aimmodelcaches/finalizers
   - aimmodels/finalizers
@@ -73,6 +75,7 @@ rules:
   - aim.eai.amd.com
   resources:
   - aimclustermodels/status
+  - aimclustermodelsources/status
   - aimclusterservicetemplates/status
   - aimmodelcaches/status
   - aimmodels/status
