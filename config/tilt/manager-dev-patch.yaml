@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: aim-engine-controller-manager
-  namespace: aim-engine-system
+  namespace: aim-system
 spec:
   template:
     spec:
