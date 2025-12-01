@@ -152,12 +152,32 @@ func buildDiscoveryJob(inputs discoveryJobBuilderInputs) *batchv1.Job {
 	// Create deterministic job name with hash of ALL parameters that affect the Job spec
 	// This ensures that any change to the spec results in a new Job instead of an update attempt
 
-	jobName, _ := utils.GenerateDerivedNameWithHashLength(
-		[]string{""},
-		4,
-		inputs.templateSpec.ModelName,
+	// Build hash inputs that include ALL parameters that affect the Job spec
+	// This ensures each unique combination of parameters gets its own Job
+	hashInputs := []any{
 		inputs.image,
 		inputs.templateSpec.ServiceAccountName,
+	}
+
+	// Include metric if specified
+	if inputs.templateSpec.Metric != nil {
+		hashInputs = append(hashInputs, string(*inputs.templateSpec.Metric))
+	}
+
+	// Include precision if specified
+	if inputs.templateSpec.Precision != nil {
+		hashInputs = append(hashInputs, string(*inputs.templateSpec.Precision))
+	}
+
+	// Include GPU selector if specified
+	if inputs.templateSpec.GpuSelector != nil {
+		hashInputs = append(hashInputs, inputs.templateSpec.GpuSelector.Model, inputs.templateSpec.GpuSelector.Count)
+	}
+
+	jobName, _ := utils.GenerateDerivedNameWithHashLength(
+		[]string{"discover", inputs.templateSpec.ModelName},
+		4,
+		hashInputs...,
 	)
 
 	backoffLimit := int32(discoveryJobBackoffLimit)
