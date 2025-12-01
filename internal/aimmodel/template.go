@@ -240,13 +240,13 @@ func projectModelStatusFromTemplates(
 	var ready, progressing, degradedOrFailed, notAvailable int
 	for _, templateStatus := range templateStatuses {
 		switch templateStatus.Status {
-		case aimv1alpha1.AIMTemplateStatusReady:
+		case constants.AIMStatusReady:
 			ready++
-		case aimv1alpha1.AIMTemplateStatusProgressing, aimv1alpha1.AIMTemplateStatusPending:
+		case constants.AIMStatusProgressing, constants.AIMStatusPending:
 			progressing++
-		case aimv1alpha1.AIMTemplateStatusDegraded, aimv1alpha1.AIMTemplateStatusFailed:
+		case constants.AIMStatusDegraded, constants.AIMStatusFailed:
 			degradedOrFailed++
-		case aimv1alpha1.AIMTemplateStatusNotAvailable:
+		case constants.AIMStatusNotAvailable:
 			notAvailable++
 		}
 	}

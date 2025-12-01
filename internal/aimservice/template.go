@@ -28,6 +28,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -273,7 +274,7 @@ func populateTemplateDetailsFromModel(obs *ServiceTemplateObservation, modelFetc
 		if template.Name == obs.TemplateName {
 			obs.TemplateFound = true
 			obs.TemplateNamespace = template.Namespace
-			obs.TemplateAvailable = template.Status.Status == aimv1alpha1.AIMTemplateStatusReady
+			obs.TemplateAvailable = template.Status.Status == constants.AIMStatusReady
 			obs.TemplateSpec = template.Spec.DeepCopy()
 			obs.TemplateSpecCommon = &template.Spec.AIMServiceTemplateSpecCommon
 			obs.TemplateStatus = template.Status.DeepCopy()
@@ -289,7 +290,7 @@ func populateTemplateDetailsFromModel(obs *ServiceTemplateObservation, modelFetc
 	for _, template := range modelFetchResult.clusterTemplatesForModel {
 		if template.Name == obs.TemplateName {
 			obs.TemplateFound = true
-			obs.TemplateAvailable = template.Status.Status == aimv1alpha1.AIMTemplateStatusReady
+			obs.TemplateAvailable = template.Status.Status == constants.AIMStatusReady
 			obs.TemplateSpecCommon = &template.Spec.AIMServiceTemplateSpecCommon
 			obs.TemplateSpec = &aimv1alpha1.AIMServiceTemplateSpec{
 				AIMServiceTemplateSpecCommon: template.Spec.AIMServiceTemplateSpecCommon,
@@ -309,7 +310,7 @@ func populateTemplateDetailsFromFetch(obs *ServiceTemplateObservation, nsTemplat
 	if nsTemplate != nil {
 		obs.TemplateFound = true
 		obs.TemplateNamespace = nsTemplate.Namespace
-		obs.TemplateAvailable = nsTemplate.Status.Status == aimv1alpha1.AIMTemplateStatusReady
+		obs.TemplateAvailable = nsTemplate.Status.Status == constants.AIMStatusReady
 		obs.TemplateSpec = nsTemplate.Spec.DeepCopy()
 		obs.TemplateSpecCommon = &nsTemplate.Spec.AIMServiceTemplateSpecCommon
 		obs.TemplateStatus = nsTemplate.Status.DeepCopy()
@@ -318,7 +319,7 @@ func populateTemplateDetailsFromFetch(obs *ServiceTemplateObservation, nsTemplat
 		obs.Scope = aimv1alpha1.AIMResolutionScopeNamespace
 	} else if clusterTemplate != nil {
 		obs.TemplateFound = true
-		obs.TemplateAvailable = clusterTemplate.Status.Status == aimv1alpha1.AIMTemplateStatusReady
+		obs.TemplateAvailable = clusterTemplate.Status.Status == constants.AIMStatusReady
 		obs.TemplateSpecCommon = &clusterTemplate.Spec.AIMServiceTemplateSpecCommon
 		obs.TemplateSpec = &aimv1alpha1.AIMServiceTemplateSpec{
 			AIMServiceTemplateSpecCommon: clusterTemplate.Spec.AIMServiceTemplateSpecCommon,
@@ -344,34 +345,34 @@ func projectServiceTemplate(
 		// Check if it's an overrides mismatch error - this is a terminal failure
 		if obs.HasOverrides && !obs.TemplateFound {
 			h.Failed(aimv1alpha1.AIMServiceReasonValidationFailed, obs.TemplateSelectionError.Error())
-			cm.MarkFalse(aimv1alpha1.AIMServiceConditionResolved, aimv1alpha1.AIMServiceReasonValidationFailed, obs.TemplateSelectionError.Error(), controllerutils.LevelWarning)
+			cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonValidationFailed, obs.TemplateSelectionError.Error(), controllerutils.LevelWarning)
 		} else {
-			h.Degraded("TemplateSelectionFailed", obs.TemplateSelectionError.Error())
-			cm.MarkFalse(aimv1alpha1.AIMServiceConditionResolved, "TemplateSelectionFailed", obs.TemplateSelectionError.Error(), controllerutils.LevelWarning)
+			h.Degraded(aimv1alpha1.AIMServiceReasonTemplateSelectionFailed, obs.TemplateSelectionError.Error())
+			cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonTemplateSelectionFailed, obs.TemplateSelectionError.Error(), controllerutils.LevelWarning)
 		}
 		return true
 	}
 
 	if !obs.TemplateFound {
 		h.Degraded(aimv1alpha1.AIMServiceReasonTemplateNotFound, fmt.Sprintf("Template %q not found", obs.TemplateName))
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionResolved, aimv1alpha1.AIMServiceReasonTemplateNotFound, fmt.Sprintf("Template %q not found", obs.TemplateName), controllerutils.LevelWarning)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonTemplateNotFound, fmt.Sprintf("Template %q not found", obs.TemplateName), controllerutils.LevelWarning)
 		return true
 	}
 
 	if !obs.TemplateMatchesModel {
 		h.Degraded(aimv1alpha1.AIMServiceReasonValidationFailed, fmt.Sprintf("Template %q does not belong to the model", obs.TemplateName))
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionResolved, aimv1alpha1.AIMServiceReasonValidationFailed, "Template does not match model", controllerutils.LevelWarning)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonValidationFailed, "Template does not match model", controllerutils.LevelWarning)
 		return true
 	}
 
 	if !obs.TemplateAvailable {
-		h.Progressing("TemplateNotReady", fmt.Sprintf("Template %q is not ready", obs.TemplateName))
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionResolved, "TemplateNotReady", fmt.Sprintf("Template %q status: %s", obs.TemplateName, obs.TemplateStatus.Status), controllerutils.LevelNormal)
+		h.Progressing(aimv1alpha1.AIMServiceReasonTemplateNotReady, fmt.Sprintf("Template %q is not ready", obs.TemplateName))
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonTemplateNotReady, fmt.Sprintf("Template %q status: %s", obs.TemplateName, obs.TemplateStatus.Status), controllerutils.LevelNormal)
 		return true
 	}
 
 	// Template found and available
-	cm.MarkTrue(aimv1alpha1.AIMServiceConditionResolved, aimv1alpha1.AIMServiceReasonResolved, fmt.Sprintf("Using template %q", obs.TemplateName), controllerutils.LevelNormal)
+	cm.MarkTrue(aimv1alpha1.AIMServiceConditionTemplateResolved, aimv1alpha1.AIMServiceReasonResolved, fmt.Sprintf("Using template %q", obs.TemplateName), controllerutils.LevelNormal)
 	status.ResolvedTemplate = &aimv1alpha1.AIMResolvedReference{
 		Name:      obs.TemplateName,
 		Namespace: obs.TemplateNamespace,

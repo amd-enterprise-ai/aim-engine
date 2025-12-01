@@ -28,6 +28,7 @@ import (
 	"fmt"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
 // selectTemplateForService selects the best template from the model's templates
@@ -83,12 +84,12 @@ type templateCandidate struct {
 // 1. Filter to only Ready templates
 // 2. Filter by service overrides if specified
 // 3. Prefer namespace templates over cluster templates
-// 4. Prefer latency over throughput, lower precision
+// 4. Prefer latency to throughput, lower precision
 func selectBestTemplate(candidates []templateCandidate, overrides *aimv1alpha1.AIMServiceOverrides) *templateCandidate {
 	// Filter to Ready templates only
 	filtered := make([]templateCandidate, 0)
 	for _, c := range candidates {
-		if c.Status.Status == aimv1alpha1.AIMTemplateStatusReady {
+		if c.Status.Status == constants.AIMStatusReady {
 			filtered = append(filtered, c)
 		}
 	}

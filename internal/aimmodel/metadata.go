@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
@@ -177,9 +178,9 @@ func projectModelMetadata(
 func reasonForRegistry(err *utils.ImageRegistryError) string {
 	switch err.Type {
 	case utils.ImagePullErrorAuth:
-		return aimv1alpha1.AIMModelReasonImagePullAuthFailure
+		return constants.ReasonImagePullAuthFailure
 	case utils.ImagePullErrorNotFound:
-		return aimv1alpha1.AIMModelReasonImageNotFound
+		return constants.ReasonImageNotFound
 	default:
 		return aimv1alpha1.AIMModelReasonMetadataExtractionFailed
 	}
@@ -213,10 +214,10 @@ func ShouldRequeueForMetadataRetry(status *aimv1alpha1.AIMModelStatus) bool {
 			// Retry for recoverable errors (auth failures, transient network issues)
 			// Don't retry for fatal errors (image not found, invalid format)
 			switch cond.Reason {
-			case aimv1alpha1.AIMModelReasonImageNotFound:
+			case constants.ReasonImageNotFound:
 				// Fatal - image doesn't exist
 				return false
-			case aimv1alpha1.AIMModelReasonImagePullAuthFailure,
+			case constants.ReasonImagePullAuthFailure,
 				aimv1alpha1.AIMModelReasonMetadataExtractionFailed:
 				// Recoverable - could be transient network/auth issues
 				return true

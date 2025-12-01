@@ -23,23 +23,12 @@
 package v1alpha1
 
 import (
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
-	// AIMModelConditionRuntimeResolved captures whether runtime config resolution succeeded.
-	AIMModelConditionRuntimeResolved = "RuntimeResolved"
-
-	// AIMModelReasonRuntimeResolved indicates resolution succeeded.
-	AIMModelReasonRuntimeResolved = "RuntimeResolved"
-
-	// AIMModelReasonRuntimeConfigMissing is set when the referenced runtime config cannot be found.
-	AIMModelReasonRuntimeConfigMissing = "RuntimeConfigMissing"
-
-	// AIMModelReasonDefaultRuntimeConfigMissing indicates the implicit default runtime config was not found.
-	AIMModelReasonDefaultRuntimeConfigMissing = "DefaultRuntimeConfigMissing"
-
 	// AIMModelConditionMetadataExtracted captures whether image metadata extraction succeeded.
 	AIMModelConditionMetadataExtracted = "MetadataExtracted"
 
@@ -48,12 +37,6 @@ const (
 
 	// AIMModelReasonMetadataExtractionFailed indicates metadata extraction failed (non-blocking, prevents retries).
 	AIMModelReasonMetadataExtractionFailed = "MetadataExtractionFailed"
-
-	// AIMModelReasonImagePullAuthFailure indicates the image could not be pulled due to authentication/authorization failure.
-	AIMModelReasonImagePullAuthFailure = "ImagePullAuthFailure"
-
-	// AIMModelReasonImageNotFound indicates the image was not found in the registry.
-	AIMModelReasonImageNotFound = "ImageNotFound"
 )
 
 // AIMModelDiscoveryConfig controls discovery behavior for a model.
@@ -73,26 +56,6 @@ type AIMModelDiscoveryConfig struct {
 	AutoCreateTemplates *bool `json:"autoCreateTemplates,omitempty"`
 }
 
-// AIMModelStatusEnum represents the overall status of an AIMModel.
-// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Degraded;Failed
-type AIMModelStatusEnum string
-
-const (
-	// AIMModelStatusPending indicates the image has been created but template generation has not started.
-	AIMModelStatusPending AIMModelStatusEnum = "Pending"
-
-	// AIMModelStatusProgressing indicates one or more templates are still being discovered.
-	AIMModelStatusProgressing AIMModelStatusEnum = "Progressing"
-
-	// AIMModelStatusReady indicates all templates are available and ready.
-	AIMModelStatusReady AIMModelStatusEnum = "Ready"
-
-	// AIMModelStatusDegraded indicates one or more templates are degraded or failed.
-	AIMModelStatusDegraded AIMModelStatusEnum = "Degraded"
-
-	// AIMModelStatusFailed indicates all templates are degraded or failed.
-	AIMModelStatusFailed AIMModelStatusEnum = "Failed"
-)
 
 // AIMModelSpec defines the desired state of AIMModel.
 type AIMModelSpec struct {
@@ -156,7 +119,7 @@ type AIMModelStatus struct {
 
 	// Status represents the overall status of the image based on its templates
 	// +kubebuilder:default=Pending
-	Status AIMModelStatusEnum `json:"status,omitempty"`
+	Status constants.AIMStatus `json:"status,omitempty"`
 
 	// Conditions represent the latest available observations of the model's state
 	// +listType=map
@@ -181,5 +144,5 @@ func (s *AIMModelStatus) SetConditions(conditions []metav1.Condition) {
 }
 
 func (s *AIMModelStatus) SetStatus(status string) {
-	s.Status = AIMModelStatusEnum(status)
+	s.Status = constants.AIMStatus(status)
 }

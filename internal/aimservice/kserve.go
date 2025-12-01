@@ -494,11 +494,11 @@ func projectServiceKServe(
 		var reason string
 		switch pullErr.Type {
 		case utils.ImagePullErrorAuth:
-			reason = "ImagePullAuthFailure"
+			reason = constants.ReasonImagePullAuthFailure
 		case utils.ImagePullErrorNotFound:
-			reason = aimv1alpha1.AIMServiceReasonImageNotFound
+			reason = constants.ReasonImageNotFound
 		default:
-			reason = aimv1alpha1.AIMServiceReasonImagePullBackOff
+			reason = constants.ReasonImagePullBackOff
 		}
 
 		// Format detailed message with container information
@@ -539,7 +539,7 @@ func projectServiceKServe(
 	}
 
 	if obs.inferenceServiceReady {
-		status.Status = aimv1alpha1.AIMServiceStatusRunning
+		status.Status = constants.AIMStatusRunning
 		cm.MarkTrue(aimv1alpha1.AIMServiceConditionRuntimeReady, aimv1alpha1.AIMServiceReasonRuntimeReady, "inferenceService is ready", controllerutils.LevelNormal)
 	}
 
