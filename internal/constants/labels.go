@@ -39,6 +39,7 @@ const (
 	LabelKeyCacheType       = AimLabelDomain + "/cache-type"
 	LabelKeySourceModel     = AimLabelDomain + "/source-model"
 	LabelAutoCreated        = AimLabelDomain + "/auto-created"
+	LabelKeyModelSource     = AimLabelDomain + "/model-source"
 
 	// AIM label values.
 	LabelValueRuntimeName        = "aim-runtime"
