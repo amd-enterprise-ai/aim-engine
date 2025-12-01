@@ -121,6 +121,7 @@ type serviceTemplateDiscoveryObservation struct {
 	failed          bool
 	completed       bool
 	discoveryResult *parsedDiscovery
+	parseError      error
 	discoveryJob    *batchv1.Job // The discovery job, if it exists
 }
 
@@ -138,6 +139,7 @@ func observeDiscovery(discoveryResult *serviceTemplateDiscoveryFetchResult, stat
 	obs.failed = utils.IsJobFailed(job)
 	if obs.completed {
 		obs.discoveryResult = discoveryResult.parsedDiscovery
+		obs.parseError = discoveryResult.parseError
 	}
 	return obs
 }
@@ -328,7 +330,7 @@ func buildDiscoveryJob(inputs discoveryJobBuilderInputs) *batchv1.Job {
 func projectDiscovery(
 	status *aimv1alpha1.AIMServiceTemplateStatus,
 	_ *controllerutils.ConditionManager,
-	_ *controllerutils.StatusHelper,
+	h *controllerutils.StatusHelper,
 	observation serviceTemplateDiscoveryObservation,
 ) {
 	if status.DiscoveryJobRef == nil && observation.discoveryJob != nil {
@@ -336,7 +338,19 @@ func projectDiscovery(
 		status.DiscoveryJobRef = &ref
 	}
 
-	// TODO: Add conditions and other status updates based on observation
+	// Set status based on discovery state
+	switch {
+	case observation.failed:
+		h.Failed(aimv1alpha1.AIMTemplateReasonDiscoveryFailed, "Discovery job failed")
+	case observation.completed && observation.parseError != nil:
+		h.Failed(aimv1alpha1.AIMTemplateReasonDiscoveryFailed, fmt.Sprintf("Failed to parse discovery output: %v", observation.parseError))
+	case observation.completed && observation.discoveryResult != nil:
+		// Store discovered profile in status
+		status.Profile = observation.discoveryResult.profile
+		h.Ready(aimv1alpha1.AIMTemplateReasonProfilesDiscovered, "Discovery completed successfully")
+	case observation.shouldRun || (observation.discoveryJob != nil && !observation.completed):
+		h.Progressing(aimv1alpha1.AIMTemplateReasonAwaitingDiscovery, "Discovery job running or pending")
+	}
 }
 
 // UTILS

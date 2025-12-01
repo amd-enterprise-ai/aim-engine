@@ -253,10 +253,10 @@ func (r *Reconciler) Plan(ctx context.Context, cache *aimv1alpha1.AIMTemplateCac
 		return controllerutils.PlanResult{Apply: objects}, nil
 	}
 
-	// Create missing model caches with owner references
+	// Create missing model caches with controller references
 	for _, mc := range buildMissingModelCaches(cache, obs) {
-		if err := controllerutil.SetOwnerReference(cache, mc, r.Scheme); err != nil {
-			return controllerutils.PlanResult{}, fmt.Errorf("set owner reference for model cache: %w", err)
+		if err := controllerutil.SetControllerReference(cache, mc, r.Scheme); err != nil {
+			return controllerutils.PlanResult{}, fmt.Errorf("set controller reference for model cache: %w", err)
 		}
 		objects = append(objects, mc)
 	}

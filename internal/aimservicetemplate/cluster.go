@@ -90,7 +90,7 @@ func observeServiceTemplateCluster(result serviceTemplateClusterFetchResult, tem
 // Returns true if a fatal error occurred (should stop reconciliation), false otherwise.
 func projectServiceTemplateCluster(_ *aimv1alpha1.AIMServiceTemplateStatus, _ *controllerutils.ConditionManager, h *controllerutils.StatusHelper, observation serviceTemplateClusterObservation) bool {
 	if !observation.gpuModelAvailable {
-		h.Degraded(aimv1alpha1.AIMTemplateReasonGpuNotAvailable, fmt.Sprintf("GPU model '%s' not available in cluster", observation.gpuModelRequested))
+		h.NotAvailable(aimv1alpha1.AIMTemplateReasonGpuNotAvailable, fmt.Sprintf("GPU model '%s' not available in cluster", observation.gpuModelRequested))
 		return true // Fatal - stop reconciliation
 	}
 	// TODOremovecondition otherwise

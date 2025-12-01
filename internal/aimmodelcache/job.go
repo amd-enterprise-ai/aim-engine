@@ -132,7 +132,7 @@ func planJob(cache *aimv1alpha1.AIMModelCache, obs Observation, scheme *runtime.
 		"waitForFirstConsumer", obs.storageClass.waitForFirstConsumer)
 
 	job := buildDownloadJob(cache, obs)
-	if err := controllerutil.SetOwnerReference(cache, job, scheme); err != nil {
+	if err := controllerutil.SetControllerReference(cache, job, scheme); err != nil {
 		return nil
 	}
 	return job
