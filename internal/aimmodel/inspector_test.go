@@ -359,7 +359,7 @@ func TestParseImageLabels_LegacyPrefix(t *testing.T) {
 
 func TestParseImageLabels_WithRecommendedDeployments(t *testing.T) {
 	labels := map[string]string{
-		"com.amd.aim.model.canonicalName":            "test-model",
+		"com.amd.aim.model.canonicalName":          "test-model",
 		"com.amd.aim.model.recommendedDeployments": `[{"gpuModel": "MI300X", "gpuCount": 1, "metric": "throughput", "precision": "fp16"}]`,
 	}
 
@@ -447,10 +447,10 @@ func TestMetadataFormatError_Error(t *testing.T) {
 
 func TestParseImageLabels_MixedPrefixes(t *testing.T) {
 	labels := map[string]string{
-		"com.amd.aim.model.canonicalName":    "new-model",
-		"org.amd.silogen.model.source":       "legacy-source",
-		"com.amd.aim.model.tags":             "tag1,tag2",
-		"org.amd.silogen.model.versions":     "v1,v2",
+		"com.amd.aim.model.canonicalName": "new-model",
+		"org.amd.silogen.model.source":    "legacy-source",
+		"com.amd.aim.model.tags":          "tag1,tag2",
+		"org.amd.silogen.model.versions":  "v1,v2",
 	}
 
 	metadata, err := parseImageLabels(labels)

@@ -44,8 +44,8 @@ import (
 func TestClusterModelReconciler_Observe(t *testing.T) {
 	clusterModel := &aimv1alpha1.AIMClusterModel{
 		Spec: aimv1alpha1.AIMModelSpec{
-			Image:               "test:latest",
-			RuntimeConfigName:   "default",
+			Image:             "test:latest",
+			RuntimeConfigName: "default",
 		},
 	}
 
