@@ -29,6 +29,11 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
+const (
+	// TemplateCacheTemplateNameIndexKey is the field index key for AIMTemplateCache.Spec.TemplateName
+	TemplateCacheTemplateNameIndexKey = ".spec.templateName"
+)
+
 // AIMTemplateCacheSpec defines the desired state of AIMTemplateCache
 type AIMTemplateCacheSpec struct {
 	// TemplateName is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to cache.

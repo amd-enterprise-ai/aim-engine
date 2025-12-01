@@ -43,10 +43,6 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
-const (
-	TemplateCacheTemplateNameIndexKey = ".spec.templateName"
-)
-
 // ============================================================================
 // DOMAIN RECONCILER
 // ============================================================================

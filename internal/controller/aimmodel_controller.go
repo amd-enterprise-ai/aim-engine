@@ -30,8 +30,6 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
-	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
-
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimmodel"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -113,12 +111,23 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	// Index AIMServiceTemplate by modelName for efficient lookup
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMServiceTemplate{}, constants.ServiceTemplateModelNameIndexKey, func(obj client.Object) []string {
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMServiceTemplate{}, aimv1alpha1.ServiceTemplateModelNameIndexKey, func(obj client.Object) []string {
 		template, ok := obj.(*aimv1alpha1.AIMServiceTemplate)
 		if !ok {
 			return nil
 		}
 		return []string{template.Spec.ModelName}
+	}); err != nil {
+		return err
+	}
+
+	// Index AIMModel by image for efficient lookup
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMModel{}, aimv1alpha1.ModelImageIndexKey, func(obj client.Object) []string {
+		model, ok := obj.(*aimv1alpha1.AIMModel)
+		if !ok {
+			return nil
+		}
+		return []string{model.Spec.Image}
 	}); err != nil {
 		return err
 	}

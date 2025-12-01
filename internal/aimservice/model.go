@@ -38,40 +38,6 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
-const (
-	// ModelImageIndexKey is the field index key for AIMModel.Spec.image
-	// TODO: Register this indexer in the controller setup:
-	//   mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMModel{}, ModelImageIndexKey,
-	//       func(obj client.Object) []string {
-	//           return []string{obj.(*aimv1alpha1.AIMModel).Spec.image}
-	//       })
-	ModelImageIndexKey = "spec.image"
-
-	// ClusterModelImageIndexKey is the field index key for AIMClusterModel.Spec.image
-	// TODO: Register this indexer in the controller setup:
-	//   mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMClusterModel{}, ClusterModelImageIndexKey,
-	//       func(obj client.Object) []string {
-	//           return []string{obj.(*aimv1alpha1.AIMClusterModel).Spec.image}
-	//       })
-	ClusterModelImageIndexKey = "spec.image"
-
-	// ServiceTemplateModelNameIndexKey is the field index key for AIMServiceTemplate.Spec.modelName
-	// TODO: Register this indexer in the controller setup:
-	//   mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMServiceTemplate{}, ServiceTemplateModelNameIndexKey,
-	//       func(obj client.Object) []string {
-	//           return []string{obj.(*aimv1alpha1.AIMServiceTemplate).Spec.modelName}
-	//       })
-	ServiceTemplateModelNameIndexKey = "spec.modelName"
-
-	// ClusterServiceTemplateModelNameIndexKey is the field index key for AIMClusterServiceTemplate.Spec.modelName
-	// TODO: Register this indexer in the controller setup:
-	//   mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMClusterServiceTemplate{}, ClusterServiceTemplateModelNameIndexKey,
-	//       func(obj client.Object) []string {
-	//           return []string{obj.(*aimv1alpha1.AIMClusterServiceTemplate).Spec.modelName}
-	//       })
-	ClusterServiceTemplateModelNameIndexKey = "spec.modelName"
-)
-
 // ============================================================================
 // FETCH
 // ============================================================================
@@ -145,7 +111,7 @@ func fetchServiceModelResultForModelImage(ctx context.Context, c client.Client, 
 	var nsModels aimv1alpha1.AIMModelList
 	if err := c.List(ctx, &nsModels,
 		client.InNamespace(namespace),
-		client.MatchingFields{ModelImageIndexKey: modelImage},
+		client.MatchingFields{aimv1alpha1.ModelImageIndexKey: modelImage},
 	); err != nil {
 		return result, fmt.Errorf("failed to list namespace models by image: %w", err)
 	}
@@ -164,7 +130,7 @@ func fetchServiceModelResultForModelImage(ctx context.Context, c client.Client, 
 	// List cluster-scoped models with this image using field indexer
 	var clusterModels aimv1alpha1.AIMClusterModelList
 	if err := c.List(ctx, &clusterModels,
-		client.MatchingFields{ClusterModelImageIndexKey: modelImage},
+		client.MatchingFields{aimv1alpha1.ClusterModelImageIndexKey: modelImage},
 	); err != nil {
 		return result, fmt.Errorf("failed to list cluster models by image: %w", err)
 	}
@@ -195,7 +161,7 @@ func fetchTemplatesForModel(ctx context.Context, c client.Client, modelName stri
 		var nsTemplates aimv1alpha1.AIMServiceTemplateList
 		if err := c.List(ctx, &nsTemplates,
 			client.InNamespace(namespace),
-			client.MatchingFields{ServiceTemplateModelNameIndexKey: modelName},
+			client.MatchingFields{aimv1alpha1.ServiceTemplateModelNameIndexKey: modelName},
 		); err != nil {
 			return fmt.Errorf("failed to list namespace templates for model: %w", err)
 		}
@@ -204,7 +170,7 @@ func fetchTemplatesForModel(ctx context.Context, c client.Client, modelName stri
 		// Cluster-scoped model - fetch cluster templates only
 		var clusterTemplates aimv1alpha1.AIMClusterServiceTemplateList
 		if err := c.List(ctx, &clusterTemplates,
-			client.MatchingFields{ClusterServiceTemplateModelNameIndexKey: modelName},
+			client.MatchingFields{aimv1alpha1.ServiceTemplateModelNameIndexKey: modelName},
 		); err != nil {
 			return fmt.Errorf("failed to list cluster templates for model: %w", err)
 		}

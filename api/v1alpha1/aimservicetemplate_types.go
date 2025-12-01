@@ -26,6 +26,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	// ServiceTemplateModelNameIndexKey is the field index key for AIMServiceTemplate.Spec.ModelName
+	// This is also used for AIMClusterServiceTemplate.Spec.ModelName
+	ServiceTemplateModelNameIndexKey = ".spec.modelName"
+)
+
 // AIMServiceTemplate is the Schema for namespace-scoped AIM service templates.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status

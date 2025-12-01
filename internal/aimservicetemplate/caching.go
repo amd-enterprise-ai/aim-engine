@@ -31,7 +31,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	"github.com/amd-enterprise-ai/aim-engine/internal/aimtemplatecache"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
@@ -68,7 +67,7 @@ func fetchServiceTemplateCacheResult(ctx context.Context, c client.Client, templ
 		if err := c.List(ctx, &caches,
 			client.InNamespace(template.GetNamespace()),
 			client.MatchingFields{
-				aimtemplatecache.TemplateCacheTemplateNameIndexKey: template.GetName(),
+				aimv1alpha1.TemplateCacheTemplateNameIndexKey: template.GetName(),
 			},
 		); err != nil {
 			return result, fmt.Errorf("error listing template cache objects: %w", err)
