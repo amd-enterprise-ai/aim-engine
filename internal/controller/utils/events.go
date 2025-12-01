@@ -25,11 +25,13 @@ SOFTWARE.
 package controllerutils
 
 import (
+	"context"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 type EventLevel string
@@ -39,6 +41,159 @@ const (
 	LevelNormal  EventLevel = EventLevel(corev1.EventTypeNormal)
 	LevelWarning EventLevel = EventLevel(corev1.EventTypeWarning)
 )
+
+type EventMode string
+
+const (
+	EventNone         EventMode = ""
+	EventOnTransition EventMode = "transition"
+	EventAlways       EventMode = "always"
+)
+
+type LogMode string
+
+const (
+	LogNone         LogMode = ""
+	LogOnTransition LogMode = "transition"
+	LogAlways       LogMode = "always"
+)
+
+// ObservabilityConfig controls how condition changes are observed (events and logs)
+type ObservabilityConfig struct {
+	eventMode    EventMode
+	eventLevel   EventLevel
+	eventReason  *string // if nil, use default (condType + condReason)
+	eventMessage *string // if nil, use condition message
+
+	logMode    LogMode
+	logLevel   int
+	logMessage *string // if nil, use condition message
+}
+
+type ObservabilityOption func(*ObservabilityConfig)
+
+func defaultConfig() ObservabilityConfig {
+	return ObservabilityConfig{
+		eventMode: EventNone,
+		logMode:   LogNone,
+	}
+}
+
+// === Core Options ===
+
+// WithRecurring makes any event/log happen every reconcile (not just on transition)
+func WithRecurring() ObservabilityOption {
+	return func(c *ObservabilityConfig) {
+		if c.eventMode == EventOnTransition {
+			c.eventMode = EventAlways
+		}
+		if c.logMode == LogOnTransition {
+			c.logMode = LogAlways
+		}
+	}
+}
+
+// === Log Options ===
+
+func WithLog(level int) ObservabilityOption {
+	return func(c *ObservabilityConfig) {
+		c.logMode = LogOnTransition
+		c.logLevel = level
+	}
+}
+
+func WithErrorLog() ObservabilityOption {
+	return WithLog(0)
+}
+
+func WithInfoLog() ObservabilityOption {
+	return WithLog(1)
+}
+
+func WithDebugLog() ObservabilityOption {
+	return WithLog(2)
+}
+
+// === Event Options ===
+
+func WithNormalEvent() ObservabilityOption {
+	return func(c *ObservabilityConfig) {
+		c.eventMode = EventOnTransition
+		c.eventLevel = LevelNormal
+	}
+}
+
+func WithWarningEvent() ObservabilityOption {
+	return func(c *ObservabilityConfig) {
+		c.eventMode = EventOnTransition
+		c.eventLevel = LevelWarning
+	}
+}
+
+// === Recurring Shorthands ===
+
+func WithRecurringErrorLog() ObservabilityOption {
+	return func(c *ObservabilityConfig) {
+		c.logMode = LogAlways
+		c.logLevel = 0
+	}
+}
+
+func WithRecurringWarningEvent() ObservabilityOption {
+	return func(c *ObservabilityConfig) {
+		c.eventMode = EventAlways
+		c.eventLevel = LevelWarning
+	}
+}
+
+// === Message/Reason Overrides ===
+
+func WithEventReason(reason string) ObservabilityOption {
+	return func(c *ObservabilityConfig) {
+		c.eventReason = &reason
+	}
+}
+
+func WithEventMessage(msg string) ObservabilityOption {
+	return func(c *ObservabilityConfig) {
+		c.eventMessage = &msg
+	}
+}
+
+func WithLogMessage(msg string) ObservabilityOption {
+	return func(c *ObservabilityConfig) {
+		c.logMessage = &msg
+	}
+}
+
+// === Convenience Combinations ===
+
+func WithCriticalError() ObservabilityOption {
+	return func(c *ObservabilityConfig) {
+		WithRecurringWarningEvent()(c)
+		WithRecurringErrorLog()(c)
+	}
+}
+
+// === Backwards Compatibility Helpers ===
+
+// EventLevelToOption converts the old EventLevel constants to ObservabilityOptions.
+// This provides backwards compatibility for existing code.
+func EventLevelToOption(level EventLevel) ObservabilityOption {
+	switch level {
+	case LevelNone:
+		// No event, no log
+		return func(c *ObservabilityConfig) {}
+	case LevelNormal:
+		// Normal event on transition
+		return WithNormalEvent()
+	case LevelWarning:
+		// Warning event on transition
+		return WithWarningEvent()
+	default:
+		return func(c *ObservabilityConfig) {}
+	}
+}
 
 func EmitConditionTransitions(
 	recorder record.EventRecorder,
@@ -57,21 +212,154 @@ func EmitConditionTransitions(
 		}
 		newCondition := transition.New
 
-		// Look up the event level chosen when the new condition was set
-		level := manager.EventLevelFor(newCondition.Type)
-		if level == LevelNone {
-			// No event for this condition
+		// Look up the observability config for this condition
+		cfg := manager.ConfigFor(newCondition.Type)
+		if cfg.eventMode == EventNone {
 			continue
 		}
 
-		eventType := string(level) // LevelNormal / LevelWarning are already corev1 event types
+		// Only emit if mode is EventOnTransition (handled by transitions)
+		// EventAlways is handled separately in EmitRecurringEvents
+		if cfg.eventMode != EventOnTransition {
+			continue
+		}
 
+		eventType := string(cfg.eventLevel)
+
+		// Use custom event reason if provided, otherwise default
 		reason := fmt.Sprintf("%s%s", newCondition.Type, newCondition.Reason)
+		if cfg.eventReason != nil {
+			reason = *cfg.eventReason
+		}
+
+		// Use custom event message if provided, otherwise use condition message
 		message := newCondition.Message
+		if cfg.eventMessage != nil {
+			message = *cfg.eventMessage
+		}
 		if message == "" {
 			message = fmt.Sprintf("Condition %s is %s (reason=%s)", newCondition.Type, newCondition.Status, newCondition.Reason)
 		}
 
 		recorder.Event(obj, eventType, reason, message)
+	}
+}
+
+// EmitRecurringEvents emits events for all conditions configured with EventAlways,
+// regardless of whether they transitioned
+func EmitRecurringEvents(
+	recorder record.EventRecorder,
+	obj runtime.Object,
+	manager *ConditionManager,
+) {
+	if recorder == nil || manager == nil {
+		return
+	}
+
+	for _, cc := range manager.conditions {
+		if cc.Config.eventMode != EventAlways {
+			continue
+		}
+
+		eventType := string(cc.Config.eventLevel)
+
+		// Use custom event reason if provided, otherwise default
+		reason := fmt.Sprintf("%s%s", cc.Type, cc.Reason)
+		if cc.Config.eventReason != nil {
+			reason = *cc.Config.eventReason
+		}
+
+		// Use custom event message if provided, otherwise use condition message
+		message := cc.Message
+		if cc.Config.eventMessage != nil {
+			message = *cc.Config.eventMessage
+		}
+		if message == "" {
+			message = fmt.Sprintf("Condition %s is %s (reason=%s)", cc.Type, cc.Status, cc.Reason)
+		}
+
+		recorder.Event(obj, eventType, reason, message)
+	}
+}
+
+// EmitConditionLogs logs condition transitions based on their observability config
+func EmitConditionLogs(
+	ctx context.Context,
+	transitions []ConditionTransition,
+	manager *ConditionManager,
+) {
+	if manager == nil {
+		return
+	}
+
+	logger := log.FromContext(ctx)
+
+	for _, transition := range transitions {
+		// We only care about conditions that now exist
+		if transition.New == nil {
+			continue
+		}
+		newCondition := transition.New
+
+		// Look up the observability config for this condition
+		cfg := manager.ConfigFor(newCondition.Type)
+		if cfg.logMode == LogNone {
+			continue
+		}
+
+		// Only log if mode is LogOnTransition (handled by transitions)
+		// LogAlways is handled separately in EmitRecurringLogs
+		if cfg.logMode != LogOnTransition {
+			continue
+		}
+
+		// Use custom log message if provided, otherwise use condition message
+		message := newCondition.Message
+		if cfg.logMessage != nil {
+			message = *cfg.logMessage
+		}
+		if message == "" {
+			message = fmt.Sprintf("Condition %s is %s (reason=%s)", newCondition.Type, newCondition.Status, newCondition.Reason)
+		}
+
+		logger.V(cfg.logLevel).Info(message,
+			"condition", newCondition.Type,
+			"status", newCondition.Status,
+			"reason", newCondition.Reason,
+		)
+	}
+}
+
+// EmitRecurringLogs logs all conditions configured with LogAlways,
+// regardless of whether they transitioned
+func EmitRecurringLogs(
+	ctx context.Context,
+	manager *ConditionManager,
+) {
+	if manager == nil {
+		return
+	}
+
+	logger := log.FromContext(ctx)
+
+	for _, cc := range manager.conditions {
+		if cc.Config.logMode != LogAlways {
+			continue
+		}
+
+		// Use custom log message if provided, otherwise use condition message
+		message := cc.Message
+		if cc.Config.logMessage != nil {
+			message = *cc.Config.logMessage
+		}
+		if message == "" {
+			message = fmt.Sprintf("Condition %s is %s (reason=%s)", cc.Type, cc.Status, cc.Reason)
+		}
+
+		logger.V(cc.Config.logLevel).Info(message,
+			"condition", cc.Type,
+			"status", cc.Status,
+			"reason", cc.Reason,
+		)
 	}
 }
