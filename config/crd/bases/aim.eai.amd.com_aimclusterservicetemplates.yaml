@@ -575,6 +575,7 @@ spec:
                 - Ready
                 - Degraded
                 - Failed
+                - NotAvailable
                 type: string
             type: object
         type: object

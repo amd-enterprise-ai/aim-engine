@@ -161,7 +161,7 @@ func planPVC(cache *aimv1alpha1.AIMModelCache, obs Observation, scheme *runtime.
 	}
 
 	pvc := buildPVC(cache, obs)
-	if err := controllerutil.SetOwnerReference(cache, pvc, scheme); err != nil {
+	if err := controllerutil.SetControllerReference(cache, pvc, scheme); err != nil {
 		return nil
 	}
 	return pvc

@@ -216,7 +216,7 @@ func (r *ClusterServiceTemplateReconciler) Plan(
 			// TODO should cluster service template have envs?
 			// env:          clusterServiceTemplate.Spec.env,
 		})
-		_ = controllerutil.SetOwnerReference(clusterServiceTemplate, discoveryJob, r.Scheme)
+		_ = controllerutil.SetControllerReference(clusterServiceTemplate, discoveryJob, r.Scheme)
 		objects = append(objects, discoveryJob)
 	}
 	return controllerutils.PlanResult{Apply: objects}, nil
@@ -230,7 +230,7 @@ func (r *ServiceTemplateReconciler) Plan(
 	var objects []client.Object
 	if observation.cache.shouldCreateCache {
 		templateCache := buildServiceTemplateCache(*serviceTemplate, observation.runtimeConfig.MergedConfig)
-		_ = controllerutil.SetOwnerReference(serviceTemplate, templateCache, r.Scheme)
+		_ = controllerutil.SetControllerReference(serviceTemplate, templateCache, r.Scheme)
 		objects = append(objects, templateCache)
 	}
 
@@ -242,7 +242,7 @@ func (r *ServiceTemplateReconciler) Plan(
 			image:        observation.Model.modelSpec.Image,
 			env:          serviceTemplate.Spec.Env,
 		})
-		_ = controllerutil.SetOwnerReference(serviceTemplate, discoveryJob, r.Scheme)
+		_ = controllerutil.SetControllerReference(serviceTemplate, discoveryJob, r.Scheme)
 		objects = append(objects, discoveryJob)
 	}
 

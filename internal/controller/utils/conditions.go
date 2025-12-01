@@ -280,3 +280,10 @@ func (h *StatusHelper) Failed(reason, msg string) {
 	h.cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionFalse, reason, msg)
 	h.cm.Set(string(constants.AIMStatusDegraded), metav1.ConditionTrue, reason, msg, WithWarningEvent(), WithErrorLog())
 }
+
+func (h *StatusHelper) NotAvailable(reason, msg string) {
+	h.status.SetStatus(string(constants.AIMStatusNotAvailable))
+	h.cm.Set(string(constants.AIMStatusReady), metav1.ConditionFalse, reason, msg)
+	h.cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionFalse, reason, msg)
+	h.cm.Set(string(constants.AIMStatusDegraded), metav1.ConditionFalse, reason, msg)
+}
