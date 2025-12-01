@@ -23,6 +23,7 @@
 package v1alpha1
 
 import (
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -203,7 +204,7 @@ type AIMServiceStatus struct {
 	// Status represents the current high‑level status of the service lifecycle.
 	// Values: `Pending`, `Starting`, `Running`, `Failed`, `Degraded`.
 	// +kubebuilder:default=Pending
-	Status AIMServiceStatusEnum `json:"status,omitempty"`
+	Status constants.AIMStatus `json:"status,omitempty"`
 
 	// Routing surfaces information about the configured HTTP routing, when enabled.
 	// +optional
@@ -240,34 +241,17 @@ func (s *AIMServiceStatus) SetConditions(conditions []metav1.Condition) {
 }
 
 func (s *AIMServiceStatus) SetStatus(status string) {
-	s.Status = AIMServiceStatusEnum(status)
+	s.Status = constants.AIMStatus(status)
 }
 
 // AIMServiceStatusEnum defines coarse-grained states for a service.
 // +kubebuilder:validation:Enum=Pending;Starting;Running;Failed;Degraded
 type AIMServiceStatusEnum string
 
-const (
-	// AIMServiceStatusPending denotes that the template has been created and discovery has not yet started.
-	AIMServiceStatusPending AIMServiceStatusEnum = "Pending"
-
-	// AIMServiceStatusStarting denotes that discovery and/or cache warm is in progress.
-	AIMServiceStatusStarting AIMServiceStatusEnum = "Starting"
-
-	// AIMServiceStatusRunning denotes that discovery succeeded and, if requested, caches are warmed.
-	AIMServiceStatusRunning AIMServiceStatusEnum = "Running"
-
-	// AIMServiceStatusFailed denotes a terminal failure for discovery or warm operations.
-	AIMServiceStatusFailed AIMServiceStatusEnum = "Failed"
-
-	// AIMServiceStatusDegraded denotes a recoverable failure state.
-	AIMServiceStatusDegraded AIMServiceStatusEnum = "Degraded"
-)
-
 // Condition types for AIMService
 const (
 	// ConditionResolved is True when the model and template have been validated and a runtime profile has been selected.
-	AIMServiceConditionResolved = "Resolved"
+	AIMServiceConditionTemplateResolved = "TemplateResolved"
 
 	// ConditionCacheReady is True when required caches are present or warmed as requested.
 	AIMServiceConditionCacheReady = "CacheReady"
@@ -278,26 +262,35 @@ const (
 	// ConditionRoutingReady is True when exposure and routing through the configured gateway are ready.
 	AIMServiceConditionRoutingReady = "RoutingReady"
 
-	// ConditionReady is True when the service is fully ready to serve traffic.
-	AIMServiceConditionReady = "Ready"
+	// ConditionModelResolved is True when the model has been resolved.
+	AIMServiceConditionModelResolved = "ModelResolved"
 
-	// ConditionProgressing is True when the controller is actively reconciling towards readiness.
-	AIMServiceConditionProgressing = "Progressing"
-
-	// ConditionFailure is True when a terminal failure has occurred.
-	AIMServiceConditionFailure = "Failure"
+	// ConditionStorageReady is True when storage (PVC or cache) is ready.
+	AIMServiceConditionStorageReady = "StorageReady"
 )
 
 // Condition reasons for AIMService
 const (
-	// Resolution
+	// Model Resolution
+	AIMServiceReasonInvalidImageReference = "InvalidImageReference"
+	AIMServiceReasonModelNotFound         = "ModelNotFound"
+	AIMServiceReasonCreatingModel         = "CreatingModel"
+	AIMServiceReasonModelNotReady         = "ModelNotReady"
+	AIMServiceReasonModelResolved         = "ModelResolved"
+	AIMServiceReasonMultipleModelsFound   = "MultipleModelsFound"
+
+	// Template Resolution
 	AIMServiceReasonTemplateNotFound           = "TemplateNotFound"
-	AIMServiceReasonModelNotFound              = "ModelNotFound"
-	AIMServiceReasonModelNotReady              = "ModelNotReady"
-	AIMServiceReasonMultipleModelsFound        = "multipleModelsFound"
+	AIMServiceReasonTemplateSelectionFailed    = "TemplateSelectionFailed"
+	AIMServiceReasonTemplateNotReady           = "TemplateNotReady"
 	AIMServiceReasonResolved                   = "Resolved"
 	AIMServiceReasonValidationFailed           = "ValidationFailed"
 	AIMServiceReasonTemplateSelectionAmbiguous = "TemplateSelectionAmbiguous"
+
+	// Storage
+	AIMServiceReasonCreatingPVC  = "CreatingPVC"
+	AIMServiceReasonPVCNotBound  = "PVCNotBound"
+	AIMServiceReasonStorageReady = "StorageReady"
 
 	// Cache
 	AIMServiceReasonCacheCreating = "CacheCreating"
@@ -305,21 +298,11 @@ const (
 	AIMServiceReasonCacheReady    = "CacheReady"
 	AIMServiceReasonCacheRetrying = "CacheRetrying"
 	AIMServiceReasonCacheFailed   = "CacheFailed"
-	// TODO: Remove these old cache reasons after controller migration is complete
-	AIMServiceReasonWaitingForCache = "WaitingForCache"
-	AIMServiceReasonCacheWarming    = "CacheWarming"
-	AIMServiceReasonCacheWarm       = "CacheWarm"
 
 	// Runtime
-	AIMServiceReasonCreatingRuntime      = "CreatingRuntime"
-	AIMServiceReasonRuntimeReady         = "RuntimeReady"
-	AIMServiceReasonRuntimeFailed        = "RuntimeFailed"
-	AIMServiceReasonRuntimeConfigMissing = "RuntimeConfigMissing"
-
-	// Image pull related
-	AIMServiceReasonImagePullAuthFailure = "ImagePullAuthFailure"
-	AIMServiceReasonImageNotFound        = "ImageNotFound"
-	AIMServiceReasonImagePullBackOff     = "ImagePullBackOff"
+	AIMServiceReasonCreatingRuntime = "CreatingRuntime"
+	AIMServiceReasonRuntimeReady    = "RuntimeReady"
+	AIMServiceReasonRuntimeFailed   = "RuntimeFailed"
 
 	// Routing
 	AIMServiceReasonConfiguringRoute    = "ConfiguringRoute"

@@ -129,6 +129,9 @@ const (
 	AIMTemplateCacheReasonWarming = "Warming"
 	AIMTemplateCacheReasonWarm    = "Warm"
 	AIMTemplateCacheReasonFailed  = "Failed"
+
+	// Template resolution
+	AIMTemplateCacheConditionTemplateFound = "TemplateFound"
 )
 
 // +kubebuilder:object:root=true

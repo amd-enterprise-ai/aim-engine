@@ -241,14 +241,14 @@ func observeServiceModel(_ context.Context, _ client.Client, service *aimv1alpha
 			obs.modelName = result.namespaceModel.Name
 			obs.ModelNamespace = result.namespaceModel.Namespace
 			obs.ModelFound = true
-			obs.ModelReady = result.namespaceModel.Status.Status == aimv1alpha1.AIMModelStatusReady
+			obs.ModelReady = result.namespaceModel.Status.Status == constants.AIMStatusReady
 			obs.ModelSpec = &result.namespaceModel.Spec
 			obs.Scope = aimv1alpha1.AIMResolutionScopeNamespace
 		} else if result.clusterModel != nil {
 			obs.modelName = result.clusterModel.Name
 			obs.ModelNamespace = "" // Cluster-scoped models have no namespace
 			obs.ModelFound = true
-			obs.ModelReady = result.clusterModel.Status.Status == aimv1alpha1.AIMModelStatusReady
+			obs.ModelReady = result.clusterModel.Status.Status == constants.AIMStatusReady
 			obs.ModelSpec = &result.clusterModel.Spec
 			obs.Scope = aimv1alpha1.AIMResolutionScopeCluster
 		} else {
@@ -272,14 +272,14 @@ func observeServiceModel(_ context.Context, _ client.Client, service *aimv1alpha
 			obs.modelName = result.namespaceModel.Name
 			obs.ModelNamespace = result.namespaceModel.Namespace
 			obs.ModelFound = true
-			obs.ModelReady = result.namespaceModel.Status.Status == aimv1alpha1.AIMModelStatusReady
+			obs.ModelReady = result.namespaceModel.Status.Status == constants.AIMStatusReady
 			obs.ModelSpec = &result.namespaceModel.Spec
 			obs.Scope = aimv1alpha1.AIMResolutionScopeNamespace
 		} else if result.clusterModel != nil {
 			obs.modelName = result.clusterModel.Name
 			obs.ModelNamespace = "" // Cluster-scoped models have no namespace
 			obs.ModelFound = true
-			obs.ModelReady = result.clusterModel.Status.Status == aimv1alpha1.AIMModelStatusReady
+			obs.ModelReady = result.clusterModel.Status.Status == constants.AIMStatusReady
 			obs.ModelSpec = &result.clusterModel.Spec
 			obs.Scope = aimv1alpha1.AIMResolutionScopeCluster
 		} else {
@@ -369,25 +369,25 @@ func projectServiceModel(
 ) bool {
 	// Check for image parse errors (terminal error)
 	if obs.ImageParseErr != nil {
-		h.Failed("InvalidImageReference", obs.ImageParseErr.Error())
-		cm.MarkFalse("ModelResolved", "InvalidImageReference", obs.ImageParseErr.Error(), controllerutils.LevelWarning)
+		h.Failed(aimv1alpha1.AIMServiceReasonInvalidImageReference, obs.ImageParseErr.Error())
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonInvalidImageReference, obs.ImageParseErr.Error(), controllerutils.LevelWarning)
 		return true // Terminal error, stop reconciliation
 	}
 
 	if obs.ModelResolutionErr != nil {
 		if obs.MultipleModels {
-			h.Degraded("multipleModelsFound", obs.ModelResolutionErr.Error())
-			cm.MarkFalse("ModelResolved", "multipleModelsFound", "Multiple models found with same image", controllerutils.LevelWarning)
+			h.Degraded(aimv1alpha1.AIMServiceReasonMultipleModelsFound, obs.ModelResolutionErr.Error())
+			cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonMultipleModelsFound, "Multiple models found with same image", controllerutils.LevelWarning)
 		} else {
-			h.Degraded("ModelNotFound", obs.ModelResolutionErr.Error())
-			cm.MarkFalse("ModelResolved", "ModelNotFound", obs.ModelResolutionErr.Error(), controllerutils.LevelWarning)
+			h.Degraded(aimv1alpha1.AIMServiceReasonModelNotFound, obs.ModelResolutionErr.Error())
+			cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonModelNotFound, obs.ModelResolutionErr.Error(), controllerutils.LevelWarning)
 		}
 		return true
 	}
 
 	if obs.ShouldCreateModel {
-		h.Progressing("CreatingModel", "Creating model for service")
-		cm.MarkFalse("ModelResolved", "CreatingModel", "Model being created", controllerutils.LevelNormal)
+		h.Progressing(aimv1alpha1.AIMServiceReasonCreatingModel, "Creating model for service")
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonCreatingModel, "Model being created", controllerutils.LevelNormal)
 		return false
 	}
 
@@ -397,13 +397,13 @@ func projectServiceModel(
 	}
 
 	if !obs.ModelReady {
-		h.Progressing("ModelNotReady", fmt.Sprintf("Model %q is not ready", obs.modelName))
-		cm.MarkFalse("ModelResolved", "ModelNotReady", fmt.Sprintf("Model %q is not ready", obs.modelName), controllerutils.LevelNormal)
+		h.Progressing(aimv1alpha1.AIMServiceReasonModelNotReady, fmt.Sprintf("Model %q is not ready", obs.modelName))
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonModelNotReady, fmt.Sprintf("Model %q is not ready", obs.modelName), controllerutils.LevelNormal)
 		return true
 	}
 
 	// Model found and ready
-	cm.MarkTrue("ModelResolved", "ModelResolved", fmt.Sprintf("Model %q is ready", obs.modelName), controllerutils.LevelNormal)
+	cm.MarkTrue(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonModelResolved, fmt.Sprintf("Model %q is ready", obs.modelName), controllerutils.LevelNormal)
 	status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
 		Name:  obs.modelName,
 		Scope: aimv1alpha1.AIMResolutionScopeNamespace,

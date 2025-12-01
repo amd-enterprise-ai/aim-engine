@@ -974,12 +974,6 @@ spec:
                 description: |-
                   Status represents the current high‑level status of the service lifecycle.
                   Values: `Pending`, `Starting`, `Running`, `Failed`, `Degraded`.
-                enum:
-                - Pending
-                - Starting
-                - Running
-                - Failed
-                - Degraded
                 type: string
             type: object
         type: object

@@ -155,7 +155,7 @@ func buildTemplateObservation(inputs templateObservationInputs) templateObservat
 
 // modelCachesObservation contains information about model caches.
 type modelCachesObservation struct {
-	cacheStatus        map[string]aimv1alpha1.AIMModelCacheStatusEnum
+	cacheStatus        map[string]constants.AIMStatus
 	missingCaches      []aimv1alpha1.AIMModelSource
 	allCachesAvailable bool
 }
@@ -169,24 +169,25 @@ type modelCachesObservationInputs struct {
 // buildModelCachesObservation is a pure function that constructs ModelCaches observation.
 func buildModelCachesObservation(inputs modelCachesObservationInputs) modelCachesObservation {
 	obs := modelCachesObservation{
-		cacheStatus: map[string]aimv1alpha1.AIMModelCacheStatusEnum{},
+		cacheStatus: map[string]constants.AIMStatus{},
 	}
 
 	// Loop through model sources and check which caches are available
 	for _, model := range inputs.modelSources {
-		bestStatus := aimv1alpha1.AIMModelCacheStatusPending
+		bestStatus := constants.AIMStatusPending
 		for _, cached := range inputs.availableCaches {
 			// ModelCache is a match if it has the same SourceURI and a StorageClass matching our config
 			if cached.Spec.SourceURI == model.SourceURI &&
 				(inputs.storageClassName == "" || inputs.storageClassName == cached.Spec.StorageClassName) {
-				if cmpModelCacheStatus(bestStatus, cached.Status.Status) < 0 {
+				// Update bestStatus if the cached status is better (higher priority)
+				if constants.CompareAIMStatus(cached.Status.Status, bestStatus) > 0 {
 					bestStatus = cached.Status.Status
 				}
 			}
 		}
 
 		obs.cacheStatus[model.Name] = bestStatus
-		if bestStatus == aimv1alpha1.AIMModelCacheStatusPending {
+		if bestStatus == constants.AIMStatusPending {
 			obs.missingCaches = append(obs.missingCaches, model)
 		}
 	}
@@ -195,20 +196,6 @@ func buildModelCachesObservation(inputs modelCachesObservationInputs) modelCache
 	obs.allCachesAvailable = len(obs.missingCaches) == 0 && len(inputs.modelSources) > 0
 
 	return obs
-}
-
-// cmpModelCacheStatus compares two model cache statuses for priority ordering.
-func cmpModelCacheStatus(a aimv1alpha1.AIMModelCacheStatusEnum, b aimv1alpha1.AIMModelCacheStatusEnum) int {
-	order := map[aimv1alpha1.AIMModelCacheStatusEnum]int{
-		aimv1alpha1.AIMModelCacheStatusFailed:      0,
-		aimv1alpha1.AIMModelCacheStatusPending:     1,
-		aimv1alpha1.AIMModelCacheStatusProgressing: 2,
-		aimv1alpha1.AIMModelCacheStatusAvailable:   3,
-	}
-	if order[a] > order[b] {
-		return 1
-	}
-	return -1
 }
 
 // ----- Main Observe Method -----
@@ -342,13 +329,14 @@ func (r *Reconciler) Project(status *aimv1alpha1.AIMTemplateCacheStatus, cm *con
 
 // ----- Project Helpers -----
 
-// projectTemplateCondition sets the TemplateNotFound condition.
+// projectTemplateCondition sets the TemplateFound condition.
 func (r *Reconciler) projectTemplateCondition(cm *controllerutils.ConditionManager, obs Observation) {
 	if !obs.template.found {
-		cm.Set("TemplateNotFound", metav1.ConditionTrue, "AwaitingTemplate",
-			fmt.Sprintf("Waiting for template to be created: %s", obs.template.error), controllerutils.LevelNormal)
+		// TODO set degraded and return
+		cm.Set(aimv1alpha1.AIMTemplateCacheConditionTemplateFound, metav1.ConditionFalse, aimv1alpha1.AIMTemplateReasonAwaitingTemplate,
+			fmt.Sprintf("Waiting for template to be created: %s", obs.template.error), controllerutils.LevelWarning)
 	} else {
-		cm.Set("TemplateNotFound", metav1.ConditionFalse, "TemplateFound", "", controllerutils.LevelNone)
+		cm.Set(aimv1alpha1.AIMTemplateCacheConditionTemplateFound, metav1.ConditionTrue, aimv1alpha1.AIMTemplateReasonTemplateFound, "", controllerutils.LevelNone)
 	}
 }
 
@@ -360,11 +348,11 @@ func (r *Reconciler) projectOverallStatus(status *aimv1alpha1.AIMTemplateCacheSt
 		return
 	}
 
-	// Determine status from cache statuses
+	// Determine status from cache statuses - use the worst (lowest priority) status
 	statusValues := slices.Collect(maps.Values(obs.modelCaches.cacheStatus))
 	if len(statusValues) > 0 {
-		worstCacheStatus := slices.MaxFunc(statusValues, cmpModelCacheStatus)
-		status.Status = constants.AIMStatus(worstCacheStatus)
+		worstCacheStatus := slices.MinFunc(statusValues, constants.CompareAIMStatus)
+		status.Status = worstCacheStatus
 	} else {
 		// If there are no caches to track, mark as Pending
 		status.Status = constants.AIMStatusPending

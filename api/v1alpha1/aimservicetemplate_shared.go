@@ -23,6 +23,7 @@
 package v1alpha1
 
 import (
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -135,7 +136,7 @@ type AIMServiceTemplateStatus struct {
 	// Status represents the current high‑level status of the template lifecycle.
 	// Values: `Pending`, `Progressing`, `Ready`, `Failed`, `NotAvailable`.
 	// +kubebuilder:default=Pending
-	Status AIMTemplateStatusEnum `json:"status,omitempty"`
+	Status constants.AIMStatus `json:"status,omitempty"`
 
 	// ModelSources list the models that this template requires to run. These are the models that will be
 	// cached, if this template is cached.
@@ -158,7 +159,7 @@ func (s *AIMServiceTemplateStatus) SetConditions(conditions []metav1.Condition) 
 }
 
 func (s *AIMServiceTemplateStatus) SetStatus(status string) {
-	s.Status = AIMTemplateStatusEnum(status)
+	s.Status = constants.AIMStatus(status)
 }
 
 // AIMProfile contains the cached discovery results for a template.
@@ -212,33 +213,11 @@ type AIMProfileMetadata struct {
 	Precision AIMPrecision `json:"precision,omitempty"`
 }
 
-// AIMTemplateStatusEnum defines coarse-grained states for a template.
-// +kubebuilder:validation:Enum=Pending;Progressing;NotAvailable;Ready;Degraded;Failed
-type AIMTemplateStatusEnum string
-
-const (
-	// AIMTemplateStatusPending denotes that the template has been created and discovery has not yet started.
-	AIMTemplateStatusPending AIMTemplateStatusEnum = "Pending"
-	// AIMTemplateStatusProgressing denotes that discovery and/or cache warm is in progress.
-	AIMTemplateStatusProgressing AIMTemplateStatusEnum = "Progressing"
-	// AIMTemplateStatusNotAvailable denotes that the template cannot run because the required GPU resources are not present in the cluster.
-	AIMTemplateStatusNotAvailable AIMTemplateStatusEnum = "NotAvailable"
-	// AIMTemplateStatusReady denotes that discovery succeeded and, if requested, caches are warmed.
-	AIMTemplateStatusReady AIMTemplateStatusEnum = "Ready"
-	// AIMTemplateStatusDegraded denotes that the template is non-functional for some reason, for example that the cluster doesn't have the resources specified.
-	AIMTemplateStatusDegraded AIMTemplateStatusEnum = "Degraded"
-	// AIMTemplateStatusFailed denotes a terminal failure for discovery or warm operations.
-	AIMTemplateStatusFailed AIMTemplateStatusEnum = "Failed"
-)
-
 // Discovery conditions
 const (
 	// AIMTemplateDiscoveryConditionType is True when runtime profiles have been discovered and sources resolved for the referenced model.
 	AIMTemplateDiscoveryConditionType = "Discovered"
 
-	AIMTemplateDiscoveryConditionAwaitingDiscovery  = "AwaitingDiscovery"
-	AIMTemplateDiscoveryConditionProfilesDiscovered = "ProfilesDiscovered"
-	AIMTemplateDiscoveryConditionDiscoveryFailed    = "DiscoveryFailed"
 )
 
 // Caching conditions
@@ -246,10 +225,10 @@ const (
 	// AIMTemplateConditionCacheWarm is True when all requested caches have been warmed.
 	AIMTemplateCacheWarmConditionType = "CacheWarm"
 
-	AIMTemplateCacheWarmConditionPending   = "Pending"
-	AIMTemplateCacheWarmConditionRequested = "Progressing"
-	AIMTemplateReasonWarm                  = "Ready"
-	AIMTemplateReasonWarmFailed            = "Failed"
+	AIMTemplateReasonCacheReady      = "Ready"
+	AIMTemplateReasonWaitingForCache = "WaitingForCache"
+	AIMTemplateReasonCacheDegraded   = "CacheDegraded"
+	AIMTemplateReasonCacheFailed     = "CacheFailed"
 )
 
 // Condition reasons for AIMServiceTemplate
@@ -259,19 +238,12 @@ const (
 	AIMTemplateReasonProfilesDiscovered = "ProfilesDiscovered"
 	AIMTemplateReasonDiscoveryFailed    = "DiscoveryFailed"
 
-	// Image pull related
-	AIMTemplateReasonImagePullAuthFailure = "ImagePullAuthFailure"
-	AIMTemplateReasonImageNotFound        = "ImageNotFound"
-	AIMTemplateReasonImagePullBackOff     = "ImagePullBackOff"
-)
+	AIMTemplateReasonGpuNotAvailable = "GpuNotAvailable"
+	AIMTemplateModelNotFound         = "ModelNotFound"
 
-// +kubebuilder:object:root=true
-// +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=aimst,categories=aim;all
-// +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
-// +kubebuilder:printcolumn:name="Model",type=string,JSONPath=`.spec.modelName`
-// +kubebuilder:printcolumn:name="Engine",type=string,JSONPath=`.status.profile.metadata.engine`
-// +kubebuilder:printcolumn:name="Metric",type=string,JSONPath=`.status.profile.metadata.metric`
-// +kubebuilder:printcolumn:name="Precision",type=string,JSONPath=`.status.profile.metadata.precision`
-// +kubebuilder:printcolumn:name="GPUs/replica",type=integer,JSONPath=`.status.profile.metadata.gpu_count`
-// +kubebuilder:printcolumn:name="GPU",type=string,JSONPath=`.status.profile.metadata.gpu`
+	AIMTemplateReasonAwaitingTemplate = "AwaitingTemplate"
+	AIMTemplateReasonTemplateFound = "TemplateFound"
+
+	// Model resolution
+	AIMServiceTemplateConditionModelFound = "ModelFound"
+)

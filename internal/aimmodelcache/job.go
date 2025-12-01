@@ -28,6 +28,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -261,13 +262,13 @@ func projectReadyCondition(cm *controllerutils.ConditionManager, obs Observation
 	ready := obs.pvc.ready && obs.job.succeeded
 
 	if ready {
-		cm.Set(aimv1alpha1.AIMModelCacheConditionReady, metav1.ConditionTrue, aimv1alpha1.AIMModelCacheReasonWarm, "", controllerutils.LevelNormal)
+		cm.Set(aimv1alpha1.AIMModelCacheDownloadReady, metav1.ConditionTrue, aimv1alpha1.AIMModelCacheReasonWarm, "", controllerutils.LevelNormal)
 	} else {
 		if !canCreate {
-			cm.Set(aimv1alpha1.AIMModelCacheConditionReady, metav1.ConditionFalse,
+			cm.Set(aimv1alpha1.AIMModelCacheDownloadReady, metav1.ConditionFalse,
 				aimv1alpha1.AIMModelCacheReasonWaitingForPVC, "", controllerutils.LevelNormal)
 		} else {
-			cm.Set(aimv1alpha1.AIMModelCacheConditionReady, metav1.ConditionFalse,
+			cm.Set(aimv1alpha1.AIMModelCacheDownloadReady, metav1.ConditionFalse,
 				aimv1alpha1.AIMModelCacheReasonDownloading, "", controllerutils.LevelNormal)
 		}
 	}
@@ -282,17 +283,17 @@ func projectProgressingCondition(cm *controllerutils.ConditionManager, obs Obser
 
 	if progressing {
 		if !obs.pvc.ready && !canCreate {
-			cm.Set(aimv1alpha1.AIMModelCacheConditionProgressing, metav1.ConditionTrue,
+			cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionTrue,
 				aimv1alpha1.AIMModelCacheReasonWaitingForPVC, "", controllerutils.LevelNormal)
 		} else if obs.job.PendingOrRunning || (!obs.job.found && canCreate) {
-			cm.Set(aimv1alpha1.AIMModelCacheConditionProgressing, metav1.ConditionTrue,
+			cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionTrue,
 				aimv1alpha1.AIMModelCacheReasonDownloading, "", controllerutils.LevelNormal)
 		} else {
-			cm.Set(aimv1alpha1.AIMModelCacheConditionProgressing, metav1.ConditionTrue,
+			cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionTrue,
 				aimv1alpha1.AIMModelCacheReasonRetryBackoff, "", controllerutils.LevelNormal)
 		}
 	} else {
-		cm.Set(aimv1alpha1.AIMModelCacheConditionProgressing, metav1.ConditionFalse,
+		cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionFalse,
 			aimv1alpha1.AIMModelCacheReasonRetryBackoff, "", controllerutils.LevelWarning)
 	}
 }
@@ -302,17 +303,17 @@ func projectFailureCondition(cm *controllerutils.ConditionManager, obs Observati
 	failure := obs.pvc.lost || obs.job.failed
 
 	if !failure {
-		cm.Set(aimv1alpha1.AIMModelCacheConditionFailure, metav1.ConditionFalse,
+		cm.Set(string(constants.AIMStatusFailed), metav1.ConditionFalse,
 			aimv1alpha1.AIMModelCacheReasonNoFailure, "", controllerutils.LevelNormal)
 		return
 	}
 
 	// Determine specific failure reason
 	if obs.pvc.lost {
-		cm.Set(aimv1alpha1.AIMModelCacheConditionFailure, metav1.ConditionTrue,
+		cm.Set(string(constants.AIMStatusFailed), metav1.ConditionTrue,
 			aimv1alpha1.AIMModelCacheReasonPVCLost, "", controllerutils.LevelWarning)
 	} else if obs.job.failed {
-		cm.Set(aimv1alpha1.AIMModelCacheConditionFailure, metav1.ConditionTrue,
+		cm.Set(string(constants.AIMStatusFailed), metav1.ConditionTrue,
 			aimv1alpha1.AIMModelCacheReasonDownloadFailed, "", controllerutils.LevelWarning)
 	}
 }
@@ -325,12 +326,12 @@ func projectOverallStatus(status *aimv1alpha1.AIMModelCacheStatus, obs Observati
 
 	switch {
 	case failure && obs.job.failed:
-		status.Status = aimv1alpha1.AIMModelCacheStatusFailed
+		status.Status = constants.AIMStatusFailed
 	case ready:
-		status.Status = aimv1alpha1.AIMModelCacheStatusAvailable
+		status.Status = constants.AIMStatusReady
 	case progressing:
-		status.Status = aimv1alpha1.AIMModelCacheStatusProgressing
+		status.Status = constants.AIMStatusProgressing
 	default:
-		status.Status = aimv1alpha1.AIMModelCacheStatusPending
+		status.Status = constants.AIMStatusPending
 	}
 }

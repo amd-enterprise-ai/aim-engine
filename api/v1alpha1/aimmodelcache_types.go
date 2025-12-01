@@ -23,6 +23,7 @@
 package v1alpha1
 
 import (
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -69,23 +70,6 @@ type AIMModelCacheSpec struct {
 	RuntimeConfigName string `json:"runtimeConfigName,omitempty"`
 }
 
-// +kubebuilder:validation:Enum=Pending;Progressing;Available;Failed
-type AIMModelCacheStatusEnum string
-
-const (
-	// AIMModelCacheStatusPending denotes that the model cache has not been created yet
-	AIMModelCacheStatusPending AIMModelCacheStatusEnum = "Pending"
-
-	// AIMModelCacheStatusProgressing denotes that the model cache is currently being filled
-	AIMModelCacheStatusProgressing AIMModelCacheStatusEnum = "Progressing"
-
-	// AIMModelCacheStatusAvailable denotes that a model cache is filled and ready to be used
-	AIMModelCacheStatusAvailable AIMModelCacheStatusEnum = "Available"
-
-	// AIMModelCacheStatusFailed denotes that the model cache has failed. A more detailed reason will be available in the conditions.
-	AIMModelCacheStatusFailed AIMModelCacheStatusEnum = "Failed"
-)
-
 // AIMModelCacheStatus defines the observed state of AIMModelCache
 type AIMModelCacheStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -97,7 +81,8 @@ type AIMModelCacheStatus struct {
 
 	// Status represents the current status of the model cache
 	// +kubebuilder:default=Pending
-	Status AIMModelCacheStatusEnum `json:"status,omitempty"`
+	// +kubebuilder:validation:Enum=Pending;Progressing;Available;Failed
+	Status constants.AIMStatus `json:"status,omitempty"`
 
 	// LastUsed represents the last time a model was deployed that used this cache
 	LastUsed *metav1.Time `json:"lastUsed,omitempty"`
@@ -119,22 +104,14 @@ func (s *AIMModelCacheStatus) SetConditions(conditions []metav1.Condition) {
 }
 
 func (s *AIMModelCacheStatus) SetStatus(status string) {
-	s.Status = AIMModelCacheStatusEnum(status)
+	s.Status = constants.AIMStatus(status)
 }
 
 // Condition types for AIMModelCache
 const (
-	// AIMModelCacheConditionProgressing is True when the cache is actively being prepared (PVC being bound, job running, etc.)
-	AIMModelCacheConditionProgressing = "Progressing"
-
-	// AIMModelCacheConditionReady is True when the cache is present and usable (PVC Bound & content populated)
-	AIMModelCacheConditionReady = "Ready"
-
 	// AIMModelCacheConditionStorageReady is True when storage backing the cache is provisioned and mounted (PVC Bound)
 	AIMModelCacheConditionStorageReady = "StorageReady"
-
-	// AIMModelCacheConditionFailure is True when the last warm/fill attempt has reached a terminal failure
-	AIMModelCacheConditionFailure = "Failure"
+	AIMModelCacheDownloadReady = "DownloadReady"
 )
 
 // Condition reasons for AIMModelCache
@@ -144,8 +121,6 @@ const (
 	AIMModelCacheReasonPVCBound             = "PVCBound"
 	AIMModelCacheReasonPVCPending           = "PVCPending"
 	AIMModelCacheReasonPVCLost              = "PVCLost"
-	AIMModelCacheReasonStorageClassMissing  = "StorageClassMissing"
-	AIMModelCacheReasonInsufficientCapacity = "InsufficientCapacity"
 
 	// Progressing-related reasons
 	AIMModelCacheReasonWaitingForPVC = "WaitingForPVC"

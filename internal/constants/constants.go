@@ -43,12 +43,38 @@ const (
 	AimLabelDomain = "aim.eai.amd.com"
 )
 
+// Shared condition reasons used across multiple resource types
+const (
+	// Image-related reasons (used by AIMModel, AIMService, AIMServiceTemplate)
+	ReasonImagePullAuthFailure = "ImagePullAuthFailure"
+	ReasonImageNotFound        = "ImageNotFound"
+	ReasonImagePullBackOff     = "ImagePullBackOff"
+
+	// Resource resolution/reference reasons (used by multiple types)
+	ReasonNotFound = "NotFound"
+	ReasonNotReady = "NotReady"
+	ReasonCreating = "Creating"
+	ReasonResolved = "Resolved"
+
+	// Storage/PVC reasons (used by AIMModelCache, AIMService)
+	ReasonPVCProvisioning = "PVCProvisioning"
+	ReasonPVCBound        = "PVCBound"
+	ReasonPVCNotBound     = "PVCNotBound"
+	ReasonPVCPending      = "PVCPending"
+	ReasonPVCLost         = "PVCLost"
+
+	// Generic failure/retry reasons
+	ReasonRetryBackoff = "RetryBackoff"
+	ReasonFailed       = "Failed"
+)
+
 type AIMStatus string
 
 const (
 	AIMStatusPending      AIMStatus = "Pending"
 	AIMStatusProgressing  AIMStatus = "Progressing"
 	AIMStatusReady        AIMStatus = "Ready"
+	AIMStatusRunning        AIMStatus = "Running"
 	AIMStatusDegraded     AIMStatus = "Degraded"
 	AIMStatusNotAvailable AIMStatus = "NotAvailable"
 	AIMStatusFailed       AIMStatus = "Failed"
@@ -57,12 +83,20 @@ const (
 // AIMStatusPriority maps AIMStatus values to priority levels.
 // Higher values indicate more desirable statuses for sorting and filtering.
 var AIMStatusPriority = map[AIMStatus]int{
+	AIMStatusRunning:        6,
 	AIMStatusReady:        5,
 	AIMStatusProgressing:  4,
 	AIMStatusPending:      3,
 	AIMStatusDegraded:     2,
 	AIMStatusNotAvailable: 1,
 	AIMStatusFailed:       0,
+}
+
+func CompareAIMStatus(a AIMStatus, b AIMStatus) int {
+	if AIMStatusPriority[a] > AIMStatusPriority[b] {
+		return 1
+	}
+	return -1
 }
 
 var (
