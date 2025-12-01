@@ -37,6 +37,7 @@ const (
 // +kubebuilder:resource:shortName=aimmdl,categories=aim;all
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 // +kubebuilder:printcolumn:name="Image",type=string,JSONPath=`.spec.image`
+// +kubebuilder:printcolumn:name="Model",type=string,JSONPath=`.status.imageMetadata.model.canonicalName`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type AIMModel struct {
 	metav1.TypeMeta   `json:",inline"`

@@ -337,15 +337,20 @@ func projectModelStatusFromTemplates(
 
 	switch {
 	case degradedOrFailed == total:
+		// All templates failed
 		h.Failed(aimv1alpha1.AIMModelReasonAllTemplatesFailed, fmt.Sprintf("All %d template(s) are degraded or failed", total))
 	case notAvailable == total:
-		h.Degraded(aimv1alpha1.AIMModelReasonNoTemplatesAvailable, fmt.Sprintf("None of the %d template(s) are available", total))
+		// All templates are not available (e.g., GPU requirements not met)
+		h.NotAvailable(aimv1alpha1.AIMModelReasonNoTemplatesAvailable, fmt.Sprintf("None of the %d template(s) are available", total))
 	case degradedOrFailed > 0:
+		// Some templates failed or degraded
 		h.Degraded(aimv1alpha1.AIMModelReasonSomeTemplatesDegraded, fmt.Sprintf("%d of %d template(s) are degraded or failed", degradedOrFailed, total))
 	case progressing > 0:
+		// Some templates still processing (discovery running, etc.)
 		h.Progressing(aimv1alpha1.AIMModelReasonTemplatesProgressing, fmt.Sprintf("%d of %d template(s) are progressing", progressing, total))
-	case ready == total:
-		h.Ready(aimv1alpha1.AIMModelReasonAllTemplatesReady, fmt.Sprintf("All %d template(s) have finished processing", total))
+	case ready+notAvailable == total && ready > 0:
+		// All templates finished processing: some ready, some not available
+		h.Ready(aimv1alpha1.AIMModelReasonAllTemplatesReady, fmt.Sprintf("%d of %d template(s) ready (%d not available)", ready, total, notAvailable))
 	default:
 		// leave as Pending
 	}
