@@ -1,0 +1,263 @@
+# Contributing Guidelines
+
+## Code Architecture: Fetch / Observe / Plan / Project Pattern
+
+Our reconciliation logic follows a four-phase pattern that separates concerns and makes code easier to test and maintain:
+
+### 1. **Fetch** - Retrieve raw data
+
+Fetch resources from Kubernetes or external systems. No logic, just API calls. Returns a struct containing all fetched components and their errors.
+
+```go
+type TemplateFetchResult struct {
+    Template *aimv1alpha1.AIMServiceTemplate
+    Err      error
+}
+
+type ServiceFetchResult struct {
+    Model         *aimv1alpha1.AIMModel
+    ModelErr      error
+    Template      *aimv1alpha1.AIMServiceTemplate
+    TemplateErr   error
+    InferenceService *kservev1beta1.InferenceService
+    InferenceErr  error
+}
+
+func (r *Reconciler) fetchServiceResources(ctx context.Context, service *aimv1alpha1.AIMService) ServiceFetchResult {
+    result := ServiceFetchResult{}
+
+    // Fetch model
+    result.Model = &aimv1alpha1.AIMModel{}
+    result.ModelErr = r.Get(ctx, client.ObjectKey{Name: service.Spec.Image}, result.Model)
+
+    // Fetch template
+    result.Template = &aimv1alpha1.AIMServiceTemplate{}
+    result.TemplateErr = r.Get(ctx, client.ObjectKey{Name: service.Spec.Template}, result.Template)
+
+    // Fetch inference service
+    result.InferenceService = &kservev1beta1.InferenceService{}
+    result.InferenceErr = r.Get(ctx, client.ObjectKey{Name: service.Name, Namespace: service.Namespace}, result.InferenceService)
+
+    return result
+}
+```
+
+### 2. **Observe** - Interpret the current state
+
+Transform raw fetched data into a structured observation that describes **what is** (current world state). Takes the FetchResult as input.
+
+```go
+type ServiceObservation struct {
+    // Model observations
+    ModelFound bool
+    ModelReady bool
+    ModelErr   error
+
+    // Template observations
+    TemplateFound     bool
+    TemplateAvailable bool
+    TemplateStatus    aimv1alpha1.AIMServiceTemplateStatus
+    TemplateErr       error
+
+    // InferenceService observations
+    InferenceServiceExists bool
+    InferenceServiceReady  bool
+    InferenceErr           error
+}
+
+func (r *Reconciler) observeService(fetchResult ServiceFetchResult) ServiceObservation {
+    obs := ServiceObservation{}
+
+    // Observe model
+    if fetchResult.ModelErr != nil {
+        obs.ModelErr = fetchResult.ModelErr
+        obs.ModelFound = false
+    } else {
+        obs.ModelFound = true
+        obs.ModelReady = fetchResult.Model.Status.Status == constants.AIMStatusReady
+    }
+
+    // Observe template
+    if fetchResult.TemplateErr != nil {
+        obs.TemplateErr = fetchResult.TemplateErr
+        obs.TemplateFound = false
+    } else {
+        obs.TemplateFound = true
+        obs.TemplateAvailable = fetchResult.Template.Status.Status == constants.AIMStatusReady
+        obs.TemplateStatus = fetchResult.Template.Status
+    }
+
+    // Observe inference service
+    if fetchResult.InferenceErr != nil {
+        obs.InferenceErr = fetchResult.InferenceErr
+        obs.InferenceServiceExists = !errors.IsNotFound(fetchResult.InferenceErr)
+    } else {
+        obs.InferenceServiceExists = true
+        obs.InferenceServiceReady = fetchResult.InferenceService.Status.IsReady()
+    }
+
+    return obs
+}
+```
+
+#### Deciding What Belongs in Observation
+
+When you're debating adding something to Observation, walk through this checklist:
+
+**Is this describing the current world or a future action?**
+- Current world → candidate for Observation
+- Future action → belongs in Plan
+
+**Will this value be used in more than one place (Plan/Project/tests/status)?**
+- Yes → good candidate for an Observation field or method
+- No → maybe compute inline or as a private helper in Plan
+
+**Does this value encapsulate non-trivial logic or provider quirks?**
+- Yes → put that logic behind an Observation method so Plan/Project don't need to know the quirks
+
+**Is it expensive or noisy to recompute?**
+- Yes → store it in a field
+- No → prefer a method or inline computation
+
+**Would a future teammate understand this field without reading Observe's internals?**
+- If the name can't be made self-explanatory, either don't expose it, or move it to a method where its meaning is clear from the implementation
+
+### 3. **Plan** - Decide what actions to take
+
+Based on observations, determine **what objects to create, update, or delete**. Returns a `PlanResult` with `Apply` and `Delete` slices.
+
+```go
+func (r *Reconciler) Plan(
+    ctx context.Context,
+    service *aimv1alpha1.AIMService,
+    obs ServiceObservation,
+) (controllerutils.PlanResult, error) {
+    var objectsToApply []client.Object
+    var objectsToDelete []client.Object
+
+    // Plan model auto-creation if needed
+    if obs.ModelFound == false && service.Spec.AutoCreateModel {
+        modelObj := planServiceModel(obs, service)
+        if modelObj != nil {
+            objectsToApply = append(objectsToApply, modelObj)
+        }
+    }
+
+    // Plan PVC creation if storage is needed
+    if obs.TemplateFound && !obs.Caching.ShouldUseCache {
+        pvcObj := planServicePVC(service, obs)
+        if pvcObj != nil {
+            objectsToApply = append(objectsToApply, pvcObj)
+        }
+    }
+
+    // Plan InferenceService
+    if obs.ModelReady && obs.TemplateAvailable {
+        inferenceObj, err := planServiceInferenceService(service, obs)
+        if err != nil {
+            return controllerutils.PlanResult{}, err
+        }
+        if inferenceObj != nil {
+            objectsToApply = append(objectsToApply, inferenceObj)
+        }
+    }
+
+    // Plan cache retry - delete failed caches to allow retry
+    if obs.Caching.ShouldRetry {
+        for _, cache := range obs.Caching.FailedCaches {
+            cacheCopy := cache
+            objectsToDelete = append(objectsToDelete, &cacheCopy)
+        }
+    }
+
+    return controllerutils.PlanResult{
+        Apply:  objectsToApply,
+        Delete: objectsToDelete,
+    }, nil
+}
+```
+
+The `PlanResult` struct:
+```go
+type PlanResult struct {
+    // Apply are objects to create or update via Server-Side Apply
+    Apply []client.Object
+
+    // Delete are objects to delete
+    Delete []client.Object
+}
+```
+
+### 4. **Project** - Update conditions and status
+Set conditions using the condition manager (`cm`) and status helper (`sh` or `h`), and update the status struct.
+
+```go
+func (r *Reconciler) projectTemplateStatus(
+    status *aimv1alpha1.AIMServiceStatus,
+    cm *controllerutils.ConditionManager,
+    h *controllerutils.StatusHelper,
+    obs TemplateObservation,
+) bool {
+    if !obs.TemplateFound {
+        h.Degraded(aimv1alpha1.AIMServiceReasonTemplateNotFound, "Template not found")
+        cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved,
+            aimv1alpha1.AIMServiceReasonTemplateNotFound, "Template not found",
+            controllerutils.LevelWarning)
+        return true // Fatal error, stop reconciliation
+    }
+
+    if !obs.TemplateAvailable {
+        h.Progressing(aimv1alpha1.AIMServiceReasonTemplateNotReady, "Waiting for template")
+        cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved,
+            aimv1alpha1.AIMServiceReasonTemplateNotReady, "Template not ready",
+            controllerutils.LevelNormal)
+        return false // Continue reconciliation
+    }
+
+    cm.MarkTrue(aimv1alpha1.AIMServiceConditionTemplateResolved,
+        aimv1alpha1.AIMServiceReasonResolved, "Template resolved",
+        controllerutils.LevelNormal)
+    status.ResolvedTemplate = &aimv1alpha1.AIMResolvedReference{
+        Name: obs.TemplateStatus.Name,
+    }
+    return false
+}
+```
+
+## Conditions and Status
+
+### Always Use Constants for Condition Types and Reasons
+
+**Never use inline strings for condition types or reasons.** All condition types and reasons must be defined as constants in the API types files:
+
+- `api/v1alpha1/aimservice_types.go` - AIMService conditions
+- `api/v1alpha1/aimservicetemplate_shared.go` - AIMServiceTemplate conditions
+- `api/v1alpha1/aimmodel_shared.go` - AIMModel conditions
+
+```go
+// ❌ BAD - inline strings
+cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, "ModelNotFound", "Model not found", controllerutils.LevelWarning)
+
+// ✅ GOOD - using constants
+cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonModelNotFound, "Model not found", controllerutils.LevelWarning)
+```
+
+Message strings (the descriptive text parameter) can and should remain as inline strings or formatted strings.
+
+### Condition Manager and Status Helper
+
+Use the condition manager (`cm`) and status helper (`sh` or `h`) consistently:
+
+- `cm.MarkTrue/MarkFalse/Set` - Set condition status with type, reason, message, and level
+- `h.Progressing/Degraded/Failed/Ready` - Set overall status with reason and message
+
+## Pull Requests
+
+- Keep changes focused and atomic
+- Write clear commit messages explaining the "why" not just the "what"
+- Add tests for new functionality
+- Update relevant documentation
+
+## Questions?
+
+Open an issue or reach out to the team for clarification.
