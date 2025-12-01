@@ -26,6 +26,9 @@ spec:
     - jsonPath: .spec.image
       name: Image
       type: string
+    - jsonPath: .status.imageMetadata.model.canonicalName
+      name: Model
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
