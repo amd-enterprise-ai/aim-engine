@@ -54,7 +54,7 @@ import (
 //   - imageURI: Full container image reference (e.g., "registry.example.com/repo/image:tag")
 //   - imagePullSecrets: Kubernetes image pull secrets for authentication
 //   - clientset: Kubernetes clientset for accessing secrets
-//   - namespace: Namespace where the secrets are located
+//   - namespace: namespace where the secrets are located
 //
 // Returns:
 //   - *imageMetadata: Extracted metadata if successful

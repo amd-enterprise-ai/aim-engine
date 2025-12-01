@@ -37,36 +37,36 @@ import (
 // FETCH
 // ============================================================================
 
-type ClusterServiceTemplateModelFetchResult struct {
-	ClusterModel *aimv1alpha1.AIMClusterModel
+type clusterServiceTemplateModelFetchResult struct {
+	clusterModel *aimv1alpha1.AIMClusterModel
 }
 
-func FetchClusterServiceTemplateModelResult(ctx context.Context, c client.Client, clusterServiceTemplate *aimv1alpha1.AIMClusterServiceTemplate) (ClusterServiceTemplateModelFetchResult, error) {
-	result := ClusterServiceTemplateModelFetchResult{}
+func fetchClusterServiceTemplateModelResult(ctx context.Context, c client.Client, clusterServiceTemplate *aimv1alpha1.AIMClusterServiceTemplate) (clusterServiceTemplateModelFetchResult, error) {
+	result := clusterServiceTemplateModelFetchResult{}
 
 	clusterModel := &aimv1alpha1.AIMClusterModel{}
 	key := client.ObjectKey{Name: clusterServiceTemplate.Spec.ModelName}
 	if err := c.Get(ctx, key, clusterModel); err != nil && !errors.IsNotFound(err) {
 		return result, fmt.Errorf("failed to fetch cluster model: %w", err)
 	} else if err == nil {
-		result.ClusterModel = clusterModel
+		result.clusterModel = clusterModel
 	}
 	return result, nil
 }
 
-type ServiceTemplateModelFetchResult struct {
-	Model *aimv1alpha1.AIMModel
+type serviceTemplateModelFetchResult struct {
+	model *aimv1alpha1.AIMModel
 }
 
-func FetchServiceTemplateModelResult(ctx context.Context, c client.Client, serviceTemplate *aimv1alpha1.AIMServiceTemplate) (ServiceTemplateModelFetchResult, error) {
-	result := ServiceTemplateModelFetchResult{}
+func fetchServiceTemplateModelResult(ctx context.Context, c client.Client, serviceTemplate *aimv1alpha1.AIMServiceTemplate) (serviceTemplateModelFetchResult, error) {
+	result := serviceTemplateModelFetchResult{}
 
 	model := &aimv1alpha1.AIMModel{}
 	key := client.ObjectKey{Name: serviceTemplate.Spec.ModelName, Namespace: serviceTemplate.Namespace}
 	if err := c.Get(ctx, key, model); err != nil && !errors.IsNotFound(err) {
 		return result, fmt.Errorf("failed to cluster model: %w", err)
 	} else if err == nil {
-		result.Model = model
+		result.model = model
 	}
 	return result, nil
 }
@@ -75,50 +75,50 @@ func FetchServiceTemplateModelResult(ctx context.Context, c client.Client, servi
 // OBSERVE
 // ============================================================================
 
-type ServiceTemplateModelObservation struct {
-	ModelName     string
-	ModelFound    bool
-	ModelSpec     *aimv1alpha1.AIMModelSpec
-	ResolvedModel *aimv1alpha1.AIMResolvedReference
+type serviceTemplateModelObservation struct {
+	modelName     string
+	modelFound    bool
+	modelSpec     *aimv1alpha1.AIMModelSpec
+	resolvedModel *aimv1alpha1.AIMResolvedReference
 }
 
-func ObserveClusterServiceTemplateModel(result ClusterServiceTemplateModelFetchResult) ServiceTemplateModelObservation {
-	obs := ServiceTemplateModelObservation{}
+func observeClusterServiceTemplateModel(result clusterServiceTemplateModelFetchResult) serviceTemplateModelObservation {
+	obs := serviceTemplateModelObservation{}
 
-	if result.ClusterModel == nil {
+	if result.clusterModel == nil {
 		return obs
 	}
 
-	obs.ModelName = result.ClusterModel.Name
-	obs.ModelFound = true
-	obs.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
-		Name:  result.ClusterModel.Name,
+	obs.modelName = result.clusterModel.Name
+	obs.modelFound = true
+	obs.resolvedModel = &aimv1alpha1.AIMResolvedReference{
+		Name:  result.clusterModel.Name,
 		Scope: aimv1alpha1.AIMResolutionScopeCluster,
-		Kind:  result.ClusterModel.Kind,
-		UID:   result.ClusterModel.UID,
+		Kind:  result.clusterModel.Kind,
+		UID:   result.clusterModel.UID,
 	}
-	obs.ModelSpec = &result.ClusterModel.Spec
+	obs.modelSpec = &result.clusterModel.Spec
 
 	return obs
 }
 
-func ObserveServiceTemplateModel(result ServiceTemplateModelFetchResult) ServiceTemplateModelObservation {
-	obs := ServiceTemplateModelObservation{}
+func observeServiceTemplateModel(result serviceTemplateModelFetchResult) serviceTemplateModelObservation {
+	obs := serviceTemplateModelObservation{}
 
-	if result.Model == nil {
+	if result.model == nil {
 		return obs
 	}
 
-	obs.ModelName = result.Model.Name
-	obs.ModelFound = true
-	obs.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
-		Name:      result.Model.Name,
+	obs.modelName = result.model.Name
+	obs.modelFound = true
+	obs.resolvedModel = &aimv1alpha1.AIMResolvedReference{
+		Name:      result.model.Name,
 		Scope:     aimv1alpha1.AIMResolutionScopeNamespace,
-		Namespace: result.Model.Namespace,
-		Kind:      result.Model.Kind,
-		UID:       result.Model.UID,
+		Namespace: result.model.Namespace,
+		Kind:      result.model.Kind,
+		UID:       result.model.UID,
 	}
-	obs.ModelSpec = &result.Model.Spec
+	obs.modelSpec = &result.model.Spec
 
 	return obs
 }
@@ -133,16 +133,16 @@ func projectServiceTemplateModel(
 	status *aimv1alpha1.AIMServiceTemplateStatus,
 	cm *controllerutils.ConditionManager,
 	h *controllerutils.StatusHelper,
-	obs ServiceTemplateModelObservation,
+	obs serviceTemplateModelObservation,
 ) bool {
-	if !obs.ModelFound {
-		msg := fmt.Sprintf("Model %s not found in scope", obs.ModelName)
+	if !obs.modelFound {
+		msg := fmt.Sprintf("Model %s not found in scope", obs.modelName)
 		h.Degraded("ModelNotFound", msg)
 		cm.MarkFalse("ModelFound", "ModelNotFound", msg, controllerutils.LevelWarning)
 		return true // Fatal - stop reconciliation
 	}
 
-	cm.MarkTrue("ModelFound", "ModelFound", fmt.Sprintf("Model '%s' found", obs.ModelName), controllerutils.LevelNone)
-	status.ResolvedModel = obs.ResolvedModel
+	cm.MarkTrue("ModelFound", "ModelFound", fmt.Sprintf("Model '%s' found", obs.modelName), controllerutils.LevelNone)
+	status.ResolvedModel = obs.resolvedModel
 	return false // Continue
 }

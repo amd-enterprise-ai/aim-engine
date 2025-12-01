@@ -71,7 +71,7 @@ package aimservicetemplate
 //
 //// ServiceObservation holds observed state for an AIMService reconciliation.
 //type ServiceObservation struct {
-//	TemplateName                  string
+//	templateName                  string
 //	BaseTemplateName              string
 //	Scope                         types.TemplateScope
 //	AutoSelectedTemplate          bool
@@ -89,7 +89,7 @@ package aimservicetemplate
 //	ModelResolutionErr            error
 //	TemplateStatus                *aimv1alpha1.AIMServiceTemplateStatus
 //	TemplateSpecCommon            aimv1alpha1.AIMServiceTemplateSpecCommon
-//	TemplateSpec                  *aimv1alpha1.AIMServiceTemplateSpec
+//	templateSpec                  *aimv1alpha1.AIMServiceTemplateSpec
 //	TemplateNamespace             string
 //	ImageResources                *corev1.ResourceRequirements
 //	TemplateSelectionReason       string
@@ -114,7 +114,7 @@ package aimservicetemplate
 //	if o == nil {
 //		return ""
 //	}
-//	return o.TemplateName
+//	return o.templateName
 //}
 //
 //// ResolveTemplateNameForService determines the template name to use for a service.
@@ -162,7 +162,7 @@ package aimservicetemplate
 //		return res, status, nil
 //	}
 //
-//	ready, _, reason, message, err := evaluateImageReadiness(ctx, k8sClient, service.Namespace, imageName)
+//	ready, _, reason, message, err := evaluateImageReadiness(ctx, k8sClient, service.namespace, imageName)
 //	if err != nil {
 //		return res, status, err
 //	}
@@ -175,7 +175,7 @@ package aimservicetemplate
 //		return res, status, nil
 //	}
 //
-//	candidates, err := listTemplateCandidatesForImage(ctx, k8sClient, service.Namespace, imageName)
+//	candidates, err := listTemplateCandidatesForImage(ctx, k8sClient, service.namespace, imageName)
 //	if err != nil {
 //		return res, status, err
 //	}
@@ -260,7 +260,7 @@ package aimservicetemplate
 //
 //// resolveModelNameFromService resolves the model name from service.Spec.Model
 //// If Model.Ref is specified, returns it directly.
-//// If Model.Image is specified, searches for or creates a model with that image.
+//// If Model.image is specified, searches for or creates a model with that image.
 //// If Model.Custom is specified, creates a model with custom configuration.
 //func resolveModelNameFromService(
 //	ctx context.Context,
@@ -272,12 +272,12 @@ package aimservicetemplate
 //		return strings.TrimSpace(*service.Spec.Model.Ref), nil
 //	}
 //
-//	// Check Model.Image
-//	if service.Spec.Model.Image != nil && *service.Spec.Model.Image != "" {
-//		imageURI := strings.TrimSpace(*service.Spec.Model.Image)
+//	// Check Model.image
+//	if service.Spec.Model.image != nil && *service.Spec.Model.image != "" {
+//		imageURI := strings.TrimSpace(*service.Spec.Model.image)
 //
 //		// Resolve runtime config to get model creation settings
-//		runtimeConfigResolution, err := aimtemplate.ResolveRuntimeConfig(ctx, k8sClient, service.Namespace, service.Spec.RuntimeConfigName)
+//		runtimeConfigResolution, err := aimtemplate.ResolveRuntimeConfig(ctx, k8sClient, service.namespace, service.Spec.RuntimeConfigName)
 //		if err != nil {
 //			// If runtime config resolution fails, use defaults
 //			// This allows services to work without a runtime config present
@@ -294,7 +294,7 @@ package aimservicetemplate
 //		serviceAccountName := service.Spec.ServiceAccountName
 //
 //		// Resolve or create model from image
-//		modelName, _, err := aimmodel.ResolveOrCreateModelFromImage(ctx, k8sClient, service.Namespace, imageURI, runtimeConfig, imagePullSecrets, serviceAccountName)
+//		modelName, _, err := aimmodel.ResolveOrCreateModelFromImage(ctx, k8sClient, service.namespace, imageURI, runtimeConfig, imagePullSecrets, serviceAccountName)
 //		if err != nil {
 //			return "", fmt.Errorf("failed to resolve/create model from image %q: %w", imageURI, err)
 //		}
@@ -305,7 +305,7 @@ package aimservicetemplate
 //	// Check Model.Custom
 //	if service.Spec.Model.Custom != nil {
 //		// Resolve runtime config to get model creation settings
-//		runtimeConfigResolution, err := aimtemplate.ResolveRuntimeConfig(ctx, k8sClient, service.Namespace, service.Spec.RuntimeConfigName)
+//		runtimeConfigResolution, err := aimtemplate.ResolveRuntimeConfig(ctx, k8sClient, service.namespace, service.Spec.RuntimeConfigName)
 //		if err != nil {
 //			// If runtime config resolution fails, use defaults
 //			runtimeConfigResolution = nil
@@ -321,7 +321,7 @@ package aimservicetemplate
 //		serviceAccountName := service.Spec.ServiceAccountName
 //
 //		// Create custom model with base image and model sources
-//		modelName, _, err := aimmodel.CreateCustomModel(ctx, k8sClient, service.Namespace, service.Name, service.Spec.Model.Custom, runtimeConfig, imagePullSecrets, serviceAccountName)
+//		modelName, _, err := aimmodel.CreateCustomModel(ctx, k8sClient, service.namespace, service.Name, service.Spec.Model.Custom, runtimeConfig, imagePullSecrets, serviceAccountName)
 //		if err != nil {
 //			return "", fmt.Errorf("failed to create custom model: %w", err)
 //		}
@@ -331,17 +331,17 @@ package aimservicetemplate
 //		templateName := modelName
 //		var existingTemplate aimv1alpha1.AIMServiceTemplate
 //		err = k8sClient.Get(ctx, client.ObjectKey{
-//			Namespace: service.Namespace,
+//			namespace: service.namespace,
 //			Name:      templateName,
 //		}, &existingTemplate)
 //
 //		if apierrors.IsNotFound(err) {
 //			// Template doesn't exist - create it
 //			template := aimtemplate.BuildCustomModelTemplate(
-//				service.Namespace,
+//				service.namespace,
 //				modelName,
 //				service.Spec.Model.Custom,
-//				service.Spec.Env,
+//				service.Spec.env,
 //			)
 //			if err := k8sClient.Create(ctx, template); err != nil {
 //				if !apierrors.IsAlreadyExists(err) {
@@ -402,7 +402,7 @@ package aimservicetemplate
 //
 //	if namespace != "" {
 //		var nsModel aimv1alpha1.AIMModel
-//		err := k8sClient.Get(ctx, client.ObjectKey{Name: imageName, Namespace: namespace}, &nsModel)
+//		err := k8sClient.Get(ctx, client.ObjectKey{Name: imageName, namespace: namespace}, &nsModel)
 //		switch {
 //		case err == nil:
 //			ready, scope, reason, message := checkModelStatus(nsModel.Status.Status, types.TemplateScopeNamespace, "AIMModel", imageName)
@@ -453,7 +453,7 @@ package aimservicetemplate
 //			}
 //			candidates = append(candidates, aimtemplate.TemplateCandidate{
 //				Name:      tpl.Name,
-//				Namespace: tpl.Namespace,
+//				namespace: tpl.namespace,
 //				Scope:     types.TemplateScopeNamespace,
 //				Spec:      tpl.Spec.AIMServiceTemplateSpecCommon,
 //				Status:    tpl.Status,
@@ -491,9 +491,9 @@ package aimservicetemplate
 //		return nil, types.TemplateScopeNone, fmt.Errorf("base template name is empty")
 //	}
 //
-//	if service.Namespace != "" {
+//	if service.namespace != "" {
 //		var namespaceTemplate aimv1alpha1.AIMServiceTemplate
-//		if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: service.Namespace, Name: baseName}, &namespaceTemplate); err == nil {
+//		if err := k8sClient.Get(ctx, client.ObjectKey{namespace: service.namespace, Name: baseName}, &namespaceTemplate); err == nil {
 //			return namespaceTemplate.Spec.DeepCopy(), types.TemplateScopeNamespace, nil
 //		} else if !apierrors.IsNotFound(err) {
 //			return nil, types.TemplateScopeNone, err
@@ -533,14 +533,14 @@ package aimservicetemplate
 //	}
 //	obs.TemplateStatus = template.Status.DeepCopy()
 //	obs.TemplateSpecCommon = template.Spec.AIMServiceTemplateSpecCommon
-//	obs.TemplateSpec = template.Spec.DeepCopy()
+//	obs.templateSpec = template.Spec.DeepCopy()
 //	runtimeConfigName := RuntimeConfigNameForService(service, obs.TemplateSpecCommon)
 //	obs.TemplateSpecCommon.RuntimeConfigName = runtimeConfigName
-//	if resolution, resolveErr := aimtemplate.ResolveRuntimeConfig(ctx, k8sClient, service.Namespace, runtimeConfigName); resolveErr != nil {
+//	if resolution, resolveErr := aimtemplate.ResolveRuntimeConfig(ctx, k8sClient, service.namespace, runtimeConfigName); resolveErr != nil {
 //		if errors.Is(resolveErr, aimtemplate.ErrRuntimeConfigNotFound) {
-//			obs.RuntimeConfigErr = fmt.Errorf("AIMRuntimeConfig %q not found in namespace %q", runtimeConfigName, service.Namespace)
+//			obs.RuntimeConfigErr = fmt.Errorf("AIMRuntimeConfig %q not found in namespace %q", runtimeConfigName, service.namespace)
 //		} else {
-//			return fmt.Errorf("failed to resolve AIMRuntimeConfig %q in namespace %q: %w", runtimeConfigName, service.Namespace, resolveErr)
+//			return fmt.Errorf("failed to resolve AIMRuntimeConfig %q in namespace %q: %w", runtimeConfigName, service.namespace, resolveErr)
 //		}
 //	} else {
 //		obs.RuntimeConfigSpec = resolution.EffectiveSpec
@@ -548,13 +548,13 @@ package aimservicetemplate
 //			obs.ResolvedRuntimeConfig = resolution.ResolvedRef
 //		}
 //	}
-//	obs.TemplateNamespace = template.Namespace
-//	if image, imageErr := aimmodel.LookupImageForNamespaceTemplate(ctx, k8sClient, template.Namespace, template.Spec.modelName); imageErr == nil {
+//	obs.TemplateNamespace = template.namespace
+//	if image, imageErr := aimmodel.LookupImageForNamespaceTemplate(ctx, k8sClient, template.namespace, template.Spec.modelName); imageErr == nil {
 //		obs.ImageResources = image.Resources.DeepCopy()
 //	} else if errors.Is(imageErr, aimmodel.ErrImageNotFound) {
-//		obs.ImageErr = fmt.Errorf("AIMModel %q not found in namespace %q", template.Spec.modelName, template.Namespace)
+//		obs.ImageErr = fmt.Errorf("AIMModel %q not found in namespace %q", template.Spec.modelName, template.namespace)
 //	} else {
-//		return fmt.Errorf("failed to lookup AIMModel %q in namespace %q: %w", template.Spec.modelName, template.Namespace, imageErr)
+//		return fmt.Errorf("failed to lookup AIMModel %q in namespace %q: %w", template.Spec.modelName, template.namespace, imageErr)
 //	}
 //	return nil
 //}
@@ -577,20 +577,20 @@ package aimservicetemplate
 //	}
 //	obs.TemplateStatus = template.Status.DeepCopy()
 //	obs.TemplateSpecCommon = template.Spec.AIMServiceTemplateSpecCommon
-//	obs.TemplateSpec = &aimv1alpha1.AIMServiceTemplateSpec{
+//	obs.templateSpec = &aimv1alpha1.AIMServiceTemplateSpec{
 //		AIMServiceTemplateSpecCommon: template.Spec.AIMServiceTemplateSpecCommon,
 //	}
 //	runtimeConfigName := RuntimeConfigNameForService(service, obs.TemplateSpecCommon)
 //	obs.TemplateSpecCommon.RuntimeConfigName = runtimeConfigName
-//	if resolution, resolveErr := aimtemplate.ResolveRuntimeConfig(ctx, k8sClient, service.Namespace, runtimeConfigName); resolveErr == nil {
+//	if resolution, resolveErr := aimtemplate.ResolveRuntimeConfig(ctx, k8sClient, service.namespace, runtimeConfigName); resolveErr == nil {
 //		obs.RuntimeConfigSpec = resolution.EffectiveSpec
 //		if resolution.ResolvedRef != nil {
 //			obs.ResolvedRuntimeConfig = resolution.ResolvedRef
 //		}
 //	} else if errors.Is(resolveErr, aimtemplate.ErrRuntimeConfigNotFound) {
-//		obs.RuntimeConfigErr = fmt.Errorf("AIMRuntimeConfig %q not found in namespace %q", runtimeConfigName, service.Namespace)
+//		obs.RuntimeConfigErr = fmt.Errorf("AIMRuntimeConfig %q not found in namespace %q", runtimeConfigName, service.namespace)
 //	} else {
-//		return fmt.Errorf("failed to resolve AIMRuntimeConfig %q in namespace %q: %w", runtimeConfigName, service.Namespace, resolveErr)
+//		return fmt.Errorf("failed to resolve AIMRuntimeConfig %q in namespace %q: %w", runtimeConfigName, service.namespace, resolveErr)
 //	}
 //	if image, imageErr := aimmodel.LookupImageForClusterTemplate(ctx, k8sClient, template.Spec.modelName); imageErr == nil {
 //		obs.ImageResources = image.Resources.DeepCopy()
@@ -622,7 +622,7 @@ package aimservicetemplate
 //) error {
 //	var namespaceTemplate aimv1alpha1.AIMServiceTemplate
 //	err := k8sClient.Get(ctx, types2.NamespacedName{
-//		Namespace: service.Namespace,
+//		namespace: service.namespace,
 //		Name:      resolution.FinalName,
 //	}, &namespaceTemplate)
 //
@@ -650,12 +650,12 @@ package aimservicetemplate
 //
 //		if match != nil {
 //			if match.NamespaceTemplate != nil {
-//				obs.TemplateName = match.NamespaceTemplate.Name
+//				obs.templateName = match.NamespaceTemplate.Name
 //				return PopulateObservationFromNamespaceTemplate(ctx, k8sClient, service, match.NamespaceTemplate, obs)
 //			}
 //
 //			if match.ClusterTemplate != nil {
-//				obs.TemplateName = match.ClusterTemplate.Name
+//				obs.templateName = match.ClusterTemplate.Name
 //				return PopulateObservationFromClusterTemplate(ctx, k8sClient, service, match.ClusterTemplate, obs)
 //			}
 //		}
@@ -664,7 +664,7 @@ package aimservicetemplate
 //		return prepareObservationForDerivedCreation(ctx, k8sClient, service, baseSpec, baseScope, obs)
 //
 //	default:
-//		return fmt.Errorf("failed to get AIMServiceTemplate %s/%s: %w", service.Namespace, resolution.FinalName, err)
+//		return fmt.Errorf("failed to get AIMServiceTemplate %s/%s: %w", service.namespace, resolution.FinalName, err)
 //	}
 //}
 //
@@ -687,19 +687,19 @@ package aimservicetemplate
 //		return nil
 //	}
 //
-//	obs.TemplateSpec = baseSpec
+//	obs.templateSpec = baseSpec
 //	obs.TemplateSpecCommon = baseSpec.AIMServiceTemplateSpecCommon
 //
 //	// Resolve runtime config
 //	runtimeConfigName := RuntimeConfigNameForService(service, obs.TemplateSpecCommon)
 //	obs.TemplateSpecCommon.RuntimeConfigName = runtimeConfigName
 //
-//	if err := resolveRuntimeConfigForObservation(ctx, k8sClient, service.Namespace, runtimeConfigName, obs); err != nil {
+//	if err := resolveRuntimeConfigForObservation(ctx, k8sClient, service.namespace, runtimeConfigName, obs); err != nil {
 //		return err
 //	}
 //
 //	// Lookup image resources based on base scope
-//	if err := lookupImageResourcesForScope(ctx, k8sClient, service.Namespace, baseSpec.modelName, baseScope, obs); err != nil {
+//	if err := lookupImageResourcesForScope(ctx, k8sClient, service.namespace, baseSpec.modelName, baseScope, obs); err != nil {
 //		return err
 //	}
 //
@@ -722,10 +722,10 @@ package aimservicetemplate
 //	expectedTemplate := aimtemplate.BuildDerivedTemplate(service, "placeholder", resolvedModelName, baseSpec)
 //	expectedSpec := expectedTemplate.Spec
 //
-//	if service.Namespace != "" {
+//	if service.namespace != "" {
 //		var templateList aimv1alpha1.AIMServiceTemplateList
-//		if err := k8sClient.List(ctx, &templateList, client.InNamespace(service.Namespace)); err != nil {
-//			return nil, fmt.Errorf("failed to list AIMServiceTemplates in namespace %q: %w", service.Namespace, err)
+//		if err := k8sClient.List(ctx, &templateList, client.InNamespace(service.namespace)); err != nil {
+//			return nil, fmt.Errorf("failed to list AIMServiceTemplates in namespace %q: %w", service.namespace, err)
 //		}
 //		for i := range templateList.Items {
 //			template := &templateList.Items[i]
@@ -739,7 +739,7 @@ package aimservicetemplate
 //		}
 //	}
 //
-//	if len(expectedSpec.Env) > 0 || len(expectedSpec.ImagePullSecrets) > 0 || expectedSpec.Caching != nil {
+//	if len(expectedSpec.env) > 0 || len(expectedSpec.ImagePullSecrets) > 0 || expectedSpec.Caching != nil {
 //		// Derived spec relies on namespace-scoped fields; cluster templates cannot satisfy it.
 //		return nil, nil
 //	}
@@ -778,7 +778,7 @@ package aimservicetemplate
 //	case types.TemplateScopeNamespace:
 //		var namespaceTemplate aimv1alpha1.AIMServiceTemplate
 //		err := k8sClient.Get(ctx, types2.NamespacedName{
-//			Namespace: service.Namespace,
+//			namespace: service.namespace,
 //			Name:      templateName,
 //		}, &namespaceTemplate)
 //		switch {
@@ -787,14 +787,14 @@ package aimservicetemplate
 //		case apierrors.IsNotFound(err):
 //			return nil
 //		default:
-//			return fmt.Errorf("failed to get AIMServiceTemplate %s/%s: %w", service.Namespace, templateName, err)
+//			return fmt.Errorf("failed to get AIMServiceTemplate %s/%s: %w", service.namespace, templateName, err)
 //		}
 //	case types.TemplateScopeCluster:
 //		return observeClusterTemplate(ctx, k8sClient, service, templateName, obs)
 //	default:
 //		var namespaceTemplate aimv1alpha1.AIMServiceTemplate
 //		err := k8sClient.Get(ctx, types2.NamespacedName{
-//			Namespace: service.Namespace,
+//			namespace: service.namespace,
 //			Name:      templateName,
 //		}, &namespaceTemplate)
 //		switch {
@@ -803,7 +803,7 @@ package aimservicetemplate
 //		case apierrors.IsNotFound(err):
 //			return observeClusterTemplate(ctx, k8sClient, service, templateName, obs)
 //		default:
-//			return fmt.Errorf("failed to get AIMServiceTemplate %s/%s: %w", service.Namespace, templateName, err)
+//			return fmt.Errorf("failed to get AIMServiceTemplate %s/%s: %w", service.namespace, templateName, err)
 //		}
 //	}
 //}

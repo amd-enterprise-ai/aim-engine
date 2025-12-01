@@ -41,12 +41,12 @@ import (
 // FETCH
 // ============================================================================
 
-type ServiceTemplateCacheFetchResult struct {
-	ExistingTemplateCaches []aimv1alpha1.AIMTemplateCache
+type serviceTemplateCacheFetchResult struct {
+	existingTemplateCaches []aimv1alpha1.AIMTemplateCache
 }
 
-func fetchServiceTemplateCacheResult(ctx context.Context, c client.Client, template client.Object, status *aimv1alpha1.AIMServiceTemplateStatus) (ServiceTemplateCacheFetchResult, error) {
-	result := ServiceTemplateCacheFetchResult{}
+func fetchServiceTemplateCacheResult(ctx context.Context, c client.Client, template client.Object, status *aimv1alpha1.AIMServiceTemplateStatus) (serviceTemplateCacheFetchResult, error) {
+	result := serviceTemplateCacheFetchResult{}
 	if status.ResolvedCache != nil {
 		templateCache := &aimv1alpha1.AIMTemplateCache{}
 		if err := c.Get(ctx, status.ResolvedCache.NamespacedName(), templateCache); err != nil {
@@ -58,7 +58,7 @@ func fetchServiceTemplateCacheResult(ctx context.Context, c client.Client, templ
 			}
 		} else {
 			// Cache still exists, use that
-			result.ExistingTemplateCaches = []aimv1alpha1.AIMTemplateCache{*templateCache}
+			result.existingTemplateCaches = []aimv1alpha1.AIMTemplateCache{*templateCache}
 		}
 	}
 	// If the resolved cache is nil, or was reset in the above step
@@ -74,7 +74,7 @@ func fetchServiceTemplateCacheResult(ctx context.Context, c client.Client, templ
 			return result, fmt.Errorf("error listing template cache objects: %w", err)
 		}
 
-		result.ExistingTemplateCaches = caches.Items
+		result.existingTemplateCaches = caches.Items
 	}
 	return result, nil
 }
@@ -83,23 +83,23 @@ func fetchServiceTemplateCacheResult(ctx context.Context, c client.Client, templ
 // OBSERVE
 // ============================================================================
 
-type ServiceTemplateCacheObservation struct {
-	ShouldCreateCache  bool
-	BestAvailableCache *aimv1alpha1.AIMTemplateCache
+type serviceTemplateCacheObservation struct {
+	shouldCreateCache  bool
+	bestAvailableCache *aimv1alpha1.AIMTemplateCache
 }
 
-func observeServiceTemplateCache(result ServiceTemplateCacheFetchResult, serviceTemplate aimv1alpha1.AIMServiceTemplate) ServiceTemplateCacheObservation {
-	obs := ServiceTemplateCacheObservation{}
+func observeServiceTemplateCache(result serviceTemplateCacheFetchResult, serviceTemplate aimv1alpha1.AIMServiceTemplate) serviceTemplateCacheObservation {
+	obs := serviceTemplateCacheObservation{}
 
 	// If we have existing template caches, determine the one that's closest to availability and the newest
-	if len(result.ExistingTemplateCaches) > 0 {
+	if len(result.existingTemplateCaches) > 0 {
 		// Find the cache with the best status (highest priority)
 		// If multiple caches have the same status, choose the newest one
 		var bestCache *aimv1alpha1.AIMTemplateCache
 		bestPriority := -1
 
-		for i := range result.ExistingTemplateCaches {
-			cache := &result.ExistingTemplateCaches[i]
+		for i := range result.existingTemplateCaches {
+			cache := &result.existingTemplateCaches[i]
 			priority := constants.AIMStatusPriority[cache.Status.Status]
 
 			if bestCache == nil {
@@ -120,10 +120,10 @@ func observeServiceTemplateCache(result ServiceTemplateCacheFetchResult, service
 			}
 		}
 
-		obs.BestAvailableCache = bestCache
+		obs.bestAvailableCache = bestCache
 	} else if serviceTemplate.Spec.Caching != nil && serviceTemplate.Spec.Caching.Enabled {
 		// Should create cache if no cache exists but caching is enabled
-		obs.ShouldCreateCache = true
+		obs.shouldCreateCache = true
 	}
 
 	return obs
@@ -165,9 +165,9 @@ func projectServiceTemplateCache(
 	status *aimv1alpha1.AIMServiceTemplateStatus,
 	cm *controllerutils.ConditionManager,
 	h *controllerutils.StatusHelper,
-	observation ServiceTemplateCacheObservation,
+	observation serviceTemplateCacheObservation,
 ) bool {
-	if cache := observation.BestAvailableCache; cache != nil {
+	if cache := observation.bestAvailableCache; cache != nil {
 		switch cache.Status.Status {
 		case constants.AIMStatusReady:
 			cm.MarkTrue(aimv1alpha1.AIMTemplateCacheWarmConditionType, string(constants.AIMStatusReady), "Cache is available and ready", controllerutils.LevelNormal)

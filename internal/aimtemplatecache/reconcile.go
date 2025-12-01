@@ -117,17 +117,17 @@ func (r *Reconciler) Fetch(
 
 // Observation holds all observed state for an AIMTemplateCache.
 type Observation struct {
-	Template    TemplateObservation
-	ModelCaches ModelCachesObservation
+	template    templateObservation
+	modelCaches modelCachesObservation
 }
 
 // ----- Template Sub-Domain -----
 
-// TemplateObservation contains information about the referenced template.
-type TemplateObservation struct {
-	Found        bool
-	ModelSources []aimv1alpha1.AIMModelSource
-	Error        string
+// templateObservation contains information about the referenced template.
+type templateObservation struct {
+	found        bool
+	modelSources []aimv1alpha1.AIMModelSource
+	error        string
 }
 
 type templateObservationInputs struct {
@@ -136,28 +136,28 @@ type templateObservationInputs struct {
 }
 
 // buildTemplateObservation is a pure function that constructs Template observation.
-func buildTemplateObservation(inputs templateObservationInputs) TemplateObservation {
-	obs := TemplateObservation{}
+func buildTemplateObservation(inputs templateObservationInputs) templateObservation {
+	obs := templateObservation{}
 
 	if inputs.error != nil {
-		obs.Found = false
-		obs.Error = inputs.error.Error()
+		obs.found = false
+		obs.error = inputs.error.Error()
 		return obs
 	}
 
-	obs.Found = true
-	obs.ModelSources = inputs.modelSources
+	obs.found = true
+	obs.modelSources = inputs.modelSources
 
 	return obs
 }
 
 // ----- ModelCaches Sub-Domain -----
 
-// ModelCachesObservation contains information about model caches.
-type ModelCachesObservation struct {
-	CacheStatus        map[string]aimv1alpha1.AIMModelCacheStatusEnum
-	MissingCaches      []aimv1alpha1.AIMModelSource
-	AllCachesAvailable bool
+// modelCachesObservation contains information about model caches.
+type modelCachesObservation struct {
+	cacheStatus        map[string]aimv1alpha1.AIMModelCacheStatusEnum
+	missingCaches      []aimv1alpha1.AIMModelSource
+	allCachesAvailable bool
 }
 
 type modelCachesObservationInputs struct {
@@ -167,9 +167,9 @@ type modelCachesObservationInputs struct {
 }
 
 // buildModelCachesObservation is a pure function that constructs ModelCaches observation.
-func buildModelCachesObservation(inputs modelCachesObservationInputs) ModelCachesObservation {
-	obs := ModelCachesObservation{
-		CacheStatus: map[string]aimv1alpha1.AIMModelCacheStatusEnum{},
+func buildModelCachesObservation(inputs modelCachesObservationInputs) modelCachesObservation {
+	obs := modelCachesObservation{
+		cacheStatus: map[string]aimv1alpha1.AIMModelCacheStatusEnum{},
 	}
 
 	// Loop through model sources and check which caches are available
@@ -185,14 +185,14 @@ func buildModelCachesObservation(inputs modelCachesObservationInputs) ModelCache
 			}
 		}
 
-		obs.CacheStatus[model.Name] = bestStatus
+		obs.cacheStatus[model.Name] = bestStatus
 		if bestStatus == aimv1alpha1.AIMModelCacheStatusPending {
-			obs.MissingCaches = append(obs.MissingCaches, model)
+			obs.missingCaches = append(obs.missingCaches, model)
 		}
 	}
 
 	// Check if all caches are available
-	obs.AllCachesAvailable = len(obs.MissingCaches) == 0 && len(inputs.modelSources) > 0
+	obs.allCachesAvailable = len(obs.missingCaches) == 0 && len(inputs.modelSources) > 0
 
 	return obs
 }
@@ -219,7 +219,7 @@ func (r *Reconciler) Observe(ctx context.Context, cache *aimv1alpha1.AIMTemplate
 	obs := Observation{}
 
 	// Build template observation from fetched data
-	obs.Template = buildTemplateObservation(templateObservationInputs{
+	obs.template = buildTemplateObservation(templateObservationInputs{
 		modelSources: func() []aimv1alpha1.AIMModelSource {
 			// Prefer namespace template over cluster template
 			if fetchResult.NamespaceTemplate.Error == nil {
@@ -247,8 +247,8 @@ func (r *Reconciler) Observe(ctx context.Context, cache *aimv1alpha1.AIMTemplate
 	})
 
 	// Build model caches observation from fetched data
-	obs.ModelCaches = buildModelCachesObservation(modelCachesObservationInputs{
-		modelSources:     obs.Template.ModelSources,
+	obs.modelCaches = buildModelCachesObservation(modelCachesObservationInputs{
+		modelSources:     obs.template.modelSources,
 		availableCaches:  fetchResult.ModelCaches.Result,
 		storageClassName: cache.Spec.StorageClassName,
 	})
@@ -266,7 +266,7 @@ func (r *Reconciler) Plan(ctx context.Context, cache *aimv1alpha1.AIMTemplateCac
 	var objects []client.Object
 
 	// Only create model caches if template was found
-	if !obs.Template.Found {
+	if !obs.template.found {
 		return controllerutils.PlanResult{Apply: objects}, nil
 	}
 
@@ -287,7 +287,7 @@ func (r *Reconciler) Plan(ctx context.Context, cache *aimv1alpha1.AIMTemplateCac
 func buildMissingModelCaches(tc *aimv1alpha1.AIMTemplateCache, obs Observation) []*aimv1alpha1.AIMModelCache {
 	var caches []*aimv1alpha1.AIMModelCache
 
-	for _, cache := range obs.ModelCaches.MissingCaches {
+	for _, cache := range obs.modelCaches.missingCaches {
 		// Sanitize the model name for use as a Kubernetes resource name
 		// The original model name (with capitalization) is preserved in SourceURI for matching
 		// Note: Don't add "-cache" suffix here as the ModelCache controller will add it when creating the PVC
@@ -344,9 +344,9 @@ func (r *Reconciler) Project(status *aimv1alpha1.AIMTemplateCacheStatus, cm *con
 
 // projectTemplateCondition sets the TemplateNotFound condition.
 func (r *Reconciler) projectTemplateCondition(cm *controllerutils.ConditionManager, obs Observation) {
-	if !obs.Template.Found {
+	if !obs.template.found {
 		cm.Set("TemplateNotFound", metav1.ConditionTrue, "AwaitingTemplate",
-			fmt.Sprintf("Waiting for template to be created: %s", obs.Template.Error), controllerutils.LevelNormal)
+			fmt.Sprintf("Waiting for template to be created: %s", obs.template.error), controllerutils.LevelNormal)
 	} else {
 		cm.Set("TemplateNotFound", metav1.ConditionFalse, "TemplateFound", "", controllerutils.LevelNone)
 	}
@@ -355,13 +355,13 @@ func (r *Reconciler) projectTemplateCondition(cm *controllerutils.ConditionManag
 // projectOverallStatus determines the overall status enum.
 func (r *Reconciler) projectOverallStatus(status *aimv1alpha1.AIMTemplateCacheStatus, obs Observation) {
 	// If template not found, status is Pending
-	if !obs.Template.Found {
+	if !obs.template.found {
 		status.Status = constants.AIMStatusPending
 		return
 	}
 
 	// Determine status from cache statuses
-	statusValues := slices.Collect(maps.Values(obs.ModelCaches.CacheStatus))
+	statusValues := slices.Collect(maps.Values(obs.modelCaches.cacheStatus))
 	if len(statusValues) > 0 {
 		worstCacheStatus := slices.MaxFunc(statusValues, cmpModelCacheStatus)
 		status.Status = constants.AIMStatus(worstCacheStatus)
@@ -371,7 +371,7 @@ func (r *Reconciler) projectOverallStatus(status *aimv1alpha1.AIMTemplateCacheSt
 	}
 
 	// Override if all caches are available
-	if obs.ModelCaches.AllCachesAvailable {
+	if obs.modelCaches.allCachesAvailable {
 		status.Status = constants.AIMStatusReady
 	}
 }
