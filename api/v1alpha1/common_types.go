@@ -22,7 +22,10 @@
 
 package v1alpha1
 
-import "k8s.io/apimachinery/pkg/types"
+import (
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
 
 // AIMResolutionScope describes the scope of a resolved reference.
 // +kubebuilder:validation:Enum=Namespace;Cluster;Merged;Unknown
@@ -58,6 +61,20 @@ type AIMResolvedReference struct {
 	// UID captures the unique identifier of the resolved reference, when known.
 	// +optional
 	UID types.UID `json:"uid,omitempty"`
+}
+
+func CreateResolvedReference(obj client.Object) AIMResolvedReference {
+	scope := AIMResolutionScopeCluster
+	if obj.GetNamespace() != "" {
+		scope = AIMResolutionScopeNamespace
+	}
+	return AIMResolvedReference{
+		Name:      obj.GetName(),
+		Namespace: obj.GetNamespace(),
+		Kind:      obj.GetObjectKind().GroupVersionKind().Kind,
+		UID:       obj.GetUID(),
+		Scope:     scope,
+	}
 }
 
 func (r *AIMResolvedReference) NamespacedName() types.NamespacedName {

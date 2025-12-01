@@ -31,6 +31,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimruntimeconfig"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
@@ -77,7 +79,7 @@ func (r *ClusterServiceTemplateReconciler) Fetch(
 	result.model = modelResult
 
 	// TODO add a check if the check needs to be done (if there's a terminal error?)
-	discoveryResult, err := fetchDiscoveryResult(ctx, c, r.Clientset, clusterServiceTemplate.Status)
+	discoveryResult, err := fetchDiscoveryResult(ctx, c, r.Clientset, constants.GetOperatorNamespace(), clusterServiceTemplate.Name, clusterServiceTemplate.Status)
 	if err != nil {
 		return result, fmt.Errorf("failed to fetch discovery results: %w", err)
 	}
@@ -119,7 +121,7 @@ func (r *ServiceTemplateReconciler) Fetch(
 	}
 	result.model = modelResult
 
-	discoveryResult, err := fetchDiscoveryResult(ctx, c, r.Clientset, serviceTemplate.Status)
+	discoveryResult, err := fetchDiscoveryResult(ctx, c, r.Clientset, serviceTemplate.Namespace, serviceTemplate.Name, serviceTemplate.Status)
 	if err != nil {
 		return result, fmt.Errorf("failed to fetch discovery results: %w", err)
 	}

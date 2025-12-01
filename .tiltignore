@@ -1,69 +1,26 @@
-# Tilt ignore file - exclude files from Tilt's file watching
-# Similar to .dockerignore
+# Tilt ignore file - allowlist approach
+# Ignore everything except essential build files and directories
 
-# Generated files that would trigger rebuild loops
-api/v1alpha1/zz_generated.deepcopy.go
-config/crd/bases/*.yaml
+# Ignore all files in root
+/*
 
-# Git
-.git/
-.gitignore
+# Allow essential files
+!go.mod
+!go.sum
+!Dockerfile
+!Tiltfile
 
-# Docker
-.dockerignore
+# Allow essential directories
+!internal/
+!cmd/
+!api/
+!config/
 
-# Documentation
-*.md
-docs/
-*.txt
-
-# Test artifacts
-*.test
-coverage.out
-cover.html
-
-# Build artifacts
-bin/
-*.o
-*.a
-*.so
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-
-# Logs
-*.log
-logs/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Helm
-charts/
-*.tgz
-
-# Tilt
-.tiltbuild/
-
-# Go
-vendor/
-
-# CI/CD
-.github/
-.gitlab-ci.yml
-.circleci/
-
-# Scripts (unless needed for build)
-scripts/
-hack/
-!hack/boilerplate.go.txt
+# But within allowed directories, still exclude certain patterns
+**/*_test.go
+**/zz_generated.*.go
+**/*.tmp
+**/.DS_Store
+**/*.tmp.*
+# JetBrains/GoLand temp files during save
+**/*.[0-9]*

@@ -30,6 +30,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimruntimeconfig"
@@ -62,6 +63,12 @@ func (r *ClusterModelReconciler) Fetch(
 	c client.Client,
 	clusterModel *aimv1alpha1.AIMClusterModel,
 ) (ClusterModelFetchResult, error) {
+	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues(
+		"phase", "fetch",
+		"clusterModel", clusterModel.Name,
+		"image", clusterModel.Spec.Image,
+	))
+
 	result := ClusterModelFetchResult{}
 
 	runtimeConfig, err := aimruntimeconfig.FetchRuntimeConfig(ctx, c, clusterModel.Spec.RuntimeConfigName, "")
@@ -96,6 +103,13 @@ func (r *ModelReconciler) Fetch(
 	c client.Client,
 	model *aimv1alpha1.AIMModel,
 ) (ModelFetchResult, error) {
+	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues(
+		"phase", "fetch",
+		"model", model.Name,
+		"namespace", model.Namespace,
+		"image", model.Spec.Image,
+	))
+
 	result := ModelFetchResult{}
 
 	runtimeConfig, err := aimruntimeconfig.FetchRuntimeConfig(ctx, c, model.Spec.RuntimeConfigName, "")
@@ -134,12 +148,17 @@ func (r *ClusterModelReconciler) Observe(
 	obj *aimv1alpha1.AIMClusterModel,
 	fetchResult ClusterModelFetchResult,
 ) (ClusterModelObservation, error) {
+	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues(
+		"phase", "observe",
+		"clusterModel", obj.Name,
+	))
+
 	obs := ClusterModelObservation{
 		runtimeConfig: aimruntimeconfig.ObserveRuntimeConfig(fetchResult.runtimeConfig, obj.Spec.RuntimeConfigName),
 	}
 
 	obs.metadata = observeModelMetadata(&obj.Status, fetchResult.imageMetadata)
-	obs.templates = observeClusterModelServiceTemplate(fetchResult.clusterServiceTemplates, *obj, obs.runtimeConfig.MergedConfig)
+	obs.templates = observeClusterModelServiceTemplate(ctx, fetchResult.clusterServiceTemplates, *obj, obs.runtimeConfig.MergedConfig)
 
 	return obs, nil
 }
@@ -155,12 +174,18 @@ func (r *ModelReconciler) Observe(
 	obj *aimv1alpha1.AIMModel,
 	fetchResult ModelFetchResult,
 ) (ModelObservation, error) {
+	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues(
+		"phase", "observe",
+		"model", obj.Name,
+		"namespace", obj.Namespace,
+	))
+
 	obs := ModelObservation{
 		runtimeConfig: aimruntimeconfig.ObserveRuntimeConfig(fetchResult.runtimeConfig, obj.Spec.RuntimeConfigName),
 	}
 
 	obs.metadata = observeModelMetadata(&obj.Status, fetchResult.imageMetadata)
-	obs.templates = observeModelServiceTemplate(fetchResult.serviceTemplates, *obj, obs.runtimeConfig.MergedConfig)
+	obs.templates = observeModelServiceTemplate(ctx, fetchResult.serviceTemplates, *obj, obs.runtimeConfig.MergedConfig)
 
 	return obs, nil
 }
@@ -174,6 +199,11 @@ func (r *ClusterModelReconciler) Plan(
 	obj *aimv1alpha1.AIMClusterModel,
 	obs ClusterModelObservation,
 ) (controllerutils.PlanResult, error) {
+	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues(
+		"phase", "plan",
+		"clusterModel", obj.Name,
+	))
+
 	// Return if nothing to create
 	if !obs.templates.shouldCreateTemplates {
 		return controllerutils.PlanResult{}, nil
@@ -181,7 +211,7 @@ func (r *ClusterModelReconciler) Plan(
 
 	var templates []client.Object
 
-	clusterServiceTemplates := planClusterModelServiceTemplates(obs.templates, obs.metadata, *obj)
+	clusterServiceTemplates := planClusterModelServiceTemplates(ctx, obs.templates, obs.metadata, *obj)
 	for _, template := range clusterServiceTemplates {
 		if err := controllerutil.SetOwnerReference(obj, template, r.Scheme, controllerutil.WithBlockOwnerDeletion(false)); err != nil {
 			return controllerutils.PlanResult{}, err
@@ -197,6 +227,12 @@ func (r *ModelReconciler) Plan(
 	obj *aimv1alpha1.AIMModel,
 	obs ModelObservation,
 ) (controllerutils.PlanResult, error) {
+	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues(
+		"phase", "plan",
+		"model", obj.Name,
+		"namespace", obj.Namespace,
+	))
+
 	// Return if nothing to create
 	if !obs.templates.shouldCreateTemplates {
 		return controllerutils.PlanResult{}, nil
@@ -204,7 +240,7 @@ func (r *ModelReconciler) Plan(
 
 	var templates []client.Object
 
-	serviceTemplates := planModelServiceTemplates(obs.templates, obs.metadata, *obj)
+	serviceTemplates := planModelServiceTemplates(ctx, obs.templates, obs.metadata, *obj)
 	for _, template := range serviceTemplates {
 		if err := controllerutil.SetOwnerReference(obj, template, r.Scheme, controllerutil.WithBlockOwnerDeletion(false)); err != nil {
 			return controllerutils.PlanResult{}, err
@@ -232,7 +268,7 @@ func (r *ClusterModelReconciler) Project(
 	}
 
 	// Project metadata - if it fails fatally, don't proceed
-	if fatal := projectModelMetadata(cm, sh, observation.metadata); fatal {
+	if fatal := projectModelMetadata(status, cm, sh, observation.metadata); fatal {
 		return
 	}
 
@@ -258,7 +294,7 @@ func (r *ModelReconciler) Project(
 	}
 
 	// Project metadata - if it fails fatally, don't proceed
-	if fatal := projectModelMetadata(cm, sh, observation.metadata); fatal {
+	if fatal := projectModelMetadata(status, cm, sh, observation.metadata); fatal {
 		return
 	}
 

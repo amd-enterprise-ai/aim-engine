@@ -61,23 +61,54 @@ type parsedDiscovery struct {
 	profile      *aimv1alpha1.AIMProfile
 }
 
-func fetchDiscoveryResult(ctx context.Context, c client.Client, clientSet kubernetes.Interface, status aimv1alpha1.AIMServiceTemplateStatus) (*serviceTemplateDiscoveryFetchResult, error) {
-	if ref := status.DiscoveryJobRef; ref != nil && shouldDiscoveryRun(status) {
-		discoveryResult := serviceTemplateDiscoveryFetchResult{}
-		discoveryJob := &batchv1.Job{}
-		discoveryJobErr := c.Get(ctx, client.ObjectKey{Name: ref.Name, Namespace: ref.Namespace}, discoveryJob)
+func fetchDiscoveryResult(ctx context.Context, c client.Client, clientSet kubernetes.Interface, templateNamespace, templateName string, status aimv1alpha1.AIMServiceTemplateStatus) (*serviceTemplateDiscoveryFetchResult, error) {
+	if !shouldDiscoveryRun(status) {
+		return nil, nil
+	}
+
+	discoveryResult := serviceTemplateDiscoveryFetchResult{}
+	var discoveryJob *batchv1.Job
+	var discoveryJobErr error
+
+	// Try to fetch by ref if it exists
+	if ref := status.DiscoveryJobRef; ref != nil {
+		discoveryJob = &batchv1.Job{}
+		discoveryJobErr = c.Get(ctx, client.ObjectKey{Name: ref.Name, Namespace: ref.Namespace}, discoveryJob)
 		if discoveryJobErr != nil && !apierrors.IsNotFound(discoveryJobErr) {
-			return nil, fmt.Errorf("failed to fetch discovery job: %w", discoveryJobErr)
+			return nil, fmt.Errorf("failed to fetch discovery job by ref: %w", discoveryJobErr)
 		}
+	}
+
+	// If no ref or job not found, try to find by owner reference
+	if discoveryJob == nil || apierrors.IsNotFound(discoveryJobErr) {
+		var jobList batchv1.JobList
+		listErr := c.List(ctx, &jobList,
+			client.InNamespace(templateNamespace),
+			client.MatchingLabels{constants.LabelKeyTemplate: templateName},
+		)
+		if listErr != nil {
+			return nil, fmt.Errorf("failed to list discovery jobs: %w", listErr)
+		}
+
+		// Find the most recent job
+		if len(jobList.Items) > 0 {
+			discoveryJob = &jobList.Items[0]
+			discoveryJobErr = nil
+		}
+	}
+
+	// Store the job if found
+	if discoveryJob != nil && discoveryJobErr == nil {
 		discoveryResult.discoveryJob = discoveryJob
 
-		if discoveryJobErr == nil && utils.IsJobSucceeded(discoveryJob) {
+		if utils.IsJobSucceeded(discoveryJob) {
 			discovery, logParseErr := parseDiscoveryLogs(ctx, c, clientSet, discoveryJob)
 			discoveryResult.parsedDiscovery = discovery
 			discoveryResult.parseError = logParseErr
 		}
 		return &discoveryResult, nil
 	}
+
 	return nil, nil
 }
 
@@ -90,10 +121,10 @@ type serviceTemplateDiscoveryObservation struct {
 	failed          bool
 	completed       bool
 	discoveryResult *parsedDiscovery
+	discoveryJob    *batchv1.Job // The discovery job, if it exists
 }
 
 func observeDiscovery(discoveryResult *serviceTemplateDiscoveryFetchResult, status aimv1alpha1.AIMServiceTemplateStatus) serviceTemplateDiscoveryObservation {
-	// TODO update
 	obs := serviceTemplateDiscoveryObservation{}
 	// If there is no discovery
 	if discoveryResult == nil {
@@ -102,6 +133,7 @@ func observeDiscovery(discoveryResult *serviceTemplateDiscoveryFetchResult, stat
 	}
 
 	job := discoveryResult.discoveryJob
+	obs.discoveryJob = job
 	obs.completed = utils.IsJobComplete(job)
 	obs.failed = utils.IsJobFailed(job)
 	if obs.completed {
@@ -295,24 +327,26 @@ func buildDiscoveryJob(inputs discoveryJobBuilderInputs) *batchv1.Job {
 
 func projectDiscovery(
 	status *aimv1alpha1.AIMServiceTemplateStatus,
-	cm *controllerutils.ConditionManager,
-	h *controllerutils.StatusHelper,
+	_ *controllerutils.ConditionManager,
+	_ *controllerutils.StatusHelper,
 	observation serviceTemplateDiscoveryObservation,
-) bool {
-	//if status.DiscoveryJobRef == nil {
-	//	if job := observation.ClusterServiceTemplateFetchResult.Discovery.DiscoveryJob; job != nil {
-	//		status.DiscoveryJobRef = &types.NamespacedName{Name: job.Name, namespace: job.namespace}
-	//	}
-	//}
-	// TODO
-	// Set ref
-	return true
+) {
+	if status.DiscoveryJobRef == nil && observation.discoveryJob != nil {
+		ref := aimv1alpha1.CreateResolvedReference(observation.discoveryJob)
+		status.DiscoveryJobRef = &ref
+	}
+
+	// TODO: Add conditions and other status updates based on observation
 }
 
 // UTILS
 
 // streamPodLogs retrieves logs from the specified pod's discovery container.
 func streamPodLogs(ctx context.Context, clientset kubernetes.Interface, pod *corev1.Pod) ([]byte, error) {
+	if pod == nil {
+		return nil, fmt.Errorf("pod is nil")
+	}
+
 	req := clientset.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
 		Container: "discovery",
 	})

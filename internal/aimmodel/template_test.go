@@ -25,6 +25,7 @@ SOFTWARE.
 package aimmodel
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -217,8 +218,9 @@ func TestObserveClusterModelServiceTemplate(t *testing.T) {
 	config := &aimv1alpha1.AIMRuntimeConfigCommon{
 		Model: &aimv1alpha1.AIMModelConfig{},
 	}
+	ctx := context.Background()
 
-	obs := observeClusterModelServiceTemplate(fetchResult, clusterModel, config)
+	obs := observeClusterModelServiceTemplate(ctx, fetchResult, clusterModel, config)
 
 	if !obs.shouldCreateTemplates {
 		t.Error("expected shouldCreateTemplates=true with default config")
@@ -244,7 +246,8 @@ func TestObserveModelServiceTemplate(t *testing.T) {
 		Model: &aimv1alpha1.AIMModelConfig{},
 	}
 
-	obs := observeModelServiceTemplate(fetchResult, model, config)
+	ctx := context.Background()
+	obs := observeModelServiceTemplate(ctx, fetchResult, model, config)
 
 	if !obs.shouldCreateTemplates {
 		t.Error("expected shouldCreateTemplates=true with default config")
@@ -265,7 +268,8 @@ func TestPlanClusterModelServiceTemplates_ShouldNotCreate(t *testing.T) {
 	metadataObs := modelMetadataObservation{}
 	clusterModel := aimv1alpha1.AIMClusterModel{}
 
-	templates := planClusterModelServiceTemplates(templateObs, metadataObs, clusterModel)
+	ctx := context.Background()
+	templates := planClusterModelServiceTemplates(ctx, templateObs, metadataObs, clusterModel)
 
 	if len(templates) != 0 {
 		t.Errorf("expected 0 templates when shouldCreateTemplates=false, got %d", len(templates))
@@ -281,7 +285,8 @@ func TestPlanClusterModelServiceTemplates_MetadataError(t *testing.T) {
 	}
 	clusterModel := aimv1alpha1.AIMClusterModel{}
 
-	templates := planClusterModelServiceTemplates(templateObs, metadataObs, clusterModel)
+	ctx := context.Background()
+	templates := planClusterModelServiceTemplates(ctx, templateObs, metadataObs, clusterModel)
 
 	if len(templates) != 0 {
 		t.Errorf("expected 0 templates when metadata error, got %d", len(templates))
@@ -297,7 +302,8 @@ func TestPlanClusterModelServiceTemplates_NoMetadata(t *testing.T) {
 	}
 	clusterModel := aimv1alpha1.AIMClusterModel{}
 
-	templates := planClusterModelServiceTemplates(templateObs, metadataObs, clusterModel)
+	ctx := context.Background()
+	templates := planClusterModelServiceTemplates(ctx, templateObs, metadataObs, clusterModel)
 
 	if len(templates) != 0 {
 		t.Errorf("expected 0 templates when no metadata, got %d", len(templates))
@@ -334,7 +340,8 @@ func TestPlanClusterModelServiceTemplates_CreateTemplates(t *testing.T) {
 		},
 	}
 
-	templates := planClusterModelServiceTemplates(templateObs, metadataObs, clusterModel)
+	ctx := context.Background()
+	templates := planClusterModelServiceTemplates(ctx, templateObs, metadataObs, clusterModel)
 
 	if len(templates) != 2 {
 		t.Errorf("expected 2 templates, got %d", len(templates))
@@ -377,7 +384,8 @@ func TestPlanModelServiceTemplates_CreateTemplates(t *testing.T) {
 		},
 	}
 
-	templates := planModelServiceTemplates(templateObs, metadataObs, model)
+	ctx := context.Background()
+	templates := planModelServiceTemplates(ctx, templateObs, metadataObs, model)
 
 	if len(templates) != 1 {
 		t.Errorf("expected 1 template, got %d", len(templates))
@@ -561,7 +569,8 @@ func TestObserveClusterModelServiceTemplate_DisabledAutoDiscovery(t *testing.T) 
 		},
 	}
 
-	obs := observeClusterModelServiceTemplate(fetchResult, clusterModel, config)
+	ctx := context.Background()
+	obs := observeClusterModelServiceTemplate(ctx, fetchResult, clusterModel, config)
 
 	if obs.shouldCreateTemplates {
 		t.Error("expected shouldCreateTemplates=false when AutoDiscovery disabled")
@@ -582,7 +591,8 @@ func TestObserveModelServiceTemplate_DisabledInModelSpec(t *testing.T) {
 		Model: &aimv1alpha1.AIMModelConfig{},
 	}
 
-	obs := observeModelServiceTemplate(fetchResult, model, config)
+	ctx := context.Background()
+	obs := observeModelServiceTemplate(ctx, fetchResult, model, config)
 
 	if obs.shouldCreateTemplates {
 		t.Error("expected shouldCreateTemplates=false when disabled in model spec")

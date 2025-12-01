@@ -349,7 +349,7 @@ func TestProjectModelMetadata_NoError(t *testing.T) {
 	status := &aimv1alpha1.AIMModelStatus{}
 	sh := controllerutils.NewStatusHelper(status, cm)
 
-	fatal := projectModelMetadata(cm, sh, obs)
+	fatal := projectModelMetadata(status, cm, sh, obs)
 
 	if fatal {
 		t.Error("expected fatal=false when no error")
@@ -390,7 +390,7 @@ func TestProjectModelMetadata_FormatError_NonFatal(t *testing.T) {
 	status := &aimv1alpha1.AIMModelStatus{}
 	sh := controllerutils.NewStatusHelper(status, cm)
 
-	fatal := projectModelMetadata(cm, sh, obs)
+	fatal := projectModelMetadata(status, cm, sh, obs)
 
 	if fatal {
 		t.Error("expected fatal=false for non-fatal format error")
@@ -428,7 +428,7 @@ func TestProjectModelMetadata_FormatError_Fatal(t *testing.T) {
 	status := &aimv1alpha1.AIMModelStatus{}
 	sh := controllerutils.NewStatusHelper(status, cm)
 
-	fatal := projectModelMetadata(cm, sh, obs)
+	fatal := projectModelMetadata(status, cm, sh, obs)
 
 	if !fatal {
 		t.Error("expected fatal=true for fatal format error")
@@ -455,7 +455,7 @@ func TestProjectModelMetadata_RegistryError_NotFound_Fatal(t *testing.T) {
 	status := &aimv1alpha1.AIMModelStatus{}
 	sh := controllerutils.NewStatusHelper(status, cm)
 
-	fatal := projectModelMetadata(cm, sh, obs)
+	fatal := projectModelMetadata(status, cm, sh, obs)
 
 	if !fatal {
 		t.Error("expected fatal=true for ImageNotFound error")
@@ -482,7 +482,7 @@ func TestProjectModelMetadata_RegistryError_Auth_Recoverable(t *testing.T) {
 	status := &aimv1alpha1.AIMModelStatus{}
 	sh := controllerutils.NewStatusHelper(status, cm)
 
-	fatal := projectModelMetadata(cm, sh, obs)
+	fatal := projectModelMetadata(status, cm, sh, obs)
 
 	if fatal {
 		t.Error("expected fatal=false for recoverable auth error")
@@ -502,7 +502,7 @@ func TestProjectModelMetadata_GenericError(t *testing.T) {
 	status := &aimv1alpha1.AIMModelStatus{}
 	sh := controllerutils.NewStatusHelper(status, cm)
 
-	fatal := projectModelMetadata(cm, sh, obs)
+	fatal := projectModelMetadata(status, cm, sh, obs)
 
 	if fatal {
 		t.Error("expected fatal=false for generic error")
