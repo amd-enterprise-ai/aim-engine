@@ -39,19 +39,19 @@ import (
 )
 
 const (
-	// ModelImageIndexKey is the field index key for AIMModel.Spec.Image
+	// ModelImageIndexKey is the field index key for AIMModel.Spec.image
 	// TODO: Register this indexer in the controller setup:
 	//   mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMModel{}, ModelImageIndexKey,
 	//       func(obj client.Object) []string {
-	//           return []string{obj.(*aimv1alpha1.AIMModel).Spec.Image}
+	//           return []string{obj.(*aimv1alpha1.AIMModel).Spec.image}
 	//       })
 	ModelImageIndexKey = "spec.image"
 
-	// ClusterModelImageIndexKey is the field index key for AIMClusterModel.Spec.Image
+	// ClusterModelImageIndexKey is the field index key for AIMClusterModel.Spec.image
 	// TODO: Register this indexer in the controller setup:
 	//   mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMClusterModel{}, ClusterModelImageIndexKey,
 	//       func(obj client.Object) []string {
-	//           return []string{obj.(*aimv1alpha1.AIMClusterModel).Spec.Image}
+	//           return []string{obj.(*aimv1alpha1.AIMClusterModel).Spec.image}
 	//       })
 	ClusterModelImageIndexKey = "spec.image"
 
@@ -77,11 +77,11 @@ const (
 // ============================================================================
 
 type serviceModelFetchResult struct {
-	// Resolved model (either from Ref or Image lookup)
+	// Resolved model (either from Ref or image lookup)
 	namespaceModel *aimv1alpha1.AIMModel
 	clusterModel   *aimv1alpha1.AIMClusterModel
 
-	// For Image-based resolution: track if multiple models found (error case)
+	// For image-based resolution: track if multiple models found (error case)
 	multipleModelsFound bool
 	multipleModelsError error
 
@@ -98,7 +98,7 @@ func fetchServiceModelResult(ctx context.Context, c client.Client, service *aimv
 		return fetchServiceModelResultForModelRef(ctx, c, *modelName, service.Namespace)
 	}
 
-	// Case 2: Model specified by Image - search for existing models with this image
+	// Case 2: Model specified by image - search for existing models with this image
 	if modelImage := service.Spec.Model.Image; modelImage != nil && *modelImage != "" {
 		return fetchServiceModelResultForModelImage(ctx, c, *modelImage, service.Namespace)
 	}
@@ -170,7 +170,7 @@ func fetchServiceModelResultForModelImage(ctx context.Context, c client.Client, 
 	}
 
 	// Check: max 1 namespace model and max 1 cluster model
-	// Namespace takes precedence over cluster
+	// namespace takes precedence over cluster
 	if len(clusterModels.Items) == 1 {
 		result.clusterModel = &clusterModels.Items[0]
 		// Fetch templates for this cluster model
@@ -191,7 +191,7 @@ func fetchServiceModelResultForModelImage(ctx context.Context, c client.Client, 
 // If namespace is empty, fetches cluster-scoped templates
 func fetchTemplatesForModel(ctx context.Context, c client.Client, modelName string, namespace string, result *serviceModelFetchResult) error {
 	if namespace != "" {
-		// Namespace-scoped model - fetch namespace templates only
+		// namespace-scoped model - fetch namespace templates only
 		var nsTemplates aimv1alpha1.AIMServiceTemplateList
 		if err := c.List(ctx, &nsTemplates,
 			client.InNamespace(namespace),
@@ -220,7 +220,7 @@ func fetchTemplatesForModel(ctx context.Context, c client.Client, modelName stri
 
 type serviceModelObservation struct {
 	modelName          string
-	ModelNamespace     string // Namespace of the resolved model (empty for cluster-scoped models)
+	ModelNamespace     string // namespace of the resolved model (empty for cluster-scoped models)
 	ModelFound         bool
 	ModelReady         bool
 	ModelSpec          *aimv1alpha1.AIMModelSpec
@@ -258,7 +258,7 @@ func observeServiceModel(_ context.Context, _ client.Client, service *aimv1alpha
 		return obs
 	}
 
-	// Case 2: Model specified by Image
+	// Case 2: Model specified by image
 	if service.Spec.Model.Image != nil && *service.Spec.Model.Image != "" {
 		// Check for multiple models error from fetch
 		if result.multipleModelsFound {

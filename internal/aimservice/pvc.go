@@ -46,7 +46,7 @@ const (
 	AIMCacheBasePath = "/workspace/model-cache"
 )
 
-func PvcNameForService(service *aimv1alpha1.AIMService) string {
+func pvcNameForService(service *aimv1alpha1.AIMService) string {
 	name, _ := utils.GenerateDerivedName([]string{"aimsvc", "temp", service.Name}, service.UID)
 	return name
 }
@@ -64,7 +64,7 @@ func fetchServicePVCResult(ctx context.Context, c client.Client, service *aimv1a
 	result := ServicePVCFetchResult{}
 
 	pvc := &corev1.PersistentVolumeClaim{}
-	key := client.ObjectKey{Name: PvcNameForService(service), Namespace: service.Namespace}
+	key := client.ObjectKey{Name: pvcNameForService(service), Namespace: service.Namespace}
 	if err := c.Get(ctx, key, pvc); err != nil && !errors.IsNotFound(err) {
 		return result, fmt.Errorf("failed to fetch service PVC: %w", err)
 	} else if err == nil {
@@ -112,7 +112,7 @@ func observeServicePVC(
 		obs.PVCReady = result.TemporaryServicePVC.Status.Phase == corev1.ClaimBound
 	} else if obs.ShouldUsePVC {
 		// PVC needed but doesn't exist
-		obs.PVCName = PvcNameForService(service)
+		obs.PVCName = pvcNameForService(service)
 		obs.ShouldCreatePVC = true
 	}
 
@@ -133,7 +133,7 @@ func planServicePVC(
 		return nil, nil
 	}
 
-	pvcName := PvcNameForService(service)
+	pvcName := pvcNameForService(service)
 
 	// Extract storage config from mergedConfig
 	storageClassName := utils.ResolveStorageClass("", mergedConfig)

@@ -49,32 +49,32 @@ import (
 // FETCH
 // ============================================================================
 
-type ServiceTemplateDiscoveryFetchResult struct {
-	DiscoveryJob    *batchv1.Job
-	ParsedDiscovery *ParsedDiscovery
-	ParseError      error
+type serviceTemplateDiscoveryFetchResult struct {
+	discoveryJob    *batchv1.Job
+	parsedDiscovery *parsedDiscovery
+	parseError      error
 }
 
-// ParsedDiscovery holds the parsed discovery result
-type ParsedDiscovery struct {
-	ModelSources []aimv1alpha1.AIMModelSource
-	Profile      *aimv1alpha1.AIMProfile
+// parsedDiscovery holds the parsed discovery result
+type parsedDiscovery struct {
+	modelSources []aimv1alpha1.AIMModelSource
+	profile      *aimv1alpha1.AIMProfile
 }
 
-func fetchDiscoveryResult(ctx context.Context, c client.Client, clientSet kubernetes.Interface, status aimv1alpha1.AIMServiceTemplateStatus) (*ServiceTemplateDiscoveryFetchResult, error) {
+func fetchDiscoveryResult(ctx context.Context, c client.Client, clientSet kubernetes.Interface, status aimv1alpha1.AIMServiceTemplateStatus) (*serviceTemplateDiscoveryFetchResult, error) {
 	if ref := status.DiscoveryJobRef; ref != nil && shouldDiscoveryRun(status) {
-		discoveryResult := ServiceTemplateDiscoveryFetchResult{}
+		discoveryResult := serviceTemplateDiscoveryFetchResult{}
 		discoveryJob := &batchv1.Job{}
 		discoveryJobErr := c.Get(ctx, client.ObjectKey{Name: ref.Name, Namespace: ref.Namespace}, discoveryJob)
 		if discoveryJobErr != nil && !apierrors.IsNotFound(discoveryJobErr) {
 			return nil, fmt.Errorf("failed to fetch discovery job: %w", discoveryJobErr)
 		}
-		discoveryResult.DiscoveryJob = discoveryJob
+		discoveryResult.discoveryJob = discoveryJob
 
 		if discoveryJobErr == nil && utils.IsJobSucceeded(discoveryJob) {
-			discovery, logParseErr := ParseDiscoveryLogs(ctx, c, clientSet, discoveryJob)
-			discoveryResult.ParsedDiscovery = discovery
-			discoveryResult.ParseError = logParseErr
+			discovery, logParseErr := parseDiscoveryLogs(ctx, c, clientSet, discoveryJob)
+			discoveryResult.parsedDiscovery = discovery
+			discoveryResult.parseError = logParseErr
 		}
 		return &discoveryResult, nil
 	}
@@ -85,27 +85,27 @@ func fetchDiscoveryResult(ctx context.Context, c client.Client, clientSet kubern
 // OBSERVE
 // ============================================================================
 
-type ServiceTemplateDiscoveryObservation struct {
-	ShouldRun       bool
-	Failed          bool
-	Completed       bool
-	DiscoveryResult *ParsedDiscovery
+type serviceTemplateDiscoveryObservation struct {
+	shouldRun       bool
+	failed          bool
+	completed       bool
+	discoveryResult *parsedDiscovery
 }
 
-func observeDiscovery(discoveryResult *ServiceTemplateDiscoveryFetchResult, status aimv1alpha1.AIMServiceTemplateStatus) ServiceTemplateDiscoveryObservation {
+func observeDiscovery(discoveryResult *serviceTemplateDiscoveryFetchResult, status aimv1alpha1.AIMServiceTemplateStatus) serviceTemplateDiscoveryObservation {
 	// TODO update
-	obs := ServiceTemplateDiscoveryObservation{}
+	obs := serviceTemplateDiscoveryObservation{}
 	// If there is no discovery
 	if discoveryResult == nil {
-		obs.ShouldRun = shouldDiscoveryRun(status)
+		obs.shouldRun = shouldDiscoveryRun(status)
 		return obs
 	}
 
-	job := discoveryResult.DiscoveryJob
-	obs.Completed = utils.IsJobComplete(job)
-	obs.Failed = utils.IsJobFailed(job)
-	if obs.Completed {
-		obs.DiscoveryResult = discoveryResult.ParsedDiscovery
+	job := discoveryResult.discoveryJob
+	obs.completed = utils.IsJobComplete(job)
+	obs.failed = utils.IsJobFailed(job)
+	if obs.completed {
+		obs.discoveryResult = discoveryResult.parsedDiscovery
 	}
 	return obs
 }
@@ -130,38 +130,38 @@ const (
 	discoveryJobHashLength = 4 //nolint:unused // will be used in future discovery job naming
 	discoveryJobHashHexLen = 8 //nolint:unused // will be used in future discovery job naming
 
-	// DiscoveryJobBackoffLimit is the number of retries before marking the discovery job as failed
-	DiscoveryJobBackoffLimit = 3
+	// discoveryJobBackoffLimit is the number of retries before marking the discovery job as failed
+	discoveryJobBackoffLimit = 3
 
-	// DiscoveryJobTTLSeconds defines how long completed discovery jobs persist
+	// discoveryJobTTLSeconds defines how long completed discovery jobs persist
 	// before automatic cleanup. This allows time for status inspection and log retrieval.
-	DiscoveryJobTTLSeconds = 60
+	discoveryJobTTLSeconds = 60
 )
 
-// DiscoveryJobBuilderInputs contains the data needed to build a discovery job
-type DiscoveryJobBuilderInputs struct {
-	TemplateName string
-	TemplateSpec aimv1alpha1.AIMServiceTemplateSpecCommon
-	Env          []corev1.EnvVar // Auth env vars for model download
-	Namespace    string
-	Image        string // From observation, not spec
+// discoveryJobBuilderInputs contains the data needed to build a discovery job
+type discoveryJobBuilderInputs struct {
+	templateName string
+	templateSpec aimv1alpha1.AIMServiceTemplateSpecCommon
+	env          []corev1.EnvVar // Auth env vars for model download
+	namespace    string
+	image        string // From observation, not spec
 }
 
-// BuildDiscoveryJob creates a Job that runs model discovery dry-run
-func BuildDiscoveryJob(inputs DiscoveryJobBuilderInputs) *batchv1.Job {
+// buildDiscoveryJob creates a Job that runs model discovery dry-run
+func buildDiscoveryJob(inputs discoveryJobBuilderInputs) *batchv1.Job {
 	// Create deterministic job name with hash of ALL parameters that affect the Job spec
 	// This ensures that any change to the spec results in a new Job instead of an update attempt
 
 	jobName, _ := utils.GenerateDerivedNameWithHashLength(
 		[]string{""},
 		4,
-		inputs.TemplateSpec.ModelName,
-		inputs.Image,
-		inputs.TemplateSpec.ServiceAccountName,
+		inputs.templateSpec.ModelName,
+		inputs.image,
+		inputs.templateSpec.ServiceAccountName,
 	)
 
-	backoffLimit := int32(DiscoveryJobBackoffLimit)
-	ttlSeconds := int32(DiscoveryJobTTLSeconds)
+	backoffLimit := int32(discoveryJobBackoffLimit)
+	ttlSeconds := int32(discoveryJobTTLSeconds)
 
 	// Add AIM environmental variables
 
@@ -176,33 +176,33 @@ func BuildDiscoveryJob(inputs DiscoveryJobBuilderInputs) *batchv1.Job {
 			Value: "CRITICAL",
 		},
 	}
-	env = append(env, inputs.Env...)
+	env = append(env, inputs.env...)
 
-	if inputs.TemplateSpec.Metric != nil {
+	if inputs.templateSpec.Metric != nil {
 		env = append(env, corev1.EnvVar{
 			Name:  "AIM_METRIC",
-			Value: string(*inputs.TemplateSpec.Metric),
+			Value: string(*inputs.templateSpec.Metric),
 		})
 	}
 
-	if inputs.TemplateSpec.Precision != nil {
+	if inputs.templateSpec.Precision != nil {
 		env = append(env, corev1.EnvVar{
 			Name:  "AIM_PRECISION",
-			Value: string(*inputs.TemplateSpec.Precision),
+			Value: string(*inputs.templateSpec.Precision),
 		})
 	}
 
-	if inputs.TemplateSpec.GpuSelector != nil {
-		if inputs.TemplateSpec.GpuSelector.Model != "" {
+	if inputs.templateSpec.GpuSelector != nil {
+		if inputs.templateSpec.GpuSelector.Model != "" {
 			env = append(env, corev1.EnvVar{
 				Name:  "AIM_GPU_MODEL",
-				Value: inputs.TemplateSpec.GpuSelector.Model,
+				Value: inputs.templateSpec.GpuSelector.Model,
 			})
 		}
-		if inputs.TemplateSpec.GpuSelector.Count > 0 {
+		if inputs.templateSpec.GpuSelector.Count > 0 {
 			env = append(env, corev1.EnvVar{
 				Name:  "AIM_GPU_COUNT",
-				Value: strconv.Itoa(int(inputs.TemplateSpec.GpuSelector.Count)),
+				Value: strconv.Itoa(int(inputs.templateSpec.GpuSelector.Count)),
 			})
 		}
 	}
@@ -222,12 +222,12 @@ func BuildDiscoveryJob(inputs DiscoveryJobBuilderInputs) *batchv1.Job {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
-			Namespace: inputs.Namespace,
+			Namespace: inputs.namespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/name":       constants.LabelValueDiscoveryName,
 				"app.kubernetes.io/component":  constants.LabelValueDiscoveryComponent,
 				"app.kubernetes.io/managed-by": constants.LabelValueManagedBy,
-				constants.LabelKeyTemplate:     inputs.TemplateName,
+				constants.LabelKeyTemplate:     inputs.templateName,
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -236,8 +236,8 @@ func BuildDiscoveryJob(inputs DiscoveryJobBuilderInputs) *batchv1.Job {
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy:      corev1.RestartPolicyNever,
-					ImagePullSecrets:   inputs.TemplateSpec.ImagePullSecrets,
-					ServiceAccountName: inputs.TemplateSpec.ServiceAccountName,
+					ImagePullSecrets:   inputs.templateSpec.ImagePullSecrets,
+					ServiceAccountName: inputs.templateSpec.ServiceAccountName,
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot:   &runAsNonRoot,
 						RunAsUser:      &runAsUser,
@@ -246,7 +246,7 @@ func BuildDiscoveryJob(inputs DiscoveryJobBuilderInputs) *batchv1.Job {
 					Containers: []corev1.Container{
 						{
 							Name:  "discovery",
-							Image: inputs.Image,
+							Image: inputs.image,
 							Args: []string{
 								"dry-run",
 								"--format=json",
@@ -277,11 +277,11 @@ func projectDiscovery(
 	status *aimv1alpha1.AIMServiceTemplateStatus,
 	cm *controllerutils.ConditionManager,
 	h *controllerutils.StatusHelper,
-	observation ServiceTemplateDiscoveryObservation,
+	observation serviceTemplateDiscoveryObservation,
 ) bool {
 	//if status.DiscoveryJobRef == nil {
 	//	if job := observation.ClusterServiceTemplateFetchResult.Discovery.DiscoveryJob; job != nil {
-	//		status.DiscoveryJobRef = &types.NamespacedName{Name: job.Name, Namespace: job.Namespace}
+	//		status.DiscoveryJobRef = &types.NamespacedName{Name: job.Name, namespace: job.namespace}
 	//	}
 	//}
 	// TODO
@@ -372,9 +372,9 @@ func parseDiscoveryJSON(ctx context.Context, logBytes []byte) ([]discoveryResult
 	return results, nil
 }
 
-// ParseDiscoveryLogs parses the discovery job output to extract model sources and profile.
+// parseDiscoveryLogs parses the discovery job output to extract model sources and profile.
 // Reads pod logs from the completed job and parses the JSON output.
-func ParseDiscoveryLogs(ctx context.Context, k8sClient client.Client, clientset kubernetes.Interface, job *batchv1.Job) (*ParsedDiscovery, error) {
+func parseDiscoveryLogs(ctx context.Context, k8sClient client.Client, clientset kubernetes.Interface, job *batchv1.Job) (*parsedDiscovery, error) {
 	// Check for cancellation early
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context cancelled before parsing discovery logs: %w", err)
@@ -418,9 +418,9 @@ func ParseDiscoveryLogs(ctx context.Context, k8sClient client.Client, clientset 
 	// Convert raw models to AIMModelSource
 	modelSources := convertToAIMModelSources(result.Models)
 
-	return &ParsedDiscovery{
-		ModelSources: modelSources,
-		Profile:      profile,
+	return &parsedDiscovery{
+		modelSources: modelSources,
+		profile:      profile,
 	}, nil
 }
 
@@ -493,17 +493,4 @@ type discoveryModelResult struct {
 	Name   string  `json:"name"`
 	Source string  `json:"source"`
 	SizeGB float64 `json:"size_gb"`
-}
-
-// DiscoveryJobSpec defines parameters for creating a discovery job
-type DiscoveryJobSpec struct {
-	TemplateName     string
-	TemplateSpec     aimv1alpha1.AIMServiceTemplateSpecCommon
-	Namespace        string
-	ModelID          string
-	Image            string
-	Env              []corev1.EnvVar
-	ImagePullSecrets []corev1.LocalObjectReference
-	ServiceAccount   string
-	OwnerRef         metav1.OwnerReference
 }

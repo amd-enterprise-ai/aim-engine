@@ -365,11 +365,11 @@ func (r *AIMServiceReconciler) serviceUsesClusterModel(svc *aimv1alpha1.AIMServi
 	if svc.Spec.Model.Ref != nil && *svc.Spec.Model.Ref == clusterModel.Name {
 		return true
 	}
-	// 2. Image URL that resolves to this cluster model (check status)
+	// 2. image URL that resolves to this cluster model (check status)
 	if svc.Status.ResolvedModel != nil && svc.Status.ResolvedModel.Name == clusterModel.Name {
 		return true
 	}
-	// 3. Image URL in spec (need to check if it would resolve to this cluster model)
+	// 3. image URL in spec (need to check if it would resolve to this cluster model)
 	// This is the case when service was just created and status not yet set
 	if svc.Spec.Model.Image != nil {
 		logger.V(1).Info("Service has image URL but no resolved image yet",

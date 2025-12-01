@@ -37,18 +37,18 @@ import (
 // FETCH
 // ============================================================================
 
-type ServiceTemplateClusterFetchResult struct {
-	AvailableGpuModels []string
+type serviceTemplateClusterFetchResult struct {
+	availableGpuModels []string
 }
 
-func fetchServiceTemplateClusterResult(ctx context.Context, c client.Client) (ServiceTemplateClusterFetchResult, error) {
-	result := ServiceTemplateClusterFetchResult{}
+func fetchServiceTemplateClusterResult(ctx context.Context, c client.Client) (serviceTemplateClusterFetchResult, error) {
+	result := serviceTemplateClusterFetchResult{}
 
 	availableGpus, err := pkgutils.ListAvailableGPUs(ctx, c)
 	if err != nil {
 		return result, err
 	}
-	result.AvailableGpuModels = availableGpus
+	result.availableGpuModels = availableGpus
 
 	return result, nil
 }
@@ -57,24 +57,24 @@ func fetchServiceTemplateClusterResult(ctx context.Context, c client.Client) (Se
 // OBSERVE
 // ============================================================================
 
-type ServiceTemplateClusterObservation struct {
-	GpuModelRequested string
-	GpuModelAvailable bool
+type serviceTemplateClusterObservation struct {
+	gpuModelRequested string
+	gpuModelAvailable bool
 }
 
-func observeServiceTemplateCluster(result ServiceTemplateClusterFetchResult, templateSpec aimv1alpha1.AIMServiceTemplateSpecCommon) ServiceTemplateClusterObservation {
-	observation := ServiceTemplateClusterObservation{}
+func observeServiceTemplateCluster(result serviceTemplateClusterFetchResult, templateSpec aimv1alpha1.AIMServiceTemplateSpecCommon) serviceTemplateClusterObservation {
+	observation := serviceTemplateClusterObservation{}
 
 	if templateSpec.GpuSelector == nil || templateSpec.GpuSelector.Model == "" {
 		// TODO okay? For CPU?
-		observation.GpuModelAvailable = true
-		observation.GpuModelRequested = ""
+		observation.gpuModelAvailable = true
+		observation.gpuModelRequested = ""
 	} else {
 		normalizedGpuModel := pkgutils.NormalizeGPUModel(templateSpec.GpuSelector.Model)
-		for _, clusterGpu := range result.AvailableGpuModels {
+		for _, clusterGpu := range result.availableGpuModels {
 			if pkgutils.NormalizeGPUModel(clusterGpu) == normalizedGpuModel {
-				observation.GpuModelRequested = normalizedGpuModel
-				observation.GpuModelAvailable = true
+				observation.gpuModelRequested = normalizedGpuModel
+				observation.gpuModelAvailable = true
 			}
 		}
 	}
@@ -88,9 +88,9 @@ func observeServiceTemplateCluster(result ServiceTemplateClusterFetchResult, tem
 
 // projectServiceTemplateCluster projects the cluster GPU availability observation.
 // Returns true if a fatal error occurred (should stop reconciliation), false otherwise.
-func projectServiceTemplateCluster(_ *aimv1alpha1.AIMServiceTemplateStatus, _ *controllerutils.ConditionManager, h *controllerutils.StatusHelper, observation ServiceTemplateClusterObservation) bool {
-	if !observation.GpuModelAvailable {
-		h.Degraded("GpuNotAvailable", fmt.Sprintf("GPU model '%s' not available in cluster", observation.GpuModelRequested))
+func projectServiceTemplateCluster(_ *aimv1alpha1.AIMServiceTemplateStatus, _ *controllerutils.ConditionManager, h *controllerutils.StatusHelper, observation serviceTemplateClusterObservation) bool {
+	if !observation.gpuModelAvailable {
+		h.Degraded("GpuNotAvailable", fmt.Sprintf("GPU model '%s' not available in cluster", observation.gpuModelRequested))
 		return true // Fatal - stop reconciliation
 	}
 	// TODOremovecondition otherwise

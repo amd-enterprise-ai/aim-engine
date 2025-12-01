@@ -51,10 +51,10 @@ type ServiceTemplateReconciler struct {
 // ============================================================================
 
 type ClusterServiceTemplateFetchResult struct {
-	RuntimeConfig aimruntimeconfig.RuntimeConfigFetchResult
-	Discovery     *ServiceTemplateDiscoveryFetchResult
-	Cluster       ServiceTemplateClusterFetchResult
-	Model         ClusterServiceTemplateModelFetchResult
+	runtimeConfig aimruntimeconfig.RuntimeConfigFetchResult
+	discovery     *serviceTemplateDiscoveryFetchResult
+	cluster       serviceTemplateClusterFetchResult
+	model         clusterServiceTemplateModelFetchResult
 }
 
 func (r *ClusterServiceTemplateReconciler) Fetch(
@@ -68,36 +68,36 @@ func (r *ClusterServiceTemplateReconciler) Fetch(
 	if err != nil {
 		return result, err
 	}
-	result.RuntimeConfig = runtimeConfig
+	result.runtimeConfig = runtimeConfig
 
-	modelResult, err := FetchClusterServiceTemplateModelResult(ctx, c, clusterServiceTemplate)
+	modelResult, err := fetchClusterServiceTemplateModelResult(ctx, c, clusterServiceTemplate)
 	if err != nil {
 		return result, fmt.Errorf("failed to fetch cluster model result: %w", err)
 	}
-	result.Model = modelResult
+	result.model = modelResult
 
 	// TODO add a check if the check needs to be done (if there's a terminal error?)
 	discoveryResult, err := fetchDiscoveryResult(ctx, c, r.Clientset, clusterServiceTemplate.Status)
 	if err != nil {
 		return result, fmt.Errorf("failed to fetch discovery results: %w", err)
 	}
-	result.Discovery = discoveryResult
+	result.discovery = discoveryResult
 
 	clusterResult, err := fetchServiceTemplateClusterResult(ctx, c)
 	if err != nil {
 		return result, fmt.Errorf("failed to fetch cluster results: %w", err)
 	}
-	result.Cluster = clusterResult
+	result.cluster = clusterResult
 
 	return result, nil
 }
 
 type ServiceTemplateFetchResult struct {
-	RuntimeConfig aimruntimeconfig.RuntimeConfigFetchResult
-	Discovery     *ServiceTemplateDiscoveryFetchResult
-	Cache         ServiceTemplateCacheFetchResult
-	Cluster       ServiceTemplateClusterFetchResult
-	Model         ServiceTemplateModelFetchResult
+	runtimeConfig aimruntimeconfig.RuntimeConfigFetchResult
+	discovery     *serviceTemplateDiscoveryFetchResult
+	cache         serviceTemplateCacheFetchResult
+	cluster       serviceTemplateClusterFetchResult
+	model         serviceTemplateModelFetchResult
 }
 
 func (r *ServiceTemplateReconciler) Fetch(
@@ -111,31 +111,31 @@ func (r *ServiceTemplateReconciler) Fetch(
 	if err != nil {
 		return result, err
 	}
-	result.RuntimeConfig = runtimeConfig
+	result.runtimeConfig = runtimeConfig
 
-	modelResult, err := FetchServiceTemplateModelResult(ctx, c, serviceTemplate)
+	modelResult, err := fetchServiceTemplateModelResult(ctx, c, serviceTemplate)
 	if err != nil {
 		return result, fmt.Errorf("failed to fetch model result: %w", err)
 	}
-	result.Model = modelResult
+	result.model = modelResult
 
 	discoveryResult, err := fetchDiscoveryResult(ctx, c, r.Clientset, serviceTemplate.Status)
 	if err != nil {
 		return result, fmt.Errorf("failed to fetch discovery results: %w", err)
 	}
-	result.Discovery = discoveryResult
+	result.discovery = discoveryResult
 
 	clusterResult, err := fetchServiceTemplateClusterResult(ctx, c)
 	if err != nil {
 		return result, fmt.Errorf("failed to fetch cluster results: %w", err)
 	}
-	result.Cluster = clusterResult
+	result.cluster = clusterResult
 
 	cacheResult, err := fetchServiceTemplateCacheResult(ctx, c, serviceTemplate, &serviceTemplate.Status)
 	if err != nil {
 		return result, fmt.Errorf("failed to fetch cache results: %w", err)
 	}
-	result.Cache = cacheResult
+	result.cache = cacheResult
 
 	return result, nil
 }
@@ -145,10 +145,10 @@ func (r *ServiceTemplateReconciler) Fetch(
 // ============================================================================
 
 type ClusterServiceTemplateObservation struct {
-	RuntimeConfig aimruntimeconfig.RuntimeConfigObservation
-	Cluster       ServiceTemplateClusterObservation
-	Discovery     ServiceTemplateDiscoveryObservation
-	Model         ServiceTemplateModelObservation
+	runtimeConfig aimruntimeconfig.RuntimeConfigObservation
+	cluster       serviceTemplateClusterObservation
+	discovery     serviceTemplateDiscoveryObservation
+	model         serviceTemplateModelObservation
 }
 
 func (r *ClusterServiceTemplateReconciler) Observe(
@@ -157,21 +157,21 @@ func (r *ClusterServiceTemplateReconciler) Observe(
 	fetchResult ClusterServiceTemplateFetchResult,
 ) (ClusterServiceTemplateObservation, error) {
 	obs := ClusterServiceTemplateObservation{
-		RuntimeConfig: aimruntimeconfig.ObserveRuntimeConfig(fetchResult.RuntimeConfig, clusterServiceTemplate.Spec.RuntimeConfigName),
-		Model:         ObserveClusterServiceTemplateModel(fetchResult.Model),
-		Cluster:       observeServiceTemplateCluster(fetchResult.Cluster, clusterServiceTemplate.Spec.AIMServiceTemplateSpecCommon),
-		Discovery:     observeDiscovery(fetchResult.Discovery, clusterServiceTemplate.Status),
+		runtimeConfig: aimruntimeconfig.ObserveRuntimeConfig(fetchResult.runtimeConfig, clusterServiceTemplate.Spec.RuntimeConfigName),
+		model:         observeClusterServiceTemplateModel(fetchResult.model),
+		cluster:       observeServiceTemplateCluster(fetchResult.cluster, clusterServiceTemplate.Spec.AIMServiceTemplateSpecCommon),
+		discovery:     observeDiscovery(fetchResult.discovery, clusterServiceTemplate.Status),
 	}
 
 	return obs, nil
 }
 
 type ServiceTemplateObservation struct {
-	RuntimeConfig aimruntimeconfig.RuntimeConfigObservation
-	Discovery     ServiceTemplateDiscoveryObservation
-	Cache         ServiceTemplateCacheObservation
-	Cluster       ServiceTemplateClusterObservation
-	Model         ServiceTemplateModelObservation
+	runtimeConfig aimruntimeconfig.RuntimeConfigObservation
+	discovery     serviceTemplateDiscoveryObservation
+	cache         serviceTemplateCacheObservation
+	Cluster       serviceTemplateClusterObservation
+	Model         serviceTemplateModelObservation
 }
 
 func (r *ServiceTemplateReconciler) Observe(
@@ -180,11 +180,11 @@ func (r *ServiceTemplateReconciler) Observe(
 	fetchResult ServiceTemplateFetchResult,
 ) (ServiceTemplateObservation, error) {
 	obs := ServiceTemplateObservation{
-		RuntimeConfig: aimruntimeconfig.ObserveRuntimeConfig(fetchResult.RuntimeConfig, serviceTemplate.Spec.RuntimeConfigName),
-		Cluster:       observeServiceTemplateCluster(fetchResult.Cluster, serviceTemplate.Spec.AIMServiceTemplateSpecCommon),
-		Discovery:     observeDiscovery(fetchResult.Discovery, serviceTemplate.Status),
-		Model:         ObserveServiceTemplateModel(fetchResult.Model),
-		Cache:         observeServiceTemplateCache(fetchResult.Cache, *serviceTemplate),
+		runtimeConfig: aimruntimeconfig.ObserveRuntimeConfig(fetchResult.runtimeConfig, serviceTemplate.Spec.RuntimeConfigName),
+		Cluster:       observeServiceTemplateCluster(fetchResult.cluster, serviceTemplate.Spec.AIMServiceTemplateSpecCommon),
+		discovery:     observeDiscovery(fetchResult.discovery, serviceTemplate.Status),
+		Model:         observeServiceTemplateModel(fetchResult.model),
+		cache:         observeServiceTemplateCache(fetchResult.cache, *serviceTemplate),
 	}
 	return obs, nil
 }
@@ -200,19 +200,19 @@ func (r *ClusterServiceTemplateReconciler) Plan(
 ) (controllerutils.PlanResult, error) {
 	var objects []client.Object
 
-	if !observation.Model.ModelFound {
+	if !observation.model.modelFound {
 		// Return early if the model doesn't exist
 		return controllerutils.PlanResult{Apply: objects}, nil
 	}
 
-	if observation.Discovery.ShouldRun {
-		discoveryJob := BuildDiscoveryJob(DiscoveryJobBuilderInputs{
-			TemplateName: clusterServiceTemplate.Name,
-			TemplateSpec: clusterServiceTemplate.Spec.AIMServiceTemplateSpecCommon,
-			Namespace:    clusterServiceTemplate.Namespace,
-			Image:        observation.Model.ModelSpec.Image,
+	if observation.discovery.shouldRun {
+		discoveryJob := buildDiscoveryJob(discoveryJobBuilderInputs{
+			templateName: clusterServiceTemplate.Name,
+			templateSpec: clusterServiceTemplate.Spec.AIMServiceTemplateSpecCommon,
+			namespace:    clusterServiceTemplate.Namespace,
+			image:        observation.model.modelSpec.Image,
 			// TODO should cluster service template have envs?
-			// Env:          clusterServiceTemplate.Spec.Env,
+			// env:          clusterServiceTemplate.Spec.env,
 		})
 		_ = controllerutil.SetOwnerReference(clusterServiceTemplate, discoveryJob, r.Scheme)
 		objects = append(objects, discoveryJob)
@@ -226,19 +226,19 @@ func (r *ServiceTemplateReconciler) Plan(
 	observation ServiceTemplateObservation,
 ) (controllerutils.PlanResult, error) {
 	var objects []client.Object
-	if observation.Cache.ShouldCreateCache {
-		templateCache := buildServiceTemplateCache(*serviceTemplate, observation.RuntimeConfig.MergedConfig)
+	if observation.cache.shouldCreateCache {
+		templateCache := buildServiceTemplateCache(*serviceTemplate, observation.runtimeConfig.MergedConfig)
 		_ = controllerutil.SetOwnerReference(serviceTemplate, templateCache, r.Scheme)
 		objects = append(objects, templateCache)
 	}
 
-	if observation.Discovery.ShouldRun {
-		discoveryJob := BuildDiscoveryJob(DiscoveryJobBuilderInputs{
-			TemplateName: serviceTemplate.Name,
-			TemplateSpec: serviceTemplate.Spec.AIMServiceTemplateSpecCommon,
-			Namespace:    serviceTemplate.Namespace,
-			Image:        observation.Model.ModelSpec.Image,
-			Env:          serviceTemplate.Spec.Env,
+	if observation.discovery.shouldRun {
+		discoveryJob := buildDiscoveryJob(discoveryJobBuilderInputs{
+			templateName: serviceTemplate.Name,
+			templateSpec: serviceTemplate.Spec.AIMServiceTemplateSpecCommon,
+			namespace:    serviceTemplate.Namespace,
+			image:        observation.Model.modelSpec.Image,
+			env:          serviceTemplate.Spec.Env,
 		})
 		_ = controllerutil.SetOwnerReference(serviceTemplate, discoveryJob, r.Scheme)
 		objects = append(objects, discoveryJob)
@@ -259,22 +259,22 @@ func (r *ClusterServiceTemplateReconciler) Project(
 	sh := controllerutils.NewStatusHelper(status, cm)
 
 	// Project runtimeConfig first - highest priority
-	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.RuntimeConfig); fatal {
+	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.runtimeConfig); fatal {
 		return
 	}
 
 	// Project model - if not found, stop
-	if fatal := projectServiceTemplateModel(status, cm, sh, observation.Model); fatal {
+	if fatal := projectServiceTemplateModel(status, cm, sh, observation.model); fatal {
 		return
 	}
 
 	// Project cluster GPU availability
-	if fatal := projectServiceTemplateCluster(status, cm, sh, observation.Cluster); fatal {
+	if fatal := projectServiceTemplateCluster(status, cm, sh, observation.cluster); fatal {
 		return
 	}
 
 	// Project discovery (lowest priority)
-	projectDiscovery(status, cm, sh, observation.Discovery)
+	projectDiscovery(status, cm, sh, observation.discovery)
 }
 
 func (r *ServiceTemplateReconciler) Project(
@@ -285,7 +285,7 @@ func (r *ServiceTemplateReconciler) Project(
 	sh := controllerutils.NewStatusHelper(status, cm)
 
 	// Project runtimeConfig first - highest priority
-	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.RuntimeConfig); fatal {
+	if fatal := aimruntimeconfig.ProjectRuntimeConfigObservation(cm, sh, observation.runtimeConfig); fatal {
 		return
 	}
 
@@ -300,10 +300,10 @@ func (r *ServiceTemplateReconciler) Project(
 	}
 
 	// Project cache status
-	if fatal := projectServiceTemplateCache(status, cm, sh, observation.Cache); fatal {
+	if fatal := projectServiceTemplateCache(status, cm, sh, observation.cache); fatal {
 		return
 	}
 
 	// Project discovery (lowest priority)
-	projectDiscovery(status, cm, sh, observation.Discovery)
+	projectDiscovery(status, cm, sh, observation.discovery)
 }
