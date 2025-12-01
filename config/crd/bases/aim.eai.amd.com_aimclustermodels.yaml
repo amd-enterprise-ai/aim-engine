@@ -592,6 +592,13 @@ spec:
                           Extracted from: org.opencontainers.image.version
                         type: string
                     type: object
+                  originalLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      OriginalLabels contains the raw OCI image labels as a JSON object.
+                      This preserves all labels from the image, including those not mapped to structured fields.
+                    type: object
                 type: object
               observedGeneration:
                 description: ObservedGeneration is the most recent generation observed

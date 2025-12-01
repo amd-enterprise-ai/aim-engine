@@ -54,6 +54,11 @@ type ImageMetadata struct {
 	// OCI contains standard OCI image metadata.
 	// +optional
 	OCI *OCIMetadata `json:"oci,omitempty"`
+
+	// OriginalLabels contains the raw OCI image labels as a JSON object.
+	// This preserves all labels from the image, including those not mapped to structured fields.
+	// +optional
+	OriginalLabels map[string]string `json:"originalLabels,omitempty"`
 }
 
 // ModelMetadata contains AMD Silogen model-specific metadata extracted from image labels.

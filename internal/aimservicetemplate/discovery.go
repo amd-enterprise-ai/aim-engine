@@ -167,7 +167,7 @@ const (
 
 	// discoveryJobTTLSeconds defines how long completed discovery jobs persist
 	// before automatic cleanup. This allows time for status inspection and log retrieval.
-	discoveryJobTTLSeconds = 60
+	discoveryJobTTLSeconds = 600 // 10 minutes
 )
 
 // discoveryJobBuilderInputs contains the data needed to build a discovery job
@@ -464,7 +464,7 @@ func parseDiscoveryLogs(ctx context.Context, k8sClient client.Client, clientset 
 	result := results[0]
 
 	// Convert raw discovery profile to AIMProfile
-	profile, err := convertToAIMProfile(result.Profile)
+	profile, err := convertToAIMProfile(result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert profile: %w", err)
 	}
@@ -478,24 +478,31 @@ func parseDiscoveryLogs(ctx context.Context, k8sClient client.Client, clientset 
 	}, nil
 }
 
-// convertToAIMProfile converts the raw discovery profile to AIMProfile API type
-func convertToAIMProfile(raw discoveryProfileResult) (*aimv1alpha1.AIMProfile, error) {
+// convertToAIMProfile converts the raw discovery result to AIMProfile API type
+func convertToAIMProfile(result discoveryResult) (*aimv1alpha1.AIMProfile, error) {
 	// Marshal engine args to JSON
-	engineArgsBytes, err := json.Marshal(raw.EngineArgs)
+	engineArgsBytes, err := json.Marshal(result.Profile.EngineArgs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal engine args: %w", err)
 	}
 
+	// Marshal the entire discovery result to preserve the original output
+	originalOutputBytes, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal original discovery output: %w", err)
+	}
+
 	return &aimv1alpha1.AIMProfile{
 		EngineArgs: &apiextensionsv1.JSON{Raw: engineArgsBytes},
-		EnvVars:    raw.EnvVars,
+		EnvVars:    result.Profile.EnvVars,
 		Metadata: aimv1alpha1.AIMProfileMetadata{
-			Engine:    raw.Metadata.Engine,
-			GPU:       raw.Metadata.GPU,
-			GPUCount:  raw.Metadata.GPUCount,
-			Metric:    aimv1alpha1.AIMMetric(raw.Metadata.Metric),
-			Precision: aimv1alpha1.AIMPrecision(raw.Metadata.Precision),
+			Engine:    result.Profile.Metadata.Engine,
+			GPU:       result.Profile.Metadata.GPU,
+			GPUCount:  result.Profile.Metadata.GPUCount,
+			Metric:    aimv1alpha1.AIMMetric(result.Profile.Metadata.Metric),
+			Precision: aimv1alpha1.AIMPrecision(result.Profile.Metadata.Precision),
 		},
+		OriginalDiscoveryOutput: &apiextensionsv1.JSON{Raw: originalOutputBytes},
 	}, nil
 }
 

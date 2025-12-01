@@ -196,8 +196,9 @@ func parseImageLabels(labels map[string]string) (*aimv1alpha1.ImageMetadata, err
 	// Downstream logic will detect missing recommendedDeployments if needed
 
 	metadata := &aimv1alpha1.ImageMetadata{
-		OCI:   &aimv1alpha1.OCIMetadata{},
-		Model: &aimv1alpha1.ModelMetadata{},
+		OCI:            &aimv1alpha1.OCIMetadata{},
+		Model:          &aimv1alpha1.ModelMetadata{},
+		OriginalLabels: labels,
 	}
 
 	// Parse OCI standard labels

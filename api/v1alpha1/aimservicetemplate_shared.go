@@ -189,6 +189,14 @@ type AIMProfile struct {
 
 	// Metadata provides structured information about this deployment profile's characteristics.
 	Metadata AIMProfileMetadata `json:"metadata,omitempty"`
+
+	// OriginalDiscoveryOutput contains the raw discovery job JSON output.
+	// This preserves the complete discovery result from the dry-run container,
+	// including all fields that may not be mapped to structured fields above.
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	// +optional
+	OriginalDiscoveryOutput *apiextensionsv1.JSON `json:"originalDiscoveryOutput,omitempty"`
 }
 
 // AIMProfileMetadata describes the characteristics of a cached deployment profile.
