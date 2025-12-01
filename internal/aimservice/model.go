@@ -336,24 +336,24 @@ func projectServiceModel(
 	// Check for image parse errors (terminal error)
 	if obs.ImageParseErr != nil {
 		h.Failed(aimv1alpha1.AIMServiceReasonInvalidImageReference, obs.ImageParseErr.Error())
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonInvalidImageReference, obs.ImageParseErr.Error(), controllerutils.LevelWarning)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonInvalidImageReference, obs.ImageParseErr.Error(), controllerutils.AsWarning())
 		return true // Terminal error, stop reconciliation
 	}
 
 	if obs.ModelResolutionErr != nil {
 		if obs.MultipleModels {
 			h.Degraded(aimv1alpha1.AIMServiceReasonMultipleModelsFound, obs.ModelResolutionErr.Error())
-			cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonMultipleModelsFound, "Multiple models found with same image", controllerutils.LevelWarning)
+			cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonMultipleModelsFound, "Multiple models found with same image", controllerutils.AsWarning())
 		} else {
 			h.Degraded(aimv1alpha1.AIMServiceReasonModelNotFound, obs.ModelResolutionErr.Error())
-			cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonModelNotFound, obs.ModelResolutionErr.Error(), controllerutils.LevelWarning)
+			cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonModelNotFound, obs.ModelResolutionErr.Error(), controllerutils.AsWarning())
 		}
 		return true
 	}
 
 	if obs.ShouldCreateModel {
 		h.Progressing(aimv1alpha1.AIMServiceReasonCreatingModel, "Creating model for service")
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonCreatingModel, "Model being created", controllerutils.LevelNormal)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonCreatingModel, "Model being created", controllerutils.AsInfo())
 		return false
 	}
 
@@ -364,12 +364,12 @@ func projectServiceModel(
 
 	if !obs.ModelReady {
 		h.Progressing(aimv1alpha1.AIMServiceReasonModelNotReady, fmt.Sprintf("Model %q is not ready", obs.modelName))
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonModelNotReady, fmt.Sprintf("Model %q is not ready", obs.modelName), controllerutils.LevelNormal)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonModelNotReady, fmt.Sprintf("Model %q is not ready", obs.modelName), controllerutils.AsInfo())
 		return true
 	}
 
 	// Model found and ready
-	cm.MarkTrue(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonModelResolved, fmt.Sprintf("Model %q is ready", obs.modelName), controllerutils.LevelNormal)
+	cm.MarkTrue(aimv1alpha1.AIMServiceConditionModelResolved, aimv1alpha1.AIMServiceReasonModelResolved, fmt.Sprintf("Model %q is ready", obs.modelName), controllerutils.AsInfo())
 	status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
 		Name:  obs.modelName,
 		Scope: aimv1alpha1.AIMResolutionScopeNamespace,

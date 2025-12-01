@@ -263,14 +263,14 @@ func projectReadyCondition(cm *controllerutils.ConditionManager, obs Observation
 	ready := obs.pvc.ready && obs.job.succeeded
 
 	if ready {
-		cm.Set(aimv1alpha1.AIMModelCacheDownloadReady, metav1.ConditionTrue, aimv1alpha1.AIMModelCacheReasonWarm, "", controllerutils.LevelNormal)
+		cm.Set(aimv1alpha1.AIMModelCacheDownloadReady, metav1.ConditionTrue, aimv1alpha1.AIMModelCacheReasonWarm, "", controllerutils.AsInfo())
 	} else {
 		if !canCreate {
 			cm.Set(aimv1alpha1.AIMModelCacheDownloadReady, metav1.ConditionFalse,
-				aimv1alpha1.AIMModelCacheReasonWaitingForPVC, "", controllerutils.LevelNormal)
+				aimv1alpha1.AIMModelCacheReasonWaitingForPVC, "", controllerutils.AsInfo())
 		} else {
 			cm.Set(aimv1alpha1.AIMModelCacheDownloadReady, metav1.ConditionFalse,
-				aimv1alpha1.AIMModelCacheReasonDownloading, "", controllerutils.LevelNormal)
+				aimv1alpha1.AIMModelCacheReasonDownloading, "", controllerutils.AsInfo())
 		}
 	}
 }
@@ -285,17 +285,17 @@ func projectProgressingCondition(cm *controllerutils.ConditionManager, obs Obser
 	if progressing {
 		if !obs.pvc.ready && !canCreate {
 			cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionTrue,
-				aimv1alpha1.AIMModelCacheReasonWaitingForPVC, "", controllerutils.LevelNormal)
+				aimv1alpha1.AIMModelCacheReasonWaitingForPVC, "", controllerutils.AsInfo())
 		} else if obs.job.PendingOrRunning || (!obs.job.found && canCreate) {
 			cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionTrue,
-				aimv1alpha1.AIMModelCacheReasonDownloading, "", controllerutils.LevelNormal)
+				aimv1alpha1.AIMModelCacheReasonDownloading, "", controllerutils.AsInfo())
 		} else {
 			cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionTrue,
-				aimv1alpha1.AIMModelCacheReasonRetryBackoff, "", controllerutils.LevelNormal)
+				aimv1alpha1.AIMModelCacheReasonRetryBackoff, "", controllerutils.AsInfo())
 		}
 	} else {
 		cm.Set(string(constants.AIMStatusProgressing), metav1.ConditionFalse,
-			aimv1alpha1.AIMModelCacheReasonRetryBackoff, "", controllerutils.LevelWarning)
+			aimv1alpha1.AIMModelCacheReasonRetryBackoff, "", controllerutils.AsWarning())
 	}
 }
 
@@ -305,17 +305,17 @@ func projectFailureCondition(cm *controllerutils.ConditionManager, obs Observati
 
 	if !failure {
 		cm.Set(string(constants.AIMStatusFailed), metav1.ConditionFalse,
-			aimv1alpha1.AIMModelCacheReasonNoFailure, "", controllerutils.LevelNormal)
+			aimv1alpha1.AIMModelCacheReasonNoFailure, "", controllerutils.AsInfo())
 		return
 	}
 
 	// Determine specific failure reason
 	if obs.pvc.lost {
 		cm.Set(string(constants.AIMStatusFailed), metav1.ConditionTrue,
-			aimv1alpha1.AIMModelCacheReasonPVCLost, "", controllerutils.LevelWarning)
+			aimv1alpha1.AIMModelCacheReasonPVCLost, "", controllerutils.AsWarning())
 	} else if obs.job.failed {
 		cm.Set(string(constants.AIMStatusFailed), metav1.ConditionTrue,
-			aimv1alpha1.AIMModelCacheReasonDownloadFailed, "", controllerutils.LevelWarning)
+			aimv1alpha1.AIMModelCacheReasonDownloadFailed, "", controllerutils.AsWarning())
 	}
 }
 

@@ -169,7 +169,7 @@ func projectServiceTemplateCache(
 	if cache := observation.bestAvailableCache; cache != nil {
 		switch cache.Status.Status {
 		case constants.AIMStatusReady:
-			cm.MarkTrue(aimv1alpha1.AIMTemplateCacheWarmConditionType, aimv1alpha1.AIMTemplateReasonCacheReady, "Cache is available and ready", controllerutils.LevelNormal)
+			cm.MarkTrue(aimv1alpha1.AIMTemplateCacheWarmConditionType, aimv1alpha1.AIMTemplateReasonCacheReady, "Cache is available and ready", controllerutils.AsInfo())
 
 			// Set the cache resolution if the best cache is available
 			status.ResolvedCache = &aimv1alpha1.AIMResolvedReference{
@@ -181,14 +181,14 @@ func projectServiceTemplateCache(
 			}
 
 		case constants.AIMStatusPending, constants.AIMStatusProgressing:
-			cm.MarkFalse(aimv1alpha1.AIMTemplateCacheWarmConditionType, aimv1alpha1.AIMTemplateReasonWaitingForCache, "Waiting for cache to be ready", controllerutils.LevelNormal)
+			cm.MarkFalse(aimv1alpha1.AIMTemplateCacheWarmConditionType, aimv1alpha1.AIMTemplateReasonWaitingForCache, "Waiting for cache to be ready", controllerutils.AsInfo())
 			h.Progressing(aimv1alpha1.AIMTemplateReasonWaitingForCache, "Waiting for cache to be ready")
 		case constants.AIMStatusDegraded:
-			cm.MarkFalse(aimv1alpha1.AIMTemplateCacheWarmConditionType, aimv1alpha1.AIMTemplateReasonCacheDegraded, "Cache degraded", controllerutils.LevelWarning)
+			cm.MarkFalse(aimv1alpha1.AIMTemplateCacheWarmConditionType, aimv1alpha1.AIMTemplateReasonCacheDegraded, "Cache degraded", controllerutils.AsWarning())
 			h.Degraded(aimv1alpha1.AIMTemplateReasonCacheDegraded, "Cache is degraded")
 			return true // Fatal - stop reconciliation
 		case constants.AIMStatusFailed:
-			cm.MarkFalse(aimv1alpha1.AIMTemplateCacheWarmConditionType, aimv1alpha1.AIMTemplateReasonCacheFailed, "Cache failed", controllerutils.LevelWarning)
+			cm.MarkFalse(aimv1alpha1.AIMTemplateCacheWarmConditionType, aimv1alpha1.AIMTemplateReasonCacheFailed, "Cache failed", controllerutils.AsWarning())
 			h.Failed(aimv1alpha1.AIMTemplateReasonCacheFailed, "Cache has failed")
 			return true // Fatal - stop reconciliation
 		}

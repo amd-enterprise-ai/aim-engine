@@ -128,11 +128,11 @@ func projectModelMetadata(
 		if err := observation.FormatError; err != nil {
 			if err.Reason == "MetadataMissingRecommendedDeployments" {
 				// Non-fatal, might be a base image with missing labels
-				cm.Set(aimv1alpha1.AIMModelConditionMetadataExtracted, metav1.ConditionFalse, err.Reason, err.Error(), controllerutils.LevelNone)
+				cm.Set(aimv1alpha1.AIMModelConditionMetadataExtracted, metav1.ConditionFalse, err.Reason, err.Error())
 			} else {
 				// Fatal, labels found but wrong format
 				h.Failed(err.Reason, err.Error())
-				cm.Set(aimv1alpha1.AIMModelConditionMetadataExtracted, metav1.ConditionFalse, err.Reason, err.Error(), controllerutils.LevelWarning)
+				cm.Set(aimv1alpha1.AIMModelConditionMetadataExtracted, metav1.ConditionFalse, err.Reason, err.Error(), controllerutils.AsWarning())
 				return true
 			}
 		}
@@ -156,7 +156,7 @@ func projectModelMetadata(
 				metav1.ConditionFalse,
 				aimv1alpha1.AIMModelReasonMetadataExtractionFailed,
 				fmt.Sprintf("Failed to extract metadata: %v", observation.Error),
-				controllerutils.LevelWarning,
+				controllerutils.AsWarning(),
 			)
 			// Keep going
 		}
@@ -167,7 +167,6 @@ func projectModelMetadata(
 			metav1.ConditionTrue,
 			"MetadataExtracted",
 			"Successfully extracted image metadata",
-			controllerutils.LevelNone,
 		)
 	}
 	// Note: If Error is nil and ExtractedMetadata is nil, metadata extraction was not attempted
@@ -197,7 +196,7 @@ func setMetadataExtractionConditionFromRegistry(
 		metav1.ConditionFalse,
 		reason,
 		regErr.Error(),
-		controllerutils.LevelWarning,
+		controllerutils.AsWarning(),
 	)
 }
 

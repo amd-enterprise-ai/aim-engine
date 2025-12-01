@@ -391,3 +391,65 @@ func TestComposability(t *testing.T) {
 		}
 	})
 }
+
+func TestHighLevelDefaults(t *testing.T) {
+	tests := []struct {
+		name          string
+		opt           ObservabilityOption
+		expectedEvent EventMode
+		expectedLevel EventLevel
+		expectedLog   LogMode
+		expectedLogLv int
+	}{
+		{
+			name:          "AsInfo",
+			opt:           AsInfo(),
+			expectedEvent: EventOnTransition,
+			expectedLevel: LevelNormal,
+			expectedLog:   LogOnTransition,
+			expectedLogLv: 1,
+		},
+		{
+			name:          "AsWarning",
+			opt:           AsWarning(),
+			expectedEvent: EventOnTransition,
+			expectedLevel: LevelWarning,
+			expectedLog:   LogOnTransition,
+			expectedLogLv: 0,
+		},
+		{
+			name:          "AsError",
+			opt:           AsError(),
+			expectedEvent: EventAlways,
+			expectedLevel: LevelWarning,
+			expectedLog:   LogAlways,
+			expectedLogLv: 0,
+		},
+		{
+			name:          "Silent",
+			opt:           Silent(),
+			expectedEvent: EventNone,
+			expectedLog:   LogNone,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := defaultConfig()
+			tt.opt(&cfg)
+
+			if cfg.eventMode != tt.expectedEvent {
+				t.Errorf("expected eventMode=%v, got %v", tt.expectedEvent, cfg.eventMode)
+			}
+			if tt.expectedEvent != EventNone && cfg.eventLevel != tt.expectedLevel {
+				t.Errorf("expected eventLevel=%v, got %v", tt.expectedLevel, cfg.eventLevel)
+			}
+			if cfg.logMode != tt.expectedLog {
+				t.Errorf("expected logMode=%v, got %v", tt.expectedLog, cfg.logMode)
+			}
+			if tt.expectedLog != LogNone && cfg.logLevel != tt.expectedLogLv {
+				t.Errorf("expected logLevel=%v, got %v", tt.expectedLogLv, cfg.logLevel)
+			}
+		})
+	}
+}

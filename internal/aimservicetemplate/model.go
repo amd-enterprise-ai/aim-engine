@@ -138,11 +138,11 @@ func projectServiceTemplateModel(
 	if !obs.modelFound {
 		msg := fmt.Sprintf("Model %s not found in scope", obs.modelName)
 		h.Degraded(aimv1alpha1.AIMTemplateModelNotFound, msg)
-		cm.MarkFalse(aimv1alpha1.AIMServiceTemplateConditionModelFound, aimv1alpha1.AIMTemplateModelNotFound, msg, controllerutils.LevelWarning)
+		cm.MarkFalse(aimv1alpha1.AIMServiceTemplateConditionModelFound, aimv1alpha1.AIMTemplateModelNotFound, msg, controllerutils.AsWarning())
 		return true // Fatal - stop reconciliation
 	}
 
-	cm.MarkTrue(aimv1alpha1.AIMServiceTemplateConditionModelFound, aimv1alpha1.AIMTemplateReasonModelFound, fmt.Sprintf("Model '%s' found", obs.modelName), controllerutils.LevelNone)
+	cm.MarkTrue(aimv1alpha1.AIMServiceTemplateConditionModelFound, aimv1alpha1.AIMTemplateReasonModelFound, fmt.Sprintf("Model '%s' found", obs.modelName))
 	status.ResolvedModel = obs.resolvedModel
 	return false // Continue
 }

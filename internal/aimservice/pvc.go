@@ -224,18 +224,18 @@ func projectServicePVC(
 
 	if obs.ShouldCreatePVC {
 		h.Progressing(aimv1alpha1.AIMServiceReasonCreatingPVC, "Creating service PVC for model storage")
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionStorageReady, aimv1alpha1.AIMServiceReasonCreatingPVC, "PVC being created", controllerutils.LevelNormal)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionStorageReady, aimv1alpha1.AIMServiceReasonCreatingPVC, "PVC being created", controllerutils.AsInfo())
 		return false
 	}
 
 	if obs.PVCExists && !obs.PVCReady {
 		h.Progressing(aimv1alpha1.AIMServiceReasonPVCNotBound, "Waiting for PVC to be bound")
-		cm.MarkFalse(aimv1alpha1.AIMServiceConditionStorageReady, aimv1alpha1.AIMServiceReasonPVCNotBound, "PVC is not bound yet", controllerutils.LevelNormal)
+		cm.MarkFalse(aimv1alpha1.AIMServiceConditionStorageReady, aimv1alpha1.AIMServiceReasonPVCNotBound, "PVC is not bound yet", controllerutils.AsInfo())
 		return false
 	}
 
 	if obs.PVCReady {
-		cm.MarkTrue(aimv1alpha1.AIMServiceConditionStorageReady, aimv1alpha1.AIMServiceReasonStorageReady, "PVC is ready", controllerutils.LevelNormal)
+		cm.MarkTrue(aimv1alpha1.AIMServiceConditionStorageReady, aimv1alpha1.AIMServiceReasonStorageReady, "PVC is ready", controllerutils.AsInfo())
 	}
 
 	return false

@@ -330,9 +330,9 @@ func (r *Reconciler) projectTemplateCondition(cm *controllerutils.ConditionManag
 	if !obs.template.found {
 		// TODO set degraded and return
 		cm.Set(aimv1alpha1.AIMTemplateCacheConditionTemplateFound, metav1.ConditionFalse, aimv1alpha1.AIMTemplateReasonAwaitingTemplate,
-			fmt.Sprintf("Waiting for template to be created: %s", obs.template.error), controllerutils.LevelWarning)
+			fmt.Sprintf("Waiting for template to be created: %s", obs.template.error), controllerutils.AsWarning())
 	} else {
-		cm.Set(aimv1alpha1.AIMTemplateCacheConditionTemplateFound, metav1.ConditionTrue, aimv1alpha1.AIMTemplateReasonTemplateFound, "", controllerutils.LevelNone)
+		cm.Set(aimv1alpha1.AIMTemplateCacheConditionTemplateFound, metav1.ConditionTrue, aimv1alpha1.AIMTemplateReasonTemplateFound, "")
 	}
 }
 
