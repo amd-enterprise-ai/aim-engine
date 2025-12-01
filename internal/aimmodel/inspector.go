@@ -31,18 +31,15 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/google/go-containerregistry/pkg/authn"
-	"github.com/google/go-containerregistry/pkg/authn/k8schain"
-	kauth "github.com/google/go-containerregistry/pkg/authn/kubernetes"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
-
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/registry"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
 // inspectImage extracts metadata from a container image using the provided image pull secrets.
@@ -78,29 +75,17 @@ func inspectImage(
 	}
 
 	// Build keychain for authentication
-	var keychain authn.Keychain
-	if clientset != nil && secretNamespace != "" && len(imagePullSecrets) > 0 {
-		// Convert LocalObjectReference to secret names
+	if len(imagePullSecrets) > 0 && secretNamespace != "" {
 		secretNames := make([]string, len(imagePullSecrets))
 		for i, secret := range imagePullSecrets {
 			secretNames[i] = secret.Name
 		}
-
 		logger.V(1).Info("Using image pull secrets for authentication", "secrets", secretNames, "namespace", secretNamespace)
+	}
 
-		// Create k8s keychain with the provided secrets
-		kc, err := k8schain.New(ctx, clientset, k8schain.Options{
-			Namespace:          secretNamespace,
-			ImagePullSecrets:   secretNames,
-			ServiceAccountName: kauth.NoServiceAccount,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create k8s keychain: %w", err)
-		}
-		keychain = kc
-	} else {
-		// Fall back to default keychain (uses docker config, etc.)
-		keychain = authn.DefaultKeychain
+	keychain, err := registry.BuildKeychain(ctx, clientset, secretNamespace, imagePullSecrets)
+	if err != nil {
+		return nil, err
 	}
 
 	// Fetch the image descriptor
