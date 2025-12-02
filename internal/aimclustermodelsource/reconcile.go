@@ -73,7 +73,15 @@ func (r *ClusterModelSourceReconciler) Fetch(
 	}
 	result.existingModels = modelList.Items
 
-	// 2. Query registry for available images
+	// 2. Check if we can skip registry queries (all filters are exact image references)
+	staticImages := extractStaticImages(source.Spec.Filters)
+	if len(staticImages) > 0 && len(staticImages) == len(source.Spec.Filters) {
+		// All filters are exact references - no registry query needed
+		result.registryImages = staticImages
+		return result, nil
+	}
+
+	// 3. Query registry for available images
 	registryClient := NewRegistryClient(r.Clientset, constants.GetOperatorNamespace())
 	images, err := registryClient.ListImages(ctx, source.Spec)
 	if err != nil {
@@ -234,8 +242,13 @@ func (r *ClusterModelSourceReconciler) Project(
 
 	// Update metrics
 	status.DiscoveredModels = len(obs.existingByURI) + len(obs.newImages)
-	now := metav1.NewTime(time.Now())
-	status.LastSyncTime = &now
+
+	// Update LastSyncTime on every successful sync
+	// Status updates don't trigger reconciliations due to GenerationChangedPredicate
+	if obs.registryReachable {
+		now := metav1.NewTime(time.Now())
+		status.LastSyncTime = &now
+	}
 
 	// Update discovered images summary (limited to most recent 50)
 	status.DiscoveredImages = buildDiscoveredImagesSummary(obs.filteredImages, obs.existingByURI)

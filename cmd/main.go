@@ -213,6 +213,14 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterModel")
 		os.Exit(1)
 	}
+	if err := (&controller.AIMClusterModelSourceReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Clientset: clientset,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterModelSource")
+		os.Exit(1)
+	}
 	// Note: AIMClusterRuntimeConfig has no controller - it's a data-only resource
 	if err := (&controller.AIMClusterServiceTemplateReconciler{
 		Client:    mgr.GetClient(),
@@ -262,6 +270,15 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "AIMTemplateCache")
 		os.Exit(1)
 	}
+	//if err := (&controller.AIMTemplateCacheReconciler{
+	//	Client:    mgr.GetClient(),
+	//	Scheme:    mgr.GetScheme(),
+	//	Clientset: clientset,
+	//}).SetupWithManager(mgr); err != nil {
+	//	setupLog.Error(err, "unable to create controller", "controller", "AIMTemplateCache")
+	//	os.Exit(1)
+	//}
+
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

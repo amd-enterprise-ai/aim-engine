@@ -126,8 +126,39 @@ type RegistryImage struct {
 // Special handling for docker.io which doesn't require the registry prefix.
 func (ri RegistryImage) ToImageURI() string {
 	// Docker Hub special case - no registry prefix
-	if ri.Registry == "docker.io" || ri.Registry == "" {
+	if ri.Registry == DockerRegistry || ri.Registry == "" {
 		return fmt.Sprintf("%s:%s", ri.Repository, ri.Tag)
 	}
 	return fmt.Sprintf("%s/%s:%s", ri.Registry, ri.Repository, ri.Tag)
+}
+
+// extractStaticImages converts filters that are exact image references (no wildcards, with tag)
+// into RegistryImage objects. This allows bypassing registry queries for static image lists.
+// Returns only the filters that are static - filters with wildcards or no tag are skipped.
+func extractStaticImages(filters []aimv1alpha1.ModelSourceFilter) []RegistryImage {
+	var images []RegistryImage
+
+	for _, filter := range filters {
+		// Parse the filter to check if it's a static reference
+		parsed := parseImageFilter(filter.Image)
+
+		// Skip if it has wildcards or no tag specified
+		if parsed.hasWildcard || parsed.tag == "" {
+			continue
+		}
+
+		// Static image reference - convert to RegistryImage
+		registry := parsed.registry
+		if registry == "" {
+			registry = DockerRegistry
+		}
+
+		images = append(images, RegistryImage{
+			Registry:   registry,
+			Repository: parsed.repository,
+			Tag:        parsed.tag,
+		})
+	}
+
+	return images
 }

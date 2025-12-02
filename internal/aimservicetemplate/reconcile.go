@@ -211,7 +211,7 @@ func (r *ClusterServiceTemplateReconciler) Plan(
 		discoveryJob := buildDiscoveryJob(discoveryJobBuilderInputs{
 			templateName: clusterServiceTemplate.Name,
 			templateSpec: clusterServiceTemplate.Spec.AIMServiceTemplateSpecCommon,
-			namespace:    clusterServiceTemplate.Namespace,
+			namespace:    constants.GetOperatorNamespace(),
 			image:        observation.model.modelSpec.Image,
 			// TODO should cluster service template have envs?
 			// env:          clusterServiceTemplate.Spec.env,

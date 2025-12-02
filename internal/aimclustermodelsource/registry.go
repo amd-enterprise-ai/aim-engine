@@ -172,7 +172,9 @@ func (rc *RegistryClient) fetchJSON(ctx context.Context, url string, target inte
 	if err != nil {
 		return fmt.Errorf("failed to fetch %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

@@ -64,29 +64,55 @@ spec:
                   Each filter specifies an image pattern with optional version constraints and exclusions.
                   Multiple filters are combined with OR logic (any match includes the image).
                 items:
-                  description: ModelSourceFilter defines a pattern for discovering
-                    images.
+                  description: |-
+                    ModelSourceFilter defines a pattern for discovering images.
+                    Supports multiple formats:
+                    - Repository patterns: "org/repo*" - matches repositories with wildcards
+                    - Repository with tag: "org/repo:1.0.0" - exact tag match
+                    - Full URI: "ghcr.io/org/repo:1.0.0" - overrides registry and tag
+                    - Full URI with wildcard: "ghcr.io/org/repo*" - overrides registry, matches pattern
                   properties:
                     exclude:
                       description: |-
-                        Exclude lists specific images to skip (exact match on repository name).
+                        Exclude lists specific repository names to skip (exact match on repository name only, not registry).
                         Useful for excluding base images or experimental versions.
-                        Example: ["amdenterpriseai/aim-base", "amdenterpriseai/aim-experimental"]
+
+                        Examples:
+                        - ["amdenterpriseai/aim-base", "amdenterpriseai/aim-experimental"]
+                        - ["silogen/aim-base"] - works with "ghcr.io/silogen/aim-*" (registry is not checked in exclusion)
+
+                        Note: Exclusions match against repository names (e.g., "silogen/aim-base"), not full URIs.
                       items:
                         type: string
                       type: array
                     image:
                       description: |-
-                        Image pattern with wildcard support.
-                        Examples: "amdenterpriseai/aim-*", "*/llama-*"
+                        Image pattern with wildcard and full URI support.
+
+                        Supported formats:
+                        - Repository pattern: "amdenterpriseai/aim-*"
+                        - Repository with tag: "silogen/aim-llama:1.0.0" (overrides versions field)
+                        - Full URI: "ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1" (overrides spec.registry and versions)
+                        - Full URI with wildcard: "ghcr.io/silogen/aim-*" (overrides spec.registry)
+
+                        When a full URI is specified (including registry like ghcr.io), only images from that
+                        registry will match. When a tag is included, it takes precedence over the versions field.
+
                         Wildcard: * matches any sequence of characters.
                       type: string
                     versions:
                       description: |-
                         Versions specifies semantic version constraints for this filter.
                         If specified, overrides the global Versions field.
-                        Only tags that parse as valid semver are considered.
+                        Only tags that parse as valid semver are considered (including prereleases like 0.8.1-rc1).
+                        Ignored if the Image field includes an explicit tag (e.g., "repo:1.0.0").
+
                         Examples: ">=1.0.0", "<2.0.0", "~1.2.0" (patch updates), "^1.0.0" (minor updates)
+
+                        Prerelease versions (e.g., 0.8.1-rc1) are supported and follow semver rules:
+                        - 0.8.1-rc1 matches ">=0.8.0" (prerelease is part of version 0.8.1)
+                        - Use ">=0.8.1-rc1" to match only that prerelease or higher
+                        - Leave empty to match all tags (including prereleases and non-semver tags)
                       items:
                         type: string
                       type: array

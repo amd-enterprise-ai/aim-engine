@@ -128,9 +128,9 @@ func TestBuildClusterModel(t *testing.T) {
 	}
 
 	// Check annotations
-	if model.Annotations["aim.eai.amd.com/source-registry"] != "docker.io" {
-		t.Errorf("Registry annotation = %v, want docker.io",
-			model.Annotations["aim.eai.amd.com/source-registry"])
+	if model.Annotations["aim.eai.amd.com/source-registry"] != DockerRegistry {
+		t.Errorf("Registry annotation = %v, want %s",
+			model.Annotations["aim.eai.amd.com/source-registry"], DockerRegistry)
 	}
 
 	if model.Annotations["aim.eai.amd.com/source-repository"] != "amdenterpriseai/aim-llama3" {
@@ -299,5 +299,120 @@ func TestBuildDiscoveredImagesSummaryLimit(t *testing.T) {
 	// Should be limited to 50
 	if len(summary) != 50 {
 		t.Errorf("Summary length = %d, want 50 (max limit)", len(summary))
+	}
+}
+
+func TestExtractStaticImages(t *testing.T) {
+	tests := []struct {
+		name    string
+		filters []aimv1alpha1.ModelSourceFilter
+		want    []RegistryImage
+	}{
+		{
+			name: "single exact image reference",
+			filters: []aimv1alpha1.ModelSourceFilter{
+				{Image: "ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1"},
+			},
+			want: []RegistryImage{
+				{
+					Registry:   "ghcr.io",
+					Repository: "silogen/aim-google-gemma-3-1b-it",
+					Tag:        "0.8.1-rc1",
+				},
+			},
+		},
+		{
+			name: "docker.io image with tag",
+			filters: []aimv1alpha1.ModelSourceFilter{
+				{Image: "silogen/aim-llama:1.0.0"},
+			},
+			want: []RegistryImage{
+				{
+					Registry:   "docker.io",
+					Repository: "silogen/aim-llama",
+					Tag:        "1.0.0",
+				},
+			},
+		},
+		{
+			name: "multiple exact references",
+			filters: []aimv1alpha1.ModelSourceFilter{
+				{Image: "ghcr.io/org/model1:v1"},
+				{Image: "gcr.io/org/model2:v2"},
+			},
+			want: []RegistryImage{
+				{
+					Registry:   "ghcr.io",
+					Repository: "org/model1",
+					Tag:        "v1",
+				},
+				{
+					Registry:   "gcr.io",
+					Repository: "org/model2",
+					Tag:        "v2",
+				},
+			},
+		},
+		{
+			name: "wildcard filter skipped",
+			filters: []aimv1alpha1.ModelSourceFilter{
+				{Image: "ghcr.io/silogen/aim-*"},
+			},
+			want: nil,
+		},
+		{
+			name: "filter without tag skipped",
+			filters: []aimv1alpha1.ModelSourceFilter{
+				{Image: "ghcr.io/silogen/aim-llama"},
+			},
+			want: nil,
+		},
+		{
+			name: "mixed static and dynamic filters",
+			filters: []aimv1alpha1.ModelSourceFilter{
+				{Image: "ghcr.io/org/model:v1"},    // static - included
+				{Image: "ghcr.io/org/aim-*"},       // wildcard - skipped
+				{Image: "docker.io/org/model2:v2"}, // static - included
+				{Image: "docker.io/org/model3"},    // no tag - skipped
+			},
+			want: []RegistryImage{
+				{
+					Registry:   "ghcr.io",
+					Repository: "org/model",
+					Tag:        "v1",
+				},
+				{
+					Registry:   "docker.io",
+					Repository: "org/model2",
+					Tag:        "v2",
+				},
+			},
+		},
+		{
+			name:    "empty filters",
+			filters: []aimv1alpha1.ModelSourceFilter{},
+			want:    nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractStaticImages(tt.filters)
+			if len(got) != len(tt.want) {
+				t.Errorf("extractStaticImages() returned %d images, want %d", len(got), len(tt.want))
+				return
+			}
+			for i := range got {
+				if got[i].Registry != tt.want[i].Registry {
+					t.Errorf("image[%d].Registry = %q, want %q", i, got[i].Registry, tt.want[i].Registry)
+				}
+				if got[i].Repository != tt.want[i].Repository {
+					t.Errorf("image[%d].Repository = %q, want %q", i, got[i].Repository, tt.want[i].Repository)
+				}
+				if got[i].Tag != tt.want[i].Tag {
+					t.Errorf("image[%d].Tag = %q, want %q", i, got[i].Tag, tt.want[i].Tag)
+				}
+			}
+		})
 	}
 }
