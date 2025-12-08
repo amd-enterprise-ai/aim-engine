@@ -362,10 +362,6 @@ cm.MarkFalse(condType, reason, msg, controllerutils.Silent())
 | Critical/persistent error | `AsError()` |
 | Internal state tracking | (no options - silent) |
 
-For detailed documentation, see:
-- [OBSERVABILITY.md](internal/controller/utils/OBSERVABILITY.md) - Full guide with examples
-- [MIGRATION.md](internal/controller/utils/MIGRATION.md) - Migration from old `EventLevel` API
-
 ## Pull Requests
 
 - Keep changes focused and atomic
