@@ -96,9 +96,7 @@ func GetClusterGPUResources(ctx context.Context, k8sClient client.Client) (map[s
 
 	for _, node := range nodes.Items {
 		// Process GPU resources on this node
-
-		// Temporarily skip aggregateNodeResources(...) and do GPU searching based on Labels
-		filterdGPULabelResources(&node, gpuResources)
+		filterGPULabelResources(&node, gpuResources)
 	}
 
 	return gpuResources, nil
@@ -266,9 +264,9 @@ func pickGPUModelToken(tokens []string) string {
 	return ""
 }
 
-// GPU discovery on labels only
+// filterGPULabelResources performs GPU discovery based on node labels only.
 // Skips GPUs where the model cannot be determined from node labels (strict matching requirement).
-func filterdGPULabelResources(node *corev1.Node, aggregate map[string]GPUResourceInfo) {
+func filterGPULabelResources(node *corev1.Node, aggregate map[string]GPUResourceInfo) {
 	for _, resourcePrefix := range []string{"amd.com/", "nvidia.com/"} {
 
 		// Extract GPU model from node labels

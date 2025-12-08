@@ -1,24 +1,26 @@
-// MIT License
-//
-// Copyright (c) 2025 Advanced Micro Devices, Inc.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
+/*
+MIT License
+
+Copyright (c) 2025 Advanced Micro Devices, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
 
 package utils
 
@@ -114,71 +116,33 @@ type ImagePullError struct {
 	IsInitContainer bool
 }
 
-// categorizeImagePullError analyzes an error message to determine if it's auth-related or not-found
-func categorizeImagePullError(message string) ImagePullErrorType {
-	lowerMsg := strings.ToLower(message)
-
-	// Check for authentication/authorization errors
-	authIndicators := []string{
-		"unauthorized",
-		"authentication required",
-		"authentication failed",
-		"401",
-		"403",
-		"forbidden",
-		"denied",
-		"permission denied",
-		"access denied",
-		"credentials",
-	}
-	for _, indicator := range authIndicators {
-		if strings.Contains(lowerMsg, indicator) {
-			return ImagePullErrorAuth
-		}
-	}
-
-	// Check for not-found errors
-	notFoundIndicators := []string{
-		"not found",
-		"404",
-		"manifest unknown",
-		"name unknown",
-		"image not found",
-	}
-	for _, indicator := range notFoundIndicators {
-		if strings.Contains(lowerMsg, indicator) {
-			return ImagePullErrorNotFound
-		}
-	}
-
-	return ImagePullErrorGeneric
-}
-
 func CheckPodImagePullStatus(pod *corev1.Pod) *ImagePullError {
 	for _, containerStatus := range pod.Status.ContainerStatuses {
-		if err := CheckContainerImagePullStatus(containerStatus); err != nil {
-			return nil
+		if err := checkContainerImagePullStatus(containerStatus, false); err != nil {
+			return err
 		}
 	}
 	for _, containerStatus := range pod.Status.InitContainerStatuses {
-		if err := CheckContainerImagePullStatus(containerStatus); err != nil {
-			return nil
+		if err := checkContainerImagePullStatus(containerStatus, true); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func CheckContainerImagePullStatus(containerStatus corev1.ContainerStatus) *ImagePullError {
+func checkContainerImagePullStatus(containerStatus corev1.ContainerStatus, isInitContainer bool) *ImagePullError {
 	if containerStatus.State.Waiting != nil {
 		reason := containerStatus.State.Waiting.Reason
 		if reason == containerStatusReasonImagePullBackOff || reason == containerStatusReasonErrImagePull {
 			message := containerStatus.State.Waiting.Message
+			// Create a simple error to categorize
+			msgErr := &ImageRegistryError{Message: message}
 			pullError := &ImagePullError{
-				Type:            categorizeImagePullError(message),
+				Type:            CategorizeRegistryError(msgErr),
 				Container:       containerStatus.Name,
 				Reason:          reason,
 				Message:         message,
-				IsInitContainer: false,
+				IsInitContainer: isInitContainer,
 			}
 			return pullError
 		}

@@ -256,11 +256,11 @@ func normalizeDeterministicSlice(s []any) []any {
 }
 
 var (
-	LabelValueRegex = regexp.MustCompile(`[^a-z0-9._-]+`)
-	// InvalidNameChars matches characters invalid for Kubernetes resource names
-	InvalidNameChars = regexp.MustCompile(`[^a-z0-9-]+`)
-	// MultiDashes matches multiple consecutive dashes
-	MultiDashes = regexp.MustCompile(`-+`)
+	labelValueRegex = regexp.MustCompile(`[^a-z0-9._-]+`)
+	// invalidNameCharsRegex matches characters invalid for Kubernetes resource names
+	invalidNameCharsRegex = regexp.MustCompile(`[^a-z0-9-]+`)
+	// multiDashesRegex matches multiple consecutive dashes
+	multiDashesRegex = regexp.MustCompile(`-+`)
 )
 
 // SanitizeLabelValue converts a string to a valid Kubernetes label value.
@@ -272,7 +272,7 @@ var (
 func SanitizeLabelValue(s string) (string, error) {
 	// Replace invalid characters with underscores
 	sanitized := strings.ToLower(s)
-	sanitized = LabelValueRegex.ReplaceAllString(sanitized, "_")
+	sanitized = labelValueRegex.ReplaceAllString(sanitized, "_")
 
 	// Trim leading and trailing non-alphanumeric characters
 	sanitized = strings.TrimLeft(sanitized, "_.-")
@@ -412,8 +412,8 @@ func ExtractImageParts(image string) (ImageParts, error) {
 // sanitizeNameComponent sanitizes a name component for Kubernetes resource names
 func sanitizeNameComponent(s string) string {
 	s = strings.ToLower(s)
-	s = InvalidNameChars.ReplaceAllString(s, "-")
-	s = MultiDashes.ReplaceAllString(s, "-")
+	s = invalidNameCharsRegex.ReplaceAllString(s, "-")
+	s = multiDashesRegex.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
 	return s
 }
