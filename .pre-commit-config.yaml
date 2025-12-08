@@ -6,19 +6,21 @@ repos:
     entry: bash -c 'branch=$(git rev-parse --abbrev-ref HEAD); if [[ ! "$branch" =~ ^(fix|feat|build|chore|ci|docs|refactor|perf|test)/.+ ]]; then echo "Error - Branch name must start with one of fix, feat, build, chore, ci, docs, refactor, perf, test, followed by / and descriptive text"; echo "Current branch is $branch"; exit 1; fi'
     language: system
     pass_filenames: false
-    always_run: true
+    stages: [pre-push]
 
   - id: make-generate
     name: Run make generate
     entry: make generate
     language: system
     pass_filenames: false
+    files: ^api/
 
   - id: make-manifests
     name: Run make manifests
     entry: make manifests
     language: system
     pass_filenames: false
+    files: ^api/
 
   - id: third-party-licenses
     name: Generate third-party licenses
@@ -41,9 +43,9 @@ repos:
   - id: golangci-lint
     name: golangci-lint
     description: Fast linters runner for Go. Note that only modified files are linted, so linters like 'unused' that need to scan all files won't work as expected.
-    entry: golangci-lint run --timeout 10m
+    entry: golangci-lint run --new-from-rev=HEAD --timeout 10m
     types: [ go ]
-    language: golang
+    language: system
     require_serial: true
     pass_filenames: false
 
