@@ -31,7 +31,7 @@ import (
 
 const (
 	// operatorNamespaceEnvVar is the environment variable the operator uses to determine its namespace.
-	operatorNamespaceEnvVar = "AIM_OPERATOR_NAMESPACE"
+	operatorNamespaceEnvVar = "AIM_SYSTEM_NAMESPACE"
 
 	// DefaultRuntimeConfigName is the name of the default AIM runtime config
 	DefaultRuntimeConfigName = "default"

@@ -34,7 +34,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // PlanResult contains the desired state changes from the Plan phase.
@@ -199,8 +198,6 @@ func ApplyDesiredState(
 	scheme *runtime.Scheme,
 	desired []client.Object,
 ) error {
-	logger := log.FromContext(ctx)
-
 	if len(desired) == 0 {
 		return nil
 	}
@@ -219,12 +216,6 @@ func ApplyDesiredState(
 	for _, obj := range sorted {
 		gvk := obj.GetObjectKind().GroupVersionKind()
 		key := client.ObjectKeyFromObject(obj)
-
-		logger.V(1).Info("Applying object",
-			"gvk", gvk.String(),
-			"namespace", key.Namespace,
-			"name", key.Name,
-		)
 
 		if err := k8sClient.Patch(
 			ctx,

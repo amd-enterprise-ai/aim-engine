@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -183,10 +184,10 @@ func NewService(opts ...ServiceOption) *aimv1alpha1.AIMService {
 		},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: aimv1alpha1.AIMServiceModel{
-				Ref: ptrTo("test-model"),
+				Ref: ptr.To("test-model"),
 			},
 			TemplateName: "test-template",
-			Replicas:     ptrTo(int32(1)),
+			Replicas:     ptr.To(int32(1)),
 		},
 		Status: aimv1alpha1.AIMServiceStatus{
 			Status: constants.AIMStatusPending,
@@ -368,9 +369,4 @@ func WithPVCPhase(phase corev1.PersistentVolumeClaimPhase) PVCOption {
 	return func(pvc *corev1.PersistentVolumeClaim) {
 		pvc.Status.Phase = phase
 	}
-}
-
-// Helper function
-func ptrTo[T any](v T) *T {
-	return &v
 }
