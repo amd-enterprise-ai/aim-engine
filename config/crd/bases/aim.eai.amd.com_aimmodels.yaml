@@ -59,8 +59,10 @@ spec:
             description: AIMModelSpec defines the desired state of AIMModel.
             properties:
               defaultServiceTemplate:
-                description: DefaultServiceTemplate is the default template to use
-                  for this image, if the user does not provide any
+                description: |-
+                  DefaultServiceTemplate specifies the default AIMServiceTemplate to use when creating services for this model.
+                  When set, services that reference this model will use this template if no template is explicitly specified.
+                  If this is not set, a template will be automatically selected.
                 type: string
               discovery:
                 description: |-
@@ -83,8 +85,9 @@ spec:
                     type: boolean
                 type: object
               env:
-                description: Env contains the environment variables used, if authentication
-                  is needed during the discovery job
+                description: |-
+                  Env specifies environment variables for authentication during model discovery and metadata extraction.
+                  These variables are used for authentication with model registries (e.g., HuggingFace tokens).
                 items:
                   description: EnvVar represents an environment variable present in
                     a Container.
@@ -240,6 +243,9 @@ spec:
                   - name
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               image:
                 description: |-
                   Image is the container image URI for this AIM model.
@@ -275,7 +281,7 @@ spec:
                 type: array
               modelSources:
                 description: |-
-                  ModelSources specifies the model artifacts to use for this model.
+                  ModelSources specifies the model sources to use for this model.
                   When specified, these sources are used instead of auto-discovery from the container image.
                   This enables pre-creating custom models with explicit model sources.
                   The discovery job will validate and enrich these sources with size information.
@@ -315,7 +321,7 @@ spec:
                 type: array
               resources:
                 description: |-
-                  Resources defines the default resource requirements for services using this image.
+                  Resources defines the default resource requirements for services using this model.
                   Template- or service-level values override these defaults.
                 properties:
                   claims:

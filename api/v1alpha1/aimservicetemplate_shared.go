@@ -66,7 +66,7 @@ type AIMServiceTemplateSpecCommon struct {
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 
-	// ModelSources specifies the model artifacts required to run this template.
+	// ModelSources specifies the model sources required to run this template.
 	// When provided, the discovery dry-run will be skipped and these sources will be used directly.
 	// This allows users to explicitly declare model dependencies without requiring a discovery job.
 	// If omitted, a discovery job will be run to automatically determine the required model sources.

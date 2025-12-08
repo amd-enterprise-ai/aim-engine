@@ -36,14 +36,18 @@ const (
 
 // AIMModelCacheSpec defines the desired state of AIMModelCache
 type AIMModelCacheSpec struct {
-	// SourceURI is the source of the model to be downloaded. This is the only
-	// identifier
+	// SourceURI specifies the source location of the model to download.
+	// Supported protocols: hf:// (HuggingFace) and s3:// (S3-compatible storage).
+	// This field uniquely identifies the model cache and is immutable after creation.
+	// Example: hf://meta-llama/Llama-3-8B
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="sourceUri is immutable"
 	// +kubebuilder:validation:Pattern=`^(hf|s3)://[^ \t\r\n]+$`
 	SourceURI string `json:"sourceUri"`
 
-	// StorageClassName specifies the storage class for the cache volume
+	// StorageClassName specifies the storage class for the cache volume.
+	// When not specified, uses the cluster default storage class.
+	// +optional
 	StorageClassName string `json:"storageClassName,omitempty"`
 
 	// Size specifies the size of the cache volume
@@ -56,9 +60,12 @@ type AIMModelCacheSpec struct {
 	// +listMapKey=name
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
-	// ModelDownloadImage is the image used to download the model
-	// +kubebuilder:default="kserve/storage-initializer:v0.16.0-rc0"
-	ModelDownloadImage string `json:"modelDownloadImage"`
+	// ModelDownloadImage specifies the container image used to download and initialize the model cache.
+	// This image runs as a job to download model artifacts from the source URI to the cache volume.
+	// When not specified, defaults to kserve/storage-initializer:v0.16.0.
+	// +optional
+	// +kubebuilder:default="kserve/storage-initializer:v0.16.0"
+	ModelDownloadImage string `json:"modelDownloadImage,omitempty"`
 
 	// ImagePullSecrets references secrets for pulling AIM container images.
 	// +optional

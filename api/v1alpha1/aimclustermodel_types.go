@@ -31,7 +31,14 @@ const (
 	ClusterModelImageIndexKey = ".spec.image"
 )
 
-// AIMClusterModel is the Schema for cluster-scoped AIM model catalog entries.
+// AIMClusterModel is a cluster-scoped model catalog entry for AIM container images.
+//
+// Cluster-scoped models can be referenced by AIMServices in any namespace, making them ideal for
+// shared model deployments across teams and projects. Like namespace-scoped AIMModels, cluster models
+// trigger discovery jobs to extract metadata and generate service templates.
+//
+// When both cluster and namespace models exist for the same container image, services will preferentially
+// use the namespace-scoped AIMModel when referenced by image URI.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=aimclmdl,categories=aim;all

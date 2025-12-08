@@ -59,8 +59,8 @@ spec:
             properties:
               downloadImage:
                 description: |-
-                  The image that should be used to download the models
-                  If not set the model cache controller will decide
+                  DownloadImage specifies the container image used to download and initialize model caches.
+                  When not specified, the controller uses the default model download image.
                 type: string
               env:
                 description: |-
@@ -245,8 +245,9 @@ spec:
                   x-kubernetes-map-type: atomic
                 type: array
               modelSources:
-                description: ModelSources are set by the template that wants these
-                  cached
+                description: |-
+                  ModelSources specifies the model sources to cache for this template.
+                  These sources are typically copied from the resolved template's model sources.
                 items:
                   description: |-
                     AIMModelSource describes a model artifact that must be downloaded for inference.
@@ -281,13 +282,15 @@ spec:
                 type: array
               runtimeConfigName:
                 default: default
-                description: RuntimeConfigName references the AIM runtime configuration
-                  (by name) to use for this template cache.
+                description: |-
+                  RuntimeConfigName references the AIM runtime configuration (by name) to use for this template cache.
+                  The controller looks for a namespace-scoped AIMRuntimeConfig first, then falls back to
+                  cluster-scoped AIMClusterRuntimeConfig.
                 type: string
               storageClassName:
                 description: |-
-                  StorageClassName is the name for the storage class to use for this cache
-                  If not set the cluster default will be used
+                  StorageClassName specifies the storage class for cache volumes.
+                  When not specified, uses the cluster default storage class.
                 type: string
               templateName:
                 description: |-
@@ -298,8 +301,9 @@ spec:
                 minLength: 1
                 type: string
               templateScope:
-                description: AIMServiceTemplateScope is retained for backwards compatibility
-                  with existing consumers.
+                description: |-
+                  TemplateScope indicates whether the template is namespace-scoped or cluster-scoped.
+                  This field is set by the controller during template resolution.
                 enum:
                 - Namespace
                 - Cluster

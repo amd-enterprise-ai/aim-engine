@@ -84,10 +84,13 @@ type AIMModelSpec struct {
 	// +optional
 	Discovery *AIMModelDiscoveryConfig `json:"discovery,omitempty"`
 
-	// DefaultServiceTemplate is the default template to use for this image, if the user does not provide any
+	// DefaultServiceTemplate specifies the default AIMServiceTemplate to use when creating services for this model.
+	// When set, services that reference this model will use this template if no template is explicitly specified.
+	// If this is not set, a template will be automatically selected.
+	// +optional
 	DefaultServiceTemplate string `json:"defaultServiceTemplate,omitempty"`
 
-	// ModelSources specifies the model artifacts to use for this model.
+	// ModelSources specifies the model sources to use for this model.
 	// When specified, these sources are used instead of auto-discovery from the container image.
 	// This enables pre-creating custom models with explicit model sources.
 	// The discovery job will validate and enrich these sources with size information.
@@ -111,7 +114,11 @@ type AIMModelSpec struct {
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 
-	// Env contains the environment variables used, if authentication is needed during the discovery job
+	// Env specifies environment variables for authentication during model discovery and metadata extraction.
+	// These variables are used for authentication with model registries (e.g., HuggingFace tokens).
+	// +optional
+	// +listType=map
+	// +listMapKey=name
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
 	// ServiceAccountName specifies the Kubernetes service account to use for workloads related to this model.
@@ -120,9 +127,9 @@ type AIMModelSpec struct {
 	// +optional
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 
-	// Resources defines the default resource requirements for services using this image.
+	// Resources defines the default resource requirements for services using this model.
 	// Template- or service-level values override these defaults.
-	// +Optional
+	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 

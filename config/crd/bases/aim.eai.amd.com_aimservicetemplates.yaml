@@ -261,7 +261,7 @@ spec:
                   model:
                     description: |-
                       Model is the GPU model name required for this deployment.
-                      Examples: "MI300X", "MI325X"
+                      Examples: `MI300X`, `MI325X`
                     minLength: 1
                     type: string
                 required:
@@ -326,7 +326,7 @@ spec:
                   rule: self == oldSelf
               modelSources:
                 description: |-
-                  ModelSources specifies the model artifacts required to run this template.
+                  ModelSources specifies the model sources required to run this template.
                   When provided, the discovery dry-run will be skipped and these sources will be used directly.
                   This allows users to explicitly declare model dependencies without requiring a discovery job.
                   If omitted, a discovery job will be run to automatically determine the required model sources.

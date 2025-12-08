@@ -240,9 +240,11 @@ spec:
                   x-kubernetes-map-type: atomic
                 type: array
               modelDownloadImage:
-                default: kserve/storage-initializer:v0.16.0-rc0
-                description: ModelDownloadImage is the image used to download the
-                  model
+                default: kserve/storage-initializer:v0.16.0
+                description: |-
+                  ModelDownloadImage specifies the container image used to download and initialize the model cache.
+                  This image runs as a job to download model artifacts from the source URI to the cache volume.
+                  When not specified, defaults to kserve/storage-initializer:v0.16.0.
                 type: string
               runtimeConfigName:
                 default: default
@@ -259,8 +261,10 @@ spec:
                 x-kubernetes-int-or-string: true
               sourceUri:
                 description: |-
-                  SourceURI is the source of the model to be downloaded. This is the only
-                  identifier
+                  SourceURI specifies the source location of the model to download.
+                  Supported protocols: hf:// (HuggingFace) and s3:// (S3-compatible storage).
+                  This field uniquely identifies the model cache and is immutable after creation.
+                  Example: hf://meta-llama/Llama-3-8B
                 minLength: 1
                 pattern: ^(hf|s3)://[^ \t\r\n]+$
                 type: string
@@ -268,11 +272,11 @@ spec:
                 - message: sourceUri is immutable
                   rule: self == oldSelf
               storageClassName:
-                description: StorageClassName specifies the storage class for the
-                  cache volume
+                description: |-
+                  StorageClassName specifies the storage class for the cache volume.
+                  When not specified, uses the cluster default storage class.
                 type: string
             required:
-            - modelDownloadImage
             - size
             - sourceUri
             type: object

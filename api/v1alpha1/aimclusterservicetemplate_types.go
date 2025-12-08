@@ -26,7 +26,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// AIMClusterServiceTemplate is the Schema for cluster-scoped AIM service templates.
+// AIMClusterServiceTemplate is a cluster-scoped template that defines runtime profiles for AIM services.
+//
+// Cluster-scoped templates can be used by AIMServices in any namespace, making them ideal for
+// platform-wide model configurations that should be shared across teams and projects.
+// Unlike namespace-scoped AIMServiceTemplates, cluster templates do not support caching configuration
+// and must be managed by cluster administrators, since caches themselves are namespace-scoped.
+//
+// When both cluster and namespace templates exist with the same name, the namespace-scoped template
+// takes precedence for services in that namespace.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=aimcltpl,categories=aim;all

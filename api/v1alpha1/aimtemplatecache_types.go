@@ -43,6 +43,9 @@ type AIMTemplateCacheSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	TemplateName string `json:"templateName"`
 
+	// TemplateScope indicates whether the template is namespace-scoped or cluster-scoped.
+	// This field is set by the controller during template resolution.
+	// +required
 	TemplateScope AIMServiceTemplateScope `json:"templateScope"`
 
 	// Env specifies environment variables to use for authentication when downloading models.
@@ -56,20 +59,25 @@ type AIMTemplateCacheSpec struct {
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 
-	// StorageClassName is the name for the storage class to use for this cache
-	// If not set the cluster default will be used
+	// StorageClassName specifies the storage class for cache volumes.
+	// When not specified, uses the cluster default storage class.
 	// +optional
 	StorageClassName string `json:"storageClassName,omitempty"`
 
-	// The image that should be used to download the models
-	// If not set the model cache controller will decide
+	// DownloadImage specifies the container image used to download and initialize model caches.
+	// When not specified, the controller uses the default model download image.
 	// +optional
 	DownloadImage string `json:"downloadImage,omitempty"`
 
-	// ModelSources are set by the template that wants these cached
+	// ModelSources specifies the model sources to cache for this template.
+	// These sources are typically copied from the resolved template's model sources.
+	// +optional
 	ModelSources []AIMModelSource `json:"modelSources,omitempty"`
 
 	// RuntimeConfigName references the AIM runtime configuration (by name) to use for this template cache.
+	// The controller looks for a namespace-scoped AIMRuntimeConfig first, then falls back to
+	// cluster-scoped AIMClusterRuntimeConfig.
+	// +optional
 	// +kubebuilder:default=default
 	RuntimeConfigName string `json:"runtimeConfigName,omitempty"`
 }

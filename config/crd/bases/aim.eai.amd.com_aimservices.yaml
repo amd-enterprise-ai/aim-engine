@@ -288,7 +288,7 @@ spec:
                         description: |-
                           BaseImage is the container image URI for the AIM base image.
                           This will be used as the image for the auto-created AIMModel.
-                          Example: `ghcr.io/silogen/aim-base:0.7.0`.
+                          Example: `ghcr.io/silogen/aim-base:0.7.0`
                         type: string
                       gpuSelector:
                         description: |-
@@ -305,7 +305,7 @@ spec:
                           model:
                             description: |-
                               Model is the GPU model name required for this deployment.
-                              Examples: "MI300X", "MI325X"
+                              Examples: `MI300X`, `MI325X`
                             minLength: 1
                             type: string
                         required:
@@ -314,7 +314,7 @@ spec:
                         type: object
                       modelSources:
                         description: |-
-                          ModelSources specifies the model artifacts to use.
+                          ModelSources specifies the model sources to use.
                           The controller will create a template with these sources inline,
                           and discovery will validate/enrich them with size information.
                           AIM runtime currently supports only one model source.
@@ -369,13 +369,13 @@ spec:
                       Image specifies a container image URI directly.
                       The controller searches for an existing model with this image, or creates one if none exists.
                       The scope of the created model is controlled by the runtime config's ModelCreationScope field.
-                      Example: `ghcr.io/silogen/llama-3-8b:v1.2.0`.
+                      Example: `ghcr.io/silogen/llama-3-8b:v1.2.0`
                     type: string
                   ref:
                     description: |-
                       Ref references an existing AIMModel or AIMClusterModel by metadata.name.
                       The controller looks for a namespace-scoped AIMModel first, then falls back to cluster-scoped AIMClusterModel.
-                      Example: `meta-llama-3-8b`.
+                      Example: `meta-llama-3-8b`
                     type: string
                 type: object
                 x-kubernetes-validations:
@@ -406,7 +406,7 @@ spec:
                       model:
                         description: |-
                           Model is the GPU model name required for this deployment.
-                          Examples: "MI300X", "MI325X"
+                          Examples: `MI300X`, `MI325X`
                         minLength: 1
                         type: string
                     required:
@@ -459,8 +459,9 @@ spec:
               replicas:
                 default: 1
                 description: |-
-                  Replicas overrides the number of replicas for this service.
-                  Other runtime settings remain governed by the template unless overridden.
+                  Replicas specifies the number of replicas for this service.
+                  When not specified, defaults to 1 replica.
+                  This value overrides any replica settings from the template.
                 format: int32
                 type: integer
               resources:
@@ -966,7 +967,7 @@ spec:
                   path:
                     description: |-
                       Path is the HTTP path prefix used when routing is enabled.
-                      Example: `/tenant/svc-uuid`.
+                      Example: `/tenant/svc-uuid`
                     type: string
                 type: object
               status:

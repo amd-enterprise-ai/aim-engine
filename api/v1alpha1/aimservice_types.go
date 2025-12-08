@@ -68,14 +68,14 @@ type AIMServiceCachingConfig struct {
 type AIMServiceModel struct {
 	// Ref references an existing AIMModel or AIMClusterModel by metadata.name.
 	// The controller looks for a namespace-scoped AIMModel first, then falls back to cluster-scoped AIMClusterModel.
-	// Example: `meta-llama-3-8b`.
+	// Example: `meta-llama-3-8b`
 	// +optional
 	Ref *string `json:"ref,omitempty"`
 
 	// Image specifies a container image URI directly.
 	// The controller searches for an existing model with this image, or creates one if none exists.
 	// The scope of the created model is controlled by the runtime config's ModelCreationScope field.
-	// Example: `ghcr.io/silogen/llama-3-8b:v1.2.0`.
+	// Example: `ghcr.io/silogen/llama-3-8b:v1.2.0`
 	// +optional
 	Image *string `json:"image,omitempty"`
 
@@ -92,11 +92,11 @@ type AIMServiceModel struct {
 type AIMServiceModelCustom struct {
 	// BaseImage is the container image URI for the AIM base image.
 	// This will be used as the image for the auto-created AIMModel.
-	// Example: `ghcr.io/silogen/aim-base:0.7.0`.
+	// Example: `ghcr.io/silogen/aim-base:0.7.0`
 	// +required
 	BaseImage string `json:"baseImage"`
 
-	// ModelSources specifies the model artifacts to use.
+	// ModelSources specifies the model sources to use.
 	// The controller will create a template with these sources inline,
 	// and discovery will validate/enrich them with size information.
 	// AIM runtime currently supports only one model source.
@@ -147,8 +147,10 @@ type AIMServiceSpec struct {
 	// +kubebuilder:validation:DeprecatedMessage="Use Caching.Mode instead. This field will be removed in a future version."
 	CacheModel *bool `json:"cacheModel,omitempty"`
 
-	// Replicas overrides the number of replicas for this service.
-	// Other runtime settings remain governed by the template unless overridden.
+	// Replicas specifies the number of replicas for this service.
+	// When not specified, defaults to 1 replica.
+	// This value overrides any replica settings from the template.
+	// +optional
 	// +kubebuilder:default=1
 	Replicas *int32 `json:"replicas,omitempty"`
 
@@ -348,7 +350,7 @@ type AIMServiceList struct {
 // AIMServiceRoutingStatus captures observed routing details.
 type AIMServiceRoutingStatus struct {
 	// Path is the HTTP path prefix used when routing is enabled.
-	// Example: `/tenant/svc-uuid`.
+	// Example: `/tenant/svc-uuid`
 	// +optional
 	Path string `json:"path,omitempty"`
 }

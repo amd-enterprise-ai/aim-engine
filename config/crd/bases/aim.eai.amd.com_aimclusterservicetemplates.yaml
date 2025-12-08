@@ -41,8 +41,16 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: AIMClusterServiceTemplate is the Schema for cluster-scoped AIM
-          service templates.
+        description: |-
+          AIMClusterServiceTemplate is a cluster-scoped template that defines runtime profiles for AIM services.
+
+          Cluster-scoped templates can be used by AIMServices in any namespace, making them ideal for
+          platform-wide model configurations that should be shared across teams and projects.
+          Unlike namespace-scoped AIMServiceTemplates, cluster templates do not support caching configuration
+          and must be managed by cluster administrators, since caches themselves are namespace-scoped.
+
+          When both cluster and namespace templates exist with the same name, the namespace-scoped template
+          takes precedence for services in that namespace.
         properties:
           apiVersion:
             description: |-
@@ -83,7 +91,7 @@ spec:
                   model:
                     description: |-
                       Model is the GPU model name required for this deployment.
-                      Examples: "MI300X", "MI325X"
+                      Examples: `MI300X`, `MI325X`
                     minLength: 1
                     type: string
                 required:
@@ -148,7 +156,7 @@ spec:
                   rule: self == oldSelf
               modelSources:
                 description: |-
-                  ModelSources specifies the model artifacts required to run this template.
+                  ModelSources specifies the model sources required to run this template.
                   When provided, the discovery dry-run will be skipped and these sources will be used directly.
                   This allows users to explicitly declare model dependencies without requiring a discovery job.
                   If omitted, a discovery job will be run to automatically determine the required model sources.

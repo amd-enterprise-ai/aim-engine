@@ -83,7 +83,7 @@ type AIMGpuSelector struct {
 	Count int32 `json:"count"`
 
 	// Model is the GPU model name required for this deployment.
-	// Examples: "MI300X", "MI325X"
+	// Examples: `MI300X`, `MI325X`
 	// +kubebuilder:validation:MinLength=1
 	Model string `json:"model"`
 }

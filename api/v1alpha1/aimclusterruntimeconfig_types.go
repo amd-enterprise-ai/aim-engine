@@ -26,7 +26,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// AIMClusterRuntimeConfig is the Schema for cluster-scoped AIM runtime configurations.
+// AIMClusterRuntimeConfig is a cluster-scoped runtime configuration for AIM services, models, and templates.
+//
+// Cluster-scoped runtime configs provide platform-wide defaults that apply to all namespaces,
+// making them ideal for organization-level policies such as storage classes, discovery behavior,
+// model creation scope, and routing configuration.
+//
+// When both cluster and namespace runtime configs exist with the same name, the configs are merged, and
+// the namespace-scoped AIMRuntimeConfig takes precedence for any field that is set in both.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=aimclrc,categories=aim;all
