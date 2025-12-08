@@ -26,6 +26,7 @@ package controllerutils
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -91,30 +92,36 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	cm := NewConditionManager(oldConditions)
 
 	// Fetch phase - get all resources needed for observation
-	// Returns errors only for transient infrastructure issues (network, API server).
-	// Semantic errors (NotFound, Invalid) should be included in fetch result and
+	// Returns errors ONLY for transient infrastructure issues (network, API server failures).
+	// Semantic errors (NotFound, Invalid) MUST be included in fetch result and
 	// handled in Observe phase to update status appropriately.
+	// Infrastructure errors cause immediate retry without status update.
 	fetched, fetchError := p.Reconciler.Fetch(ctx, p.Client, obj)
 	if fetchError != nil {
 		// Infrastructure error - return for exponential backoff.
-		// Status is NOT updated to avoid noise from transient issues.
+		// Status is NOT updated to avoid noise from transient network/API issues.
+		// Project phase does NOT run - this is intentional for infrastructure failures.
 		return fmt.Errorf("fetch failed: %w", fetchError)
 	}
 
 	// Observe phase - interpret fetched resources into domain observations
-	// Domain reconcilers should handle semantic issues (NotFound) in observations,
-	// returning errors only for unexpected failures.
+	// Returns errors ONLY for unexpected failures that should trigger retry.
+	// Semantic issues (NotFound, validation errors) MUST be reflected in observations,
+	// not returned as errors, so they can be surfaced in status via Project phase.
 	obs, obsErr := p.Reconciler.Observe(ctx, obj, fetched)
 	if obsErr != nil {
-		// Unexpected observation error - return for retry
+		// Unexpected observation error - return for retry without status update.
+		// Project phase does NOT run - this is intentional for infrastructure failures.
 		return fmt.Errorf("observe failed: %w", obsErr)
 	}
 
 	// Plan phase - derive desired state changes based on observations
-	// Should be pure - no client calls, just logic based on current state
+	// Should be pure - no client calls, just logic based on current state.
+	// Returns errors ONLY for unexpected failures (e.g., internal logic errors).
 	planResult, planErr := p.Reconciler.Plan(ctx, obj, obs)
 	if planErr != nil {
-		// Planning error - return for retry
+		// Planning error - return for retry without status update.
+		// Project phase does NOT run - this is intentional for infrastructure failures.
 		return fmt.Errorf("plan failed: %w", planErr)
 	}
 
@@ -131,7 +138,7 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	}
 	// If any deletes failed, return aggregated error for retry
 	if len(deleteErrs) > 0 {
-		return fmt.Errorf("delete phase failed with %d error(s): %v", len(deleteErrs), deleteErrs)
+		return fmt.Errorf("delete phase failed: %w", errors.Join(deleteErrs...))
 	}
 
 	// Apply phase - use Server-Side Apply to create/update desired objects
@@ -149,10 +156,12 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 		}
 	}
 
-	// Project phase - always runs to update status based on observations
-	// This phase executes even if earlier phases (Fetch, Observe, Plan) failed, ensuring
-	// status reflects the current state with appropriate error conditions. Domain reconciler
-	// updates conditions to reflect observed state and any errors encountered.
+	// Project phase - updates status based on observations and planned changes
+	// This phase runs ONLY after successful Fetch/Observe/Plan phases.
+	// Infrastructure failures in earlier phases cause immediate retry without status update.
+	// Semantic errors MUST be reflected in observations (not returned as errors) so they
+	// can be surfaced here via conditions. Domain reconciler updates conditions to reflect
+	// observed state and any semantic issues encountered.
 	p.Reconciler.Project(status, cm, obs)
 
 	// Update conditions from manager
@@ -286,10 +295,4 @@ func sortObjects(objects []client.Object) []client.Object {
 	})
 
 	return sorted
-}
-
-// FetchResult is used to wrap a result with an error for the fetch stage
-type FetchResult[T any] struct {
-	Result T
-	Error  error
 }
