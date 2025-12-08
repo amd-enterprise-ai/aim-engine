@@ -1323,8 +1323,8 @@ func (in *AIMServiceTemplateStatus) DeepCopyInto(out *AIMServiceTemplateStatus) 
 		*out = new(AIMProfile)
 		(*in).DeepCopyInto(*out)
 	}
-	if in.DiscoveryJobRef != nil {
-		in, out := &in.DiscoveryJobRef, &out.DiscoveryJobRef
+	if in.DiscoveryJob != nil {
+		in, out := &in.DiscoveryJob, &out.DiscoveryJob
 		*out = new(AIMResolvedReference)
 		**out = **in
 	}

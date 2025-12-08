@@ -174,9 +174,3 @@ type AIMRuntimeConfigStatus struct {
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
-
-// +kubebuilder:object:root=true
-// +kubebuilder:resource:scope=Cluster,shortName=aimcrcfg,categories=aim;all
-// +kubebuilder:printcolumn:name="CacheBaseImages",type=boolean,JSONPath=`.spec.cacheBaseImages`
-// +kubebuilder:printcolumn:name="DefaultStorageClass",type=string,JSONPath=`.spec.defaultStorageClassName`
-// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

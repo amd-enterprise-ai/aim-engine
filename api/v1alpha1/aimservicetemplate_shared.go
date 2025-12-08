@@ -148,8 +148,8 @@ type AIMServiceTemplateStatus struct {
 	// This includes metadata, engine args, environment variables, and model details.
 	Profile *AIMProfile `json:"profile,omitempty"`
 
-	// DiscoveryJobRef is a reference to the job that was run for discovery
-	DiscoveryJobRef *AIMResolvedReference `json:"discoveryJobRef,omitempty"`
+	// DiscoveryJob is a reference to the job that was run for discovery
+	DiscoveryJob *AIMResolvedReference `json:"discoveryJob,omitempty"`
 }
 
 func (s *AIMServiceTemplateStatus) GetConditions() []metav1.Condition {
@@ -212,7 +212,7 @@ type AIMProfileMetadata struct {
 
 	// GPUCount indicates how many GPUs are required per replica for this profile.
 	// +optional
-	GPUCount int32 `json:"gpu_count,omitempty"`
+	GPUCount int32 `json:"gpuCount,omitempty"`
 
 	// Metric indicates the optimization goal for this profile ("latency" or "throughput").
 	// +optional
@@ -231,8 +231,8 @@ const (
 
 // Caching conditions
 const (
-	// AIMTemplateConditionCacheWarm is True when all requested caches have been warmed.
-	AIMTemplateCacheWarmConditionType = "CacheWarm"
+	// AIMTemplateConditionCacheReady is True when all requested caches have been warmed.
+	AIMTemplateCacheReadyConditionType = "CacheReady"
 
 	AIMTemplateReasonCacheReady      = "Ready"
 	AIMTemplateReasonWaitingForCache = "WaitingForCache"
@@ -250,8 +250,8 @@ const (
 	AIMTemplateReasonGpuNotAvailable = "GpuNotAvailable"
 
 	// Model resolution reasons
-	AIMTemplateModelNotFound    = "ModelNotFound"
-	AIMTemplateReasonModelFound = "ModelFound"
+	AIMTemplateModelNotFound    = "ModelNotResolved"
+	AIMTemplateReasonModelFound = "ModelResolved"
 
 	// Template resolution reasons
 	AIMTemplateReasonAwaitingTemplate = "AwaitingTemplate"

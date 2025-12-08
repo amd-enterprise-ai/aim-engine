@@ -115,8 +115,8 @@ func (s *AIMTemplateCacheStatus) SetStatus(status string) {
 const (
 	// AIMTemplateCacheConditionResolved is True when the template reference has been resolved.
 	AIMTemplateCacheConditionResolved = "Resolved"
-	// AIMTemplateCacheConditionCacheWarm is True when the template's models are cached.
-	AIMTemplateCacheConditionCacheWarm = "CacheWarm"
+	// AIMTemplateCacheConditionCacheReady is True when the template's models are cached.
+	AIMTemplateCacheConditionCacheReady = "CacheReady"
 	// AIMTemplateCacheConditionReady is True when the template cache is ready.
 	AIMTemplateCacheConditionReady = "Ready"
 	// AIMTemplateCacheConditionProgressing is True when cache warming is in progress.
@@ -143,7 +143,7 @@ const (
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=aimtc,categories=aim;all
-// +kubebuilder:printcolumn:name="Template",type=string,JSONPath=`.spec.templateRef`
+// +kubebuilder:printcolumn:name="Template",type=string,JSONPath=`.spec.templateName`
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 // +kubebuilder:printcolumn:name="Kind",type=string,JSONPath=`.status.resolvedTemplateKind`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

@@ -23,7 +23,7 @@ spec:
     - jsonPath: .status.status
       name: Status
       type: string
-    - jsonPath: .status.resolvedImage.name
+    - jsonPath: .status.resolvedModel.name
       name: Model
       type: string
     - jsonPath: .status.resolvedTemplate.name

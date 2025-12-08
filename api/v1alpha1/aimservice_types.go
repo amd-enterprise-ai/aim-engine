@@ -324,7 +324,7 @@ const (
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=aimsvc,categories=aim;all
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
-// +kubebuilder:printcolumn:name="Model",type=string,JSONPath=`.status.resolvedImage.name`
+// +kubebuilder:printcolumn:name="Model",type=string,JSONPath=`.status.resolvedModel.name`
 // +kubebuilder:printcolumn:name="Template",type=string,JSONPath=`.status.resolvedTemplate.name`
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

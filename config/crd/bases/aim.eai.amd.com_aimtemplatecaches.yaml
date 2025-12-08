@@ -20,7 +20,7 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.templateRef
+    - jsonPath: .spec.templateName
       name: Template
       type: string
     - jsonPath: .status.status

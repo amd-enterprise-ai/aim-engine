@@ -344,9 +344,9 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              discoveryJobRef:
-                description: DiscoveryJobRef is a reference to the job that was run
-                  for discovery
+              discoveryJob:
+                description: DiscoveryJob is a reference to the job that was run for
+                  discovery
                 properties:
                   kind:
                     description: Kind is the fully-qualified kind of the resolved
@@ -445,7 +445,7 @@ spec:
                         description: GPU specifies the GPU model this profile is optimized
                           for (e.g., "MI300X", "MI325X").
                         type: string
-                      gpu_count:
+                      gpuCount:
                         description: GPUCount indicates how many GPUs are required
                           per replica for this profile.
                         format: int32
