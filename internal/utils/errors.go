@@ -116,6 +116,9 @@ type ImagePullError struct {
 	IsInitContainer bool
 }
 
+// CheckPodImagePullStatus checks if a pod has any containers stuck in ImagePullBackOff or ErrImagePull state.
+// It examines both regular containers and init containers.
+// Returns the first ImagePullError found, or nil if no image pull issues are detected.
 func CheckPodImagePullStatus(pod *corev1.Pod) *ImagePullError {
 	for _, containerStatus := range pod.Status.ContainerStatuses {
 		if err := checkContainerImagePullStatus(containerStatus, false); err != nil {

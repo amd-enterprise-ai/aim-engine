@@ -33,6 +33,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// KnownAmdDevices maps AMD GPU device IDs (PCI device IDs) to their commercial model names.
+// This mapping is used to identify GPU models from node labels when the device ID is available.
+// Device IDs are typically exposed by AMD GPU labelers (e.g., amd.com/gpu.device-id).
+//
+// The mapping includes:
+//   - AMD Instinct accelerators (MI series): MI100, MI210, MI250X, MI300X, MI308X, MI325X, MI350X, MI355X
+//   - AMD Radeon Pro workstation GPUs: W6800, W6900X, W7800, W7900, V620, V710
+//   - AMD Radeon gaming GPUs: RX6800, RX6900, RX7900, RX9070
+//
+// Note: Some device IDs map to the same model (e.g., multiple MI300X variants).
+// Device IDs may represent different variants, revisions, or virtualization flavors (MxGPU, VF, HF).
 var KnownAmdDevices = map[string]string{
 	// AMD Instinct
 	"738c": "MI100",
@@ -171,6 +182,15 @@ func MapAMDDeviceIDToModel(deviceID string) string {
 	return "AMD-" + strings.ToUpper(deviceID)
 }
 
+// ExtractAMDModel extracts the AMD GPU model name from node labels.
+// It tries multiple label sources in order of preference:
+//  1. Device ID labels (amd.com/gpu.device-id or beta.amd.com/gpu.device-id) - most accurate
+//  2. Count-encoded device ID labels (e.g., amd.com/gpu.device-id.74a1=4)
+//  3. GPU family labels (amd.com/gpu.family or beta.amd.com/gpu.family)
+//  4. Count-encoded GPU family labels
+//
+// Returns a normalized GPU model name (e.g., "MI300X") or empty string if not found.
+// Device IDs are mapped using KnownAmdDevices for precise identification.
 func ExtractAMDModel(labels map[string]string) string {
 	// Primary method: Use device ID for accurate model identification
 	if deviceID := labelValue(labels, "amd.com/gpu.device-id", "beta.amd.com/gpu.device-id"); deviceID != "" {

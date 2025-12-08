@@ -30,6 +30,14 @@ const (
 	DebugLogLevel = 1
 )
 
+// Debug logs a debug-level message using the provided logger.
+// Debug messages are logged at verbosity level 1 and will only appear when the logger
+// is configured to show debug output.
+//
+// Parameters:
+//   - logger: The logr.Logger instance to use for logging
+//   - fmt: The message format string
+//   - keysAndValues: Optional key-value pairs for structured logging
 func Debug(logger logr.Logger, fmt string, keysAndValues ...any) {
 	logger.V(DebugLogLevel).Info(fmt, keysAndValues...)
 }

@@ -78,10 +78,14 @@ func QuantityWithHeadroom(baseSizeBytes int64, headroomPercent int32) resource.Q
 
 // ResolveStorageClass determines the effective storage class using fallback logic:
 //  1. Use explicit storage class if provided (non-empty)
-//  2. Fall back to runtime config's defaultStorageClassName if explicit is empty
-//  3. Empty string means use the cluster's default StorageClass
+//  2. Fall back to runtime config's Storage.DefaultStorageClassName if explicit is empty
+//  3. Fall back to runtime config's top-level DefaultStorageClassName (deprecated location)
+//  4. Empty string means use the cluster's default StorageClass
 //
 // This implements consistent storage class resolution across all PVC creation paths.
+// The function checks two locations in the runtime config for backwards compatibility:
+//   - runtimeConfigSpec.Storage.DefaultStorageClassName (current/preferred)
+//   - runtimeConfigSpec.DefaultStorageClassName (deprecated/legacy)
 //
 // Parameters:
 //   - explicitStorageClass: Storage class explicitly specified in the resource spec
@@ -96,8 +100,10 @@ func ResolveStorageClass(explicitStorageClass string, runtimeConfigSpec *aimv1al
 	if runtimeConfigSpec == nil {
 		return ""
 	}
+	// Prefer the nested Storage.DefaultStorageClassName (current schema)
 	if runtimeConfigSpec.Storage != nil && runtimeConfigSpec.Storage.DefaultStorageClassName != nil {
 		return *runtimeConfigSpec.Storage.DefaultStorageClassName
 	}
+	// Fall back to top-level DefaultStorageClassName (legacy/deprecated schema)
 	return runtimeConfigSpec.DefaultStorageClassName
 }

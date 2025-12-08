@@ -36,6 +36,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// ValueOrDefault returns the value pointed to by d, or the zero value of type T if d is nil.
+// This is a generic helper to safely dereference pointers with a fallback to the type's zero value.
+//
+// Example:
+//
+//	var ptr *int = nil
+//	val := ValueOrDefault(ptr)  // Returns 0
+//
+//	ptr2 := ptr.To(42)
+//	val2 := ValueOrDefault(ptr2)  // Returns 42
 func ValueOrDefault[T any](d *T) T {
 	if d == nil {
 		return *new(T)
