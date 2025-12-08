@@ -983,6 +983,10 @@ spec:
                 type: string
             type: object
         type: object
+        x-kubernetes-validations:
+        - message: combined length of name and namespace cannot exceed 62 characters
+            (KServe uses {name}-{namespace} format which must not exceed 63 characters)
+          rule: self.metadata.name.size() + self.metadata.namespace.size() <= 62
     served: true
     storage: true
     subresources:

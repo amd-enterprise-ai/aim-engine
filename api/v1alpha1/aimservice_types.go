@@ -328,6 +328,7 @@ const (
 // +kubebuilder:printcolumn:name="Template",type=string,JSONPath=`.status.resolvedTemplate.name`
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="self.metadata.name.size() + self.metadata.namespace.size() <= 62",message="combined length of name and namespace cannot exceed 62 characters (KServe uses {name}-{namespace} format which must not exceed 63 characters)"
 type AIMService struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
