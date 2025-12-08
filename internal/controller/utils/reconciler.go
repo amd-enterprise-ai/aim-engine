@@ -80,7 +80,10 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	status := obj.GetStatus() // S, e.g. *AIMServiceStatus
 
 	// 2) Deep copy the entire object to capture old status for comparison
-	oldObj := obj.DeepCopyObject().(T)
+	oldObj, ok := obj.DeepCopyObject().(T)
+	if !ok {
+		return fmt.Errorf("DeepCopyObject returned unexpected type, expected %T", obj)
+	}
 	oldStatus := oldObj.GetStatus()
 	oldConditions := append([]metav1.Condition(nil), status.GetConditions()...)
 
@@ -116,13 +119,19 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	}
 
 	// Delete phase - delete objects before applying new state
+	// Continue processing all deletes and aggregate errors to avoid silent failures
+	var deleteErrs []error
 	for _, objToDelete := range planResult.Delete {
 		if err := p.Client.Delete(ctx, objToDelete); client.IgnoreNotFound(err) != nil {
-			// Deletion failed - return for retry
+			// Deletion failed - collect error and continue to process remaining deletes
 			gvk := objToDelete.GetObjectKind().GroupVersionKind()
 			key := client.ObjectKeyFromObject(objToDelete)
-			return fmt.Errorf("delete failed for %s %s/%s: %w", gvk.Kind, key.Namespace, key.Name, err)
+			deleteErrs = append(deleteErrs, fmt.Errorf("delete failed for %s %s/%s: %w", gvk.Kind, key.Namespace, key.Name, err))
 		}
+	}
+	// If any deletes failed, return aggregated error for retry
+	if len(deleteErrs) > 0 {
+		return fmt.Errorf("delete phase failed with %d error(s): %v", len(deleteErrs), deleteErrs)
 	}
 
 	// Apply phase - use Server-Side Apply to create/update desired objects
@@ -141,7 +150,9 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	}
 
 	// Project phase - always runs to update status based on observations
-	// Domain reconciler updates conditions to reflect current state
+	// This phase executes even if earlier phases (Fetch, Observe, Plan) failed, ensuring
+	// status reflects the current state with appropriate error conditions. Domain reconciler
+	// updates conditions to reflect observed state and any errors encountered.
 	p.Reconciler.Project(status, cm, obs)
 
 	// Update conditions from manager
@@ -217,12 +228,16 @@ func ApplyDesiredState(
 		gvk := obj.GetObjectKind().GroupVersionKind()
 		key := client.ObjectKeyFromObject(obj)
 
+		// Use Server-Side Apply (SSA) to create/update desired objects.
+		// The FieldOwner parameter ensures this controller owns only the fields it manages.
+		// SSA will automatically handle conflicts - if another manager has changed fields,
+		// this apply will only update fields owned by this controller's field manager.
+		// This allows proper cooperation with kubectl and other controllers.
 		if err := k8sClient.Patch(
 			ctx,
 			obj,
 			client.Apply,
 			client.FieldOwner(fieldOwner),
-			client.ForceOwnership,
 		); err != nil {
 			return fmt.Errorf("failed to apply %s %s: %w", gvk.Kind, key.Name, err)
 		}
