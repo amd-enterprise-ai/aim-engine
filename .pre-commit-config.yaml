@@ -13,6 +13,12 @@ repos:
     language: system
     pass_filenames: false
 
+  - id: third-party-licenses
+    name: Generate third-party licenses
+    entry: make third-party-licenses
+    language: system
+    pass_filenames: false
+
   # - id: build-crds
   #   name: Build CRDs for Helm chart
   #   entry: bash -lc 'kubectl kustomize config/crd/ > crd/crds.yaml'
