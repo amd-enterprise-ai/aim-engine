@@ -71,11 +71,8 @@ type AIMModelCacheSpec struct {
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 
-	// RuntimeConfigName references the AIM runtime configuration (by name) to use for this model cache.
-	// This determines PVC headroom and other runtime settings.
-	// +kubebuilder:default=default
-	// +optional
-	RuntimeConfigName string `json:"runtimeConfigName,omitempty"`
+	// RuntimeConfigRef contains the runtime config reference for this model cache.
+	RuntimeConfigRef `json:",inline"`
 }
 
 // AIMModelCacheStatus defines the observed state of AIMModelCache

@@ -97,4 +97,10 @@ const (
 	AIMServiceTemplateScopeUnknown AIMServiceTemplateScope = AIMServiceTemplateScope(AIMResolutionScopeUnknown)
 )
 
-// Model-related shared types and constants
+type RuntimeConfigRef struct {
+	// Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both
+	// as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority
+	// over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster
+	// runtime config with the name `default` is used, if it exists.
+	Name string `json:"runtimeConfigName"`
+}

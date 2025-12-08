@@ -74,12 +74,8 @@ type AIMTemplateCacheSpec struct {
 	// +optional
 	ModelSources []AIMModelSource `json:"modelSources,omitempty"`
 
-	// RuntimeConfigName references the AIM runtime configuration (by name) to use for this template cache.
-	// The controller looks for a namespace-scoped AIMRuntimeConfig first, then falls back to
-	// cluster-scoped AIMClusterRuntimeConfig.
-	// +optional
-	// +kubebuilder:default=default
-	RuntimeConfigName string `json:"runtimeConfigName,omitempty"`
+	// RuntimeConfigRef contains the runtime config reference for this template cache.
+	RuntimeConfigRef `json:",inline"`
 }
 
 // AIMTemplateCacheStatus defines the observed state of AIMTemplateCache

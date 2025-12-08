@@ -154,6 +154,10 @@ type AIMServiceSpec struct {
 	// +kubebuilder:default=1
 	Replicas *int32 `json:"replicas,omitempty"`
 
+	// RuntimeConfigRef contains the runtime config reference for this service.
+	// The result of the merged runtime configs is merged with the inline AIMServiceRuntimeConfig configuration.
+	RuntimeConfigRef `json:",inline"`
+
 	// RuntimeConfigName references the AIM runtime configuration (by name) to use for this service.
 	// The controller looks for a namespace-scoped AIMRuntimeConfig first, then falls back to
 	// cluster-scoped AIMClusterRuntimeConfig. This serves as the base configuration that can be

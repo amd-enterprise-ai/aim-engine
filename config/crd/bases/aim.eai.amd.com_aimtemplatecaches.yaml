@@ -281,11 +281,11 @@ spec:
                   type: object
                 type: array
               runtimeConfigName:
-                default: default
                 description: |-
-                  RuntimeConfigName references the AIM runtime configuration (by name) to use for this template cache.
-                  The controller looks for a namespace-scoped AIMRuntimeConfig first, then falls back to
-                  cluster-scoped AIMClusterRuntimeConfig.
+                  Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both
+                  as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority
+                  over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster
+                  runtime config with the name `default` is used, if it exists.
                 type: string
               storageClassName:
                 description: |-
@@ -310,6 +310,7 @@ spec:
                 - Unknown
                 type: string
             required:
+            - runtimeConfigName
             - templateName
             - templateScope
             type: object

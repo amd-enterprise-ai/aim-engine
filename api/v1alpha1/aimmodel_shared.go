@@ -99,10 +99,8 @@ type AIMModelSpec struct {
 	// +kubebuilder:validation:MaxItems=1
 	ModelSources []AIMModelSource `json:"modelSources,omitempty"`
 
-	// RuntimeConfigName references the AIM runtime configuration (by name) to use for this image.
-	// The runtime config controls discovery behavior and model creation scope.
-	// +kubebuilder:default=default
-	RuntimeConfigName string `json:"runtimeConfigName,omitempty"`
+	// RuntimeConfigRef contains the runtime config reference for this model, and is used to control discovery behavior.
+	RuntimeConfigRef `json:",inline"`
 
 	// ImagePullSecrets lists secrets containing credentials for pulling the model container image.
 	// These secrets are used for:

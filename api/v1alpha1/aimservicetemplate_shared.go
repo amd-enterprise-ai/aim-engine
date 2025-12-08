@@ -41,9 +41,8 @@ type AIMServiceTemplateSpecCommon struct {
 
 	AIMRuntimeParameters `json:",inline"`
 
-	// RuntimeConfigName references the AIM runtime configuration (by name) to use for this template.
-	// +kubebuilder:default=default
-	RuntimeConfigName string `json:"runtimeConfigName,omitempty"`
+	// RuntimeConfigRef contains the runtime config reference for this service template
+	RuntimeConfigRef `json:",inline"`
 
 	// ImagePullSecrets lists secrets containing credentials for pulling container images.
 	// These secrets are used for:
