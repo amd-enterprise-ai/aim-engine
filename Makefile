@@ -244,6 +244,11 @@ third-party-licenses: go-licenses ## Generate third-party licenses directory.
 	"$(GO_LICENSES)" save ./... --save_path=third-party-licenses --ignore github.com/amd-enterprise-ai/aim-engine 2>/dev/null || true
 	@git add third-party-licenses/ 2>/dev/null || true
 
+.PHONY: generate-crd-docs
+generate-crd-docs:
+	go install github.com/elastic/crd-ref-docs@latest
+	crd-ref-docs --source-path api/v1alpha1/ --renderer=markdown --output-path=docs/docs/reference/crds/v1alpha1/aim.eai.amd.com.md --config docs/crd-ref-docs-config.yaml
+
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary
 # $2 - package url which can be installed

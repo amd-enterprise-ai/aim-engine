@@ -716,7 +716,6 @@ spec:
                     type: string
                 type: object
               runtimeConfigName:
-                default: default
                 description: |-
                   Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both
                   as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority
