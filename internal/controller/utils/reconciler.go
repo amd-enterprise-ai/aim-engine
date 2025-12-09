@@ -35,7 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// PlanResult contains the desired state changes from the Plan phase.
+// PlanResult contains the desired state changes from the PlanResources phase.
 type PlanResult struct {
 	// Apply are objects to create or update via Server-Side Apply
 	Apply []client.Object
@@ -46,17 +46,17 @@ type PlanResult struct {
 
 // DomainReconciler is implemented by domain-specific logic for a CRD.
 type DomainReconciler[T ObjectWithStatus[S], S StatusWithConditions, F any, Obs any] interface {
-	// Fetch can hit the API via client and returns the fetched objects.
-	Fetch(ctx context.Context, c client.Client, obj T) (F, error)
+	// FetchRemoteState can hit the API via client and returns the fetched objects.
+	FetchRemoteState(ctx context.Context, c client.Client, obj T) (F, error)
 
-	// Observe interprets the fetched objects into a meaningful observation.
-	Observe(ctx context.Context, obj T, fetched F) (Obs, error)
+	// ComposeState interprets the fetched objects into a meaningful observation.
+	ComposeState(ctx context.Context, obj T, fetched F) (Obs, error)
 
-	// Plan must be pure: no client calls, just derive desired state changes based on the object + observed state.
-	Plan(ctx context.Context, obj T, obs Obs) (PlanResult, error)
+	// PlanResources must be pure: no client calls, just derive desired state changes based on the object + observed state.
+	PlanResources(ctx context.Context, obj T, obs Obs) (PlanResult, error)
 
-	// Project mutates obj.Status via the ConditionManager based on obs/plan/errors.
-	Project(status S, cm *ConditionManager, obs Obs)
+	// SetStatus mutates obj.Status via the ConditionManager based on obs/plan/errors.
+	SetStatus(status S, cm *ConditionManager, obs Obs)
 }
 
 // Pipeline wires a domain reconciler with controller-runtime utilities.
@@ -69,7 +69,7 @@ type Pipeline[T ObjectWithStatus[S], S StatusWithConditions, F any, Obs any] str
 	Scheme       *runtime.Scheme
 }
 
-// Run executes the standard Observe → Plan → Apply → Project → Events → Status flow.
+// Run executes the standard ComposeState → PlanResources → Apply → SetStatus → Events → Status flow.
 // It does NOT handle:
 // - fetching the object from the API
 // - deletion / finalizers
@@ -89,37 +89,37 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	// Condition manager from existing conditions
 	cm := NewConditionManager(oldConditions)
 
-	// Fetch phase - get all resources needed for observation
+	// FetchRemoteState phase - get all resources needed for observation
 	// Returns errors ONLY for transient infrastructure issues (network, API server failures).
 	// Semantic errors (NotFound, Invalid) MUST be included in fetch result and
-	// handled in Observe phase to update status appropriately.
+	// handled in ComposeState phase to update status appropriately.
 	// Infrastructure errors cause immediate retry without status update.
-	fetched, fetchError := p.Reconciler.Fetch(ctx, p.Client, obj)
+	fetched, fetchError := p.Reconciler.FetchRemoteState(ctx, p.Client, obj)
 	if fetchError != nil {
 		// Infrastructure error - return for exponential backoff.
 		// Status is NOT updated to avoid noise from transient network/API issues.
-		// Project phase does NOT run - this is intentional for infrastructure failures.
+		// SetStatus phase does NOT run - this is intentional for infrastructure failures.
 		return fmt.Errorf("fetch failed: %w", fetchError)
 	}
 
-	// Observe phase - interpret fetched resources into domain observations
+	// ComposeState phase - interpret fetched resources into domain observations
 	// Returns errors ONLY for unexpected failures that should trigger retry.
 	// Semantic issues (NotFound, validation errors) MUST be reflected in observations,
-	// not returned as errors, so they can be surfaced in status via Project phase.
-	obs, obsErr := p.Reconciler.Observe(ctx, obj, fetched)
+	// not returned as errors, so they can be surfaced in status via SetStatus phase.
+	obs, obsErr := p.Reconciler.ComposeState(ctx, obj, fetched)
 	if obsErr != nil {
 		// Unexpected observation error - return for retry without status update.
-		// Project phase does NOT run - this is intentional for infrastructure failures.
+		// SetStatus phase does NOT run - this is intentional for infrastructure failures.
 		return fmt.Errorf("observe failed: %w", obsErr)
 	}
 
-	// Plan phase - derive desired state changes based on observations
+	// PlanResources phase - derive desired state changes based on observations
 	// Should be pure - no client calls, just logic based on current state.
 	// Returns errors ONLY for unexpected failures (e.g., internal logic errors).
-	planResult, planErr := p.Reconciler.Plan(ctx, obj, obs)
+	planResult, planErr := p.Reconciler.PlanResources(ctx, obj, obs)
 	if planErr != nil {
 		// Planning error - return for retry without status update.
-		// Project phase does NOT run - this is intentional for infrastructure failures.
+		// SetStatus phase does NOT run - this is intentional for infrastructure failures.
 		return fmt.Errorf("plan failed: %w", planErr)
 	}
 
@@ -154,13 +154,13 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 		}
 	}
 
-	// Project phase - updates status based on observations and planned changes
-	// This phase runs ONLY after successful Fetch/Observe/Plan phases.
+	// SetStatus phase - updates status based on observations and planned changes
+	// This phase runs ONLY after successful FetchRemoteState/ComposeState/PlanResources phases.
 	// Infrastructure failures in earlier phases cause immediate retry without status update.
 	// Semantic errors MUST be reflected in observations (not returned as errors) so they
 	// can be surfaced here via conditions. Domain reconciler updates conditions to reflect
 	// observed state and any semantic issues encountered.
-	p.Reconciler.Project(status, cm, obs)
+	p.Reconciler.SetStatus(status, cm, obs)
 
 	// Update conditions from manager
 	status.SetConditions(cm.Conditions())

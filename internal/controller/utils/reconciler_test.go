@@ -103,28 +103,28 @@ type mockReconciler struct {
 
 type TestObservabilityConfig struct{}
 
-func (m *mockReconciler) Fetch(ctx context.Context, c client.Client, obj *TestObject) (TestFetchResult, error) {
+func (m *mockReconciler) FetchRemoteState(ctx context.Context, c client.Client, obj *TestObject) (TestFetchResult, error) {
 	if m.fetchFunc != nil {
 		return m.fetchFunc(ctx, c, obj)
 	}
 	return TestFetchResult{}, nil
 }
 
-func (m *mockReconciler) Observe(ctx context.Context, obj *TestObject, fetched TestFetchResult) (*TestObservabilityConfig, error) {
+func (m *mockReconciler) ComposeState(ctx context.Context, obj *TestObject, fetched TestFetchResult) (*TestObservabilityConfig, error) {
 	if m.observeFunc != nil {
 		return m.observeFunc(ctx, obj, fetched)
 	}
 	return &TestObservabilityConfig{}, nil
 }
 
-func (m *mockReconciler) Plan(ctx context.Context, obj *TestObject, obs *TestObservabilityConfig) (PlanResult, error) {
+func (m *mockReconciler) PlanResources(ctx context.Context, obj *TestObject, obs *TestObservabilityConfig) (PlanResult, error) {
 	if m.planFunc != nil {
 		return m.planFunc(ctx, obj, obs)
 	}
 	return PlanResult{}, nil
 }
 
-func (m *mockReconciler) Project(status *TestStatus, cm *ConditionManager, obs *TestObservabilityConfig) {
+func (m *mockReconciler) SetStatus(status *TestStatus, cm *ConditionManager, obs *TestObservabilityConfig) {
 	if m.projectFunc != nil {
 		m.projectFunc(status, cm, obs)
 	}
@@ -385,7 +385,7 @@ func TestPipelineRun_Success(t *testing.T) {
 		t.Fatal("expected error from status update (unregistered type)")
 	}
 	if !projectCalled {
-		t.Fatal("expected Project to be called before status update")
+		t.Fatal("expected SetStatus to be called before status update")
 	}
 
 	// Verify condition was set (even though status update failed)

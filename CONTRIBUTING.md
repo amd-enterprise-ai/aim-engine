@@ -1,10 +1,10 @@
 # Contributing Guidelines
 
-## Code Architecture: Fetch / Observe / Plan / Project Pattern
+## Code Architecture: FetchRemoteState / ComposeState / PlanResources / SetStatus Pattern
 
 Our reconciliation logic follows a four-phase pattern that separates concerns and makes code easier to test and maintain:
 
-### 1. **Fetch** - Retrieve raw data
+### 1. **FetchRemoteState** - Retrieve raw data
 
 Fetch resources from Kubernetes or external systems. No logic, just API calls. Returns a struct containing all fetched components and their errors.
 
@@ -23,7 +23,7 @@ type ServiceFetchResult struct {
     InferenceErr  error
 }
 
-func (r *Reconciler) fetchServiceResources(ctx context.Context, service *aimv1alpha1.AIMService) ServiceFetchResult {
+func (r *Reconciler) FetchRemoteState(ctx context.Context, c client.Client, service *aimv1alpha1.AIMService) (ServiceFetchResult, error) {
     result := ServiceFetchResult{}
 
     // Fetch model
@@ -42,7 +42,7 @@ func (r *Reconciler) fetchServiceResources(ctx context.Context, service *aimv1al
 }
 ```
 
-### 2. **Observe** - Interpret the current state
+### 2. **ComposeState** - Interpret the current state
 
 Transform raw fetched data into a structured observation that describes **what is** (current world state). Takes the FetchResult as input.
 
@@ -65,7 +65,7 @@ type ServiceObservation struct {
     InferenceErr           error
 }
 
-func (r *Reconciler) observeService(fetchResult ServiceFetchResult) ServiceObservation {
+func (r *Reconciler) ComposeState(ctx context.Context, service *aimv1alpha1.AIMService, fetchResult ServiceFetchResult) (ServiceObservation, error) {
     obs := ServiceObservation{}
 
     // Observe model
@@ -100,29 +100,29 @@ func (r *Reconciler) observeService(fetchResult ServiceFetchResult) ServiceObser
 }
 ```
 
-#### Deciding What Belongs in Observation
+#### Deciding What Belongs in the ComposeState Result (Observation)
 
 When you're debating adding something to Observation, walk through this checklist:
 
 **Is this describing the current world or a future action?**
 - Current world → candidate for Observation
-- Future action → belongs in Plan
+- Future action → belongs in PlanResources
 
-**Will this value be used in more than one place (Plan/Project/tests/status)?**
+**Will this value be used in more than one place (PlanResources/SetStatus/tests/status)?**
 - Yes → good candidate for an Observation field or method
-- No → maybe compute inline or as a private helper in Plan
+- No → maybe compute inline or as a private helper in PlanResources
 
 **Does this value encapsulate non-trivial logic or provider quirks?**
-- Yes → put that logic behind an Observation method so Plan/Project don't need to know the quirks
+- Yes → put that logic behind an Observation method so PlanResources/SetStatus don't need to know the quirks
 
 **Is it expensive or noisy to recompute?**
 - Yes → store it in a field
 - No → prefer a method or inline computation
 
-**Would a future teammate understand this field without reading Observe's internals?**
+**Would a future teammate understand this field without reading ComposeState's internals?**
 - If the name can't be made self-explanatory, either don't expose it, or move it to a method where its meaning is clear from the implementation
 
-#### Methods vs Fields in Observation
+#### Methods vs Fields in the Observation Struct
 
 Any time you feel tempted to add a new field, ask: **"Is this really a stored fact, or just a computation over existing facts?"**
 
@@ -163,10 +163,10 @@ func (o InferenceObservation) HasFailedCondition() bool {
 }
 ```
 
-**Then Plan reads cleanly:**
+**Then PlanResources reads cleanly:**
 
 ```go
-func (r *Reconciler) Plan(ctx context.Context, service *aimv1alpha1.AIMService, obs ServiceObservation) (controllerutils.PlanResult, error) {
+func (r *Reconciler) PlanResources(ctx context.Context, service *aimv1alpha1.AIMService, obs ServiceObservation) (controllerutils.PlanResult, error) {
     // Clear, readable logic
     if obs.Inference.NeedsScaleUp(service.Spec.Replicas) {
         // plan scale up...
@@ -190,12 +190,12 @@ func (r *Reconciler) Plan(ctx context.Context, service *aimv1alpha1.AIMService, 
 - Logic is encapsulated and testable
 - Easy to refactor without changing the Observation API
 
-### 3. **Plan** - Decide what actions to take
+### 3. **PlanResources** - Decide what actions to take
 
 Based on observations, determine **what objects to create, update, or delete**. Returns a `PlanResult` with `Apply` and `Delete` slices.
 
 ```go
-func (r *Reconciler) Plan(
+func (r *Reconciler) PlanResources(
     ctx context.Context,
     service *aimv1alpha1.AIMService,
     obs ServiceObservation,
@@ -256,39 +256,39 @@ type PlanResult struct {
 }
 ```
 
-### 4. **Project** - Update conditions and status
-Set conditions using the condition manager (`cm`) and status helper (`sh` or `h`), and update the status struct.
+### 4. **SetStatus** - Update conditions and status
+Set conditions using the condition manager (`cm`) and status helper (`h`), and update the status struct. This method receives the status object.
 
 ```go
-func (r *Reconciler) projectTemplateStatus(
+func (r *Reconciler) SetStatus(
     status *aimv1alpha1.AIMServiceStatus,
     cm *controllerutils.ConditionManager,
-    h *controllerutils.StatusHelper,
-    obs TemplateObservation,
-) bool {
+    obs ServiceObservation,
+) {
+    h := controllerutils.NewStatusHelper(status, cm)
+
     if !obs.TemplateFound {
         h.Degraded(aimv1alpha1.AIMServiceReasonTemplateNotFound, "Template not found")
         cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved,
             aimv1alpha1.AIMServiceReasonTemplateNotFound, "Template not found",
-            controllerutils.LevelWarning)
-        return true // Fatal error, stop reconciliation
+            controllerutils.AsWarning())
+        return
     }
 
     if !obs.TemplateAvailable {
         h.Progressing(aimv1alpha1.AIMServiceReasonTemplateNotReady, "Waiting for template")
         cm.MarkFalse(aimv1alpha1.AIMServiceConditionTemplateResolved,
             aimv1alpha1.AIMServiceReasonTemplateNotReady, "Template not ready",
-            controllerutils.LevelNormal)
-        return false // Continue reconciliation
+            controllerutils.AsInfo())
+        return
     }
 
     cm.MarkTrue(aimv1alpha1.AIMServiceConditionTemplateResolved,
         aimv1alpha1.AIMServiceReasonResolved, "Template resolved",
-        controllerutils.LevelNormal)
+        controllerutils.AsInfo())
     status.ResolvedTemplate = &aimv1alpha1.AIMResolvedReference{
         Name: obs.TemplateStatus.Name,
     }
-    return false
 }
 ```
 
