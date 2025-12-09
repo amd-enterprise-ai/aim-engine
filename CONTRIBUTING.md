@@ -314,7 +314,7 @@ Message strings (the descriptive text parameter) can and should remain as inline
 
 ### Condition Manager and Status Helper
 
-Use the condition manager (`cm`) and status helper (`sh` or `h`) consistently:
+Use the condition manager (`cm`) and status helper (`h`) consistently:
 
 - `cm.MarkTrue/MarkFalse/Set` - Set condition status with type, reason, message, and observability options
 - `h.Progressing/Degraded/Failed/Ready` - Set overall status with reason and message
