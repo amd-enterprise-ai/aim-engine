@@ -34,6 +34,7 @@ repos:
     entry: make third-party-licenses
     language: system
     pass_filenames: false
+    files: ^go\.(mod|sum)$
 
   # - id: build-crds
   #   name: Build CRDs for Helm chart
