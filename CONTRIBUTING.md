@@ -138,11 +138,12 @@ type InferenceObservation struct {
     rawInferenceService *kservev1beta1.InferenceService // unexported raw state
     Ready               bool
     CurrentReplicas     int32
+	DesiredReplicas     int32
 }
 
 // Methods encapsulate derivations - no need to store these as fields
-func (o InferenceObservation) NeedsScaleUp(desiredReplicas int32) bool {
-    return o.CurrentReplicas < desiredReplicas
+func (o InferenceObservation) NeedsScaleUp() bool {
+    return o.CurrentReplicas < o.DesiredReplicas
 }
 
 func (o InferenceObservation) IsProgressing() bool {
