@@ -54,9 +54,20 @@ type DomainReconciler[T ObjectWithStatus[S], S StatusWithConditions, F any, Obs 
 
 	// PlanResources must be pure: no client calls, just derive desired state changes based on the object + observed state.
 	PlanResources(ctx context.Context, obj T, obs Obs) (PlanResult, error)
+}
 
+// StatusDecorator lets a reconciler *extend* status, but not replace it.
+type StatusDecorator[T ObjectWithStatus[S], S StatusWithConditions, Obs any] interface {
+	// DecorateStatus can set domain-specific status fields and optional conditions. It can be used to extend
+	// and override the status and conditions that are set by the StateEngine.
+	DecorateStatus(status S, cm *ConditionManager, obs Obs, es ErrorSummary)
+}
+
+// ManualStatusController takes full ownership of status & conditions.
+// When implemented, the StateEngine is NOT called.
+type ManualStatusController[T ObjectWithStatus[S], S StatusWithConditions, Obs any] interface {
 	// SetStatus mutates obj.Status via the ConditionManager based on obs/plan/errors.
-	SetStatus(status S, cm *ConditionManager, obs Obs)
+	SetStatus(status S, cm *ConditionManager, obs Obs, es ErrorSummary)
 }
 
 // Pipeline wires a domain reconciler with controller-runtime utilities.
@@ -154,13 +165,21 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 		}
 	}
 
-	// SetStatus phase - updates status based on observations and planned changes
-	// This phase runs ONLY after successful FetchRemoteState/ComposeState/PlanResources phases.
-	// Infrastructure failures in earlier phases cause immediate retry without status update.
-	// Semantic errors MUST be reflected in observations (not returned as errors) so they
-	// can be surfaced here via conditions. Domain reconciler updates conditions to reflect
-	// observed state and any semantic issues encountered.
-	p.Reconciler.SetStatus(status, cm, obs)
+	// TODO implement error summarization
+	errSummary := ErrorSummary{}
+
+	// If the reconciler implements the ManualStatusController interface, let the reconciler determine its status
+	if manual, ok := any(p.Reconciler).(ManualStatusController[T, S, Obs]); ok {
+		// Fully manual mode: domain owns status & conditions.
+		manual.SetStatus(status, cm, obs, errSummary)
+	} else {
+		// TODO add StateEngine default status / condition management here
+
+		// If the reconciler implements the StatusDecorator interface, allow the reconciler to modify the auto-generated status and conditions
+		if dec, ok := any(p.Reconciler).(StatusDecorator[T, S, Obs]); ok {
+			dec.DecorateStatus(status, cm, obs, errSummary)
+		}
+	}
 
 	// Update conditions from manager
 	status.SetConditions(cm.Conditions())
