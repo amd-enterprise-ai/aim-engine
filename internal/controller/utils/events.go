@@ -83,8 +83,10 @@ type ObservabilityOption func(*ObservabilityConfig)
 
 func defaultConfig() ObservabilityConfig {
 	return ObservabilityConfig{
-		eventMode: EventNone,
-		logMode:   LogNone,
+		eventMode:  EventOnTransition,
+		eventLevel: LevelNormal,
+		logMode:    LogOnTransition,
+		logLevel:   0, // Info level
 	}
 }
 
@@ -210,7 +212,7 @@ func AsError() ObservabilityOption {
 }
 
 // Silent explicitly marks a condition as having no events or logs.
-// This is the default, but can be used for clarity or to override other options.
+// Use this to suppress observability for low-priority conditions.
 func Silent() ObservabilityOption {
 	return func(c *ObservabilityConfig) {
 		c.eventMode = EventNone
