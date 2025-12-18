@@ -22,7 +22,13 @@
 
 package controllerutils
 
-import "errors"
+import (
+	"errors"
+	"net"
+	"syscall"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+)
 
 // ErrorCategory classifies high-level error semantics for the state engine.
 type ErrorCategory int
@@ -31,8 +37,10 @@ const (
 	ErrorCategoryUnknown ErrorCategory = iota
 	ErrorCategoryInfrastructure
 	ErrorCategoryAuth
-	ErrorCategoryMissingDependency
+	ErrorCategoryMissingDownstreamDependency
+	ErrorCategoryMissingUpstreamDependency
 	ErrorCategoryInvalidSpec
+	ErrorCategoryResourceExhaustion
 )
 
 // StateEngineError is a structured error for the state engine layer.
@@ -92,10 +100,14 @@ func (c ErrorCategory) String() string {
 		return "Infrastructure"
 	case ErrorCategoryAuth:
 		return "Auth"
-	case ErrorCategoryMissingDependency:
+	case ErrorCategoryMissingDownstreamDependency:
 		return "MissingDependency"
+	case ErrorCategoryMissingUpstreamDependency:
+		return "MissingReference"
 	case ErrorCategoryInvalidSpec:
 		return "InvalidSpec"
+	case ErrorCategoryResourceExhaustion:
+		return "ResourceExhaustion"
 	default:
 		return "Unknown"
 	}
@@ -111,7 +123,7 @@ func (c ErrorCategory) String() string {
 //   - reason: Machine-readable reason code (e.g., "NetworkFailure")
 //   - message: Human-readable description for users
 //   - cause: Underlying error that caused this issue (may be nil)
-func NewInfrastructureError(reason, message string, cause error) error {
+func NewInfrastructureError(reason, message string, cause error) StateEngineError {
 	return &stateEngineError{
 		err:     cause,
 		cat:     ErrorCategoryInfrastructure,
@@ -128,7 +140,7 @@ func NewInfrastructureError(reason, message string, cause error) error {
 //   - reason: Machine-readable reason code (e.g., "InsufficientPermissions")
 //   - message: Human-readable description for users
 //   - cause: Underlying error that caused this issue (may be nil)
-func NewAuthError(reason, message string, cause error) error {
+func NewAuthError(reason, message string, cause error) StateEngineError {
 	return &stateEngineError{
 		err:     cause,
 		cat:     ErrorCategoryAuth,
@@ -137,18 +149,36 @@ func NewAuthError(reason, message string, cause error) error {
 	}
 }
 
-// NewMissingDependencyError creates an error for missing required resources
-// (e.g., ConfigMaps, Secrets, CRDs). These errors should be surfaced in status
-// conditions to inform users about missing dependencies.
+// NewMissingDownstreamDependencyError creates an error for missing internal dependencies
+// that the controller is waiting for (e.g., a template being created, a pod starting).
+// These are transient states that should self-heal - the controller will keep progressing.
 //
 // Parameters:
-//   - reason: Machine-readable reason code (e.g., "SecretNotFound")
+//   - reason: Machine-readable reason code (e.g., "TemplateNotReady")
 //   - message: Human-readable description for users
 //   - cause: Underlying error that caused this issue (may be nil)
-func NewMissingDependencyError(reason, message string, cause error) error {
+func NewMissingDownstreamDependencyError(reason, message string, cause error) StateEngineError {
 	return &stateEngineError{
 		err:     cause,
-		cat:     ErrorCategoryMissingDependency,
+		cat:     ErrorCategoryMissingDownstreamDependency,
+		reason:  reason,
+		message: message,
+	}
+}
+
+// NewMissingUpstreamDependencyError creates an error for user-referenced resources that don't exist
+// (e.g., a runtimeConfigName that points to a non-existent config, a secret reference).
+// These are configuration errors that require user intervention - the spec is valid but
+// the referenced resource is missing. Sets ConfigValid=False.
+//
+// Parameters:
+//   - reason: Machine-readable reason code (e.g., "ConfigNotFound")
+//   - message: Human-readable description for users
+//   - cause: Underlying error that caused this issue (may be nil)
+func NewMissingUpstreamDependencyError(reason, message string, cause error) StateEngineError {
+	return &stateEngineError{
+		err:     cause,
+		cat:     ErrorCategoryMissingUpstreamDependency,
 		reason:  reason,
 		message: message,
 	}
@@ -162,10 +192,26 @@ func NewMissingDependencyError(reason, message string, cause error) error {
 //   - reason: Machine-readable reason code (e.g., "InvalidConfiguration")
 //   - message: Human-readable description for users
 //   - cause: Underlying error that caused this issue (may be nil)
-func NewInvalidSpecError(reason, message string, cause error) error {
+func NewInvalidSpecError(reason, message string, cause error) StateEngineError {
 	return &stateEngineError{
 		err:     cause,
 		cat:     ErrorCategoryInvalidSpec,
+		reason:  reason,
+		message: message,
+	}
+}
+
+// NewResourceExhaustionError creates a resource exhaustion error.
+// Use this for errors related to resource limits being hit:
+// - Disk full / no space left on device
+// - Out of memory (OOM)
+// - Storage quota exceeded
+// These errors require user intervention (increase PVC size, memory limits, etc.)
+// and will not auto-recover through retries.
+func NewResourceExhaustionError(reason, message string, cause error) StateEngineError {
+	return &stateEngineError{
+		err:     cause,
+		cat:     ErrorCategoryResourceExhaustion,
 		reason:  reason,
 		message: message,
 	}
@@ -177,157 +223,162 @@ func IsStateEngineError(err error) bool {
 	return errors.As(err, &se)
 }
 
-// ErrorSummary aggregates errors and workload issues for the state engine.
-type ErrorSummary struct {
-	InfrastructureErrors []StateEngineError
-	AuthErrors           []StateEngineError
-	MissingDeps          []StateEngineError
-	InvalidSpecs         []StateEngineError
-
-	// UnclassifiedErrors contains errors that are not StateEngineErrors or have
-	// ErrorCategoryUnknown. These typically indicate bugs in error construction
-	// or unexpected error types that need investigation.
-	UnclassifiedErrors []error
-
-	WorkloadIssues []WorkloadIssue
-}
-
-// HasInfrastructureError returns true if any infrastructure errors are present.
-func (es ErrorSummary) HasInfrastructureError() bool {
-	return len(es.InfrastructureErrors) > 0
-}
-
-// HasAuthError returns true if any authentication/authorization errors are present.
-func (es ErrorSummary) HasAuthError() bool {
-	return len(es.AuthErrors) > 0
-}
-
-// HasMissingDependency returns true if any missing dependency errors are present.
-func (es ErrorSummary) HasMissingDependency() bool {
-	return len(es.MissingDeps) > 0
-}
-
-// HasInvalidSpec returns true if any invalid specification errors are present.
-func (es ErrorSummary) HasInvalidSpec() bool {
-	return len(es.InvalidSpecs) > 0
-}
-
-// HasUnclassifiedErrors returns true if any unclassified errors are present.
-func (es ErrorSummary) HasUnclassifiedErrors() bool {
-	return len(es.UnclassifiedErrors) > 0
-}
-
-// HasAnyErrors returns true if any errors (categorized or unclassified) are present.
-func (es ErrorSummary) HasAnyErrors() bool {
-	return es.HasInfrastructureError() ||
-		es.HasAuthError() ||
-		es.HasMissingDependency() ||
-		es.HasInvalidSpec() ||
-		es.HasUnclassifiedErrors()
-}
-
-// BuildErrorSummary walks over a list of errors and classifies StateEngineErrors
-// into their respective categories. This allows controllers to aggregate errors
-// from multiple operations and make decisions about status conditions based on
-// error categories.
+// CategorizeError inspects a raw error and categorizes it as a StateEngineError.
+// This function performs deep inspection to determine the error category:
+// - Kubernetes API errors (NotFound, Forbidden, Unauthorized, etc.)
+// - Network errors (connection refused, timeout, DNS failures)
+// - HTTP status codes (401, 403, 5xx)
 //
-// Non-StateEngineErrors and errors with ErrorCategoryUnknown are collected in
-// the UnclassifiedErrors field. The caller can inspect this field to determine
-// how to handle unexpected errors (e.g., fail reconciliation, log warnings, etc.).
-//
-// Parameters:
-//   - errs: List of errors to analyze (may contain nil, non-StateEngineErrors, or wrapped errors)
-//
-// Returns:
-//   - ErrorSummary with categorized state engine errors and unclassified errors
-func BuildErrorSummary(errs []error) ErrorSummary {
-	summary := ErrorSummary{
-		InfrastructureErrors: []StateEngineError{},
-		AuthErrors:           []StateEngineError{},
-		MissingDeps:          []StateEngineError{},
-		InvalidSpecs:         []StateEngineError{},
-		UnclassifiedErrors:   []error{},
-		WorkloadIssues:       []WorkloadIssue{},
-	}
-
-	// Track which concrete StateEngineError instances we've already seen
-	// to avoid duplicates when the same error appears multiple times in a chain.
-	seen := make(map[*stateEngineError]bool)
-
-	for _, err := range errs {
-		if err == nil {
-			continue
-		}
-
-		hasStateEngineError := false
-
-		// Walk the error chain to find all state engine errors
-		walkErrors(err, func(e error) {
-			// Check if this specific error is a StateEngineError
-			if concreteErr, ok := e.(*stateEngineError); ok {
-				// Skip if we've already processed this exact error instance
-				if seen[concreteErr] {
-					return
-				}
-				seen[concreteErr] = true
-				hasStateEngineError = true
-
-				switch concreteErr.Category() {
-				case ErrorCategoryInfrastructure:
-					summary.InfrastructureErrors = append(summary.InfrastructureErrors, concreteErr)
-				case ErrorCategoryAuth:
-					summary.AuthErrors = append(summary.AuthErrors, concreteErr)
-				case ErrorCategoryMissingDependency:
-					summary.MissingDeps = append(summary.MissingDeps, concreteErr)
-				case ErrorCategoryInvalidSpec:
-					summary.InvalidSpecs = append(summary.InvalidSpecs, concreteErr)
-				case ErrorCategoryUnknown:
-					// Unknown category indicates a bug in error construction.
-					// Add to unclassified to surface the issue.
-					summary.UnclassifiedErrors = append(summary.UnclassifiedErrors, e)
-				}
-			}
-		})
-
-		// If the error chain contains no state engine errors, it's a plain error
-		// that should not be swallowed.
-		if !hasStateEngineError {
-			summary.UnclassifiedErrors = append(summary.UnclassifiedErrors, err)
-		}
-	}
-
-	return summary
-}
-
-// walkErrors traverses an error chain, calling fn for each error encountered.
-// This handles both simple wrapped errors (via Unwrap()) and joined errors
-// (from errors.Join()). The function ensures all errors in a chain are visited,
-// regardless of how they were combined.
-//
-// Parameters:
-//   - err: The error to traverse (can be wrapped or joined)
-//   - fn: Function to call for each error in the chain
-func walkErrors(err error, fn func(error)) {
+// This is the SINGLE place where error categorization happens.
+func CategorizeError(err error) StateEngineError {
 	if err == nil {
-		return
+		return nil
 	}
 
-	// Call the function for the current error
-	fn(err)
-
-	// Check if this error wraps multiple errors (errors.Join pattern)
-	type unwrapper interface {
-		Unwrap() []error
+	// If already a StateEngineError, return as-is
+	var se StateEngineError
+	if errors.As(err, &se) {
+		return se
 	}
-	if u, ok := err.(unwrapper); ok {
-		for _, e := range u.Unwrap() {
-			walkErrors(e, fn)
+
+	// Kubernetes API errors
+	if statusErr := apierrors.APIStatus(nil); errors.As(err, &statusErr) {
+		status := statusErr.Status()
+
+		switch {
+		case apierrors.IsNotFound(err):
+			return NewMissingDownstreamDependencyError(
+				"NotFound",
+				"Resource not found",
+				err,
+			)
+
+		case apierrors.IsUnauthorized(err):
+			return NewAuthError(
+				"Unauthorized",
+				"Authentication required or invalid credentials",
+				err,
+			)
+
+		case apierrors.IsForbidden(err):
+			return NewAuthError(
+				"Forbidden",
+				"Insufficient permissions to access resource",
+				err,
+			)
+
+		case apierrors.IsInvalid(err):
+			return NewInvalidSpecError(
+				"InvalidSpec",
+				"Resource specification is invalid",
+				err,
+			)
+
+		case apierrors.IsAlreadyExists(err):
+			return NewInvalidSpecError(
+				"AlreadyExists",
+				"Resource already exists",
+				err,
+			)
+
+		case apierrors.IsConflict(err):
+			return NewInvalidSpecError(
+				"Conflict",
+				"Resource conflict - version mismatch or concurrent modification",
+				err,
+			)
+
+		case apierrors.IsServerTimeout(err), apierrors.IsTimeout(err):
+			return NewInfrastructureError(
+				"Timeout",
+				"Request timed out",
+				err,
+			)
+
+		case apierrors.IsServiceUnavailable(err), apierrors.IsInternalError(err):
+			return NewInfrastructureError(
+				"ServiceUnavailable",
+				"Kubernetes API server unavailable or internal error",
+				err,
+			)
+
+		case apierrors.IsTooManyRequests(err):
+			return NewInfrastructureError(
+				"RateLimited",
+				"Too many requests - rate limited",
+				err,
+			)
+
+		default:
+			// Check HTTP status code
+			if status.Code >= 500 {
+				return NewInfrastructureError(
+					"ServerError",
+					"Server error (5xx)",
+					err,
+				)
+			}
+			if status.Code >= 400 && status.Code < 500 {
+				return NewInvalidSpecError(
+					"ClientError",
+					"Client error (4xx)",
+					err,
+				)
+			}
 		}
-		return
 	}
 
-	// Check if this error wraps a single error (fmt.Errorf %w pattern)
-	if e := errors.Unwrap(err); e != nil {
-		walkErrors(e, fn)
+	// Network-level errors
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return NewInfrastructureError(
+			"ConnectionRefused",
+			"Connection refused - service may be down",
+			err,
+		)
+	}
+
+	if errors.Is(err, syscall.ETIMEDOUT) {
+		return NewInfrastructureError(
+			"NetworkTimeout",
+			"Network timeout",
+			err,
+		)
+	}
+
+	if errors.Is(err, syscall.ECONNRESET) {
+		return NewInfrastructureError(
+			"ConnectionReset",
+			"Connection reset by peer",
+			err,
+		)
+	}
+
+	// DNS errors - use Go's structured net.DNSError type
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return NewInfrastructureError(
+			"DNSFailure",
+			"DNS resolution failed for "+dnsErr.Name,
+			err,
+		)
+	}
+
+	// Generic network operation errors (dial, read, write failures)
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return NewInfrastructureError(
+			"NetworkError",
+			"Network operation failed: "+opErr.Op,
+			err,
+		)
+	}
+
+	// Default: unclassified error - categorize as unknown infrastructure
+	// This ensures we never return nil, but indicates investigation needed
+	return &stateEngineError{
+		err:     err,
+		cat:     ErrorCategoryUnknown,
+		reason:  "UnknownError",
+		message: err.Error(),
 	}
 }

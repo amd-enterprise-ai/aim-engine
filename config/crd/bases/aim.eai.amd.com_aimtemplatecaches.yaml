@@ -310,7 +310,6 @@ spec:
                 - Unknown
                 type: string
             required:
-            - runtimeConfigName
             - templateName
             - templateScope
             type: object

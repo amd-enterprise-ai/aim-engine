@@ -23,9 +23,11 @@
 package utils
 
 import (
+	"reflect"
 	"regexp"
 	"strings"
 
+	"dario.cat/mergo"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -144,33 +146,86 @@ func MergePullSecretRefs(base []corev1.LocalObjectReference, extras []corev1.Loc
 	return base
 }
 
-// MergeEnvVars merges env vars from template with service env vars.
-// Service env vars take precedence over template env vars (by name).
-// templateEnv are the base env vars from the template.
-// serviceEnv are the override env vars from the service (these take precedence).
-func MergeEnvVars(templateEnv []corev1.EnvVar, serviceEnv []corev1.EnvVar) []corev1.EnvVar {
-	if len(templateEnv) == 0 {
-		return serviceEnv
-	}
-	if len(serviceEnv) == 0 {
-		return CopyEnvVars(templateEnv)
-	}
-
-	// Build index of service env var names (these override template vars)
-	index := make(map[string]struct{}, len(serviceEnv))
-	for _, env := range serviceEnv {
-		index[env.Name] = struct{}{}
-	}
-
-	// Start with service env vars (they take precedence)
-	result := CopyEnvVars(serviceEnv)
-
-	// Add template env vars that aren't overridden by service
-	for _, env := range templateEnv {
-		if _, exists := index[env.Name]; !exists {
-			result = append(result, env)
+// MergeEnvVars merges multiple env var slices with later slices taking precedence.
+// Env vars are keyed by Name, matching the +listMapKey=name kubebuilder annotation.
+// Pass slices in order of increasing precedence (e.g., cluster, namespace, resource).
+//
+// Example:
+//
+//	merged := MergeEnvVars(clusterEnv, namespaceEnv, resourceEnv)
+//	// resourceEnv vars override namespaceEnv, which override clusterEnv
+func MergeEnvVars(envSlices ...[]corev1.EnvVar) []corev1.EnvVar {
+	// Build map keyed by name, later slices override earlier ones
+	merged := make(map[string]corev1.EnvVar)
+	for _, slice := range envSlices {
+		for _, env := range slice {
+			merged[env.Name] = env
 		}
 	}
 
+	if len(merged) == 0 {
+		return nil
+	}
+
+	result := make([]corev1.EnvVar, 0, len(merged))
+	for _, env := range merged {
+		result = append(result, env)
+	}
 	return result
+}
+
+// envVarSliceType is cached for transformer type comparison.
+var envVarSliceType = reflect.TypeOf([]corev1.EnvVar{})
+
+// envVarMergeTransformer implements mergo.Transformers to handle []corev1.EnvVar
+// with key-based merging by Name, matching +listMapKey=name semantics.
+type envVarMergeTransformer struct{}
+
+// Transformer returns a merge function for []corev1.EnvVar that merges by Name key.
+func (t envVarMergeTransformer) Transformer(typ reflect.Type) func(dst, src reflect.Value) error {
+	if typ != envVarSliceType {
+		return nil
+	}
+	return func(dst, src reflect.Value) error {
+		if !src.IsValid() || src.IsNil() {
+			return nil
+		}
+		if !dst.CanSet() {
+			return nil
+		}
+
+		dstEnv, _ := dst.Interface().([]corev1.EnvVar)
+		srcEnv, _ := src.Interface().([]corev1.EnvVar)
+		merged := MergeEnvVars(dstEnv, srcEnv)
+		dst.Set(reflect.ValueOf(merged))
+		return nil
+	}
+}
+
+// MergeOptions returns the standard mergo options for config merging.
+// This includes WithOverride for scalar fields and the envVarMergeTransformer
+// for key-based slice merging of []corev1.EnvVar fields.
+func MergeOptions() []func(*mergo.Config) {
+	return []func(*mergo.Config){
+		mergo.WithOverride,
+		mergo.WithTransformers(envVarMergeTransformer{}),
+	}
+}
+
+// MergeConfigs merges multiple config structs with later configs taking precedence.
+// Uses key-based merging for []corev1.EnvVar fields (by Name).
+// The dst must be a pointer to the destination struct.
+//
+// Example:
+//
+//	var resolved AIMRuntimeConfigCommon
+//	err := MergeConfigs(&resolved, clusterConfig, namespaceConfig, serviceConfig)
+func MergeConfigs[T any](dst *T, srcs ...T) error {
+	opts := MergeOptions()
+	for _, src := range srcs {
+		if err := mergo.Merge(dst, src, opts...); err != nil {
+			return err
+		}
+	}
+	return nil
 }

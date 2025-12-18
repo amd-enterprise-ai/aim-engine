@@ -24,6 +24,7 @@ package constants
 
 import (
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -93,10 +94,15 @@ var AIMStatusPriority = map[AIMStatus]int{
 }
 
 func CompareAIMStatus(a AIMStatus, b AIMStatus) int {
-	if AIMStatusPriority[a] > AIMStatusPriority[b] {
-		return 1
+	priorityA := AIMStatusPriority[a]
+	priorityB := AIMStatusPriority[b]
+	if priorityA > priorityB {
+		return 1 // a is better
 	}
-	return -1
+	if priorityA < priorityB {
+		return -1 // a is worse
+	}
+	return 0 // equal
 }
 
 var (
@@ -105,13 +111,24 @@ var (
 )
 
 // GetOperatorNamespace returns the namespace where the AIM operator runs.
-// It reads the AIM_OPERATOR_NAMESPACE environment variable; if unset, it defaults to "aim-system".
+// The result is cached after the first call.
 func GetOperatorNamespace() string {
 	operatorNamespaceOnce.Do(func() {
+		// Check if the env var is set
 		if ns := os.Getenv(operatorNamespaceEnvVar); ns != "" {
 			operatorNamespace = ns
 			return
 		}
+
+		// If running in a pod, this should exist
+		if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+			if ns := strings.TrimSpace(string(data)); len(ns) > 0 {
+				operatorNamespace = ns
+				return
+			}
+		}
+
+		// Default to aim-system
 		operatorNamespace = "aim-system"
 	})
 	return operatorNamespace

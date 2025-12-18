@@ -95,7 +95,7 @@ func TestLogHelpers(t *testing.T) {
 			opt:  WithInfoLog(),
 			expected: ObservabilityConfig{
 				logMode:  LogOnTransition,
-				logLevel: 1,
+				logLevel: 0, // V(0) = visible at default info level
 			},
 		},
 		{
@@ -103,7 +103,7 @@ func TestLogHelpers(t *testing.T) {
 			opt:  WithDebugLog(),
 			expected: ObservabilityConfig{
 				logMode:  LogOnTransition,
-				logLevel: 2,
+				logLevel: 1, // V(1) = only visible with debug
 			},
 		},
 	}
@@ -405,7 +405,7 @@ func TestHighLevelDefaults(t *testing.T) {
 			expectedEvent: EventOnTransition,
 			expectedLevel: LevelNormal,
 			expectedLog:   LogOnTransition,
-			expectedLogLv: 1,
+			expectedLogLv: 0, // V(0) = visible at default info level
 		},
 		{
 			name:          "AsWarning",

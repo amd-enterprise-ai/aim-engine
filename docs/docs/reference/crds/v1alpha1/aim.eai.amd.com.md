@@ -155,6 +155,8 @@ _Appears in:_
 | `storage` _[AIMStorageConfig](#aimstorageconfig)_ | Storage configures storage defaults for this service's PVCs and caches.<br />When set, these values override namespace/cluster runtime config defaults. |  |  |
 | `routing` _[AIMRuntimeRoutingConfig](#aimruntimeroutingconfig)_ | Routing controls HTTP routing configuration for this service.<br />When set, these values override namespace/cluster runtime config defaults. |  |  |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults.<br />This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  |  |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables to use for the runtime config.<br />These variables are used for the runtime config and are not propagated to child resources.<br />If configmaps or secrets are referenced, they need to exist in the namespace referencing this runtime config.<br />For cluster scoped runtime configs, any referenced configmaps or secrets need to exist in the system namespace. |  |  |
+| `labelPropagation` _[AIMRuntimeConfigLabelPropagationSpec](#aimruntimeconfiglabelpropagationspec)_ | LabelPropagation controls how labels from parent AIM resources are propagated to child resources.<br />When enabled, labels matching the specified patterns are automatically copied from parent resources<br />(e.g., AIMService, AIMTemplateCache) to their child resources (e.g., Deployments, Services, PVCs).<br />This is useful for propagating organizational metadata like cost centers, team identifiers,<br />or compliance labels through the resource hierarchy. |  |  |
 | `defaultStorageClassName` _string_ | DEPRECATED: Use Storage.DefaultStorageClassName instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.DefaultStorageClassName is not set,<br />the value will be automatically migrated. |  |  |
 | `pvcHeadroomPercent` _integer_ | DEPRECATED: Use Storage.PVCHeadroomPercent instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.PVCHeadroomPercent is not set,<br />the value will be automatically migrated. |  |  |
 
@@ -686,8 +688,29 @@ _Appears in:_
 | `storage` _[AIMStorageConfig](#aimstorageconfig)_ | Storage configures storage defaults for this service's PVCs and caches.<br />When set, these values override namespace/cluster runtime config defaults. |  |  |
 | `routing` _[AIMRuntimeRoutingConfig](#aimruntimeroutingconfig)_ | Routing controls HTTP routing configuration for this service.<br />When set, these values override namespace/cluster runtime config defaults. |  |  |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults.<br />This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  |  |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables to use for the runtime config.<br />These variables are used for the runtime config and are not propagated to child resources.<br />If configmaps or secrets are referenced, they need to exist in the namespace referencing this runtime config.<br />For cluster scoped runtime configs, any referenced configmaps or secrets need to exist in the system namespace. |  |  |
+| `labelPropagation` _[AIMRuntimeConfigLabelPropagationSpec](#aimruntimeconfiglabelpropagationspec)_ | LabelPropagation controls how labels from parent AIM resources are propagated to child resources.<br />When enabled, labels matching the specified patterns are automatically copied from parent resources<br />(e.g., AIMService, AIMTemplateCache) to their child resources (e.g., Deployments, Services, PVCs).<br />This is useful for propagating organizational metadata like cost centers, team identifiers,<br />or compliance labels through the resource hierarchy. |  |  |
 | `defaultStorageClassName` _string_ | DEPRECATED: Use Storage.DefaultStorageClassName instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.DefaultStorageClassName is not set,<br />the value will be automatically migrated. |  |  |
 | `pvcHeadroomPercent` _integer_ | DEPRECATED: Use Storage.PVCHeadroomPercent instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.PVCHeadroomPercent is not set,<br />the value will be automatically migrated. |  |  |
+
+
+#### AIMRuntimeConfigLabelPropagationSpec
+
+
+
+
+
+
+
+_Appears in:_
+- [AIMClusterRuntimeConfigSpec](#aimclusterruntimeconfigspec)
+- [AIMRuntimeConfigCommon](#aimruntimeconfigcommon)
+- [AIMRuntimeConfigSpec](#aimruntimeconfigspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `enabled` _boolean_ | Enabled, if true, allows propagating parent labels to all child resources it creates directly<br />Only label keys that match the ones in Match are propagated. | false |  |
+| `match` _string array_ | Match is a list of label keys that will be propagated to any child resources created.<br />Wildcards are supported, so for example `org.my/my-key-*` would match any label with that prefix. |  |  |
 
 
 #### AIMRuntimeConfigList
@@ -724,6 +747,8 @@ _Appears in:_
 | `storage` _[AIMStorageConfig](#aimstorageconfig)_ | Storage configures storage defaults for this service's PVCs and caches.<br />When set, these values override namespace/cluster runtime config defaults. |  |  |
 | `routing` _[AIMRuntimeRoutingConfig](#aimruntimeroutingconfig)_ | Routing controls HTTP routing configuration for this service.<br />When set, these values override namespace/cluster runtime config defaults. |  |  |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults.<br />This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  |  |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables to use for the runtime config.<br />These variables are used for the runtime config and are not propagated to child resources.<br />If configmaps or secrets are referenced, they need to exist in the namespace referencing this runtime config.<br />For cluster scoped runtime configs, any referenced configmaps or secrets need to exist in the system namespace. |  |  |
+| `labelPropagation` _[AIMRuntimeConfigLabelPropagationSpec](#aimruntimeconfiglabelpropagationspec)_ | LabelPropagation controls how labels from parent AIM resources are propagated to child resources.<br />When enabled, labels matching the specified patterns are automatically copied from parent resources<br />(e.g., AIMService, AIMTemplateCache) to their child resources (e.g., Deployments, Services, PVCs).<br />This is useful for propagating organizational metadata like cost centers, team identifiers,<br />or compliance labels through the resource hierarchy. |  |  |
 | `defaultStorageClassName` _string_ | DEPRECATED: Use Storage.DefaultStorageClassName instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.DefaultStorageClassName is not set,<br />the value will be automatically migrated. |  |  |
 | `pvcHeadroomPercent` _integer_ | DEPRECATED: Use Storage.PVCHeadroomPercent instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.PVCHeadroomPercent is not set,<br />the value will be automatically migrated. |  |  |
 
@@ -799,6 +824,8 @@ _Appears in:_
 
 
 AIMService manages a KServe-based AIM inference service for the selected model and template.
+Note: KServe uses {name}-{namespace} format which must not exceed 63 characters.
+This constraint is validated at runtime since CEL cannot access metadata.namespace.
 
 
 
@@ -989,7 +1016,6 @@ _Appears in:_
 | `routing` _[AIMRuntimeRoutingConfig](#aimruntimeroutingconfig)_ | Routing controls HTTP routing configuration for this service.<br />When set, these values override namespace/cluster runtime config defaults. |  |  |
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources overrides the container resource requirements for this service.<br />When specified, these values take precedence over the template and image defaults. |  |  |
 | `overrides` _[AIMServiceOverrides](#aimserviceoverrides)_ | Overrides allows overriding specific template parameters for this service.<br />When specified, these values take precedence over the template values. |  |  |
-| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables to use for authentication when downloading models.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  |  |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets references secrets for pulling AIM container images. |  |  |
 | `serviceAccountName` _string_ | ServiceAccountName specifies the Kubernetes service account to use for the inference workload.<br />This service account is used by the deployed inference pods.<br />If empty, the default service account for the namespace is used. |  |  |
 

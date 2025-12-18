@@ -459,7 +459,6 @@ spec:
                 type: string
             required:
             - modelName
-            - runtimeConfigName
             type: object
           status:
             description: AIMServiceTemplateStatus defines the observed state of AIMServiceTemplate.

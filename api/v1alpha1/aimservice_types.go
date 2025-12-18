@@ -171,13 +171,6 @@ type AIMServiceSpec struct {
 	// +optional
 	Overrides *AIMServiceOverrides `json:"overrides,omitempty"`
 
-	// Env specifies environment variables to use for authentication when downloading models.
-	// These variables are used for authentication with model registries (e.g., HuggingFace tokens).
-	// +optional
-	// +listType=map
-	// +listMapKey=name
-	Env []corev1.EnvVar `json:"env,omitempty"`
-
 	// ImagePullSecrets references secrets for pulling AIM container images.
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
@@ -327,7 +320,8 @@ const (
 // +kubebuilder:printcolumn:name="Template",type=string,JSONPath=`.status.resolvedTemplate.name`
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
-// +kubebuilder:validation:XValidation:rule="self.metadata.name.size() + self.metadata.namespace.size() <= 62",message="combined length of name and namespace cannot exceed 62 characters (KServe uses {name}-{namespace} format which must not exceed 63 characters)"
+// Note: KServe uses {name}-{namespace} format which must not exceed 63 characters.
+// This constraint is validated at runtime since CEL cannot access metadata.namespace.
 type AIMService struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

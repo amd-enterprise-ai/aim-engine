@@ -105,3 +105,15 @@ func ResolveStorageClass(explicitStorageClass string, runtimeConfigSpec *aimv1al
 	// Fall back to top-level DefaultStorageClassName (legacy/deprecated schema)
 	return runtimeConfigSpec.DefaultStorageClassName
 }
+
+// GetPVCHeadroomPercent returns the PVC headroom percentage from the runtime config spec.
+// If not set, returns the default value defined in DefaultPVCHeadroomPercent.
+func GetPVCHeadroomPercent(spec *aimv1alpha1.AIMRuntimeConfigCommon) int32 {
+	if spec != nil && spec.Storage != nil && spec.Storage.PVCHeadroomPercent != nil {
+		return *spec.Storage.PVCHeadroomPercent
+	}
+	if spec != nil && spec.PVCHeadroomPercent != nil {
+		return *spec.PVCHeadroomPercent
+	}
+	return DefaultPVCHeadroomPercent
+}
