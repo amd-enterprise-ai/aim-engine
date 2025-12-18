@@ -8,16 +8,42 @@ metadata:
 spec:
   group: aim.eai.amd.com
   names:
+    categories:
+    - aim
+    - all
     kind: AIMClusterModel
     listKind: AIMClusterModelList
     plural: aimclustermodels
+    shortNames:
+    - aimclmdl
     singular: aimclustermodel
-  scope: Namespaced
+  scope: Cluster
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.status
+      name: Status
+      type: string
+    - jsonPath: .spec.image
+      name: Image
+      type: string
+    - jsonPath: .status.imageMetadata.model.canonicalName
+      name: Model
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: AIMClusterModel is the Schema for the aimclustermodels API
+        description: |-
+          AIMClusterModel is a cluster-scoped model catalog entry for AIM container images.
+
+          Cluster-scoped models can be referenced by AIMServices in any namespace, making them ideal for
+          shared model deployments across teams and projects. Like namespace-scoped AIMModels, cluster models
+          trigger discovery jobs to extract metadata and generate service templates.
+
+          When both cluster and namespace models exist for the same container image, services will preferentially
+          use the namespace-scoped AIMModel when referenced by image URI.
         properties:
           apiVersion:
             description: |-
@@ -37,27 +63,353 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of AIMClusterModel
+            description: AIMModelSpec defines the desired state of AIMModel.
             properties:
-              foo:
-                description: foo is an example field of AIMClusterModel. Edit aimclustermodel_types.go
-                  to remove/update
+              defaultServiceTemplate:
+                description: |-
+                  DefaultServiceTemplate specifies the default AIMServiceTemplate to use when creating services for this model.
+                  When set, services that reference this model will use this template if no template is explicitly specified.
+                  If this is not set, a template will be automatically selected.
                 type: string
+              discovery:
+                description: |-
+                  Discovery controls discovery behavior for this model.
+                  When unset, uses runtime config defaults.
+                properties:
+                  autoCreateTemplates:
+                    description: |-
+                      AutoCreateTemplates controls whether templates are auto-created from discovery results.
+                      When unset, templates are created if discovery succeeds and returns recommended deployments.
+                      When false, discovery runs but templates are not created (metadata extraction only).
+                      When true, templates are always created from discovery results.
+                    type: boolean
+                  enabled:
+                    description: |-
+                      Enabled controls whether discovery runs for this model.
+                      When unset (nil), uses the runtime config's model.autoDiscovery setting.
+                      When true, discovery always runs regardless of runtime config.
+                      When false, discovery never runs regardless of runtime config.
+                    type: boolean
+                type: object
+              env:
+                description: |-
+                  Env specifies environment variables for authentication during model discovery and metadata extraction.
+                  These variables are used for authentication with model registries (e.g., HuggingFace tokens).
+                items:
+                  description: EnvVar represents an environment variable present in
+                    a Container.
+                  properties:
+                    name:
+                      description: |-
+                        Name of the environment variable.
+                        May consist of any printable ASCII characters except '='.
+                      type: string
+                    value:
+                      description: |-
+                        Variable references $(VAR_NAME) are expanded
+                        using the previously defined environment variables in the container and
+                        any service environment variables. If a variable cannot be resolved,
+                        the reference in the input string will be unchanged. Double $$ are reduced
+                        to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                        "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                        Escaped references will never be expanded, regardless of whether the variable
+                        exists or not.
+                        Defaults to "".
+                      type: string
+                    valueFrom:
+                      description: Source for the environment variable's value. Cannot
+                        be used if value is not empty.
+                      properties:
+                        configMapKeyRef:
+                          description: Selects a key of a ConfigMap.
+                          properties:
+                            key:
+                              description: The key to select.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the ConfigMap or its key
+                                must be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        fieldRef:
+                          description: |-
+                            Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                            spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                          properties:
+                            apiVersion:
+                              description: Version of the schema the FieldPath is
+                                written in terms of, defaults to "v1".
+                              type: string
+                            fieldPath:
+                              description: Path of the field to select in the specified
+                                API version.
+                              type: string
+                          required:
+                          - fieldPath
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        fileKeyRef:
+                          description: |-
+                            FileKeyRef selects a key of the env file.
+                            Requires the EnvFiles feature gate to be enabled.
+                          properties:
+                            key:
+                              description: |-
+                                The key within the env file. An invalid key will prevent the pod from starting.
+                                The keys defined within a source may consist of any printable ASCII characters except '='.
+                                During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
+                              type: string
+                            optional:
+                              default: false
+                              description: |-
+                                Specify whether the file or its key must be defined. If the file or key
+                                does not exist, then the env var is not published.
+                                If optional is set to true and the specified key does not exist,
+                                the environment variable will not be set in the Pod's containers.
+
+                                If optional is set to false and the specified key does not exist,
+                                an error will be returned during Pod creation.
+                              type: boolean
+                            path:
+                              description: |-
+                                The path within the volume from which to select the file.
+                                Must be relative and may not contain the '..' path or start with '..'.
+                              type: string
+                            volumeName:
+                              description: The name of the volume mount containing
+                                the env file.
+                              type: string
+                          required:
+                          - key
+                          - path
+                          - volumeName
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        resourceFieldRef:
+                          description: |-
+                            Selects a resource of the container: only resources limits and requests
+                            (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                          properties:
+                            containerName:
+                              description: 'Container name: required for volumes,
+                                optional for env vars'
+                              type: string
+                            divisor:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: Specifies the output format of the exposed
+                                resources, defaults to "1"
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            resource:
+                              description: 'Required: resource to select'
+                              type: string
+                          required:
+                          - resource
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        secretKeyRef:
+                          description: Selects a key of a secret in the pod's namespace
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              image:
+                description: |-
+                  Image is the container image URI for this AIM model.
+                  This image is inspected by the operator to select runtime profiles used by templates.
+                  Discovery behavior is controlled by the discovery field and runtime config's AutoDiscovery setting.
+                minLength: 1
+                type: string
+              imagePullSecrets:
+                description: |-
+                  ImagePullSecrets lists secrets containing credentials for pulling the model container image.
+                  These secrets are used for:
+                  - OCI registry metadata extraction during discovery
+                  - Pulling the image for inference services
+                  The secrets are merged with any runtime config defaults.
+                  For namespace-scoped models, secrets must exist in the same namespace.
+                  For cluster-scoped models, secrets must exist in the operator namespace.
+                items:
+                  description: |-
+                    LocalObjectReference contains enough information to let you locate the
+                    referenced object inside the same namespace.
+                  properties:
+                    name:
+                      default: ""
+                      description: |-
+                        Name of the referent.
+                        This field is effectively required, but due to backwards compatibility is
+                        allowed to be empty. Instances of this type with an empty value here are
+                        almost certainly wrong.
+                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      type: string
+                  type: object
+                  x-kubernetes-map-type: atomic
+                type: array
+              modelSources:
+                description: |-
+                  ModelSources specifies the model sources to use for this model.
+                  When specified, these sources are used instead of auto-discovery from the container image.
+                  This enables pre-creating custom models with explicit model sources.
+                  The discovery job will validate and enrich these sources with size information.
+                  AIM runtime currently supports only one model source.
+                items:
+                  description: |-
+                    AIMModelSource describes a model artifact that must be downloaded for inference.
+                    Discovery extracts these from the container's configuration to enable caching and validation.
+                  properties:
+                    name:
+                      description: |-
+                        Name is a human-readable identifier for this model artifact.
+                        May be empty if the source represents the primary model.
+                      type: string
+                    size:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      description: |-
+                        Size is the expected storage space required for this model artifact.
+                        Used for PVC sizing and capacity planning during cache creation.
+                        Optional for custom models (will be populated by discovery job).
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    sourceUri:
+                      description: |-
+                        SourceURI is the location from which the model should be downloaded.
+                        Supported schemes:
+                        - hf://org/model - Hugging Face Hub model
+                        - s3://bucket/key - S3-compatible storage
+                      pattern: ^(hf|s3)://[^ \t\r\n]+$
+                      type: string
+                  required:
+                  - sourceUri
+                  type: object
+                maxItems: 1
+                type: array
+              resources:
+                description: |-
+                  Resources defines the default resource requirements for services using this model.
+                  Template- or service-level values override these defaults.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+                      This field depends on the
+                      DynamicResourceAllocation feature gate.
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                        request:
+                          description: |-
+                            Request is the name chosen for a request in the referenced claim.
+                            If empty, everything from the claim is made available, otherwise
+                            only the result of this request.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              runtimeConfigName:
+                description: |-
+                  Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both
+                  as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority
+                  over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster
+                  runtime config with the name `default` is used, if it exists.
+                type: string
+              serviceAccountName:
+                description: |-
+                  ServiceAccountName specifies the Kubernetes service account to use for workloads related to this model.
+                  This includes metadata extraction jobs and any other model-related operations.
+                  If empty, the default service account for the namespace is used.
+                type: string
+            required:
+            - image
+            - runtimeConfigName
             type: object
           status:
-            description: status defines the observed state of AIMClusterModel
+            description: AIMModelStatus defines the observed state of AIMModel.
             properties:
               conditions:
-                description: |-
-                  conditions represent the current state of the AIMClusterModel resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                description: Conditions represent the latest available observations
+                  of the model's state
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -116,9 +468,204 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              imageMetadata:
+                description: ImageMetadata is the metadata extracted from an AIM image
+                properties:
+                  model:
+                    description: Model contains AMD Silogen model-specific metadata.
+                    properties:
+                      canonicalName:
+                        description: |-
+                          CanonicalName is the canonical model identifier (e.g., mistralai/Mixtral-8x22B-Instruct-v0.1).
+                          Extracted from: org.amd.silogen.model.canonicalName
+                        type: string
+                      descriptionFull:
+                        description: |-
+                          DescriptionFull is the full description.
+                          Extracted from: org.amd.silogen.description.full
+                        type: string
+                      hfTokenRequired:
+                        description: |-
+                          HFTokenRequired indicates if a HuggingFace token is required.
+                          Extracted from: org.amd.silogen.hfToken.required
+                        type: boolean
+                      recommendedDeployments:
+                        description: |-
+                          RecommendedDeployments contains recommended deployment configurations.
+                          Extracted from: org.amd.silogen.model.recommendedDeployments (parsed from JSON array)
+                        items:
+                          description: RecommendedDeployment describes a recommended
+                            deployment configuration for a model.
+                          properties:
+                            description:
+                              description: Description provides additional context
+                                about this deployment configuration
+                              type: string
+                            gpuCount:
+                              description: GPUCount is the number of GPUs required
+                              format: int32
+                              type: integer
+                            gpuModel:
+                              description: GPUModel is the GPU model name (e.g., MI300X,
+                                MI325X)
+                              type: string
+                            metric:
+                              description: Metric is the optimization target (e.g.,
+                                latency, throughput)
+                              type: string
+                            precision:
+                              description: Precision is the recommended precision
+                                (e.g., fp8, fp16, bf16)
+                              type: string
+                          type: object
+                        type: array
+                      releaseNotes:
+                        description: |-
+                          ReleaseNotes contains release notes for this version.
+                          Extracted from: org.amd.silogen.release.notes
+                        type: string
+                      source:
+                        description: |-
+                          Source is the URL where the model can be found.
+                          Extracted from: org.amd.silogen.model.source
+                        type: string
+                      tags:
+                        description: |-
+                          Tags are descriptive tags (e.g., ["text-generation", "chat", "instruction"]).
+                          Extracted from: org.amd.silogen.model.tags (comma-separated)
+                        items:
+                          type: string
+                        type: array
+                      title:
+                        description: |-
+                          Title is the Silogen-specific title for the model.
+                          Extracted from: org.amd.silogen.title
+                        type: string
+                      variants:
+                        description: |-
+                          Variants lists model variants.
+                          Extracted from: org.amd.silogen.model.variants (comma-separated)
+                        items:
+                          type: string
+                        type: array
+                      versions:
+                        description: |-
+                          Versions lists available versions.
+                          Extracted from: org.amd.silogen.model.versions (comma-separated)
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  oci:
+                    description: OCI contains standard OCI image metadata.
+                    properties:
+                      authors:
+                        description: |-
+                          Authors is contact details of the authors.
+                          Extracted from: org.opencontainers.image.authors
+                        type: string
+                      created:
+                        description: |-
+                          Created is the creation timestamp.
+                          Extracted from: org.opencontainers.image.created
+                        type: string
+                      description:
+                        description: |-
+                          Description is a brief description.
+                          Extracted from: org.opencontainers.image.description
+                        type: string
+                      documentation:
+                        description: |-
+                          Documentation is the URL to documentation.
+                          Extracted from: org.opencontainers.image.documentation
+                        type: string
+                      licenses:
+                        description: |-
+                          Licenses is the SPDX license identifier(s).
+                          Extracted from: org.opencontainers.image.licenses
+                        type: string
+                      revision:
+                        description: |-
+                          Revision is the source control revision.
+                          Extracted from: org.opencontainers.image.revision
+                        type: string
+                      source:
+                        description: |-
+                          Source is the URL to the source code repository.
+                          Extracted from: org.opencontainers.image.source
+                        type: string
+                      title:
+                        description: |-
+                          Title is the human-readable title.
+                          Extracted from: org.opencontainers.image.title
+                        type: string
+                      vendor:
+                        description: |-
+                          Vendor is the organization that produced the image.
+                          Extracted from: org.opencontainers.image.vendor
+                        type: string
+                      version:
+                        description: |-
+                          Version is the image version.
+                          Extracted from: org.opencontainers.image.version
+                        type: string
+                    type: object
+                  originalLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      OriginalLabels contains the raw OCI image labels as a JSON object.
+                      This preserves all labels from the image, including those not mapped to structured fields.
+                    type: object
+                type: object
+              observedGeneration:
+                description: ObservedGeneration is the most recent generation observed
+                  by the controller
+                format: int64
+                type: integer
+              resolvedRuntimeConfig:
+                description: ResolvedRuntimeConfig captures metadata about the runtime
+                  config that was resolved.
+                properties:
+                  kind:
+                    description: Kind is the fully-qualified kind of the resolved
+                      reference, when known.
+                    type: string
+                  name:
+                    description: Name is the resource name that satisfied the reference.
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace identifies where the resource was found when namespace-scoped.
+                      Empty indicates a cluster-scoped resource.
+                    type: string
+                  scope:
+                    description: Scope indicates whether the resolved resource was
+                      namespace or cluster scoped.
+                    enum:
+                    - Namespace
+                    - Cluster
+                    - Merged
+                    - Unknown
+                    type: string
+                  uid:
+                    description: UID captures the unique identifier of the resolved
+                      reference, when known.
+                    type: string
+                type: object
+              status:
+                default: Pending
+                description: Status represents the overall status of the image based
+                  on its templates
+                enum:
+                - Pending
+                - Progressing
+                - Ready
+                - Degraded
+                - Failed
+                - NotAvailable
+                type: string
             type: object
-        required:
-        - spec
         type: object
     served: true
     storage: true

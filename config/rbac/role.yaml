@@ -5,6 +5,41 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  - pods
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  - get
+- apiGroups:
   - aim.eai.amd.com
   resources:
   - aimclustermodels
@@ -28,25 +63,19 @@ rules:
   - aim.eai.amd.com
   resources:
   - aimclustermodels/finalizers
-  - aimclusterruntimeconfigs/finalizers
   - aimclusterservicetemplates/finalizers
   - aimmodelcaches/finalizers
   - aimmodels/finalizers
-  - aimruntimeconfigs/finalizers
-  - aimservices/finalizers
   - aimservicetemplates/finalizers
-  - aimtemplatecaches/finalizers
   verbs:
   - update
 - apiGroups:
   - aim.eai.amd.com
   resources:
   - aimclustermodels/status
-  - aimclusterruntimeconfigs/status
   - aimclusterservicetemplates/status
   - aimmodelcaches/status
   - aimmodels/status
-  - aimruntimeconfigs/status
   - aimservices/status
   - aimservicetemplates/status
   - aimtemplatecaches/status
@@ -54,3 +83,65 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - httproutes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - httproutes/status
+  verbs:
+  - get
+- apiGroups:
+  - serving.kserve.io
+  resources:
+  - clusterservingruntimes
+  - inferenceservices
+  - servingruntimes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - serving.kserve.io
+  resources:
+  - clusterservingruntimes/status
+  - inferenceservices/status
+  - servingruntimes/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  verbs:
+  - get
+  - list
+  - watch

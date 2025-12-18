@@ -22,7 +22,10 @@
 
 package v1alpha1
 
-import "k8s.io/apimachinery/pkg/types"
+import (
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
 
 // AIMResolutionScope describes the scope of a resolved reference.
 // +kubebuilder:validation:Enum=Namespace;Cluster;Merged;Unknown
@@ -60,9 +63,25 @@ type AIMResolvedReference struct {
 	UID types.UID `json:"uid,omitempty"`
 }
 
-// AIMServiceResolvedTemplate retains the historical name while reusing the shared structure.
-type AIMServiceResolvedTemplate struct {
-	AIMResolvedReference `json:",inline"`
+func CreateResolvedReference(obj client.Object) AIMResolvedReference {
+	scope := AIMResolutionScopeCluster
+	if obj.GetNamespace() != "" {
+		scope = AIMResolutionScopeNamespace
+	}
+	return AIMResolvedReference{
+		Name:      obj.GetName(),
+		Namespace: obj.GetNamespace(),
+		Kind:      obj.GetObjectKind().GroupVersionKind().Kind,
+		UID:       obj.GetUID(),
+		Scope:     scope,
+	}
+}
+
+func (r *AIMResolvedReference) NamespacedName() types.NamespacedName {
+	return types.NamespacedName{
+		Name:      r.Name,
+		Namespace: r.Namespace,
+	}
 }
 
 // AIMServiceTemplateScope is retained for backwards compatibility with existing consumers.
@@ -77,3 +96,11 @@ const (
 	// AIMServiceTemplateScopeUnknown denotes that the scope could not be resolved.
 	AIMServiceTemplateScopeUnknown AIMServiceTemplateScope = AIMServiceTemplateScope(AIMResolutionScopeUnknown)
 )
+
+type RuntimeConfigRef struct {
+	// Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both
+	// as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority
+	// over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster
+	// runtime config with the name `default` is used, if it exists.
+	Name string `json:"runtimeConfigName"`
+}

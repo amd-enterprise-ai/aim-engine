@@ -1,0 +1,17 @@
+sync:
+  fromHost:
+    nodes:
+      enabled: true
+      selector:
+        all: true
+    storageClasses:
+      enabled: true
+
+controlPlane:
+  statefulSet:
+    persistence:
+      volumeClaim:
+        enabled: "true"
+        accessModes: ["ReadWriteOnce"]
+        storageClass: "openebs-hostpath"
+        size: 5Gi

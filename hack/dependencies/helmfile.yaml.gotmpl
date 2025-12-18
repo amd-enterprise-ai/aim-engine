@@ -1,0 +1,72 @@
+---
+repositories:
+  - name: rocm
+    url: https://rocm.github.io/gpu-operator
+  - name: nfs-ganesha-server-and-external-provisioner
+    url: https://kubernetes-sigs.github.io/nfs-ganesha-server-and-external-provisioner/
+  - name: jetstack
+    url: https://charts.jetstack.io
+
+releases:
+  - name: cert-manager
+    namespace: cert-manager
+    chart: jetstack/cert-manager
+    version: v1.16.2
+    createNamespace: true
+    wait: true
+    timeout: 600
+    values:
+      - crds:
+          enabled: true
+
+  - name: kgateway-crd
+    namespace: kgateway-system
+    chart: oci://cr.kgateway.dev/kgateway-dev/charts/kgateway-crds
+    version: v2.1.0-main
+    createNamespace: true
+    wait: true
+    timeout: 600
+
+  - name: kgateway
+    namespace: kgateway-system
+    chart: oci://cr.kgateway.dev/kgateway-dev/charts/kgateway
+    version: v2.1.0-main
+    createNamespace: false
+    wait: false
+    disableValidation: true
+    timeout: 600
+    needs:
+      - kgateway-system/kgateway-crd
+      - cert-manager/cert-manager
+    values:
+      - agentgateway:
+          enabled: true
+
+  - name: kserve-crd
+    namespace: kserve-system
+    chart: oci://ghcr.io/kserve/charts/kserve-crd
+    version: v0.16.0
+    createNamespace: true
+    wait: true
+    timeout: 600
+
+  - name: kserve
+    namespace: kserve-system
+    chart: oci://ghcr.io/kserve/charts/kserve
+    version: v0.16.0
+    createNamespace: false
+    wait: false
+    disableValidation: true
+    timeout: 600
+    needs:
+      - kserve-system/kserve-crd
+      - cert-manager/cert-manager
+#    values:
+#      - kserve:
+#          controller:
+#            deploymentMode: RawDeployment
+#            gateway:
+#              ingressGateway:
+#                enableGatewayApi: false
+#          localmodel:
+#            enabled: false

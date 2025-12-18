@@ -8,17 +8,41 @@ metadata:
 spec:
   group: aim.eai.amd.com
   names:
+    categories:
+    - aim
+    - all
     kind: AIMServiceTemplate
     listKind: AIMServiceTemplateList
     plural: aimservicetemplates
+    shortNames:
+    - aimtpl
     singular: aimservicetemplate
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.modelName
+      name: Model
+      type: string
+    - jsonPath: .status.status
+      name: Status
+      type: string
+    - jsonPath: .status.profile.metadata.metric
+      name: Metric
+      type: string
+    - jsonPath: .status.profile.metadata.precision
+      name: Precision
+      type: string
+    - jsonPath: .spec.gpuSelector.count
+      name: GPUs/replica
+      type: integer
+    - jsonPath: .spec.gpuSelector.model
+      name: GPU
+      type: string
+    name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: AIMServiceTemplate is the Schema for the aimservicetemplates
-          API
+        description: AIMServiceTemplate is the Schema for namespace-scoped AIM service
+          templates.
         properties:
           apiVersion:
             description: |-
@@ -38,27 +62,411 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of AIMServiceTemplate
+            description: |-
+              AIMServiceTemplateSpec defines the desired state of AIMServiceTemplate (namespace-scoped).
+
+              A namespaced and versioned template that selects a runtime profile
+              for a given AIM model (by canonical name). Templates are intentionally
+              narrow: they describe runtime selection knobs for the AIM container and do
+              not redefine the full Kubernetes deployment shape.
             properties:
-              foo:
-                description: foo is an example field of AIMServiceTemplate. Edit aimservicetemplate_types.go
-                  to remove/update
+              caching:
+                description: |-
+                  Caching configures model caching behavior for this namespace-scoped template.
+                  When enabled, models will be cached using the specified environment variables
+                  during download.
+                properties:
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled controls whether caching is enabled for this template.
+                      Defaults to `false`.
+                    type: boolean
+                type: object
+              env:
+                description: |-
+                  Env specifies environment variables to use for authentication when downloading models.
+                  These variables are used for authentication with model registries (e.g., HuggingFace tokens).
+                items:
+                  description: EnvVar represents an environment variable present in
+                    a Container.
+                  properties:
+                    name:
+                      description: |-
+                        Name of the environment variable.
+                        May consist of any printable ASCII characters except '='.
+                      type: string
+                    value:
+                      description: |-
+                        Variable references $(VAR_NAME) are expanded
+                        using the previously defined environment variables in the container and
+                        any service environment variables. If a variable cannot be resolved,
+                        the reference in the input string will be unchanged. Double $$ are reduced
+                        to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                        "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                        Escaped references will never be expanded, regardless of whether the variable
+                        exists or not.
+                        Defaults to "".
+                      type: string
+                    valueFrom:
+                      description: Source for the environment variable's value. Cannot
+                        be used if value is not empty.
+                      properties:
+                        configMapKeyRef:
+                          description: Selects a key of a ConfigMap.
+                          properties:
+                            key:
+                              description: The key to select.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the ConfigMap or its key
+                                must be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        fieldRef:
+                          description: |-
+                            Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                            spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                          properties:
+                            apiVersion:
+                              description: Version of the schema the FieldPath is
+                                written in terms of, defaults to "v1".
+                              type: string
+                            fieldPath:
+                              description: Path of the field to select in the specified
+                                API version.
+                              type: string
+                          required:
+                          - fieldPath
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        fileKeyRef:
+                          description: |-
+                            FileKeyRef selects a key of the env file.
+                            Requires the EnvFiles feature gate to be enabled.
+                          properties:
+                            key:
+                              description: |-
+                                The key within the env file. An invalid key will prevent the pod from starting.
+                                The keys defined within a source may consist of any printable ASCII characters except '='.
+                                During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
+                              type: string
+                            optional:
+                              default: false
+                              description: |-
+                                Specify whether the file or its key must be defined. If the file or key
+                                does not exist, then the env var is not published.
+                                If optional is set to true and the specified key does not exist,
+                                the environment variable will not be set in the Pod's containers.
+
+                                If optional is set to false and the specified key does not exist,
+                                an error will be returned during Pod creation.
+                              type: boolean
+                            path:
+                              description: |-
+                                The path within the volume from which to select the file.
+                                Must be relative and may not contain the '..' path or start with '..'.
+                              type: string
+                            volumeName:
+                              description: The name of the volume mount containing
+                                the env file.
+                              type: string
+                          required:
+                          - key
+                          - path
+                          - volumeName
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        resourceFieldRef:
+                          description: |-
+                            Selects a resource of the container: only resources limits and requests
+                            (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                          properties:
+                            containerName:
+                              description: 'Container name: required for volumes,
+                                optional for env vars'
+                              type: string
+                            divisor:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: Specifies the output format of the exposed
+                                resources, defaults to "1"
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            resource:
+                              description: 'Required: resource to select'
+                              type: string
+                          required:
+                          - resource
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        secretKeyRef:
+                          description: Selects a key of a secret in the pod's namespace
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              gpuSelector:
+                description: |-
+                  GpuSelector specifies GPU requirements for each replica.
+                  Defines the GPU count and model type required for deployment.
+                  This field is immutable after creation.
+                properties:
+                  count:
+                    description: |-
+                      Count is the number of GPU resources requested per replica.
+                      Must be at least 1.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  model:
+                    description: |-
+                      Model is the GPU model name required for this deployment.
+                      Examples: `MI300X`, `MI325X`
+                    minLength: 1
+                    type: string
+                required:
+                - count
+                - model
+                type: object
+                x-kubernetes-validations:
+                - message: gpuSelector is immutable
+                  rule: self == oldSelf
+              imagePullSecrets:
+                description: |-
+                  ImagePullSecrets lists secrets containing credentials for pulling container images.
+                  These secrets are used for:
+                  - Discovery dry-run jobs that inspect the model container
+                  - Pulling the image for inference services
+                  The secrets are merged with any model or runtime config defaults.
+                  For namespace-scoped templates, secrets must exist in the same namespace.
+                  For cluster-scoped templates, secrets must exist in the operator namespace.
+                items:
+                  description: |-
+                    LocalObjectReference contains enough information to let you locate the
+                    referenced object inside the same namespace.
+                  properties:
+                    name:
+                      default: ""
+                      description: |-
+                        Name of the referent.
+                        This field is effectively required, but due to backwards compatibility is
+                        allowed to be empty. Instances of this type with an empty value here are
+                        almost certainly wrong.
+                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      type: string
+                  type: object
+                  x-kubernetes-map-type: atomic
+                type: array
+              metric:
+                allOf:
+                - enum:
+                  - latency
+                  - throughput
+                - enum:
+                  - latency
+                  - throughput
+                description: |-
+                  Metric selects the optimization goal.
+
+                  - `latency`: prioritize low end‑to‑end latency
+                  - `throughput`: prioritize sustained requests/second
                 type: string
+                x-kubernetes-validations:
+                - message: metric is immutable
+                  rule: self == oldSelf
+              modelName:
+                description: |-
+                  ModelName is the model name. Matches `metadata.name` of an AIMModel or AIMClusterModel. Immutable.
+
+                  Example: `meta/llama-3-8b:1.1+20240915`
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: model name is immutable
+                  rule: self == oldSelf
+              modelSources:
+                description: |-
+                  ModelSources specifies the model sources required to run this template.
+                  When provided, the discovery dry-run will be skipped and these sources will be used directly.
+                  This allows users to explicitly declare model dependencies without requiring a discovery job.
+                  If omitted, a discovery job will be run to automatically determine the required model sources.
+                items:
+                  description: |-
+                    AIMModelSource describes a model artifact that must be downloaded for inference.
+                    Discovery extracts these from the container's configuration to enable caching and validation.
+                  properties:
+                    name:
+                      description: |-
+                        Name is a human-readable identifier for this model artifact.
+                        May be empty if the source represents the primary model.
+                      type: string
+                    size:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      description: |-
+                        Size is the expected storage space required for this model artifact.
+                        Used for PVC sizing and capacity planning during cache creation.
+                        Optional for custom models (will be populated by discovery job).
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    sourceUri:
+                      description: |-
+                        SourceURI is the location from which the model should be downloaded.
+                        Supported schemes:
+                        - hf://org/model - Hugging Face Hub model
+                        - s3://bucket/key - S3-compatible storage
+                      pattern: ^(hf|s3)://[^ \t\r\n]+$
+                      type: string
+                  required:
+                  - sourceUri
+                  type: object
+                type: array
+              precision:
+                allOf:
+                - enum:
+                  - bf16
+                  - fp16
+                  - fp8
+                  - int8
+                - enum:
+                  - auto
+                  - fp4
+                  - fp8
+                  - fp16
+                  - fp32
+                  - bf16
+                  - int4
+                  - int8
+                description: Precision selects the numeric precision used by the runtime.
+                type: string
+                x-kubernetes-validations:
+                - message: precision is immutable
+                  rule: self == oldSelf
+              resources:
+                description: |-
+                  Resources defines the default container resource requirements applied to services derived from this template.
+                  Service-specific values override the template defaults.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+                      This field depends on the
+                      DynamicResourceAllocation feature gate.
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                        request:
+                          description: |-
+                            Request is the name chosen for a request in the referenced claim.
+                            If empty, everything from the claim is made available, otherwise
+                            only the result of this request.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              runtimeConfigName:
+                description: |-
+                  Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both
+                  as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority
+                  over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster
+                  runtime config with the name `default` is used, if it exists.
+                type: string
+              serviceAccountName:
+                description: |-
+                  ServiceAccountName specifies the Kubernetes service account to use for workloads related to this template.
+                  This includes discovery dry-run jobs and inference services created from this template.
+                  If empty, the default service account for the namespace is used.
+                type: string
+            required:
+            - modelName
+            - runtimeConfigName
             type: object
           status:
-            description: status defines the observed state of AIMServiceTemplate
+            description: AIMServiceTemplateStatus defines the observed state of AIMServiceTemplate.
             properties:
               conditions:
-                description: |-
-                  conditions represent the current state of the AIMServiceTemplate resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                description: Conditions represent the latest observations of template
+                  state.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -117,9 +525,240 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              discoveryJob:
+                description: DiscoveryJob is a reference to the job that was run for
+                  discovery
+                properties:
+                  kind:
+                    description: Kind is the fully-qualified kind of the resolved
+                      reference, when known.
+                    type: string
+                  name:
+                    description: Name is the resource name that satisfied the reference.
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace identifies where the resource was found when namespace-scoped.
+                      Empty indicates a cluster-scoped resource.
+                    type: string
+                  scope:
+                    description: Scope indicates whether the resolved resource was
+                      namespace or cluster scoped.
+                    enum:
+                    - Namespace
+                    - Cluster
+                    - Merged
+                    - Unknown
+                    type: string
+                  uid:
+                    description: UID captures the unique identifier of the resolved
+                      reference, when known.
+                    type: string
+                type: object
+              modelSources:
+                description: |-
+                  ModelSources list the models that this template requires to run. These are the models that will be
+                  cached, if this template is cached.
+                items:
+                  description: |-
+                    AIMModelSource describes a model artifact that must be downloaded for inference.
+                    Discovery extracts these from the container's configuration to enable caching and validation.
+                  properties:
+                    name:
+                      description: |-
+                        Name is a human-readable identifier for this model artifact.
+                        May be empty if the source represents the primary model.
+                      type: string
+                    size:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      description: |-
+                        Size is the expected storage space required for this model artifact.
+                        Used for PVC sizing and capacity planning during cache creation.
+                        Optional for custom models (will be populated by discovery job).
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    sourceUri:
+                      description: |-
+                        SourceURI is the location from which the model should be downloaded.
+                        Supported schemes:
+                        - hf://org/model - Hugging Face Hub model
+                        - s3://bucket/key - S3-compatible storage
+                      pattern: ^(hf|s3)://[^ \t\r\n]+$
+                      type: string
+                  required:
+                  - sourceUri
+                  type: object
+                type: array
+              observedGeneration:
+                description: ObservedGeneration is the most recent generation observed
+                  by the controller.
+                format: int64
+                type: integer
+              profile:
+                description: |-
+                  Profile contains the full discovery result profile as a free-form JSON object.
+                  This includes metadata, engine args, environment variables, and model details.
+                properties:
+                  engine_args:
+                    description: |-
+                      EngineArgs contains runtime-specific engine configuration as a free-form JSON object.
+                      The structure depends on the inference engine being used (e.g., vLLM, TGI).
+                      These arguments are passed to the runtime container to configure model loading and inference.
+                    x-kubernetes-preserve-unknown-fields: true
+                  env_vars:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      EnvVars contains environment variables required by the runtime for this profile.
+                      These may include engine-specific settings, optimization flags, or hardware configuration.
+                    type: object
+                  metadata:
+                    description: Metadata provides structured information about this
+                      deployment profile's characteristics.
+                    properties:
+                      engine:
+                        description: Engine identifies the inference engine used for
+                          this profile (e.g., "vllm", "tgi").
+                        type: string
+                      gpu:
+                        description: GPU specifies the GPU model this profile is optimized
+                          for (e.g., "MI300X", "MI325X").
+                        type: string
+                      gpuCount:
+                        description: GPUCount indicates how many GPUs are required
+                          per replica for this profile.
+                        format: int32
+                        type: integer
+                      metric:
+                        description: Metric indicates the optimization goal for this
+                          profile ("latency" or "throughput").
+                        enum:
+                        - latency
+                        - throughput
+                        type: string
+                      precision:
+                        description: Precision specifies the numeric precision used
+                          in this profile (e.g., "fp16", "fp8").
+                        enum:
+                        - bf16
+                        - fp16
+                        - fp8
+                        - int8
+                        type: string
+                    type: object
+                  originalDiscoveryOutput:
+                    description: |-
+                      OriginalDiscoveryOutput contains the raw discovery job JSON output.
+                      This preserves the complete discovery result from the dry-run container,
+                      including all fields that may not be mapped to structured fields above.
+                    x-kubernetes-preserve-unknown-fields: true
+                type: object
+              resolvedCache:
+                description: ResolvedCache captures metadata about which cache is
+                  used for this template
+                properties:
+                  kind:
+                    description: Kind is the fully-qualified kind of the resolved
+                      reference, when known.
+                    type: string
+                  name:
+                    description: Name is the resource name that satisfied the reference.
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace identifies where the resource was found when namespace-scoped.
+                      Empty indicates a cluster-scoped resource.
+                    type: string
+                  scope:
+                    description: Scope indicates whether the resolved resource was
+                      namespace or cluster scoped.
+                    enum:
+                    - Namespace
+                    - Cluster
+                    - Merged
+                    - Unknown
+                    type: string
+                  uid:
+                    description: UID captures the unique identifier of the resolved
+                      reference, when known.
+                    type: string
+                type: object
+              resolvedModel:
+                description: ResolvedModel captures metadata about the image that
+                  was resolved.
+                properties:
+                  kind:
+                    description: Kind is the fully-qualified kind of the resolved
+                      reference, when known.
+                    type: string
+                  name:
+                    description: Name is the resource name that satisfied the reference.
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace identifies where the resource was found when namespace-scoped.
+                      Empty indicates a cluster-scoped resource.
+                    type: string
+                  scope:
+                    description: Scope indicates whether the resolved resource was
+                      namespace or cluster scoped.
+                    enum:
+                    - Namespace
+                    - Cluster
+                    - Merged
+                    - Unknown
+                    type: string
+                  uid:
+                    description: UID captures the unique identifier of the resolved
+                      reference, when known.
+                    type: string
+                type: object
+              resolvedRuntimeConfig:
+                description: ResolvedRuntimeConfig captures metadata about the runtime
+                  config that was resolved.
+                properties:
+                  kind:
+                    description: Kind is the fully-qualified kind of the resolved
+                      reference, when known.
+                    type: string
+                  name:
+                    description: Name is the resource name that satisfied the reference.
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace identifies where the resource was found when namespace-scoped.
+                      Empty indicates a cluster-scoped resource.
+                    type: string
+                  scope:
+                    description: Scope indicates whether the resolved resource was
+                      namespace or cluster scoped.
+                    enum:
+                    - Namespace
+                    - Cluster
+                    - Merged
+                    - Unknown
+                    type: string
+                  uid:
+                    description: UID captures the unique identifier of the resolved
+                      reference, when known.
+                    type: string
+                type: object
+              status:
+                default: Pending
+                description: |-
+                  Status represents the current high‑level status of the template lifecycle.
+                  Values: `Pending`, `Progressing`, `Ready`, `Degraded`, `Failed`.
+                enum:
+                - Pending
+                - Progressing
+                - Ready
+                - Degraded
+                - Failed
+                - NotAvailable
+                type: string
             type: object
-        required:
-        - spec
         type: object
     served: true
     storage: true

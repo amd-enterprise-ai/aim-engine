@@ -83,25 +83,7 @@ type AIMGpuSelector struct {
 	Count int32 `json:"count"`
 
 	// Model is the GPU model name required for this deployment.
-	// Examples: "MI300X", "MI325X"
+	// Examples: `MI300X`, `MI325X`
 	// +kubebuilder:validation:MinLength=1
 	Model string `json:"model"`
-
-	// ResourceName is the Kubernetes resource name for GPU resources.
-	// Defaults to "amd.com/gpu" if not specified.
-	// +optional
-	// +kubebuilder:default="amd.com/gpu"
-	ResourceName string `json:"resourceName,omitempty"`
-
-	// TODO re-enable partitioning once it is supported
-
-	//// ComputePartitioning mode.
-	//// +kubebuilder:default="spx"
-	//// +kubebuilder:validation:Enum=spx;cpx
-	//ComputePartitioning string `json:"computePartitioning,omitempty"`
-	//
-	//// ComputePartitioning mode
-	//// +kubebuilder:default:"nps1"
-	//// +kubebuilder:validation:Enum=nps1;nps4
-	//MemoryPartitioning string `json:"memoryPartitioning,omitempty"`
 }

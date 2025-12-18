@@ -1,11 +1,21 @@
-# More info: https://docs.docker.com/engine/reference/builder/#dockerignore-file
-# Ignore everything by default and re-include only needed files
-**
+# Dockerignore - allowlist approach
+# Exclude everything, then selectively include what's needed for build
 
-# Re-include Go source files (but not *_test.go)
-!**/*.go
-**/*_test.go
+# Ignore everything by default
+*
 
-# Re-include Go module files
+# Allow essential build files
 !go.mod
 !go.sum
+!Dockerfile
+
+# Allow source directories needed for build
+!cmd/
+!internal/
+!api/
+
+# But exclude certain files within allowed directories
+**/*_test.go
+**/*.tmp
+**/*.tmp.*
+**/.DS_Store
