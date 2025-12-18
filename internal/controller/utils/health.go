@@ -155,11 +155,24 @@ func DeriveStateFromErrors(errs []error) constants.AIMStatus {
 		categorized = append(categorized, CategorizeError(e))
 	}
 
-	// Check for user-fixable errors → Degraded
-	// These are issues the user can resolve (fix config, add missing resource, fix auth)
+	// Check for terminal errors that require spec change → Failed
+	// These won't auto-recover through normal reconciliation:
+	// - Auth: We don't watch Secrets, so fixing credentials won't trigger reconcile
+	// - ResourceExhaustion: Requires increasing limits/quotas/PVC size
+	// - InvalidSpec: Requires spec change
 	for _, e := range categorized {
 		switch e.Category() {
-		case ErrorCategoryInvalidSpec, ErrorCategoryMissingUpstreamDependency, ErrorCategoryAuth, ErrorCategoryInfrastructure:
+		case ErrorCategoryAuth, ErrorCategoryResourceExhaustion, ErrorCategoryInvalidSpec:
+			return constants.AIMStatusFailed
+		}
+	}
+
+	// Check for issues that might resolve externally → Degraded
+	// - MissingUpstreamDependency: External resource might appear (image being pushed, etc.)
+	// - Infrastructure: Transient platform issues (with grace period)
+	for _, e := range categorized {
+		switch e.Category() {
+		case ErrorCategoryMissingUpstreamDependency, ErrorCategoryInfrastructure:
 			return constants.AIMStatusDegraded
 		}
 	}
