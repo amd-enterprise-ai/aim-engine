@@ -2,6 +2,35 @@
 
 Guidelines for structuring your observation types.
 
+## The Observation Step is Often Optional
+
+For many controllers, the observation struct can be a thin wrapper around the fetch result. In the future it may be made option, allowing you to implement `GetComponentHealth()` directly on the fetch result.
+
+```go
+// Option 1: Thin wrapper (embed fetch result)
+type MyObservation struct {
+    MyFetch
+}
+
+func (r *Reconciler) ComposeState(ctx, reconcileCtx, fetch) MyObservation {
+    return MyObservation{MyFetch: fetch}
+}
+
+// Option 2: Implement directly on fetch result (skip observation entirely)
+func (fetch MyFetch) GetComponentHealth() []controllerutils.ComponentHealth {
+    return []controllerutils.ComponentHealth{
+        fetch.Model.ToComponentHealth("Model", inspectModel),
+    }
+}
+```
+
+Use a separate observation struct only when you need to:
+- Perform expensive computations once and cache results
+- Add derived state or boolean checks
+- Encapsulate complex domain logic
+
+---
+
 ## Fields vs Methods
 
 **Rule of thumb**: Prefer methods to fields for derived state.
@@ -124,3 +153,80 @@ func (r *Reconciler) PlanResources(ctx, obj, obs) PlanResult {
 ```
 
 Clean, readable, testable.
+
+---
+
+## Context-Aware Health Inspection
+
+For advanced health checks that need to inspect pod logs or fetch additional resources, implement `GetComponentHealth` with context and clientset parameters:
+
+```go
+// Standard signature (no context)
+func (obs MyObservation) GetComponentHealth() []controllerutils.ComponentHealth {
+    return []controllerutils.ComponentHealth{
+        obs.Job.ToComponentHealth("Job", controllerutils.GetJobHealth),
+    }
+}
+
+// Context-aware signature (with clientset for log inspection)
+func (obs MyObservation) GetComponentHealth(ctx context.Context, clientset kubernetes.Interface) []controllerutils.ComponentHealth {
+    return []controllerutils.ComponentHealth{
+        obs.Job.ToComponentHealth("Job", controllerutils.GetJobHealth),
+        obs.Pods.ToComponentHealthWithContext(ctx, clientset, "Pods", controllerutils.GetPodsHealth),
+    }
+}
+```
+
+The pipeline automatically detects which signature you've implemented and calls it with the appropriate parameters.
+
+### When to Use Context-Aware Pattern
+
+Use the context-aware signature when you need:
+- **Pod log inspection**: Categorize failures from log patterns (auth errors, storage exhaustion)
+- **Additional API calls**: Fetch related resources not available in the initial fetch
+- **Complex health checks**: PVC usage, service endpoint readiness, etc.
+
+### Example: Conditional Health Checking
+
+```go
+func (fetch ModelCacheFetch) GetComponentHealth(ctx context.Context, clientset kubernetes.Interface) []controllerutils.ComponentHealth {
+    health := []controllerutils.ComponentHealth{
+        fetch.RuntimeConfig.ToComponentHealth("RuntimeConfig", getRuntimeConfigHealth),
+        fetch.PVC.ToComponentHealth("Storage", controllerutils.GetPvcHealth),
+    }
+
+    // Only check job/pods while download is in progress
+    // Once Ready, job may be cleaned up by TTL - don't let its absence affect status
+    if fetch.Object.Status.Status != constants.AIMStatusReady {
+        health = append(health,
+            fetch.Job.ToComponentHealth("DownloadJob", controllerutils.GetJobHealth),
+            fetch.Pods.ToComponentHealthWithContext(ctx, clientset, "Pods", controllerutils.GetPodsHealth),
+        )
+    }
+
+    return health
+}
+```
+
+This pattern:
+- Avoids spurious failures when cleanup happens
+- Surfaces detailed error info during active operations
+- Stops tracking ephemeral resources after success
+
+### Health Inspector Utilities
+
+The framework provides ready-to-use inspectors:
+
+| Utility | Use For | Log Inspection | Detects |
+|---------|---------|----------------|---------|
+| `GetJobHealth` | Batch jobs | No | BackoffLimitExceeded, DeadlineExceeded, Evicted |
+| `GetPodsHealth` | Pod lists | Yes (requires clientset) | Auth errors, storage exhaustion, OOM, image pull failures |
+| `GetPvcHealth` | PVCs | No | Lost volumes, provisioning failures |
+
+**Pod log inspection categories**:
+- **Auth errors**: S3 credentials, HuggingFace tokens, registry auth
+- **Storage exhaustion**: Disk full, quota exceeded, ENOSPC
+- **Resource not found**: 404, Repository Not Found (HuggingFace)
+- **OOM kills**: Memory limit exceeded
+
+These inspectors return properly categorized errors that the state engine uses to set conditions (`AuthValid`, `ConfigValid`, etc.).
