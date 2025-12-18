@@ -22,15 +22,20 @@ All errors are automatically categorized using `CategorizeError()`:
 - Sets `DependenciesReachable=False`
 - Triggers requeue with exponential backoff
 - Applies 10-second grace period before degrading components
+- Component state: `Degraded` (after grace period)
 
 ### Auth Errors
 
-**Detection**: 401 Unauthorized, 403 Forbidden
+**Detection**: 401 Unauthorized, 403 Forbidden, auth-related log patterns (S3, HuggingFace)
 
 **Behavior**:
 - Sets `AuthValid=False`
 - Stops apply phase (user must fix)
-- Fails the resource immediately
+- Component state: `Failed` (requires spec/secret change)
+
+**Log patterns detected**:
+- S3: `access denied`, `InvalidAccessKeyId`, `NoCredentialProviders`
+- HuggingFace: `Access to model X is restricted`, `Cannot access gated repo`, `Invalid token`
 
 ### InvalidSpec Errors
 
@@ -39,20 +44,75 @@ All errors are automatically categorized using `CategorizeError()`:
 **Behavior**:
 - Sets `ConfigValid=False`
 - Stops apply phase (user must fix)
-- Fails the resource immediately
+- Component state: `Failed` (requires spec change)
 
-### MissingDependency Errors
+### MissingUpstreamDependency Errors
 
-**Detection**: 404 NotFound
+**Detection**: User-referenced resources not found (runtimeConfig, secrets, configmaps)
+
+**Behavior**:
+- Sets `ConfigValid=False`
+- Stops apply phase (user must fix)
+- Component state: `Failed` (requires user to create the referenced resource)
+
+**Distinction**: These are resources the *user* referenced in their spec, not internal resources the controller creates.
+
+### MissingDownstreamDependency Errors
+
+**Detection**: 404 NotFound for internal resources (pods, jobs, deployments being created)
 
 **Behavior**:
 - Marks component as `Progressing` (waiting state)
 - Does not fail the resource
 - Normal reconciliation continues
+- Component state: `Progressing` (will self-heal)
+
+**Distinction**: These are resources the *controller* is creating/managing - they're expected to be missing during initial reconciliation.
+
+### ResourceExhaustion Errors
+
+**Detection**: OOM kills, disk full, quota exceeded, storage exhaustion log patterns
+
+**Behavior**:
+- Component state: `Failed` (requires resource limit/quota increase)
+- Does not set `ConfigValid=False` (it's a platform/capacity issue, not a config issue)
+
+**Log patterns detected**:
+- `no space left on device`
+- `disk full`
+- `quota exceeded`
+- Pod termination reason: `OOMKilled`
 
 ### Unknown Errors
 
-**Behavior**: Treated as infrastructure errors (requeue)
+**Behavior**: Treated as infrastructure errors (requeue with backoff)
+
+---
+
+## Pod Log Inspection
+
+The `GetPodsHealth` utility automatically inspects pod logs to categorize failures beyond what Kubernetes API provides:
+
+**How it works**:
+1. Checks for image pull errors (auth, not found, backoff)
+2. For failed pods, fetches the last 50 lines of logs from the failed container
+3. Matches log patterns to categorize the failure type
+4. Returns categorized error with log excerpt for debugging
+
+**Pattern matching order** (first match wins):
+1. **Resource not found** (404, "Repository Not Found") - checked first because HuggingFace returns 401 for non-existent repos
+2. **Auth errors** (credentials, tokens, access denied)
+3. **Storage exhaustion** (disk full, quota exceeded)
+
+**Example categorization**:
+```go
+// Pod failed with exit code 1
+// Logs contain: "Access to model meta-llama/Llama-2-7b is restricted"
+// → Categorized as Auth error
+// → Status shows: "Container download failed with exit code 1: ...\n\nLog excerpt:\nAccess to model meta-llama/Llama-2-7b is restricted"
+```
+
+This automatic inspection eliminates the need for manual log checking - the controller surfaces the root cause directly in the status.
 
 ---
 
@@ -151,17 +211,29 @@ Once a lazy condition appears, it stays forever. After recovery, it shows `True`
 
 ## Status Field
 
-The `status.Status` field is set to the "worst" component state:
+The `status.Status` field is set to the "worst" component state using priority ordering:
 
-Priority (worst to best):
-1. `Failed`
-2. `Degraded`
-3. `NotAvailable`
-4. `Pending`
-5. `Progressing`
-6. `Ready/Running`
+**Priority (worst to best)**:
+1. `Failed` - Terminal errors requiring user intervention (auth, invalid spec, resource exhaustion)
+2. `Degraded` - Recoverable issues (infrastructure errors after grace period, missing upstream dependencies)
+3. `NotAvailable` - Resource exists but not available due to some reason
+4. `Pending` - Waiting for scheduling/resources
+5. `Progressing` - Actively working toward Ready (internal deps, jobs running)
+6. `Ready/Running` - Fully operational
 
-During grace period, the state is preserved (doesn't degrade).
+**State Derivation from Errors**:
+
+When `ComponentHealth.State` is not explicitly set, the state is derived from errors:
+
+```go
+// DeriveStateFromErrors rules:
+- No errors → Ready
+- Auth, InvalidSpec, ResourceExhaustion → Failed (requires user action)
+- MissingUpstreamDependency, Infrastructure → Degraded (may recover)
+- MissingDownstreamDependency → Progressing (will self-heal)
+```
+
+**During grace period**: Component state is preserved (doesn't degrade to `Degraded`) until 10 seconds have passed.
 
 ---
 
