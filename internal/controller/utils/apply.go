@@ -127,12 +127,12 @@ func setOwnerReference(owner, obj client.Object, _ *runtime.Scheme) error {
 
 	// Create owner reference
 	ownerRef := metav1.OwnerReference{
-		APIVersion:         ownerGVK.GroupVersion().String(),
-		Kind:               ownerGVK.Kind,
-		Name:               owner.GetName(),
-		UID:                owner.GetUID(),
-		Controller:         ptr.To(true),
-		BlockOwnerDeletion: ptr.To(true),
+		APIVersion: ownerGVK.GroupVersion().String(),
+		Kind:       ownerGVK.Kind,
+		Name:       owner.GetName(),
+		UID:        owner.GetUID(),
+		Controller: ptr.To(true),
+		// BlockOwnerDeletion: ptr.To(true),  // TODO make configurable
 	}
 
 	// Get current owner references and append
@@ -192,6 +192,61 @@ func PropagateLabelsForResult(parent client.Object, planResult *PlanResult, conf
 	}
 	for _, obj := range planResult.toApplyWithoutOwnerRef {
 		PropagateLabels(parent, obj, config)
+	}
+}
+
+// ApplyControllerLabelsToResult adds controller-specific labels to all resources in the PlanResult.
+// These labels are added to both the resource metadata and to Job pod templates (if applicable).
+// Labels are merged with existing labels - existing labels are not overwritten.
+func ApplyControllerLabelsToResult(planResult *PlanResult, labels map[string]string) {
+	for _, obj := range planResult.toApply {
+		applyControllerLabels(obj, labels)
+	}
+	for _, obj := range planResult.toApplyWithoutOwnerRef {
+		applyControllerLabels(obj, labels)
+	}
+}
+
+// applyControllerLabels adds the provided labels to the object's metadata.
+// For Jobs, custom domain labels (not app.kubernetes.io/managed-by) are also added to the pod template spec.
+// This is because pods are managed by the Job controller, not by our custom controller.
+// Existing labels are preserved (not overwritten).
+func applyControllerLabels(obj client.Object, labels map[string]string) {
+	if len(labels) == 0 {
+		return
+	}
+
+	// Get or initialize object labels
+	objLabels := obj.GetLabels()
+	if objLabels == nil {
+		objLabels = make(map[string]string)
+	}
+
+	// Add new labels (don't overwrite existing ones)
+	for key, value := range labels {
+		if _, exists := objLabels[key]; !exists {
+			objLabels[key] = value
+		}
+	}
+
+	obj.SetLabels(objLabels)
+
+	// Special handling for Jobs: propagate custom domain labels to PodTemplateSpec,
+	// but NOT app.kubernetes.io/managed-by since pods are managed by the Job controller.
+	if job, ok := obj.(*batchv1.Job); ok {
+		if job.Spec.Template.Labels == nil {
+			job.Spec.Template.Labels = make(map[string]string)
+		}
+		for key, value := range labels {
+			// Skip app.kubernetes.io/managed-by for pods - they're managed by Job controller
+			if key == "app.kubernetes.io/managed-by" {
+				continue
+			}
+			// Only add if not already present in pod template
+			if _, exists := job.Spec.Template.Labels[key]; !exists {
+				job.Spec.Template.Labels[key] = value
+			}
+		}
 	}
 }
 

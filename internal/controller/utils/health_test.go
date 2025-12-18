@@ -46,16 +46,30 @@ func TestDeriveStateFromErrors(t *testing.T) {
 			expected: constants.AIMStatusReady,
 		},
 		{
-			name: "InvalidSpec error returns Degraded",
+			name: "InvalidSpec error returns Failed",
 			errs: []error{
 				NewInvalidSpecError("InvalidConfig", "Invalid configuration", nil),
 			},
-			expected: constants.AIMStatusDegraded,
+			expected: constants.AIMStatusFailed,
 		},
 		{
-			name: "Auth error returns Degraded",
+			name: "Auth error returns Failed",
 			errs: []error{
 				NewAuthError("Forbidden", "Insufficient permissions", nil),
+			},
+			expected: constants.AIMStatusFailed,
+		},
+		{
+			name: "ResourceExhaustion error returns Failed",
+			errs: []error{
+				NewResourceExhaustionError("StorageFull", "No space left on device", nil),
+			},
+			expected: constants.AIMStatusFailed,
+		},
+		{
+			name: "MissingUpstreamDependency error returns Degraded",
+			errs: []error{
+				NewMissingUpstreamDependencyError("ImageNotFound", "Image not found", nil),
 			},
 			expected: constants.AIMStatusDegraded,
 		},
@@ -74,20 +88,20 @@ func TestDeriveStateFromErrors(t *testing.T) {
 			expected: constants.AIMStatusProgressing,
 		},
 		{
-			name: "Multiple errors - worst status wins (Degraded > Progressing)",
+			name: "Multiple errors - worst status wins (Failed > Degraded > Progressing)",
 			errs: []error{
 				NewInfrastructureError("Timeout", "Timeout", nil),
 				NewInvalidSpecError("Invalid", "Invalid", nil),
 			},
-			expected: constants.AIMStatusDegraded,
+			expected: constants.AIMStatusFailed,
 		},
 		{
-			name: "Multiple errors - auth and missing dep returns Degraded",
+			name: "Multiple errors - auth and missing dep returns Failed",
 			errs: []error{
 				NewMissingDownstreamDependencyError("NotFound", "Not found", nil),
 				NewAuthError("Forbidden", "Forbidden", nil),
 			},
-			expected: constants.AIMStatusDegraded,
+			expected: constants.AIMStatusFailed,
 		},
 		{
 			name: "Multiple errors - worst status wins (Degraded > Progressing)",
@@ -141,14 +155,14 @@ func TestComponentHealth_GetState(t *testing.T) {
 			expected: constants.AIMStatusReady,
 		},
 		{
-			name: "Empty state with InvalidSpec error derives Degraded",
+			name: "Empty state with InvalidSpec error derives Failed",
 			ch: ComponentHealth{
 				Component: "Model",
 				Errors: []error{
 					NewInvalidSpecError("Invalid", "Invalid", nil),
 				},
 			},
-			expected: constants.AIMStatusDegraded,
+			expected: constants.AIMStatusFailed,
 		},
 		{
 			name: "Explicit state overrides errors",
@@ -307,8 +321,8 @@ func TestComponentHealth_FullyDerived(t *testing.T) {
 	}
 
 	// All fields should be derived from the error
-	if got := ch.GetState(); got != constants.AIMStatusDegraded {
-		t.Errorf("GetState() = %v, want %v", got, constants.AIMStatusDegraded)
+	if got := ch.GetState(); got != constants.AIMStatusFailed {
+		t.Errorf("GetState() = %v, want %v", got, constants.AIMStatusFailed)
 	}
 
 	if got := ch.GetReason(); got != "InvalidCredentials" {
