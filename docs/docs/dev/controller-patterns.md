@@ -360,11 +360,11 @@ If you need to report custom conditions in the status update methods, you can us
 Control event and log emission per condition:
 
 ```go
-// Silent (default)
+// Info log + Normal event on transition (default)
 cm.MarkTrue(condType, reason, msg)
 
-// Info log + Normal event on transition
-cm.MarkTrue(condType, reason, msg, controllerutils.AsInfo())
+// Silent
+cm.MarkTrue(condType, reason, msg, controllerutils.Silent())
 
 // Error log + Warning event on transition
 cm.MarkFalse(condType, reason, msg, controllerutils.AsWarning())
