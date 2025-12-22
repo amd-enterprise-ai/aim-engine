@@ -26,6 +26,24 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
+// DependencyType indicates whether a component is an upstream or downstream dependency.
+type DependencyType string
+
+const (
+	// DependencyTypeUpstream indicates this component is an upstream dependency that this controller depends on.
+	// Examples: templates, runtime configs, secrets, configmaps.
+	// When upstream dependencies are not ready, the resource should be Pending.
+	DependencyTypeUpstream DependencyType = "Upstream"
+
+	// DependencyTypeDownstream indicates this component is a downstream resource that this controller creates.
+	// Examples: model caches, pods, jobs, child resources.
+	// When downstream dependencies are not ready (being created), the resource should be Progressing.
+	DependencyTypeDownstream DependencyType = "Downstream"
+
+	// DependencyTypeUnspecified means the dependency type is not specified (for backward compatibility).
+	DependencyTypeUnspecified DependencyType = ""
+)
+
 // ComponentHealth describes the health of a component (dependency, child resource, or virtual component).
 // It unifies tracking for logical components (model, template, cache), physical resources (pods, deployments),
 // and virtual components (external API queries, image registry access, etc.).
@@ -54,6 +72,11 @@ type ComponentHealth struct {
 	// These will be categorized by the state engine to drive parent-level conditions
 	// (ConfigValid, AuthValid, DependenciesReachable).
 	Errors []error
+
+	// DependencyType indicates whether this is an upstream or downstream dependency.
+	// This is used to determine whether a not-ready component should result in Pending (upstream)
+	// or Progressing (downstream) status.
+	DependencyType DependencyType
 
 	// ChildRef optionally identifies a specific child resource for fine-grained tracking.
 	// When set, this ComponentHealth represents a specific pod/deployment/etc.

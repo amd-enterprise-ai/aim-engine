@@ -26,6 +26,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -476,9 +477,34 @@ func setErrorCategoryConditions(cm *ConditionManager, cats errorCategories) {
 	}
 }
 
-// setReadyCondition sets the overall Ready condition based on component states and error categories.
+// setReadyCondition sets the overall Ready condition based on all component conditions and error categories.
+// This should be called after DecorateStatus to ensure all conditions are considered.
 func setReadyCondition(cm *ConditionManager, componentHealth []ComponentHealth, cats errorCategories) {
+	// First check component health from GetComponentHealth
 	allReady, firstFailed, readyReason, readyMessage := analyzeComponentReadiness(componentHealth)
+
+	// Then check all component-specific Ready conditions that may have been added by DecorateStatus
+	// These are conditions with names ending in "Ready" (e.g., "ModelCachesReady")
+	allConditions := cm.Conditions()
+	for _, cond := range allConditions {
+		if cond.Type == ConditionTypeReady {
+			continue // Skip the overall Ready condition itself
+		}
+		if strings.HasSuffix(cond.Type, ComponentConditionSuffix) {
+			if cond.Status != metav1.ConditionTrue {
+				allReady = false
+				// Use the first failed component condition for the error message
+				if firstFailed == nil {
+					firstFailed = &ComponentHealth{
+						Component: strings.TrimSuffix(cond.Type, ComponentConditionSuffix),
+						State:     constants.AIMStatusFailed,
+						Reason:    cond.Reason,
+						Message:   cond.Message,
+					}
+				}
+			}
+		}
+	}
 
 	if allReady && !cats.hasAuth && !cats.hasMissingUpstreamDep && !cats.hasInvalidSpec {
 		// Use component-specific reason/message if available, otherwise use generic
@@ -575,27 +601,121 @@ func (p *Pipeline[T, S, F, Obs]) processStateEngine(
 
 	// Set per-component conditions
 	withinGracePeriod := isInGracePeriod(cm, cats.hasInfra)
-	actualStates := setComponentConditions(cm, componentHealth, withinGracePeriod)
+	setComponentConditions(cm, componentHealth, withinGracePeriod)
 
 	// Set error category conditions (AuthValid, ConfigValid)
 	setErrorCategoryConditions(cm, cats)
 
-	// Set overall Ready condition
-	setReadyCondition(cm, componentHealth, cats)
-
-	// Set root status
-	status.SetStatus(string(aggregateActualComponentStates(actualStates)))
-
-	// Allow StatusDecorator to extend/override
+	// Allow StatusDecorator to extend/override and add domain-specific conditions
 	if dec, ok := any(p.Reconciler).(StatusDecorator[T, S, Obs]); ok {
 		dec.DecorateStatus(status, cm, obs)
 	}
+
+	// Set overall Ready condition after DecorateStatus has had a chance to add conditions
+	// This ensures all conditions (including domain-specific ones) are considered
+	setReadyCondition(cm, componentHealth, cats)
+
+	// Set root status from all conditions after DecorateStatus
+	// This ensures the status reflects all domain-specific conditions
+	derivedStatus := deriveStatusFromConditions(cm, cats, componentHealth)
+	status.SetStatus(string(derivedStatus))
 
 	// Determine behavior
 	if cats.hasInfra {
 		return StateEngineDecision{ShouldApply: false, ShouldRequeue: true, RequeueError: errors.Join(cats.infraErrors...)}, nil
 	}
 	return StateEngineDecision{ShouldApply: !cats.hasAuth && !cats.hasInvalidSpec, ShouldRequeue: false}, nil
+}
+
+// deriveStatusFromConditions derives the root status by examining all component Ready conditions.
+// This is called after DecorateStatus to ensure all conditions (including domain-specific ones) are considered.
+func deriveStatusFromConditions(cm *ConditionManager, cats errorCategories, componentHealth []ComponentHealth) constants.AIMStatus {
+	// Check for error category conditions first (highest priority)
+	if cats.hasAuth || cats.hasInvalidSpec || cats.hasMissingUpstreamDep {
+		return constants.AIMStatusFailed
+	}
+
+	// Build a map of component names to their dependency types for quick lookup
+	componentDepTypes := make(map[string]DependencyType)
+	for _, h := range componentHealth {
+		componentDepTypes[h.Component] = h.DependencyType
+	}
+
+	// Check all component Ready conditions
+	worstStatus := constants.AIMStatusReady
+	allConditions := cm.Conditions()
+
+	for _, cond := range allConditions {
+		// Skip non-component conditions
+		if cond.Type == ConditionTypeReady ||
+			cond.Type == ConditionTypeDependenciesReachable ||
+			cond.Type == ConditionTypeAuthValid ||
+			cond.Type == ConditionTypeConfigValid {
+			continue
+		}
+
+		// Check component Ready conditions (conditions ending with "Ready")
+		if strings.HasSuffix(cond.Type, ComponentConditionSuffix) {
+			// Extract component name from condition type (remove "Ready" suffix)
+			componentName := strings.TrimSuffix(cond.Type, ComponentConditionSuffix)
+			depType := componentDepTypes[componentName]
+
+			var componentStatus constants.AIMStatus
+			switch cond.Status {
+			case metav1.ConditionTrue:
+				componentStatus = constants.AIMStatusReady
+			case metav1.ConditionFalse:
+				// Derive status based on dependency type
+				componentStatus = deriveStatusFromDependencyType(depType, cond.Reason)
+			case metav1.ConditionUnknown:
+				// Unknown status: upstream → Pending, downstream/unspecified → Progressing
+				if depType == DependencyTypeUpstream {
+					componentStatus = constants.AIMStatusPending
+				} else {
+					// Treat downstream and unspecified as Progressing
+					componentStatus = constants.AIMStatusProgressing
+				}
+			}
+
+			// Keep the worst status
+			if constants.CompareAIMStatus(componentStatus, worstStatus) < 0 {
+				worstStatus = componentStatus
+			}
+		}
+	}
+
+	// Infrastructure errors take precedence if we're not ready
+	if cats.hasInfra && worstStatus != constants.AIMStatusReady {
+		return constants.AIMStatusDegraded
+	}
+
+	return worstStatus
+}
+
+// deriveStatusFromDependencyType derives the status for a not-ready component based on its dependency type.
+// Upstream dependencies not ready → Pending (waiting for user to provide them)
+// Downstream dependencies not ready → Progressing (controller is creating them)
+func deriveStatusFromDependencyType(depType DependencyType, reason string) constants.AIMStatus {
+	// First check for explicit error states in the reason
+	switch {
+	case strings.Contains(reason, "Failed"):
+		return constants.AIMStatusFailed
+	case strings.Contains(reason, "Degraded"):
+		return constants.AIMStatusDegraded
+	}
+
+	// Then derive based on dependency type
+	switch depType {
+	case DependencyTypeUpstream:
+		// Upstream dependencies not ready → Pending
+		return constants.AIMStatusPending
+	case DependencyTypeDownstream, DependencyTypeUnspecified:
+		// Downstream dependencies being created → Progressing
+		// Treat unspecified as downstream for flexibility (conditions added in DecorateStatus, etc.)
+		return constants.AIMStatusProgressing
+	default:
+		return constants.AIMStatusProgressing
+	}
 }
 
 // aggregateActualComponentStates returns the "worst" status from the actual component states.

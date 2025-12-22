@@ -145,3 +145,76 @@ func (fr FetchResult[T]) ToComponentHealthWithContext(
 
 	return health
 }
+
+// ToUpstreamComponentHealth converts a FetchResult for an upstream dependency into ComponentHealth.
+// Upstream dependencies are resources that this controller depends on (templates, configs, secrets, etc.).
+// NotFound errors for upstream dependencies are categorized as MissingUpstreamDependency (non-retriable, but can be
+// resolved when they are created via external actions).
+func (fr FetchResult[T]) ToUpstreamComponentHealth(component string, inspector func(T) ComponentHealth) ComponentHealth {
+	// Handle fetch errors
+	if fr.HasError() {
+		var wrappedErr error
+		if fr.IsNotFound() {
+			// NotFound for upstream dependency = non-retriable error (user must create it)
+			wrappedErr = NewMissingUpstreamDependencyError(
+				"ReferenceNotFound",
+				"Upstream dependency not found",
+				fr.Error,
+			)
+		} else {
+			// Other errors get categorized later
+			wrappedErr = fr.Error
+		}
+
+		return ComponentHealth{
+			Component:      component,
+			Errors:         []error{wrappedErr},
+			DependencyType: DependencyTypeUpstream,
+		}
+	}
+
+	// No fetch errors - inspect the value for semantic state
+	health := inspector(fr.Value)
+
+	// Override the component name and dependency type
+	health.Component = component
+	health.DependencyType = DependencyTypeUpstream
+
+	return health
+}
+
+// ToDownstreamComponentHealth converts a FetchResult for a downstream dependency into ComponentHealth.
+// Downstream dependencies are resources that this controller creates (pods, jobs, child resources, etc.).
+// NotFound errors for downstream dependencies are categorized as MissingDownstreamDependency (retriable/expected).
+func (fr FetchResult[T]) ToDownstreamComponentHealth(component string, inspector func(T) ComponentHealth) ComponentHealth {
+	// Handle fetch errors
+	if fr.HasError() {
+		var wrappedErr error
+		if fr.IsNotFound() {
+			// NotFound for downstream dependency = retriable (controller may be creating it)
+			wrappedErr = NewMissingDownstreamDependencyError(
+				"ResourceNotReady",
+				"Downstream resource not found or being created",
+				fr.Error,
+			)
+		} else {
+			// Other errors get categorized later
+			wrappedErr = fr.Error
+		}
+
+		return ComponentHealth{
+			Component:      component,
+			Errors:         []error{wrappedErr},
+			DependencyType: DependencyTypeDownstream,
+		}
+	}
+
+	// No fetch errors - inspect the value for semantic state
+	health := inspector(fr.Value)
+
+	// Override the component name and dependency type
+	health.Component = component
+	health.DependencyType = DependencyTypeDownstream
+
+	return health
+}
