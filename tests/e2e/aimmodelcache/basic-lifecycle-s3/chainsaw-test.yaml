@@ -1,0 +1,74 @@
+
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: basic-lifecycle-s3
+spec:
+  steps:
+    - name: Deploy Minio
+      try:
+        - apply:
+            file: minio-service.yaml
+        - apply:
+            file: minio-deployment.yaml
+
+    - name: Wait for Minio to be ready
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: minio
+              status:
+                availableReplicas: 1
+
+    - name: Create Minio bucket
+      try:
+        - apply:
+            file: minio-setup-job.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                name: minio-setup
+              status:
+                (succeeded != null): true
+                succeeded: 1
+
+    - name: Download model from HF and upload to Minio
+      try:
+        - apply:
+            file: model-upload-job.yaml
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                name: model-upload
+              status:
+                (succeeded != null): true
+                succeeded: 1
+
+    - name: Create model cache
+      try:
+        - apply:
+            file: model-cache.yaml
+
+    - name: Assert the cache gets ready
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModelCache
+              metadata:
+                name: basic-lifecycle-s3
+              status:
+                status: Ready
+                progress:
+                  percentage: 100

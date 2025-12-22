@@ -200,18 +200,27 @@ func main() {
 		os.Exit(1)
 	}
 
+<<<<<<< HEAD
 	// Create Kubernetes clientset for controllers that need direct API access (e.g., registry operations)
+=======
+	// Create Kubernetes clientset for controllers that need direct pod log access
+>>>>>>> 6b92318 (model cache migration)
 	clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
 	if err != nil {
 		setupLog.Error(err, "unable to create Kubernetes clientset")
 		os.Exit(1)
 	}
 
+<<<<<<< HEAD
 	if err := (&controller.AIMClusterModelReconciler{
+=======
+	if err := (&controller.AIMModelCacheReconciler{
+>>>>>>> 6b92318 (model cache migration)
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Clientset: clientset,
 	}).SetupWithManager(mgr); err != nil {
+<<<<<<< HEAD
 		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterModel")
 		os.Exit(1)
 	}
@@ -234,6 +243,11 @@ func main() {
 		os.Exit(1)
 	}
 
+=======
+		setupLog.Error(err, "unable to create controller", "controller", "AIMModelCache")
+		os.Exit(1)
+	}
+>>>>>>> 6b92318 (model cache migration)
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

@@ -75,6 +75,28 @@ type AIMModelCacheSpec struct {
 	RuntimeConfigRef `json:",inline"`
 }
 
+// DownloadProgress represents the download progress for a model cache
+type DownloadProgress struct {
+	// TotalBytes is the expected total size of the download in bytes
+	// +optional
+	TotalBytes int64 `json:"totalBytes,omitempty"`
+
+	// DownloadedBytes is the number of bytes downloaded so far
+	// +optional
+	DownloadedBytes int64 `json:"downloadedBytes,omitempty"`
+
+	// Percentage is the download progress as a percentage (0-100)
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	Percentage int32 `json:"percentage,omitempty"`
+
+	// DisplayPercentage is a human-readable progress string (e.g., "45 %")
+	// This field is automatically populated from Progress.Percentage
+	// +optional
+	DisplayPercentage string `json:"displayPercentage,omitempty"`
+}
+
 // AIMModelCacheStatus defines the observed state of AIMModelCache
 type AIMModelCacheStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -86,8 +108,12 @@ type AIMModelCacheStatus struct {
 
 	// Status represents the current status of the model cache
 	// +kubebuilder:default=Pending
-	// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Failed
+	// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Degraded;Failed
 	Status constants.AIMStatus `json:"status,omitempty"`
+
+	// Progress represents the download progress when Status is Progressing
+	// +optional
+	Progress *DownloadProgress `json:"progress,omitempty"`
 
 	// LastUsed represents the last time a model was deployed that used this cache
 	LastUsed *metav1.Time `json:"lastUsed,omitempty"`
@@ -143,9 +169,9 @@ const (
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=aimmc,categories=aim;all
-// +kubebuilder:printcolumn:name="Cache Size",type=string,JSONPath=`.spec.size`
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
-// +kubebuilder:printcolumn:name="PVC",type=string,JSONPath=`.status.persistentVolumeClaim`
+// +kubebuilder:printcolumn:name="Model Size",type=string,JSONPath=`.spec.size`
+// +kubebuilder:printcolumn:name="Progress",type=string,JSONPath=`.status.progress.displayPercentage`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // AIMModelCache is the Schema for the modelcaches API
