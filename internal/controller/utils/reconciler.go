@@ -132,6 +132,27 @@ type StateEngineDecision struct {
 	RequeueError error
 }
 
+// InfrastructureError represents retriable infrastructure failures (network, API server, etc.).
+// It provides a stable error type for controller-runtime's exponential backoff, while preserving
+// detailed error information for logging and debugging.
+type InfrastructureError struct {
+	// Count is the number of infrastructure errors encountered
+	Count int
+	// Errors contains the detailed error information
+	Errors []error
+}
+
+func (e InfrastructureError) Error() string {
+	if e.Count == 1 {
+		return "infrastructure error (1 failure)"
+	}
+	return fmt.Sprintf("infrastructure errors (%d failures)", e.Count)
+}
+
+func (e InfrastructureError) Unwrap() []error {
+	return e.Errors
+}
+
 // DomainReconciler is implemented by domain-specific logic for a CRD.
 type DomainReconciler[T ObjectWithStatus[S], S StatusWithConditions, F any, Obs any] interface {
 	// FetchRemoteState hits the API via client and returns the fetched objects.
@@ -217,7 +238,7 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 		return fmt.Errorf("DeepCopyObject returned unexpected type, expected %T", obj)
 	}
 	oldStatus := oldObj.GetStatus()
-	oldConditions := append([]metav1.Condition(nil), status.GetConditions()...)
+	oldConditions := append([]metav1.Condition(nil), oldStatus.GetConditions()...)
 
 	// Condition manager from existing conditions
 	cm := NewConditionManager(oldConditions)
@@ -288,26 +309,30 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 		}
 	}
 
-	// TODO: Handle deleteErrs and applyErr - should they feed back into state engine?
-	// For now, if they occurred, we'll return them after status update
+	// === Phase 7: Handle Apply/Delete Errors ===
+	// Apply/delete failures are treated as infrastructure errors (retriable).
+	// Set DependenciesReachable=False to indicate the operator cannot reach the API server
+	// or lacks permissions to perform the operation.
 	var phaseErr error
 	if len(deleteErrs) > 0 {
-		phaseErr = fmt.Errorf("delete phase failed: %w", errors.Join(deleteErrs...))
+		phaseErr = InfrastructureError{Count: len(deleteErrs), Errors: deleteErrs}
+		cm.Set(ConditionTypeDependenciesReachable, metav1.ConditionFalse, ReasonDependenciesNotReachable, "Failed to delete resources", AsError())
 	} else if applyErr != nil {
-		phaseErr = fmt.Errorf("apply phase failed: %w", applyErr)
+		phaseErr = InfrastructureError{Count: 1, Errors: []error{applyErr}}
+		cm.Set(ConditionTypeDependenciesReachable, metav1.ConditionFalse, ReasonDependenciesNotReachable, "Failed to apply resources", AsError())
 	}
 
-	// === Phase 7: Update Conditions ===
+	// === Phase 8: Update Conditions ===
 	status.SetConditions(cm.Conditions())
 
-	// === Phase 8: Emit Events and Logs ===
+	// === Phase 9: Emit Events and Logs ===
 	transitions := DiffConditionTransitions(oldConditions, status.GetConditions())
 	EmitConditionTransitions(p.Recorder, obj, transitions, cm)
 	EmitRecurringEvents(p.Recorder, obj, cm)
 	EmitConditionLogs(ctx, transitions, cm)
 	EmitRecurringLogs(ctx, cm)
 
-	// === Phase 9: Update Status ===
+	// === Phase 10: Update Status ===
 	// ALWAYS update status (even on errors) so users can see what went wrong
 	if !equality.Semantic.DeepEqual(oldStatus, status) {
 		if err := p.StatusClient.Update(ctx, obj); err != nil {
@@ -322,7 +347,7 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 		}
 	}
 
-	// === Phase 10: Return Decision ===
+	// === Phase 11: Return Decision ===
 	// Return requeue error if infrastructure issues detected (triggers exponential backoff)
 	if decision.ShouldRequeue {
 		return decision.RequeueError
@@ -720,9 +745,12 @@ func (p *Pipeline[T, S, F, Obs]) processStateEngine(
 
 	// Determine behavior
 	if cats.hasInfra {
-		return StateEngineDecision{ShouldApply: false, ShouldRequeue: true, RequeueError: errors.Join(cats.infraErrors...)}, nil
+		infraErr := InfrastructureError{Count: len(cats.infraErrors), Errors: cats.infraErrors}
+		return StateEngineDecision{ShouldApply: false, ShouldRequeue: true, RequeueError: infraErr}, nil
 	}
-	return StateEngineDecision{ShouldApply: !cats.hasAuth && !cats.hasInvalidSpec, ShouldRequeue: false}, nil
+	// Block apply if auth, invalid spec, or missing upstream dependencies
+	shouldApply := !cats.hasAuth && !cats.hasInvalidSpec && !cats.hasMissingUpstreamDep
+	return StateEngineDecision{ShouldApply: shouldApply, ShouldRequeue: false}, nil
 }
 
 // deriveStatusFromDependencyType derives the status for a not-ready component based on its dependency type.

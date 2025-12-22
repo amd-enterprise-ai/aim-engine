@@ -25,6 +25,7 @@ package controllerutils
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -1678,4 +1679,324 @@ func TestPipeline_processStateEngine_DependenciesReachableRecovery(t *testing.T)
 	if cfg.logLevel != 0 {
 		t.Errorf("DependenciesReachable should use info log (V(0)) when True, got level %v", cfg.logLevel)
 	}
+}
+
+// ======================================================
+// CRITICAL BUG FIX TESTS
+// ======================================================
+
+func TestPipeline_MissingUpstreamDep_BlocksApply(t *testing.T) {
+	// Test that missing upstream dependencies block apply (ShouldApply=false)
+	upstreamErr := NewMissingUpstreamDependencyError("SecretNotFound", "Secret 'my-secret' not found in namespace 'default'", errors.New("secret not found"))
+	obs := testObservationWithError{infraError: upstreamErr}
+	cm := NewConditionManager([]metav1.Condition{})
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationWithError]{
+		Reconciler: &testReconcilerWithError{infraError: upstreamErr},
+	}
+
+	decision, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	if decision.ShouldApply {
+		t.Error("ShouldApply should be false for missing upstream dependency")
+	}
+
+	if decision.ShouldRequeue {
+		t.Error("ShouldRequeue should be false for missing upstream dependency (not retriable)")
+	}
+
+	// Verify ConfigValid condition is set to False
+	configValid := cm.Get(ConditionTypeConfigValid)
+	if configValid == nil {
+		t.Fatal("ConfigValid condition should be set")
+	}
+	if configValid.Status != metav1.ConditionFalse {
+		t.Errorf("ConfigValid should be False for missing upstream dep, got %v", configValid.Status)
+	}
+	if configValid.Reason != ReasonMissingRef {
+		t.Errorf("ConfigValid reason should be %s, got %s", ReasonMissingRef, configValid.Reason)
+	}
+
+	// Verify Ready condition is set to False
+	ready := cm.Get(ConditionTypeReady)
+	if ready == nil {
+		t.Fatal("Ready condition should be set")
+	}
+	if ready.Status != metav1.ConditionFalse {
+		t.Errorf("Ready should be False for missing upstream dep, got %v", ready.Status)
+	}
+}
+
+func TestPipeline_Run_ApplyError_SetsDependenciesReachable(t *testing.T) {
+	// Test that apply errors set DependenciesReachable=False and return InfrastructureError
+	scheme := runtime.NewScheme()
+	_ = metav1.AddMetaToScheme(scheme)
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "test.k8s.io", Version: "v1"}, &testObject{})
+
+	now := metav1.Now()
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "test.k8s.io/v1",
+			Kind:       "TestObject",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test-obj",
+			Namespace:         "default",
+			CreationTimestamp: now,
+		},
+	}
+
+	// Create a fake client that will fail on Apply
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).WithStatusSubresource(obj).Build()
+
+	// Create a test reconciler that returns resources to apply
+	reconciler := &testReconcilerWithPlan{
+		fetchResult: testFetch{ModelReady: true},
+		planResult: PlanResult{
+			toApply: []client.Object{
+				&testObject{
+					TypeMeta: metav1.TypeMeta{
+						APIVersion: "test.k8s.io/v1",
+						Kind:       "TestObject",
+					},
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "child-resource",
+						Namespace: "default",
+					},
+				},
+			},
+		},
+	}
+
+	recorder := record.NewFakeRecorder(10)
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservation]{
+		Client:         &failingApplyClient{Client: fakeClient},
+		StatusClient:   fakeClient.Status(),
+		Recorder:       recorder,
+		Reconciler:     reconciler,
+		Scheme:         scheme,
+		ControllerName: "test",
+	}
+
+	err := p.Run(context.Background(), obj)
+
+	// Should return InfrastructureError
+	if err == nil {
+		t.Fatal("Expected error from apply failure, got nil")
+	}
+
+	var infraErr InfrastructureError
+	if !errors.As(err, &infraErr) {
+		t.Errorf("Expected InfrastructureError, got %T: %v", err, err)
+	}
+
+	if infraErr.Count != 1 {
+		t.Errorf("Expected 1 infrastructure error, got %d", infraErr.Count)
+	}
+
+	// Verify DependenciesReachable is False
+	depReachable := findCondition(obj.Status.Conditions, ConditionTypeDependenciesReachable)
+	if depReachable == nil {
+		t.Fatal("DependenciesReachable condition should be set")
+	}
+	if depReachable.Status != metav1.ConditionFalse {
+		t.Errorf("DependenciesReachable should be False after apply error, got %v", depReachable.Status)
+	}
+	if !strings.Contains(depReachable.Message, "Failed to apply") {
+		t.Errorf("DependenciesReachable message should mention apply failure, got: %s", depReachable.Message)
+	}
+}
+
+func TestPipeline_Run_DeleteError_SetsDependenciesReachable(t *testing.T) {
+	// Test that delete errors set DependenciesReachable=False and return InfrastructureError
+	scheme := runtime.NewScheme()
+	_ = metav1.AddMetaToScheme(scheme)
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "test.k8s.io", Version: "v1"}, &testObject{})
+
+	now := metav1.Now()
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "test.k8s.io/v1",
+			Kind:       "TestObject",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test-obj",
+			Namespace:         "default",
+			CreationTimestamp: now,
+		},
+	}
+
+	// Create a fake client that will fail on Delete
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).WithStatusSubresource(obj).Build()
+
+	// Create a test reconciler that returns resources to delete
+	reconciler := &testReconcilerWithPlan{
+		fetchResult: testFetch{ModelReady: true},
+		planResult: PlanResult{
+			toDelete: []client.Object{
+				&testObject{
+					TypeMeta: metav1.TypeMeta{
+						APIVersion: "test.k8s.io/v1",
+						Kind:       "TestObject",
+					},
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "child-to-delete",
+						Namespace: "default",
+					},
+				},
+			},
+		},
+	}
+
+	recorder := record.NewFakeRecorder(10)
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservation]{
+		Client:         &failingDeleteClient{Client: fakeClient},
+		StatusClient:   fakeClient.Status(),
+		Recorder:       recorder,
+		Reconciler:     reconciler,
+		Scheme:         scheme,
+		ControllerName: "test",
+	}
+
+	err := p.Run(context.Background(), obj)
+
+	// Should return InfrastructureError
+	if err == nil {
+		t.Fatal("Expected error from delete failure, got nil")
+	}
+
+	var infraErr InfrastructureError
+	if !errors.As(err, &infraErr) {
+		t.Errorf("Expected InfrastructureError, got %T: %v", err, err)
+	}
+
+	if infraErr.Count != 1 {
+		t.Errorf("Expected 1 infrastructure error, got %d", infraErr.Count)
+	}
+
+	// Verify DependenciesReachable is False
+	depReachable := findCondition(obj.Status.Conditions, ConditionTypeDependenciesReachable)
+	if depReachable == nil {
+		t.Fatal("DependenciesReachable condition should be set")
+	}
+	if depReachable.Status != metav1.ConditionFalse {
+		t.Errorf("DependenciesReachable should be False after delete error, got %v", depReachable.Status)
+	}
+	if !strings.Contains(depReachable.Message, "Failed to delete") {
+		t.Errorf("DependenciesReachable message should mention delete failure, got: %s", depReachable.Message)
+	}
+}
+
+func TestInfrastructureError_StableMessage(t *testing.T) {
+	tests := []struct {
+		name          string
+		count         int
+		errors        []error
+		wantMessage   string
+		wantUnwrapLen int
+	}{
+		{
+			name:          "single error",
+			count:         1,
+			errors:        []error{errors.New("network timeout")},
+			wantMessage:   "infrastructure error (1 failure)",
+			wantUnwrapLen: 1,
+		},
+		{
+			name:          "multiple errors",
+			count:         3,
+			errors:        []error{errors.New("timeout 1"), errors.New("timeout 2"), errors.New("timeout 3")},
+			wantMessage:   "infrastructure errors (3 failures)",
+			wantUnwrapLen: 3,
+		},
+		{
+			name:          "different error details but same count",
+			count:         2,
+			errors:        []error{errors.New("completely different error"), errors.New("another different error")},
+			wantMessage:   "infrastructure errors (2 failures)",
+			wantUnwrapLen: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			infraErr := InfrastructureError{
+				Count:  tt.count,
+				Errors: tt.errors,
+			}
+
+			// Test Error() returns stable message
+			if infraErr.Error() != tt.wantMessage {
+				t.Errorf("Error() = %q, want %q", infraErr.Error(), tt.wantMessage)
+			}
+
+			// Test Unwrap() returns underlying errors
+			unwrapped := infraErr.Unwrap()
+			if len(unwrapped) != tt.wantUnwrapLen {
+				t.Errorf("Unwrap() returned %d errors, want %d", len(unwrapped), tt.wantUnwrapLen)
+			}
+
+			// Verify errors.As works with the error wrapped
+			wrappedErr := fmt.Errorf("wrapped: %w", infraErr)
+			var asInfraErr InfrastructureError
+			if !errors.As(wrappedErr, &asInfraErr) {
+				t.Error("errors.As should work with InfrastructureError")
+			}
+			if asInfraErr.Count != tt.count {
+				t.Errorf("errors.As preserved Count: got %d, want %d", asInfraErr.Count, tt.count)
+			}
+		})
+	}
+}
+
+// Helper type for testing apply failures
+type failingApplyClient struct {
+	client.Client
+}
+
+func (c *failingApplyClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+	// Simulate apply failure
+	return errors.New("simulated apply failure: insufficient permissions")
+}
+
+// Helper type for testing delete failures
+type failingDeleteClient struct {
+	client.Client
+}
+
+func (c *failingDeleteClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	// Simulate delete failure
+	return errors.New("simulated delete failure: resource locked")
+}
+
+// Helper reconciler that returns a plan with resources
+type testReconcilerWithPlan struct {
+	fetchResult testFetch
+	planResult  PlanResult
+}
+
+func (r *testReconcilerWithPlan) FetchRemoteState(ctx context.Context, c client.Client, obj ReconcileContext[*testObject]) testFetch {
+	return r.fetchResult
+}
+
+func (r *testReconcilerWithPlan) ComposeState(ctx context.Context, obj ReconcileContext[*testObject], fetched testFetch) testObservation {
+	return testObservation{modelReady: fetched.ModelReady}
+}
+
+func (r *testReconcilerWithPlan) PlanResources(ctx context.Context, obj ReconcileContext[*testObject], obs testObservation) PlanResult {
+	return r.planResult
+}
+
+// Helper to find a condition by type
+func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == condType {
+			return &conditions[i]
+		}
+	}
+	return nil
 }
