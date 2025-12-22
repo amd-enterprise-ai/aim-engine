@@ -32,6 +32,8 @@ import (
 const (
 	// TemplateCacheTemplateNameIndexKey is the field index key for AIMTemplateCache.Spec.TemplateName
 	TemplateCacheTemplateNameIndexKey = ".spec.templateName"
+	// TemplateCacheTemplateScopeIndexKey is the field index key for AIMTemplateCache.Spec.TemplateScope
+	TemplateCacheTemplateScopeIndexKey = ".spec.templateScope"
 )
 
 // AIMTemplateCacheSpec defines the desired state of AIMTemplateCache
@@ -94,13 +96,17 @@ type AIMTemplateCacheStatus struct {
 
 	// Status represents the current high-level status of the template cache.
 	// +kubebuilder:default=Pending
-	// +kubebuilder:validation:Enum=Pending;Ready
+	// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Failed;Degraded
 	Status constants.AIMStatus `json:"status,omitempty"`
 
 	// ResolvedTemplateKind indicates whether the template resolved to a namespace-scoped
 	// AIMServiceTemplate or cluster-scoped AIMClusterServiceTemplate.
 	// Values: "AIMServiceTemplate", "AIMClusterServiceTemplate"
 	ResolvedTemplateKind string `json:"resolvedTemplateKind,omitempty"`
+
+	// ModelCaches maps model names to their resolved AIMModelCache resources.
+	// +optional
+	ModelCaches map[string]AIMResolvedModelCache `json:"modelCaches,omitempty"`
 }
 
 func (s *AIMTemplateCacheStatus) GetConditions() []metav1.Condition {
@@ -128,6 +134,21 @@ const (
 	// AIMTemplateCacheConditionFailure is True when a failure has occurred.
 	AIMTemplateCacheConditionFailure = "Failure"
 )
+
+type AIMResolvedModelCache struct {
+	// UID of the AIMModelCache resource
+	UID string `json:"uid"`
+	// Name of the AIMModelCache resource
+	Name string `json:"name"`
+	// Model is the name of the model that is cached
+	Model string `json:"model"`
+	// Status of the model cache
+	Status constants.AIMStatus `json:"status"`
+	// PersistentVolumeClaim name if available
+	PersistentVolumeClaim string `json:"persistentVolumeClaim,omitempty"`
+	// MountPoint is the mount point for the model cache
+	MountPoint string `json:"mountPoint,omitempty"`
+}
 
 // Condition reasons for AIMTemplateCache
 const (

@@ -1,0 +1,6 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: template-cache-waits-for-template-readiness
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.9

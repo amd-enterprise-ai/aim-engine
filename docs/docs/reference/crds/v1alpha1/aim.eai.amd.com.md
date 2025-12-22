@@ -710,6 +710,27 @@ _Appears in:_
 | `Unknown` | AIMResolutionScopeUnknown denotes that the scope could not be determined.<br /> |
 
 
+#### AIMResolvedModelCache
+
+
+
+
+
+
+
+_Appears in:_
+- [AIMTemplateCacheStatus](#aimtemplatecachestatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `uid` _string_ | UID of the AIMModelCache resource |  |  |
+| `name` _string_ | Name of the AIMModelCache resource |  |  |
+| `model` _string_ | Model is the name of the model that is cached |  |  |
+| `status` _[AIMStatus](#aimstatus)_ | Status of the model cache |  |  |
+| `persistentVolumeClaim` _string_ | PersistentVolumeClaim name if available |  |  |
+| `mountPoint` _string_ | MountPoint is the mount point for the model cache |  |  |
+
+
 #### AIMResolvedReference
 
 
@@ -1361,8 +1382,9 @@ _Appears in:_
 | `observedGeneration` _integer_ | ObservedGeneration is the most recent generation observed by the controller. |  |  |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#condition-v1-meta) array_ | Conditions represent the latest observations of the template cache state. |  |  |
 | `resolvedRuntimeConfig` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedRuntimeConfig captures metadata about the runtime config that was resolved. |  |  |
-| `status` _[AIMStatus](#aimstatus)_ | Status represents the current high-level status of the template cache. | Pending | Enum: [Pending Ready] <br /> |
+| `status` _[AIMStatus](#aimstatus)_ | Status represents the current high-level status of the template cache. | Pending | Enum: [Pending Progressing Ready Failed Degraded] <br /> |
 | `resolvedTemplateKind` _string_ | ResolvedTemplateKind indicates whether the template resolved to a namespace-scoped<br />AIMServiceTemplate or cluster-scoped AIMClusterServiceTemplate.<br />Values: "AIMServiceTemplate", "AIMClusterServiceTemplate" |  |  |
+| `modelCaches` _object (keys:string, values:[AIMResolvedModelCache](#aimresolvedmodelcache))_ | ModelCaches maps model names to their resolved AIMModelCache resources. |  |  |
 
 
 #### AIMTemplateCachingConfig
