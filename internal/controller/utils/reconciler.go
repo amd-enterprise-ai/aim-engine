@@ -422,11 +422,11 @@ func statusToObsLevel(state constants.AIMStatus) ObservabilityOption {
 	}
 }
 
-// setComponentConditions sets per-component conditions and returns the actual states used.
-func setComponentConditions(cm *ConditionManager, componentHealth []ComponentHealth, withinGracePeriod bool) []constants.AIMStatus {
-	actualStates := make([]constants.AIMStatus, len(componentHealth))
-
-	for i, h := range componentHealth {
+// setComponentConditions sets or preserves per-component conditions.
+// During the grace period, component conditions with infrastructure errors preserve their previous status
+// to prevent flapping between Ready/Progressing and Degraded due to transient network issues.
+func setComponentConditions(cm *ConditionManager, componentHealth []ComponentHealth, withinGracePeriod bool) {
+	for _, h := range componentHealth {
 		conditionType := h.Component + ComponentConditionSuffix
 		state := h.GetState()
 		reason := h.GetReason()
@@ -435,17 +435,14 @@ func setComponentConditions(cm *ConditionManager, componentHealth []ComponentHea
 		// Grace period: preserve previous state for components with infra errors
 		if hasComponentInfrastructureErrors(h) && withinGracePeriod {
 			if oldCond := cm.Get(conditionType); oldCond != nil {
-				state, condStatus, obsLevel := preserveGracePeriodState(oldCond.Status)
+				_, condStatus, obsLevel := preserveGracePeriodState(oldCond.Status)
 				cm.Set(conditionType, condStatus, reason, message, obsLevel)
-				actualStates[i] = state
 				continue
 			}
 		}
 
 		cm.Set(conditionType, statusToCondition(state), reason, message, statusToObsLevel(state))
-		actualStates[i] = state
 	}
-	return actualStates
 }
 
 // preserveGracePeriodState returns the state to preserve during grace period based on old condition.
@@ -477,39 +474,168 @@ func setErrorCategoryConditions(cm *ConditionManager, cats errorCategories) {
 	}
 }
 
-// setReadyCondition sets the overall Ready condition based on all component conditions and error categories.
-// This should be called after DecorateStatus to ensure all conditions are considered.
-func setReadyCondition(cm *ConditionManager, componentHealth []ComponentHealth, cats errorCategories) {
-	// First check component health from GetComponentHealth
-	allReady, firstFailed, readyReason, readyMessage := analyzeComponentReadiness(componentHealth)
+// deriveStatusAndSetReadyCondition analyzes all component conditions, derives the root status,
+// and sets the Ready condition. This should be called after DecorateStatus to ensure all
+// conditions (including domain-specific ones) are considered.
+//
+// Returns the derived root status.
+func deriveStatusAndSetReadyCondition(cm *ConditionManager, cats errorCategories, componentHealth []ComponentHealth) constants.AIMStatus {
+	// Check for error category conditions first (highest priority)
+	if status, handled := handleErrorCategories(cm, cats); handled {
+		return status
+	}
 
-	// Then check all component-specific Ready conditions that may have been added by DecorateStatus
-	// These are conditions with names ending in "Ready" (e.g., "ModelCachesReady")
+	// Build lookup maps for component states and dependency types
+	componentStates, componentDepTypes := buildComponentMaps(componentHealth)
+
+	// Scan all component conditions and aggregate results
+	scanResult := scanComponentConditions(cm, componentStates, componentDepTypes)
+
+	// Set Ready condition based on scan results
+	setReadyConditionFromScan(cm, scanResult, cats)
+
+	// Infrastructure errors take precedence if we're not ready
+	if cats.hasInfra && scanResult.worstStatus != constants.AIMStatusReady {
+		return constants.AIMStatusDegraded
+	}
+
+	return scanResult.worstStatus
+}
+
+// handleErrorCategories checks for error category conditions and sets Ready=False if found.
+// Returns (status, true) if handled, (empty, false) if not.
+func handleErrorCategories(cm *ConditionManager, cats errorCategories) (constants.AIMStatus, bool) {
+	if !cats.hasAuth && !cats.hasInvalidSpec && !cats.hasMissingUpstreamDep {
+		return "", false
+	}
+
+	var reason, message string
+	switch {
+	case cats.hasAuth:
+		reason, message = ReasonAuthError, MessageAuthError
+	case cats.hasInvalidSpec:
+		reason, message = ReasonInvalidSpec, MessageInvalidSpec
+	case cats.hasMissingUpstreamDep:
+		reason, message = ReasonMissingRef, MessageMissingRef
+	}
+	cm.Set(ConditionTypeReady, metav1.ConditionFalse, reason, message, AsError())
+	return constants.AIMStatusFailed, true
+}
+
+// buildComponentMaps creates lookup maps for component states and dependency types.
+func buildComponentMaps(componentHealth []ComponentHealth) (map[string]constants.AIMStatus, map[string]DependencyType) {
+	componentStates := make(map[string]constants.AIMStatus)
+	componentDepTypes := make(map[string]DependencyType)
+	for _, h := range componentHealth {
+		componentStates[h.Component] = h.GetState()
+		componentDepTypes[h.Component] = h.DependencyType
+	}
+	return componentStates, componentDepTypes
+}
+
+// componentScanResult holds the aggregated results from scanning component conditions.
+type componentScanResult struct {
+	allReady            bool
+	worstStatus         constants.AIMStatus
+	firstErrorComponent string
+	firstErrorReason    string
+	firstErrorMessage   string
+	readyReason         string
+	readyMessage        string
+}
+
+// scanComponentConditions scans all component Ready conditions and aggregates their status.
+func scanComponentConditions(cm *ConditionManager, componentStates map[string]constants.AIMStatus, componentDepTypes map[string]DependencyType) componentScanResult {
+	result := componentScanResult{
+		allReady:    true,
+		worstStatus: constants.AIMStatusReady,
+	}
+
+	// Note: cm.Conditions() allocates a new slice for encapsulation, but this is acceptable
+	// since the number of conditions is typically small (< 10) and this is called once per reconcile.
 	allConditions := cm.Conditions()
 	for _, cond := range allConditions {
-		if cond.Type == ConditionTypeReady {
-			continue // Skip the overall Ready condition itself
+		if !isComponentCondition(cond.Type) {
+			continue
 		}
-		if strings.HasSuffix(cond.Type, ComponentConditionSuffix) {
-			if cond.Status != metav1.ConditionTrue {
-				allReady = false
-				// Use the first failed component condition for the error message
-				if firstFailed == nil {
-					firstFailed = &ComponentHealth{
-						Component: strings.TrimSuffix(cond.Type, ComponentConditionSuffix),
-						State:     constants.AIMStatusFailed,
-						Reason:    cond.Reason,
-						Message:   cond.Message,
-					}
-				}
-			}
+
+		componentName := strings.TrimSuffix(cond.Type, ComponentConditionSuffix)
+		componentStatus := deriveComponentStatus(cond.Status, componentName, componentStates, componentDepTypes)
+
+		// Process the component status
+		processComponentStatus(cond, componentName, componentStatus, &result)
+
+		// Keep the worst status
+		if constants.CompareAIMStatus(componentStatus, result.worstStatus) < 0 {
+			result.worstStatus = componentStatus
 		}
 	}
 
-	if allReady && !cats.hasAuth && !cats.hasMissingUpstreamDep && !cats.hasInvalidSpec {
-		// Use component-specific reason/message if available, otherwise use generic
-		reason := readyReason
-		message := readyMessage
+	return result
+}
+
+// isComponentCondition returns true if the condition type is a component Ready condition.
+func isComponentCondition(condType string) bool {
+	if condType == ConditionTypeReady ||
+		condType == ConditionTypeDependenciesReachable ||
+		condType == ConditionTypeAuthValid ||
+		condType == ConditionTypeConfigValid {
+		return false
+	}
+	return strings.HasSuffix(condType, ComponentConditionSuffix)
+}
+
+// deriveComponentStatus derives the component's status based on condition status and available metadata.
+func deriveComponentStatus(condStatus metav1.ConditionStatus, componentName string, componentStates map[string]constants.AIMStatus, componentDepTypes map[string]DependencyType) constants.AIMStatus {
+	switch condStatus {
+	case metav1.ConditionTrue:
+		return constants.AIMStatusReady
+	case metav1.ConditionFalse:
+		// Use original state if available, otherwise derive from dependency type
+		if originalState, ok := componentStates[componentName]; ok {
+			return originalState
+		}
+		return deriveStatusFromDependencyType(componentDepTypes[componentName])
+	case metav1.ConditionUnknown:
+		// Use original state if available, otherwise derive from dependency type
+		if originalState, ok := componentStates[componentName]; ok {
+			return originalState
+		}
+		// Fallback: upstream → Pending, downstream/unspecified → Progressing
+		if componentDepTypes[componentName] == DependencyTypeUpstream {
+			return constants.AIMStatusPending
+		}
+		return constants.AIMStatusProgressing
+	default:
+		return constants.AIMStatusProgressing
+	}
+}
+
+// processComponentStatus updates the scan result based on the component's condition and status.
+func processComponentStatus(cond metav1.Condition, componentName string, componentStatus constants.AIMStatus, result *componentScanResult) {
+	if componentStatus == constants.AIMStatusReady {
+		// Capture reason/message from ready components (last one wins, typically most specific)
+		if cond.Reason != "" {
+			result.readyReason = cond.Reason
+			result.readyMessage = cond.Message
+		}
+	} else {
+		result.allReady = false
+		// Track first component in actual error state (Failed, Degraded, NotAvailable).
+		// Normal progression states (Progressing, Pending) don't count as errors.
+		if result.firstErrorComponent == "" && isErrorState(componentStatus) {
+			result.firstErrorComponent = componentName
+			result.firstErrorReason = cond.Reason
+			result.firstErrorMessage = cond.Message
+		}
+	}
+}
+
+// setReadyConditionFromScan sets the Ready condition based on the scan results.
+func setReadyConditionFromScan(cm *ConditionManager, result componentScanResult, cats errorCategories) {
+	if result.allReady {
+		reason := result.readyReason
+		message := result.readyMessage
 		if reason == "" {
 			reason = ReasonAllComponentsReady
 		}
@@ -520,49 +646,22 @@ func setReadyCondition(cm *ConditionManager, componentHealth []ComponentHealth, 
 		return
 	}
 
-	reason, message, obsLevel := determineReadyFalseReason(cats, firstFailed)
+	// Determine reason for Ready=False
+	reason, message, obsLevel := determineReadyFalseReason(result, cats)
 	cm.Set(ConditionTypeReady, metav1.ConditionFalse, reason, message, obsLevel)
 }
 
-// analyzeComponentReadiness checks if all components are ready and finds the first failed component.
-// When all are ready, it returns the reason/message from the last component with a non-empty reason
-// (typically the most specific one, like "AllTemplatesReady" from a template aggregator).
-func analyzeComponentReadiness(componentHealth []ComponentHealth) (allReady bool, firstFailed *ComponentHealth, readyReason, readyMessage string) {
-	allReady = true
-	for i := range componentHealth {
-		h := &componentHealth[i]
-		state := h.GetState()
-		if state != constants.AIMStatusReady {
-			allReady = false
-		}
-		if firstFailed == nil && (state == constants.AIMStatusFailed || state == constants.AIMStatusDegraded || state == constants.AIMStatusNotAvailable) {
-			firstFailed = h
-		}
-		// Capture reason/message from ready components (last one wins, as it's typically most specific)
-		if state == constants.AIMStatusReady && h.Reason != "" {
-			readyReason = h.Reason
-			readyMessage = h.Message
-		}
+// determineReadyFalseReason determines the reason, message, and observability level for Ready=False.
+func determineReadyFalseReason(result componentScanResult, cats errorCategories) (string, string, ObservabilityOption) {
+	if result.firstErrorComponent != "" {
+		reason := result.firstErrorReason
+		message := fmt.Sprintf("Component %s is not ready: %s", result.firstErrorComponent, result.firstErrorMessage)
+		return reason, message, AsError()
 	}
-	return allReady, firstFailed, readyReason, readyMessage
-}
-
-// determineReadyFalseReason determines the reason/message for Ready=False condition.
-func determineReadyFalseReason(cats errorCategories, firstFailed *ComponentHealth) (string, string, ObservabilityOption) {
-	switch {
-	case cats.hasAuth:
-		return ReasonAuthError, MessageAuthError, AsError()
-	case cats.hasInvalidSpec:
-		return ReasonInvalidSpec, MessageInvalidSpec, AsError()
-	case cats.hasMissingUpstreamDep:
-		return ReasonMissingRef, MessageMissingRef, AsError()
-	case firstFailed != nil:
-		return firstFailed.GetReason(), fmt.Sprintf("Component %s is not ready: %s", firstFailed.Component, firstFailed.GetMessage()), AsError()
-	case cats.hasInfra:
+	if cats.hasInfra {
 		return ReasonDependenciesNotReachable, MessageInfraError, AsError()
-	default:
-		return ReasonProgressing, MessageProgressing, AsInfo()
 	}
+	return ReasonProgressing, MessageProgressing, AsInfo()
 }
 
 // processStateEngine analyzes component health, categorizes errors, sets conditions, and decides behavior.
@@ -599,7 +698,10 @@ func (p *Pipeline[T, S, F, Obs]) processStateEngine(
 	// Set DependenciesReachable condition
 	setDependenciesReachableCondition(cm, cats.hasInfra)
 
-	// Set per-component conditions
+	// Set or preserve per-component conditions.
+	// During grace period (degradationThreshold after infra errors start), component conditions
+	// preserve their previous status to prevent flapping. The preserved conditions will be used
+	// by deriveStatusAndSetReadyCondition to calculate the root status.
 	withinGracePeriod := isInGracePeriod(cm, cats.hasInfra)
 	setComponentConditions(cm, componentHealth, withinGracePeriod)
 
@@ -611,13 +713,9 @@ func (p *Pipeline[T, S, F, Obs]) processStateEngine(
 		dec.DecorateStatus(status, cm, obs)
 	}
 
-	// Set overall Ready condition after DecorateStatus has had a chance to add conditions
-	// This ensures all conditions (including domain-specific ones) are considered
-	setReadyCondition(cm, componentHealth, cats)
-
-	// Set root status from all conditions after DecorateStatus
-	// This ensures the status reflects all domain-specific conditions
-	derivedStatus := deriveStatusFromConditions(cm, cats, componentHealth)
+	// Derive root status and set Ready condition after DecorateStatus has had a chance to add conditions.
+	// This ensures all conditions (including domain-specific ones) are considered.
+	derivedStatus := deriveStatusAndSetReadyCondition(cm, cats, componentHealth)
 	status.SetStatus(string(derivedStatus))
 
 	// Determine behavior
@@ -627,84 +725,11 @@ func (p *Pipeline[T, S, F, Obs]) processStateEngine(
 	return StateEngineDecision{ShouldApply: !cats.hasAuth && !cats.hasInvalidSpec, ShouldRequeue: false}, nil
 }
 
-// deriveStatusFromConditions derives the root status by examining all component Ready conditions.
-// This is called after DecorateStatus to ensure all conditions (including domain-specific ones) are considered.
-func deriveStatusFromConditions(cm *ConditionManager, cats errorCategories, componentHealth []ComponentHealth) constants.AIMStatus {
-	// Check for error category conditions first (highest priority)
-	if cats.hasAuth || cats.hasInvalidSpec || cats.hasMissingUpstreamDep {
-		return constants.AIMStatusFailed
-	}
-
-	// Build a map of component names to their dependency types for quick lookup
-	componentDepTypes := make(map[string]DependencyType)
-	for _, h := range componentHealth {
-		componentDepTypes[h.Component] = h.DependencyType
-	}
-
-	// Check all component Ready conditions
-	worstStatus := constants.AIMStatusReady
-	allConditions := cm.Conditions()
-
-	for _, cond := range allConditions {
-		// Skip non-component conditions
-		if cond.Type == ConditionTypeReady ||
-			cond.Type == ConditionTypeDependenciesReachable ||
-			cond.Type == ConditionTypeAuthValid ||
-			cond.Type == ConditionTypeConfigValid {
-			continue
-		}
-
-		// Check component Ready conditions (conditions ending with "Ready")
-		if strings.HasSuffix(cond.Type, ComponentConditionSuffix) {
-			// Extract component name from condition type (remove "Ready" suffix)
-			componentName := strings.TrimSuffix(cond.Type, ComponentConditionSuffix)
-			depType := componentDepTypes[componentName]
-
-			var componentStatus constants.AIMStatus
-			switch cond.Status {
-			case metav1.ConditionTrue:
-				componentStatus = constants.AIMStatusReady
-			case metav1.ConditionFalse:
-				// Derive status based on dependency type
-				componentStatus = deriveStatusFromDependencyType(depType, cond.Reason)
-			case metav1.ConditionUnknown:
-				// Unknown status: upstream → Pending, downstream/unspecified → Progressing
-				if depType == DependencyTypeUpstream {
-					componentStatus = constants.AIMStatusPending
-				} else {
-					// Treat downstream and unspecified as Progressing
-					componentStatus = constants.AIMStatusProgressing
-				}
-			}
-
-			// Keep the worst status
-			if constants.CompareAIMStatus(componentStatus, worstStatus) < 0 {
-				worstStatus = componentStatus
-			}
-		}
-	}
-
-	// Infrastructure errors take precedence if we're not ready
-	if cats.hasInfra && worstStatus != constants.AIMStatusReady {
-		return constants.AIMStatusDegraded
-	}
-
-	return worstStatus
-}
-
 // deriveStatusFromDependencyType derives the status for a not-ready component based on its dependency type.
 // Upstream dependencies not ready → Pending (waiting for user to provide them)
 // Downstream dependencies not ready → Progressing (controller is creating them)
-func deriveStatusFromDependencyType(depType DependencyType, reason string) constants.AIMStatus {
-	// First check for explicit error states in the reason
-	switch {
-	case strings.Contains(reason, "Failed"):
-		return constants.AIMStatusFailed
-	case strings.Contains(reason, "Degraded"):
-		return constants.AIMStatusDegraded
-	}
-
-	// Then derive based on dependency type
+// Unspecified dependencies → Progressing (for backward compatibility and flexibility)
+func deriveStatusFromDependencyType(depType DependencyType) constants.AIMStatus {
 	switch depType {
 	case DependencyTypeUpstream:
 		// Upstream dependencies not ready → Pending
@@ -718,22 +743,15 @@ func deriveStatusFromDependencyType(depType DependencyType, reason string) const
 	}
 }
 
-// aggregateActualComponentStates returns the "worst" status from the actual component states.
-// This is used when we've overridden derived states (e.g., during grace period).
-func aggregateActualComponentStates(states []constants.AIMStatus) constants.AIMStatus {
-	if len(states) == 0 {
-		return constants.AIMStatusReady
+// isErrorState returns true if the status represents an actual error condition,
+// not just normal progression (Progressing, Pending) or readiness.
+func isErrorState(status constants.AIMStatus) bool {
+	switch status {
+	case constants.AIMStatusFailed, constants.AIMStatusDegraded, constants.AIMStatusNotAvailable:
+		return true
+	default:
+		return false
 	}
-
-	worst := constants.AIMStatusReady
-	for _, state := range states {
-		// CompareAIMStatus returns > 0 if first arg is better (higher priority)
-		// We want the worst status, so we check if state < worst (returns < 0)
-		if constants.CompareAIMStatus(state, worst) < 0 {
-			worst = state
-		}
-	}
-	return worst
 }
 
 // hasComponentInfrastructureErrors checks if a component has any infrastructure errors
