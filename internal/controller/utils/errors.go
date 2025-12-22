@@ -40,7 +40,6 @@ const (
 	ErrorCategoryMissingDownstreamDependency
 	ErrorCategoryMissingUpstreamDependency
 	ErrorCategoryInvalidSpec
-	ErrorCategoryResourceExhaustion
 )
 
 // StateEngineError is a structured error for the state engine layer.
@@ -106,8 +105,6 @@ func (c ErrorCategory) String() string {
 		return "MissingReference"
 	case ErrorCategoryInvalidSpec:
 		return "InvalidSpec"
-	case ErrorCategoryResourceExhaustion:
-		return "ResourceExhaustion"
 	default:
 		return "Unknown"
 	}
@@ -196,22 +193,6 @@ func NewInvalidSpecError(reason, message string, cause error) StateEngineError {
 	return &stateEngineError{
 		err:     cause,
 		cat:     ErrorCategoryInvalidSpec,
-		reason:  reason,
-		message: message,
-	}
-}
-
-// NewResourceExhaustionError creates a resource exhaustion error.
-// Use this for errors related to resource limits being hit:
-// - Disk full / no space left on device
-// - Out of memory (OOM)
-// - Storage quota exceeded
-// These errors require user intervention (increase PVC size, memory limits, etc.)
-// and will not auto-recover through retries.
-func NewResourceExhaustionError(reason, message string, cause error) StateEngineError {
-	return &stateEngineError{
-		err:     cause,
-		cat:     ErrorCategoryResourceExhaustion,
 		reason:  reason,
 		message: message,
 	}

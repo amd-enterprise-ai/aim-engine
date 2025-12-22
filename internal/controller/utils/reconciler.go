@@ -33,7 +33,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -188,22 +187,14 @@ type Pipeline[T ObjectWithStatus[S], S StatusWithConditions, F any, Obs any] str
 	Client         client.Client
 	StatusClient   client.StatusWriter // usually mgr.GetClient().Status()
 	Recorder       record.EventRecorder
+	FieldOwner     string
 	Reconciler     DomainReconciler[T, S, F, Obs]
 	Scheme         *runtime.Scheme
 	ControllerName string
-	Clientset      kubernetes.Interface // Optional: for health inspectors that need additional K8s API access
 }
 
-// GetKubernetesName returns the Kubernetes controller name (used in SetupWithManager's .Named()).
-// Example: "model" -> "model-controller"
-func (p *Pipeline[T, S, F, Obs]) GetKubernetesName() string {
+func (p *Pipeline[T, S, F, Obs]) GetControllerNameWithSuffix() string {
 	return p.ControllerName + "-controller"
-}
-
-// GetFullName returns the full AIM controller identifier (used for app.kubernetes.io/managed-by label).
-// Example: "model" -> "aim-model-controller"
-func (p *Pipeline[T, S, F, Obs]) GetFullName() string {
-	return "aim-" + p.ControllerName + "-controller"
 }
 
 type ReconcileContext[T client.Object] struct {
@@ -284,17 +275,16 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	if decision.ShouldApply && len(deleteErrs) == 0 {
 		// Propagate labels from the parent to the children
 		PropagateLabelsForResult(reconcileCtx.Object, &planResult, reconcileCtx.MergedRuntimeConfig.Value)
-
-		// Add standard controller labels to all resources
-		controllerLabels := map[string]string{
-			"app.kubernetes.io/managed-by":                                        p.GetFullName(),
-			fmt.Sprintf("%s/%s.name", constants.AimLabelDomain, p.ControllerName): obj.GetName(),
-		}
-		ApplyControllerLabelsToResult(&planResult, controllerLabels)
+		// TODO implement labels below
+		//labels := map[string]string{
+		//	"app.kubernetes.io/managed-by": p.GetControllerNameWithSuffix(),
+		//	fmt.Sprintf("%s/%s.name", constants.AimLabelDomain, p.ControllerName): obj.GetName(),
+		//}
+		// TODO also add to job pods
 
 		// Apply owned resources (with owner references)
 		if len(planResult.toApply) > 0 {
-			applyErr = ApplyDesiredState(ctx, p.Client, p.GetFullName(), p.Scheme, planResult.toApply, obj)
+			applyErr = ApplyDesiredState(ctx, p.Client, p.FieldOwner, p.Scheme, planResult.toApply, obj)
 			if applyErr != nil {
 				applyErr = fmt.Errorf("failed to apply owned resources: %w", applyErr)
 			}
@@ -302,7 +292,7 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 
 		// Apply unowned resources (without owner references)
 		if applyErr == nil && len(planResult.toApplyWithoutOwnerRef) > 0 {
-			applyErr = ApplyDesiredState(ctx, p.Client, p.GetFullName(), p.Scheme, planResult.toApplyWithoutOwnerRef, nil)
+			applyErr = ApplyDesiredState(ctx, p.Client, p.FieldOwner, p.Scheme, planResult.toApplyWithoutOwnerRef, nil)
 			if applyErr != nil {
 				applyErr = fmt.Errorf("failed to apply unowned resources: %w", applyErr)
 			}
@@ -693,20 +683,14 @@ func determineReadyFalseReason(result componentScanResult, cats errorCategories)
 
 // processStateEngine analyzes component health, categorizes errors, sets conditions, and decides behavior.
 func (p *Pipeline[T, S, F, Obs]) processStateEngine(
-	ctx context.Context,
+	_ context.Context,
 	obs Obs,
 	cm *ConditionManager,
 	status S,
 ) (StateEngineDecision, error) {
 	// Extract component health from observation
 	var componentHealth []ComponentHealth
-	// Try the extended interface with clientset support first
-	if healthProviderWithClientset, ok := any(obs).(interface {
-		GetComponentHealth(context.Context, kubernetes.Interface) []ComponentHealth
-	}); ok && p.Clientset != nil {
-		componentHealth = healthProviderWithClientset.GetComponentHealth(ctx, p.Clientset)
-	} else if healthProvider, ok := any(obs).(ComponentHealthProvider); ok {
-		// Fallback to standard interface
+	if healthProvider, ok := any(obs).(ComponentHealthProvider); ok {
 		componentHealth = healthProvider.GetComponentHealth()
 	}
 

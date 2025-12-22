@@ -23,8 +23,10 @@
 package utils
 
 import (
+	"errors"
 	"strings"
 
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -59,12 +61,38 @@ func (e *ImageRegistryError) Unwrap() error {
 	return e.Cause
 }
 
-// CategorizeRegistryError analyzes a registry error to determine its type
+// CategorizeRegistryError analyzes a registry error to determine its type.
+// It first checks for structured transport.Error with HTTP status codes,
+// then falls back to text-based error message parsing for other error types.
 func CategorizeRegistryError(err error) ImagePullErrorType {
 	if err == nil {
 		return ImagePullErrorGeneric
 	}
 
+	// First, check if this is a structured transport.Error from go-containerregistry
+	// This gives us reliable HTTP status codes instead of parsing error text
+	var transportErr *transport.Error
+	if errors.As(err, &transportErr) {
+		switch {
+		case transportErr.StatusCode == 401 || transportErr.StatusCode == 403:
+			// 401 Unauthorized, 403 Forbidden - authentication/authorization failures
+			return ImagePullErrorAuth
+		case transportErr.StatusCode == 404:
+			// 404 Not Found - image or manifest doesn't exist
+			return ImagePullErrorNotFound
+		case transportErr.StatusCode >= 500:
+			// 5xx Server errors - transient server-side issues
+			return ImagePullErrorGeneric
+		case transportErr.StatusCode >= 400:
+			// Other 4xx errors (400 Bad Request, etc.) - generally permanent client errors
+			return ImagePullErrorGeneric
+		default:
+			// Unexpected status code
+			return ImagePullErrorGeneric
+		}
+	}
+
+	// Fallback to text-based parsing for non-transport errors (network errors, etc.)
 	errMsg := strings.ToLower(err.Error())
 
 	// Check for authentication/authorization errors

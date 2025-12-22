@@ -29,6 +29,9 @@ import (
 const (
 	// ModelImageIndexKey is the field index key for AIMModel.Spec.Image
 	ModelImageIndexKey = ".spec.image"
+
+	// ModelRuntimeConfigIndexKey is the field index key for AIMModel.Spec.Name (runtimeConfigName)
+	ModelRuntimeConfigIndexKey = ".spec.runtimeConfigName"
 )
 
 // AIMModel is the Schema for namespace-scoped AIM model catalog entries.
@@ -57,6 +60,10 @@ type AIMModelList struct {
 
 func (img *AIMModel) GetStatus() *AIMModelStatus {
 	return &img.Status
+}
+
+func (img *AIMModel) GetRuntimeConfigRef() RuntimeConfigRef {
+	return img.Spec.RuntimeConfigRef
 }
 
 func init() {

@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMClusterModel Test: Cluster-Scoped Templates
+#
+# This test validates that cluster-scoped AIMClusterModel resources create
+# AIMClusterServiceTemplate resources (not namespace-scoped AIMServiceTemplate).
+#
+# Tested behavior:
+# - AIMClusterModel (cluster-scoped) creates AIMClusterServiceTemplate (cluster-scoped)
+# - Templates have correct labels and model reference
+# - Model reaches Ready state when templates are created
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: cluster-scoped-templates
+spec:
+  concurrent: false
+  steps:
+    - name: Create cluster-scoped model
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert AIMClusterServiceTemplate is created with correct labels
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/model: test-cluster-model
+              spec:
+                modelName: test-cluster-model
+
+# TODO enable once service template controller is migrated
+#    - name: Assert model reaches Ready with ClusterServiceTemplatesReady condition
+#      try:
+#        - assert:
+#            timeout: 60s
+#            resource:
+#              apiVersion: aim.eai.amd.com/v1alpha1
+#              kind: AIMClusterModel
+#              metadata:
+#                name: test-cluster-model
+#              status:
+#                status: Ready
+#                (conditions[?type == 'Ready']):
+#                  - status: "True"
+#                (conditions[?type == 'ClusterServiceTemplatesReady']):
+#                  - status: "True"

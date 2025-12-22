@@ -1,0 +1,64 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: Error Recovery
+#
+# This test validates that a model recovers when a configuration issue is fixed.
+# It creates a model referencing a non-existent runtime config, then creates the
+# config and verifies the model transitions to Ready.
+#
+# Tested behavior:
+# - Model starts in error state due to missing config
+# - Creating the referenced config triggers recovery
+# - Model transitions to Ready state
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: error-recovery
+spec:
+  steps:
+    - name: Create model with missing runtime config
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert model is Failed initially
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-error-recovery
+              status:
+                status: Failed
+                (conditions[?type == 'ConfigValid']):
+                  - status: "False"
+                    reason: ReferenceNotFound
+                (conditions[?type == 'Ready']):
+                  - type: Ready
+                    status: "False"
+
+    - name: Create the missing runtime config
+      try:
+        - apply:
+            file: runtimeconfig.yaml
+
+    - name: Assert model recovers to Ready
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-error-recovery
+              status:
+                status: Ready
+                (conditions[?type == 'Ready']):
+                  - type: Ready
+                    status: "True"
+                (conditions[?type == 'ConfigValid']):
+                  - type: ConfigValid
+                    status: "True"

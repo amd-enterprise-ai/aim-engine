@@ -1,0 +1,5 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: recovery-test-config
+spec: {}

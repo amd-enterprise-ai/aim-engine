@@ -1,0 +1,11 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: test-error-recovery
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.7
+  # Reference a config that will be created later
+  runtimeConfigName: recovery-test-config
+  discovery:
+    extractMetadata: false
+    createServiceTemplates: false

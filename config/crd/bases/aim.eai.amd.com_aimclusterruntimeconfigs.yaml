@@ -251,7 +251,6 @@ spec:
                   This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services.
                 properties:
                   autoDiscovery:
-                    default: true
                     description: |-
                       AutoDiscovery controls whether models run discovery by default.
                       When true, models run discovery jobs to extract metadata and auto-create templates.

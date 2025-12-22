@@ -68,7 +68,6 @@ type AIMModelConfig struct {
 	// AutoDiscovery controls whether models run discovery by default.
 	// When true, models run discovery jobs to extract metadata and auto-create templates.
 	// When false, discovery is skipped. Discovery failures are non-fatal and reported via conditions.
-	// +kubebuilder:default=true
 	// +optional
 	AutoDiscovery *bool `json:"autoDiscovery,omitempty"`
 }

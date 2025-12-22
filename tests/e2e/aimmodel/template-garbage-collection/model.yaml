@@ -1,0 +1,7 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: test-gc-model
+spec:
+  # Use real image to extract metadata with recommendedDeployments
+  image: ghcr.io/silogen/aim-dummy:0.1.7

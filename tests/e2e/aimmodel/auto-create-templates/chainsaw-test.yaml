@@ -1,0 +1,66 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: Auto-Create Service Templates
+#
+# This test validates AIMModel-specific behavior for automatically creating
+# AIMServiceTemplates from the model's recommended deployments.
+#
+# Tested behavior:
+# - Templates are created based on spec.imageMetadata.model.recommendedDeployments
+# - Template names follow the expected format
+# - Templates have correct labels (auto-generated, model-name)
+# - Model status reflects template statuses
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: auto-create-templates
+spec:
+  steps:
+    - name: Create model with recommended deployments
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert templates are created
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/model: test-model-auto-templates
+
+    - name: Assert template has correct spec
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/model: test-model-auto-templates
+              spec:
+                modelName: test-model-auto-templates
+                gpuSelector:
+                  model: MI300X
+
+# TODO uncomment once the service template controller is migrated
+#    - name: Assert model status reflects templates
+#      try:
+#        - assert:
+#            timeout: 60s
+#            resource:
+#              apiVersion: aim.eai.amd.com/v1alpha1
+#              kind: AIMModel
+#              metadata:
+#                name: test-model-auto-templates
+#              status:
+#                conditions:
+#                  - type: ServiceTemplatesReady
+#                    status: "True"
+#                    reason: AllTemplatesReady
