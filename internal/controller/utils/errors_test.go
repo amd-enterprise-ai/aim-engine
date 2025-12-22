@@ -25,7 +25,12 @@ package controllerutils
 import (
 	"errors"
 	"fmt"
+	"net"
+	"syscall"
 	"testing"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestErrorCategoryString(t *testing.T) {
@@ -46,7 +51,7 @@ func TestErrorCategoryString(t *testing.T) {
 		},
 		{
 			name:     "MissingDependency",
-			category: ErrorCategoryMissingDependency,
+			category: ErrorCategoryMissingDownstreamDependency,
 			want:     "MissingDependency",
 		},
 		{
@@ -121,15 +126,15 @@ func TestNewAuthError(t *testing.T) {
 
 func TestNewMissingDependencyError(t *testing.T) {
 	cause := errors.New("not found")
-	err := NewMissingDependencyError("SecretNotFound", "Required secret 'api-key' not found", cause)
+	err := NewMissingDownstreamDependencyError("SecretNotFound", "Required secret 'api-key' not found", cause)
 
 	var stateErr StateEngineError
 	if !errors.As(err, &stateErr) {
-		t.Fatal("NewMissingDependencyError should return a StateEngineError")
+		t.Fatal("NewMissingDownstreamDependencyError should return a StateEngineError")
 	}
 
-	if stateErr.Category() != ErrorCategoryMissingDependency {
-		t.Errorf("Category() = %v, want %v", stateErr.Category(), ErrorCategoryMissingDependency)
+	if stateErr.Category() != ErrorCategoryMissingDownstreamDependency {
+		t.Errorf("Category() = %v, want %v", stateErr.Category(), ErrorCategoryMissingDownstreamDependency)
 	}
 
 	if stateErr.Reason() != "SecretNotFound" {
@@ -253,283 +258,351 @@ func TestIsStateEngineError(t *testing.T) {
 	}
 }
 
-func TestErrorSummaryHasMethods(t *testing.T) {
-	summary := ErrorSummary{
-		InfrastructureErrors: []StateEngineError{
-			&stateEngineError{cat: ErrorCategoryInfrastructure},
+func TestCategorizeError_KubernetesAPIErrors(t *testing.T) {
+	tests := []struct {
+		name             string
+		err              error
+		expectedCategory ErrorCategory
+		expectedReason   string
+	}{
+		{
+			name: "NotFound error",
+			err: &apierrors.StatusError{
+				ErrStatus: metav1.Status{
+					Code:   404,
+					Reason: metav1.StatusReasonNotFound,
+				},
+			},
+			expectedCategory: ErrorCategoryMissingDownstreamDependency,
+			expectedReason:   "NotFound",
 		},
-		AuthErrors: []StateEngineError{
-			&stateEngineError{cat: ErrorCategoryAuth},
+		{
+			name: "Unauthorized error",
+			err: &apierrors.StatusError{
+				ErrStatus: metav1.Status{
+					Code:   401,
+					Reason: metav1.StatusReasonUnauthorized,
+				},
+			},
+			expectedCategory: ErrorCategoryAuth,
+			expectedReason:   "Unauthorized",
 		},
-		MissingDeps: []StateEngineError{
-			&stateEngineError{cat: ErrorCategoryMissingDependency},
+		{
+			name: "Forbidden error",
+			err: &apierrors.StatusError{
+				ErrStatus: metav1.Status{
+					Code:   403,
+					Reason: metav1.StatusReasonForbidden,
+				},
+			},
+			expectedCategory: ErrorCategoryAuth,
+			expectedReason:   "Forbidden",
 		},
-		InvalidSpecs: []StateEngineError{
-			&stateEngineError{cat: ErrorCategoryInvalidSpec},
+		{
+			name: "Invalid error",
+			err: &apierrors.StatusError{
+				ErrStatus: metav1.Status{
+					Code:   422,
+					Reason: metav1.StatusReasonInvalid,
+				},
+			},
+			expectedCategory: ErrorCategoryInvalidSpec,
+			expectedReason:   "InvalidSpec",
 		},
-		UnclassifiedErrors: []error{
-			errors.New("unclassified"),
+		{
+			name: "AlreadyExists error",
+			err: &apierrors.StatusError{
+				ErrStatus: metav1.Status{
+					Code:   409,
+					Reason: metav1.StatusReasonAlreadyExists,
+				},
+			},
+			expectedCategory: ErrorCategoryInvalidSpec,
+			expectedReason:   "AlreadyExists",
+		},
+		{
+			name: "Conflict error",
+			err: &apierrors.StatusError{
+				ErrStatus: metav1.Status{
+					Code:   409,
+					Reason: metav1.StatusReasonConflict,
+				},
+			},
+			expectedCategory: ErrorCategoryInvalidSpec,
+			expectedReason:   "Conflict",
+		},
+		{
+			name: "Timeout error",
+			err: &apierrors.StatusError{
+				ErrStatus: metav1.Status{
+					Code:   504,
+					Reason: metav1.StatusReasonTimeout,
+				},
+			},
+			expectedCategory: ErrorCategoryInfrastructure,
+			expectedReason:   "Timeout",
+		},
+		{
+			name: "ServiceUnavailable error",
+			err: &apierrors.StatusError{
+				ErrStatus: metav1.Status{
+					Code:   503,
+					Reason: metav1.StatusReasonServiceUnavailable,
+				},
+			},
+			expectedCategory: ErrorCategoryInfrastructure,
+			expectedReason:   "ServiceUnavailable",
+		},
+		{
+			name: "TooManyRequests error",
+			err: &apierrors.StatusError{
+				ErrStatus: metav1.Status{
+					Code:   429,
+					Reason: metav1.StatusReasonTooManyRequests,
+				},
+			},
+			expectedCategory: ErrorCategoryInfrastructure,
+			expectedReason:   "RateLimited",
 		},
 	}
 
-	if !summary.HasInfrastructureError() {
-		t.Error("HasInfrastructureError() = false, want true")
-	}
-	if !summary.HasAuthError() {
-		t.Error("HasAuthError() = false, want true")
-	}
-	if !summary.HasMissingDependency() {
-		t.Error("HasMissingDependency() = false, want true")
-	}
-	if !summary.HasInvalidSpec() {
-		t.Error("HasInvalidSpec() = false, want true")
-	}
-	if !summary.HasUnclassifiedErrors() {
-		t.Error("HasUnclassifiedErrors() = false, want true")
-	}
-	if !summary.HasAnyErrors() {
-		t.Error("HasAnyErrors() = false, want true")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			categorized := CategorizeError(tt.err)
+			if categorized == nil {
+				t.Fatal("CategorizeError returned nil")
+			}
 
-	emptySummary := ErrorSummary{}
-	if emptySummary.HasInfrastructureError() {
-		t.Error("Empty summary HasInfrastructureError() = true, want false")
-	}
-	if emptySummary.HasAnyErrors() {
-		t.Error("Empty summary HasAnyErrors() = true, want false")
+			if categorized.Category() != tt.expectedCategory {
+				t.Errorf("expected category %v, got %v", tt.expectedCategory, categorized.Category())
+			}
+
+			if categorized.Reason() != tt.expectedReason {
+				t.Errorf("expected reason %q, got %q", tt.expectedReason, categorized.Reason())
+			}
+		})
 	}
 }
 
-func TestBuildErrorSummary(t *testing.T) {
-	t.Run("Empty list", func(t *testing.T) {
-		summary := BuildErrorSummary([]error{})
-		if summary.HasAnyErrors() {
-			t.Error("Expected empty summary")
-		}
-	})
+func TestCategorizeError_HTTPStatusCodes(t *testing.T) {
+	tests := []struct {
+		name             string
+		statusCode       int32
+		statusReason     metav1.StatusReason
+		expectedCategory ErrorCategory
+		expectedReason   string
+	}{
+		{
+			name:             "500 Internal Error",
+			statusCode:       500,
+			statusReason:     metav1.StatusReasonInternalError,
+			expectedCategory: ErrorCategoryInfrastructure,
+			expectedReason:   "ServiceUnavailable",
+		},
+		{
+			name:             "502 Bad Gateway",
+			statusCode:       502,
+			statusReason:     metav1.StatusReasonUnknown,
+			expectedCategory: ErrorCategoryInfrastructure,
+			expectedReason:   "ServerError",
+		},
+		{
+			name:             "400 Bad Request",
+			statusCode:       400,
+			statusReason:     metav1.StatusReasonBadRequest,
+			expectedCategory: ErrorCategoryInvalidSpec,
+			expectedReason:   "ClientError",
+		},
+		{
+			name:             "422 Invalid",
+			statusCode:       422,
+			statusReason:     metav1.StatusReasonInvalid,
+			expectedCategory: ErrorCategoryInvalidSpec,
+			expectedReason:   "InvalidSpec",
+		},
+	}
 
-	t.Run("Nil errors ignored", func(t *testing.T) {
-		summary := BuildErrorSummary([]error{nil, nil})
-		if summary.HasAnyErrors() {
-			t.Error("Expected empty summary when all errors are nil")
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := &apierrors.StatusError{
+				ErrStatus: metav1.Status{
+					Code:   tt.statusCode,
+					Reason: tt.statusReason,
+				},
+			}
 
-	t.Run("Single categorized error", func(t *testing.T) {
-		infraErr := NewInfrastructureError("Test", "test", nil)
-		summary := BuildErrorSummary([]error{infraErr})
+			categorized := CategorizeError(err)
+			if categorized == nil {
+				t.Fatal("CategorizeError returned nil")
+			}
 
-		if !summary.HasInfrastructureError() {
-			t.Error("Expected infrastructure error")
-		}
-		if len(summary.InfrastructureErrors) != 1 {
-			t.Errorf("Expected 1 infrastructure error, got %d", len(summary.InfrastructureErrors))
-		}
-		if summary.HasAuthError() || summary.HasMissingDependency() || summary.HasInvalidSpec() {
-			t.Error("Expected only infrastructure errors")
-		}
-	})
+			if categorized.Category() != tt.expectedCategory {
+				t.Errorf("expected category %v, got %v", tt.expectedCategory, categorized.Category())
+			}
 
-	t.Run("Multiple categorized errors", func(t *testing.T) {
-		errs := []error{
-			NewInfrastructureError("Infra1", "test1", nil),
-			NewAuthError("Auth1", "test2", nil),
-			NewMissingDependencyError("Dep1", "test3", nil),
-			NewInvalidSpecError("Spec1", "test4", nil),
-			NewInfrastructureError("Infra2", "test5", nil),
-		}
-		summary := BuildErrorSummary(errs)
-
-		if len(summary.InfrastructureErrors) != 2 {
-			t.Errorf("Expected 2 infrastructure errors, got %d", len(summary.InfrastructureErrors))
-		}
-		if len(summary.AuthErrors) != 1 {
-			t.Errorf("Expected 1 auth error, got %d", len(summary.AuthErrors))
-		}
-		if len(summary.MissingDeps) != 1 {
-			t.Errorf("Expected 1 missing dependency error, got %d", len(summary.MissingDeps))
-		}
-		if len(summary.InvalidSpecs) != 1 {
-			t.Errorf("Expected 1 invalid spec error, got %d", len(summary.InvalidSpecs))
-		}
-		if summary.HasUnclassifiedErrors() {
-			t.Error("Expected no unclassified errors")
-		}
-	})
-
-	t.Run("Wrapped StateEngineError", func(t *testing.T) {
-		wrappedErr := fmt.Errorf("wrapped: %w", NewAuthError("Auth", "auth failed", nil))
-		summary := BuildErrorSummary([]error{wrappedErr})
-
-		if !summary.HasAuthError() {
-			t.Error("Expected auth error to be found in wrapped error")
-		}
-		if len(summary.AuthErrors) != 1 {
-			t.Errorf("Expected 1 auth error, got %d", len(summary.AuthErrors))
-		}
-	})
-
-	t.Run("Joined errors", func(t *testing.T) {
-		err1 := NewInfrastructureError("Infra", "test1", nil)
-		err2 := NewAuthError("Auth", "test2", nil)
-		joined := errors.Join(err1, err2)
-
-		summary := BuildErrorSummary([]error{joined})
-
-		if len(summary.InfrastructureErrors) != 1 {
-			t.Errorf("Expected 1 infrastructure error, got %d", len(summary.InfrastructureErrors))
-		}
-		if len(summary.AuthErrors) != 1 {
-			t.Errorf("Expected 1 auth error, got %d", len(summary.AuthErrors))
-		}
-	})
-
-	t.Run("Plain errors become unclassified", func(t *testing.T) {
-		plainErr := errors.New("plain error")
-		summary := BuildErrorSummary([]error{plainErr})
-
-		if !summary.HasUnclassifiedErrors() {
-			t.Error("Expected plain error to be unclassified")
-		}
-		if len(summary.UnclassifiedErrors) != 1 {
-			t.Errorf("Expected 1 unclassified error, got %d", len(summary.UnclassifiedErrors))
-		}
-	})
-
-	t.Run("ErrorCategoryUnknown becomes unclassified", func(t *testing.T) {
-		unknownErr := &stateEngineError{
-			cat:     ErrorCategoryUnknown,
-			reason:  "Unknown",
-			message: "unknown error",
-		}
-		summary := BuildErrorSummary([]error{unknownErr})
-
-		if !summary.HasUnclassifiedErrors() {
-			t.Error("Expected unknown category error to be unclassified")
-		}
-		if len(summary.UnclassifiedErrors) != 1 {
-			t.Errorf("Expected 1 unclassified error, got %d", len(summary.UnclassifiedErrors))
-		}
-	})
-
-	t.Run("Mixed error types", func(t *testing.T) {
-		errs := []error{
-			NewInfrastructureError("Infra", "test", nil),
-			errors.New("plain error"),
-			NewAuthError("Auth", "test", nil),
-			nil,
-			&stateEngineError{cat: ErrorCategoryUnknown, reason: "Unknown", message: "test"},
-		}
-		summary := BuildErrorSummary(errs)
-
-		if len(summary.InfrastructureErrors) != 1 {
-			t.Errorf("Expected 1 infrastructure error, got %d", len(summary.InfrastructureErrors))
-		}
-		if len(summary.AuthErrors) != 1 {
-			t.Errorf("Expected 1 auth error, got %d", len(summary.AuthErrors))
-		}
-		if len(summary.UnclassifiedErrors) != 2 {
-			t.Errorf("Expected 2 unclassified errors (plain + unknown), got %d", len(summary.UnclassifiedErrors))
-		}
-	})
-
-	t.Run("Deeply nested wrapped errors", func(t *testing.T) {
-		baseErr := NewMissingDependencyError("Dep", "missing", nil)
-		wrapped1 := fmt.Errorf("level 1: %w", baseErr)
-		wrapped2 := fmt.Errorf("level 2: %w", wrapped1)
-		wrapped3 := fmt.Errorf("level 3: %w", wrapped2)
-
-		summary := BuildErrorSummary([]error{wrapped3})
-
-		if len(summary.MissingDeps) != 1 {
-			t.Errorf("Expected 1 missing dependency error in nested chain, got %d", len(summary.MissingDeps))
-		}
-	})
-
-	t.Run("StateEngineError with wrapped cause", func(t *testing.T) {
-		cause := errors.New("underlying cause")
-		stateErr := NewInfrastructureError("Infra", "failed", cause)
-
-		summary := BuildErrorSummary([]error{stateErr})
-
-		if len(summary.InfrastructureErrors) != 1 {
-			t.Errorf("Expected 1 infrastructure error, got %d", len(summary.InfrastructureErrors))
-		}
-		// The cause should not be treated as a separate unclassified error
-		// because it's wrapped inside a StateEngineError
-		if summary.HasUnclassifiedErrors() {
-			t.Error("Expected no unclassified errors when cause is wrapped in StateEngineError")
-		}
-	})
+			if categorized.Reason() != tt.expectedReason {
+				t.Errorf("expected reason %q, got %q", tt.expectedReason, categorized.Reason())
+			}
+		})
+	}
 }
 
-func TestWalkErrors(t *testing.T) {
-	t.Run("Nil error", func(t *testing.T) {
-		called := false
-		walkErrors(nil, func(e error) {
-			called = true
+func TestCategorizeError_NetworkErrors(t *testing.T) {
+	tests := []struct {
+		name             string
+		err              error
+		expectedCategory ErrorCategory
+		expectedReason   string
+	}{
+		{
+			name:             "Connection refused",
+			err:              syscall.ECONNREFUSED,
+			expectedCategory: ErrorCategoryInfrastructure,
+			expectedReason:   "ConnectionRefused",
+		},
+		{
+			name:             "Network timeout",
+			err:              syscall.ETIMEDOUT,
+			expectedCategory: ErrorCategoryInfrastructure,
+			expectedReason:   "NetworkTimeout",
+		},
+		{
+			name:             "Connection reset",
+			err:              syscall.ECONNRESET,
+			expectedCategory: ErrorCategoryInfrastructure,
+			expectedReason:   "ConnectionReset",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			categorized := CategorizeError(tt.err)
+			if categorized == nil {
+				t.Fatal("CategorizeError returned nil")
+			}
+
+			if categorized.Category() != tt.expectedCategory {
+				t.Errorf("expected category %v, got %v", tt.expectedCategory, categorized.Category())
+			}
+
+			if categorized.Reason() != tt.expectedReason {
+				t.Errorf("expected reason %q, got %q", tt.expectedReason, categorized.Reason())
+			}
 		})
-		if called {
-			t.Error("Function should not be called for nil error")
-		}
-	})
+	}
+}
 
-	t.Run("Simple error", func(t *testing.T) {
-		err := errors.New("test")
-		count := 0
-		walkErrors(err, func(e error) {
-			count++
+func TestCategorizeError_DNSErrors(t *testing.T) {
+	tests := []struct {
+		name           string
+		err            error
+		expectedReason string
+	}{
+		{
+			name: "net.DNSError not found",
+			err: &net.DNSError{
+				Err:        "no such host",
+				Name:       "example.com",
+				IsNotFound: true,
+			},
+			expectedReason: "DNSFailure",
+		},
+		{
+			name: "net.DNSError timeout",
+			err: &net.DNSError{
+				Err:       "i/o timeout",
+				Name:      "example.com",
+				IsTimeout: true,
+			},
+			expectedReason: "DNSFailure",
+		},
+		{
+			name: "wrapped net.DNSError",
+			err: fmt.Errorf("lookup failed: %w", &net.DNSError{
+				Err:  "no such host",
+				Name: "api.example.com",
+			}),
+			expectedReason: "DNSFailure",
+		},
+		{
+			name: "net.OpError dial failure",
+			err: &net.OpError{
+				Op:  "dial",
+				Net: "tcp",
+				Err: errors.New("connection failed"),
+			},
+			expectedReason: "NetworkError",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			categorized := CategorizeError(tt.err)
+			if categorized == nil {
+				t.Fatal("CategorizeError returned nil")
+			}
+
+			if categorized.Category() != ErrorCategoryInfrastructure {
+				t.Errorf("expected Infrastructure category, got %v", categorized.Category())
+			}
+
+			if categorized.Reason() != tt.expectedReason {
+				t.Errorf("expected reason %s, got %q", tt.expectedReason, categorized.Reason())
+			}
 		})
-		if count != 1 {
-			t.Errorf("Expected function called 1 time, got %d", count)
-		}
-	})
+	}
+}
 
-	t.Run("Wrapped error", func(t *testing.T) {
-		base := errors.New("base")
-		wrapped := fmt.Errorf("wrapped: %w", base)
+func TestCategorizeError_AlreadyCategorized(t *testing.T) {
+	original := NewAuthError("CustomAuth", "custom auth error", nil)
 
-		var collected []error
-		walkErrors(wrapped, func(e error) {
-			collected = append(collected, e)
-		})
+	categorized := CategorizeError(original)
 
-		if len(collected) != 2 {
-			t.Errorf("Expected 2 errors in chain, got %d", len(collected))
-		}
-	})
+	if categorized != original {
+		t.Error("CategorizeError should return already-categorized errors unchanged")
+	}
 
-	t.Run("Joined errors", func(t *testing.T) {
-		err1 := errors.New("error 1")
-		err2 := errors.New("error 2")
-		err3 := errors.New("error 3")
-		joined := errors.Join(err1, err2, err3)
+	if categorized.Category() != ErrorCategoryAuth {
+		t.Errorf("expected Auth category, got %v", categorized.Category())
+	}
+}
 
-		var collected []error
-		walkErrors(joined, func(e error) {
-			collected = append(collected, e)
-		})
+func TestCategorizeError_WrappedErrors(t *testing.T) {
+	baseErr := &apierrors.StatusError{
+		ErrStatus: metav1.Status{
+			Code:   404,
+			Reason: metav1.StatusReasonNotFound,
+		},
+	}
+	wrappedErr := fmt.Errorf("failed to get deployment: %w", baseErr)
 
-		// Should visit joined error itself + 3 individual errors
-		if len(collected) != 4 {
-			t.Errorf("Expected 4 errors (joined + 3 individuals), got %d", len(collected))
-		}
-	})
+	categorized := CategorizeError(wrappedErr)
 
-	t.Run("Complex nested structure", func(t *testing.T) {
-		err1 := errors.New("error 1")
-		err2 := errors.New("error 2")
-		joined := errors.Join(err1, err2)
-		wrapped := fmt.Errorf("wrapper: %w", joined)
+	if categorized.Category() != ErrorCategoryMissingDownstreamDependency {
+		t.Errorf("expected MissingDependency category for wrapped NotFound, got %v", categorized.Category())
+	}
+}
 
-		count := 0
-		walkErrors(wrapped, func(e error) {
-			count++
-		})
+func TestCategorizeError_NilError(t *testing.T) {
+	categorized := CategorizeError(nil)
+	if categorized != nil {
+		t.Error("CategorizeError should return nil for nil input")
+	}
+}
 
-		// Should visit all errors in the tree
-		if count < 4 {
-			t.Errorf("Expected at least 4 errors visited, got %d", count)
-		}
-	})
+func TestCategorizeError_UnknownError(t *testing.T) {
+	err := errors.New("some random error")
+
+	categorized := CategorizeError(err)
+	if categorized == nil {
+		t.Fatal("CategorizeError returned nil")
+	}
+
+	if categorized.Category() != ErrorCategoryUnknown {
+		t.Errorf("expected Unknown category, got %v", categorized.Category())
+	}
+
+	if categorized.Reason() != "UnknownError" {
+		t.Errorf("expected reason UnknownError, got %q", categorized.Reason())
+	}
 }

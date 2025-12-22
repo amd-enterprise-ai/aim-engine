@@ -360,7 +360,7 @@ func TestDiffConditionTransitions(t *testing.T) {
 	// Find Ready transition
 	var readyTransition *ConditionTransition
 	for i := range transitions {
-		if transitions[i].New != nil && transitions[i].New.Type == "Ready" {
+		if transitions[i].New != nil && transitions[i].New.Type == ConditionTypeReady {
 			readyTransition = &transitions[i]
 			break
 		}
@@ -488,8 +488,8 @@ func TestConditionManager_ConfigFor(t *testing.T) {
 	if cfg.logMode != LogOnTransition {
 		t.Errorf("expected logMode OnTransition, got %v", cfg.logMode)
 	}
-	if cfg.logLevel != 1 {
-		t.Errorf("expected logLevel 1, got %d", cfg.logLevel)
+	if cfg.logLevel != 0 {
+		t.Errorf("expected logLevel 0 (info), got %d", cfg.logLevel)
 	}
 }
 
@@ -504,5 +504,66 @@ func TestConditionManager_ConfigFor_NotFound(t *testing.T) {
 	}
 	if cfg.logMode != LogNone {
 		t.Errorf("expected default logMode None, got %v", cfg.logMode)
+	}
+}
+
+func TestConditionManager_Set(t *testing.T) {
+	// Test the Set() convenience method - it's used by processStateEngine
+	cm := NewConditionManager(nil)
+
+	// Test setting True
+	cm.Set("Ready", metav1.ConditionTrue, "AllGood", "Everything is working", AsInfo())
+
+	conds := cm.Conditions()
+	if len(conds) != 1 {
+		t.Fatalf("expected 1 condition, got %d", len(conds))
+	}
+
+	cond := conds[0]
+	if cond.Type != "Ready" {
+		t.Errorf("Type = %v, want Ready", cond.Type)
+	}
+	if cond.Status != metav1.ConditionTrue {
+		t.Errorf("Status = %v, want True", cond.Status)
+	}
+	if cond.Reason != "AllGood" {
+		t.Errorf("Reason = %v, want AllGood", cond.Reason)
+	}
+	if cond.Message != "Everything is working" {
+		t.Errorf("Message = %v, want 'Everything is working'", cond.Message)
+	}
+
+	// Test setting False
+	cm.Set("ConfigValid", metav1.ConditionFalse, "InvalidSpec", "Configuration is invalid", AsWarning())
+
+	conds = cm.Conditions()
+	if len(conds) != 2 {
+		t.Fatalf("expected 2 conditions, got %d", len(conds))
+	}
+
+	// Find ConfigValid condition
+	var configCond *metav1.Condition
+	for _, c := range conds {
+		if c.Type == "ConfigValid" {
+			configCond = &c
+			break
+		}
+	}
+
+	if configCond == nil {
+		t.Fatal("ConfigValid condition not found")
+	}
+
+	if configCond.Status != metav1.ConditionFalse {
+		t.Errorf("Status = %v, want False", configCond.Status)
+	}
+	if configCond.Reason != "InvalidSpec" {
+		t.Errorf("Reason = %v, want InvalidSpec", configCond.Reason)
+	}
+
+	// Verify observability config was applied
+	cfg := cm.ConfigFor("ConfigValid")
+	if cfg.eventLevel != LevelWarning {
+		t.Errorf("expected eventLevel Warning, got %v", cfg.eventLevel)
 	}
 }

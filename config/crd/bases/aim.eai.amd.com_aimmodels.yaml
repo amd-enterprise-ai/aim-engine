@@ -395,7 +395,6 @@ spec:
                 type: string
             required:
             - image
-            - runtimeConfigName
             type: object
           status:
             description: AIMModelStatus defines the observed state of AIMModel.

@@ -30,6 +30,8 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
+// ConfiguredCondition extends the metav1.Condition with observability configuration that
+// determines how this condition or a change in its state should be reported.
 type ConfiguredCondition struct {
 	metav1.Condition
 	Config ObservabilityConfig

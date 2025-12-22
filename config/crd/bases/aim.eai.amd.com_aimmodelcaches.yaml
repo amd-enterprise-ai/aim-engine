@@ -278,7 +278,6 @@ spec:
                   When not specified, uses the cluster default storage class.
                 type: string
             required:
-            - runtimeConfigName
             - size
             - sourceUri
             type: object

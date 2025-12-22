@@ -23,6 +23,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -83,6 +84,23 @@ type AIMRuntimeConfigCommon struct {
 	// +optional
 	Model *AIMModelConfig `json:"model,omitempty"`
 
+	// Env specifies environment variables to use for the runtime config.
+	// These variables are used for the runtime config and are not propagated to child resources.
+	// If configmaps or secrets are referenced, they need to exist in the namespace referencing this runtime config.
+	// For cluster scoped runtime configs, any referenced configmaps or secrets need to exist in the system namespace.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// LabelPropagation controls how labels from parent AIM resources are propagated to child resources.
+	// When enabled, labels matching the specified patterns are automatically copied from parent resources
+	// (e.g., AIMService, AIMTemplateCache) to their child resources (e.g., Deployments, Services, PVCs).
+	// This is useful for propagating organizational metadata like cost centers, team identifiers,
+	// or compliance labels through the resource hierarchy.
+	// +optional
+	LabelPropagation *AIMRuntimeConfigLabelPropagationSpec `json:"labelPropagation,omitempty"`
+
 	// DEPRECATED: Use Storage.DefaultStorageClassName instead. This field will be removed in a future version.
 	// For backward compatibility, if this field is set and Storage.DefaultStorageClassName is not set,
 	// the value will be automatically migrated.
@@ -98,6 +116,19 @@ type AIMRuntimeConfigCommon struct {
 	// +kubebuilder:validation:Deprecated
 	// +kubebuilder:validation:DeprecatedMessage="Use Storage.PVCHeadroomPercent instead. This field will be removed in a future version."
 	PVCHeadroomPercent *int32 `json:"pvcHeadroomPercent,omitempty"`
+}
+
+type AIMRuntimeConfigLabelPropagationSpec struct {
+	// Enabled, if true, allows propagating parent labels to all child resources it creates directly
+	// Only label keys that match the ones in Match are propagated.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Match is a list of label keys that will be propagated to any child resources created.
+	// Wildcards are supported, so for example `org.my/my-key-*` would match any label with that prefix.
+	// +optional
+	Match []string `json:"match,omitempty"`
 }
 
 // AIMClusterRuntimeConfigSpec defines cluster-wide defaults for AIM resources.

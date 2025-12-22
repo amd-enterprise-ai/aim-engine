@@ -25,489 +25,2150 @@ package controllerutils
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
-	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
-// Mock types for testing
-type TestObject struct {
+// ======================================================
+// TEST HELPERS
+// ======================================================
+
+// Test condition type constants - derived from test component names
+const (
+	testComponentModel          = "Model"
+	testConditionTypeModelReady = testComponentModel + ComponentConditionSuffix // "ModelReady"
+)
+
+type testObject struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Status            TestStatus `json:"status,omitempty"`
+	Status            testStatus `json:"status,omitempty"`
 }
 
-func (t *TestObject) DeepCopyObject() runtime.Object {
-	return &TestObject{
-		TypeMeta:   t.TypeMeta,
-		ObjectMeta: *t.DeepCopy(),
-		Status:     *t.Status.DeepCopy(),
-	}
-}
-
-func (t *TestObject) GetStatus() *TestStatus {
-	return &t.Status
-}
-
-type TestStatus struct {
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-}
-
-func (s *TestStatus) DeepCopy() *TestStatus {
-	if s == nil {
-		return nil
-	}
-	out := new(TestStatus)
-	s.DeepCopyInto(out)
+func (t *testObject) DeepCopyObject() runtime.Object {
+	out := &testObject{}
+	*out = *t
+	out.Status.Conditions = append([]metav1.Condition(nil), t.Status.Conditions...)
 	return out
 }
 
-func (s *TestStatus) DeepCopyInto(out *TestStatus) {
-	*out = *s
-	if s.Conditions != nil {
-		in, out := &s.Conditions, &out.Conditions
-		*out = make([]metav1.Condition, len(*in))
-		for i := range *in {
-			(*in)[i].DeepCopyInto(&(*out)[i])
+func (t *testObject) GetStatus() *testStatus {
+	return &t.Status
+}
+
+type testStatus struct {
+	Status     string             `json:"status"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+func (t *testStatus) GetConditions() []metav1.Condition {
+	return t.Conditions
+}
+
+func (t *testStatus) SetConditions(conds []metav1.Condition) {
+	t.Conditions = conds
+}
+
+func (t *testStatus) SetStatus(status string) {
+	t.Status = status
+}
+
+type testFetch struct {
+	ModelReady bool
+}
+
+type testObservation struct {
+	modelReady bool
+}
+
+func (o testObservation) GetComponentHealth() []ComponentHealth {
+	if o.modelReady {
+		return []ComponentHealth{
+			{
+				Component: "Model",
+				State:     constants.AIMStatusReady,
+				Reason:    "Ready",
+				Message:   "Model is ready",
+			},
 		}
 	}
-}
-
-func (s *TestStatus) GetConditions() []metav1.Condition {
-	return s.Conditions
-}
-
-func (s *TestStatus) SetConditions(conditions []metav1.Condition) {
-	s.Conditions = conditions
-}
-
-func (s *TestStatus) SetStatus(status string) {
-	// Not used in these tests
-}
-
-type TestFetchResult struct{}
-
-// Mock reconciler for testing
-type mockReconciler struct {
-	fetchFunc   func(ctx context.Context, c client.Client, obj *TestObject) (TestFetchResult, error)
-	observeFunc func(ctx context.Context, obj *TestObject, fetched TestFetchResult) (*TestObservabilityConfig, error)
-	planFunc    func(ctx context.Context, obj *TestObject, obs *TestObservabilityConfig) (PlanResult, error)
-	projectFunc func(status *TestStatus, cm *ConditionManager, obs *TestObservabilityConfig)
-}
-
-type TestObservabilityConfig struct{}
-
-func (m *mockReconciler) FetchRemoteState(ctx context.Context, c client.Client, obj *TestObject) (TestFetchResult, error) {
-	if m.fetchFunc != nil {
-		return m.fetchFunc(ctx, c, obj)
-	}
-	return TestFetchResult{}, nil
-}
-
-func (m *mockReconciler) ComposeState(ctx context.Context, obj *TestObject, fetched TestFetchResult) (*TestObservabilityConfig, error) {
-	if m.observeFunc != nil {
-		return m.observeFunc(ctx, obj, fetched)
-	}
-	return &TestObservabilityConfig{}, nil
-}
-
-func (m *mockReconciler) PlanResources(ctx context.Context, obj *TestObject, obs *TestObservabilityConfig) (PlanResult, error) {
-	if m.planFunc != nil {
-		return m.planFunc(ctx, obj, obs)
-	}
-	return PlanResult{}, nil
-}
-
-func (m *mockReconciler) SetStatus(status *TestStatus, cm *ConditionManager, obs *TestObservabilityConfig) {
-	if m.projectFunc != nil {
-		m.projectFunc(status, cm, obs)
-	}
-}
-
-func TestPipelineRun_FetchError(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-
-	obj := &TestObject{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test",
-			Namespace: "default",
+	return []ComponentHealth{
+		{
+			Component: "Model",
+			State:     constants.AIMStatusProgressing,
+			Reason:    "NotReady",
+			Message:   "Waiting for model",
 		},
 	}
+}
 
-	mockReconciler := &mockReconciler{
-		fetchFunc: func(ctx context.Context, c client.Client, obj *TestObject) (TestFetchResult, error) {
-			return TestFetchResult{}, errors.New("fetch error")
+type testReconciler struct {
+	fetchResult testFetch
+}
+
+func (r *testReconciler) FetchRemoteState(ctx context.Context, c client.Client, obj ReconcileContext[*testObject]) testFetch {
+	return r.fetchResult
+}
+
+func (r *testReconciler) ComposeState(ctx context.Context, obj ReconcileContext[*testObject], fetched testFetch) testObservation {
+	return testObservation{modelReady: fetched.ModelReady}
+}
+
+func (r *testReconciler) PlanResources(ctx context.Context, obj ReconcileContext[*testObject], obs testObservation) PlanResult {
+	// Simple test: return empty plan
+	return PlanResult{}
+}
+
+// Test reconciler with errors
+type testObservationWithError struct {
+	infraError error
+}
+
+func (o testObservationWithError) GetComponentHealth() []ComponentHealth {
+	if o.infraError != nil {
+		return []ComponentHealth{
+			{
+				Component: "Model",
+				Errors:    []error{o.infraError},
+			},
+		}
+	}
+	return []ComponentHealth{
+		{
+			Component: "Model",
+			State:     constants.AIMStatusReady,
+			Reason:    "Ready",
+			Message:   "Model is ready",
 		},
-	}
-
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	fakeRecorder := &record.FakeRecorder{}
-
-	pipeline := &Pipeline[*TestObject, *TestStatus, TestFetchResult, *TestObservabilityConfig]{
-		Client:       fakeClient,
-		StatusClient: fakeClient.Status(),
-		Reconciler:   mockReconciler,
-		Recorder:     fakeRecorder,
-		FieldOwner:   "test-controller",
-		Scheme:       scheme,
-	}
-
-	err := pipeline.Run(context.Background(), obj)
-	if err == nil {
-		t.Fatal("expected error from fetch failure, got nil")
-	}
-	if err.Error() != "fetch failed: fetch error" {
-		t.Fatalf("unexpected error message: %v", err)
 	}
 }
 
-func TestPipelineRun_ObserveError(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-
-	obj := &TestObject{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test",
-			Namespace: "default",
-		},
-	}
-
-	mockReconciler := &mockReconciler{
-		observeFunc: func(ctx context.Context, obj *TestObject, fetched TestFetchResult) (*TestObservabilityConfig, error) {
-			return nil, errors.New("observe error")
-		},
-	}
-
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	fakeRecorder := &record.FakeRecorder{}
-
-	pipeline := &Pipeline[*TestObject, *TestStatus, TestFetchResult, *TestObservabilityConfig]{
-		Client:       fakeClient,
-		StatusClient: fakeClient.Status(),
-		Reconciler:   mockReconciler,
-		Recorder:     fakeRecorder,
-		FieldOwner:   "test-controller",
-		Scheme:       scheme,
-	}
-
-	err := pipeline.Run(context.Background(), obj)
-	if err == nil {
-		t.Fatal("expected error from observe failure, got nil")
-	}
-	if err.Error() != "observe failed: observe error" {
-		t.Fatalf("unexpected error message: %v", err)
-	}
+type testReconcilerWithError struct {
+	infraError error
 }
 
-func TestPipelineRun_PlanError(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-
-	obj := &TestObject{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test",
-			Namespace: "default",
-		},
-	}
-
-	mockReconciler := &mockReconciler{
-		planFunc: func(ctx context.Context, obj *TestObject, obs *TestObservabilityConfig) (PlanResult, error) {
-			return PlanResult{}, errors.New("plan error")
-		},
-	}
-
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	fakeRecorder := &record.FakeRecorder{}
-
-	pipeline := &Pipeline[*TestObject, *TestStatus, TestFetchResult, *TestObservabilityConfig]{
-		Client:       fakeClient,
-		StatusClient: fakeClient.Status(),
-		Reconciler:   mockReconciler,
-		Recorder:     fakeRecorder,
-		FieldOwner:   "test-controller",
-		Scheme:       scheme,
-	}
-
-	err := pipeline.Run(context.Background(), obj)
-	if err == nil {
-		t.Fatal("expected error from plan failure, got nil")
-	}
-	if err.Error() != "plan failed: plan error" {
-		t.Fatalf("unexpected error message: %v", err)
-	}
+func (r *testReconcilerWithError) FetchRemoteState(ctx context.Context, c client.Client, obj ReconcileContext[*testObject]) testFetch {
+	return testFetch{}
 }
 
-func TestPipelineRun_DeleteAggregatesErrors(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-
-	obj := &TestObject{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test",
-			Namespace: "default",
-		},
-	}
-
-	pod1 := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "pod1",
-			Namespace: "default",
-		},
-	}
-	pod1.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "Pod"})
-
-	pod2 := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "pod2",
-			Namespace: "default",
-		},
-	}
-	pod2.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "Pod"})
-
-	mockReconciler := &mockReconciler{
-		planFunc: func(ctx context.Context, obj *TestObject, obs *TestObservabilityConfig) (PlanResult, error) {
-			return PlanResult{
-				Delete: []client.Object{pod1, pod2},
-			}, nil
-		},
-	}
-
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	fakeRecorder := &record.FakeRecorder{}
-
-	pipeline := &Pipeline[*TestObject, *TestStatus, TestFetchResult, *TestObservabilityConfig]{
-		Client:       fakeClient,
-		StatusClient: fakeClient.Status(),
-		Reconciler:   mockReconciler,
-		Recorder:     fakeRecorder,
-		FieldOwner:   "test-controller",
-		Scheme:       scheme,
-	}
-
-	err := pipeline.Run(context.Background(), obj)
-	// Both pods don't exist, so delete will return NotFound errors
-	// These should be ignored by client.IgnoreNotFound, so no error expected
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+func (r *testReconcilerWithError) ComposeState(ctx context.Context, obj ReconcileContext[*testObject], fetched testFetch) testObservationWithError {
+	return testObservationWithError{infraError: r.infraError}
 }
 
-func TestPipelineRun_DeepCopyTypeAssertion(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
+func (r *testReconcilerWithError) PlanResources(ctx context.Context, obj ReconcileContext[*testObject], obs testObservationWithError) PlanResult {
+	return PlanResult{}
+}
 
-	// Create an object that returns wrong type from DeepCopyObject
-	badObj := &struct {
-		*TestObject
+// Test observation with custom health (for observability tests)
+type testObservationCustomHealth struct {
+	health []ComponentHealth
+}
+
+func (o testObservationCustomHealth) GetComponentHealth() []ComponentHealth {
+	return o.health
+}
+
+type testReconcilerCustomHealth struct{}
+
+func (r *testReconcilerCustomHealth) FetchRemoteState(ctx context.Context, c client.Client, obj ReconcileContext[*testObject]) testFetch {
+	return testFetch{}
+}
+
+func (r *testReconcilerCustomHealth) ComposeState(ctx context.Context, obj ReconcileContext[*testObject], fetched testFetch) testObservationCustomHealth {
+	// This won't actually be called in our tests since we pass obs directly to processStateEngine
+	return testObservationCustomHealth{}
+}
+
+func (r *testReconcilerCustomHealth) PlanResources(ctx context.Context, obj ReconcileContext[*testObject], obs testObservationCustomHealth) PlanResult {
+	return PlanResult{}
+}
+
+// ======================================================
+// DECISION TESTS
+// ======================================================
+
+// State engine decision tests - simplified to test the logic without Pipeline type constraints
+// The processStateEngine logic categorizes errors and returns decisions.
+// These tests verify the error categorization → decision behavior.
+
+func TestStateEngineDecision_ErrorCategorization(t *testing.T) {
+	tests := []struct {
+		name          string
+		errors        []error
+		shouldApply   bool
+		shouldRequeue bool
+		requeueNonNil bool
+		description   string
 	}{
-		TestObject: &TestObject{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test",
-				Namespace: "default",
+		{
+			name:          "No errors - should apply",
+			errors:        []error{},
+			shouldApply:   true,
+			shouldRequeue: false,
+			requeueNonNil: false,
+			description:   "Healthy state should allow apply without requeue",
+		},
+		{
+			name: "Infrastructure error - requeue but don't apply",
+			errors: []error{
+				NewInfrastructureError("NetworkTimeout", "Network timeout", errors.New("timeout")),
+			},
+			shouldApply:   false,
+			shouldRequeue: true,
+			requeueNonNil: true,
+			description:   "Infrastructure errors trigger requeue for retry",
+		},
+		{
+			name: "Auth error - don't apply, don't requeue",
+			errors: []error{
+				NewAuthError("Forbidden", "Insufficient permissions", nil),
+			},
+			shouldApply:   false,
+			shouldRequeue: false,
+			requeueNonNil: false,
+			description:   "Auth errors require user intervention, not retry",
+		},
+		{
+			name: "Invalid spec error - don't apply, don't requeue",
+			errors: []error{
+				NewInvalidSpecError("InvalidConfig", "Invalid configuration", nil),
+			},
+			shouldApply:   false,
+			shouldRequeue: false,
+			requeueNonNil: false,
+			description:   "Invalid spec errors require user fix, not retry",
+		},
+		{
+			name: "Missing dependency - should apply (waiting state)",
+			errors: []error{
+				NewMissingDownstreamDependencyError("NotFound", "Model not found", nil),
+			},
+			shouldApply:   true,
+			shouldRequeue: false,
+			requeueNonNil: false,
+			description:   "Missing dependencies are waiting states, not blocking",
+		},
+		{
+			name: "Multiple errors - infrastructure takes precedence",
+			errors: []error{
+				NewAuthError("Forbidden", "Forbidden", nil),
+				NewInfrastructureError("Timeout", "Timeout", nil),
+			},
+			shouldApply:   false,
+			shouldRequeue: true,
+			requeueNonNil: true,
+			description:   "Infrastructure errors override auth/spec errors for requeue",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Categorize errors and count by category
+			var hasInfraError, hasAuthError, hasInvalidSpec bool
+
+			for _, err := range tt.errors {
+				if err == nil {
+					continue
+				}
+				categorized := CategorizeError(err)
+				switch categorized.Category() {
+				case ErrorCategoryInfrastructure:
+					hasInfraError = true
+				case ErrorCategoryAuth:
+					hasAuthError = true
+				case ErrorCategoryInvalidSpec:
+					hasInvalidSpec = true
+				}
+			}
+
+			// Simulate state engine decision logic (from processStateEngine)
+			var shouldApply, shouldRequeue bool
+			var requeueError error
+
+			if hasInfraError {
+				// Infrastructure errors → requeue, don't apply
+				shouldApply = false
+				shouldRequeue = true
+				requeueError = tt.errors[len(tt.errors)-1] // Simplified - real code joins all infra errors
+			} else {
+				// No infrastructure errors
+				shouldApply = !hasAuthError && !hasInvalidSpec
+				shouldRequeue = false
+			}
+
+			// Verify expectations
+			if shouldApply != tt.shouldApply {
+				t.Errorf("%s: shouldApply = %v, want %v", tt.description, shouldApply, tt.shouldApply)
+			}
+
+			if shouldRequeue != tt.shouldRequeue {
+				t.Errorf("%s: shouldRequeue = %v, want %v", tt.description, shouldRequeue, tt.shouldRequeue)
+			}
+
+			requeueNonNil := requeueError != nil
+			if requeueNonNil != tt.requeueNonNil {
+				t.Errorf("%s: requeueError non-nil = %v, want %v", tt.description, requeueNonNil, tt.requeueNonNil)
+			}
+		})
+	}
+}
+
+// ======================================================
+// STATE ENGINE TESTS
+// ======================================================
+
+func TestPipeline_processStateEngine_Success(t *testing.T) {
+	// Test processStateEngine with healthy components
+	obs := testObservation{modelReady: true}
+	cm := NewConditionManager([]metav1.Condition{})
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservation]{
+		Reconciler: &testReconciler{},
+	}
+
+	decision, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	if !decision.ShouldApply {
+		t.Error("ShouldApply should be true for healthy state")
+	}
+
+	if decision.ShouldRequeue {
+		t.Error("ShouldRequeue should be false for healthy state")
+	}
+
+	if decision.RequeueError != nil {
+		t.Errorf("RequeueError should be nil, got %v", decision.RequeueError)
+	}
+}
+
+func TestPipeline_processStateEngine_InfrastructureError(t *testing.T) {
+	// Test processStateEngine with infrastructure error
+	infraErr := NewInfrastructureError("NetworkTimeout", "Network timeout", errors.New("timeout"))
+	obs := testObservationWithError{infraError: infraErr}
+	cm := NewConditionManager([]metav1.Condition{})
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationWithError]{
+		Reconciler: &testReconcilerWithError{infraError: infraErr},
+	}
+
+	decision, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	if decision.ShouldApply {
+		t.Error("ShouldApply should be false for infrastructure error")
+	}
+
+	if !decision.ShouldRequeue {
+		t.Error("ShouldRequeue should be true for infrastructure error")
+	}
+
+	if decision.RequeueError == nil {
+		t.Error("RequeueError should not be nil for infrastructure error")
+	}
+}
+
+func TestPipeline_processStateEngine_ObservabilityLevels(t *testing.T) {
+	tests := []struct {
+		name            string
+		componentHealth []ComponentHealth
+		conditionType   string
+		wantEventMode   EventMode
+		wantEventLevel  EventLevel
+		wantLogMode     LogMode
+		wantLogLevel    int
+		description     string
+	}{
+		{
+			name: "Component Ready state uses AsInfo",
+			componentHealth: []ComponentHealth{
+				{
+					Component: testComponentModel,
+					State:     constants.AIMStatusReady,
+					Reason:    "Ready",
+					Message:   "Model is ready",
+				},
+			},
+			conditionType:  testConditionTypeModelReady,
+			wantEventMode:  EventOnTransition,
+			wantEventLevel: LevelNormal,
+			wantLogMode:    LogOnTransition,
+			wantLogLevel:   0, // V(0) = visible at default info level
+			description:    "Ready components should use AsInfo (normal event + info log on transition)",
+		},
+		{
+			name: "Component Progressing state uses AsInfo",
+			componentHealth: []ComponentHealth{
+				{
+					Component: testComponentModel,
+					State:     constants.AIMStatusProgressing,
+					Reason:    "NotReady",
+					Message:   "Waiting for model",
+				},
+			},
+			conditionType:  testConditionTypeModelReady,
+			wantEventMode:  EventOnTransition,
+			wantEventLevel: LevelNormal,
+			wantLogMode:    LogOnTransition,
+			wantLogLevel:   0, // V(0) = visible at default info level
+			description:    "Progressing components should use AsInfo",
+		},
+		{
+			name: "Component Failed state uses AsError",
+			componentHealth: []ComponentHealth{
+				{
+					Component: testComponentModel,
+					State:     constants.AIMStatusFailed,
+					Reason:    "Failed",
+					Message:   "Model failed",
+				},
+			},
+			conditionType:  testConditionTypeModelReady,
+			wantEventMode:  EventAlways,
+			wantEventLevel: LevelWarning,
+			wantLogMode:    LogAlways,
+			wantLogLevel:   0,
+			description:    "Failed components should use AsError (warning event + error log every reconcile)",
+		},
+		{
+			name: "Component Degraded state uses AsError",
+			componentHealth: []ComponentHealth{
+				{
+					Component: testComponentModel,
+					State:     constants.AIMStatusDegraded,
+					Reason:    "Degraded",
+					Message:   "Model degraded",
+				},
+			},
+			conditionType:  testConditionTypeModelReady,
+			wantEventMode:  EventAlways,
+			wantEventLevel: LevelWarning,
+			wantLogMode:    LogAlways,
+			wantLogLevel:   0,
+			description:    "Degraded components should use AsError",
+		},
+		{
+			name: "Component NotAvailable state uses AsError",
+			componentHealth: []ComponentHealth{
+				{
+					Component: testComponentModel,
+					State:     constants.AIMStatusNotAvailable,
+					Reason:    "NotAvailable",
+					Message:   "Model not available",
+				},
+			},
+			conditionType:  testConditionTypeModelReady,
+			wantEventMode:  EventAlways,
+			wantEventLevel: LevelWarning,
+			wantLogMode:    LogAlways,
+			wantLogLevel:   0,
+			description:    "NotAvailable components should use AsError",
+		},
+		{
+			name: "Ready=True uses AsInfo",
+			componentHealth: []ComponentHealth{
+				{
+					Component: testComponentModel,
+					State:     constants.AIMStatusReady,
+					Reason:    "Ready",
+					Message:   "Model is ready",
+				},
+			},
+			conditionType:  ConditionTypeReady,
+			wantEventMode:  EventOnTransition,
+			wantEventLevel: LevelNormal,
+			wantLogMode:    LogOnTransition,
+			wantLogLevel:   0, // V(0) = visible at default info level
+			description:    "Ready=True should use AsInfo",
+		},
+		{
+			name: "Ready=False (progressing) uses AsInfo",
+			componentHealth: []ComponentHealth{
+				{
+					Component: "Model",
+					State:     constants.AIMStatusProgressing,
+					Reason:    "NotReady",
+					Message:   "Waiting",
+				},
+			},
+			conditionType:  "Ready",
+			wantEventMode:  EventOnTransition,
+			wantEventLevel: LevelNormal,
+			wantLogMode:    LogOnTransition,
+			wantLogLevel:   0, // V(0) = visible at default info level
+			description:    "Ready=False due to normal progression should use AsInfo",
+		},
+		{
+			name: "Ready=False (component failure) uses AsError",
+			componentHealth: []ComponentHealth{
+				{
+					Component: "Model",
+					State:     constants.AIMStatusFailed,
+					Reason:    "Failed",
+					Message:   "Model failed",
+				},
+			},
+			conditionType:  "Ready",
+			wantEventMode:  EventAlways,
+			wantEventLevel: LevelWarning,
+			wantLogMode:    LogAlways,
+			wantLogLevel:   0,
+			description:    "Ready=False due to component failure should use AsError",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create test observation that returns our test component health
+			obs := testObservationCustomHealth{health: tt.componentHealth}
+			cm := NewConditionManager([]metav1.Condition{})
+			status := &testStatus{}
+
+			p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+				Reconciler: &testReconcilerCustomHealth{},
+			}
+
+			_, err := p.processStateEngine(context.Background(), obs, cm, status)
+			if err != nil {
+				t.Fatalf("processStateEngine returned error: %v", err)
+			}
+
+			// Verify observability config
+			cfg := cm.ConfigFor(tt.conditionType)
+
+			if cfg.eventMode != tt.wantEventMode {
+				t.Errorf("%s: eventMode = %v, want %v", tt.description, cfg.eventMode, tt.wantEventMode)
+			}
+
+			if cfg.eventLevel != tt.wantEventLevel {
+				t.Errorf("%s: eventLevel = %v, want %v", tt.description, cfg.eventLevel, tt.wantEventLevel)
+			}
+
+			if cfg.logMode != tt.wantLogMode {
+				t.Errorf("%s: logMode = %v, want %v", tt.description, cfg.logMode, tt.wantLogMode)
+			}
+
+			if cfg.logLevel != tt.wantLogLevel {
+				t.Errorf("%s: logLevel = %v, want %v", tt.description, cfg.logLevel, tt.wantLogLevel)
+			}
+		})
+	}
+}
+
+func TestPipeline_processStateEngine_ParentConditionObservability(t *testing.T) {
+	tests := []struct {
+		name           string
+		errors         []error
+		conditionType  string
+		wantEventMode  EventMode
+		wantEventLevel EventLevel
+		wantLogMode    LogMode
+		wantLogLevel   int
+	}{
+		{
+			name: "AuthValid=False uses AsError",
+			errors: []error{
+				NewAuthError("Forbidden", "Access denied", nil),
+			},
+			conditionType:  "AuthValid",
+			wantEventMode:  EventAlways,
+			wantEventLevel: LevelWarning,
+			wantLogMode:    LogAlways,
+			wantLogLevel:   0,
+		},
+		{
+			name: "ConfigValid=False uses AsError",
+			errors: []error{
+				NewInvalidSpecError("InvalidSpec", "Bad config", nil),
+			},
+			conditionType:  "ConfigValid",
+			wantEventMode:  EventAlways,
+			wantEventLevel: LevelWarning,
+			wantLogMode:    LogAlways,
+			wantLogLevel:   0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obs := testObservationCustomHealth{
+				health: []ComponentHealth{
+					{
+						Component: "Model",
+						Errors:    tt.errors,
+					},
+				},
+			}
+			cm := NewConditionManager([]metav1.Condition{})
+			status := &testStatus{}
+
+			p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+				Reconciler: &testReconcilerCustomHealth{},
+			}
+
+			_, err := p.processStateEngine(context.Background(), obs, cm, status)
+			if err != nil {
+				t.Fatalf("processStateEngine returned error: %v", err)
+			}
+
+			cfg := cm.ConfigFor(tt.conditionType)
+
+			if cfg.eventMode != tt.wantEventMode {
+				t.Errorf("eventMode = %v, want %v", cfg.eventMode, tt.wantEventMode)
+			}
+
+			if cfg.eventLevel != tt.wantEventLevel {
+				t.Errorf("eventLevel = %v, want %v", cfg.eventLevel, tt.wantEventLevel)
+			}
+
+			if cfg.logMode != tt.wantLogMode {
+				t.Errorf("logMode = %v, want %v", cfg.logMode, tt.wantLogMode)
+			}
+
+			if cfg.logLevel != tt.wantLogLevel {
+				t.Errorf("logLevel = %v, want %v", cfg.logLevel, tt.wantLogLevel)
+			}
+		})
+	}
+}
+
+func TestPipeline_processStateEngine_NoConditionPollution(t *testing.T) {
+	// Start with no conditions
+	obs := testObservationCustomHealth{
+		health: []ComponentHealth{
+			{
+				Component: "Model",
+				State:     constants.AIMStatusReady,
+				Reason:    "Ready",
+				Message:   "Model is ready",
+			},
+		},
+	}
+	cm := NewConditionManager([]metav1.Condition{})
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	_, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	// AuthValid, ConfigValid, and DependenciesReachable should NOT be set
+	// (since there are no errors and they weren't previously present)
+	if cm.Get(ConditionTypeAuthValid) != nil {
+		t.Error("AuthValid should not be set when there are no auth errors and it wasn't previously present")
+	}
+
+	if cm.Get(ConditionTypeConfigValid) != nil {
+		t.Error("ConfigValid should not be set when there are no config errors and it wasn't previously present")
+	}
+
+	if cm.Get(ConditionTypeDependenciesReachable) != nil {
+		t.Error("DependenciesReachable should not be set when there are no infra errors and it wasn't previously present")
+	}
+
+	// However, ModelReady and Ready SHOULD be set (component condition + overall ready)
+	if cm.Get(testConditionTypeModelReady) == nil {
+		t.Error("ModelReady should be set for component health")
+	}
+
+	if cm.Get(ConditionTypeReady) == nil {
+		t.Error("Ready should always be set")
+	}
+}
+
+// ======================================================
+// PIPELINE TESTS
+// ======================================================
+
+func TestPipeline_Run_Success(t *testing.T) {
+	// Test successful reconciliation with all components healthy
+	scheme := runtime.NewScheme()
+	_ = metav1.AddMetaToScheme(scheme)
+
+	// Register testObject in scheme
+	scheme.AddKnownTypes(metav1.SchemeGroupVersion, &testObject{})
+
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "meta.k8s.io/v1",
+			Kind:       "testObject",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-obj",
+			Namespace: "default",
+		},
+	}
+
+	// Create fake client with the object already in it
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).Build()
+	recorder := record.NewFakeRecorder(100)
+
+	reconciler := &testReconciler{
+		fetchResult: testFetch{ModelReady: true},
+	}
+
+	pipeline := &Pipeline[*testObject, *testStatus, testFetch, testObservation]{
+		Client:         cl,
+		StatusClient:   cl.Status(),
+		Recorder:       recorder,
+		ControllerName: "test",
+		Reconciler:     reconciler,
+		Scheme:         scheme,
+	}
+
+	err := pipeline.Run(context.Background(), obj)
+
+	// Note: We expect a status update error because fake client doesn't fully support SubResource updates
+	// The important thing is that our state engine logic ran and set the status fields in memory
+	if err != nil && err.Error() != "status update failed: testobjects.meta.k8s.io \"test-obj\" not found" {
+		t.Fatalf("Run() returned unexpected error: %v", err)
+	}
+
+	// Verify status was set in memory (even though update to fake client failed)
+	if obj.Status.Status == "" {
+		t.Error("Status.Status should be set")
+	}
+
+	// Verify conditions were set in memory
+	if len(obj.Status.Conditions) == 0 {
+		t.Error("Conditions should be set")
+	}
+
+	// Verify specific conditions
+	var modelReady, ready *metav1.Condition
+	for i := range obj.Status.Conditions {
+		cond := &obj.Status.Conditions[i]
+		if cond.Type == testConditionTypeModelReady {
+			modelReady = cond
+		}
+		if cond.Type == ConditionTypeReady {
+			ready = cond
+		}
+	}
+
+	if modelReady == nil {
+		t.Error("ModelReady condition should be set")
+	} else if modelReady.Status != metav1.ConditionTrue {
+		t.Errorf("ModelReady should be True, got %v", modelReady.Status)
+	}
+
+	if ready == nil {
+		t.Error("Ready condition should be set")
+	} else if ready.Status != metav1.ConditionTrue {
+		t.Errorf("Ready should be True, got %v", ready.Status)
+	}
+
+	// Verify events were emitted
+	// Note: Events are only emitted on transitions, and this is the first time we're setting these conditions
+	// So we expect 2 events: ModelReady and Ready
+	select {
+	case event := <-recorder.Events:
+		// Should have at least one event
+		if event == "" {
+			t.Error("Expected event to be emitted")
+		}
+		t.Logf("Event emitted: %s", event)
+	default:
+		t.Error("Expected events to be emitted but recorder is empty")
+	}
+}
+
+func TestPipeline_Run_WithInfrastructureError(t *testing.T) {
+	// Test that infrastructure errors trigger requeue
+	scheme := runtime.NewScheme()
+	_ = metav1.AddMetaToScheme(scheme)
+
+	// Register testObject in scheme
+	scheme.AddKnownTypes(metav1.SchemeGroupVersion, &testObject{})
+
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "meta.k8s.io/v1",
+			Kind:       "testObject",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-obj",
+			Namespace: "default",
+		},
+	}
+
+	// Create fake client with the object already in it
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).Build()
+	recorder := record.NewFakeRecorder(100)
+
+	// Create a reconciler that returns infrastructure error in observation
+	reconciler := &testReconcilerWithError{
+		infraError: NewInfrastructureError("NetworkTimeout", "Network timeout", errors.New("timeout")),
+	}
+
+	pipeline := &Pipeline[*testObject, *testStatus, testFetch, testObservationWithError]{
+		Client:         cl,
+		StatusClient:   cl.Status(),
+		Recorder:       recorder,
+		ControllerName: "test",
+		Reconciler:     reconciler,
+		Scheme:         scheme,
+	}
+
+	err := pipeline.Run(context.Background(), obj)
+
+	// Should return error for requeue
+	if err == nil {
+		t.Fatal("Run() should return error for infrastructure issues")
+	}
+
+	// Status should still be updated (even on error)
+	if len(obj.Status.Conditions) == 0 {
+		t.Error("Conditions should be set even when returning error")
+	}
+
+	// Verify that ModelReady condition uses AsError (recurring) since it has an infrastructure error
+	// This means it should emit warning events even though it's the first transition
+	var modelReady *metav1.Condition
+	for i := range obj.Status.Conditions {
+		if obj.Status.Conditions[i].Type == testConditionTypeModelReady {
+			modelReady = &obj.Status.Conditions[i]
+			break
+		}
+	}
+
+	if modelReady != nil {
+		// ModelReady should be False (infrastructure error derives Degraded state, which maps to False)
+		if modelReady.Status != metav1.ConditionFalse {
+			t.Errorf("ModelReady should be False for infrastructure error (Degraded state), got %v", modelReady.Status)
+		}
+	}
+
+	// Verify events were emitted (should have warning events due to AsError)
+	eventCount := 0
+	for {
+		select {
+		case event := <-recorder.Events:
+			eventCount++
+			t.Logf("Event emitted: %s", event)
+			// Infrastructure errors should produce Warning events
+			if !strings.Contains(event, "Warning") {
+				t.Errorf("Expected Warning event for infrastructure error, got: %s", event)
+			}
+		default:
+			goto doneCountingEvents
+		}
+	}
+doneCountingEvents:
+
+	if eventCount == 0 {
+		t.Error("Expected warning events to be emitted for infrastructure error")
+	}
+}
+
+// conflictStatusWriter is a status writer that always returns a conflict error
+type conflictStatusWriter struct {
+	client.StatusWriter
+}
+
+func (c *conflictStatusWriter) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	return apierrors.NewConflict(schema.GroupResource{Group: "test", Resource: "testobjects"}, "test-obj", errors.New("the object has been modified"))
+}
+
+func TestPipeline_Run_StatusConflict(t *testing.T) {
+	// Test that status update conflicts are handled gracefully without returning an error
+	scheme := runtime.NewScheme()
+	_ = metav1.AddMetaToScheme(scheme)
+	scheme.AddKnownTypes(metav1.SchemeGroupVersion, &testObject{})
+
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "meta.k8s.io/v1",
+			Kind:       "testObject",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-obj",
+			Namespace: "default",
+		},
+	}
+
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).Build()
+	recorder := record.NewFakeRecorder(100)
+
+	reconciler := &testReconciler{
+		fetchResult: testFetch{ModelReady: true},
+	}
+
+	pipeline := &Pipeline[*testObject, *testStatus, testFetch, testObservation]{
+		Client:         cl,
+		StatusClient:   &conflictStatusWriter{}, // Use our conflict-returning status writer
+		Recorder:       recorder,
+		ControllerName: "test",
+		Reconciler:     reconciler,
+		Scheme:         scheme,
+	}
+
+	err := pipeline.Run(context.Background(), obj)
+	// Conflict errors should be swallowed - no error returned
+	if err != nil {
+		t.Errorf("Expected nil error for status conflict, got: %v", err)
+	}
+
+	// Status should still be set in memory (even though update failed)
+	if obj.Status.Status == "" {
+		t.Error("Status.Status should be set in memory")
+	}
+}
+
+// ======================================================
+// GRACE PERIOD TESTS
+// ======================================================
+
+func TestPipeline_GracePeriod_WithinThreshold(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = metav1.AddMetaToScheme(scheme)
+	scheme.AddKnownTypes(metav1.SchemeGroupVersion, &testObject{})
+
+	// Create object with existing Ready condition
+	now := metav1.Now()
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "meta.k8s.io/v1",
+			Kind:       "testObject",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-obj",
+			Namespace: "default",
+		},
+		Status: testStatus{
+			Status: string(constants.AIMStatusReady),
+			Conditions: []metav1.Condition{
+				{
+					Type:               testConditionTypeModelReady,
+					Status:             metav1.ConditionTrue,
+					Reason:             "Ready",
+					Message:            "Model is ready",
+					LastTransitionTime: now,
+				},
+				{
+					Type:               ConditionTypeReady,
+					Status:             metav1.ConditionTrue,
+					Reason:             "AllComponentsReady",
+					Message:            "All components are ready",
+					LastTransitionTime: now,
+				},
 			},
 		},
 	}
 
-	// Override DeepCopyObject to return wrong type
-	type BadObject struct {
-		*TestObject
-	}
-	badDeepCopy := &BadObject{TestObject: &TestObject{}}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).Build()
+	recorder := record.NewFakeRecorder(100)
 
-	mockReconciler := &mockReconciler{}
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	fakeRecorder := &record.FakeRecorder{}
-
-	pipeline := &Pipeline[*TestObject, *TestStatus, TestFetchResult, *TestObservabilityConfig]{
-		Client:       fakeClient,
-		StatusClient: fakeClient.Status(),
-		Reconciler:   mockReconciler,
-		Recorder:     fakeRecorder,
-		FieldOwner:   "test-controller",
-		Scheme:       scheme,
+	// Reconciler returns infrastructure error (simulating temporary network issue)
+	reconciler := &testReconcilerWithError{
+		infraError: NewInfrastructureError("NetworkTimeout", "Network timeout", errors.New("timeout")),
 	}
 
-	// Note: This test is limited because we can't easily override DeepCopyObject behavior
-	// in the fake object. The type assertion check is still valuable for runtime safety.
-	_ = badDeepCopy
-	_ = pipeline
-	_ = badObj
-
-	// The actual test would require mocking the DeepCopyObject method,
-	// which is difficult without interfaces. We've added the check to prevent panics.
-}
-
-func TestPipelineRun_Success(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-
-	obj := &TestObject{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test",
-			Namespace: "default",
-		},
-	}
-
-	// Don't add test object to fake client since it's not registered
-	// We'll test status update separately
-
-	projectCalled := false
-	mockReconciler := &mockReconciler{
-		projectFunc: func(status *TestStatus, cm *ConditionManager, obs *TestObservabilityConfig) {
-			projectCalled = true
-			cm.MarkTrue("Ready", "Success", "Test ready")
-		},
-	}
-
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	fakeRecorder := &record.FakeRecorder{}
-
-	pipeline := &Pipeline[*TestObject, *TestStatus, TestFetchResult, *TestObservabilityConfig]{
-		Client:       fakeClient,
-		StatusClient: fakeClient.Status(),
-		Reconciler:   mockReconciler,
-		Recorder:     fakeRecorder,
-		FieldOwner:   "test-controller",
-		Scheme:       scheme,
+	pipeline := &Pipeline[*testObject, *testStatus, testFetch, testObservationWithError]{
+		Client:         cl,
+		StatusClient:   cl.Status(),
+		Recorder:       recorder,
+		ControllerName: "test",
+		Reconciler:     reconciler,
+		Scheme:         scheme,
 	}
 
 	err := pipeline.Run(context.Background(), obj)
-	// Status update will fail since TestObject isn't registered in scheme
-	// This is expected - we're testing the pipeline flow, not the fake client
+
+	// Should return error for requeue
 	if err == nil {
-		t.Fatal("expected error from status update (unregistered type)")
-	}
-	if !projectCalled {
-		t.Fatal("expected SetStatus to be called before status update")
+		t.Fatal("Run() should return error for infrastructure issues")
 	}
 
-	// Verify condition was set (even though status update failed)
-	if len(obj.Status.Conditions) != 1 {
-		t.Fatalf("expected 1 condition, got %d", len(obj.Status.Conditions))
+	// Verify DependenciesReachable condition was set to False
+	var depReachable *metav1.Condition
+	for i := range obj.Status.Conditions {
+		if obj.Status.Conditions[i].Type == "DependenciesReachable" {
+			depReachable = &obj.Status.Conditions[i]
+			break
+		}
 	}
 
-	cond := obj.Status.Conditions[0]
-	if cond.Type != "Ready" {
-		t.Errorf("expected condition type 'Ready', got %s", cond.Type)
+	if depReachable == nil {
+		t.Fatal("DependenciesReachable condition should be set")
 	}
-	if cond.Status != metav1.ConditionTrue {
-		t.Errorf("expected condition status True, got %s", cond.Status)
+
+	if depReachable.Status != metav1.ConditionFalse {
+		t.Errorf("DependenciesReachable should be False, got %v", depReachable.Status)
 	}
+
+	// CRITICAL: ModelReady should STAY True (grace period - just set the condition)
+	// Because this is the first time DependenciesReachable went False, we're within grace period
+	var modelReady *metav1.Condition
+	for i := range obj.Status.Conditions {
+		if obj.Status.Conditions[i].Type == testConditionTypeModelReady {
+			modelReady = &obj.Status.Conditions[i]
+			break
+		}
+	}
+
+	if modelReady == nil {
+		t.Fatal("ModelReady condition should be set")
+	}
+
+	if modelReady.Status != metav1.ConditionTrue {
+		t.Errorf("ModelReady should STAY True during grace period, got %v", modelReady.Status)
+	}
+
+	// Status should stay Ready (grace period)
+	if obj.Status.Status != string(constants.AIMStatusReady) {
+		t.Errorf("Status should stay Ready during grace period, got %v", obj.Status.Status)
+	}
+
+	t.Logf("Within grace period: ModelReady=%v, Status=%v", modelReady.Status, obj.Status.Status)
 }
 
-func TestApplyDesiredState_StampsGVK(t *testing.T) {
+func TestPipeline_GracePeriod_AfterThreshold(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
+	_ = metav1.AddMetaToScheme(scheme)
+	scheme.AddKnownTypes(metav1.SchemeGroupVersion, &testObject{})
 
-	pod := &corev1.Pod{
+	// Create object with DependenciesReachable=False that has been false for > 10 seconds
+	elevenSecondsAgo := metav1.NewTime(metav1.Now().Add(-11 * time.Second))
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "meta.k8s.io/v1",
+			Kind:       "testObject",
+		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pod",
+			Name:      "test-obj",
 			Namespace: "default",
+		},
+		Status: testStatus{
+			Status: string(constants.AIMStatusReady),
+			Conditions: []metav1.Condition{
+				{
+					Type:               testConditionTypeModelReady,
+					Status:             metav1.ConditionTrue,
+					Reason:             "Ready",
+					Message:            "Model is ready",
+					LastTransitionTime: elevenSecondsAgo,
+				},
+				{
+					Type:               ConditionTypeDependenciesReachable,
+					Status:             metav1.ConditionFalse,
+					Reason:             "InfrastructureError",
+					Message:            "Cannot reach dependencies",
+					LastTransitionTime: elevenSecondsAgo, // Been false for 11 seconds
+				},
+				{
+					Type:               ConditionTypeReady,
+					Status:             metav1.ConditionTrue,
+					Reason:             "AllComponentsReady",
+					Message:            "All components are ready",
+					LastTransitionTime: elevenSecondsAgo,
+				},
+			},
 		},
 	}
 
-	// Test that stampGVK works directly
-	err := stampGVK(pod, scheme)
-	if err != nil {
-		t.Fatalf("unexpected error from stampGVK: %v", err)
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).Build()
+	recorder := record.NewFakeRecorder(100)
+
+	// Reconciler still returns infrastructure error
+	reconciler := &testReconcilerWithError{
+		infraError: NewInfrastructureError("NetworkTimeout", "Network timeout", errors.New("timeout")),
 	}
 
-	// Verify GVK was stamped
-	gvk := pod.GetObjectKind().GroupVersionKind()
-	if gvk.Version != "v1" || gvk.Kind != "Pod" {
-		t.Errorf("expected GVK v1/Pod, got %v", gvk)
-	}
-}
-
-func TestApplyDesiredState_SortsObjects(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-
-	// Create objects in reverse order
-	pod2 := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "pod-z",
-			Namespace: "default",
-		},
-	}
-	pod1 := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "pod-a",
-			Namespace: "default",
-		},
+	pipeline := &Pipeline[*testObject, *testStatus, testFetch, testObservationWithError]{
+		Client:         cl,
+		StatusClient:   cl.Status(),
+		Recorder:       recorder,
+		ControllerName: "test",
+		Reconciler:     reconciler,
+		Scheme:         scheme,
 	}
 
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	err := pipeline.Run(context.Background(), obj)
 
-	// Objects should be sorted by name
-	objects := []client.Object{pod2, pod1}
-	err := ApplyDesiredState(context.Background(), fakeClient, "test", scheme, objects)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Note: We can't easily verify the apply order with fake client,
-	// but the sort function is tested separately
-}
-
-func TestSortObjects(t *testing.T) {
-	pod1 := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "ns1"}}
-	pod1.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "Pod"})
-
-	pod2 := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "ns1"}}
-	pod2.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "Pod"})
-
-	pod3 := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "ns2"}}
-	pod3.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "Pod"})
-
-	objects := []client.Object{pod1, pod2, pod3}
-	sorted := sortObjects(objects)
-
-	// Verify sort order: same GVK, sorted by namespace then name
-	// Input: pod-b/ns1, pod-a/ns1, pod-a/ns2
-	// Expected: pod-a/ns1, pod-b/ns1, pod-a/ns2 (namespace ns1 < ns2)
-	if sorted[0].GetName() != "pod-a" || sorted[0].GetNamespace() != "ns1" {
-		t.Errorf("expected first object to be pod-a/ns1, got %s/%s", sorted[0].GetName(), sorted[0].GetNamespace())
-	}
-	if sorted[1].GetName() != "pod-b" || sorted[1].GetNamespace() != "ns1" {
-		t.Errorf("expected second object to be pod-b/ns1, got %s/%s", sorted[1].GetName(), sorted[1].GetNamespace())
-	}
-	if sorted[2].GetName() != "pod-a" || sorted[2].GetNamespace() != "ns2" {
-		t.Errorf("expected third object to be pod-a/ns2, got %s/%s", sorted[2].GetName(), sorted[2].GetNamespace())
-	}
-}
-
-func TestStampGVK_Success(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-
-	pod := &corev1.Pod{}
-	err := stampGVK(pod, scheme)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	gvk := pod.GetObjectKind().GroupVersionKind()
-	if gvk.Version != "v1" || gvk.Kind != "Pod" {
-		t.Errorf("expected GVK v1/Pod, got %v", gvk)
-	}
-}
-
-func TestStampGVK_UnknownType(t *testing.T) {
-	scheme := runtime.NewScheme()
-
-	// Use a real Kubernetes type that's not registered in the scheme
-	configMap := &corev1.ConfigMap{}
-
-	err := stampGVK(configMap, scheme)
+	// Should return error for requeue
 	if err == nil {
-		t.Fatal("expected error for unregistered type, got nil")
+		t.Fatal("Run() should return error for infrastructure issues")
+	}
+
+	// CRITICAL: After threshold, ModelReady should degrade to False
+	var modelReady *metav1.Condition
+	for i := range obj.Status.Conditions {
+		if obj.Status.Conditions[i].Type == testConditionTypeModelReady {
+			modelReady = &obj.Status.Conditions[i]
+			break
+		}
+	}
+
+	if modelReady == nil {
+		t.Fatal("ModelReady condition should be set")
+	}
+
+	if modelReady.Status != metav1.ConditionFalse {
+		t.Errorf("ModelReady should degrade to False after threshold, got %v", modelReady.Status)
+	}
+
+	// Status should degrade to Degraded
+	if obj.Status.Status != string(constants.AIMStatusDegraded) {
+		t.Errorf("Status should degrade to Degraded after threshold, got %v", obj.Status.Status)
+	}
+
+	t.Logf("After grace period: ModelReady=%v, Status=%v", modelReady.Status, obj.Status.Status)
+}
+
+func TestPipeline_GracePeriod_Recovery(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = metav1.AddMetaToScheme(scheme)
+	scheme.AddKnownTypes(metav1.SchemeGroupVersion, &testObject{})
+
+	// Create object with DependenciesReachable=False that has been false for 5 seconds
+	fiveSecondsAgo := metav1.NewTime(metav1.Now().Add(-5 * time.Second))
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "meta.k8s.io/v1",
+			Kind:       "testObject",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-obj",
+			Namespace: "default",
+		},
+		Status: testStatus{
+			Status: string(constants.AIMStatusReady),
+			Conditions: []metav1.Condition{
+				{
+					Type:               testConditionTypeModelReady,
+					Status:             metav1.ConditionTrue,
+					Reason:             "Ready",
+					Message:            "Model is ready",
+					LastTransitionTime: fiveSecondsAgo,
+				},
+				{
+					Type:               ConditionTypeDependenciesReachable,
+					Status:             metav1.ConditionFalse,
+					Reason:             "InfrastructureError",
+					Message:            "Cannot reach dependencies",
+					LastTransitionTime: fiveSecondsAgo, // Been false for 5 seconds (within threshold)
+				},
+			},
+		},
+	}
+
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).Build()
+	recorder := record.NewFakeRecorder(100)
+
+	// Reconciler now returns NO error (recovery!)
+	reconciler := &testReconciler{
+		fetchResult: testFetch{ModelReady: true},
+	}
+
+	pipeline := &Pipeline[*testObject, *testStatus, testFetch, testObservation]{
+		Client:         cl,
+		StatusClient:   cl.Status(),
+		Recorder:       recorder,
+		ControllerName: "test",
+		Reconciler:     reconciler,
+		Scheme:         scheme,
+	}
+
+	err := pipeline.Run(context.Background(), obj)
+
+	// May have status update error from fake client, but that's OK
+	if err != nil && !strings.Contains(err.Error(), "status update failed") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// DependenciesReachable should now be True (recovered)
+	var depReachable *metav1.Condition
+	for i := range obj.Status.Conditions {
+		if obj.Status.Conditions[i].Type == ConditionTypeDependenciesReachable {
+			depReachable = &obj.Status.Conditions[i]
+			break
+		}
+	}
+
+	if depReachable == nil {
+		t.Fatal("DependenciesReachable condition should be set")
+	}
+
+	if depReachable.Status != metav1.ConditionTrue {
+		t.Errorf("DependenciesReachable should be True after recovery, got %v", depReachable.Status)
+	}
+
+	// ModelReady should be True (still ready, never degraded)
+	var modelReady *metav1.Condition
+	for i := range obj.Status.Conditions {
+		if obj.Status.Conditions[i].Type == testConditionTypeModelReady {
+			modelReady = &obj.Status.Conditions[i]
+			break
+		}
+	}
+
+	if modelReady == nil {
+		t.Fatal("ModelReady condition should be set")
+	}
+
+	if modelReady.Status != metav1.ConditionTrue {
+		t.Errorf("ModelReady should stay True after recovery, got %v", modelReady.Status)
+	}
+
+	// Status should stay Ready (never degraded)
+	if obj.Status.Status != string(constants.AIMStatusReady) {
+		t.Errorf("Status should stay Ready after recovery, got %v", obj.Status.Status)
+	}
+
+	t.Logf("After recovery: ModelReady=%v, Status=%v, DependenciesReachable=%v",
+		modelReady.Status, obj.Status.Status, depReachable.Status)
+}
+
+// ======================================================
+// ERROR RECOVERY TESTS
+// ======================================================
+
+func TestPipeline_ErrorRecovery_AuthValid(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = metav1.AddMetaToScheme(scheme)
+	scheme.AddKnownTypes(metav1.SchemeGroupVersion, &testObject{})
+
+	now := metav1.Now()
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "meta.k8s.io/v1",
+			Kind:       "testObject",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-obj",
+			Namespace: "default",
+		},
+		Status: testStatus{
+			Status: string(constants.AIMStatusFailed),
+			Conditions: []metav1.Condition{
+				{
+					Type:               "AuthValid",
+					Status:             metav1.ConditionFalse,
+					Reason:             "AuthError",
+					Message:            "Authentication or authorization failure",
+					LastTransitionTime: now,
+				},
+			},
+		},
+	}
+
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).Build()
+	recorder := record.NewFakeRecorder(100)
+
+	// First reconcile: auth error cleared, reconciler returns success
+	reconciler := &testReconciler{
+		fetchResult: testFetch{ModelReady: true},
+	}
+
+	pipeline := &Pipeline[*testObject, *testStatus, testFetch, testObservation]{
+		Client:         cl,
+		StatusClient:   cl.Status(),
+		Recorder:       recorder,
+		ControllerName: "test",
+		Reconciler:     reconciler,
+		Scheme:         scheme,
+	}
+
+	err := pipeline.Run(context.Background(), obj)
+
+	// May have status update error from fake client
+	if err != nil && !strings.Contains(err.Error(), "status update failed") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// AuthValid should transition to True
+	var authValid *metav1.Condition
+	for i := range obj.Status.Conditions {
+		if obj.Status.Conditions[i].Type == "AuthValid" {
+			authValid = &obj.Status.Conditions[i]
+			break
+		}
+	}
+
+	if authValid == nil {
+		t.Fatal("AuthValid condition should be set")
+	}
+
+	if authValid.Status != metav1.ConditionTrue {
+		t.Errorf("AuthValid should be True after error clears, got %v", authValid.Status)
+	}
+
+	if authValid.Reason != "AuthenticationValid" {
+		t.Errorf("AuthValid reason should be AuthenticationValid, got %v", authValid.Reason)
+	}
+
+	t.Logf("AuthValid recovered: Status=%v, Reason=%v", authValid.Status, authValid.Reason)
+}
+
+func TestPipeline_ErrorRecovery_ConfigValid(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = metav1.AddMetaToScheme(scheme)
+	scheme.AddKnownTypes(metav1.SchemeGroupVersion, &testObject{})
+
+	now := metav1.Now()
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "meta.k8s.io/v1",
+			Kind:       "testObject",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-obj",
+			Namespace: "default",
+		},
+		Status: testStatus{
+			Status: string(constants.AIMStatusFailed),
+			Conditions: []metav1.Condition{
+				{
+					Type:               "ConfigValid",
+					Status:             metav1.ConditionFalse,
+					Reason:             "InvalidSpec",
+					Message:            "Configuration validation failed",
+					LastTransitionTime: now,
+				},
+			},
+		},
+	}
+
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).Build()
+	recorder := record.NewFakeRecorder(100)
+
+	// Config error cleared
+	reconciler := &testReconciler{
+		fetchResult: testFetch{ModelReady: true},
+	}
+
+	pipeline := &Pipeline[*testObject, *testStatus, testFetch, testObservation]{
+		Client:         cl,
+		StatusClient:   cl.Status(),
+		Recorder:       recorder,
+		ControllerName: "test",
+		Reconciler:     reconciler,
+		Scheme:         scheme,
+	}
+
+	err := pipeline.Run(context.Background(), obj)
+
+	if err != nil && !strings.Contains(err.Error(), "status update failed") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// ConfigValid should transition to True
+	var configValid *metav1.Condition
+	for i := range obj.Status.Conditions {
+		if obj.Status.Conditions[i].Type == "ConfigValid" {
+			configValid = &obj.Status.Conditions[i]
+			break
+		}
+	}
+
+	if configValid == nil {
+		t.Fatal("ConfigValid condition should be set")
+	}
+
+	if configValid.Status != metav1.ConditionTrue {
+		t.Errorf("ConfigValid should be True after error clears, got %v", configValid.Status)
+	}
+
+	if configValid.Reason != "ConfigurationValid" {
+		t.Errorf("ConfigValid reason should be ConfigurationValid, got %v", configValid.Reason)
+	}
+
+	t.Logf("ConfigValid recovered: Status=%v, Reason=%v", configValid.Status, configValid.Reason)
+}
+
+func TestPipeline_ErrorRecovery_ComponentAuthError(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = metav1.AddMetaToScheme(scheme)
+	scheme.AddKnownTypes(metav1.SchemeGroupVersion, &testObject{})
+
+	now := metav1.Now()
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "meta.k8s.io/v1",
+			Kind:       "testObject",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-obj",
+			Namespace: "default",
+		},
+		Status: testStatus{
+			Status: string(constants.AIMStatusFailed),
+			Conditions: []metav1.Condition{
+				{
+					Type:               testConditionTypeModelReady,
+					Status:             metav1.ConditionFalse,
+					Reason:             "AuthError",
+					Message:            "Forbidden",
+					LastTransitionTime: now,
+				},
+				{
+					Type:               "AuthValid",
+					Status:             metav1.ConditionFalse,
+					Reason:             "AuthError",
+					Message:            "Authentication or authorization failure",
+					LastTransitionTime: now,
+				},
+			},
+		},
+	}
+
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).Build()
+	recorder := record.NewFakeRecorder(100)
+
+	// Auth error cleared - component now ready
+	reconciler := &testReconciler{
+		fetchResult: testFetch{ModelReady: true},
+	}
+
+	pipeline := &Pipeline[*testObject, *testStatus, testFetch, testObservation]{
+		Client:         cl,
+		StatusClient:   cl.Status(),
+		Recorder:       recorder,
+		ControllerName: "test",
+		Reconciler:     reconciler,
+		Scheme:         scheme,
+	}
+
+	err := pipeline.Run(context.Background(), obj)
+
+	if err != nil && !strings.Contains(err.Error(), "status update failed") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// ModelReady should transition to True
+	var modelReady *metav1.Condition
+	for i := range obj.Status.Conditions {
+		if obj.Status.Conditions[i].Type == testConditionTypeModelReady {
+			modelReady = &obj.Status.Conditions[i]
+			break
+		}
+	}
+
+	if modelReady == nil {
+		t.Fatal("ModelReady condition should be set")
+	}
+
+	if modelReady.Status != metav1.ConditionTrue {
+		t.Errorf("ModelReady should be True after auth error clears, got %v", modelReady.Status)
+	}
+
+	// AuthValid should also be True
+	var authValid *metav1.Condition
+	for i := range obj.Status.Conditions {
+		if obj.Status.Conditions[i].Type == "AuthValid" {
+			authValid = &obj.Status.Conditions[i]
+			break
+		}
+	}
+
+	if authValid == nil {
+		t.Fatal("AuthValid condition should be set")
+	}
+
+	if authValid.Status != metav1.ConditionTrue {
+		t.Errorf("AuthValid should be True after error clears, got %v", authValid.Status)
+	}
+
+	// Status should transition to Ready
+	if obj.Status.Status != string(constants.AIMStatusReady) {
+		t.Errorf("Status should be Ready after recovery, got %v", obj.Status.Status)
+	}
+
+	t.Logf("Component recovered from auth error: ModelReady=%v, AuthValid=%v, Status=%v",
+		modelReady.Status, authValid.Status, obj.Status.Status)
+}
+
+func TestPipeline_processStateEngine_AuthValidRecovery(t *testing.T) {
+	// Start with AuthValid=False
+	oldConditions := []metav1.Condition{
+		{
+			Type:               "AuthValid",
+			Status:             metav1.ConditionFalse,
+			Reason:             "AuthError",
+			Message:            "Authentication or authorization failure",
+			LastTransitionTime: metav1.Now(),
+		},
+	}
+
+	// No auth errors in observation
+	obs := testObservationCustomHealth{
+		health: []ComponentHealth{
+			{
+				Component: "Model",
+				State:     constants.AIMStatusReady,
+				Reason:    "Ready",
+				Message:   "Model is ready",
+			},
+		},
+	}
+
+	cm := NewConditionManager(oldConditions)
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	_, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	// AuthValid should now be True
+	authValid := cm.Get("AuthValid")
+	if authValid == nil {
+		t.Fatal("AuthValid condition should exist")
+	}
+
+	if authValid.Status != metav1.ConditionTrue {
+		t.Errorf("AuthValid should be True, got %v", authValid.Status)
+	}
+
+	if authValid.Reason != "AuthenticationValid" {
+		t.Errorf("AuthValid reason should be AuthenticationValid, got %v", authValid.Reason)
+	}
+
+	// Verify observability config is AsInfo (not AsError)
+	cfg := cm.ConfigFor("AuthValid")
+	if cfg.eventMode != EventOnTransition {
+		t.Errorf("AuthValid should use EventOnTransition when True, got %v", cfg.eventMode)
+	}
+	if cfg.logLevel != 0 {
+		t.Errorf("AuthValid should use info log (V(0)) when True, got level %v", cfg.logLevel)
+	}
+}
+
+func TestPipeline_processStateEngine_ConfigValidRecovery(t *testing.T) {
+	// Start with ConfigValid=False
+	oldConditions := []metav1.Condition{
+		{
+			Type:               "ConfigValid",
+			Status:             metav1.ConditionFalse,
+			Reason:             "InvalidSpec",
+			Message:            "Configuration validation failed",
+			LastTransitionTime: metav1.Now(),
+		},
+	}
+
+	// No config errors in observation
+	obs := testObservationCustomHealth{
+		health: []ComponentHealth{
+			{
+				Component: "Model",
+				State:     constants.AIMStatusReady,
+				Reason:    "Ready",
+				Message:   "Model is ready",
+			},
+		},
+	}
+
+	cm := NewConditionManager(oldConditions)
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	_, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	// ConfigValid should now be True
+	configValid := cm.Get("ConfigValid")
+	if configValid == nil {
+		t.Fatal("ConfigValid condition should exist")
+	}
+
+	if configValid.Status != metav1.ConditionTrue {
+		t.Errorf("ConfigValid should be True, got %v", configValid.Status)
+	}
+
+	if configValid.Reason != "ConfigurationValid" {
+		t.Errorf("ConfigValid reason should be ConfigurationValid, got %v", configValid.Reason)
+	}
+
+	// Verify observability config is AsInfo (not AsError)
+	cfg := cm.ConfigFor("ConfigValid")
+	if cfg.eventMode != EventOnTransition {
+		t.Errorf("ConfigValid should use EventOnTransition when True, got %v", cfg.eventMode)
+	}
+	if cfg.logLevel != 0 {
+		t.Errorf("ConfigValid should use info log (V(0)) when True, got level %v", cfg.logLevel)
+	}
+}
+
+func TestPipeline_processStateEngine_DependenciesReachableRecovery(t *testing.T) {
+	// Start with DependenciesReachable=False
+	oldConditions := []metav1.Condition{
+		{
+			Type:               "DependenciesReachable",
+			Status:             metav1.ConditionFalse,
+			Reason:             "InfrastructureError",
+			Message:            "Cannot reach dependencies",
+			LastTransitionTime: metav1.Now(),
+		},
+	}
+
+	// No infrastructure errors in observation
+	obs := testObservationCustomHealth{
+		health: []ComponentHealth{
+			{
+				Component: "Model",
+				State:     constants.AIMStatusReady,
+				Reason:    "Ready",
+				Message:   "Model is ready",
+			},
+		},
+	}
+
+	cm := NewConditionManager(oldConditions)
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	_, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	// DependenciesReachable should now be True
+	depReachable := cm.Get("DependenciesReachable")
+	if depReachable == nil {
+		t.Fatal("DependenciesReachable condition should exist")
+	}
+
+	if depReachable.Status != metav1.ConditionTrue {
+		t.Errorf("DependenciesReachable should be True, got %v", depReachable.Status)
+	}
+
+	if depReachable.Reason != "Reachable" {
+		t.Errorf("DependenciesReachable reason should be Reachable, got %v", depReachable.Reason)
+	}
+
+	// Verify observability config is AsInfo (not AsError)
+	cfg := cm.ConfigFor("DependenciesReachable")
+	if cfg.eventMode != EventOnTransition {
+		t.Errorf("DependenciesReachable should use EventOnTransition when True, got %v", cfg.eventMode)
+	}
+	if cfg.logLevel != 0 {
+		t.Errorf("DependenciesReachable should use info log (V(0)) when True, got level %v", cfg.logLevel)
+	}
+}
+
+// ======================================================
+// CRITICAL BUG FIX TESTS
+// ======================================================
+
+func TestPipeline_MissingUpstreamDep_BlocksApply(t *testing.T) {
+	// Test that missing upstream dependencies block apply (ShouldApply=false)
+	upstreamErr := NewMissingUpstreamDependencyError("SecretNotFound", "Secret 'my-secret' not found in namespace 'default'", errors.New("secret not found"))
+	obs := testObservationWithError{infraError: upstreamErr}
+	cm := NewConditionManager([]metav1.Condition{})
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationWithError]{
+		Reconciler: &testReconcilerWithError{infraError: upstreamErr},
+	}
+
+	decision, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	if decision.ShouldApply {
+		t.Error("ShouldApply should be false for missing upstream dependency")
+	}
+
+	if decision.ShouldRequeue {
+		t.Error("ShouldRequeue should be false for missing upstream dependency (not retriable)")
+	}
+
+	// Verify ConfigValid condition is set to False
+	configValid := cm.Get(ConditionTypeConfigValid)
+	if configValid == nil {
+		t.Fatal("ConfigValid condition should be set")
+	}
+	if configValid.Status != metav1.ConditionFalse {
+		t.Errorf("ConfigValid should be False for missing upstream dep, got %v", configValid.Status)
+	}
+	if configValid.Reason != ReasonMissingRef {
+		t.Errorf("ConfigValid reason should be %s, got %s", ReasonMissingRef, configValid.Reason)
+	}
+
+	// Verify Ready condition is set to False
+	ready := cm.Get(ConditionTypeReady)
+	if ready == nil {
+		t.Fatal("Ready condition should be set")
+	}
+	if ready.Status != metav1.ConditionFalse {
+		t.Errorf("Ready should be False for missing upstream dep, got %v", ready.Status)
+	}
+}
+
+func TestPipeline_Run_ApplyError_SetsDependenciesReachable(t *testing.T) {
+	// Test that apply errors set DependenciesReachable=False and return InfrastructureError
+	scheme := runtime.NewScheme()
+	_ = metav1.AddMetaToScheme(scheme)
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "test.k8s.io", Version: "v1"}, &testObject{})
+
+	now := metav1.Now()
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "test.k8s.io/v1",
+			Kind:       "TestObject",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test-obj",
+			Namespace:         "default",
+			CreationTimestamp: now,
+		},
+	}
+
+	// Create a fake client that will fail on Apply
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).WithStatusSubresource(obj).Build()
+
+	// Create a test reconciler that returns resources to apply
+	reconciler := &testReconcilerWithPlan{
+		fetchResult: testFetch{ModelReady: true},
+		planResult: PlanResult{
+			toApply: []client.Object{
+				&testObject{
+					TypeMeta: metav1.TypeMeta{
+						APIVersion: "test.k8s.io/v1",
+						Kind:       "TestObject",
+					},
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "child-resource",
+						Namespace: "default",
+					},
+				},
+			},
+		},
+	}
+
+	recorder := record.NewFakeRecorder(10)
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservation]{
+		Client:         &failingApplyClient{Client: fakeClient},
+		StatusClient:   fakeClient.Status(),
+		Recorder:       recorder,
+		Reconciler:     reconciler,
+		Scheme:         scheme,
+		ControllerName: "test",
+	}
+
+	err := p.Run(context.Background(), obj)
+
+	// Should return InfrastructureError
+	if err == nil {
+		t.Fatal("Expected error from apply failure, got nil")
+	}
+
+	var infraErr InfrastructureError
+	if !errors.As(err, &infraErr) {
+		t.Errorf("Expected InfrastructureError, got %T: %v", err, err)
+	}
+
+	if infraErr.Count != 1 {
+		t.Errorf("Expected 1 infrastructure error, got %d", infraErr.Count)
+	}
+
+	// Verify DependenciesReachable is False
+	depReachable := findCondition(obj.Status.Conditions, ConditionTypeDependenciesReachable)
+	if depReachable == nil {
+		t.Fatal("DependenciesReachable condition should be set")
+	}
+	if depReachable.Status != metav1.ConditionFalse {
+		t.Errorf("DependenciesReachable should be False after apply error, got %v", depReachable.Status)
+	}
+	if !strings.Contains(depReachable.Message, "Failed to apply") {
+		t.Errorf("DependenciesReachable message should mention apply failure, got: %s", depReachable.Message)
+	}
+}
+
+func TestPipeline_Run_DeleteError_SetsDependenciesReachable(t *testing.T) {
+	// Test that delete errors set DependenciesReachable=False and return InfrastructureError
+	scheme := runtime.NewScheme()
+	_ = metav1.AddMetaToScheme(scheme)
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "test.k8s.io", Version: "v1"}, &testObject{})
+
+	now := metav1.Now()
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "test.k8s.io/v1",
+			Kind:       "TestObject",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test-obj",
+			Namespace:         "default",
+			CreationTimestamp: now,
+		},
+	}
+
+	// Create a fake client that will fail on Delete
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).WithStatusSubresource(obj).Build()
+
+	// Create a test reconciler that returns resources to delete
+	reconciler := &testReconcilerWithPlan{
+		fetchResult: testFetch{ModelReady: true},
+		planResult: PlanResult{
+			toDelete: []client.Object{
+				&testObject{
+					TypeMeta: metav1.TypeMeta{
+						APIVersion: "test.k8s.io/v1",
+						Kind:       "TestObject",
+					},
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "child-to-delete",
+						Namespace: "default",
+					},
+				},
+			},
+		},
+	}
+
+	recorder := record.NewFakeRecorder(10)
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservation]{
+		Client:         &failingDeleteClient{Client: fakeClient},
+		StatusClient:   fakeClient.Status(),
+		Recorder:       recorder,
+		Reconciler:     reconciler,
+		Scheme:         scheme,
+		ControllerName: "test",
+	}
+
+	err := p.Run(context.Background(), obj)
+
+	// Should return InfrastructureError
+	if err == nil {
+		t.Fatal("Expected error from delete failure, got nil")
+	}
+
+	var infraErr InfrastructureError
+	if !errors.As(err, &infraErr) {
+		t.Errorf("Expected InfrastructureError, got %T: %v", err, err)
+	}
+
+	if infraErr.Count != 1 {
+		t.Errorf("Expected 1 infrastructure error, got %d", infraErr.Count)
+	}
+
+	// Verify DependenciesReachable is False
+	depReachable := findCondition(obj.Status.Conditions, ConditionTypeDependenciesReachable)
+	if depReachable == nil {
+		t.Fatal("DependenciesReachable condition should be set")
+	}
+	if depReachable.Status != metav1.ConditionFalse {
+		t.Errorf("DependenciesReachable should be False after delete error, got %v", depReachable.Status)
+	}
+	if !strings.Contains(depReachable.Message, "Failed to delete") {
+		t.Errorf("DependenciesReachable message should mention delete failure, got: %s", depReachable.Message)
+	}
+}
+
+func TestInfrastructureError_StableMessage(t *testing.T) {
+	tests := []struct {
+		name          string
+		count         int
+		errors        []error
+		wantMessage   string
+		wantUnwrapLen int
+	}{
+		{
+			name:          "single error",
+			count:         1,
+			errors:        []error{errors.New("network timeout")},
+			wantMessage:   "infrastructure error (1 failure)",
+			wantUnwrapLen: 1,
+		},
+		{
+			name:          "multiple errors",
+			count:         3,
+			errors:        []error{errors.New("timeout 1"), errors.New("timeout 2"), errors.New("timeout 3")},
+			wantMessage:   "infrastructure errors (3 failures)",
+			wantUnwrapLen: 3,
+		},
+		{
+			name:          "different error details but same count",
+			count:         2,
+			errors:        []error{errors.New("completely different error"), errors.New("another different error")},
+			wantMessage:   "infrastructure errors (2 failures)",
+			wantUnwrapLen: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			infraErr := InfrastructureError{
+				Count:  tt.count,
+				Errors: tt.errors,
+			}
+
+			// Test Error() returns stable message
+			if infraErr.Error() != tt.wantMessage {
+				t.Errorf("Error() = %q, want %q", infraErr.Error(), tt.wantMessage)
+			}
+
+			// Test Unwrap() returns underlying errors
+			unwrapped := infraErr.Unwrap()
+			if len(unwrapped) != tt.wantUnwrapLen {
+				t.Errorf("Unwrap() returned %d errors, want %d", len(unwrapped), tt.wantUnwrapLen)
+			}
+
+			// Verify errors.As works with the error wrapped
+			wrappedErr := fmt.Errorf("wrapped: %w", infraErr)
+			var asInfraErr InfrastructureError
+			if !errors.As(wrappedErr, &asInfraErr) {
+				t.Error("errors.As should work with InfrastructureError")
+			}
+			if asInfraErr.Count != tt.count {
+				t.Errorf("errors.As preserved Count: got %d, want %d", asInfraErr.Count, tt.count)
+			}
+		})
+	}
+}
+
+// Helper type for testing apply failures
+type failingApplyClient struct {
+	client.Client
+}
+
+func (c *failingApplyClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+	// Simulate apply failure
+	return errors.New("simulated apply failure: insufficient permissions")
+}
+
+// Helper type for testing delete failures
+type failingDeleteClient struct {
+	client.Client
+}
+
+func (c *failingDeleteClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	// Simulate delete failure
+	return errors.New("simulated delete failure: resource locked")
+}
+
+// Helper reconciler that returns a plan with resources
+type testReconcilerWithPlan struct {
+	fetchResult testFetch
+	planResult  PlanResult
+}
+
+func (r *testReconcilerWithPlan) FetchRemoteState(ctx context.Context, c client.Client, obj ReconcileContext[*testObject]) testFetch {
+	return r.fetchResult
+}
+
+func (r *testReconcilerWithPlan) ComposeState(ctx context.Context, obj ReconcileContext[*testObject], fetched testFetch) testObservation {
+	return testObservation{modelReady: fetched.ModelReady}
+}
+
+func (r *testReconcilerWithPlan) PlanResources(ctx context.Context, obj ReconcileContext[*testObject], obs testObservation) PlanResult {
+	return r.planResult
+}
+
+// Helper to find a condition by type
+func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == condType {
+			return &conditions[i]
+		}
+	}
+	return nil
+}
+
+// ======================================================
+// DEPENDENCY TYPE TESTS (Upstream vs Downstream)
+// ======================================================
+
+func TestPipeline_UpstreamDependency_StatusPending(t *testing.T) {
+	// Test that not-ready upstream dependencies result in Pending status
+	obs := testObservationCustomHealth{
+		health: []ComponentHealth{
+			{
+				Component:      "ServiceTemplate",
+				State:          constants.AIMStatusProgressing,
+				Reason:         "WaitingForDiscovery",
+				Message:        "Discovery underway",
+				DependencyType: DependencyTypeUpstream, // ← Upstream = Pending
+			},
+		},
+	}
+	cm := NewConditionManager([]metav1.Condition{})
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	_, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	// Verify status is Pending (not Progressing)
+	if status.Status != string(constants.AIMStatusPending) {
+		t.Errorf("Status should be Pending for not-ready upstream dependency, got %s", status.Status)
+	}
+
+	// Verify ServiceTemplateReady condition is False
+	templateReady := cm.Get("ServiceTemplateReady")
+	if templateReady == nil {
+		t.Fatal("ServiceTemplateReady condition should be set")
+	}
+	if templateReady.Status != metav1.ConditionFalse {
+		t.Errorf("ServiceTemplateReady should be False, got %v", templateReady.Status)
+	}
+
+	// Verify Ready condition is False
+	ready := cm.Get(ConditionTypeReady)
+	if ready == nil {
+		t.Fatal("Ready condition should be set")
+	}
+	if ready.Status != metav1.ConditionFalse {
+		t.Errorf("Ready should be False, got %v", ready.Status)
+	}
+}
+
+func TestPipeline_DownstreamDependency_StatusProgressing(t *testing.T) {
+	// Test that not-ready downstream dependencies result in Progressing status
+	obs := testObservationCustomHealth{
+		health: []ComponentHealth{
+			{
+				Component:      "ModelCaches",
+				State:          constants.AIMStatusProgressing,
+				Reason:         "CreatingCaches",
+				Message:        "Waiting for model caches to be created",
+				DependencyType: DependencyTypeDownstream, // ← Downstream = Progressing
+			},
+		},
+	}
+	cm := NewConditionManager([]metav1.Condition{})
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	_, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	// Verify status is Progressing (not Pending)
+	if status.Status != string(constants.AIMStatusProgressing) {
+		t.Errorf("Status should be Progressing for not-ready downstream dependency, got %s", status.Status)
+	}
+
+	// Verify ModelCachesReady condition is False
+	cachesReady := cm.Get("ModelCachesReady")
+	if cachesReady == nil {
+		t.Fatal("ModelCachesReady condition should be set")
+	}
+	if cachesReady.Status != metav1.ConditionFalse {
+		t.Errorf("ModelCachesReady should be False, got %v", cachesReady.Status)
+	}
+
+	// Verify Ready condition is False
+	ready := cm.Get(ConditionTypeReady)
+	if ready == nil {
+		t.Fatal("Ready condition should be set")
+	}
+	if ready.Status != metav1.ConditionFalse {
+		t.Errorf("Ready should be False, got %v", ready.Status)
+	}
+}
+
+func TestPipeline_MixedDependencies_UpstreamTakesPrecedence(t *testing.T) {
+	// Test that when both upstream (Pending) and downstream (Progressing) deps are not ready,
+	// the worse status wins (Pending is worse than Progressing)
+	obs := testObservationCustomHealth{
+		health: []ComponentHealth{
+			{
+				Component:      "ServiceTemplate",
+				State:          constants.AIMStatusProgressing,
+				Reason:         "WaitingForDiscovery",
+				Message:        "Discovery underway",
+				DependencyType: DependencyTypeUpstream,
+			},
+			{
+				Component:      "ModelCaches",
+				State:          constants.AIMStatusProgressing,
+				Reason:         "CreatingCaches",
+				Message:        "Creating caches",
+				DependencyType: DependencyTypeDownstream,
+			},
+		},
+	}
+	cm := NewConditionManager([]metav1.Condition{})
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	_, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	// Verify status is Pending (upstream not ready takes precedence)
+	if status.Status != string(constants.AIMStatusPending) {
+		t.Errorf("Status should be Pending when upstream dependency not ready, got %s", status.Status)
+	}
+}
+
+func TestPipeline_UnspecifiedDependencyType_DefaultsToProgressing(t *testing.T) {
+	// Test that unspecified dependency type defaults to Progressing (treated as downstream)
+	obs := testObservationCustomHealth{
+		health: []ComponentHealth{
+			{
+				Component:      "SomeComponent",
+				State:          constants.AIMStatusProgressing,
+				Reason:         "NotReady",
+				Message:        "Component not ready",
+				DependencyType: DependencyTypeUnspecified, // ← Unspecified = Progressing
+			},
+		},
+	}
+	cm := NewConditionManager([]metav1.Condition{})
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	_, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	// Verify status is Progressing (unspecified treated as downstream)
+	if status.Status != string(constants.AIMStatusProgressing) {
+		t.Errorf("Status should be Progressing for unspecified dependency type, got %s", status.Status)
 	}
 }

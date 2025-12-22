@@ -25,6 +25,7 @@ package controllerutils
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -82,8 +83,10 @@ type ObservabilityOption func(*ObservabilityConfig)
 
 func defaultConfig() ObservabilityConfig {
 	return ObservabilityConfig{
-		eventMode: EventNone,
-		logMode:   LogNone,
+		eventMode:  EventOnTransition,
+		eventLevel: LevelNormal,
+		logMode:    LogOnTransition,
+		logLevel:   0, // Info level
 	}
 }
 
@@ -110,16 +113,21 @@ func WithLog(level int) ObservabilityOption {
 	}
 }
 
+// WithErrorLog logs at V(0) - always visible. Use for errors that must be seen.
 func WithErrorLog() ObservabilityOption {
 	return WithLog(0)
 }
 
+// WithInfoLog logs at V(0) - visible at default info level.
+// Use for important state transitions like Ready conditions.
 func WithInfoLog() ObservabilityOption {
-	return WithLog(1)
+	return WithLog(0)
 }
 
+// WithDebugLog logs at V(1) - only visible with -zap-log-level=debug.
+// Use for verbose operational details.
 func WithDebugLog() ObservabilityOption {
-	return WithLog(2)
+	return WithLog(1)
 }
 
 // === Event Options ===
@@ -204,7 +212,7 @@ func AsError() ObservabilityOption {
 }
 
 // Silent explicitly marks a condition as having no events or logs.
-// This is the default, but can be used for clarity or to override other options.
+// Use this to suppress observability for low-priority conditions.
 func Silent() ObservabilityOption {
 	return func(c *ObservabilityConfig) {
 		c.eventMode = EventNone
@@ -238,15 +246,17 @@ func EventLevelToOption(level EventLevel) ObservabilityOption {
 	}
 }
 
-// buildEventReason builds the event reason from a condition, using custom reason if provided
-func buildEventReason(conditionType, conditionReason string, customReason *string) string {
+// buildEventReason builds the event reason from a condition, using custom reason if provided.
+// Returns just the condition reason since the condition type is already in the message body.
+func buildEventReason(conditionReason string, customReason *string) string {
 	if customReason != nil {
 		return *customReason
 	}
-	return fmt.Sprintf("%s%s", conditionType, conditionReason)
+	return conditionReason
 }
 
-// buildEventMessage builds the event/log message from a condition, using custom message if provided
+// buildEventMessage builds the event/log message from a condition, using custom message if provided.
+// Format: "{Component} is ready: {reason}" or "{Component} is not ready: {reason}"
 func buildEventMessage(conditionType string, conditionStatus metav1.ConditionStatus, conditionReason, conditionMessage string, customMessage *string) string {
 	if customMessage != nil {
 		return *customMessage
@@ -254,7 +264,22 @@ func buildEventMessage(conditionType string, conditionStatus metav1.ConditionSta
 	if conditionMessage != "" {
 		return conditionMessage
 	}
-	return fmt.Sprintf("Condition %s is %s (reason=%s)", conditionType, conditionStatus, conditionReason)
+
+	// Strip "Ready" suffix from condition type for cleaner messages
+	// e.g., "RuntimeConfigReady" -> "RuntimeConfig"
+	component := strings.TrimSuffix(conditionType, ComponentConditionSuffix)
+
+	var readyStatus string
+	switch conditionStatus {
+	case metav1.ConditionTrue:
+		readyStatus = "is ready"
+	case metav1.ConditionFalse:
+		readyStatus = "is not ready"
+	default:
+		readyStatus = "status unknown"
+	}
+
+	return fmt.Sprintf("%s %s: %s", component, readyStatus, conditionReason)
 }
 
 func EmitConditionTransitions(
@@ -287,7 +312,7 @@ func EmitConditionTransitions(
 		}
 
 		eventType := string(cfg.eventLevel)
-		reason := buildEventReason(newCondition.Type, newCondition.Reason, cfg.eventReason)
+		reason := buildEventReason(newCondition.Reason, cfg.eventReason)
 		message := buildEventMessage(newCondition.Type, newCondition.Status, newCondition.Reason, newCondition.Message, cfg.eventMessage)
 
 		recorder.Event(obj, eventType, reason, message)
@@ -311,7 +336,7 @@ func EmitRecurringEvents(
 		}
 
 		eventType := string(cc.Config.eventLevel)
-		reason := buildEventReason(cc.Type, cc.Reason, cc.Config.eventReason)
+		reason := buildEventReason(cc.Reason, cc.Config.eventReason)
 		message := buildEventMessage(cc.Type, cc.Status, cc.Reason, cc.Message, cc.Config.eventMessage)
 
 		recorder.Event(obj, eventType, reason, message)
@@ -351,11 +376,21 @@ func EmitConditionLogs(
 
 		message := buildEventMessage(newCondition.Type, newCondition.Status, newCondition.Reason, newCondition.Message, cfg.logMessage)
 
-		logger.V(cfg.logLevel).Info(message,
-			"condition", newCondition.Type,
-			"status", newCondition.Status,
-			"reason", newCondition.Reason,
-		)
+		// Use Error() for warning-level events (actual errors), Info() for normal events
+		// We can't use logLevel alone since both INFO and ERROR use V(0)
+		if cfg.eventLevel == LevelWarning {
+			logger.Error(nil, message,
+				"condition", newCondition.Type,
+				"status", newCondition.Status,
+				"reason", newCondition.Reason,
+			)
+		} else {
+			logger.V(cfg.logLevel).Info(message,
+				"condition", newCondition.Type,
+				"status", newCondition.Status,
+				"reason", newCondition.Reason,
+			)
+		}
 	}
 }
 
@@ -378,10 +413,20 @@ func EmitRecurringLogs(
 
 		message := buildEventMessage(cc.Type, cc.Status, cc.Reason, cc.Message, cc.Config.logMessage)
 
-		logger.V(cc.Config.logLevel).Info(message,
-			"condition", cc.Type,
-			"status", cc.Status,
-			"reason", cc.Reason,
-		)
+		// Use Error() for warning-level events (actual errors), Info() for normal events
+		// We can't use logLevel alone since both INFO and ERROR use V(0)
+		if cc.Config.eventLevel == LevelWarning {
+			logger.Error(nil, message,
+				"condition", cc.Type,
+				"status", cc.Status,
+				"reason", cc.Reason,
+			)
+		} else {
+			logger.V(cc.Config.logLevel).Info(message,
+				"condition", cc.Type,
+				"status", cc.Status,
+				"reason", cc.Reason,
+			)
+		}
 	}
 }
