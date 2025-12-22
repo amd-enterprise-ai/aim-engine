@@ -1,6 +1,7 @@
 ## Append samples of your project ##
 resources:
 - aim_v1alpha1_aimclustermodel.yaml
+- aim_v1alpha1_aimclustermodelsource.yaml
 - aim_v1alpha1_aimclusterruntimeconfig.yaml
 - aim_v1alpha1_aimclusterservicetemplate.yaml
 - aim_v1alpha1_aimmodelcache.yaml

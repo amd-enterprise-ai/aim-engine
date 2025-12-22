@@ -119,6 +119,21 @@ func (pr *PlanResult) Delete(obj client.Object) {
 	pr.toDelete = append(pr.toDelete, obj)
 }
 
+// GetToApply returns the objects to be applied with owner references (for testing)
+func (pr *PlanResult) GetToApply() []client.Object {
+	return pr.toApply
+}
+
+// GetToApplyWithoutOwnerRef returns the objects to be applied without owner references (for testing)
+func (pr *PlanResult) GetToApplyWithoutOwnerRef() []client.Object {
+	return pr.toApplyWithoutOwnerRef
+}
+
+// GetToDelete returns the objects to be deleted (for testing)
+func (pr *PlanResult) GetToDelete() []client.Object {
+	return pr.toDelete
+}
+
 // StateEngineDecision contains the state engine's analysis and reconciliation directives.
 type StateEngineDecision struct {
 	// ShouldApply is false if ConfigValid/AuthValid/DependenciesReachable is False

@@ -11,6 +11,8 @@ Package v1alpha1 contains API Schema definitions for the aim v1alpha1 API group.
 ### Resource Types
 - [AIMClusterModel](#aimclustermodel)
 - [AIMClusterModelList](#aimclustermodellist)
+- [AIMClusterModelSource](#aimclustermodelsource)
+- [AIMClusterModelSourceList](#aimclustermodelsourcelist)
 - [AIMClusterRuntimeConfig](#aimclusterruntimeconfig)
 - [AIMClusterRuntimeConfigList](#aimclusterruntimeconfiglist)
 - [AIMClusterServiceTemplate](#aimclusterservicetemplate)
@@ -92,6 +94,87 @@ AIMClusterModelList contains a list of AIMClusterModel.
 | `kind` _string_ | `AIMClusterModelList` | | |
 | `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `items` _[AIMClusterModel](#aimclustermodel) array_ |  |  |  |
+
+
+#### AIMClusterModelSource
+
+
+
+AIMClusterModelSource automatically discovers and syncs AI model images from container registries.
+
+
+
+_Appears in:_
+- [AIMClusterModelSourceList](#aimclustermodelsourcelist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha1` | | |
+| `kind` _string_ | `AIMClusterModelSource` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMClusterModelSourceSpec](#aimclustermodelsourcespec)_ |  |  |  |
+| `status` _[AIMClusterModelSourceStatus](#aimclustermodelsourcestatus)_ |  |  |  |
+
+
+#### AIMClusterModelSourceList
+
+
+
+AIMClusterModelSourceList contains a list of AIMClusterModelSource.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha1` | | |
+| `kind` _string_ | `AIMClusterModelSourceList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMClusterModelSource](#aimclustermodelsource) array_ |  |  |  |
+
+
+#### AIMClusterModelSourceSpec
+
+
+
+AIMClusterModelSourceSpec defines the desired state of AIMClusterModelSource.
+
+
+
+_Appears in:_
+- [AIMClusterModelSource](#aimclustermodelsource)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `registry` _string_ | Registry to sync from (e.g., docker.io, ghcr.io, gcr.io).<br />Defaults to docker.io if not specified. | docker.io |  |
+| `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets contains references to secrets for authenticating to private registries.<br />Secrets must exist in the operator namespace (typically aim-engine-system).<br />Used for both registry catalog listing and image metadata extraction. |  |  |
+| `filters` _[ModelSourceFilter](#modelsourcefilter) array_ | Filters define which images to discover and sync.<br />Each filter specifies an image pattern with optional version constraints and exclusions.<br />Multiple filters are combined with OR logic (any match includes the image). |  | MaxItems: 100 <br />MinItems: 1 <br /> |
+| `syncInterval` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#duration-v1-meta)_ | SyncInterval defines how often to sync with the registry.<br />Defaults to 1h. Minimum recommended interval is 15m to avoid rate limiting.<br />Format: duration string (e.g., "30m", "1h", "2h30m"). | 1h |  |
+| `versions` _string array_ | Versions specifies global semantic version constraints applied to all filters.<br />Individual filters can override this with their own version constraints.<br />Constraints use semver syntax: >=1.0.0, <2.0.0, ~1.2.0, ^1.0.0, etc.<br />Non-semver tags (e.g., "latest", "dev") are silently skipped.<br />Version ranges work on all registries (including ghcr.io, gcr.io) when combined with<br />exact repository names (no wildcards). The controller uses the Tags List API to fetch<br />all tags for the repository and filters them by the semver constraint.<br />Example: registry=ghcr.io, filters=[\{image: "silogen/aim-llama"\}], versions=[">=1.0.0"]<br />will fetch all tags from ghcr.io/silogen/aim-llama and include only those >=1.0.0. |  |  |
+| `maxModels` _integer_ | MaxModels is the maximum number of AIMClusterModel resources to create from this source.<br />Once this limit is reached, no new models will be created, even if more matching images are discovered.<br />Existing models are never deleted.<br />This prevents runaway model creation from overly broad filters. | 100 | Maximum: 10000 <br />Minimum: 1 <br /> |
+
+
+#### AIMClusterModelSourceStatus
+
+
+
+AIMClusterModelSourceStatus defines the observed state of AIMClusterModelSource.
+
+
+
+_Appears in:_
+- [AIMClusterModelSource](#aimclustermodelsource)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `status` _string_ | Status represents the overall state of the model source. |  | Enum: [Pending Starting Progressing Ready Running Degraded NotAvailable Failed] <br /> |
+| `lastSyncTime` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#time-v1-meta)_ | LastSyncTime is the timestamp of the last successful registry sync.<br />Updated after each successful sync operation. |  |  |
+| `discoveredModels` _integer_ | DiscoveredModels is the count of AIMClusterModel resources managed by this source.<br />Includes both existing and newly created models. |  |  |
+| `availableModels` _integer_ | AvailableModels is the total count of images discovered in the registry that match the filters.<br />This may be higher than DiscoveredModels if maxModels limit was reached. |  |  |
+| `modelsLimitReached` _boolean_ | ModelsLimitReached indicates whether the maxModels limit has been reached.<br />When true, no new models will be created even if more matching images are discovered. |  |  |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#condition-v1-meta) array_ | Conditions represent the latest available observations of the source's state.<br />Standard conditions: Ready, Syncing, RegistryReachable. |  |  |
+| `observedGeneration` _integer_ | ObservedGeneration reflects the generation of the most recently observed spec. |  |  |
 
 
 #### AIMClusterRuntimeConfig
@@ -1339,6 +1422,29 @@ _Appears in:_
 | `descriptionFull` _string_ | DescriptionFull is the full description.<br />Extracted from: org.amd.silogen.description.full |  |  |
 | `releaseNotes` _string_ | ReleaseNotes contains release notes for this version.<br />Extracted from: org.amd.silogen.release.notes |  |  |
 | `recommendedDeployments` _[RecommendedDeployment](#recommendeddeployment) array_ | RecommendedDeployments contains recommended deployment configurations.<br />Extracted from: org.amd.silogen.model.recommendedDeployments (parsed from JSON array) |  |  |
+
+
+#### ModelSourceFilter
+
+
+
+ModelSourceFilter defines a pattern for discovering images.
+Supports multiple formats:
+- Repository patterns: "org/repo*" - matches repositories with wildcards
+- Repository with tag: "org/repo:1.0.0" - exact tag match
+- Full URI: "ghcr.io/org/repo:1.0.0" - overrides registry and tag
+- Full URI with wildcard: "ghcr.io/org/repo*" - overrides registry, matches pattern
+
+
+
+_Appears in:_
+- [AIMClusterModelSourceSpec](#aimclustermodelsourcespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `image` _string_ | Image pattern with wildcard and full URI support.<br />Supported formats:<br />- Repository pattern: "amdenterpriseai/aim-*"<br />- Repository with tag: "silogen/aim-llama:1.0.0" (overrides versions field)<br />- Full URI: "ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1" (overrides spec.registry and versions)<br />- Full URI with wildcard: "ghcr.io/silogen/aim-*" (overrides spec.registry)<br />When a full URI is specified (including registry like ghcr.io), only images from that<br />registry will match. When a tag is included, it takes precedence over the versions field.<br />Wildcard: * matches any sequence of characters. |  | MaxLength: 512 <br /> |
+| `exclude` _string array_ | Exclude lists specific repository names to skip (exact match on repository name only, not registry).<br />Useful for excluding base images or experimental versions.<br />Examples:<br />- ["amdenterpriseai/aim-base", "amdenterpriseai/aim-experimental"]<br />- ["silogen/aim-base"] - works with "ghcr.io/silogen/aim-*" (registry is not checked in exclusion)<br />Note: Exclusions match against repository names (e.g., "silogen/aim-base"), not full URIs. |  |  |
+| `versions` _string array_ | Versions specifies semantic version constraints for this filter.<br />If specified, overrides the global Versions field.<br />Only tags that parse as valid semver are considered (including prereleases like 0.8.1-rc1).<br />Ignored if the Image field includes an explicit tag (e.g., "repo:1.0.0").<br />Examples: ">=1.0.0", "<2.0.0", "~1.2.0" (patch updates), "^1.0.0" (minor updates)<br />Prerelease versions (e.g., 0.8.1-rc1) are supported and follow semver rules:<br />- 0.8.1-rc1 matches ">=0.8.0" (prerelease is part of version 0.8.1)<br />- Use ">=0.8.1-rc1" to match only that prerelease or higher<br />- Leave empty to match all tags (including prereleases and non-semver tags) |  |  |
 
 
 #### OCIMetadata

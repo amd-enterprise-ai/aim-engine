@@ -3,6 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/aim.eai.amd.com_aimclustermodels.yaml
+- bases/aim.eai.amd.com_aimclustermodelsources.yaml
 - bases/aim.eai.amd.com_aimclusterruntimeconfigs.yaml
 - bases/aim.eai.amd.com_aimclusterservicetemplates.yaml
 - bases/aim.eai.amd.com_aimmodelcaches.yaml
