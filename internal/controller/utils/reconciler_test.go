@@ -2000,3 +2000,175 @@ func findCondition(conditions []metav1.Condition, condType string) *metav1.Condi
 	}
 	return nil
 }
+
+// ======================================================
+// DEPENDENCY TYPE TESTS (Upstream vs Downstream)
+// ======================================================
+
+func TestPipeline_UpstreamDependency_StatusPending(t *testing.T) {
+	// Test that not-ready upstream dependencies result in Pending status
+	obs := testObservationCustomHealth{
+		health: []ComponentHealth{
+			{
+				Component:      "ServiceTemplate",
+				State:          constants.AIMStatusProgressing,
+				Reason:         "WaitingForDiscovery",
+				Message:        "Discovery underway",
+				DependencyType: DependencyTypeUpstream, // ← Upstream = Pending
+			},
+		},
+	}
+	cm := NewConditionManager([]metav1.Condition{})
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	_, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	// Verify status is Pending (not Progressing)
+	if status.Status != string(constants.AIMStatusPending) {
+		t.Errorf("Status should be Pending for not-ready upstream dependency, got %s", status.Status)
+	}
+
+	// Verify ServiceTemplateReady condition is False
+	templateReady := cm.Get("ServiceTemplateReady")
+	if templateReady == nil {
+		t.Fatal("ServiceTemplateReady condition should be set")
+	}
+	if templateReady.Status != metav1.ConditionFalse {
+		t.Errorf("ServiceTemplateReady should be False, got %v", templateReady.Status)
+	}
+
+	// Verify Ready condition is False
+	ready := cm.Get(ConditionTypeReady)
+	if ready == nil {
+		t.Fatal("Ready condition should be set")
+	}
+	if ready.Status != metav1.ConditionFalse {
+		t.Errorf("Ready should be False, got %v", ready.Status)
+	}
+}
+
+func TestPipeline_DownstreamDependency_StatusProgressing(t *testing.T) {
+	// Test that not-ready downstream dependencies result in Progressing status
+	obs := testObservationCustomHealth{
+		health: []ComponentHealth{
+			{
+				Component:      "ModelCaches",
+				State:          constants.AIMStatusProgressing,
+				Reason:         "CreatingCaches",
+				Message:        "Waiting for model caches to be created",
+				DependencyType: DependencyTypeDownstream, // ← Downstream = Progressing
+			},
+		},
+	}
+	cm := NewConditionManager([]metav1.Condition{})
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	_, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	// Verify status is Progressing (not Pending)
+	if status.Status != string(constants.AIMStatusProgressing) {
+		t.Errorf("Status should be Progressing for not-ready downstream dependency, got %s", status.Status)
+	}
+
+	// Verify ModelCachesReady condition is False
+	cachesReady := cm.Get("ModelCachesReady")
+	if cachesReady == nil {
+		t.Fatal("ModelCachesReady condition should be set")
+	}
+	if cachesReady.Status != metav1.ConditionFalse {
+		t.Errorf("ModelCachesReady should be False, got %v", cachesReady.Status)
+	}
+
+	// Verify Ready condition is False
+	ready := cm.Get(ConditionTypeReady)
+	if ready == nil {
+		t.Fatal("Ready condition should be set")
+	}
+	if ready.Status != metav1.ConditionFalse {
+		t.Errorf("Ready should be False, got %v", ready.Status)
+	}
+}
+
+func TestPipeline_MixedDependencies_UpstreamTakesPrecedence(t *testing.T) {
+	// Test that when both upstream (Pending) and downstream (Progressing) deps are not ready,
+	// the worse status wins (Pending is worse than Progressing)
+	obs := testObservationCustomHealth{
+		health: []ComponentHealth{
+			{
+				Component:      "ServiceTemplate",
+				State:          constants.AIMStatusProgressing,
+				Reason:         "WaitingForDiscovery",
+				Message:        "Discovery underway",
+				DependencyType: DependencyTypeUpstream,
+			},
+			{
+				Component:      "ModelCaches",
+				State:          constants.AIMStatusProgressing,
+				Reason:         "CreatingCaches",
+				Message:        "Creating caches",
+				DependencyType: DependencyTypeDownstream,
+			},
+		},
+	}
+	cm := NewConditionManager([]metav1.Condition{})
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	_, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	// Verify status is Pending (upstream not ready takes precedence)
+	if status.Status != string(constants.AIMStatusPending) {
+		t.Errorf("Status should be Pending when upstream dependency not ready, got %s", status.Status)
+	}
+}
+
+func TestPipeline_UnspecifiedDependencyType_DefaultsToProgressing(t *testing.T) {
+	// Test that unspecified dependency type defaults to Progressing (treated as downstream)
+	obs := testObservationCustomHealth{
+		health: []ComponentHealth{
+			{
+				Component:      "SomeComponent",
+				State:          constants.AIMStatusProgressing,
+				Reason:         "NotReady",
+				Message:        "Component not ready",
+				DependencyType: DependencyTypeUnspecified, // ← Unspecified = Progressing
+			},
+		},
+	}
+	cm := NewConditionManager([]metav1.Condition{})
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	_, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	// Verify status is Progressing (unspecified treated as downstream)
+	if status.Status != string(constants.AIMStatusProgressing) {
+		t.Errorf("Status should be Progressing for unspecified dependency type, got %s", status.Status)
+	}
+}

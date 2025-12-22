@@ -616,14 +616,16 @@ func deriveComponentStatus(condStatus metav1.ConditionStatus, componentName stri
 	case metav1.ConditionTrue:
 		return constants.AIMStatusReady
 	case metav1.ConditionFalse:
-		// Use original state if available, otherwise derive from dependency type
-		if originalState, ok := componentStates[componentName]; ok {
+		// For not-ready components, check if the original state is an error state.
+		// If so, preserve it (Failed/Degraded/NotAvailable are more specific than Pending/Progressing).
+		// Otherwise, derive from dependency type for correct semantics (Upstream→Pending, Downstream→Progressing).
+		if originalState, ok := componentStates[componentName]; ok && isErrorState(originalState) {
 			return originalState
 		}
 		return deriveStatusFromDependencyType(componentDepTypes[componentName])
 	case metav1.ConditionUnknown:
-		// Use original state if available, otherwise derive from dependency type
-		if originalState, ok := componentStates[componentName]; ok {
+		// Unknown status: use original if available and specific, otherwise derive from dependency type
+		if originalState, ok := componentStates[componentName]; ok && isErrorState(originalState) {
 			return originalState
 		}
 		// Fallback: upstream → Pending, downstream/unspecified → Progressing
