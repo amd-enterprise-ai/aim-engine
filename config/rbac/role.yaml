@@ -41,7 +41,13 @@ rules:
   resources:
   - pods/log
   verbs:
+  - create
+  - delete
   - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - aim.eai.amd.com
   resources:
@@ -96,9 +102,9 @@ rules:
   - patch
   - update
 - apiGroups:
-  - batch
+  - aim.eai.amd.com
   resources:
-  - jobs
+  - aimkvcaches
   verbs:
   - create
   - delete
@@ -141,3 +147,29 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - aim.silogen.ai
+  resources:
+  - aimkvcaches/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - aim.silogen.ai
+  resources:
+  - aimkvcaches/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+
