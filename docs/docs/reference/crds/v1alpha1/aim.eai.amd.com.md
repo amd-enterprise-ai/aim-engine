@@ -417,7 +417,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `autoDiscovery` _boolean_ | AutoDiscovery controls whether models run discovery by default.<br />When true, models run discovery jobs to extract metadata and auto-create templates.<br />When false, discovery is skipped. Discovery failures are non-fatal and reported via conditions. | true |  |
+| `autoDiscovery` _boolean_ | AutoDiscovery controls whether models run discovery by default.<br />When true, models run discovery jobs to extract metadata and auto-create templates.<br />When false, discovery is skipped. Discovery failures are non-fatal and reported via conditions. |  |  |
 
 
 #### AIMModelDiscoveryConfig
@@ -433,8 +433,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `enabled` _boolean_ | Enabled controls whether discovery runs for this model.<br />When unset (nil), uses the runtime config's model.autoDiscovery setting.<br />When true, discovery always runs regardless of runtime config.<br />When false, discovery never runs regardless of runtime config. |  |  |
-| `autoCreateTemplates` _boolean_ | AutoCreateTemplates controls whether templates are auto-created from discovery results.<br />When unset, templates are created if discovery succeeds and returns recommended deployments.<br />When false, discovery runs but templates are not created (metadata extraction only).<br />When true, templates are always created from discovery results. |  |  |
+| `extractMetadata` _boolean_ | ExtractMetadata controls whether metadata extraction runs for this model.<br />During metadata extraction, the controller connects to the image registry and<br />extracts the image's labels. | true |  |
+| `createServiceTemplates` _boolean_ | CreateServiceTemplates controls whether (cluster) service templates are auto-created from the image metadata. | true |  |
 
 
 #### AIMModelList
@@ -503,6 +503,7 @@ _Appears in:_
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for authentication during model discovery and metadata extraction.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  |  |
 | `serviceAccountName` _string_ | ServiceAccountName specifies the Kubernetes service account to use for workloads related to this model.<br />This includes metadata extraction jobs and any other model-related operations.<br />If empty, the default service account for the namespace is used. |  |  |
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources defines the default resource requirements for services using this model.<br />Template- or service-level values override these defaults. |  |  |
+| `imageMetadata` _[ImageMetadata](#imagemetadata)_ | ImageMetadata is the metadata that is used to determine which recommended service templates to create,<br />and to drive clients with richer metadata regarding this particular model. For most cases the user does<br />not need to set this field manually, for images that have the supported labels embedded in them<br />the `AIM(Cluster)Model.status.imageMetadata` field is automatically filled from the container image labels.<br />This field is intended to be used when there are network restrictions, or in other similar situations.<br />If this field is set, the remote extraction will not be performed at all. |  |  |
 
 
 #### AIMModelStatus
@@ -1305,6 +1306,7 @@ ImageMetadata contains metadata extracted from or provided for a container image
 
 
 _Appears in:_
+- [AIMModelSpec](#aimmodelspec)
 - [AIMModelStatus](#aimmodelstatus)
 
 | Field | Description | Default | Validation |

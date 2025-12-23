@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: Invalid ImagePullSecrets Reference
+#
+# This test validates error handling when a model references an imagePullSecret
+# that doesn't exist. The controller should surface this as a configuration error.
+#
+# Tested behavior:
+# - Model references an imagePullSecret that doesn't exist
+# - ConfigValid condition is set to False with appropriate reason
+# - Model is not Ready
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: invalid-image-pull-secret
+spec:
+  steps:
+    - name: Create model with non-existent imagePullSecret
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert model is Failed with ConfigValid=False and Ready=False
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-invalid-secret
+              status:
+                status: Failed
+                (conditions[?type == 'ConfigValid']):
+                  - status: "False"
+                    reason: ReferenceNotFound
+                (conditions[?type == 'Ready']):
+                  - status: "False"

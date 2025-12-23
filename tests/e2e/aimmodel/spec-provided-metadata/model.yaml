@@ -1,0 +1,17 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: test-spec-provided-metadata
+spec:
+  # Intentionally invalid image - proves no registry fetch occurs
+  # If the controller tried to fetch, it would fail with network/not-found error
+  image: this-registry-does-not-exist-12345.invalid/fake-model:v1
+  # Metadata provided in spec - controller should use this directly
+  imageMetadata:
+    model:
+      canonicalName: spec-provided-model
+      recommendedDeployments:
+        - gpuModel: MI300X
+          gpuCount: 1
+          metric: throughput
+          precision: fp16

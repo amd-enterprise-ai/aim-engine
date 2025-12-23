@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModel
+metadata:
+  name: test-cluster-model
+spec:
+  # Use real image to extract metadata with recommendedDeployments
+  image: ghcr.io/silogen/aim-dummy:0.1.7
+  discovery:
+    extractMetadata: true
+    createServiceTemplates: true

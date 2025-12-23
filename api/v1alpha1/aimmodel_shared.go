@@ -51,25 +51,12 @@ const (
 	AIMModelReasonSomeTemplatesDegraded                 = "SomeTemplatesDegraded"
 	AIMModelReasonTemplatesProgressing                  = "TemplatesProgressing"
 	AIMModelReasonAllTemplatesReady                     = "AllTemplatesReady"
+	AIMModelReasonSomeTemplatesReady                    = "SomeTemplatesReady"
+	AIMModelReasonNoTemplatesExpected                   = "NoTemplatesExpected"
+	AIMModelReasonAwaitingMetadata                      = "AwaitingMetadata"
+	AIMModelReasonCreatingTemplates                     = "CreatingTemplates"
 	AIMModelReasonMetadataMissingRecommendedDeployments = "MetadataMissingRecommendedDeployments"
 )
-
-// AIMModelDiscoveryConfig controls discovery behavior for a model.
-type AIMModelDiscoveryConfig struct {
-	// Enabled controls whether discovery runs for this model.
-	// When unset (nil), uses the runtime config's model.autoDiscovery setting.
-	// When true, discovery always runs regardless of runtime config.
-	// When false, discovery never runs regardless of runtime config.
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// AutoCreateTemplates controls whether templates are auto-created from discovery results.
-	// When unset, templates are created if discovery succeeds and returns recommended deployments.
-	// When false, discovery runs but templates are not created (metadata extraction only).
-	// When true, templates are always created from discovery results.
-	// +optional
-	AutoCreateTemplates *bool `json:"autoCreateTemplates,omitempty"`
-}
 
 // AIMModelSpec defines the desired state of AIMModel.
 type AIMModelSpec struct {
@@ -129,6 +116,29 @@ type AIMModelSpec struct {
 	// Template- or service-level values override these defaults.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// ImageMetadata is the metadata that is used to determine which recommended service templates to create,
+	// and to drive clients with richer metadata regarding this particular model. For most cases the user does
+	// not need to set this field manually, for images that have the supported labels embedded in them
+	// the `AIM(Cluster)Model.status.imageMetadata` field is automatically filled from the container image labels.
+	// This field is intended to be used when there are network restrictions, or in other similar situations.
+	// If this field is set, the remote extraction will not be performed at all.
+	ImageMetadata *ImageMetadata `json:"imageMetadata,omitempty"`
+}
+
+// AIMModelDiscoveryConfig controls discovery behavior for a model.
+type AIMModelDiscoveryConfig struct {
+	// ExtractMetadata controls whether metadata extraction runs for this model.
+	// During metadata extraction, the controller connects to the image registry and
+	// extracts the image's labels.
+	// +optional
+	// +kubebuilder:default=true
+	ExtractMetadata bool `json:"extractMetadata,omitempty"`
+
+	// CreateServiceTemplates controls whether (cluster) service templates are auto-created from the image metadata.
+	// +optional
+	// +kubebuilder:default=true
+	CreateServiceTemplates bool `json:"createServiceTemplates,omitempty"`
 }
 
 // AIMModelStatus defines the observed state of AIMModel.
@@ -165,4 +175,46 @@ func (s *AIMModelStatus) SetConditions(conditions []metav1.Condition) {
 
 func (s *AIMModelStatus) SetStatus(status string) {
 	s.Status = constants.AIMStatus(status)
+}
+
+// GetEffectiveImageMetadata returns metadata from spec (if provided) or status (if extracted).
+// Spec takes precedence over status since it represents user intent.
+func (s *AIMModelSpec) GetEffectiveImageMetadata(status *AIMModelStatus) *ImageMetadata {
+	if s.ImageMetadata != nil {
+		return s.ImageMetadata
+	}
+	if status != nil {
+		return status.ImageMetadata
+	}
+	return nil
+}
+
+// ShouldCreateTemplates returns whether template creation is enabled for this model.
+// Returns true if discovery.createServiceTemplates is unset or true.
+func (s *AIMModelSpec) ShouldCreateTemplates() bool {
+	if s.Discovery == nil {
+		return true // Default: create templates
+	}
+	return s.Discovery.CreateServiceTemplates
+}
+
+// ExpectsTemplates returns whether this model should have auto-created templates.
+// Returns:
+//   - ptr to true: templates expected (has recommendedDeployments and creation enabled)
+//   - ptr to false: no templates expected (no recommendedDeployments or creation disabled)
+//   - nil: unknown (metadata not yet available)
+func (s *AIMModelSpec) ExpectsTemplates(status *AIMModelStatus) *bool {
+	// Check if template creation is disabled
+	if !s.ShouldCreateTemplates() {
+		result := false
+		return &result
+	}
+
+	metadata := s.GetEffectiveImageMetadata(status)
+	if metadata == nil {
+		return nil // Unknown - still fetching
+	}
+
+	hasDeployments := metadata.Model != nil && len(metadata.Model.RecommendedDeployments) > 0
+	return &hasDeployments
 }

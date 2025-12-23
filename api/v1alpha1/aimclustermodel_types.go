@@ -29,6 +29,9 @@ import (
 const (
 	// ClusterModelImageIndexKey is the field index key for AIMClusterModel.Spec.Image
 	ClusterModelImageIndexKey = ".spec.image"
+
+	// ClusterModelRuntimeConfigIndexKey is the field index key for AIMClusterModel.Spec.Name (runtimeConfigName)
+	ClusterModelRuntimeConfigIndexKey = ".spec.runtimeConfigName"
 )
 
 // AIMClusterModel is a cluster-scoped model catalog entry for AIM container images.
@@ -64,6 +67,10 @@ type AIMClusterModelList struct {
 
 func (img *AIMClusterModel) GetStatus() *AIMModelStatus {
 	return &img.Status
+}
+
+func (img *AIMClusterModel) GetRuntimeConfigRef() RuntimeConfigRef {
+	return img.Spec.RuntimeConfigRef
 }
 
 func init() {

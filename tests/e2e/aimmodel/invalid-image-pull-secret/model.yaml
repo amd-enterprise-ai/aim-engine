@@ -1,0 +1,12 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: test-invalid-secret
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.7
+  # Reference a secret that doesn't exist
+  imagePullSecrets:
+    - name: this-secret-does-not-exist
+  discovery:
+    extractMetadata: true
+    createServiceTemplates: false

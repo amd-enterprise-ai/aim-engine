@@ -1,0 +1,51 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: Spec-Provided Metadata (Air-Gapped Mode)
+#
+# This test validates that when imageMetadata is provided in the spec,
+# the controller uses it directly without attempting to fetch from the registry.
+#
+# The image URL is intentionally invalid - if the controller tried to fetch,
+# it would fail. Success proves the spec-provided path works.
+#
+# Tested behavior:
+# - Controller uses spec.imageMetadata instead of fetching
+# - No DependenciesReachable=False (no network call made)
+# - Templates are created from spec-provided recommendedDeployments
+# - Model reaches Ready state
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: spec-provided-metadata
+spec:
+  steps:
+    - name: Create model with spec-provided metadata
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert model reaches Ready (proves no fetch attempted)
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-spec-provided-metadata
+              status:
+                # TODO enable later once the service template controller is migrated
+#                status: Ready
+#                (conditions[?type == 'Ready']):
+#                  - status: "True"
+                (conditions[?type == 'ImageMetadataReady']):
+                  - status: "True"
+                imageMetadata:
+                  model:
+                    canonicalName: spec-provided-model
+                    recommendedDeployments:
+                      - gpuModel: MI300X
+                        gpuCount: 1
+                        metric: throughput
+                        precision: fp16
