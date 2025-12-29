@@ -1,0 +1,7 @@
+[tools]
+kind = "0.31.0"
+kubectl = "1.32.1"
+helm = "4.0.4"
+helmfile = "1.2.3"
+kubebuilder = "4.10.1"
+"github:kyverno/chainsaw" = "0.2.14"
