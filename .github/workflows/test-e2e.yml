@@ -16,16 +16,31 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install the latest version of kind
+      - name: Install mise
+        uses: jdx/mise-action@v2
+
+      - name: Create Kind cluster
+        run: kind create cluster --config hack/kind/config.yaml
+
+      - name: Install Kind dependencies (NFS provisioner)
+        run: helmfile apply -f hack/kind/helmfile.yaml.gotmpl
+
+      - name: Install core dependencies
+        run: helmfile apply -f hack/dependencies/helmfile.yaml.gotmpl
+
+      - name: Build operator image
         run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
+          make docker-build IMG=aim-engine:test
+          kind load docker-image aim-engine:test --name aim-engine
 
-      - name: Verify kind installation
-        run: kind version
+      - name: Generate Helm chart
+        run: make helm
 
-#      - name: Running Test e2e
-#        run: |
-#          go mod tidy
-#          make test-e2e
+      - name: Install operator via Helm
+        run: helm install aim-engine dist/chart --namespace aim-system --create-namespace --set manager.image.repository=aim-engine --set manager.image.tag=test
+
+      - name: Wait for operator to be ready
+        run: kubectl wait --for=condition=Available --timeout=120s deployment/aim-engine-controller-manager -n aim-system
+
+      - name: Run Chainsaw tests
+        run: chainsaw test tests/e2e/

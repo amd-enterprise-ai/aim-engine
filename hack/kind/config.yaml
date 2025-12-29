@@ -1,0 +1,15 @@
+# Kind cluster configuration for e2e testing
+# Used by both CI and local development via: kind create cluster --config config.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: aim-engine-test-e2e
+nodes:
+  - role: control-plane
+  - role: worker
+    labels:
+      # AMD Instinct MI300X
+      amd.com/gpu.product.id: "0x74a1"
+  - role: worker
+    labels:
+      # AMD Instinct MI350X
+      amd.com/gpu.product.id: "75a0"

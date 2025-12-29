@@ -1,0 +1,24 @@
+---
+# Kind-specific dependencies
+# Provides NFS-based RWX storage class for local testing
+repositories:
+  - name: nfs-ganesha-server-and-external-provisioner
+    url: https://kubernetes-sigs.github.io/nfs-ganesha-server-and-external-provisioner/
+
+releases:
+  - name: nfs-server-provisioner
+    namespace: nfs-system
+    chart: nfs-ganesha-server-and-external-provisioner/nfs-server-provisioner
+    version: 1.8.0
+    createNamespace: true
+    wait: true
+    timeout: 300
+    values:
+      - storageClass:
+          name: nfs
+          defaultClass: false
+          reclaimPolicy: Delete
+        persistence:
+          enabled: true
+          storageClass: standard
+          size: 10Gi
