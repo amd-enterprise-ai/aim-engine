@@ -29,3 +29,7 @@ go.work
 # Kubeconfig might contain secrets
 *.kubeconfig
 .tilt-image-uuid
+
+# Generated distribution assets (install.yaml, helm chart)
+# These are built in CI and published to releases/registries
+dist/
