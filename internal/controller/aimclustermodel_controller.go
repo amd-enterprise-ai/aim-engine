@@ -101,12 +101,13 @@ func (r *AIMClusterModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		aimmodel.ClusterModelFetchResult,
 		aimmodel.ClusterModelObservation,
 	]{
-		Client:       mgr.GetClient(),
-		StatusClient: mgr.GetClient().Status(),
-		Recorder:     r.Recorder,
-		FieldOwner:   aimClusterModelControllerName,
-		Reconciler:   r.reconciler,
-		Scheme:       r.Scheme,
+		Client:         mgr.GetClient(),
+		StatusClient:   mgr.GetClient().Status(),
+		Recorder:       r.Recorder,
+		ControllerName: "aimclustermodel",
+		Reconciler:     r.reconciler,
+		Scheme:         r.Scheme,
+		Clientset:      r.Clientset,
 	}
 
 	// Index AIMClusterServiceTemplate by modelName for efficient lookup

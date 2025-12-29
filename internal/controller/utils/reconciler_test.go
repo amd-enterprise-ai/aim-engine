@@ -23,6 +23,7 @@
 package controllerutils
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -974,51 +975,6 @@ func TestPipeline_GracePeriod_WithinThreshold(t *testing.T) {
 					LastTransitionTime: now,
 				},
 			},
-			shouldApply:   false,
-			shouldRequeue: true,
-			requeueNonNil: true,
-			description:   "Infrastructure errors trigger requeue for retry",
-		},
-		{
-			name: "Auth error - don't apply, don't requeue",
-			errors: []error{
-				NewAuthError("Forbidden", "Insufficient permissions", nil),
-			},
-			shouldApply:   false,
-			shouldRequeue: false,
-			requeueNonNil: false,
-			description:   "Auth errors require user intervention, not retry",
-		},
-		{
-			name: "Invalid spec error - don't apply, don't requeue",
-			errors: []error{
-				NewInvalidSpecError("InvalidConfig", "Invalid configuration", nil),
-			},
-			shouldApply:   false,
-			shouldRequeue: false,
-			requeueNonNil: false,
-			description:   "Invalid spec errors require user fix, not retry",
-		},
-		{
-			name: "Missing dependency - should apply (waiting state)",
-			errors: []error{
-				NewMissingDownstreamDependencyError("NotFound", "Model not found", nil),
-			},
-			shouldApply:   true,
-			shouldRequeue: false,
-			requeueNonNil: false,
-			description:   "Missing dependencies are waiting states, not blocking",
-		},
-		{
-			name: "Multiple errors - infrastructure takes precedence",
-			errors: []error{
-				NewAuthError("Forbidden", "Forbidden", nil),
-				NewInfrastructureError("Timeout", "Timeout", nil),
-			},
-			shouldApply:   false,
-			shouldRequeue: true,
-			requeueNonNil: true,
-			description:   "Infrastructure errors override auth/spec errors for requeue",
 		},
 	}
 

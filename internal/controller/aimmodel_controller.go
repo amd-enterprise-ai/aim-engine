@@ -101,12 +101,13 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		aimmodel.ModelFetchResult,
 		aimmodel.ModelObservation,
 	]{
-		Client:       mgr.GetClient(),
-		StatusClient: mgr.GetClient().Status(),
-		Recorder:     r.Recorder,
-		FieldOwner:   aimModelControllerName,
-		Reconciler:   r.reconciler,
-		Scheme:       r.Scheme,
+		Client:         mgr.GetClient(),
+		StatusClient:   mgr.GetClient().Status(),
+		Recorder:       r.Recorder,
+		ControllerName: "aimmodel",
+		Reconciler:     r.reconciler,
+		Scheme:         r.Scheme,
+		Clientset:      r.Clientset,
 	}
 
 	// Index AIMServiceTemplate by modelName for efficient lookup
