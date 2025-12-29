@@ -32,7 +32,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -111,6 +110,49 @@ func (fetch ClusterModelSourceFetch) GetComponentHealth() []controllerutils.Comp
 	}
 }
 
+// composeFilterHealth aggregates filter results into a single ComponentHealth.
+func composeFilterHealth(results []FilterResult) controllerutils.ComponentHealth {
+	if len(results) == 0 {
+		return controllerutils.ComponentHealth{
+			Component: "Filters",
+			State:     constants.AIMStatusProgressing,
+			Reason:    "NoFilters",
+			Message:   "No filters configured",
+		}
+	}
+
+	var errCount int
+	for _, r := range results {
+		if r.Error != nil {
+			errCount++
+		}
+	}
+
+	total := len(results)
+	if errCount == 0 {
+		return controllerutils.ComponentHealth{
+			Component: "Filters",
+			State:     constants.AIMStatusReady,
+			Reason:    "AllFiltersSucceeded",
+			Message:   fmt.Sprintf("All %d filters succeeded", total),
+		}
+	}
+	if errCount < total {
+		return controllerutils.ComponentHealth{
+			Component: "Filters",
+			State:     constants.AIMStatusDegraded,
+			Reason:    "SomeFiltersFailed",
+			Message:   fmt.Sprintf("%d of %d filters had errors", errCount, total),
+		}
+	}
+	return controllerutils.ComponentHealth{
+		Component: "Filters",
+		State:     constants.AIMStatusFailed,
+		Reason:    "AllFiltersFailed",
+		Message:   fmt.Sprintf("All %d filters failed", total),
+	}
+}
+
 // ============================================================================
 // OBSERVATION
 // ============================================================================
@@ -173,49 +215,6 @@ func (r *ClusterModelSourceReconciler) ComposeState(
 	return obs
 }
 
-// composeFilterHealth aggregates filter results into a single ComponentHealth.
-func composeFilterHealth(results []FilterResult) controllerutils.ComponentHealth {
-	if len(results) == 0 {
-		return controllerutils.ComponentHealth{
-			Component: "Filters",
-			State:     constants.AIMStatusProgressing,
-			Reason:    "NoFilters",
-			Message:   "No filters configured",
-		}
-	}
-
-	var errCount int
-	for _, r := range results {
-		if r.Error != nil {
-			errCount++
-		}
-	}
-
-	total := len(results)
-	if errCount == 0 {
-		return controllerutils.ComponentHealth{
-			Component: "Filters",
-			State:     constants.AIMStatusReady,
-			Reason:    "AllFiltersSucceeded",
-			Message:   fmt.Sprintf("All %d filters succeeded", total),
-		}
-	}
-	if errCount < total {
-		return controllerutils.ComponentHealth{
-			Component: "Filters",
-			State:     constants.AIMStatusDegraded,
-			Reason:    "SomeFiltersFailed",
-			Message:   fmt.Sprintf("%d of %d filters had errors", errCount, total),
-		}
-	}
-	return controllerutils.ComponentHealth{
-		Component: "Filters",
-		State:     constants.AIMStatusFailed,
-		Reason:    "AllFiltersFailed",
-		Message:   fmt.Sprintf("All %d filters failed", total),
-	}
-}
-
 // ============================================================================
 // PLAN
 // ============================================================================
@@ -232,8 +231,6 @@ func (r *ClusterModelSourceReconciler) PlanResources(
 	result := controllerutils.PlanResult{}
 	for _, img := range obs.newImages {
 		model := buildClusterModel(source, img)
-		_ = controllerutil.SetOwnerReference(source, model, r.Scheme,
-			controllerutil.WithBlockOwnerDeletion(false))
 		result.Apply(model)
 	}
 

@@ -33,8 +33,54 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 )
 
-// Test constants
-const testImageURI = "ghcr.io/org/model:1.0.0"
+// parseImageURI is a test helper that converts image URI strings to RegistryImage.
+// This is used to maintain backward compatibility with existing test cases.
+func parseImageURI(uri string) RegistryImage {
+	var registry, repository, tag string
+
+	// Parse registry
+	firstSlash := strings.Index(uri, "/")
+	if firstSlash > 0 {
+		firstPart := uri[:firstSlash]
+		if strings.Contains(firstPart, ".") || strings.Contains(firstPart, ":") {
+			registry = firstPart
+			uri = uri[firstSlash+1:]
+		} else {
+			registry = "docker.io"
+		}
+	} else {
+		registry = "docker.io"
+	}
+
+	// Parse tag/digest
+	if idx := strings.Index(uri, "@"); idx != -1 {
+		// Digest reference
+		repository = uri[:idx]
+		digest := uri[idx+1:]
+		if colonIdx := strings.Index(digest, ":"); colonIdx != -1 {
+			start := colonIdx + 1
+			end := start + 6
+			if end > len(digest) {
+				end = len(digest)
+			}
+			tag = digest[start:end]
+		}
+	} else if idx := strings.LastIndex(uri, ":"); idx != -1 {
+		// Tag reference
+		repository = uri[:idx]
+		tag = uri[idx+1:]
+	} else {
+		// No tag
+		repository = uri
+		tag = "latest"
+	}
+
+	return RegistryImage{
+		Registry:   registry,
+		Repository: repository,
+		Tag:        tag,
+	}
+}
 
 func TestGenerateModelName(t *testing.T) {
 	tests := []struct {
@@ -46,50 +92,51 @@ func TestGenerateModelName(t *testing.T) {
 		{
 			name:       "basic image with tag",
 			imageURI:   "ghcr.io/silogen/aim-llama:1.0.0",
-			wantPrefix: "aim-llama-",
+			wantPrefix: "silogen-aim-llama-",
 			wantMaxLen: 63,
 		},
 		{
 			name:       "docker hub image",
 			imageURI:   "docker.io/library/ubuntu:22.04",
-			wantPrefix: "ubuntu-",
+			wantPrefix: "library-ubuntu-",
 			wantMaxLen: 63,
 		},
 		{
 			name:       "long image name is truncated",
 			imageURI:   "ghcr.io/silogen/aim-mistralai-mistral-small-3.2-24b-instruct-2506:0.8.5",
-			wantPrefix: "aim-mistralai-mistral-small-3-2-24b-instruct-",
+			wantPrefix: "silogen-aim-mistralai-mistral-small-3-2-24b-instru-",
 			wantMaxLen: 63,
 		},
 		{
 			name:       "special characters sanitized",
 			imageURI:   "ghcr.io/org/My_Model.Name:v1.0.0",
-			wantPrefix: "my-model-name-",
+			wantPrefix: "org-my-model-name-",
 			wantMaxLen: 63,
 		},
 		{
 			name:       "latest tag included",
 			imageURI:   "docker.io/org/model:latest",
-			wantPrefix: "model-latest-",
+			wantPrefix: "org-model-latest-",
 			wantMaxLen: 63,
 		},
 		{
 			name:       "no tag defaults to latest",
 			imageURI:   "docker.io/org/model",
-			wantPrefix: "model-latest-",
+			wantPrefix: "org-model-latest-",
 			wantMaxLen: 63,
 		},
 		{
 			name:       "digest reference uses short digest",
 			imageURI:   "ghcr.io/org/model@sha256:abc123def456789",
-			wantPrefix: "model-abc123-",
+			wantPrefix: "org-model-abc123-",
 			wantMaxLen: 63,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := generateModelName(tt.imageURI)
+			img := parseImageURI(tt.imageURI)
+			got := generateModelName(img)
 
 			// Check max length
 			if len(got) > tt.wantMaxLen {
@@ -123,10 +170,16 @@ func TestGenerateModelName(t *testing.T) {
 }
 
 func TestGenerateModelName_Deterministic(t *testing.T) {
+	img := RegistryImage{
+		Registry:   "ghcr.io",
+		Repository: "org/model",
+		Tag:        "1.0.0",
+	}
+
 	// Generate name multiple times
-	name1 := generateModelName(testImageURI)
-	name2 := generateModelName(testImageURI)
-	name3 := generateModelName(testImageURI)
+	name1 := generateModelName(img)
+	name2 := generateModelName(img)
+	name3 := generateModelName(img)
 
 	// All should be identical
 	if name1 != name2 || name2 != name3 {
@@ -135,12 +188,25 @@ func TestGenerateModelName_Deterministic(t *testing.T) {
 }
 
 func TestGenerateModelName_UniqueForDifferentImages(t *testing.T) {
-	uri2 := "ghcr.io/org/model:2.0.0"
-	uri3 := "docker.io/org/model:1.0.0"
+	img1 := RegistryImage{
+		Registry:   "ghcr.io",
+		Repository: "org/model",
+		Tag:        "1.0.0",
+	}
+	img2 := RegistryImage{
+		Registry:   "ghcr.io",
+		Repository: "org/model",
+		Tag:        "2.0.0",
+	}
+	img3 := RegistryImage{
+		Registry:   "docker.io",
+		Repository: "org/model",
+		Tag:        "1.0.0",
+	}
 
-	name1 := generateModelName(testImageURI)
-	name2 := generateModelName(uri2)
-	name3 := generateModelName(uri3)
+	name1 := generateModelName(img1)
+	name2 := generateModelName(img2)
+	name3 := generateModelName(img3)
 
 	// All should be different (hash ensures uniqueness)
 	if name1 == name2 {
@@ -155,17 +221,22 @@ func TestGenerateModelName_UniqueForDifferentImages(t *testing.T) {
 }
 
 func TestGenerateModelName_HashSuffix(t *testing.T) {
-	name := generateModelName(testImageURI)
+	img := RegistryImage{
+		Registry:   "ghcr.io",
+		Repository: "org/model",
+		Tag:        "1.0.0",
+	}
+	name := generateModelName(img)
 
-	// Should end with 8-character hex hash
+	// Should end with 6-character hex hash
 	parts := strings.Split(name, "-")
 	if len(parts) < 2 {
 		t.Fatalf("expected name to have at least 2 parts separated by dash: %q", name)
 	}
 
 	hash := parts[len(parts)-1]
-	if len(hash) != 8 {
-		t.Errorf("hash suffix should be 8 characters, got %d: %q", len(hash), hash)
+	if len(hash) != 6 {
+		t.Errorf("hash suffix should be 6 characters, got %d: %q", len(hash), hash)
 	}
 
 	// Should be valid hex
@@ -177,79 +248,12 @@ func TestGenerateModelName_HashSuffix(t *testing.T) {
 	}
 }
 
-func TestSanitizeNameComponent(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{
-			name:  "lowercase conversion",
-			input: "MySource",
-			want:  "mysource",
-		},
-		{
-			name:  "underscore to dash",
-			input: "my_source",
-			want:  "my-source",
-		},
-		{
-			name:  "dot to dash",
-			input: "my.source",
-			want:  "my-source",
-		},
-		{
-			name:  "multiple special chars",
-			input: "my_source.name__test",
-			want:  "my-source-name-test",
-		},
-		{
-			name:  "trim leading dashes",
-			input: "--leading",
-			want:  "leading",
-		},
-		{
-			name:  "trim trailing dashes",
-			input: "trailing--",
-			want:  "trailing",
-		},
-		{
-			name:  "collapse multiple dashes",
-			input: "multi---dash",
-			want:  "multi-dash",
-		},
-		{
-			name:  "already valid",
-			input: "valid-name-123",
-			want:  "valid-name-123",
-		},
-		{
-			name:  "empty string",
-			input: "",
-			want:  "",
-		},
-		{
-			name:  "only special chars",
-			input: "___",
-			want:  "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := sanitizeNameComponent(tt.input)
-			if got != tt.want {
-				t.Errorf("sanitizeNameComponent(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestBuildClusterModel(t *testing.T) {
 	source := &aimv1alpha1.AIMClusterModelSource{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: testSourceName,
 		},
+		Spec: aimv1alpha1.AIMClusterModelSourceSpec{},
 	}
 
 	img := RegistryImage{
@@ -280,6 +284,8 @@ func TestBuildClusterModel(t *testing.T) {
 	if model.Spec.Image != expectedImage {
 		t.Errorf("model image = %q, want %q", model.Spec.Image, expectedImage)
 	}
+
+	t.Logf("Generated model name: %s", model.Name)
 }
 
 func TestBuildClusterModel_DockerHub(t *testing.T) {
