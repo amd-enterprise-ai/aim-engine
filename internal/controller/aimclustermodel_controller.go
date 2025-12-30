@@ -44,8 +44,7 @@ import (
 )
 
 const (
-	aimClusterModelName           = "aim-cluster-model"
-	aimClusterModelControllerName = aimClusterModelName + "-controller"
+	clusterModelName = "cluster-model"
 )
 
 // AIMClusterModelReconciler reconciles an AIMClusterModel object
@@ -89,7 +88,6 @@ func (r *AIMClusterModelReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 func (r *AIMClusterModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
-	r.Recorder = mgr.GetEventRecorderFor(aimClusterModelControllerName)
 
 	r.reconciler = &aimmodel.ClusterModelReconciler{
 		Clientset: r.Clientset,
@@ -104,11 +102,13 @@ func (r *AIMClusterModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Client:         mgr.GetClient(),
 		StatusClient:   mgr.GetClient().Status(),
 		Recorder:       r.Recorder,
-		ControllerName: "aimclustermodel",
+		ControllerName: clusterModelName,
 		Reconciler:     r.reconciler,
 		Scheme:         r.Scheme,
 		Clientset:      r.Clientset,
 	}
+	r.Recorder = mgr.GetEventRecorderFor(r.pipeline.GetFullName())
+	r.pipeline.Recorder = r.Recorder
 
 	// Index AIMClusterServiceTemplate by modelName for efficient lookup
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMClusterServiceTemplate{}, aimv1alpha1.ServiceTemplateModelNameIndexKey, func(obj client.Object) []string {
@@ -154,7 +154,7 @@ func (r *AIMClusterModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&aimv1alpha1.AIMClusterRuntimeConfig{},
 			handler.EnqueueRequestsFromMapFunc(r.findClusterModelsForClusterRuntimeConfig),
 		).
-		Named(aimClusterModelName).
+		Named(clusterModelName).
 		Complete(r)
 }
 
