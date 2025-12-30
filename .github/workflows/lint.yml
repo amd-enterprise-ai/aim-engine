@@ -11,12 +11,8 @@ jobs:
       - name: Clone the code
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+      - name: Setup mise
+        uses: jdx/mise-action@v2
 
       - name: Run linter
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.5.0
+        run: golangci-lint run

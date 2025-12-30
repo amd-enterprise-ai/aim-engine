@@ -11,11 +11,8 @@ jobs:
       - name: Clone the code
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
+      - name: Setup mise
+        uses: jdx/mise-action@v2
 
       - name: Cache Go build
         uses: actions/cache@v4
@@ -48,19 +45,16 @@ jobs:
       - name: Clone the code
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+      - name: Setup mise
+        uses: jdx/mise-action@v2
 
-      - name: Cache Go tools
+      - name: Cache Go build
         uses: actions/cache@v4
         with:
-          path: bin
-          key: go-tools-${{ hashFiles('Makefile', 'mise.toml') }}
-
-      - name: Install mise
-        uses: jdx/mise-action@v2
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
+          restore-keys: |
+            go-build-${{ runner.os }}-
 
       - name: Create Kind cluster
         run: kind create cluster --config hack/kind/config.yaml
