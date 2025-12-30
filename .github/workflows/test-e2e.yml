@@ -1,31 +1,93 @@
-name: E2E Tests
+name: Tests
 
 on:
   pull_request:
 
 jobs:
-  test-e2e:
-    name: test-e2e
+  test-unit:
+    name: test-unit
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Cache Go build
+        uses: actions/cache@v4
         with:
-          go-version-file: go.mod
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
+          restore-keys: |
+            go-build-${{ runner.os }}-
 
-      - name: Install the latest version of kind
+      # TODO: Consider adding -race flag for race detection (adds 2-10x build time)
+      - name: Run tests
+        run: go test ./...
+
+  test-e2e:
+    name: test-e2e
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free up disk space
         run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
+          echo "Before cleanup:"
+          df -h /
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af
+          echo "After cleanup:"
+          df -h /
 
-      - name: Verify kind installation
-        run: kind version
+      - name: Clone the code
+        uses: actions/checkout@v4
 
-#      - name: Running Test e2e
-#        run: |
-#          go mod tidy
-#          make test-e2e
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Cache Go build
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
+          restore-keys: |
+            go-build-${{ runner.os }}-
+
+      - name: Create Kind cluster
+        run: kind create cluster --config hack/kind/config.yaml
+
+      - name: Install Kind dependencies (NFS provisioner)
+        run: helmfile sync -f hack/kind/helmfile.yaml.gotmpl
+
+      - name: Install core dependencies
+        run: helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build operator image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: aim-engine:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Load image into Kind
+        run: kind load docker-image aim-engine:test --name aim-engine
+
+      - name: Generate Helm chart
+        run: make helm
+
+      - name: Install operator via Helm
+        run: helm install aim-engine dist/chart --namespace aim-system --create-namespace --set manager.image.repository=aim-engine --set manager.image.tag=test
+
+      - name: Wait for operator to be ready
+        run: kubectl wait --for=condition=Available --timeout=120s deployment/aim-engine-controller-manager -n aim-system
+
+      - name: Run Chainsaw tests
+        run: chainsaw test tests/e2e/
