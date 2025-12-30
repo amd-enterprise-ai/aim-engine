@@ -10,11 +10,15 @@ jobs:
     steps:
       - name: Free up disk space
         run: |
+          echo "Before cleanup:"
+          df -h /
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune -af
+          echo "After cleanup:"
+          df -h /
 
       - name: Clone the code
         uses: actions/checkout@v4
@@ -23,6 +27,12 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Cache Go tools
+        uses: actions/cache@v4
+        with:
+          path: bin
+          key: go-tools-${{ hashFiles('Makefile', 'mise.toml') }}
 
       - name: Install mise
         uses: jdx/mise-action@v2
