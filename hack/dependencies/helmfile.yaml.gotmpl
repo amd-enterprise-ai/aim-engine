@@ -62,12 +62,27 @@ releases:
     chart: oci://ghcr.io/kserve/charts/kserve
     version: v0.16.0
     createNamespace: false
-    wait: false
+    wait: true
+    waitForJobs: true
     disableValidation: true
     timeout: 600
     needs:
       - kserve-system/kserve-crd
       - cert-manager/cert-manager
+    hooks:
+      # The kserve chart has a race condition: it installs both the ValidatingWebhookConfiguration
+      # and ClusterServingRuntime resources. During install, Helm applies the webhook config before
+      # the webhook pod is ready, causing ClusterServingRuntime creation to fail with "connection
+      # refused". Deleting the webhook before install allows resources to be created; the kserve
+      # controller will recreate the webhook once it starts.
+      - events: ["presync"]
+        showlogs: true
+        command: kubectl
+        args:
+          - delete
+          - validatingwebhookconfiguration
+          - inferenceservice.serving.kserve.io
+          - --ignore-not-found
 #    values:
 #      - kserve:
 #          controller:

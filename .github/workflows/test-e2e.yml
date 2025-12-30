@@ -26,12 +26,7 @@ jobs:
         run: helmfile sync -f hack/kind/helmfile.yaml.gotmpl
 
       - name: Install core dependencies
-        # KServe helm chart has a race condition: the ValidatingWebhookConfiguration
-        # is applied before the webhook pod is ready, causing ClusterServingRuntime
-        # creation to fail with "connection refused". Retry handles this since the
-        # webhook pod will be ready on second attempt.
-        # See: https://github.com/kserve/kserve/issues/3154
-        run: helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl || sleep 10 && helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
+        run: helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
 
       - name: Build operator image
         run: |
