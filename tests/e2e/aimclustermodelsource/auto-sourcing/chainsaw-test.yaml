@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMClusterModelSource Test: Auto-Sourcing Cluster Models
+#
+# This test validates that AIMClusterModelSource automatically discovers
+# and creates AIMClusterModel resources from a container registry.
+#
+# Tested behavior:
+# - Models are created based on filter patterns
+# - Source reaches Ready status
+# - Models have correct labels (model-source, origin)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: auto-sourcing-cluster-models
+spec:
+  description: Test AIMClusterModelSource creates cluster models from registry
+  steps:
+    - name: Create AIMClusterModelSource
+      try:
+        - apply:
+            file: cluster-model-source.yaml
+
+    - name: Wait for source to become Ready
+      try:
+        - assert:
+            timeout: 2m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModelSource
+              metadata:
+                name: test-auto-sourcing
+              status:
+                status: Ready
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: Verify models were created with correct labels
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/model-source: test-auto-sourcing
+                  aim.eai.amd.com/origin: auto-generated

@@ -1,0 +1,56 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMClusterModelSource Test: Wildcard Discovery with MaxModels
+#
+# This test validates wildcard discovery from DockerHub with maxModels limits.
+#
+# Tested behavior:
+# - Wildcard patterns match multiple repositories
+# - maxModels limit is respected
+# - modelsLimitReached is set correctly when limit is hit
+# - Source reaches Ready status
+# - MaxModelsLimitReached condition is set
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: wildcard-model-discovery
+spec:
+  description: Test AIMClusterModelSource wildcard discovery with maxModels limits
+  steps:
+    - name: Create DockerHub AIMClusterModelSource with maxModels limit
+      try:
+        - apply:
+            file: cluster-model-source-dockerhub.yaml
+
+    - name: Wait for source to be Ready with maxModels limit reached
+      try:
+        - assert:
+            timeout: 2m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModelSource
+              metadata:
+                name: dockerhub-wildcard
+              status:
+                status: Ready
+                discoveredModels: 5
+                modelsLimitReached: true
+                # Use JMESPath to assert specific conditions within the array
+                (conditions[?type == 'MaxModelsLimitReached']):
+                  - status: "True"
+                    reason: LimitReached
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: Verify models were created with correct labels
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/model-source: dockerhub-wildcard
+                  aim.eai.amd.com/origin: auto-generated

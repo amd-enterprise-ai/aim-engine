@@ -1,0 +1,14 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModelSource
+metadata:
+  name: test-auto-sourcing
+spec:
+  # Use DockerHub (default registry) for public images
+  maxModels: 5
+  filters:
+    - image: amdenterpriseai/aim-*
+      exclude:
+        - amdenterpriseai/aim-base
+  versions:
+    - "0.8.4"
+
