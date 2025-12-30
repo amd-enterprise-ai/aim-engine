@@ -99,7 +99,7 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	opts := zap.Options{
-		Development: true,
+		Development: false,
 		// Disable stack traces for errors - they're noisy for expected infrastructure errors.
 		// Stack traces will still appear for panics (DPanic level and above).
 		StacktraceLevel: zapcore.DPanicLevel,
@@ -200,7 +200,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create Kubernetes clientset for controllers that need secret access
+	// Create Kubernetes clientset for controllers that need direct API access (e.g., registry operations)
 	clientset, err := kubernetes.NewForConfig(mgr.GetConfig())
 	if err != nil {
 		setupLog.Error(err, "unable to create Kubernetes clientset")
@@ -223,6 +223,17 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "AIMModel")
 		os.Exit(1)
 	}
+
+	// Setup AIMClusterModelSource controller
+	if err = (&controller.AIMClusterModelSourceReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Clientset: clientset,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterModelSource")
+		os.Exit(1)
+	}
+
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

@@ -29,11 +29,11 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := defaultConfig()
 
-	if cfg.eventMode != EventNone {
-		t.Errorf("expected eventMode=%v, got %v", EventNone, cfg.eventMode)
+	if cfg.eventMode != EventOnTransition {
+		t.Errorf("expected eventMode=%v, got %v", EventOnTransition, cfg.eventMode)
 	}
-	if cfg.logMode != LogNone {
-		t.Errorf("expected logMode=%v, got %v", LogNone, cfg.logMode)
+	if cfg.logMode != LogOnTransition {
+		t.Errorf("expected logMode=%v, got %v", LogOnTransition, cfg.logMode)
 	}
 }
 
@@ -172,8 +172,10 @@ func TestRecurringHelpers(t *testing.T) {
 			name: "WithRecurringErrorLog",
 			opt:  WithRecurringErrorLog(),
 			expected: ObservabilityConfig{
-				logMode:  LogAlways,
-				logLevel: 0,
+				eventMode:  EventOnTransition, // default
+				eventLevel: LevelNormal,       // default
+				logMode:    LogAlways,
+				logLevel:   0,
 			},
 		},
 		{
@@ -182,6 +184,8 @@ func TestRecurringHelpers(t *testing.T) {
 			expected: ObservabilityConfig{
 				eventMode:  EventAlways,
 				eventLevel: LevelWarning,
+				logMode:    LogOnTransition, // default
+				logLevel:   0,               // default
 			},
 		},
 	}
@@ -218,12 +222,12 @@ func TestWithRecurring(t *testing.T) {
 			name:          "with event on transition",
 			baseOpts:      []ObservabilityOption{WithWarningEvent(), WithRecurring()},
 			expectedEvent: EventAlways,
-			expectedLog:   LogNone,
+			expectedLog:   LogAlways, // default OnTransition gets upgraded too
 		},
 		{
 			name:          "with log on transition",
 			baseOpts:      []ObservabilityOption{WithInfoLog(), WithRecurring()},
-			expectedEvent: EventNone,
+			expectedEvent: EventAlways, // default OnTransition gets upgraded too
 			expectedLog:   LogAlways,
 		},
 		{
@@ -233,10 +237,10 @@ func TestWithRecurring(t *testing.T) {
 			expectedLog:   LogAlways,
 		},
 		{
-			name:          "recurring on nothing does nothing",
+			name:          "recurring upgrades defaults to always",
 			baseOpts:      []ObservabilityOption{WithRecurring()},
-			expectedEvent: EventNone,
-			expectedLog:   LogNone,
+			expectedEvent: EventAlways,
+			expectedLog:   LogAlways,
 		},
 	}
 
@@ -323,7 +327,8 @@ func TestEventLevelToOption(t *testing.T) {
 		{
 			name:          "LevelNone",
 			level:         LevelNone,
-			expectedEvent: EventNone,
+			expectedEvent: EventOnTransition, // no-op, keeps default
+			expectedLevel: LevelNormal,       // default
 		},
 		{
 			name:          "LevelNormal",
@@ -347,7 +352,7 @@ func TestEventLevelToOption(t *testing.T) {
 			if cfg.eventMode != tt.expectedEvent {
 				t.Errorf("expected eventMode=%v, got %v", tt.expectedEvent, cfg.eventMode)
 			}
-			if tt.expectedEvent != EventNone && cfg.eventLevel != tt.expectedLevel {
+			if cfg.eventLevel != tt.expectedLevel {
 				t.Errorf("expected eventLevel=%v, got %v", tt.expectedLevel, cfg.eventLevel)
 			}
 		})

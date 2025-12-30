@@ -1,0 +1,20 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModelSource
+metadata:
+  name: ghcr-models
+spec:
+  registry: ghcr.io
+  syncInterval: 1h
+  maxModels: 10
+  
+  # Reference to pull secret (must exist in operator namespace)
+  imagePullSecrets:
+    - name: ghcr-regcred
+  
+  # Global version constraint
+  versions:
+    - ">=0.8.5"
+  
+  filters:
+    # Exact repository - will fetch all tags and filter by version
+    - image: "silogen/aim-*"

@@ -1,0 +1,14 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModelSource
+metadata:
+  name: test-ghcr-auth-failure
+spec:
+  registry: ghcr.io
+  maxModels: 10
+  filters:
+    # Private repository that requires authentication
+    - image: amd-enterprise-ai/aim-private-*
+  versions:
+    - ">=0.8.0"
+    - "<=0.9.0-rc1"
+

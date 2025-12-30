@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMClusterModelSource Test: Auth Failure
+#
+# This test validates that AIMClusterModelSource fails gracefully when
+# credentials are missing or invalid for a private registry.
+#
+# Tested behavior:
+# - Source reaches Failed status when authentication fails
+# - Ready condition is False
+# - No models are created when registry access fails
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: auth-failure-ghcr
+spec:
+  description: Test AIMClusterModelSource fails gracefully with invalid credentials
+  steps:
+    - name: Create AIMClusterModelSource with missing credentials
+      try:
+        - apply:
+            file: cluster-model-source-ghcr.yaml
+
+    - name: Wait for source to reach Failed status
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModelSource
+              metadata:
+                name: test-ghcr-auth-failure
+              status:
+                status: Failed
+                (conditions[?type == 'Ready']):
+                  - status: "False"
+
+    - name: Verify no models were created
+      try:
+        # Use error assertion - expect that no matching resource exists
+        - error:
+            timeout: 10s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/model-source: test-ghcr-auth-failure

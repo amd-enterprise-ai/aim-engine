@@ -499,11 +499,11 @@ func TestConditionManager_ConfigFor_NotFound(t *testing.T) {
 	cfg := cm.ConfigFor("NonExistent")
 
 	// Should return default config
-	if cfg.eventMode != EventNone {
-		t.Errorf("expected default eventMode None, got %v", cfg.eventMode)
+	if cfg.eventMode != EventOnTransition {
+		t.Errorf("expected default eventMode OnTransition, got %v", cfg.eventMode)
 	}
-	if cfg.logMode != LogNone {
-		t.Errorf("expected default logMode None, got %v", cfg.logMode)
+	if cfg.logMode != LogOnTransition {
+		t.Errorf("expected default logMode OnTransition, got %v", cfg.logMode)
 	}
 }
 
