@@ -374,20 +374,12 @@ func TestPlanResources_CreatesNewModels(t *testing.T) {
 		t.Fatalf("expected 2 models to apply, got %d", len(toApply))
 	}
 
-	// Check models have owner reference
+	// Check models have correct labels (owner references are set during apply phase, not plan)
 	for i, obj := range toApply {
 		model, ok := obj.(*aimv1alpha1.AIMClusterModel)
 		if !ok {
 			t.Errorf("apply[%d] is not an AIMClusterModel", i)
 			continue
-		}
-
-		// Check owner reference
-		if len(model.OwnerReferences) != 1 {
-			t.Errorf("model %s should have 1 owner reference, got %d", model.Name, len(model.OwnerReferences))
-		}
-		if model.OwnerReferences[0].Name != testSourceName {
-			t.Errorf("owner reference name = %q, want 'test-source'", model.OwnerReferences[0].Name)
 		}
 
 		// Check label
