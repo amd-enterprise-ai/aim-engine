@@ -41,10 +41,7 @@ import (
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
-const (
-	aimClusterModelSourceName           = "aim-cluster-model-source"
-	aimClusterModelSourceControllerName = aimClusterModelSourceName + "-controller"
-)
+const clusterModelSourceName = "cluster-model-source"
 
 // AIMClusterModelSourceReconciler reconciles an AIMClusterModelSource object.
 type AIMClusterModelSourceReconciler struct {
@@ -98,8 +95,6 @@ func (r *AIMClusterModelSourceReconciler) Reconcile(ctx context.Context, req ctr
 }
 
 func (r *AIMClusterModelSourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.Recorder = mgr.GetEventRecorderFor(aimClusterModelSourceControllerName)
-
 	r.reconciler = &aimclustermodelsource.ClusterModelSourceReconciler{
 		Clientset:         r.Clientset,
 		Scheme:            r.Scheme,
@@ -113,15 +108,16 @@ func (r *AIMClusterModelSourceReconciler) SetupWithManager(mgr ctrl.Manager) err
 	]{
 		Client:         mgr.GetClient(),
 		StatusClient:   mgr.GetClient().Status(),
-		Recorder:       r.Recorder,
 		Reconciler:     r.reconciler,
 		Scheme:         r.Scheme,
-		ControllerName: aimClusterModelSourceName,
+		ControllerName: clusterModelSourceName,
 	}
+	r.Recorder = mgr.GetEventRecorderFor(r.pipeline.GetFullName())
+	r.pipeline.Recorder = r.Recorder
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMClusterModelSource{}).
 		Owns(&aimv1alpha1.AIMClusterModel{}).
-		Named(aimClusterModelSourceName).
+		Named(clusterModelSourceName).
 		Complete(r)
 }
