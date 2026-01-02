@@ -134,20 +134,6 @@ func (r *AIMTemplateCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
-	// Set up field index for AIMModelCache.Spec.SourceURI
-	// This allows efficient queries for model caches by source URI
-	if err := mgr.GetFieldIndexer().IndexField(
-		context.Background(),
-		&aimv1alpha1.AIMModelCache{},
-		aimv1alpha1.ModelCacheSourceURIIndexKey,
-		func(obj client.Object) []string {
-			mc := obj.(*aimv1alpha1.AIMModelCache)
-			return []string{mc.Spec.SourceURI}
-		},
-	); err != nil {
-		return err
-	}
-
 	r.reconciler = &aimtemplatecache.TemplateCacheReconciler{
 		Clientset: r.Clientset,
 		Scheme:    r.Scheme,
@@ -220,11 +206,6 @@ func (r *AIMTemplateCacheReconciler) findTemplateCachesForServiceTemplate(ctx co
 	template := obj.(*aimv1alpha1.AIMServiceTemplate)
 	logger := log.FromContext(ctx)
 
-	logger.Info("Finding template caches for service template",
-		"templateName", template.Name,
-		"namespace", template.Namespace,
-		"searchingForScope", string(aimv1alpha1.AIMResolutionScopeNamespace))
-
 	// Query for template caches using field indexes for both name and scope
 	var templateCaches aimv1alpha1.AIMTemplateCacheList
 	if err := r.List(ctx, &templateCaches,
@@ -237,23 +218,6 @@ func (r *AIMTemplateCacheReconciler) findTemplateCachesForServiceTemplate(ctx co
 		logger.Error(err, "Failed to list template caches for service template",
 			"templateName", template.Name, "namespace", template.Namespace)
 		return nil
-	}
-
-	logger.Info("Found template caches", "count", len(templateCaches.Items))
-
-	// Also list all template caches to see what's there
-	var allCaches aimv1alpha1.AIMTemplateCacheList
-	if err := r.List(ctx, &allCaches, client.InNamespace(template.Namespace)); err == nil {
-		logger.Info("All template caches in namespace", "total", len(allCaches.Items))
-		for _, tc := range allCaches.Items {
-			logger.Info("Template cache in namespace",
-				"name", tc.Name,
-				"templateName", tc.Spec.TemplateName,
-				"templateScope", tc.Spec.TemplateScope,
-				"templateScopeString", string(tc.Spec.TemplateScope),
-				"generation", tc.Generation,
-				"resourceVersion", tc.ResourceVersion)
-		}
 	}
 
 	// Create reconcile requests for each template cache

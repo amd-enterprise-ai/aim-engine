@@ -130,6 +130,7 @@ func (r *TemplateCacheReconciler) FetchRemoteState(
 	return result
 }
 
+// GetComponentHealth returns the health of all dependencies for status computation.
 func (result TemplateCacheFetchResult) GetComponentHealth() []controllerutils.ComponentHealth {
 	// Runtime config is an upstream dependency
 	health := []controllerutils.ComponentHealth{
@@ -150,8 +151,14 @@ func (result TemplateCacheFetchResult) GetComponentHealth() []controllerutils.Co
 		}))
 	}
 
-	// Model caches are downstream dependencies - this controller creates them
-	// Handle model caches fetch error
+	// NOTE: We only report fetch errors here. The actual ModelCachesReady condition
+	// is set in DecorateStatus because determining cache health requires:
+	// 1. Matching caches to template ModelSources by SourceURI and StorageClass
+	// 2. Finding the "best" cache for each model source
+	// 3. Aggregating status across matched caches
+	//
+	// This matching logic is computed in ComposeState, which runs AFTER GetComponentHealth.
+	// Therefore, DecorateStatus (which runs after ComposeState) handles the success case.
 	if !result.modelCaches.OK() {
 		health = append(health, result.modelCaches.ToDownstreamComponentHealth(modelCachesComponentName, func(list *aimv1alpha1.AIMModelCacheList) controllerutils.ComponentHealth {
 			// This should not get called, as there was an error
@@ -274,6 +281,10 @@ func (r *TemplateCacheReconciler) PlanResources(
 
 // DecorateStatus implements StatusDecorator to populate status fields and set domain-specific conditions.
 // The framework will set the overall Ready condition after this runs, based on all conditions.
+//
+// NOTE: This method sets the ModelCachesReady condition (rather than GetComponentHealth) because
+// cache health depends on matching logic computed in ComposeState - specifically which caches
+// match the template's ModelSources. See GetComponentHealth for more context.
 func (r *TemplateCacheReconciler) DecorateStatus(
 	status *aimv1alpha1.AIMTemplateCacheStatus,
 	cm *controllerutils.ConditionManager,
@@ -322,7 +333,7 @@ func (r *TemplateCacheReconciler) DecorateStatus(
 		}
 	} else {
 		// Shouldn't reach this, but just in case
-		cm.MarkFalse(modelCachesReadyConditionType, "NoCaches", "No model caches to track")
+		cm.MarkFalse(modelCachesReadyConditionType, "NoCaches", "No model caches to track", controllerutils.AsError())
 	}
 
 	// Populate the ModelCaches status field with details about resolved caches
