@@ -10,7 +10,6 @@
 # JSON output types:
 #   - "start": Initial message when monitor starts
 #   - "progress": Periodic progress update
-#   - "complete": Download finished successfully (detected via marker file)
 #   - "terminated": Received SIGTERM from kubelet (main container finished)
 
 # Handle SIGTERM gracefully - kubelet sends this when main container terminates
@@ -47,13 +46,6 @@ while true; do
     if [ "$terminated" = "true" ]; then
         current_size=$(du -sb "$mount_path" 2>/dev/null | cut -f1 || echo 0)
         log_json "terminated" "currentBytes=$current_size" "expectedBytes=$expected_size" "message=Main container terminated"
-        exit 0
-    fi
-
-    # Check if download completed successfully (marker file from main container)
-    if [ -f "$mount_path/.download-complete" ]; then
-        current_size=$(du -sb "$mount_path" 2>/dev/null | cut -f1 || echo 0)
-        log_json "complete" "currentBytes=$current_size" "expectedBytes=$expected_size"
         exit 0
     fi
 

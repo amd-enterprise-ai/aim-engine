@@ -37,15 +37,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimmodelcache"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+)
 
-	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+const (
+	modelCacheName = "model-cache"
 )
 
 // AIMModelCacheReconciler reconciles a AIMModelCache object
@@ -79,7 +82,7 @@ type AIMModelCacheReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
 func (r *AIMModelCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := logf.FromContext(ctx)
+	logger := log.FromContext(ctx)
 
 	// Fetch the model
 	var model aimv1alpha1.AIMModelCache
@@ -241,11 +244,6 @@ func (r *AIMModelCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Clientset: r.Clientset,
 		Scheme:    r.Scheme,
 	}
-
-	// Get event recorder before creating pipeline so it's not nil
-	controllerName := "model-cache"
-	r.Recorder = mgr.GetEventRecorderFor(controllerName + "-controller")
-
 	r.pipeline = controllerutils.Pipeline[
 		*aimv1alpha1.AIMModelCache,
 		*aimv1alpha1.AIMModelCacheStatus,
@@ -255,11 +253,13 @@ func (r *AIMModelCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Client:         mgr.GetClient(),
 		StatusClient:   mgr.GetClient().Status(),
 		Recorder:       r.Recorder,
-		ControllerName: controllerName,
+		ControllerName: modelCacheName,
 		Reconciler:     r.reconciler,
 		Scheme:         r.Scheme,
 		Clientset:      r.Clientset,
 	}
+	r.Recorder = mgr.GetEventRecorderFor(r.pipeline.GetFullName())
+	r.pipeline.Recorder = r.Recorder
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMModelCache{}).
@@ -270,6 +270,6 @@ func (r *AIMModelCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.findModelCacheForPod),
 			builder.WithPredicates(downloadJobPodPredicate()),
 		).
-		Named(r.pipeline.ControllerName).
+		Named(modelCacheName).
 		Complete(r)
 }
