@@ -1,0 +1,34 @@
+
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: failure-auth-hf
+spec:
+  steps:
+    - name: Create model cache
+      try:
+        - apply:
+            file: model-cache.yaml
+
+    - name: Assert the cache failure is set correctly
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModelCache
+              metadata:
+                name: failure-auth-hf
+              status:
+                status: "Failed"
+                progress:
+                  displayPercentage: "N/A"
+                (conditions[?type == 'Ready']):
+                  - status: "False"
+                    reason: "AuthError"
+                (conditions[?type == 'DownloadJobPodsReady']):
+                  - status: "False"
+                    reason: "AuthError"
+                (conditions[?type == 'AuthValid']):
+                  - status: "False"
+                    reason: "AuthError"

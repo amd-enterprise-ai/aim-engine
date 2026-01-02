@@ -20,14 +20,14 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.size
-      name: Cache Size
-      type: string
     - jsonPath: .status.status
       name: Status
       type: string
-    - jsonPath: .status.persistentVolumeClaim
-      name: PVC
+    - jsonPath: .spec.size
+      name: Model Size
+      type: string
+    - jsonPath: .status.progress.displayPercentage
+      name: Progress
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -357,6 +357,33 @@ spec:
                 description: PersistentVolumeClaim represents the name of the created
                   PVC
                 type: string
+              progress:
+                description: Progress represents the download progress when Status
+                  is Progressing
+                properties:
+                  displayPercentage:
+                    description: |-
+                      DisplayPercentage is a human-readable progress string (e.g., "45 %")
+                      This field is automatically populated from Progress.Percentage
+                    type: string
+                  downloadedBytes:
+                    description: DownloadedBytes is the number of bytes downloaded
+                      so far
+                    format: int64
+                    type: integer
+                  percentage:
+                    description: Percentage is the download progress as a percentage
+                      (0-100)
+                    format: int32
+                    maximum: 100
+                    minimum: 0
+                    type: integer
+                  totalBytes:
+                    description: TotalBytes is the expected total size of the download
+                      in bytes
+                    format: int64
+                    type: integer
+                type: object
               status:
                 default: Pending
                 description: Status represents the current status of the model cache
@@ -364,6 +391,7 @@ spec:
                 - Pending
                 - Progressing
                 - Ready
+                - Degraded
                 - Failed
                 type: string
             type: object

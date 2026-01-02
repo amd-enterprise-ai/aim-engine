@@ -1,0 +1,7 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModelCache
+metadata:
+  name: basic-lifecycle-hf
+spec:
+  sourceUri: hf://HuggingFaceTB/SmolLM-135M
+  size: 2.2Gi

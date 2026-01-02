@@ -1,0 +1,44 @@
+
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: basic-lifecycle-hf
+spec:
+  steps:
+    - name: Create model cache
+      try:
+        - apply:
+            file: model-cache.yaml
+
+    - name: Assert the dependent resources get created
+      try:
+        - assert:
+            resource:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                labels:
+                  aim.eai.amd.com/model-cache.name: basic-lifecycle-hf
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: PersistentVolumeClaim
+              metadata:
+                labels:
+                  aim.eai.amd.com/model-cache.name: basic-lifecycle-hf
+              status:
+                phase: Bound
+
+    - name: Assert the cache gets ready
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModelCache
+              metadata:
+                name: basic-lifecycle-hf
+              status:
+                status: Ready
+                progress:
+                  percentage: 100

@@ -137,4 +137,7 @@ const (
 
 	// LabelValueCacheTypeTemplate indicates a template cache.
 	LabelValueCacheTypeTemplate = "template-cache"
+
+	LabelValueCacheTypeTemplateCache = "template-cache"
+	LabelKeySourceModel              = AimLabelDomain + "/source-model"
 )
