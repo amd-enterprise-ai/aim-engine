@@ -3,6 +3,8 @@ apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
   name: failure-storage
+  labels:
+    requires: longhorn
 spec:
   steps:
     - name: Create model cache
