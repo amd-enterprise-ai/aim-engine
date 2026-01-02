@@ -16,9 +16,19 @@ releases:
     values:
       - storageClass:
           name: nfs
-          defaultClass: false
+          defaultClass: true
           reclaimPolicy: Delete
         persistence:
           enabled: true
           storageClass: standard
           size: 10Gi
+    hooks:
+      - events: ["postsync"]
+        showlogs: true
+        command: kubectl
+        args:
+          - patch
+          - storageclass
+          - standard
+          - -p
+          - '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
