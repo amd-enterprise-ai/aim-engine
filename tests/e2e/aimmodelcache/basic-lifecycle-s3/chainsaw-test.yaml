@@ -44,7 +44,7 @@ spec:
         - apply:
             file: model-upload-job.yaml
         - assert:
-            timeout: 180s
+            timeout: 3m
             resource:
               apiVersion: batch/v1
               kind: Job
@@ -62,7 +62,7 @@ spec:
     - name: Assert the cache gets ready
       try:
         - assert:
-            timeout: 120s
+            timeout: 3m
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMModelCache

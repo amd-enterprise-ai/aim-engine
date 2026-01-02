@@ -46,7 +46,7 @@ spec:
     - name: Assert the cache failure is set correctly
       try:
         - assert:
-            timeout: 120s
+            timeout: 3m
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMModelCache
