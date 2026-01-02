@@ -1,0 +1,7 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMTemplateCache
+metadata:
+  name: waits-for-template-readiness
+spec:
+  templateName: waits-for-template-readiness
+  templateScope: Namespace

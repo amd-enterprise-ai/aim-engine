@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: fails-if-service-template-degraded
+spec:
+  modelName: template-cache-degrades-if-service-template-degraded
+  modelSources:
+    - sourceUri: hf://hello/world
+      size: 2Gi

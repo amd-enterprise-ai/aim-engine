@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterServiceTemplate
+metadata:
+  name: service-template-wrong-scope-cluster
+spec:
+  modelName: test-model
+  modelSources:
+    - sourceUri: hf://hello/world
+      size: 2Gi

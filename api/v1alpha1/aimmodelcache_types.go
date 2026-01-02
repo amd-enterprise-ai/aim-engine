@@ -32,6 +32,9 @@ import (
 
 const (
 	DefaultDownloadImage = "kserve/storage-initializer:v0.16.0-rc0"
+
+	// ModelCacheSourceURIIndexKey is the field index key for AIMModelCache.Spec.SourceURI
+	ModelCacheSourceURIIndexKey = ".spec.sourceUri"
 )
 
 // AIMModelCacheSpec defines the desired state of AIMModelCache

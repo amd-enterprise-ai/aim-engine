@@ -1,0 +1,7 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMTemplateCache
+metadata:
+  name: fails-if-service-template-failed
+spec:
+  templateName: fails-if-service-template-failed
+  templateScope: Namespace

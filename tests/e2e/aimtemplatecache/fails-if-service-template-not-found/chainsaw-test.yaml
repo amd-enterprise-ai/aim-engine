@@ -1,0 +1,27 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: failure-service-template-not-found
+spec:
+  steps:
+    - name: Create the template cache
+      try:
+        - apply:
+            file: template-cache.yaml
+
+    - name: Ensure the template cache is in a failed state
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                name: failure-service-template-not-found
+              status:
+                status: Failed
+                (conditions[?type == 'Ready']):
+                  - status: "False"
+                    reason: "ReferenceNotFound"
+                (conditions[?type == 'ServiceTemplateReady']):
+                  - status: "False"
+                    reason: "ReferenceNotFound"

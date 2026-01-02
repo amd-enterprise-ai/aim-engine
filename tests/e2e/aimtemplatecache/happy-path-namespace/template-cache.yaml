@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMTemplateCache
+metadata:
+  name: happy-path-namespace
+spec:
+  templateName: happy-path-namespace
+  templateScope: Namespace
+  env:
+    - name: HF_TOKEN
+      value: my-token

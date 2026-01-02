@@ -1,0 +1,7 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMTemplateCache
+metadata:
+  name: failure-service-template-not-found
+spec:
+  templateName: not-existing
+  templateScope: Namespace

@@ -1,0 +1,68 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: template-cache-happy-path-namespace
+spec:
+  steps:
+    - name: Create the service template
+      try:
+        - apply:
+            file: service-template.yaml
+        - script:
+            # TODO remove once the template controller is merged
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              kubectl patch aimservicetemplate happy-path-namespace -n $NAMESPACE --type=merge --subresource=status -p '
+              {
+                "status": {
+                  "status": "Ready",
+                  "conditions": [
+                    {
+                      "type": "Ready",
+                      "status": "True",
+                      "reason": "AllComponentsReady",
+                      "message": "All components are ready",
+                      "lastTransitionTime": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
+                    }
+                  ]
+                }
+              }'
+
+    - name: Create the template cache
+      try:
+        - apply:
+            file: template-cache.yaml
+
+    - name: Ensure the model caches are created
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModelCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/template-cache.name: happy-path-namespace
+                  aim.eai.amd.com/template.index: "0"
+                  aim.eai.amd.com/template.scope: "Namespace"
+              spec:
+                sourceUri: hf://hello/world
+                size: 2Gi
+                env:
+                  - name: HF_TOKEN
+                    value: my-token
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModelCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/template-cache.name: happy-path-namespace
+                  aim.eai.amd.com/template.index: "1"
+                  aim.eai.amd.com/template.scope: "Namespace"
+              spec:
+                sourceUri: s3://hello2/world2
+                size: 4Gi
+
+    # TODO add an assert to check the template cache becomes ready (once the model cache is merged)

@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMTemplateCache
+metadata:
+  name: happy-path-cluster
+spec:
+  templateName: happy-path-cluster
+  templateScope: Cluster
+  env:
+    - name: HF_TOKEN
+      value: my-token

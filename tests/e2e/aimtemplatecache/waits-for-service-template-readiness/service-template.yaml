@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: waits-for-template-readiness
+spec:
+  modelName: template-cache-waits-for-template-readiness
+  modelSources:
+    - sourceUri: hf://hello/world
+      size: 2Gi

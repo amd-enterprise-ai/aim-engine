@@ -1,0 +1,85 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: template-cache-waits-for-template-readiness
+spec:
+  steps:
+    - name: Create the service template
+      try:
+        - apply:
+            file: model.yaml
+        - apply:
+            file: service-template.yaml
+        - script:
+            # TODO remove once the template controller is merged
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              kubectl patch aimservicetemplate waits-for-template-readiness -n $NAMESPACE --type=merge --subresource=status -p '
+              {
+                "status": {
+                  "status": "Progressing",
+                  "conditions": [
+                    {
+                      "type": "Ready",
+                      "status": "False",
+                      "reason": "WaitingForDiscovery",
+                      "message": "Discovery underway",
+                      "lastTransitionTime": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
+                    }
+                  ]
+                }
+              }'
+
+    - name: Create the template cache
+      try:
+        - apply:
+            file: template-cache.yaml
+
+    - name: Ensure the template cache is waiting for the template to become ready
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                name: waits-for-template-readiness
+              status:
+                status: Pending
+
+    # TODO remove once the template controller is merged
+    - name: Mark the service template as ready
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              kubectl patch aimservicetemplate waits-for-template-readiness -n $NAMESPACE --type=merge --subresource=status -p '
+              {
+                "status": {
+                  "status": "Ready",
+                  "conditions": [
+                    {
+                      "type": "Ready",
+                      "status": "True",
+                      "reason": "AllComponentsReady",
+                      "message": "Everything is ready",
+                      "lastTransitionTime": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
+                    }
+                  ]
+                }
+              }'
+
+    # TODO change to Ready once model cache is merged
+    - name: Ensure the template cache moves to progressing (pending model cache creation)
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                name: waits-for-template-readiness
+              status:
+                status: Progressing

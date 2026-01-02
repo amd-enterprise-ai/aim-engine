@@ -1,0 +1,8 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMTemplateCache
+metadata:
+  name: failure-service-template-not-found-namespace
+spec:
+  # The template exists, but in the Cluster scope
+  templateName: service-template-wrong-scope-cluster
+  templateScope: Namespace
