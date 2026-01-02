@@ -62,15 +62,29 @@ type AIMServiceCachingConfig struct {
 	Mode AIMCachingMode `json:"mode,omitempty"`
 }
 
+// AIMServiceTemplateConfig contains template selection configuration for AIMService.
+type AIMServiceTemplateConfig struct {
+	// Name is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.
+	// The template selects the runtime profile and GPU parameters.
+	// When not specified, a template will be automatically selected based on the model.
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// AllowUnoptimized, if true, will allow automatic selection of templates
+	// that resolve to an unoptimized profile.
+	// +optional
+	AllowUnoptimized bool `json:"allowUnoptimized,omitempty"`
+}
+
 // AIMServiceModel specifies which model to deploy. Exactly one field must be set.
 // +kubebuilder:validation:XValidation:rule="(has(self.ref) && !has(self.image) && !has(self.custom)) || (!has(self.ref) && has(self.image) && !has(self.custom)) || (!has(self.ref) && !has(self.image) && has(self.custom))",message="exactly one of ref, image, or custom must be specified"
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="model selection is immutable after creation"
 type AIMServiceModel struct {
-	// Ref references an existing AIMModel or AIMClusterModel by metadata.name.
+	// Name references an existing AIMModel or AIMClusterModel by metadata.name.
 	// The controller looks for a namespace-scoped AIMModel first, then falls back to cluster-scoped AIMClusterModel.
 	// Example: `meta-llama-3-8b`
 	// +optional
-	Ref *string `json:"ref,omitempty"`
+	Name *string `json:"name,omitempty"`
 
 	// Image specifies a container image URI directly.
 	// The controller searches for an existing model with this image, or creates one if none exists.
@@ -130,9 +144,10 @@ type AIMServiceSpec struct {
 	// to specify a container image URI directly (which will auto-create a model if needed).
 	Model AIMServiceModel `json:"model"`
 
-	// TemplateName is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.
-	// The template selects the runtime profile and GPU parameters.
-	TemplateName string `json:"templateName,omitempty"`
+	// Template contains template selection and configuration.
+	// Use Template.Name to specify an explicit template, or omit to auto-select.
+	// +optional
+	Template AIMServiceTemplateConfig `json:"template,omitempty"`
 
 	// Caching controls caching behavior for this service.
 	// When nil, defaults to Auto mode (use cache if available, don't create).

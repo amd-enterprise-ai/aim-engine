@@ -25,45 +25,363 @@ package controller
 import (
 	"context"
 
+	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimservice"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+)
+
+const (
+	serviceName = "service"
 )
 
 // AIMServiceReconciler reconciles a AIMService object
 type AIMServiceReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme    *runtime.Scheme
+	Recorder  record.EventRecorder
+	Clientset kubernetes.Interface
+
+	reconciler controllerutils.DomainReconciler[*aimv1alpha1.AIMService, *aimv1alpha1.AIMServiceStatus, aimservice.ServiceFetchResult, aimservice.ServiceObservation]
+	pipeline   controllerutils.Pipeline[*aimv1alpha1.AIMService, *aimv1alpha1.AIMServiceStatus, aimservice.ServiceFetchResult, aimservice.ServiceObservation]
 }
 
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimservices,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimservices/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimservices/finalizers,verbs=update
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimmodels,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclustermodels,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimservicetemplates,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterservicetemplates,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimtemplatecaches,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimmodelcaches,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimruntimeconfigs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterruntimeconfigs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=serving.kserve.io,resources=inferenceservices,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the AIMService object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
 func (r *AIMServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	logger := log.FromContext(ctx)
 
-	// TODO(user): your logic here
+	// Fetch the service
+	var service aimv1alpha1.AIMService
+	if err := r.Get(ctx, req.NamespacedName, &service); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		logger.Error(err, "Failed to fetch AIMService")
+		return ctrl.Result{}, err
+	}
+
+	if err := r.pipeline.Run(ctx, &service); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	ctx := context.Background()
+
+	r.reconciler = &aimservice.ServiceReconciler{
+		Clientset: r.Clientset,
+		Scheme:    r.Scheme,
+	}
+	r.pipeline = controllerutils.Pipeline[
+		*aimv1alpha1.AIMService,
+		*aimv1alpha1.AIMServiceStatus,
+		aimservice.ServiceFetchResult,
+		aimservice.ServiceObservation,
+	]{
+		Client:         mgr.GetClient(),
+		StatusClient:   mgr.GetClient().Status(),
+		Recorder:       r.Recorder,
+		ControllerName: serviceName,
+		Reconciler:     r.reconciler,
+		Scheme:         r.Scheme,
+		Clientset:      r.Clientset,
+	}
+	r.Recorder = mgr.GetEventRecorderFor(r.pipeline.GetFullName())
+	r.pipeline.Recorder = r.Recorder
+
+	// Index AIMService by template name for efficient lookup when templates change
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMService{}, aimv1alpha1.AIMServiceTemplateIndexKey, func(obj client.Object) []string {
+		svc, ok := obj.(*aimv1alpha1.AIMService)
+		if !ok {
+			return nil
+		}
+		if svc.Spec.Template.Name == "" {
+			return nil
+		}
+		return []string{svc.Spec.Template.Name}
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMService{}).
-		Named("aimservice").
+		Owns(&servingv1beta1.InferenceService{}).
+		Owns(&gatewayapiv1.HTTPRoute{}).
+		Owns(&corev1.PersistentVolumeClaim{}).
+		Owns(&aimv1alpha1.AIMTemplateCache{}).
+		// Watch namespace-scoped templates and enqueue services that reference them
+		Watches(
+			&aimv1alpha1.AIMServiceTemplate{},
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForTemplate),
+		).
+		// Watch cluster-scoped templates and enqueue services that reference them
+		Watches(
+			&aimv1alpha1.AIMClusterServiceTemplate{},
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForClusterTemplate),
+		).
+		// Watch namespace-scoped models and enqueue services using them
+		Watches(
+			&aimv1alpha1.AIMModel{},
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForModel),
+		).
+		// Watch cluster-scoped models and enqueue services using them
+		Watches(
+			&aimv1alpha1.AIMClusterModel{},
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForClusterModel),
+		).
+		// Watch namespace-scoped RuntimeConfigs and enqueue services that reference them
+		Watches(
+			&aimv1alpha1.AIMRuntimeConfig{},
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForRuntimeConfig),
+		).
+		// Watch cluster-scoped RuntimeConfigs and enqueue services that reference them
+		Watches(
+			&aimv1alpha1.AIMClusterRuntimeConfig{},
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForClusterRuntimeConfig),
+		).
+		// Watch template caches and enqueue services that use them
+		Watches(
+			&aimv1alpha1.AIMTemplateCache{},
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForTemplateCache),
+		).
+		Named(serviceName).
 		Complete(r)
+}
+
+// findServicesForTemplate returns reconcile requests for all AIMServices
+// that reference the given template by name.
+func (r *AIMServiceReconciler) findServicesForTemplate(ctx context.Context, obj client.Object) []reconcile.Request {
+	template, ok := obj.(*aimv1alpha1.AIMServiceTemplate)
+	if !ok {
+		return nil
+	}
+
+	// Find all services in the same namespace referencing this template
+	var services aimv1alpha1.AIMServiceList
+	if err := r.List(ctx, &services,
+		client.InNamespace(template.Namespace),
+		client.MatchingFields{aimv1alpha1.AIMServiceTemplateIndexKey: template.Name},
+	); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMServices for template", "template", template.Name)
+		return nil
+	}
+
+	requests := make([]reconcile.Request, len(services.Items))
+	for i, svc := range services.Items {
+		requests[i] = reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      svc.Name,
+				Namespace: svc.Namespace,
+			},
+		}
+	}
+	return requests
+}
+
+// findServicesForClusterTemplate returns reconcile requests for all AIMServices
+// that reference the given cluster template by name.
+func (r *AIMServiceReconciler) findServicesForClusterTemplate(ctx context.Context, obj client.Object) []reconcile.Request {
+	template, ok := obj.(*aimv1alpha1.AIMClusterServiceTemplate)
+	if !ok {
+		return nil
+	}
+
+	// Find all services across all namespaces referencing this template
+	var services aimv1alpha1.AIMServiceList
+	if err := r.List(ctx, &services,
+		client.MatchingFields{aimv1alpha1.AIMServiceTemplateIndexKey: template.Name},
+	); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMServices for cluster template", "template", template.Name)
+		return nil
+	}
+
+	requests := make([]reconcile.Request, len(services.Items))
+	for i, svc := range services.Items {
+		requests[i] = reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      svc.Name,
+				Namespace: svc.Namespace,
+			},
+		}
+	}
+	return requests
+}
+
+// findServicesForModel returns reconcile requests for all AIMServices
+// that reference the given model.
+func (r *AIMServiceReconciler) findServicesForModel(ctx context.Context, obj client.Object) []reconcile.Request {
+	model, ok := obj.(*aimv1alpha1.AIMModel)
+	if !ok {
+		return nil
+	}
+
+	// Find services in the same namespace that might use this model
+	var services aimv1alpha1.AIMServiceList
+	if err := r.List(ctx, &services, client.InNamespace(model.Namespace)); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMServices for model", "model", model.Name)
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for _, svc := range services.Items {
+		// Check if service references this model by name
+		if svc.Spec.Model.Name != nil && *svc.Spec.Model.Name == model.Name {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      svc.Name,
+					Namespace: svc.Namespace,
+				},
+			})
+		}
+	}
+	return requests
+}
+
+// findServicesForClusterModel returns reconcile requests for all AIMServices
+// that reference the given cluster model.
+func (r *AIMServiceReconciler) findServicesForClusterModel(ctx context.Context, obj client.Object) []reconcile.Request {
+	model, ok := obj.(*aimv1alpha1.AIMClusterModel)
+	if !ok {
+		return nil
+	}
+
+	// Find all services that might use this cluster model
+	var services aimv1alpha1.AIMServiceList
+	if err := r.List(ctx, &services); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMServices for cluster model", "model", model.Name)
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for _, svc := range services.Items {
+		// Check if service references this cluster model by name
+		if svc.Spec.Model.Name != nil && *svc.Spec.Model.Name == model.Name {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      svc.Name,
+					Namespace: svc.Namespace,
+				},
+			})
+		}
+	}
+	return requests
+}
+
+// findServicesForRuntimeConfig returns reconcile requests for all AIMServices
+// in the same namespace that reference the given RuntimeConfig.
+func (r *AIMServiceReconciler) findServicesForRuntimeConfig(ctx context.Context, obj client.Object) []reconcile.Request {
+	config, ok := obj.(*aimv1alpha1.AIMRuntimeConfig)
+	if !ok {
+		return nil
+	}
+
+	// Find all services in the same namespace
+	var services aimv1alpha1.AIMServiceList
+	if err := r.List(ctx, &services, client.InNamespace(config.Namespace)); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMServices for RuntimeConfig", "config", config.Name)
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for _, svc := range services.Items {
+		// Check if service references this config or uses default
+		if svc.Spec.Name == config.Name || svc.Spec.Name == "" {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      svc.Name,
+					Namespace: svc.Namespace,
+				},
+			})
+		}
+	}
+	return requests
+}
+
+// findServicesForClusterRuntimeConfig returns reconcile requests for all AIMServices
+// that reference the given ClusterRuntimeConfig.
+func (r *AIMServiceReconciler) findServicesForClusterRuntimeConfig(ctx context.Context, obj client.Object) []reconcile.Request {
+	config, ok := obj.(*aimv1alpha1.AIMClusterRuntimeConfig)
+	if !ok {
+		return nil
+	}
+
+	// Find all services across all namespaces
+	var services aimv1alpha1.AIMServiceList
+	if err := r.List(ctx, &services); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMServices for ClusterRuntimeConfig", "config", config.Name)
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for _, svc := range services.Items {
+		// Check if service references this config or uses default
+		if svc.Spec.Name == config.Name || svc.Spec.Name == "" {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      svc.Name,
+					Namespace: svc.Namespace,
+				},
+			})
+		}
+	}
+	return requests
+}
+
+// findServicesForTemplateCache returns reconcile requests for the AIMService
+// that owns the given template cache.
+func (r *AIMServiceReconciler) findServicesForTemplateCache(ctx context.Context, obj client.Object) []reconcile.Request {
+	cache, ok := obj.(*aimv1alpha1.AIMTemplateCache)
+	if !ok {
+		return nil
+	}
+
+	// Find owner service from labels or owner references
+	for _, ownerRef := range cache.OwnerReferences {
+		if ownerRef.Kind == "AIMService" {
+			return []reconcile.Request{
+				{
+					NamespacedName: types.NamespacedName{
+						Name:      ownerRef.Name,
+						Namespace: cache.Namespace,
+					},
+				},
+			}
+		}
+	}
+
+	return nil
 }

@@ -182,10 +182,12 @@ func NewService(opts ...ServiceOption) *aimv1alpha1.AIMService {
 		},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: aimv1alpha1.AIMServiceModel{
-				Ref: ptr.To("test-model"),
+				Name: ptr.To("test-model"),
 			},
-			TemplateName: "test-template",
-			Replicas:     ptr.To(int32(1)),
+			Template: aimv1alpha1.AIMServiceTemplateConfig{
+				Name: "test-template",
+			},
+			Replicas: ptr.To(int32(1)),
 		},
 		Status: aimv1alpha1.AIMServiceStatus{
 			Status: constants.AIMStatusPending,
@@ -211,13 +213,13 @@ func WithServiceNamespace(namespace string) ServiceOption {
 
 func WithServiceModelRef(modelRef string) ServiceOption {
 	return func(s *aimv1alpha1.AIMService) {
-		s.Spec.Model.Ref = &modelRef
+		s.Spec.Model.Name = &modelRef
 	}
 }
 
 func WithServiceTemplate(templateName string) ServiceOption {
 	return func(s *aimv1alpha1.AIMService) {
-		s.Spec.TemplateName = templateName
+		s.Spec.Template.Name = templateName
 	}
 }
 

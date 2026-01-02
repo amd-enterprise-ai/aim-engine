@@ -314,7 +314,6 @@ _Appears in:_
 | `serviceAccountName` _string_ | ServiceAccountName specifies the Kubernetes service account to use for workloads related to this template.<br />This includes discovery dry-run jobs and inference services created from this template.<br />If empty, the default service account for the namespace is used. |  |  |
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources defines the default container resource requirements applied to services derived from this template.<br />Service-specific values override the template defaults. |  |  |
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources required to run this template.<br />When provided, the discovery dry-run will be skipped and these sources will be used directly.<br />This allows users to explicitly declare model dependencies without requiring a discovery job.<br />If omitted, a discovery job will be run to automatically determine the required model sources. |  |  |
-| `profileId` _string_ | ProfileId is the specific AIM profile ID that this template should use.<br />When set, the discovery job will be instructed to use this specific profile. |  |  |
 
 
 
@@ -337,7 +336,6 @@ _Appears in:_
 | `gpu_count` _integer_ | GPUCount indicates how many GPUs are required per replica for this profile. |  |  |
 | `metric` _[AIMMetric](#aimmetric)_ | Metric indicates the optimization goal for this profile ("latency" or "throughput"). |  | Enum: [latency throughput] <br /> |
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision specifies the numeric precision used in this profile (e.g., "fp16", "fp8"). |  | Enum: [bf16 fp16 fp8 int8] <br /> |
-| `type` _[AIMProfileType](#aimprofiletype)_ | Type specifies the optimization level of this profile (optimized, unoptimized, preview). |  | Enum: [optimized unoptimized preview] <br /> |
 
 
 #### AIMGpuSelector
@@ -361,7 +359,6 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `count` _integer_ | Count is the number of GPU resources requested per replica.<br />Must be at least 1. |  | Minimum: 1 <br /> |
 | `model` _string_ | Model is the GPU model name required for this deployment.<br />Examples: `MI300X`, `MI325X` |  | MinLength: 1 <br /> |
-| `resourceName` _string_ | ResourceName is the Kubernetes resource name for GPU resources.<br />Defaults to "amd.com/gpu" if not specified. | amd.com/gpu |  |
 
 
 #### AIMMetric
@@ -483,7 +480,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `observedGeneration` _integer_ |  |  |  |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#condition-v1-meta) array_ | Conditions represent the latest available observations of the model cache's state |  |  |
-| `status` _[AIMStatus](#aimstatus)_ | Status represents the current status of the model cache | Pending | Enum: [Pending Progressing Ready Degraded Failed NotAvailable] <br /> |
+| `status` _[AIMStatus](#aimstatus)_ | Status represents the current status of the model cache | Pending | Enum: [Pending Progressing Ready Degraded Failed] <br /> |
 | `progress` _[DownloadProgress](#downloadprogress)_ | Progress represents the download progress when Status is Progressing |  |  |
 | `lastUsed` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#time-v1-meta)_ | LastUsed represents the last time a model was deployed that used this cache |  |  |
 | `persistentVolumeClaim` _string_ | PersistentVolumeClaim represents the name of the created PVC |  |  |
@@ -691,27 +688,26 @@ _Appears in:_
 | `gpuCount` _integer_ | GPUCount indicates how many GPUs are required per replica for this profile. |  |  |
 | `metric` _[AIMMetric](#aimmetric)_ | Metric indicates the optimization goal for this profile ("latency" or "throughput"). |  | Enum: [latency throughput] <br /> |
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision specifies the numeric precision used in this profile (e.g., "fp16", "fp8"). |  | Enum: [bf16 fp16 fp8 int8] <br /> |
-| `type` _[AIMProfileType](#aimprofiletype)_ | Type specifies the designation of the profile (optimized, unoptimized, preview). |  | Enum: [optimized unoptimized preview] <br /> |
+| `type` _[AIMProfileType](#aimprofiletype)_ | Type indicates the optimization level of this profile (optimized, preview, unoptimized). |  | Enum: [optimized preview unoptimized] <br /> |
 
 
 #### AIMProfileType
 
 _Underlying type:_ _string_
 
-AIMProfileType specifies the designation/optimization level of a profile.
+AIMProfileType indicates the optimization level of a deployment profile.
 
 _Validation:_
-- Enum: [optimized unoptimized preview]
+- Enum: [optimized preview unoptimized]
 
 _Appears in:_
-- [AIMDiscoveryProfileMetadata](#aimdiscoveryprofilemetadata)
 - [AIMProfileMetadata](#aimprofilemetadata)
 
 | Field | Description |
 | --- | --- |
-| `optimized` |  |
-| `unoptimized` |  |
-| `preview` |  |
+| `optimized` | AIMProfileTypeOptimized indicates the profile has been fully optimized.<br /> |
+| `preview` | AIMProfileTypePreview indicates the profile is in preview/beta state.<br /> |
+| `unoptimized` | AIMProfileTypeUnoptimized indicates the profile has not been optimized.<br /> |
 
 
 #### AIMResolutionScope
@@ -1035,7 +1031,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `ref` _string_ | Ref references an existing AIMModel or AIMClusterModel by metadata.name.<br />The controller looks for a namespace-scoped AIMModel first, then falls back to cluster-scoped AIMClusterModel.<br />Example: `meta-llama-3-8b` |  |  |
+| `name` _string_ | Name references an existing AIMModel or AIMClusterModel by metadata.name.<br />The controller looks for a namespace-scoped AIMModel first, then falls back to cluster-scoped AIMClusterModel.<br />Example: `meta-llama-3-8b` |  |  |
 | `image` _string_ | Image specifies a container image URI directly.<br />The controller searches for an existing model with this image, or creates one if none exists.<br />The scope of the created model is controlled by the runtime config's ModelCreationScope field.<br />Example: `ghcr.io/silogen/llama-3-8b:v1.2.0` |  |  |
 | `custom` _[AIMServiceModelCustom](#aimservicemodelcustom)_ | Custom specifies a custom model configuration with explicit base image,<br />model sources, and GPU requirements. |  |  |
 
@@ -1137,7 +1133,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `model` _[AIMServiceModel](#aimservicemodel)_ | Model specifies which model to deploy using one of the available reference methods.<br />Use `ref` to reference an existing AIMModel/AIMClusterModel by name, or use `image`<br />to specify a container image URI directly (which will auto-create a model if needed). |  |  |
-| `templateName` _string_ | TemplateName is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.<br />The template selects the runtime profile and GPU parameters. |  |  |
+| `template` _[AIMServiceTemplateConfig](#aimservicetemplateconfig)_ | Template contains template selection and configuration.<br />Use Template.Name to specify an explicit template, or omit to auto-select. |  |  |
 | `caching` _[AIMServiceCachingConfig](#aimservicecachingconfig)_ | Caching controls caching behavior for this service.<br />When nil, defaults to Auto mode (use cache if available, don't create). |  |  |
 | `cacheModel` _boolean_ | DEPRECATED: Use Caching.Mode instead. This field will be removed in a future version.<br />For backward compatibility, if Caching is not set, this field is used.<br />Tri-state logic: nil=Auto, true=Always, false=Never |  |  |
 | `replicas` _integer_ | Replicas specifies the number of replicas for this service.<br />When not specified, defaults to 1 replica.<br />This value overrides any replica settings from the template. | 1 |  |
@@ -1193,6 +1189,23 @@ _Appears in:_
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `spec` _[AIMServiceTemplateSpec](#aimservicetemplatespec)_ |  |  |  |
 | `status` _[AIMServiceTemplateStatus](#aimservicetemplatestatus)_ |  |  |  |
+
+
+#### AIMServiceTemplateConfig
+
+
+
+AIMServiceTemplateConfig contains template selection configuration for AIMService.
+
+
+
+_Appears in:_
+- [AIMServiceSpec](#aimservicespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.<br />The template selects the runtime profile and GPU parameters.<br />When not specified, a template will be automatically selected based on the model. |  |  |
+| `allowUnoptimized` _boolean_ | AllowUnoptimized, if true, will allow automatic selection of templates<br />that resolve to an unoptimized profile. |  |  |
 
 
 #### AIMServiceTemplateList
@@ -1254,7 +1267,6 @@ _Appears in:_
 | `serviceAccountName` _string_ | ServiceAccountName specifies the Kubernetes service account to use for workloads related to this template.<br />This includes discovery dry-run jobs and inference services created from this template.<br />If empty, the default service account for the namespace is used. |  |  |
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources defines the default container resource requirements applied to services derived from this template.<br />Service-specific values override the template defaults. |  |  |
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources required to run this template.<br />When provided, the discovery dry-run will be skipped and these sources will be used directly.<br />This allows users to explicitly declare model dependencies without requiring a discovery job.<br />If omitted, a discovery job will be run to automatically determine the required model sources. |  |  |
-| `profileId` _string_ | ProfileId is the specific AIM profile ID that this template should use.<br />When set, the discovery job will be instructed to use this specific profile. |  |  |
 | `caching` _[AIMTemplateCachingConfig](#aimtemplatecachingconfig)_ | Caching configures model caching behavior for this namespace-scoped template.<br />When enabled, models will be cached using the specified environment variables<br />during download. |  |  |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables to use for authentication when downloading models.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  |  |
 
@@ -1282,7 +1294,6 @@ _Appears in:_
 | `serviceAccountName` _string_ | ServiceAccountName specifies the Kubernetes service account to use for workloads related to this template.<br />This includes discovery dry-run jobs and inference services created from this template.<br />If empty, the default service account for the namespace is used. |  |  |
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources defines the default container resource requirements applied to services derived from this template.<br />Service-specific values override the template defaults. |  |  |
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources required to run this template.<br />When provided, the discovery dry-run will be skipped and these sources will be used directly.<br />This allows users to explicitly declare model dependencies without requiring a discovery job.<br />If omitted, a discovery job will be run to automatically determine the required model sources. |  |  |
-| `profileId` _string_ | ProfileId is the specific AIM profile ID that this template should use.<br />When set, the discovery job will be instructed to use this specific profile. |  |  |
 
 
 #### AIMServiceTemplateStatus
@@ -1408,7 +1419,7 @@ _Appears in:_
 | `observedGeneration` _integer_ | ObservedGeneration is the most recent generation observed by the controller. |  |  |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#condition-v1-meta) array_ | Conditions represent the latest observations of the template cache state. |  |  |
 | `resolvedRuntimeConfig` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedRuntimeConfig captures metadata about the runtime config that was resolved. |  |  |
-| `status` _[AIMStatus](#aimstatus)_ | Status represents the current high-level status of the template cache. | Pending | Enum: [Pending Progressing Ready Failed Degraded NotAvailable] <br /> |
+| `status` _[AIMStatus](#aimstatus)_ | Status represents the current high-level status of the template cache. | Pending | Enum: [Pending Progressing Ready Failed Degraded] <br /> |
 | `resolvedTemplateKind` _string_ | ResolvedTemplateKind indicates whether the template resolved to a namespace-scoped<br />AIMServiceTemplate or cluster-scoped AIMClusterServiceTemplate.<br />Values: "AIMServiceTemplate", "AIMClusterServiceTemplate" |  |  |
 | `modelCaches` _object (keys:string, values:[AIMResolvedModelCache](#aimresolvedmodelcache))_ | ModelCaches maps model names to their resolved AIMModelCache resources. |  |  |
 
@@ -1427,7 +1438,6 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `enabled` _boolean_ | Enabled controls whether caching is enabled for this template.<br />Defaults to `false`. | false |  |
-| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables to use when downloading the model for caching.<br />These variables are available to the model download process and can be used<br />to configure download behavior, authentication, proxies, etc.<br />If not set, falls back to the template's top-level Env field. |  |  |
 
 
 #### DownloadProgress

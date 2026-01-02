@@ -217,9 +217,9 @@ spec:
                       The scope of the created model is controlled by the runtime config's ModelCreationScope field.
                       Example: `ghcr.io/silogen/llama-3-8b:v1.2.0`
                     type: string
-                  ref:
+                  name:
                     description: |-
-                      Ref references an existing AIMModel or AIMClusterModel by metadata.name.
+                      Name references an existing AIMModel or AIMClusterModel by metadata.name.
                       The controller looks for a namespace-scoped AIMModel first, then falls back to cluster-scoped AIMClusterModel.
                       Example: `meta-llama-3-8b`
                     type: string
@@ -602,11 +602,23 @@ spec:
                     minimum: 0
                     type: integer
                 type: object
-              templateName:
+              template:
                 description: |-
-                  TemplateName is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.
-                  The template selects the runtime profile and GPU parameters.
-                type: string
+                  Template contains template selection and configuration.
+                  Use Template.Name to specify an explicit template, or omit to auto-select.
+                properties:
+                  allowUnoptimized:
+                    description: |-
+                      AllowUnoptimized, if true, will allow automatic selection of templates
+                      that resolve to an unoptimized profile.
+                    type: boolean
+                  name:
+                    description: |-
+                      Name is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.
+                      The template selects the runtime profile and GPU parameters.
+                      When not specified, a template will be automatically selected based on the model.
+                    type: string
+                type: object
             required:
             - model
             type: object

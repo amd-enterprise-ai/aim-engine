@@ -42,6 +42,36 @@ const (
 	AimLabelDomain = "aim.eai.amd.com"
 )
 
+// Label keys for AIM resources
+const (
+	// LabelTemplate is the label key for the template name
+	LabelTemplate = AimLabelDomain + "/template"
+	// LabelService is the label key for the service name
+	LabelService = AimLabelDomain + "/service"
+	// LabelModelID is the label key for the model ID
+	LabelModelID = AimLabelDomain + "/model"
+	// LabelMetric is the label key for the optimization metric
+	LabelMetric = AimLabelDomain + "/metric"
+	// LabelPrecision is the label key for the numeric precision
+	LabelPrecision = AimLabelDomain + "/precision"
+	// LabelDerivedTemplate indicates a template was derived from service overrides
+	LabelDerivedTemplate = AimLabelDomain + "/derived-template"
+	// LabelAutoCreated indicates a resource was auto-created
+	LabelAutoCreated = AimLabelDomain + "/auto-created"
+	// LabelCacheType indicates the type of cache (temp or persistent)
+	LabelCacheType = AimLabelDomain + "/cache-type"
+)
+
+// Label values
+const (
+	// LabelValueManagedBy is the standard managed-by label value
+	LabelValueManagedBy = "aim-engine"
+	// LabelValueCacheTypeTemp indicates a temporary cache
+	LabelValueCacheTypeTemp = "temp"
+	// LabelValueCacheTypePersistent indicates a persistent cache
+	LabelValueCacheTypePersistent = "persistent"
+)
+
 // Shared condition reasons used across multiple resource types
 const (
 	// Image-related reasons (used by AIMModel, AIMService, AIMServiceTemplate)

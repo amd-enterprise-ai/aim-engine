@@ -212,14 +212,17 @@ type AIMProfile struct {
 	OriginalDiscoveryOutput *apiextensionsv1.JSON `json:"originalDiscoveryOutput,omitempty"`
 }
 
-// AIMProfileType specifies the designation/optimization level of a profile.
-// +kubebuilder:validation:Enum=optimized;unoptimized;preview
+// AIMProfileType indicates the optimization level of a deployment profile.
+// +kubebuilder:validation:Enum=optimized;preview;unoptimized
 type AIMProfileType string
 
 const (
-	AIMProfileTypeOptimized   AIMProfileType = "optimized"
+	// AIMProfileTypeOptimized indicates the profile has been fully optimized.
+	AIMProfileTypeOptimized AIMProfileType = "optimized"
+	// AIMProfileTypePreview indicates the profile is in preview/beta state.
+	AIMProfileTypePreview AIMProfileType = "preview"
+	// AIMProfileTypeUnoptimized indicates the profile has not been optimized.
 	AIMProfileTypeUnoptimized AIMProfileType = "unoptimized"
-	AIMProfileTypePreview     AIMProfileType = "preview"
 )
 
 // AIMProfileMetadata describes the characteristics of a cached deployment profile.
@@ -245,9 +248,20 @@ type AIMProfileMetadata struct {
 	// +optional
 	Precision AIMPrecision `json:"precision,omitempty"`
 
-	// Type specifies the designation of the profile (optimized, unoptimized, preview).
+	// Type indicates the optimization level of this profile (optimized, preview, unoptimized).
 	// +optional
 	Type AIMProfileType `json:"type,omitempty"`
+}
+
+// AIMTemplateCandidateResult represents the evaluation result for a template candidate
+// during template selection.
+type AIMTemplateCandidateResult struct {
+	// Name is the name of the template candidate.
+	Name string `json:"name"`
+	// Status indicates whether the candidate was "chosen" or "rejected".
+	Status string `json:"status"`
+	// Reason provides a CamelCase reason for the evaluation result.
+	Reason string `json:"reason,omitempty"`
 }
 
 // Discovery conditions
