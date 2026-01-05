@@ -44,14 +44,6 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
-const (
-	// DefaultGPUResourceName is the default resource name for AMD GPUs
-	DefaultGPUResourceName = "amd.com/gpu"
-	// DefaultSharedMemorySize is the default size for /dev/shm
-	DefaultSharedMemorySize = "8Gi"
-	// AIMCacheBasePath is the base directory for cached models
-	AIMCacheBasePath = "/workspace/model-cache"
-)
 
 // GenerateInferenceServiceName creates a deterministic name for the InferenceService.
 // KServe creates hostnames in format {isvc-name}-predictor-{namespace}, which must be ≤ 63 chars.
@@ -159,11 +151,10 @@ func buildInferenceService(
 	}
 
 	labels := map[string]string{
-		"app.kubernetes.io/name":       "aim-inference-service",
-		"app.kubernetes.io/component":  "inference",
-		"app.kubernetes.io/managed-by": constants.LabelValueManagedBy,
-		constants.LabelTemplate:        templateLabelValue,
-		constants.LabelService:         serviceLabelValue,
+		constants.LabelK8sComponent: constants.ComponentInference,
+		constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
+		constants.LabelTemplate:     templateLabelValue,
+		constants.LabelService:      serviceLabelValue,
 	}
 	if modelLabelValue != "" {
 		labels[constants.LabelModelID] = modelLabelValue
@@ -199,13 +190,13 @@ func buildInferenceService(
 	}
 
 	// GPU resource name is always the default AMD GPU resource
-	gpuResourceName := corev1.ResourceName(DefaultGPUResourceName)
+	gpuResourceName := corev1.ResourceName(constants.DefaultGPUResourceName)
 
 	// Build resource requirements
 	resources := resolveResources(service, templateSpec, gpuCount, gpuResourceName)
 
 	// Build shared memory volume
-	dshmSizeLimit := resource.MustParse(DefaultSharedMemorySize)
+	dshmSizeLimit := resource.MustParse(constants.DefaultSharedMemorySize)
 
 	inferenceService := &servingv1beta1.InferenceService{
 		TypeMeta: metav1.TypeMeta{
@@ -236,28 +227,28 @@ func buildInferenceService(
 					ServiceAccountName: service.Spec.ServiceAccountName,
 					Containers: []corev1.Container{
 						{
-							Name:      "kserve-container",
+							Name:      constants.ContainerKServe,
 							Image:     image,
 							Env:       envVars,
 							Resources: resources,
 							Ports: []corev1.ContainerPort{
 								{
-									ContainerPort: 8000,
+									ContainerPort: constants.DefaultHTTPPort,
 									Name:          "http",
 									Protocol:      corev1.ProtocolTCP,
 								},
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      "dshm",
-									MountPath: "/dev/shm",
+									Name:      constants.VolumeSharedMemory,
+									MountPath: constants.MountPathSharedMemory,
 								},
 							},
 						},
 					},
 					Volumes: []corev1.Volume{
 						{
-							Name: "dshm",
+							Name: constants.VolumeSharedMemory,
 							VolumeSource: corev1.VolumeSource{
 								EmptyDir: &corev1.EmptyDirVolumeSource{
 									Medium:    corev1.StorageMediumMemory,
@@ -298,8 +289,8 @@ func buildMergedEnvVars(
 ) []corev1.EnvVar {
 	// Start with system defaults
 	envVars := []corev1.EnvVar{
-		{Name: "AIM_CACHE_PATH", Value: AIMCacheBasePath},
-		{Name: "VLLM_ENABLE_METRICS", Value: "true"},
+		{Name: constants.EnvAIMCachePath, Value: constants.AIMCacheBasePath},
+		{Name: constants.EnvVLLMEnableMetrics, Value: "true"},
 	}
 
 	// Merge runtime config env vars
@@ -309,12 +300,12 @@ func buildMergedEnvVars(
 
 	// Add metric if set on template
 	if templateSpec != nil && templateSpec.Metric != nil {
-		envVars = append(envVars, corev1.EnvVar{Name: "AIM_METRIC", Value: string(*templateSpec.Metric)})
+		envVars = append(envVars, corev1.EnvVar{Name: constants.EnvAIMMetric, Value: string(*templateSpec.Metric)})
 	}
 
 	// Add precision if set on template
 	if templateSpec != nil && templateSpec.Precision != nil {
-		envVars = append(envVars, corev1.EnvVar{Name: "AIM_PRECISION", Value: string(*templateSpec.Precision)})
+		envVars = append(envVars, corev1.EnvVar{Name: constants.EnvAIMPrecision, Value: string(*templateSpec.Precision)})
 	}
 
 	// Merge template spec env vars
@@ -441,8 +432,8 @@ func disableHPA(isvc *servingv1beta1.InferenceService) {
 	if isvc.Annotations == nil {
 		isvc.Annotations = make(map[string]string)
 	}
-	if _, exists := isvc.Annotations["serving.kserve.io/autoscalerClass"]; !exists {
-		isvc.Annotations["serving.kserve.io/autoscalerClass"] = "none"
+	if _, exists := isvc.Annotations[constants.AnnotationKServeAutoscalerClass]; !exists {
+		isvc.Annotations[constants.AnnotationKServeAutoscalerClass] = constants.AutoscalerClassNone
 	}
 }
 
@@ -476,10 +467,8 @@ func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObserva
 
 // addServicePVCMount adds a service PVC volume mount.
 func addServicePVCMount(isvc *servingv1beta1.InferenceService, container *corev1.Container, pvcName string) {
-	volumeName := "model-storage"
-
 	isvc.Spec.Predictor.Volumes = append(isvc.Spec.Predictor.Volumes, corev1.Volume{
-		Name: volumeName,
+		Name: constants.VolumeModelStorage,
 		VolumeSource: corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 				ClaimName: pvcName,
@@ -488,8 +477,8 @@ func addServicePVCMount(isvc *servingv1beta1.InferenceService, container *corev1
 	})
 
 	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
-		Name:      volumeName,
-		MountPath: AIMCacheBasePath,
+		Name:      constants.VolumeModelStorage,
+		MountPath: constants.AIMCacheBasePath,
 	})
 }
 
@@ -509,7 +498,7 @@ func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1
 	})
 
 	// Mount at cache path + model name
-	mountPath := filepath.Join(AIMCacheBasePath, modelName)
+	mountPath := filepath.Join(constants.AIMCacheBasePath, modelName)
 
 	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 		Name:      volumeName,

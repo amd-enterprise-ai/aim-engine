@@ -120,10 +120,9 @@ func buildHTTPRoute(
 	// Build labels
 	serviceLabelValue, _ := utils.SanitizeLabelValue(service.Name)
 	labels := map[string]string{
-		"app.kubernetes.io/name":       "aim-http-route",
-		"app.kubernetes.io/component":  "routing",
-		"app.kubernetes.io/managed-by": constants.LabelValueManagedBy,
-		constants.LabelService:         serviceLabelValue,
+		constants.LabelK8sComponent: constants.ComponentRouting,
+		constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
+		constants.LabelService:      serviceLabelValue,
 	}
 
 	// Build annotations
@@ -149,14 +148,14 @@ func buildHTTPRoute(
 
 	// Build backend reference - points to KServe predictor service
 	isvcName, _ := GenerateInferenceServiceName(service.Name, service.Namespace)
-	predictorServiceName := isvcName + "-predictor"
+	predictorServiceName := isvcName + constants.PredictorServiceSuffix
 	backendRef := gatewayapiv1.HTTPBackendRef{
 		BackendRef: gatewayapiv1.BackendRef{
 			BackendObjectReference: gatewayapiv1.BackendObjectReference{
 				Kind:      ptr.To(gatewayapiv1.Kind("Service")),
 				Name:      gatewayapiv1.ObjectName(predictorServiceName),
 				Namespace: ptr.To(gatewayapiv1.Namespace(service.Namespace)),
-				Port:      ptr.To(gatewayapiv1.PortNumber(80)),
+				Port:      ptr.To(gatewayapiv1.PortNumber(constants.DefaultGatewayPort)),
 			},
 		},
 	}

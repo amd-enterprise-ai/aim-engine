@@ -113,11 +113,11 @@ func planServicePVC(
 			Name:      pvcName,
 			Namespace: service.Namespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": constants.LabelValueManagedBy,
-				"app.kubernetes.io/component":  "model-storage",
-				constants.LabelService:         serviceLabelValue,
-				constants.LabelCacheType:       constants.LabelValueCacheTypeTemp,
-				constants.LabelTemplate:        templateLabelValue,
+				constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
+				constants.LabelK8sComponent: constants.ComponentModelStorage,
+				constants.LabelService:      serviceLabelValue,
+				constants.LabelCacheType:    constants.LabelValueCacheTypeTemp,
+				constants.LabelTemplate:     templateLabelValue,
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{

@@ -54,10 +54,6 @@ const (
 	LabelMetric = AimLabelDomain + "/metric"
 	// LabelPrecision is the label key for the numeric precision
 	LabelPrecision = AimLabelDomain + "/precision"
-	// LabelDerivedTemplate indicates a template was derived from service overrides
-	LabelDerivedTemplate = AimLabelDomain + "/derived-template"
-	// LabelAutoCreated indicates a resource was auto-created
-	LabelAutoCreated = AimLabelDomain + "/auto-created"
 	// LabelCacheType indicates the type of cache (temp or persistent)
 	LabelCacheType = AimLabelDomain + "/cache-type"
 )
@@ -176,4 +172,74 @@ const (
 
 	// NodeLabelBetaAMDGPUDeviceID is the legacy/beta node label for AMD GPU device IDs
 	NodeLabelBetaAMDGPUDeviceID = "beta.amd.com/gpu.device-id"
+)
+
+// Standard Kubernetes label keys
+const (
+	// LabelK8sComponent is the standard Kubernetes component label
+	LabelK8sComponent = "app.kubernetes.io/component"
+	// LabelK8sManagedBy is the standard Kubernetes managed-by label
+	LabelK8sManagedBy = "app.kubernetes.io/managed-by"
+)
+
+// InferenceService constants
+const (
+	// ContainerKServe is the name of the main inference container
+	ContainerKServe = "kserve-container"
+	// VolumeSharedMemory is the name of the shared memory volume
+	VolumeSharedMemory = "dshm"
+	// VolumeModelStorage is the name of the model storage volume
+	VolumeModelStorage = "model-storage"
+	// MountPathSharedMemory is the mount path for shared memory
+	MountPathSharedMemory = "/dev/shm"
+	// DefaultSharedMemorySize is the default size for /dev/shm
+	DefaultSharedMemorySize = "8Gi"
+	// DefaultHTTPPort is the default HTTP port for inference services
+	DefaultHTTPPort = 8000
+	// DefaultGatewayPort is the default gateway port
+	DefaultGatewayPort = 80
+	// DefaultGPUResourceName is the default resource name for AMD GPUs
+	DefaultGPUResourceName = "amd.com/gpu"
+	// AIMCacheBasePath is the base directory for cached models
+	AIMCacheBasePath = "/workspace/model-cache"
+)
+
+// Component values for resource labels
+const (
+	// ComponentInference is the component value for inference-related resources
+	ComponentInference = "inference"
+	// ComponentRouting is the component value for routing-related resources
+	ComponentRouting = "routing"
+	// ComponentModelStorage is the component value for storage-related resources
+	ComponentModelStorage = "model-storage"
+)
+
+// Environment variable names
+const (
+	// EnvAIMCachePath is the environment variable for the cache path
+	EnvAIMCachePath = "AIM_CACHE_PATH"
+	// EnvAIMMetric is the environment variable for the optimization metric
+	EnvAIMMetric = "AIM_METRIC"
+	// EnvAIMPrecision is the environment variable for the numeric precision
+	EnvAIMPrecision = "AIM_PRECISION"
+	// EnvVLLMEnableMetrics enables vLLM metrics
+	EnvVLLMEnableMetrics = "VLLM_ENABLE_METRICS"
+)
+
+// KServe annotation keys and values
+const (
+	// AnnotationKServeAutoscalerClass is the annotation key for autoscaler class
+	AnnotationKServeAutoscalerClass = "serving.kserve.io/autoscalerClass"
+	// AutoscalerClassNone disables autoscaling
+	AutoscalerClassNone = "none"
+)
+
+// Template-related constants
+const (
+	// TemplateNameMaxLength is the maximum length for template names (Kubernetes name limit)
+	TemplateNameMaxLength = 63
+	// DerivedTemplateSuffix is the suffix used for derived templates
+	DerivedTemplateSuffix = "-ovr-"
+	// PredictorServiceSuffix is the suffix added to InferenceService names for predictor services
+	PredictorServiceSuffix = "-predictor"
 )

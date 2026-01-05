@@ -39,7 +39,6 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
-const templateNameMaxLength = 63
 
 // TemplateFetchResult holds the result of fetching/resolving a template for the service.
 type TemplateFetchResult struct {
@@ -224,7 +223,7 @@ func planDerivedTemplate(
 	// Check if we already have the derived template
 	if obs.template.Value != nil {
 		// Template already exists, check if it's our derived template
-		if val, ok := obs.template.Value.Labels[constants.LabelDerivedTemplate]; ok && val == "true" {
+		if val, ok := obs.template.Value.Labels[constants.LabelKeyOrigin]; ok && val == constants.LabelValueOriginDerived {
 			return nil // Already exists
 		}
 	}
@@ -325,8 +324,8 @@ func buildDerivedTemplate(
 			Name:      templateName,
 			Namespace: service.Namespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": constants.LabelValueManagedBy,
-				constants.LabelDerivedTemplate: "true",
+				constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
+				constants.LabelKeyOrigin:    constants.LabelValueOriginDerived,
 			},
 			OwnerReferences: []metav1.OwnerReference{},
 		},
@@ -375,8 +374,8 @@ func derivedTemplateName(baseName, suffix string) string {
 		return baseName
 	}
 
-	extra := "-ovr-" + suffix
-	maxBaseLen := templateNameMaxLength - len(extra)
+	extra := constants.DerivedTemplateSuffix + suffix
+	maxBaseLen := constants.TemplateNameMaxLength - len(extra)
 	if maxBaseLen <= 0 {
 		maxBaseLen = 1
 	}
@@ -396,7 +395,7 @@ func derivedTemplateName(baseName, suffix string) string {
 func normalizeRuntimeConfigName(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return "default"
+		return constants.DefaultRuntimeConfigName
 	}
 	return name
 }
