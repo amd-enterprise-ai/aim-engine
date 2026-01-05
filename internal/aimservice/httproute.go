@@ -23,13 +23,17 @@
 package aimservice
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"text/template"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -42,6 +46,68 @@ const (
 	// MaxPathLength is the maximum length for rendered paths
 	MaxPathLength = 200
 )
+
+// GenerateHTTPRouteName creates a deterministic name for the HTTPRoute.
+func GenerateHTTPRouteName(serviceName, namespace string) (string, error) {
+	return utils.GenerateDerivedName([]string{serviceName}, namespace)
+}
+
+// fetchHTTPRoute fetches the existing HTTPRoute for the service.
+func fetchHTTPRoute(
+	ctx context.Context,
+	c client.Client,
+	service *aimv1alpha1.AIMService,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+) controllerutils.FetchResult[*gatewayapiv1.HTTPRoute] {
+	// Check if routing is enabled
+	if !isRoutingEnabled(service, runtimeConfig) {
+		return controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]{}
+	}
+
+	routeName, err := GenerateHTTPRouteName(service.Name, service.Namespace)
+	if err != nil {
+		return controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]{Error: err}
+	}
+
+	return controllerutils.Fetch(ctx, c, client.ObjectKey{
+		Namespace: service.Namespace,
+		Name:      routeName,
+	}, &gatewayapiv1.HTTPRoute{})
+}
+
+// planHTTPRoute creates the HTTPRoute if routing is enabled.
+func planHTTPRoute(
+	service *aimv1alpha1.AIMService,
+	obs ServiceObservation,
+) client.Object {
+	runtimeConfig := obs.mergedRuntimeConfig.Value
+	if !isRoutingEnabled(service, runtimeConfig) {
+		return nil
+	}
+
+	// Need gateway ref to create route
+	gatewayRef := resolveGatewayRef(service, runtimeConfig)
+	if gatewayRef == nil {
+		return nil
+	}
+
+	return buildHTTPRoute(service, gatewayRef, runtimeConfig)
+}
+
+// resolveGatewayRef gets the gateway reference from service or runtime config.
+func resolveGatewayRef(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) *gatewayapiv1.ParentReference {
+	// Service-level override
+	if service.Spec.Routing != nil && service.Spec.Routing.GatewayRef != nil {
+		return service.Spec.Routing.GatewayRef
+	}
+
+	// Fall back to runtime config
+	if runtimeConfig != nil && runtimeConfig.Routing != nil && runtimeConfig.Routing.GatewayRef != nil {
+		return runtimeConfig.Routing.GatewayRef
+	}
+
+	return nil
+}
 
 // buildHTTPRoute constructs an HTTPRoute for the service.
 func buildHTTPRoute(

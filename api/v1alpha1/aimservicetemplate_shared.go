@@ -177,6 +177,10 @@ func (s *AIMServiceTemplateStatus) SetStatus(status string) {
 	s.Status = constants.AIMStatus(status)
 }
 
+func (s *AIMServiceTemplateStatus) GetAIMStatus() constants.AIMStatus {
+	return s.Status
+}
+
 // AIMProfile contains the cached discovery results for a template.
 // This is the processed and validated version of AIMDiscoveryProfile that is stored
 // in the template's status after successful discovery.

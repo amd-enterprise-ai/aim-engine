@@ -1033,26 +1033,8 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `name` _string_ | Name references an existing AIMModel or AIMClusterModel by metadata.name.<br />The controller looks for a namespace-scoped AIMModel first, then falls back to cluster-scoped AIMClusterModel.<br />Example: `meta-llama-3-8b` |  |  |
 | `image` _string_ | Image specifies a container image URI directly.<br />The controller searches for an existing model with this image, or creates one if none exists.<br />The scope of the created model is controlled by the runtime config's ModelCreationScope field.<br />Example: `ghcr.io/silogen/llama-3-8b:v1.2.0` |  |  |
-| `custom` _[AIMServiceModelCustom](#aimservicemodelcustom)_ | Custom specifies a custom model configuration with explicit base image,<br />model sources, and GPU requirements. |  |  |
 
 
-#### AIMServiceModelCustom
-
-
-
-AIMServiceModelCustom specifies a custom model configuration with explicit base image,
-model sources, and GPU requirements.
-
-
-
-_Appears in:_
-- [AIMServiceModel](#aimservicemodel)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `baseImage` _string_ | BaseImage is the container image URI for the AIM base image.<br />This will be used as the image for the auto-created AIMModel.<br />Example: `ghcr.io/silogen/aim-base:0.7.0` |  |  |
-| `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources to use.<br />The controller will create a template with these sources inline,<br />and discovery will validate/enrich them with size information.<br />AIM runtime currently supports only one model source. |  | MaxItems: 1 <br />MinItems: 1 <br /> |
-| `gpuSelector` _[AIMGpuSelector](#aimgpuselector)_ | GpuSelector specifies the GPU requirements for this custom model.<br />This is mandatory and cannot be overridden by service-level overrides. |  |  |
 
 
 #### AIMServiceOverrides

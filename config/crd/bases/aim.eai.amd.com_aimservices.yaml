@@ -119,97 +119,6 @@ spec:
                   Use `ref` to reference an existing AIMModel/AIMClusterModel by name, or use `image`
                   to specify a container image URI directly (which will auto-create a model if needed).
                 properties:
-                  custom:
-                    description: |-
-                      Custom specifies a custom model configuration with explicit base image,
-                      model sources, and GPU requirements.
-                    properties:
-                      baseImage:
-                        description: |-
-                          BaseImage is the container image URI for the AIM base image.
-                          This will be used as the image for the auto-created AIMModel.
-                          Example: `ghcr.io/silogen/aim-base:0.7.0`
-                        type: string
-                      gpuSelector:
-                        description: |-
-                          GpuSelector specifies the GPU requirements for this custom model.
-                          This is mandatory and cannot be overridden by service-level overrides.
-                        properties:
-                          count:
-                            description: |-
-                              Count is the number of GPU resources requested per replica.
-                              Must be at least 1.
-                            format: int32
-                            minimum: 1
-                            type: integer
-                          model:
-                            description: |-
-                              Model is the GPU model name required for this deployment.
-                              Examples: `MI300X`, `MI325X`
-                            minLength: 1
-                            type: string
-                          resourceName:
-                            default: amd.com/gpu
-                            description: |-
-                              ResourceName is the Kubernetes resource name for GPU resources.
-                              Defaults to "amd.com/gpu" if not specified.
-                            type: string
-                        required:
-                        - count
-                        - model
-                        type: object
-                      modelSources:
-                        description: |-
-                          ModelSources specifies the model sources to use.
-                          The controller will create a template with these sources inline,
-                          and discovery will validate/enrich them with size information.
-                          AIM runtime currently supports only one model source.
-                        items:
-                          description: |-
-                            AIMModelSource describes a model artifact that must be downloaded for inference.
-                            Discovery extracts these from the container's configuration to enable caching and validation.
-                          properties:
-                            name:
-                              description: |-
-                                Name is a human-readable identifier for this model artifact.
-                                May be empty if the source represents the primary model.
-                              type: string
-                            size:
-                              anyOf:
-                              - type: integer
-                              - type: string
-                              description: |-
-                                Size is the expected storage space required for this model artifact.
-                                Used for PVC sizing and capacity planning during cache creation.
-                                Optional for custom models (will be populated by discovery job).
-                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                              x-kubernetes-int-or-string: true
-                            sourceUri:
-                              description: |-
-                                SourceURI is the location from which the model should be downloaded.
-                                Supported schemes:
-                                - hf://org/model - Hugging Face Hub model
-                                - s3://bucket/key - S3-compatible storage
-                              pattern: ^(hf|s3)://[^ \t\r\n]+$
-                              type: string
-                          required:
-                          - sourceUri
-                          type: object
-                        maxItems: 1
-                        minItems: 1
-                        type: array
-                    required:
-                    - baseImage
-                    - gpuSelector
-                    - modelSources
-                    type: object
-                    x-kubernetes-validations:
-                    - message: at least one model source must be specified
-                      rule: size(self.modelSources) >= 1
-                    - message: gpuSelector must be fully specified with model and
-                        count
-                      rule: has(self.gpuSelector) && self.gpuSelector.model != ""
-                        && self.gpuSelector.count > 0
                   image:
                     description: |-
                       Image specifies a container image URI directly.
@@ -254,12 +163,6 @@ spec:
                           Model is the GPU model name required for this deployment.
                           Examples: `MI300X`, `MI325X`
                         minLength: 1
-                        type: string
-                      resourceName:
-                        default: amd.com/gpu
-                        description: |-
-                          ResourceName is the Kubernetes resource name for GPU resources.
-                          Defaults to "amd.com/gpu" if not specified.
                         type: string
                     required:
                     - count

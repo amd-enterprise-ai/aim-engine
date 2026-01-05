@@ -29,9 +29,7 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -44,12 +42,172 @@ import (
 // ErrMultipleModelsFound is returned when multiple models exist with the same image URI
 var ErrMultipleModelsFound = errors.New("multiple models found with the same image")
 
-// resolveOrCreateModelFromImage searches for existing models matching the image URI,
-// or creates a new one if none exists.
-func resolveOrCreateModelFromImage(
+// ModelFetchResult holds the result of fetching/resolving a model for the service.
+type ModelFetchResult struct {
+	Model        controllerutils.FetchResult[*aimv1alpha1.AIMModel]
+	ClusterModel controllerutils.FetchResult[*aimv1alpha1.AIMClusterModel]
+	// ImageURI is set when Model.Image is specified (needed for building the model in PlanResources).
+	ImageURI string
+}
+
+// fetchModel resolves the model for the service.
+// It handles three modes:
+// 1. Model.Name - reference to existing AIMModel or AIMClusterModel
+// 2. Model.Image - container image URI (signals creation needed if no match)
+// 3. Model.Custom - custom model configuration
+//
+// If a resolved model reference exists in status (which implies it was Ready when stored)
+// and is still Ready, it uses that directly. Otherwise, it re-resolves.
+func fetchModel(
 	ctx context.Context,
 	c client.Client,
-	_ kubernetes.Interface,
+	service *aimv1alpha1.AIMService,
+) ModelFetchResult {
+	logger := log.FromContext(ctx)
+
+	// Try to use previously resolved model if Ready
+	if result, shouldContinue := tryFetchResolvedModel(ctx, c, service); !shouldContinue {
+		return result
+	}
+
+	var result ModelFetchResult
+
+	// Case 1: Model.Name - look up by name
+	if modelNamePtr := service.Spec.Model.Name; modelNamePtr != nil && *modelNamePtr != "" {
+		modelName := strings.TrimSpace(*modelNamePtr)
+		logger.V(1).Info("looking up model by ref", "modelName", modelName)
+
+		// Try namespace-scoped first
+		result.Model = controllerutils.Fetch(ctx, c, client.ObjectKey{
+			Namespace: service.Namespace,
+			Name:      modelName,
+		}, &aimv1alpha1.AIMModel{})
+
+		if result.Model.OK() {
+			return result
+		}
+
+		if !result.Model.IsNotFound() {
+			// Real error, not just missing
+			return result
+		}
+
+		// Try cluster-scoped
+		result.ClusterModel = controllerutils.Fetch(ctx, c, client.ObjectKey{
+			Name: modelName,
+		}, &aimv1alpha1.AIMClusterModel{})
+
+		if result.ClusterModel.OK() {
+			// Clear the namespace-scoped error since we found a cluster model
+			result.Model.Error = nil
+			return result
+		}
+
+		if result.ClusterModel.IsNotFound() {
+			// Neither found - report as missing upstream dependency
+			result.Model.Error = controllerutils.NewMissingUpstreamDependencyError(
+				aimv1alpha1.AIMServiceReasonModelNotFound,
+				fmt.Sprintf("model %q not found in namespace %s or cluster scope", modelName, service.Namespace),
+				nil,
+			)
+			result.ClusterModel.Error = nil
+		}
+		return result
+	}
+
+	// Case 2: Model.Image - resolve model from image
+	if service.Spec.Model.Image != nil && *service.Spec.Model.Image != "" {
+		imageURI := strings.TrimSpace(*service.Spec.Model.Image)
+		logger.V(1).Info("resolving model from image", "image", imageURI)
+
+		result.ImageURI = imageURI
+		result.Model, result.ClusterModel = resolveModelFromImage(ctx, c, service, imageURI)
+		return result
+	}
+
+	//// Case 3: Model.Custom - custom model configuration
+	//if service.Spec.Model.Custom != nil {
+	//	logger.V(1).Info("resolving custom model")
+	//	// Custom models are handled differently - we create the model inline
+	//	// For now, treat as an error until implemented
+	//	result.Model.Error = fmt.Errorf("custom model configuration not yet implemented")
+	//	return result
+	//}
+
+	// No model specified
+	result.Model.Error = controllerutils.NewInvalidSpecError(
+		aimv1alpha1.AIMServiceReasonModelNotFound,
+		"no model specified in service spec",
+		nil,
+	)
+	return result
+}
+
+// tryFetchResolvedModel attempts to fetch a previously resolved model reference.
+// Returns the result and whether to continue with normal resolution.
+// If the resolved model is Ready, returns (result, false) to use it directly.
+// If not Ready, deleted, or has an error, returns appropriate state and whether to continue.
+func tryFetchResolvedModel(
+	ctx context.Context,
+	c client.Client,
+	service *aimv1alpha1.AIMService,
+) (result ModelFetchResult, shouldContinue bool) {
+	if service.Status.ResolvedModel == nil {
+		return result, true
+	}
+
+	logger := log.FromContext(ctx)
+	ref := service.Status.ResolvedModel
+
+	switch ref.Scope {
+	case aimv1alpha1.AIMResolutionScopeNamespace:
+		result.Model = controllerutils.Fetch(ctx, c, ref.NamespacedName(), &aimv1alpha1.AIMModel{})
+		if result.Model.OK() && result.Model.Value.Status.Status == constants.AIMStatusReady {
+			logger.V(1).Info("using resolved model", "name", ref.Name)
+			if service.Spec.Model.Image != nil && *service.Spec.Model.Image != "" {
+				result.ImageURI = strings.TrimSpace(*service.Spec.Model.Image)
+			}
+			return result, false
+		}
+		// Not Ready or deleted - log and continue to search
+		if result.Model.OK() {
+			logger.V(1).Info("resolved model not ready, re-resolving",
+				"name", ref.Name, "status", result.Model.Value.Status.Status)
+		} else if result.Model.IsNotFound() {
+			logger.V(1).Info("resolved model deleted, re-resolving", "name", ref.Name)
+		} else {
+			return result, false // Real error - stop
+		}
+
+	case aimv1alpha1.AIMResolutionScopeCluster:
+		result.ClusterModel = controllerutils.Fetch(ctx, c, ref.NamespacedName(), &aimv1alpha1.AIMClusterModel{})
+		if result.ClusterModel.OK() && result.ClusterModel.Value.Status.Status == constants.AIMStatusReady {
+			logger.V(1).Info("using resolved cluster model", "name", ref.Name)
+			if service.Spec.Model.Image != nil && *service.Spec.Model.Image != "" {
+				result.ImageURI = strings.TrimSpace(*service.Spec.Model.Image)
+			}
+			return result, false
+		}
+		// Not Ready or deleted - log and continue to search
+		if result.ClusterModel.OK() {
+			logger.V(1).Info("resolved cluster model not ready, re-resolving",
+				"name", ref.Name, "status", result.ClusterModel.Value.Status.Status)
+		} else if result.ClusterModel.IsNotFound() {
+			logger.V(1).Info("resolved cluster model deleted, re-resolving", "name", ref.Name)
+		} else {
+			return result, false // Real error - stop
+		}
+	}
+
+	return ModelFetchResult{}, true
+}
+
+// resolveModelFromImage searches for existing models matching the image URI.
+// Returns the found model (if any). If no model is found and no error occurred,
+// both Model and ClusterModel will be nil - ComposeState determines if creation is needed.
+func resolveModelFromImage(
+	ctx context.Context,
+	c client.Client,
 	service *aimv1alpha1.AIMService,
 	imageURI string,
 ) (controllerutils.FetchResult[*aimv1alpha1.AIMModel], controllerutils.FetchResult[*aimv1alpha1.AIMClusterModel]) {
@@ -72,14 +230,9 @@ func resolveOrCreateModelFromImage(
 
 	switch len(models) {
 	case 0:
-		// No models found - create one
-		logger.V(1).Info("no existing model found, creating new one", "image", imageURI)
-		model, err := createModelForImage(ctx, c, service, imageURI)
-		if err != nil {
-			modelResult.Error = err
-			return modelResult, clusterModelResult
-		}
-		modelResult.Value = model
+		// No models found - return empty results (no error)
+		// ComposeState will determine that creation is needed based on imageURI being set
+		logger.V(1).Info("no existing model found for image", "image", imageURI)
 		return modelResult, clusterModelResult
 
 	case 1:
@@ -88,24 +241,14 @@ func resolveOrCreateModelFromImage(
 		logger.V(1).Info("found existing model", "name", ref.Name, "scope", ref.Scope)
 
 		if ref.Scope == TemplateScopeNamespace {
-			model := &aimv1alpha1.AIMModel{}
-			err := c.Get(ctx, client.ObjectKey{
+			modelResult = controllerutils.Fetch(ctx, c, client.ObjectKey{
 				Namespace: service.Namespace,
 				Name:      ref.Name,
-			}, model)
-			if err != nil {
-				modelResult.Error = err
-				return modelResult, clusterModelResult
-			}
-			modelResult.Value = model
+			}, &aimv1alpha1.AIMModel{})
 		} else {
-			model := &aimv1alpha1.AIMClusterModel{}
-			err := c.Get(ctx, client.ObjectKey{Name: ref.Name}, model)
-			if err != nil {
-				clusterModelResult.Error = err
-				return modelResult, clusterModelResult
-			}
-			clusterModelResult.Value = model
+			clusterModelResult = controllerutils.Fetch(ctx, c, client.ObjectKey{
+				Name: ref.Name,
+			}, &aimv1alpha1.AIMClusterModel{})
 		}
 		return modelResult, clusterModelResult
 
@@ -172,21 +315,30 @@ func findModelsWithImage(
 	return results, nil
 }
 
-// createModelForImage creates a new namespace-scoped AIMModel for the given image.
-func createModelForImage(
-	ctx context.Context,
-	c client.Client,
+// planModel creates an AIMModel if the service specifies an image but no matching model exists.
+// The model is created without an owner reference so it can be shared and outlive the service.
+func planModel(
 	service *aimv1alpha1.AIMService,
-	imageURI string,
-) (*aimv1alpha1.AIMModel, error) {
-	// Generate model name from image URI
-	modelName, err := generateModelName(imageURI)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate model name: %w", err)
+	obs ServiceObservation,
+) client.Object {
+	if !obs.needsModelCreation {
+		return nil
 	}
 
-	// Create namespace-scoped model
-	model := &aimv1alpha1.AIMModel{
+	// Image URI and model name were validated in ComposeState
+	return BuildModelForImage(service, obs.modelResult.ImageURI, obs.pendingModelName)
+}
+
+// BuildModelForImage constructs a new namespace-scoped AIMModel for the given image.
+// The model is not created - it should be added to PlanResult for SSA application.
+// The caller should validate the imageURI first using GenerateModelName.
+func BuildModelForImage(
+	service *aimv1alpha1.AIMService,
+	imageURI string,
+	modelName string,
+) *aimv1alpha1.AIMModel {
+	// Build namespace-scoped model
+	return &aimv1alpha1.AIMModel{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: aimv1alpha1.GroupVersion.String(),
 			Kind:       "AIMModel",
@@ -195,6 +347,7 @@ func createModelForImage(
 			Name:      modelName,
 			Namespace: service.Namespace,
 			Labels: map[string]string{
+				// TODO use origin
 				constants.LabelAutoCreated: "true",
 			},
 		},
@@ -206,32 +359,15 @@ func createModelForImage(
 			Resources:          corev1.ResourceRequirements{},
 		},
 	}
-
-	if err := c.Create(ctx, model); err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			// Race condition - another controller created it, fetch and return
-			existing := &aimv1alpha1.AIMModel{}
-			if getErr := c.Get(ctx, client.ObjectKey{
-				Namespace: service.Namespace,
-				Name:      modelName,
-			}, existing); getErr != nil {
-				return nil, fmt.Errorf("model exists but failed to fetch: %w", getErr)
-			}
-			return existing, nil
-		}
-		return nil, fmt.Errorf("failed to create AIMModel: %w", err)
-	}
-
-	return model, nil
 }
 
-// generateModelName creates a Kubernetes-valid name from an image URI using utils.GenerateDerivedName.
-func generateModelName(imageURI string) (string, error) {
-	// Extract image parts
+// GenerateModelName creates a Kubernetes-valid name from an image URI using utils.GenerateDerivedName.
+// Returns an error if the image URI cannot be parsed.
+func GenerateModelName(imageURI string) (string, error) {
+	// Extract image parts - fail if image can't be parsed
 	parts, err := utils.ExtractImageParts(imageURI)
 	if err != nil {
-		// Fallback to simple hash-based name
-		return utils.GenerateDerivedName([]string{"model"}, imageURI)
+		return "", fmt.Errorf("invalid image URI %q: %w", imageURI, err)
 	}
 
 	// Generate name from image name and tag with hash for uniqueness

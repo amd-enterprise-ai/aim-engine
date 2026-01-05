@@ -110,6 +110,11 @@ const (
 	AIMStatusFailed       AIMStatus = "Failed"
 )
 
+// StatusProvider is implemented by status types that expose their AIMStatus.
+type StatusProvider interface {
+	GetAIMStatus() AIMStatus
+}
+
 // AIMStatusPriority maps AIMStatus values to priority levels.
 // Higher values indicate more desirable statuses for sorting and filtering.
 var AIMStatusPriority = map[AIMStatus]int{

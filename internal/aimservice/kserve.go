@@ -23,6 +23,7 @@
 package aimservice
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -33,6 +34,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -47,6 +52,91 @@ const (
 	// AIMCacheBasePath is the base directory for cached models
 	AIMCacheBasePath = "/workspace/model-cache"
 )
+
+// GenerateInferenceServiceName creates a deterministic name for the InferenceService.
+// KServe creates hostnames in format {isvc-name}-predictor-{namespace}, which must be ≤ 63 chars.
+func GenerateInferenceServiceName(serviceName, namespace string) (string, error) {
+	return utils.GenerateDerivedName([]string{serviceName}, namespace)
+}
+
+// fetchInferenceService fetches the existing InferenceService for the service.
+func fetchInferenceService(
+	ctx context.Context,
+	c client.Client,
+	service *aimv1alpha1.AIMService,
+) controllerutils.FetchResult[*servingv1beta1.InferenceService] {
+	isvcName, err := GenerateInferenceServiceName(service.Name, service.Namespace)
+	if err != nil {
+		return controllerutils.FetchResult[*servingv1beta1.InferenceService]{Error: err}
+	}
+
+	return controllerutils.Fetch(ctx, c, client.ObjectKey{
+		Namespace: service.Namespace,
+		Name:      isvcName,
+	}, &servingv1beta1.InferenceService{})
+}
+
+// planInferenceService creates the KServe InferenceService.
+func planInferenceService(
+	ctx context.Context,
+	service *aimv1alpha1.AIMService,
+	templateName string,
+	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
+	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
+	obs ServiceObservation,
+) client.Object {
+	logger := log.FromContext(ctx)
+
+	// Check if we're ready to create the InferenceService
+	if !isReadyForInferenceService(service, obs) {
+		logger.V(1).Info("not ready to create InferenceService")
+		return nil
+	}
+
+	// Build the InferenceService
+	return buildInferenceService(service, templateName, templateSpec, templateStatus, obs)
+}
+
+// isReadyForInferenceService checks if all prerequisites are met to create the InferenceService.
+func isReadyForInferenceService(service *aimv1alpha1.AIMService, obs ServiceObservation) bool {
+	cachingMode := service.Spec.GetCachingMode()
+
+	// Check model is ready
+	modelReady := false
+	if obs.modelResult.Model.Value != nil {
+		modelReady = obs.modelResult.Model.Value.Status.Status == constants.AIMStatusReady
+	} else if obs.modelResult.ClusterModel.Value != nil {
+		modelReady = obs.modelResult.ClusterModel.Value.Status.Status == constants.AIMStatusReady
+	}
+	if !modelReady {
+		return false
+	}
+
+	// Check if we have storage
+	switch cachingMode {
+	case aimv1alpha1.CachingModeAlways:
+		// Require template cache to be ready
+		if obs.templateCache.Value == nil ||
+			obs.templateCache.Value.Status.Status != constants.AIMStatusReady {
+			return false
+		}
+	case aimv1alpha1.CachingModeAuto:
+		// Either cache or PVC is fine
+		hasCache := obs.templateCache.Value != nil &&
+			obs.templateCache.Value.Status.Status == constants.AIMStatusReady
+		hasPVC := obs.pvc.Value != nil
+		if !hasCache && !hasPVC {
+			return false
+		}
+	case aimv1alpha1.CachingModeNever:
+		// No cache required, but need PVC for download
+		if obs.pvc.Value == nil {
+			return false
+		}
+	}
+
+	return true
+}
 
 // buildInferenceService constructs a KServe InferenceService with inline container spec.
 // This approach embeds the container configuration directly in the InferenceService
@@ -96,10 +186,10 @@ func buildInferenceService(
 
 	// Determine image from the resolved model
 	image := ""
-	if obs.model.Value != nil {
-		image = obs.model.Value.Spec.Image
-	} else if obs.clusterModel.Value != nil {
-		image = obs.clusterModel.Value.Spec.Image
+	if obs.modelResult.Model.Value != nil {
+		image = obs.modelResult.Model.Value.Spec.Image
+	} else if obs.modelResult.ClusterModel.Value != nil {
+		image = obs.modelResult.ClusterModel.Value.Spec.Image
 	}
 
 	// Get GPU count from template status
@@ -425,4 +515,54 @@ func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1
 		Name:      volumeName,
 		MountPath: mountPath,
 	})
+}
+
+// addGPUNodeAffinity adds node affinity rules for GPU selection to the InferenceService.
+// Uses device ID-based matching which is more reliable than product name labels.
+func addGPUNodeAffinity(isvc *servingv1beta1.InferenceService, gpuModel string) {
+	if gpuModel == "" {
+		return
+	}
+
+	// Normalize and get all device IDs for this GPU model
+	deviceIDs := utils.GetAMDDeviceIDsForModel(gpuModel)
+	if len(deviceIDs) == 0 {
+		// Unknown GPU model, skip affinity (will schedule on any GPU node)
+		return
+	}
+
+	// Create the node selector requirement using device ID label
+	requirement := corev1.NodeSelectorRequirement{
+		Key:      utils.LabelAMDGPUDeviceID,
+		Operator: corev1.NodeSelectorOpIn,
+		Values:   deviceIDs,
+	}
+
+	// Ensure Affinity exists
+	if isvc.Spec.Predictor.Affinity == nil {
+		isvc.Spec.Predictor.Affinity = &corev1.Affinity{}
+	}
+	if isvc.Spec.Predictor.Affinity.NodeAffinity == nil {
+		isvc.Spec.Predictor.Affinity.NodeAffinity = &corev1.NodeAffinity{}
+	}
+
+	// Add required node selector terms
+	nodeAffinity := isvc.Spec.Predictor.Affinity.NodeAffinity
+	if nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{},
+		}
+	}
+
+	// Add or update the node selector term
+	terms := nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	if len(terms) == 0 {
+		terms = append(terms, corev1.NodeSelectorTerm{
+			MatchExpressions: []corev1.NodeSelectorRequirement{requirement},
+		})
+	} else {
+		// Add to existing term
+		terms[0].MatchExpressions = append(terms[0].MatchExpressions, requirement)
+	}
+	nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = terms
 }

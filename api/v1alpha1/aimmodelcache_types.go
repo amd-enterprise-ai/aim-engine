@@ -141,6 +141,10 @@ func (s *AIMModelCacheStatus) SetStatus(status string) {
 	s.Status = constants.AIMStatus(status)
 }
 
+func (s *AIMModelCacheStatus) GetAIMStatus() constants.AIMStatus {
+	return s.Status
+}
+
 // Condition types for AIMModelCache
 const (
 	// AIMModelCacheConditionStorageReady is True when storage backing the cache is provisioned and mounted (PVC Bound)

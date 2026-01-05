@@ -96,7 +96,7 @@ type AIMServiceModel struct {
 	// Custom specifies a custom model configuration with explicit base image,
 	// model sources, and GPU requirements.
 	// +optional
-	Custom *AIMServiceModelCustom `json:"custom,omitempty"`
+	// Custom *AIMServiceModelCustom `json:"custom,omitempty"`
 }
 
 // AIMServiceModelCustom specifies a custom model configuration with explicit base image,
@@ -257,6 +257,10 @@ func (s *AIMServiceStatus) SetConditions(conditions []metav1.Condition) {
 
 func (s *AIMServiceStatus) SetStatus(status string) {
 	s.Status = constants.AIMStatus(status)
+}
+
+func (s *AIMServiceStatus) GetAIMStatus() constants.AIMStatus {
+	return s.Status
 }
 
 // AIMServiceStatusEnum defines coarse-grained states for a service.

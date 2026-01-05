@@ -121,6 +121,10 @@ func (s *AIMTemplateCacheStatus) SetStatus(status string) {
 	s.Status = constants.AIMStatus(status)
 }
 
+func (s *AIMTemplateCacheStatus) GetAIMStatus() constants.AIMStatus {
+	return s.Status
+}
+
 // Condition types for AIMTemplateCache
 const (
 	// AIMTemplateCacheConditionResolved is True when the template reference has been resolved.

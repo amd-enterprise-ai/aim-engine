@@ -33,6 +33,7 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
 // TemplateScope indicates whether a template is namespace-scoped or cluster-scoped.
@@ -226,6 +227,7 @@ func listTemplateCandidatesForModel(
 }
 
 // listAvailableGPUs returns the list of GPU models available in the cluster.
+// Uses device ID-based extraction for AMD GPUs and label-based extraction for NVIDIA GPUs.
 func listAvailableGPUs(ctx context.Context, c client.Client) ([]string, error) {
 	nodes := &corev1.NodeList{}
 	if err := c.List(ctx, nodes); err != nil {
@@ -234,10 +236,11 @@ func listAvailableGPUs(ctx context.Context, c client.Client) ([]string, error) {
 
 	gpuSet := make(map[string]struct{})
 	for _, node := range nodes.Items {
-		model := extractGPUModelFromNodeLabels(node.Labels)
-		if model != "" {
-			gpuSet[normalizeGPUModel(model)] = struct{}{}
+		// Try AMD GPU extraction (device ID-based)
+		if model := utils.ExtractAMDModel(node.Labels); model != "" {
+			gpuSet[model] = struct{}{}
 		}
+		// Add NVIDIA extraction if needed in the future
 	}
 
 	gpus := make([]string, 0, len(gpuSet))
@@ -446,7 +449,7 @@ func filterTemplatesByOverrides(candidates []TemplateCandidate, overrides *aimv1
 func filterTemplatesByGPUAvailability(candidates []TemplateCandidate, availableGPUs []string) []TemplateCandidate {
 	gpuMap := make(map[string]struct{}, len(availableGPUs))
 	for _, gpu := range availableGPUs {
-		normalized := normalizeGPUModel(strings.TrimSpace(gpu))
+		normalized := utils.NormalizeGPUModel(strings.TrimSpace(gpu))
 		if normalized != "" {
 			gpuMap[normalized] = struct{}{}
 		}
@@ -459,7 +462,7 @@ func filterTemplatesByGPUAvailability(candidates []TemplateCandidate, availableG
 			result = append(result, c)
 			continue
 		}
-		normalized := normalizeGPUModel(model)
+		normalized := utils.NormalizeGPUModel(model)
 		if _, ok := gpuMap[normalized]; ok {
 			result = append(result, c)
 		}

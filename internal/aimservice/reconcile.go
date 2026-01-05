@@ -55,9 +55,8 @@ type ServiceFetchResult struct {
 	// Merged runtime config (provided by reconcile context)
 	mergedRuntimeConfig controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
 
-	// Model resolution (namespace-scoped first, then cluster-scoped)
-	model        controllerutils.FetchResult[*aimv1alpha1.AIMModel]
-	clusterModel controllerutils.FetchResult[*aimv1alpha1.AIMClusterModel]
+	// Model resolution result (includes existing model or signals creation needed)
+	modelResult ModelFetchResult
 
 	// Template resolution
 	template        controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]
@@ -77,6 +76,9 @@ type ServiceFetchResult struct {
 }
 
 // FetchRemoteState fetches all resources needed for AIMService reconciliation.
+// Fetching is optimized based on whether the InferenceService already exists:
+// - Always fetch: InferenceService, HTTPRoute, TemplateCache (for health visibility)
+// - Conditionally fetch: Model, Template (only if ISVC doesn't exist or needs recreation)
 func (r *ServiceReconciler) FetchRemoteState(
 	ctx context.Context,
 	c client.Client,
@@ -95,49 +97,61 @@ func (r *ServiceReconciler) FetchRemoteState(
 		mergedRuntimeConfig: reconcileCtx.MergedRuntimeConfig,
 	}
 
-	// 1. Resolve model (handles ref, image, and custom modes)
-	result.model, result.clusterModel = fetchModel(ctx, c, r.Clientset, service)
-
-	// 2. Resolve template (explicit or auto-select)
-	result.template, result.clusterTemplate, result.templateSelection = fetchTemplate(
-		ctx, c, service, result.model, result.clusterModel,
-	)
-
-	// 3. Fetch existing InferenceService
+	// 1. Fetch existing InferenceService first (gates other fetches)
 	result.inferenceService = fetchInferenceService(ctx, c, service)
 
-	// 4. Fetch HTTPRoute if routing might be enabled
+	// 2. Fetch HTTPRoute if routing might be enabled (we own this, always check)
 	result.httpRoute = fetchHTTPRoute(ctx, c, service, reconcileCtx.MergedRuntimeConfig.Value)
 
-	// 5. Fetch TemplateCache
-	result.templateCache = fetchTemplateCache(ctx, c, service, result.template, result.clusterTemplate)
+	// 3. Fetch TemplateCache (always fetch - cascades health from ModelCache/PVC)
+	result.templateCache = fetchTemplateCache(ctx, c, service)
 
-	// 6. Fetch ModelCaches if template cache exists
+	// 4. Fetch ModelCaches if template cache exists
 	if result.templateCache.OK() && result.templateCache.Value != nil {
 		result.modelCaches = fetchModelCaches(ctx, c, service.Namespace)
 	}
 
-	// 7. Fetch PVC if not using template cache
+	// 5. Fetch PVC if not using template cache
 	if !result.templateCache.OK() || result.templateCache.Value == nil {
 		result.pvc = fetchServicePVC(ctx, c, service)
+	}
+
+	// 6. Only fetch Model and Template if InferenceService needs to be (re)created.
+	// Once the ISVC exists, the config is baked in and we don't need these upstream resources.
+	if !result.inferenceService.OK() {
+		logger.V(1).Info("InferenceService not found, fetching upstream resources")
+
+		// Resolve model (handles ref, image, and custom modes)
+		result.modelResult = fetchModel(ctx, c, service)
+
+		// Resolve template (explicit or auto-select)
+		result.template, result.clusterTemplate, result.templateSelection = fetchTemplate(
+			ctx, c, service, result.modelResult.Model, result.modelResult.ClusterModel,
+		)
+	} else {
+		logger.V(1).Info("InferenceService exists, skipping upstream resource fetch")
 	}
 
 	return result
 }
 
 // GetComponentHealth returns health status for each component.
-func (f ServiceFetchResult) GetComponentHealth() []controllerutils.ComponentHealth {
+// NOTE: Unlike other controllers where this is on FetchResult, AIMService defines it on
+// ServiceObservation because model health depends on derived state (needsModelCreation)
+// computed in ComposeState. The template/isvc/cache health helpers remain on ServiceFetchResult
+// and are accessible via embedding.
+func (obs ServiceObservation) GetComponentHealth() []controllerutils.ComponentHealth {
 	var health []controllerutils.ComponentHealth
 
-	// Model health
-	health = append(health, f.getModelHealth())
+	// Model health (on ServiceObservation - needs needsModelCreation)
+	health = append(health, obs.getModelHealth())
 
 	// Template health
-	health = append(health, f.getTemplateHealth())
+	health = append(health, obs.getTemplateHealth())
 
 	// Runtime config health (optional upstream dependency)
-	if f.mergedRuntimeConfig.Value != nil || f.mergedRuntimeConfig.Error != nil {
-		health = append(health, f.mergedRuntimeConfig.ToUpstreamComponentHealth(
+	if obs.mergedRuntimeConfig.Value != nil || obs.mergedRuntimeConfig.Error != nil {
+		health = append(health, obs.mergedRuntimeConfig.ToUpstreamComponentHealth(
 			"RuntimeConfig",
 			func(cfg *aimv1alpha1.AIMRuntimeConfigCommon) controllerutils.ComponentHealth {
 				return controllerutils.ComponentHealth{
@@ -149,43 +163,56 @@ func (f ServiceFetchResult) GetComponentHealth() []controllerutils.ComponentHeal
 	}
 
 	// InferenceService health (downstream)
-	if f.inferenceService.Value != nil || f.inferenceService.Error != nil {
-		health = append(health, f.getInferenceServiceHealth())
+	if obs.inferenceService.Value != nil || obs.inferenceService.Error != nil {
+		health = append(health, obs.getInferenceServiceHealth())
 	}
 
 	// Cache health (if caching is enabled)
-	health = append(health, f.getCacheHealth())
+	health = append(health, obs.getCacheHealth())
 
 	return health
 }
 
-func (f ServiceFetchResult) getModelHealth() controllerutils.ComponentHealth {
-	// Check namespace-scoped model first
-	if f.model.Value != nil {
-		return evaluateModelStatus(f.model.Value.Status.Status, "AIMModel", f.model.Value.Name)
+func (obs ServiceObservation) getModelHealth() controllerutils.ComponentHealth {
+	mr := obs.modelResult
+
+	// Check if model needs to be created (downstream dependency - pending state)
+	if obs.needsModelCreation {
+		return controllerutils.ComponentHealth{
+			Component:      "Model",
+			State:          constants.AIMStatusPending,
+			Reason:         aimv1alpha1.AIMServiceReasonCreatingModel,
+			Message:        "Model will be created for image " + mr.ImageURI,
+			DependencyType: controllerutils.DependencyTypeDownstream,
+		}
 	}
-	if f.model.Error != nil {
+
+	// Check namespace-scoped model first
+	if mr.Model.Value != nil {
+		return evaluateModelStatus(mr.Model.Value.Status.Status, "AIMModel", mr.Model.Value.Name)
+	}
+	if mr.Model.Error != nil {
 		return controllerutils.ComponentHealth{
 			Component:      "Model",
 			State:          constants.AIMStatusFailed,
 			Reason:         aimv1alpha1.AIMServiceReasonModelNotFound,
-			Message:        f.model.Error.Error(),
-			Errors:         []error{f.model.Error},
+			Message:        mr.Model.Error.Error(),
+			Errors:         []error{mr.Model.Error},
 			DependencyType: controllerutils.DependencyTypeUpstream,
 		}
 	}
 
 	// Check cluster-scoped model
-	if f.clusterModel.Value != nil {
-		return evaluateModelStatus(f.clusterModel.Value.Status.Status, "AIMClusterModel", f.clusterModel.Value.Name)
+	if mr.ClusterModel.Value != nil {
+		return evaluateModelStatus(mr.ClusterModel.Value.Status.Status, "AIMClusterModel", mr.ClusterModel.Value.Name)
 	}
-	if f.clusterModel.Error != nil {
+	if mr.ClusterModel.Error != nil {
 		return controllerutils.ComponentHealth{
 			Component:      "Model",
 			State:          constants.AIMStatusFailed,
 			Reason:         aimv1alpha1.AIMServiceReasonModelNotFound,
-			Message:        f.clusterModel.Error.Error(),
-			Errors:         []error{f.clusterModel.Error},
+			Message:        mr.ClusterModel.Error.Error(),
+			Errors:         []error{mr.ClusterModel.Error},
 			DependencyType: controllerutils.DependencyTypeUpstream,
 		}
 	}
@@ -425,20 +452,45 @@ func (f ServiceFetchResult) getCacheHealth() controllerutils.ComponentHealth {
 // OBSERVATION
 // ============================================================================
 
-// ServiceObservation embeds the fetch result. The observation phase is minimal
-// since FetchResult.GetComponentHealth() handles health derivation and PlanResources
-// uses the fetched data directly for planning decisions.
+// ServiceObservation embeds the fetch result and adds derived state.
 type ServiceObservation struct {
 	ServiceFetchResult
+
+	// needsModelCreation is true when Model.Image is specified but no existing model matches.
+	// Derived in ComposeState from the fetch result.
+	needsModelCreation bool
+
+	// pendingModelName is the validated model name to create (set when needsModelCreation is true).
+	pendingModelName string
 }
 
-// ComposeState creates the observation from fetched data.
+// ComposeState creates the observation from fetched data, deriving semantic state.
 func (r *ServiceReconciler) ComposeState(
 	_ context.Context,
 	_ controllerutils.ReconcileContext[*aimv1alpha1.AIMService],
 	fetch ServiceFetchResult,
 ) ServiceObservation {
-	return ServiceObservation{ServiceFetchResult: fetch}
+	obs := ServiceObservation{ServiceFetchResult: fetch}
+
+	// Derive: if imageURI is set but no model was found (and no error), we need to create it
+	mr := fetch.modelResult
+	if mr.ImageURI != "" && mr.Model.Value == nil && mr.ClusterModel.Value == nil && mr.Model.Error == nil && mr.ClusterModel.Error == nil {
+		// Validate the image URI can generate a valid model name
+		modelName, err := GenerateModelName(mr.ImageURI)
+		if err != nil {
+			// Set validation error on the model result
+			obs.modelResult.Model.Error = controllerutils.NewInvalidSpecError(
+				aimv1alpha1.AIMServiceReasonInvalidImageReference,
+				err.Error(),
+				err,
+			)
+		} else {
+			obs.needsModelCreation = true
+			obs.pendingModelName = modelName
+		}
+	}
+
+	return obs
 }
 
 // ============================================================================
@@ -455,6 +507,11 @@ func (r *ServiceReconciler) PlanResources(
 	service := obs.service
 
 	planResult := controllerutils.PlanResult{}
+
+	// 0. Plan model creation if needed (before template check - model can be created independently)
+	if model := planModel(service, obs); model != nil {
+		planResult.ApplyWithoutOwnerRef(model)
+	}
 
 	// Get resolved template info
 	templateName, templateNamespace, templateNsSpec, templateStatus := obs.getResolvedTemplate()
@@ -517,11 +574,11 @@ func (obs ServiceObservation) getResolvedTemplate() (name, namespace string, nsS
 
 // getResolvedModel returns the resolved model from the observation.
 func (obs ServiceObservation) getResolvedModel() (name string, status *aimv1alpha1.AIMModelStatus, isClusterScoped bool) {
-	if obs.model.Value != nil {
-		return obs.model.Value.Name, &obs.model.Value.Status, false
+	if obs.modelResult.Model.Value != nil {
+		return obs.modelResult.Model.Value.Name, &obs.modelResult.Model.Value.Status, false
 	}
-	if obs.clusterModel.Value != nil {
-		return obs.clusterModel.Value.Name, &obs.clusterModel.Value.Status, true
+	if obs.modelResult.ClusterModel.Value != nil {
+		return obs.modelResult.ClusterModel.Value.Name, &obs.modelResult.ClusterModel.Value.Status, true
 	}
 	return "", nil, false
 }
@@ -531,14 +588,17 @@ func (obs ServiceObservation) getResolvedModel() (name string, status *aimv1alph
 // ============================================================================
 
 // DecorateStatus sets domain-specific status fields.
+// Resolved references are only set when the upstream resource is Ready.
+// This ensures we don't "lock in" a reference until it's actually usable,
+// allowing the fetch logic to re-search for better alternatives on subsequent reconciles.
 func (r *ServiceReconciler) DecorateStatus(
 	status *aimv1alpha1.AIMServiceStatus,
 	_ *controllerutils.ConditionManager,
 	obs ServiceObservation,
 ) {
-	// Set resolved model reference
+	// Set resolved model reference (only if Ready)
 	modelName, modelStatus, isClusterScoped := obs.getResolvedModel()
-	if modelName != "" {
+	if modelName != "" && modelStatus != nil && modelStatus.Status == constants.AIMStatusReady {
 		scope := aimv1alpha1.AIMResolutionScopeNamespace
 		if isClusterScoped {
 			scope = aimv1alpha1.AIMResolutionScopeCluster
@@ -547,18 +607,16 @@ func (r *ServiceReconciler) DecorateStatus(
 			Name:  modelName,
 			Scope: scope,
 		}
-		if modelStatus != nil {
-			if obs.model.Value != nil {
-				status.ResolvedModel.UID = obs.model.Value.UID
-			} else if obs.clusterModel.Value != nil {
-				status.ResolvedModel.UID = obs.clusterModel.Value.UID
-			}
+		if obs.modelResult.Model.Value != nil {
+			status.ResolvedModel.UID = obs.modelResult.Model.Value.UID
+		} else if obs.modelResult.ClusterModel.Value != nil {
+			status.ResolvedModel.UID = obs.modelResult.ClusterModel.Value.UID
 		}
 	}
 
-	// Set resolved template reference
-	templateName, templateNamespace, _, _ := obs.getResolvedTemplate()
-	if templateName != "" {
+	// Set resolved template reference (only if Ready)
+	templateName, templateNamespace, _, templateStatus := obs.getResolvedTemplate()
+	if templateName != "" && templateStatus != nil && templateStatus.Status == constants.AIMStatusReady {
 		scope := aimv1alpha1.AIMResolutionScopeCluster
 		if templateNamespace != "" {
 			scope = aimv1alpha1.AIMResolutionScopeNamespace
@@ -575,8 +633,8 @@ func (r *ServiceReconciler) DecorateStatus(
 		}
 	}
 
-	// Set cache status
-	if obs.templateCache.Value != nil {
+	// Set cache status (only if Ready)
+	if obs.templateCache.Value != nil && obs.templateCache.Value.Status.Status == constants.AIMStatusReady {
 		status.Cache = &aimv1alpha1.AIMServiceCacheStatus{
 			TemplateCacheRef: &aimv1alpha1.AIMResolvedReference{
 				Name:      obs.templateCache.Value.Name,
