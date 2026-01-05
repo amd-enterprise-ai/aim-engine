@@ -15,6 +15,7 @@ rules:
   - ""
   resources:
   - nodes
+  - pods
   - secrets
   verbs:
   - get
@@ -31,14 +32,6 @@ rules:
   - list
   - patch
   - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  verbs:
-  - get
-  - list
   - watch
 - apiGroups:
   - ""
