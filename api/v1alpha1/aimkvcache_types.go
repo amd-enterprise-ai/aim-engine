@@ -23,6 +23,7 @@
 package v1alpha1
 
 import (
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -87,23 +88,6 @@ type StorageSpec struct {
 	AccessModes []corev1.PersistentVolumeAccessMode `json:"accessModes,omitempty"`
 }
 
-// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Failed
-type AIMKVCacheStatusEnum string
-
-const (
-	// AIMKVCacheStatusPending denotes that the KV cache is being created
-	AIMKVCacheStatusPending AIMKVCacheStatusEnum = "Pending"
-
-	// AIMKVCacheStatusProgressing denotes that the KV cache is being deployed
-	AIMKVCacheStatusProgressing AIMKVCacheStatusEnum = "Progressing"
-
-	// AIMKVCacheStatusReady denotes that the KV cache is ready to be used
-	AIMKVCacheStatusReady AIMKVCacheStatusEnum = "Ready"
-
-	// AIMKVCacheStatusFailed denotes that the KV cache deployment has failed
-	AIMKVCacheStatusFailed AIMKVCacheStatusEnum = "Failed"
-)
-
 // AIMKVCacheStatus defines the observed state of AIMKVCache
 type AIMKVCacheStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -115,7 +99,7 @@ type AIMKVCacheStatus struct {
 
 	// Status represents the current status of the KV cache
 	// +kubebuilder:default=Pending
-	Status AIMKVCacheStatusEnum `json:"status,omitempty"`
+	Status constants.AIMStatus `json:"status,omitempty"`
 
 	// StatefulSetName represents the name of the created statefulset
 	StatefulSetName string `json:"statefulSetName,omitempty"`
@@ -151,6 +135,10 @@ func (m *AIMKVCache) GetStatus() *AIMKVCacheStatus {
 	return &m.Status
 }
 
+func (s *AIMKVCacheStatus) SetStatus(status string) {
+	s.Status = constants.AIMStatus(status)
+}
+
 // Condition types for AIMKVCache
 const (
 	// AIMKVCacheConditionProgressing is True when the cache is actively being deployed
@@ -177,6 +165,14 @@ const (
 	AIMKVCacheReasonNoFailure         = "NoFailure"
 	AIMKVCacheReasonStatefulSetFailed = "StatefulSetFailed"
 )
+
+func (s *AIMKVCacheStatus) GetConditions() []metav1.Condition {
+	return s.Conditions
+}
+
+func (s *AIMKVCacheStatus) SetConditions(conditions []metav1.Condition) {
+	s.Conditions = conditions
+}
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
