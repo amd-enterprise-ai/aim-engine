@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-discovery-namespace
+spec:
+  modelName: test-model-discovery-namespace
+  gpuSelector:
+    count: 1
+    model: MI300X
+

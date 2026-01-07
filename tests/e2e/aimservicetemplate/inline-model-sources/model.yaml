@@ -1,6 +1,10 @@
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMModel
 metadata:
-  name: template-cache-fails-if-service-template-failed
+  name: test-model-inline
 spec:
   image: ghcr.io/silogen/aim-dummy:0.1.8
+  discovery:
+    extractMetadata: false
+    createServiceTemplates: false
+

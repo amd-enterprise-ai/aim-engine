@@ -25,6 +25,7 @@ package utils
 import (
 	"context"
 	"regexp"
+	"sort"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -362,5 +363,7 @@ func ListAvailableGPUs(ctx context.Context, k8sClient client.Client) ([]string, 
 		gpuTypes = append(gpuTypes, gpuModel)
 	}
 
+	// Sort for consistent ordering across reconciliations
+	sort.Strings(gpuTypes)
 	return gpuTypes, nil
 }

@@ -71,6 +71,11 @@ type AIMServiceTemplateSpecCommon struct {
 	// If omitted, a discovery job will be run to automatically determine the required model sources.
 	// +optional
 	ModelSources []AIMModelSource `json:"modelSources,omitempty"`
+
+	// ProfileId is the specific AIM profile ID that this template should use.
+	// When set, the discovery job will be instructed to use this specific profile.
+	// +optional
+	ProfileId string `json:"profileId,omitempty"`
 }
 
 // AIMTemplateCachingConfig configures model caching behavior for namespace-scoped templates.
@@ -79,6 +84,15 @@ type AIMTemplateCachingConfig struct {
 	// Defaults to `false`.
 	// +kubebuilder:default=false
 	Enabled bool `json:"enabled,omitempty"`
+
+	// Env specifies environment variables to use when downloading the model for caching.
+	// These variables are available to the model download process and can be used
+	// to configure download behavior, authentication, proxies, etc.
+	// If not set, falls back to the template's top-level Env field.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Env []corev1.EnvVar `json:"env,omitempty"`
 }
 
 // AIMServiceTemplateSpec defines the desired state of AIMServiceTemplate (namespace-scoped).
@@ -198,6 +212,16 @@ type AIMProfile struct {
 	OriginalDiscoveryOutput *apiextensionsv1.JSON `json:"originalDiscoveryOutput,omitempty"`
 }
 
+// AIMProfileType specifies the designation/optimization level of a profile.
+// +kubebuilder:validation:Enum=optimized;unoptimized;preview
+type AIMProfileType string
+
+const (
+	AIMProfileTypeOptimized   AIMProfileType = "optimized"
+	AIMProfileTypeUnoptimized AIMProfileType = "unoptimized"
+	AIMProfileTypePreview     AIMProfileType = "preview"
+)
+
 // AIMProfileMetadata describes the characteristics of a cached deployment profile.
 // This is identical to AIMDiscoveryProfileMetadata but exists in the template status namespace.
 type AIMProfileMetadata struct {
@@ -220,6 +244,10 @@ type AIMProfileMetadata struct {
 	// Precision specifies the numeric precision used in this profile (e.g., "fp16", "fp8").
 	// +optional
 	Precision AIMPrecision `json:"precision,omitempty"`
+
+	// Type specifies the designation of the profile (optimized, unoptimized, preview).
+	// +optional
+	Type AIMProfileType `json:"type,omitempty"`
 }
 
 // Discovery conditions

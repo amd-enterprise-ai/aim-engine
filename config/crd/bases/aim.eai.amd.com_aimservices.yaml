@@ -148,6 +148,12 @@ spec:
                               Examples: `MI300X`, `MI325X`
                             minLength: 1
                             type: string
+                          resourceName:
+                            default: amd.com/gpu
+                            description: |-
+                              ResourceName is the Kubernetes resource name for GPU resources.
+                              Defaults to "amd.com/gpu" if not specified.
+                            type: string
                         required:
                         - count
                         - model
@@ -248,6 +254,12 @@ spec:
                           Model is the GPU model name required for this deployment.
                           Examples: `MI300X`, `MI325X`
                         minLength: 1
+                        type: string
+                      resourceName:
+                        default: amd.com/gpu
+                        description: |-
+                          ResourceName is the Kubernetes resource name for GPU resources.
+                          Defaults to "amd.com/gpu" if not specified.
                         type: string
                     required:
                     - count

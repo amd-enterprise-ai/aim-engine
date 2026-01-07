@@ -301,6 +301,12 @@ func fetchImageMetadata(
 	status *aimv1alpha1.AIMModelStatus,
 	secretNamespace string,
 ) controllerutils.FetchResult[*aimv1alpha1.ImageMetadata] {
+	// Case 0: Extraction explicitly disabled - skip fetch entirely
+	if spec.Discovery != nil && !spec.Discovery.ExtractMetadata {
+		log.FromContext(ctx).V(1).Info("metadata extraction disabled in spec")
+		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{}
+	}
+
 	// Case 1: Use spec-provided metadata (air-gapped environments)
 	if spec.ImageMetadata != nil {
 		log.FromContext(ctx).V(1).Info("using spec-provided imageMetadata")

@@ -1,0 +1,17 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModel
+metadata:
+  name: test-model-discovery-cluster
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.8
+  defaultServiceTemplate: test-template-discovery-cluster
+  discovery:
+    extractMetadata: false
+    createServiceTemplates: false
+  resources:
+    limits:
+      memory: 1Gi
+    requests:
+      memory: 100Mi
+      cpu: 100m
+
