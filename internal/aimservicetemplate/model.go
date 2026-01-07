@@ -157,7 +157,7 @@ func GetModelLookupHealth(result *ModelLookupResult) controllerutils.ComponentHe
 func GetModelHealth(model *aimv1alpha1.AIMModel) controllerutils.ComponentHealth {
 	if model == nil {
 		return controllerutils.ComponentHealth{
-			State:   constants.AIMStatusProgressing,
+			State:   constants.AIMStatusPending,
 			Reason:  "ModelNotFound",
 			Message: "Waiting for AIMModel to be created",
 		}
@@ -165,7 +165,7 @@ func GetModelHealth(model *aimv1alpha1.AIMModel) controllerutils.ComponentHealth
 
 	if model.Spec.Image == "" {
 		return controllerutils.ComponentHealth{
-			State:   constants.AIMStatusDegraded,
+			State:   constants.AIMStatusFailed,
 			Reason:  "ImageNotSpecified",
 			Message: "Model does not specify an image",
 		}
@@ -183,7 +183,7 @@ func GetModelHealth(model *aimv1alpha1.AIMModel) controllerutils.ComponentHealth
 func GetClusterModelHealth(model *aimv1alpha1.AIMClusterModel) controllerutils.ComponentHealth {
 	if model == nil {
 		return controllerutils.ComponentHealth{
-			State:   constants.AIMStatusProgressing,
+			State:   constants.AIMStatusPending,
 			Reason:  "ClusterModelNotFound",
 			Message: "Waiting for AIMClusterModel to be created",
 		}
@@ -191,7 +191,7 @@ func GetClusterModelHealth(model *aimv1alpha1.AIMClusterModel) controllerutils.C
 
 	if model.Spec.Image == "" {
 		return controllerutils.ComponentHealth{
-			State:   constants.AIMStatusDegraded,
+			State:   constants.AIMStatusFailed,
 			Reason:  "ImageNotSpecified",
 			Message: "Cluster model does not specify an image",
 		}
