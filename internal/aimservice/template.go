@@ -329,27 +329,27 @@ func buildDerivedTemplate(
 }
 
 // generateDerivedTemplateName creates a unique, deterministic name for a derived template.
-// It uses the base template name and service overrides to generate a hash suffix,
-// ensuring that:
-// 1. Same base template + overrides always produce the same name (deterministic)
-// 2. Different overrides produce different names (collision-resistant)
-// 3. The name is a valid Kubernetes resource name
+// The name includes the override values for readability, plus a short hash for uniqueness.
 //
-// Example: base template "my-template" with metric=latency, precision=fp16
-// -> "my-template-ovr-a1b2c3d4"
+// Naming convention: {base}-ovr-{gpu}-{precision}-{hash}
+// Examples:
+//   - "my-template" with gpu=MI325X, precision=fp16 -> "my-template-ovr-mi325x-fp16-a1b2"
+//   - "my-template" with metric=latency only -> "my-template-ovr-latency-a1b2"
+//   - "my-template" with gpu=MI300X, count=4 -> "my-template-ovr-mi300x-4gpu-a1b2"
 func generateDerivedTemplateName(baseTemplateName string, overrides *aimv1alpha1.AIMServiceOverrides) string {
 	if overrides == nil {
 		return baseTemplateName
 	}
 
-	// Build hash inputs from overrides in deterministic order
-	hashInputs := buildOverrideHashInputs(overrides)
-	if len(hashInputs) == 0 {
+	// Build name parts and hash inputs from overrides
+	nameParts, hashInputs := buildOverrideNameParts(overrides)
+	if len(nameParts) == 0 {
 		return baseTemplateName
 	}
 
-	// Use GenerateDerivedName with the "ovr" suffix convention
-	name, err := utils.GenerateDerivedName([]string{baseTemplateName, "ovr"}, hashInputs...)
+	// Construct: base-ovr-{parts}-{hash}
+	allParts := append([]string{baseTemplateName, "ovr"}, nameParts...)
+	name, err := utils.GenerateDerivedNameWithHashLength(allParts, 4, hashInputs...)
 	if err != nil {
 		// Fall back to base name if generation fails (shouldn't happen with valid inputs)
 		return baseTemplateName
@@ -357,29 +357,40 @@ func generateDerivedTemplateName(baseTemplateName string, overrides *aimv1alpha1
 	return name
 }
 
-// buildOverrideHashInputs creates a slice of hash inputs from service overrides.
-// The order is deterministic to ensure consistent hashing.
-func buildOverrideHashInputs(overrides *aimv1alpha1.AIMServiceOverrides) []any {
+// buildOverrideNameParts creates name parts and hash inputs from service overrides.
+// Name parts are human-readable segments; hash inputs ensure uniqueness.
+// Order is deterministic: gpu, count, precision, metric.
+func buildOverrideNameParts(overrides *aimv1alpha1.AIMServiceOverrides) (nameParts []string, hashInputs []any) {
 	if overrides == nil {
-		return nil
+		return nil, nil
 	}
 
-	var inputs []any
-	if overrides.Metric != nil {
-		inputs = append(inputs, "metric", string(*overrides.Metric))
+	// GPU model (e.g., "mi325x")
+	if overrides.GpuSelector != nil && overrides.GpuSelector.Model != "" {
+		gpuLower := strings.ToLower(overrides.GpuSelector.Model)
+		nameParts = append(nameParts, gpuLower)
+		hashInputs = append(hashInputs, "gpu", overrides.GpuSelector.Model)
 	}
+
+	// GPU count (e.g., "4gpu")
+	if overrides.GpuSelector != nil && overrides.GpuSelector.Count > 0 {
+		nameParts = append(nameParts, fmt.Sprintf("%dgpu", overrides.GpuSelector.Count))
+		hashInputs = append(hashInputs, "count", overrides.GpuSelector.Count)
+	}
+
+	// Precision (e.g., "fp16")
 	if overrides.Precision != nil {
-		inputs = append(inputs, "precision", string(*overrides.Precision))
+		nameParts = append(nameParts, string(*overrides.Precision))
+		hashInputs = append(hashInputs, "precision", string(*overrides.Precision))
 	}
-	if overrides.GpuSelector != nil {
-		if overrides.GpuSelector.Model != "" {
-			inputs = append(inputs, "gpu", overrides.GpuSelector.Model)
-		}
-		if overrides.GpuSelector.Count > 0 {
-			inputs = append(inputs, "count", overrides.GpuSelector.Count)
-		}
+
+	// Metric (e.g., "latency")
+	if overrides.Metric != nil {
+		nameParts = append(nameParts, string(*overrides.Metric))
+		hashInputs = append(hashInputs, "metric", string(*overrides.Metric))
 	}
-	return inputs
+
+	return nameParts, hashInputs
 }
 
 // normalizeRuntimeConfigName returns the runtime config name or "default" if empty.

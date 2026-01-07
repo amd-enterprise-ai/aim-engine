@@ -179,7 +179,7 @@ spec:
     metric: latency
 ```
 
-This creates a derived template named something like `base-template-ovr-a1b2c3d4` (with a hash suffix based on the override values).
+This creates a derived template with a descriptive name like `base-template-ovr-mi325x-fp16-a1b2`. The name includes the override values for readability, plus a short hash for uniqueness.
 
 Derived templates:
 - Are namespace-scoped (even if the base template is cluster-scoped)
