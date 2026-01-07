@@ -44,7 +44,6 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
-
 // GenerateInferenceServiceName creates a deterministic name for the InferenceService.
 // KServe creates hostnames in format {isvc-name}-predictor-{namespace}, which must be ≤ 63 chars.
 func GenerateInferenceServiceName(serviceName, namespace string) (string, error) {

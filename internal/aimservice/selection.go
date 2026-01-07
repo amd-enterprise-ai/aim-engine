@@ -36,7 +36,6 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
-
 // TemplateCandidate captures the information needed to evaluate a template during selection.
 type TemplateCandidate struct {
 	Name      string
@@ -380,7 +379,6 @@ func selectBestTemplate(
 }
 
 func appendRejections(evals *[]CandidateEvaluation, rejectedByStage map[string][]TemplateCandidate) {
-
 	for _, c := range rejectedByStage[stageAvailability] {
 		*evals = append(*evals, CandidateEvaluation{
 			Candidate: c,
@@ -431,6 +429,7 @@ func filterTemplatesByOverrides(candidates []TemplateCandidate, overrides *aimv1
 		templateMetric := candidateMetric(c)
 		templatePrecision := candidatePrecision(c)
 		templateGPU := candidateGPUModel(c)
+		templateGPUCount := candidateGPUCount(c)
 
 		if overrides.Metric != nil && !strings.EqualFold(templateMetric, string(*overrides.Metric)) {
 			continue
@@ -441,6 +440,10 @@ func filterTemplatesByOverrides(candidates []TemplateCandidate, overrides *aimv1
 		if overrides.GpuSelector != nil {
 			overrideGPU := strings.TrimSpace(overrides.GpuSelector.Model)
 			if overrideGPU != "" && !strings.EqualFold(templateGPU, overrideGPU) {
+				continue
+			}
+			// Filter by GPU count if specified
+			if overrides.GpuSelector.Count > 0 && templateGPUCount > 0 && templateGPUCount != overrides.GpuSelector.Count {
 				continue
 			}
 		}
@@ -545,13 +548,14 @@ func choosePreferredTemplate(candidates []TemplateCandidate) (*TemplateCandidate
 		}
 	}
 
-	// Count identical scores
+	// Count identical scores (must include all scoring dimensions)
 	identicalCount := 0
 	for i := range candidates {
+		profileType := getPreferenceScore(candidateProfileType(candidates[i]), profileTypePref)
 		gpu := getPreferenceScore(candidateGPUModel(candidates[i]), gpuPref)
 		metric := getPreferenceScore(candidateMetric(candidates[i]), metricPref)
 		precision := getPreferenceScore(candidatePrecision(candidates[i]), precisionPref)
-		if gpu == bestGPU && metric == bestMetric && precision == bestPrecision {
+		if profileType == bestProfileType && gpu == bestGPU && metric == bestMetric && precision == bestPrecision {
 			identicalCount++
 		}
 	}
@@ -590,6 +594,16 @@ func candidateGPUModel(c TemplateCandidate) string {
 		return gpu
 	}
 	return ""
+}
+
+func candidateGPUCount(c TemplateCandidate) int32 {
+	if c.Spec.GpuSelector != nil && c.Spec.GpuSelector.Count > 0 {
+		return c.Spec.GpuSelector.Count
+	}
+	if c.Status.Profile.Metadata.GPUCount > 0 {
+		return c.Status.Profile.Metadata.GPUCount
+	}
+	return 0
 }
 
 func candidateProfileType(c TemplateCandidate) string {

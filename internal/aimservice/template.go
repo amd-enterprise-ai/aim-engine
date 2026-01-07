@@ -37,7 +37,6 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
-
 // TemplateFetchResult holds the result of fetching/resolving a template for the service.
 type TemplateFetchResult struct {
 	Template        controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]

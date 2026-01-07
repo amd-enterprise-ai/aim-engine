@@ -381,7 +381,7 @@ func calculateRequiredStorageSize(modelSources []aimv1alpha1.AIMModelSource, hea
 
 	var totalBytes int64
 	for _, source := range modelSources {
-		if source.Size.IsZero() {
+		if source.Size == nil || source.Size.IsZero() {
 			return resource.Quantity{}, fmt.Errorf("model source %q has no size specified", source.Name)
 		}
 		totalBytes += source.Size.Value()
