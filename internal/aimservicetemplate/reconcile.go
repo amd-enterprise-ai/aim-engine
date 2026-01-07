@@ -379,7 +379,7 @@ func (r *ServiceTemplateReconciler) PlanResources(
 		// Create template cache if caching is enabled
 		if template.Spec.Caching != nil && template.Spec.Caching.Enabled {
 			if !HasExistingTemplateCache(template.UID, obs.templateCaches) {
-				cache := BuildTemplateCache(template, obs.mergedRuntimeConfig.Value)
+				cache := BuildTemplateCache(template)
 				planResult.Apply(cache)
 			}
 		}
@@ -401,7 +401,7 @@ func (r *ServiceTemplateReconciler) PlanResources(
 		// Create template cache if caching is enabled and model sources are available
 		if template.Spec.Caching != nil && template.Spec.Caching.Enabled && len(template.Status.ModelSources) > 0 {
 			if !HasExistingTemplateCache(template.UID, obs.templateCaches) {
-				cache := BuildTemplateCache(template, obs.mergedRuntimeConfig.Value)
+				cache := BuildTemplateCache(template)
 				planResult.Apply(cache)
 			}
 		}

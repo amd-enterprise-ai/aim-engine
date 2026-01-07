@@ -49,7 +49,7 @@ func HasExistingTemplateCache(templateUID types.UID, cachesResult controllerutil
 }
 
 // BuildTemplateCache creates an AIMTemplateCache resource for a namespace-scoped template.
-func BuildTemplateCache(template *aimv1alpha1.AIMServiceTemplate, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) *aimv1alpha1.AIMTemplateCache {
+func BuildTemplateCache(template *aimv1alpha1.AIMServiceTemplate) *aimv1alpha1.AIMTemplateCache {
 	// Use Caching.Env only - these are download-specific environment variables
 	// (e.g., HF_TOKEN, proxy settings) separate from inference runtime env vars
 	var cacheEnv []corev1.EnvVar
@@ -76,15 +76,11 @@ func BuildTemplateCache(template *aimv1alpha1.AIMServiceTemplate, runtimeConfig 
 			},
 		},
 		Spec: aimv1alpha1.AIMTemplateCacheSpec{
-			TemplateName:  template.Name,
-			TemplateScope: aimv1alpha1.AIMServiceTemplateScopeNamespace,
-			Env:           cacheEnv,
+			TemplateName:     template.Name,
+			TemplateScope:    aimv1alpha1.AIMServiceTemplateScopeNamespace,
+			Env:              cacheEnv,
+			RuntimeConfigRef: template.Spec.RuntimeConfigRef,
 		},
-	}
-
-	// Set storage class from runtime config if available
-	if runtimeConfig != nil && runtimeConfig.DefaultStorageClassName != "" {
-		cache.Spec.StorageClassName = runtimeConfig.DefaultStorageClassName
 	}
 
 	return cache
