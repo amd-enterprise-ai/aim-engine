@@ -307,9 +307,10 @@ const (
 	AIMServiceReasonTemplateSelectionAmbiguous = "TemplateSelectionAmbiguous"
 
 	// Storage
-	AIMServiceReasonCreatingPVC  = "CreatingPVC"
-	AIMServiceReasonPVCNotBound  = "PVCNotBound"
-	AIMServiceReasonStorageReady = "StorageReady"
+	AIMServiceReasonCreatingPVC      = "CreatingPVC"
+	AIMServiceReasonPVCNotBound      = "PVCNotBound"
+	AIMServiceReasonStorageReady     = "StorageReady"
+	AIMServiceReasonStorageSizeError = "StorageSizeError"
 
 	// Cache
 	AIMServiceReasonCacheCreating = "CacheCreating"

@@ -36,20 +36,12 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
-// TemplateScope indicates whether a template is namespace-scoped or cluster-scoped.
-type TemplateScope string
-
-const (
-	TemplateScopeNone      TemplateScope = ""
-	TemplateScopeNamespace TemplateScope = "namespace"
-	TemplateScopeCluster   TemplateScope = "cluster"
-)
 
 // TemplateCandidate captures the information needed to evaluate a template during selection.
 type TemplateCandidate struct {
 	Name      string
 	Namespace string
-	Scope     TemplateScope
+	Scope     aimv1alpha1.AIMResolutionScope
 	Spec      aimv1alpha1.AIMServiceTemplateSpecCommon
 	Status    aimv1alpha1.AIMServiceTemplateStatus
 }
@@ -154,7 +146,7 @@ func selectTemplateForModel(
 	}
 
 	// Fetch the actual template object
-	if selected.Scope == TemplateScopeNamespace {
+	if selected.Scope == aimv1alpha1.AIMResolutionScopeNamespace {
 		template := &aimv1alpha1.AIMServiceTemplate{}
 		err := c.Get(ctx, client.ObjectKey{
 			Namespace: selected.Namespace,
@@ -199,7 +191,7 @@ func listTemplateCandidatesForModel(
 			candidates = append(candidates, TemplateCandidate{
 				Name:      t.Name,
 				Namespace: t.Namespace,
-				Scope:     TemplateScopeNamespace,
+				Scope:     aimv1alpha1.AIMResolutionScopeNamespace,
 				Spec:      t.Spec.AIMServiceTemplateSpecCommon,
 				Status:    t.Status,
 			})
@@ -216,7 +208,7 @@ func listTemplateCandidatesForModel(
 		if t.Spec.ModelName == modelName {
 			candidates = append(candidates, TemplateCandidate{
 				Name:   t.Name,
-				Scope:  TemplateScopeCluster,
+				Scope:  aimv1alpha1.AIMResolutionScopeCluster,
 				Spec:   t.Spec.AIMServiceTemplateSpecCommon,
 				Status: t.Status,
 			})
@@ -250,104 +242,44 @@ func listAvailableGPUs(ctx context.Context, c client.Client) ([]string, error) {
 	return gpus, nil
 }
 
-// selectBestTemplate selects the best template from candidates.
-// Selection criteria (in order of priority):
-// 1. Only Available templates
-// 2. Filter unoptimized if not allowed
-// 3. Filter by service overrides
-// 4. Filter by GPU availability
-// 5. Prefer namespace-scoped over cluster-scoped
-// 6. Prefer: optimized > latency > lower precision > higher-tier GPU
-func selectBestTemplate(
-	candidates []TemplateCandidate,
-	overrides *aimv1alpha1.AIMServiceOverrides,
-	availableGPUs []string,
-	allowUnoptimized bool,
-) (*TemplateCandidate, int, SelectionDiagnostics, []CandidateEvaluation) {
-	diag := SelectionDiagnostics{TotalCandidates: len(candidates)}
-	evaluations := make([]CandidateEvaluation, 0, len(candidates))
+// Filter stage identifiers for tracking rejections
+const (
+	stageAvailability = "availability"
+	stageUnoptimized  = "unoptimized"
+	stageOverrides    = "overrides"
+	stageGPU          = "gpu"
+)
 
-	const (
-		stageAvailability = "availability"
-		stageUnoptimized  = "unoptimized"
-		stageOverrides    = "overrides"
-		stageGPU          = "gpu"
-	)
-	rejectedByStage := make(map[string][]TemplateCandidate)
-
-	// Stage 1: Availability filter
-	var filtered []TemplateCandidate
+// filterByAvailability removes candidates that are not Ready.
+func filterByAvailability(candidates []TemplateCandidate, rejected map[string][]TemplateCandidate) []TemplateCandidate {
+	var result []TemplateCandidate
 	for _, c := range candidates {
 		if c.Status.Status == constants.AIMStatusReady {
-			filtered = append(filtered, c)
+			result = append(result, c)
 		} else {
-			rejectedByStage[stageAvailability] = append(rejectedByStage[stageAvailability], c)
+			rejected[stageAvailability] = append(rejected[stageAvailability], c)
 		}
 	}
-	diag.AfterAvailabilityFilter = len(filtered)
-	if len(filtered) == 0 {
-		appendRejections(&evaluations, rejectedByStage)
-		return nil, 0, diag, evaluations
-	}
+	return result
+}
 
-	// Stage 2: Unoptimized filter
-	beforeUnoptimized := filtered
-	filtered = filtered[:0]
-	for _, c := range beforeUnoptimized {
+// filterByOptimizationStatus removes unoptimized templates if not allowed.
+func filterByOptimizationStatus(candidates []TemplateCandidate, allowUnoptimized bool, rejected map[string][]TemplateCandidate) []TemplateCandidate {
+	var result []TemplateCandidate
+	for _, c := range candidates {
 		if c.Status.Profile.Metadata.Type == aimv1alpha1.AIMProfileTypeOptimized || allowUnoptimized {
-			filtered = append(filtered, c)
+			result = append(result, c)
 		} else {
-			rejectedByStage[stageUnoptimized] = append(rejectedByStage[stageUnoptimized], c)
+			rejected[stageUnoptimized] = append(rejected[stageUnoptimized], c)
 		}
 	}
-	diag.AfterUnoptimizedFilter = len(filtered)
-	diag.UnoptimizedTemplatesWereFiltered = len(rejectedByStage[stageUnoptimized]) > 0
-	if len(filtered) == 0 {
-		appendRejections(&evaluations, rejectedByStage)
-		return nil, 0, diag, evaluations
-	}
+	return result
+}
 
-	// Stage 3: Overrides filter
-	if overrides != nil {
-		beforeOverrides := filtered
-		filtered = filterTemplatesByOverrides(filtered, overrides)
-		diag.AfterOverridesFilter = len(filtered)
-		if len(filtered) == 0 {
-			rejectedByStage[stageOverrides] = beforeOverrides
-			appendRejections(&evaluations, rejectedByStage)
-			return nil, 0, diag, evaluations
-		}
-	} else {
-		diag.AfterOverridesFilter = len(filtered)
-	}
-
-	// Stage 4: GPU availability filter
-	beforeGPU := filtered
-	filtered = filterTemplatesByGPUAvailability(filtered, availableGPUs)
-	diag.AfterGPUAvailabilityFilter = len(filtered)
-	if len(filtered) == 0 {
-		rejectedByStage[stageGPU] = beforeGPU
-		appendRejections(&evaluations, rejectedByStage)
-		return nil, 0, diag, evaluations
-	}
-
-	// Stage 5: Prefer namespace-scoped templates
-	filtered = preferNamespaceTemplates(filtered)
-
-	if len(filtered) == 1 {
-		appendRejections(&evaluations, rejectedByStage)
-		evaluations = append(evaluations, CandidateEvaluation{
-			Candidate: filtered[0],
-			Status:    "chosen",
-			Reason:    "BestMatch",
-			Rank:      1,
-		})
-		return &filtered[0], 1, diag, evaluations
-	}
-
-	// Stage 6: Preference scoring
-	selected, count := choosePreferredTemplate(filtered)
-	appendRejections(&evaluations, rejectedByStage)
+// buildFinalEvaluations creates the evaluation list for the final selected candidates.
+func buildFinalEvaluations(filtered []TemplateCandidate, selected *TemplateCandidate, rejected map[string][]TemplateCandidate) []CandidateEvaluation {
+	evaluations := make([]CandidateEvaluation, 0, len(filtered)+len(rejected))
+	appendRejections(&evaluations, rejected)
 
 	for i, c := range filtered {
 		if c.Name == selected.Name {
@@ -366,17 +298,88 @@ func selectBestTemplate(
 			})
 		}
 	}
+	return evaluations
+}
 
-	return selected, count, diag, evaluations
+// selectBestTemplate selects the best template from candidates.
+// Selection criteria (in order of priority):
+// 1. Only Available templates (status == Ready)
+// 2. Filter unoptimized if not allowed
+// 3. Filter by service overrides (metric, precision, GPU)
+// 4. Filter by GPU availability in cluster
+// 5. Prefer namespace-scoped over cluster-scoped
+// 6. Prefer by profile type > GPU tier > metric > precision
+func selectBestTemplate(
+	candidates []TemplateCandidate,
+	overrides *aimv1alpha1.AIMServiceOverrides,
+	availableGPUs []string,
+	allowUnoptimized bool,
+) (*TemplateCandidate, int, SelectionDiagnostics, []CandidateEvaluation) {
+	diag := SelectionDiagnostics{TotalCandidates: len(candidates)}
+	rejectedByStage := make(map[string][]TemplateCandidate)
+
+	// Stage 1: Availability filter - only Ready templates can be selected
+	filtered := filterByAvailability(candidates, rejectedByStage)
+	diag.AfterAvailabilityFilter = len(filtered)
+	if len(filtered) == 0 {
+		evals := make([]CandidateEvaluation, 0)
+		appendRejections(&evals, rejectedByStage)
+		return nil, 0, diag, evals
+	}
+
+	// Stage 2: Unoptimized filter - exclude unoptimized unless explicitly allowed
+	filtered = filterByOptimizationStatus(filtered, allowUnoptimized, rejectedByStage)
+	diag.AfterUnoptimizedFilter = len(filtered)
+	diag.UnoptimizedTemplatesWereFiltered = len(rejectedByStage[stageUnoptimized]) > 0
+	if len(filtered) == 0 {
+		evals := make([]CandidateEvaluation, 0)
+		appendRejections(&evals, rejectedByStage)
+		return nil, 0, diag, evals
+	}
+
+	// Stage 3: Overrides filter - match service-specified constraints
+	if overrides != nil {
+		beforeOverrides := filtered
+		filtered = filterTemplatesByOverrides(filtered, overrides)
+		diag.AfterOverridesFilter = len(filtered)
+		if len(filtered) == 0 {
+			rejectedByStage[stageOverrides] = beforeOverrides
+			evals := make([]CandidateEvaluation, 0)
+			appendRejections(&evals, rejectedByStage)
+			return nil, 0, diag, evals
+		}
+	} else {
+		diag.AfterOverridesFilter = len(filtered)
+	}
+
+	// Stage 4: GPU availability filter - only templates for GPUs present in cluster
+	beforeGPU := filtered
+	filtered = filterTemplatesByGPUAvailability(filtered, availableGPUs)
+	diag.AfterGPUAvailabilityFilter = len(filtered)
+	if len(filtered) == 0 {
+		rejectedByStage[stageGPU] = beforeGPU
+		evals := make([]CandidateEvaluation, 0)
+		appendRejections(&evals, rejectedByStage)
+		return nil, 0, diag, evals
+	}
+
+	// Stage 5: Scope preference - namespace templates over cluster templates
+	filtered = preferNamespaceTemplates(filtered)
+
+	// Single candidate remaining - select it
+	if len(filtered) == 1 {
+		evals := buildFinalEvaluations(filtered, &filtered[0], rejectedByStage)
+		return &filtered[0], 1, diag, evals
+	}
+
+	// Stage 6: Preference scoring - rank by profile type, GPU, metric, precision
+	selected, count := choosePreferredTemplate(filtered)
+	evals := buildFinalEvaluations(filtered, selected, rejectedByStage)
+
+	return selected, count, diag, evals
 }
 
 func appendRejections(evals *[]CandidateEvaluation, rejectedByStage map[string][]TemplateCandidate) {
-	const (
-		stageAvailability = "availability"
-		stageUnoptimized  = "unoptimized"
-		stageOverrides    = "overrides"
-		stageGPU          = "gpu"
-	)
 
 	for _, c := range rejectedByStage[stageAvailability] {
 		*evals = append(*evals, CandidateEvaluation{
@@ -473,7 +476,7 @@ func filterTemplatesByGPUAvailability(candidates []TemplateCandidate, availableG
 func preferNamespaceTemplates(candidates []TemplateCandidate) []TemplateCandidate {
 	hasNamespace := false
 	for _, c := range candidates {
-		if c.Scope == TemplateScopeNamespace {
+		if c.Scope == aimv1alpha1.AIMResolutionScopeNamespace {
 			hasNamespace = true
 			break
 		}
@@ -484,13 +487,23 @@ func preferNamespaceTemplates(candidates []TemplateCandidate) []TemplateCandidat
 
 	result := make([]TemplateCandidate, 0, len(candidates))
 	for _, c := range candidates {
-		if c.Scope == TemplateScopeNamespace {
+		if c.Scope == aimv1alpha1.AIMResolutionScopeNamespace {
 			result = append(result, c)
 		}
 	}
 	return result
 }
 
+// choosePreferredTemplate selects the best template from candidates using a preference hierarchy.
+//
+// Preference hierarchy (highest to lowest priority):
+// 1. Profile Type: optimized > preview > unoptimized
+// 2. GPU Tier: MI325X > MI300X > MI250X > MI210 > A100 > H100 (AMD preferred)
+// 3. Metric: latency > throughput
+// 4. Precision: fp8 > fp16 > bf16 > fp32 (lower precision preferred for performance)
+//
+// Lower scores indicate higher preference. Unknown values get a high score (len+1000).
+// Returns the best candidate and count of candidates with identical best scores.
 func choosePreferredTemplate(candidates []TemplateCandidate) (*TemplateCandidate, int) {
 	if len(candidates) == 0 {
 		return nil, 0
@@ -499,6 +512,7 @@ func choosePreferredTemplate(candidates []TemplateCandidate) (*TemplateCandidate
 		return &candidates[0], 1
 	}
 
+	// Build preference maps: lower index = higher preference
 	gpuPref := makePreferenceMap(gpuPreferenceOrder)
 	metricPref := makePreferenceMap(metricPreferenceOrder)
 	precisionPref := makePreferenceMap(precisionPreferenceOrder)
@@ -516,7 +530,9 @@ func choosePreferredTemplate(candidates []TemplateCandidate) (*TemplateCandidate
 		precision := getPreferenceScore(candidatePrecision(candidates[i]), precisionPref)
 		profileType := getPreferenceScore(candidateProfileType(candidates[i]), profileTypePref)
 
-		// Compare by: profile type > GPU > metric > precision
+		// Compare using lexicographic ordering: profile type > GPU > metric > precision
+		// A candidate is better if it has a lower score at the highest-priority dimension
+		// where the candidates differ
 		if profileType < bestProfileType ||
 			(profileType == bestProfileType && gpu < bestGPU) ||
 			(profileType == bestProfileType && gpu == bestGPU && metric < bestMetric) ||

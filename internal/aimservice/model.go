@@ -205,6 +205,11 @@ func tryFetchResolvedModel(
 // resolveModelFromImage searches for existing models matching the image URI.
 // Returns the found model (if any). If no model is found and no error occurred,
 // both Model and ClusterModel will be nil - ComposeState determines if creation is needed.
+//
+// Note on concurrency: If multiple services with the same image URI reconcile concurrently,
+// both may determine that model creation is needed. This is handled gracefully by Kubernetes'
+// server-side apply (SSA) - the second apply will simply update the existing model.
+// The model is created without an owner reference specifically to allow sharing across services.
 func resolveModelFromImage(
 	ctx context.Context,
 	c client.Client,
@@ -240,7 +245,7 @@ func resolveModelFromImage(
 		ref := models[0]
 		logger.V(1).Info("found existing model", "name", ref.Name, "scope", ref.Scope)
 
-		if ref.Scope == TemplateScopeNamespace {
+		if ref.Scope == aimv1alpha1.AIMResolutionScopeNamespace {
 			modelResult = controllerutils.Fetch(ctx, c, client.ObjectKey{
 				Namespace: service.Namespace,
 				Name:      ref.Name,
@@ -256,7 +261,7 @@ func resolveModelFromImage(
 		// Multiple matches - error
 		names := make([]string, len(models))
 		for i, m := range models {
-			if m.Scope == TemplateScopeNamespace {
+			if m.Scope == aimv1alpha1.AIMResolutionScopeNamespace {
 				names[i] = fmt.Sprintf("%s/%s (namespace)", service.Namespace, m.Name)
 			} else {
 				names[i] = fmt.Sprintf("%s (cluster)", m.Name)
@@ -270,7 +275,7 @@ func resolveModelFromImage(
 // modelReference represents a found model
 type modelReference struct {
 	Name  string
-	Scope TemplateScope
+	Scope aimv1alpha1.AIMResolutionScope
 }
 
 // findModelsWithImage searches for AIMModel and AIMClusterModel resources with the specified image
@@ -292,7 +297,7 @@ func findModelsWithImage(
 			if modelList.Items[i].Spec.Image == imageURI {
 				results = append(results, modelReference{
 					Name:  modelList.Items[i].Name,
-					Scope: TemplateScopeNamespace,
+					Scope: aimv1alpha1.AIMResolutionScopeNamespace,
 				})
 			}
 		}
@@ -307,7 +312,7 @@ func findModelsWithImage(
 		if clusterModelList.Items[i].Spec.Image == imageURI {
 			results = append(results, modelReference{
 				Name:  clusterModelList.Items[i].Name,
-				Scope: TemplateScopeCluster,
+				Scope: aimv1alpha1.AIMResolutionScopeCluster,
 			})
 		}
 	}

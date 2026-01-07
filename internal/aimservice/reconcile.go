@@ -380,13 +380,13 @@ func (f ServiceFetchResult) getInferenceServiceHealth() controllerutils.Componen
 	return health
 }
 
-func (f ServiceFetchResult) getCacheHealth() controllerutils.ComponentHealth {
+func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 	health := controllerutils.ComponentHealth{
 		Component:      "Cache",
 		DependencyType: controllerutils.DependencyTypeDownstream,
 	}
 
-	cachingMode := f.service.Spec.GetCachingMode()
+	cachingMode := obs.service.Spec.GetCachingMode()
 
 	// If caching is disabled, cache is always ready
 	if cachingMode == aimv1alpha1.CachingModeNever {
@@ -396,9 +396,18 @@ func (f ServiceFetchResult) getCacheHealth() controllerutils.ComponentHealth {
 		return health
 	}
 
+	// Check for storage size calculation errors (invalid template configuration)
+	if obs.storageSizeError != nil {
+		health.State = constants.AIMStatusFailed
+		health.Reason = aimv1alpha1.AIMServiceReasonStorageSizeError
+		health.Message = obs.storageSizeError.Error()
+		health.Errors = []error{obs.storageSizeError}
+		return health
+	}
+
 	// Check template cache
-	if f.templateCache.Value != nil {
-		switch f.templateCache.Value.Status.Status {
+	if obs.templateCache.Value != nil {
+		switch obs.templateCache.Value.Status.Status {
 		case constants.AIMStatusReady:
 			health.State = constants.AIMStatusReady
 			health.Reason = aimv1alpha1.AIMServiceReasonCacheReady
@@ -414,14 +423,14 @@ func (f ServiceFetchResult) getCacheHealth() controllerutils.ComponentHealth {
 		default:
 			health.State = constants.AIMStatusProgressing
 			health.Reason = aimv1alpha1.AIMServiceReasonCacheCreating
-			health.Message = "Template cache status: " + string(f.templateCache.Value.Status.Status)
+			health.Message = "Template cache status: " + string(obs.templateCache.Value.Status.Status)
 		}
 		return health
 	}
 
 	// No template cache - check PVC for fallback storage
-	if f.pvc.Value != nil {
-		if f.pvc.Value.Status.Phase == corev1.ClaimBound {
+	if obs.pvc.Value != nil {
+		if obs.pvc.Value.Status.Phase == corev1.ClaimBound {
 			health.State = constants.AIMStatusReady
 			health.Reason = aimv1alpha1.AIMServiceReasonStorageReady
 			health.Message = "Service PVC is bound"
@@ -462,6 +471,10 @@ type ServiceObservation struct {
 
 	// pendingModelName is the validated model name to create (set when needsModelCreation is true).
 	pendingModelName string
+
+	// storageSizeError is set when storage size calculation fails due to missing model source sizes.
+	// This indicates the template hasn't fully resolved its model sources yet.
+	storageSizeError error
 }
 
 // ComposeState creates the observation from fetched data, deriving semantic state.
@@ -472,7 +485,10 @@ func (r *ServiceReconciler) ComposeState(
 ) ServiceObservation {
 	obs := ServiceObservation{ServiceFetchResult: fetch}
 
-	// Derive: if imageURI is set but no model was found (and no error), we need to create it
+	// Derive needsModelCreation: When a service specifies Model.Image (image URI) instead of
+	// Model.Name (reference), we search for existing models with that image. If no model is found
+	// AND no error occurred during search, then we need to create a new AIMModel for this image.
+	// The model is created without owner references so it can be shared across services.
 	mr := fetch.modelResult
 	if mr.ImageURI != "" && mr.Model.Value == nil && mr.ClusterModel.Value == nil && mr.Model.Error == nil && mr.ClusterModel.Error == nil {
 		// Validate the image URI can generate a valid model name
@@ -490,7 +506,43 @@ func (r *ServiceReconciler) ComposeState(
 		}
 	}
 
+	// Validate storage size can be calculated when template has model sources
+	// This catches configuration issues early (model sources without sizes)
+	obs.storageSizeError = r.validateStorageSize(fetch)
+
 	return obs
+}
+
+// validateStorageSize checks if storage size can be calculated for the template's model sources.
+// Returns an error if model sources exist but have invalid/missing sizes.
+func (r *ServiceReconciler) validateStorageSize(fetch ServiceFetchResult) error {
+	// Get template status with model sources
+	var templateStatus *aimv1alpha1.AIMServiceTemplateStatus
+	if fetch.template.Value != nil {
+		templateStatus = &fetch.template.Value.Status
+	} else if fetch.clusterTemplate.Value != nil {
+		templateStatus = &fetch.clusterTemplate.Value.Status
+	}
+
+	// No template or no model sources - nothing to validate
+	if templateStatus == nil || len(templateStatus.ModelSources) == 0 {
+		return nil
+	}
+
+	// Template cache already exists and is ready - no need to calculate
+	if fetch.templateCache.Value != nil && fetch.templateCache.Value.Status.Status == constants.AIMStatusReady {
+		return nil
+	}
+
+	// PVC already exists - no need to calculate
+	if fetch.pvc.Value != nil {
+		return nil
+	}
+
+	// Try to calculate storage size
+	headroomPercent := resolvePVCHeadroomPercent(fetch.service, ServiceObservation{ServiceFetchResult: fetch})
+	_, err := calculateRequiredStorageSize(templateStatus.ModelSources, headroomPercent)
+	return err
 }
 
 // ============================================================================

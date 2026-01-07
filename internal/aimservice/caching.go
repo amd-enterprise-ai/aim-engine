@@ -54,6 +54,7 @@ func GenerateServicePVCName(serviceName, namespace string) (string, error) {
 }
 
 // planServicePVC creates a PVC for the service if no template cache is available.
+// Returns nil if PVC creation is not needed or prerequisites are not met.
 func planServicePVC(
 	service *aimv1alpha1.AIMService,
 	templateName string,
@@ -78,20 +79,23 @@ func planServicePVC(
 		return nil
 	}
 
-	// Need model sources to calculate size
+	// Need model sources to calculate size - waiting for template to be ready
 	if templateStatus == nil || len(templateStatus.ModelSources) == 0 {
 		return nil
 	}
 
-	// Calculate required size
+	// Calculate required size - if this fails, model sources don't have sizes yet,
+	// which means template is still resolving. Return nil to wait for next reconcile.
 	headroomPercent := resolvePVCHeadroomPercent(service, obs)
 	size, err := calculateRequiredStorageSize(templateStatus.ModelSources, headroomPercent)
 	if err != nil {
+		// Model sources exist but don't have sizes - template is still resolving
 		return nil
 	}
 
 	pvcName, err := GenerateServicePVCName(service.Name, service.Namespace)
 	if err != nil {
+		// Name generation failed - this would be a programming error
 		return nil
 	}
 
@@ -182,6 +186,7 @@ func planTemplateCache(
 
 	cacheName, err := GenerateTemplateCacheName(templateName, service.Namespace)
 	if err != nil {
+		// Name generation failed - this would be a programming error
 		return nil
 	}
 

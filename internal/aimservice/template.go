@@ -24,7 +24,6 @@ package aimservice
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"strings"
 
@@ -32,10 +31,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
-
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
@@ -77,13 +75,9 @@ func fetchTemplate(
 		logger.V(1).Info("looking up template by name", "templateName", templateName)
 
 		// Check for derived template (service has overrides)
-		finalTemplateName := templateName
-		if service.Spec.Overrides != nil {
-			suffix := overridesSuffix(service.Spec.Overrides)
-			if suffix != "" {
-				finalTemplateName = derivedTemplateName(templateName, suffix)
-				logger.V(1).Info("using derived template name", "derivedName", finalTemplateName)
-			}
+		finalTemplateName := generateDerivedTemplateName(templateName, service.Spec.Overrides)
+		if finalTemplateName != templateName {
+			logger.V(1).Info("using derived template name", "derivedName", finalTemplateName)
 		}
 
 		// Try namespace-scoped first
@@ -237,8 +231,7 @@ func planDerivedTemplate(
 	}
 
 	// Calculate the derived template name
-	suffix := overridesSuffix(service.Spec.Overrides)
-	derivedName := derivedTemplateName(templateName, suffix)
+	derivedName := generateDerivedTemplateName(templateName, service.Spec.Overrides)
 
 	return buildDerivedTemplate(service, derivedName, modelName, templateSpec)
 }
@@ -335,60 +328,58 @@ func buildDerivedTemplate(
 	return template
 }
 
-// overridesSuffix computes a hash suffix for service overrides.
-func overridesSuffix(overrides *aimv1alpha1.AIMServiceOverrides) string {
+// generateDerivedTemplateName creates a unique, deterministic name for a derived template.
+// It uses the base template name and service overrides to generate a hash suffix,
+// ensuring that:
+// 1. Same base template + overrides always produce the same name (deterministic)
+// 2. Different overrides produce different names (collision-resistant)
+// 3. The name is a valid Kubernetes resource name
+//
+// Example: base template "my-template" with metric=latency, precision=fp16
+// -> "my-template-ovr-a1b2c3d4"
+func generateDerivedTemplateName(baseTemplateName string, overrides *aimv1alpha1.AIMServiceOverrides) string {
 	if overrides == nil {
-		return ""
+		return baseTemplateName
 	}
 
-	// Build a deterministic string from overrides
-	var parts []string
+	// Build hash inputs from overrides in deterministic order
+	hashInputs := buildOverrideHashInputs(overrides)
+	if len(hashInputs) == 0 {
+		return baseTemplateName
+	}
+
+	// Use GenerateDerivedName with the "ovr" suffix convention
+	name, err := utils.GenerateDerivedName([]string{baseTemplateName, "ovr"}, hashInputs...)
+	if err != nil {
+		// Fall back to base name if generation fails (shouldn't happen with valid inputs)
+		return baseTemplateName
+	}
+	return name
+}
+
+// buildOverrideHashInputs creates a slice of hash inputs from service overrides.
+// The order is deterministic to ensure consistent hashing.
+func buildOverrideHashInputs(overrides *aimv1alpha1.AIMServiceOverrides) []any {
+	if overrides == nil {
+		return nil
+	}
+
+	var inputs []any
 	if overrides.Metric != nil {
-		parts = append(parts, "metric="+string(*overrides.Metric))
+		inputs = append(inputs, "metric", string(*overrides.Metric))
 	}
 	if overrides.Precision != nil {
-		parts = append(parts, "precision="+string(*overrides.Precision))
+		inputs = append(inputs, "precision", string(*overrides.Precision))
 	}
 	if overrides.GpuSelector != nil {
 		if overrides.GpuSelector.Model != "" {
-			parts = append(parts, "gpu="+overrides.GpuSelector.Model)
+			inputs = append(inputs, "gpu", overrides.GpuSelector.Model)
 		}
 		if overrides.GpuSelector.Count > 0 {
-			parts = append(parts, fmt.Sprintf("count=%d", overrides.GpuSelector.Count))
+			inputs = append(inputs, "count", overrides.GpuSelector.Count)
 		}
 	}
-
-	if len(parts) == 0 {
-		return ""
-	}
-
-	combined := strings.Join(parts, ",")
-	sum := sha256.Sum256([]byte(combined))
-	return fmt.Sprintf("%x", sum[:])[:8]
-}
-
-// derivedTemplateName constructs a template name from a base name and suffix.
-// Ensures the final name does not exceed Kubernetes name length limits.
-func derivedTemplateName(baseName, suffix string) string {
-	if suffix == "" {
-		return baseName
-	}
-
-	extra := constants.DerivedTemplateSuffix + suffix
-	maxBaseLen := constants.TemplateNameMaxLength - len(extra)
-	if maxBaseLen <= 0 {
-		maxBaseLen = 1
-	}
-
-	trimmed := baseName
-	if len(trimmed) > maxBaseLen {
-		trimmed = strings.TrimRight(trimmed[:maxBaseLen], "-")
-		if trimmed == "" {
-			trimmed = baseName[:maxBaseLen]
-		}
-	}
-
-	return fmt.Sprintf("%s%s", trimmed, extra)
+	return inputs
 }
 
 // normalizeRuntimeConfigName returns the runtime config name or "default" if empty.

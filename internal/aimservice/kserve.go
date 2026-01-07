@@ -439,6 +439,9 @@ func disableHPA(isvc *servingv1beta1.InferenceService) {
 
 // addStorageVolumes adds cache or PVC volumes to the InferenceService.
 func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObservation) {
+	if len(isvc.Spec.Predictor.Containers) == 0 {
+		return
+	}
 	container := &isvc.Spec.Predictor.Containers[0]
 
 	// Check if we have template cache with model caches
@@ -497,8 +500,13 @@ func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1
 		},
 	})
 
-	// Mount at cache path + model name
-	mountPath := filepath.Join(constants.AIMCacheBasePath, modelName)
+	// Sanitize model name to prevent path traversal (remove ".." and other unsafe sequences)
+	// and ensure it's a valid path component
+	safeModelName := filepath.Base(strings.ReplaceAll(modelName, "..", ""))
+	if safeModelName == "" || safeModelName == "." {
+		safeModelName = volumeName // Fall back to volume name if model name is invalid
+	}
+	mountPath := filepath.Join(constants.AIMCacheBasePath, safeModelName)
 
 	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 		Name:      volumeName,
