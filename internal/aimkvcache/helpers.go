@@ -1,8 +1,6 @@
 package aimkvcache
 
 import (
-	"fmt"
-
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -11,11 +9,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
-	utils "github.com/amd-enterprise-ai/aim-engine/internal/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
-
-
 
 func (r *AIMKVCacheReconciler) buildRedisStatefulSet(kvc *aimv1alpha1.AIMKVCache) *appsv1.StatefulSet {
 	name, err := r.GetStatefulSetName(kvc)
@@ -27,9 +22,9 @@ func (r *AIMKVCacheReconciler) buildRedisStatefulSet(kvc *aimv1alpha1.AIMKVCache
 		return nil
 	}
 	labels := map[string]string{
-		"app":                         "redis",
-		"aim.silogen.ai/kvcache":      kvc.Name,
-		"aim.silogen.ai/kvcache-type": kvc.Spec.KVCacheType,
+		"app":                          "redis",
+		"aim.eai.amd.com/kvcache":      kvc.Name,
+		"aim.eai.amd.com/kvcache-type": kvc.Spec.KVCacheType,
 	}
 
 	replicas := int32(1)
@@ -135,14 +130,14 @@ func (r *AIMKVCacheReconciler) buildRedisStatefulSet(kvc *aimv1alpha1.AIMKVCache
 }
 
 func (r *AIMKVCacheReconciler) buildRedisService(kvc *aimv1alpha1.AIMKVCache) *corev1.Service {
-	name, err := r.getServiceName(kvc)
+	name, err := r.GetServiceName(kvc)
 	if err != nil {
 		return nil
 	}
 	labels := map[string]string{
-		"app":                         "redis",
-		"aim.silogen.ai/kvcache":      kvc.Name,
-		"aim.silogen.ai/kvcache-type": kvc.Spec.KVCacheType,
+		"app":                          "redis",
+		"aim.eai.amd.com/kvcache":      kvc.Name,
+		"aim.eai.amd.com/kvcache-type": kvc.Spec.KVCacheType,
 	}
 
 	service := &corev1.Service{
@@ -240,153 +235,4 @@ func (r *AIMKVCacheReconciler) getResources(kvc *aimv1alpha1.AIMKVCache) corev1.
 			corev1.ResourceMemory: resource.MustParse("1Gi"),
 		},
 	}
-}
-
-func (r *AIMKVCacheReconciler) getErrorMessage(errs controllerutils.ReconcileErrors) string {
-	if errs.PlanErr != nil {
-		return fmt.Sprintf("Planning failed: %v", errs.PlanErr)
-	}
-	if errs.ApplyErr != nil {
-		return fmt.Sprintf("Apply failed: %v", errs.ApplyErr)
-	}
-	if errs.ObserveErr != nil {
-		return fmt.Sprintf("Observation failed: %v", errs.ObserveErr)
-	}
-	if errs.FinalizeErr != nil {
-		return fmt.Sprintf("Finalization failed: %v", errs.FinalizeErr)
-	}
-	return "Unknown error"
-}
-
-func (r *AIMKVCacheReconciler) setReadyCondition(status *aimv1alpha1.AIMKVCacheStatus) {
-	r.setCondition(status, metav1.Condition{
-		Type:    aimv1alpha1.AIMKVCacheConditionReady,
-		Status:  metav1.ConditionTrue,
-		Reason:  aimv1alpha1.AIMKVCacheReasonStatefulSetReady,
-		Message: "StatefulSet and service are ready",
-	})
-
-	r.setCondition(status, metav1.Condition{
-		Type:    aimv1alpha1.AIMKVCacheConditionProgressing,
-		Status:  metav1.ConditionFalse,
-		Reason:  aimv1alpha1.AIMKVCacheReasonStatefulSetReady,
-		Message: "StatefulSet and service are ready",
-	})
-
-	r.setCondition(status, metav1.Condition{
-		Type:    aimv1alpha1.AIMKVCacheConditionFailure,
-		Status:  metav1.ConditionFalse,
-		Reason:  aimv1alpha1.AIMKVCacheReasonNoFailure,
-		Message: "No failures detected",
-	})
-}
-
-func (r *AIMKVCacheReconciler) setProgressingCondition(status *aimv1alpha1.AIMKVCacheStatus, obs *kvObservation) {
-	message := "StatefulSet is progressing"
-	reason := aimv1alpha1.AIMKVCacheReasonWaitingForPods
-
-	if obs != nil {
-		if obs.statefulSetFound && !obs.statefulSetReady {
-			message = "StatefulSet exists but pods are not ready"
-			reason = aimv1alpha1.AIMKVCacheReasonWaitingForPods
-		} else if obs.statefulSetFound && !obs.serviceFound {
-			message = "StatefulSet ready, creating service"
-			reason = aimv1alpha1.AIMKVCacheReasonStatefulSetCreated
-		}
-	}
-
-	r.setCondition(status, metav1.Condition{
-		Type:    aimv1alpha1.AIMKVCacheConditionProgressing,
-		Status:  metav1.ConditionTrue,
-		Reason:  reason,
-		Message: message,
-	})
-
-	r.setCondition(status, metav1.Condition{
-		Type:    aimv1alpha1.AIMKVCacheConditionReady,
-		Status:  metav1.ConditionFalse,
-		Reason:  aimv1alpha1.AIMKVCacheReasonWaitingForPods,
-		Message: message,
-	})
-
-	r.setCondition(status, metav1.Condition{
-		Type:    aimv1alpha1.AIMKVCacheConditionFailure,
-		Status:  metav1.ConditionFalse,
-		Reason:  aimv1alpha1.AIMKVCacheReasonNoFailure,
-		Message: "No failures detected",
-	})
-}
-
-func (r *AIMKVCacheReconciler) setPendingCondition(status *aimv1alpha1.AIMKVCacheStatus, obs *kvObservation) {
-	message := "Waiting for StatefulSet to be ready"
-	if obs != nil {
-		if !obs.statefulSetFound {
-			message = "StatefulSet not found, creating"
-		} else if !obs.statefulSetReady {
-			message = "StatefulSet found but not ready"
-		} else if !obs.serviceFound {
-			message = "Service not found, creating"
-		}
-	}
-
-	r.setCondition(status, metav1.Condition{
-		Type:    aimv1alpha1.AIMKVCacheConditionReady,
-		Status:  metav1.ConditionFalse,
-		Reason:  aimv1alpha1.AIMKVCacheReasonStatefulSetPending,
-		Message: message,
-	})
-
-	r.setCondition(status, metav1.Condition{
-		Type:    aimv1alpha1.AIMKVCacheConditionProgressing,
-		Status:  metav1.ConditionFalse,
-		Reason:  aimv1alpha1.AIMKVCacheReasonStatefulSetPending,
-		Message: message,
-	})
-
-	r.setCondition(status, metav1.Condition{
-		Type:    aimv1alpha1.AIMKVCacheConditionFailure,
-		Status:  metav1.ConditionFalse,
-		Reason:  aimv1alpha1.AIMKVCacheReasonNoFailure,
-		Message: "No failures detected",
-	})
-}
-
-func (r *AIMKVCacheReconciler) setFailureCondition(status *aimv1alpha1.AIMKVCacheStatus, errs controllerutils.ReconcileErrors) {
-	message := r.getErrorMessage(errs)
-
-	r.setCondition(status, metav1.Condition{
-		Type:    aimv1alpha1.AIMKVCacheConditionReady,
-		Status:  metav1.ConditionFalse,
-		Reason:  aimv1alpha1.AIMKVCacheReasonStatefulSetFailed,
-		Message: message,
-	})
-
-	r.setCondition(status, metav1.Condition{
-		Type:    aimv1alpha1.AIMKVCacheConditionProgressing,
-		Status:  metav1.ConditionFalse,
-		Reason:  aimv1alpha1.AIMKVCacheReasonStatefulSetFailed,
-		Message: message,
-	})
-
-	r.setCondition(status, metav1.Condition{
-		Type:    aimv1alpha1.AIMKVCacheConditionFailure,
-		Status:  metav1.ConditionTrue,
-		Reason:  aimv1alpha1.AIMKVCacheReasonStatefulSetFailed,
-		Message: message,
-	})
-}
-
-func (r *AIMKVCacheReconciler) setCondition(status *aimv1alpha1.AIMKVCacheStatus, newCondition metav1.Condition) {
-	newCondition.LastTransitionTime = metav1.Now()
-
-	for i, existing := range status.Conditions {
-		if existing.Type == newCondition.Type {
-			if existing.Status != newCondition.Status || existing.Reason != newCondition.Reason {
-				status.Conditions[i] = newCondition
-			}
-			return
-		}
-	}
-
-	status.Conditions = append(status.Conditions, newCondition)
 }
