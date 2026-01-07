@@ -439,11 +439,6 @@ spec:
               status:
                 default: Pending
                 description: Status represents the current status of the KV cache
-                enum:
-                - Pending
-                - Progressing
-                - Ready
-                - Failed
                 type: string
               storageSize:
                 description: |-
