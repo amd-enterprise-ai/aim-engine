@@ -62,9 +62,11 @@ func (r *AIMKVCacheReconciler) FetchRemoteState(
 }
 
 func (result FetchResult) GetComponentHealth() []controllerutils.ComponentHealth {
-	return []controllerutils.ComponentHealth{}
+	return []controllerutils.ComponentHealth{
+		result.statefulSet.ToDownstreamComponentHealth("StatefulSet", controllerutils.GetStatefulSetHealth),
+		result.service.ToDownstreamComponentHealth("Service", controllerutils.GetServiceHealth),
+	}
 }
-
 
 type Observation struct {
 	FetchResult
@@ -77,7 +79,6 @@ func (r *AIMKVCacheReconciler) ComposeState(
 ) Observation {
 	return Observation{FetchResult: fetch}
 }
-
 
 func (r *AIMKVCacheReconciler) PlanResources(
 	ctx context.Context,
