@@ -13,9 +13,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-
-	aimkvcache "github.com/amd-enterprise-ai/aim-engine/internal/aimkvcache"
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimkvcache "github.com/amd-enterprise-ai/aim-engine/internal/aimkvcache"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
@@ -39,7 +38,7 @@ type AIMKVCacheReconciler struct {
 	]
 
 	// Pipeline executes the standard reconciliation flow (Fetch -> Observe -> Plan -> Status)
-	pipeline   controllerutils.Pipeline[
+	pipeline controllerutils.Pipeline[
 		*aimv1alpha1.AIMKVCache,
 		*aimv1alpha1.AIMKVCacheStatus,
 		aimkvcache.FetchResult,
@@ -47,9 +46,9 @@ type AIMKVCacheReconciler struct {
 	]
 }
 
-// +kubebuilder:rbac:groups=aim.silogen.ai,resources=aimkvcaches,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=aim.silogen.ai,resources=aimkvcaches/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=aim.silogen.ai,resources=aimkvcaches/finalizers,verbs=update
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimkvcaches,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimkvcaches/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimkvcaches/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 
@@ -89,12 +88,12 @@ func (r *AIMKVCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		aimkvcache.FetchResult,
 		aimkvcache.Observation,
 	]{
-		Client:       mgr.GetClient(),
-		StatusClient: mgr.GetClient().Status(),
-		Recorder:     r.Recorder,
-		FieldOwner:   kvCacheControllerName,
-		Reconciler:   r.reconciler,
-		Scheme:       r.Scheme,
+		Client:         mgr.GetClient(),
+		StatusClient:   mgr.GetClient().Status(),
+		Recorder:       r.Recorder,
+		ControllerName: kvCacheControllerName,
+		Reconciler:     r.reconciler,
+		Scheme:         r.Scheme,
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
