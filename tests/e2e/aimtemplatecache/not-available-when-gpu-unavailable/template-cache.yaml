@@ -1,0 +1,8 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMTemplateCache
+metadata:
+  name: not-available-due-to-gpu
+spec:
+  templateName: not-available-due-to-gpu
+  templateScope: Namespace
+

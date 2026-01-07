@@ -1,7 +1,0 @@
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMTemplateCache
-metadata:
-  name: fails-if-service-template-degraded
-spec:
-  templateName: fails-if-service-template-degraded
-  templateScope: Namespace

@@ -1,0 +1,55 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: template-cache-not-available-when-gpu-unavailable
+spec:
+  description: |
+    Tests that the template cache reflects NotAvailable state when the service template
+    requires a GPU that doesn't exist in the cluster. This tests propagation of
+    hardware availability constraints from template to cache.
+  steps:
+    - name: Create the model and service template
+      try:
+        - apply:
+            file: model.yaml
+        - apply:
+            file: service-template.yaml
+
+    - name: Ensure the service template is NotAvailable
+      description: |
+        The service template requires a GPU that doesn't exist in the cluster.
+        It should transition to NotAvailable state.
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: not-available-due-to-gpu
+              status:
+                status: NotAvailable
+
+    - name: Create the template cache
+      try:
+        - apply:
+            file: template-cache.yaml
+
+    - name: Ensure the template cache reflects upstream NotAvailable state
+      description: |
+        When the upstream service template is NotAvailable, the template cache
+        should also be NotAvailable since the upstream dependency cannot be satisfied.
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                name: not-available-due-to-gpu
+              status:
+                status: NotAvailable
+                (conditions[?type == 'Ready']):
+                  - status: "False"
+                (conditions[?type == 'ServiceTemplateReady']):
+                  - status: "False"

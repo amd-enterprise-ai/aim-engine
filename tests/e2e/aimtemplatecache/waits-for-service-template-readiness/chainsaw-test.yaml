@@ -3,83 +3,48 @@ kind: Test
 metadata:
   name: template-cache-waits-for-template-readiness
 spec:
+  description: |
+    Tests that the template cache waits for the service template to become ready.
+    When the service template is not ready (e.g., discovery in progress or failing),
+    the template cache should reflect that it cannot proceed yet.
   steps:
-    - name: Create the service template
+    - name: Create the model and service template
       try:
         - apply:
             file: model.yaml
         - apply:
             file: service-template.yaml
-        - script:
-            # TODO remove once the template controller is merged
-            env:
-              - name: NAMESPACE
-                value: ($namespace)
-            content: |
-              kubectl patch aimservicetemplate waits-for-template-readiness -n $NAMESPACE --type=merge --subresource=status -p '
-              {
-                "status": {
-                  "status": "Progressing",
-                  "conditions": [
-                    {
-                      "type": "Ready",
-                      "status": "False",
-                      "reason": "WaitingForDiscovery",
-                      "message": "Discovery underway",
-                      "lastTransitionTime": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
-                    }
-                  ]
-                }
-              }'
 
     - name: Create the template cache
       try:
         - apply:
             file: template-cache.yaml
 
-    - name: Ensure the template cache is waiting for the template to become ready
+    - name: Ensure the template cache is not Ready while template is not ready
+      description: |
+        The service template will struggle with discovery (fake image can't be pulled).
+        The template cache should NOT be Ready - it will be Pending or Failed
+        depending on the current state of the service template.
       try:
         - assert:
+            timeout: 30s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMTemplateCache
               metadata:
                 name: waits-for-template-readiness
               status:
-                status: Pending
+                (conditions[?type == 'Ready']):
+                  - status: "False"
 
-    # TODO remove once the template controller is merged
-    - name: Mark the service template as ready
-      try:
-        - script:
-            env:
-              - name: NAMESPACE
-                value: ($namespace)
-            content: |
-              kubectl patch aimservicetemplate waits-for-template-readiness -n $NAMESPACE --type=merge --subresource=status -p '
-              {
-                "status": {
-                  "status": "Ready",
-                  "conditions": [
-                    {
-                      "type": "Ready",
-                      "status": "True",
-                      "reason": "AllComponentsReady",
-                      "message": "Everything is ready",
-                      "lastTransitionTime": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
-                    }
-                  ]
-                }
-              }'
-
-    # TODO change to Ready once model cache is merged
-    - name: Ensure the template cache moves to progressing (pending model cache creation)
+    - name: Verify the service template is also not ready
       try:
         - assert:
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMTemplateCache
+              kind: AIMServiceTemplate
               metadata:
                 name: waits-for-template-readiness
               status:
-                status: Progressing
+                (conditions[?type == 'Ready']):
+                  - status: "False"

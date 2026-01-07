@@ -1,6 +1,0 @@
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMModel
-metadata:
-  name: template-cache-degrades-if-service-template-degraded
-spec:
-  image: ghcr.io/silogen/aim-dummy:0.1.8

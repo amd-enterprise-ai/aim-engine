@@ -1,0 +1,429 @@
+Version: 0.2.14
+Loading default configuration...
+- Using test file: chainsaw-test
+- TestDirs [tests/e2e/aimtemplatecache]
+- Quiet false
+- SkipDelete false
+- FailFast false
+- Namespace ''
+- FullName false
+- IncludeTestRegex ''
+- ExcludeTestRegex ''
+- ApplyTimeout 5s
+- AssertTimeout 30s
+- CleanupTimeout 30s
+- DeleteTimeout 15s
+- ErrorTimeout 30s
+- ExecTimeout 5s
+- DeletionPropagationPolicy Background
+- Template true
+- NoCluster false
+- PauseOnFailure false
+Loading tests...
+- template-cache-fails-if-service-template-failed (tests/e2e/aimtemplatecache/fails-if-service-template-failed)
+- failure-service-template-wrong-scope (tests/e2e/aimtemplatecache/fails-if-service-template-has-wrong-scope)
+- failure-service-template-not-found (tests/e2e/aimtemplatecache/fails-if-service-template-not-found)
+- template-cache-happy-path-cluster (tests/e2e/aimtemplatecache/happy-path-cluster)
+- template-cache-happy-path-namespace (tests/e2e/aimtemplatecache/happy-path-namespace)
+- template-cache-not-available-when-gpu-unavailable (tests/e2e/aimtemplatecache/not-available-when-gpu-unavailable)
+- template-cache-waits-for-template-readiness (tests/e2e/aimtemplatecache/waits-for-service-template-readiness)
+Loading values...
+Running tests...
+=== RUN   chainsaw
+=== PAUSE chainsaw
+=== CONT  chainsaw
+=== RUN   chainsaw/template-cache-fails-if-service-template-failed
+=== PAUSE chainsaw/template-cache-fails-if-service-template-failed
+=== RUN   chainsaw/failure-service-template-wrong-scope
+=== PAUSE chainsaw/failure-service-template-wrong-scope
+=== RUN   chainsaw/failure-service-template-not-found
+=== PAUSE chainsaw/failure-service-template-not-found
+=== RUN   chainsaw/template-cache-happy-path-cluster
+=== PAUSE chainsaw/template-cache-happy-path-cluster
+=== RUN   chainsaw/template-cache-happy-path-namespace
+=== PAUSE chainsaw/template-cache-happy-path-namespace
+=== RUN   chainsaw/template-cache-not-available-when-gpu-unavailable
+=== PAUSE chainsaw/template-cache-not-available-when-gpu-unavailable
+=== RUN   chainsaw/template-cache-waits-for-template-readiness
+=== PAUSE chainsaw/template-cache-waits-for-template-readiness
+=== CONT  chainsaw/template-cache-fails-if-service-template-failed
+=== CONT  chainsaw/template-cache-happy-path-namespace
+=== CONT  chainsaw/failure-service-template-not-found
+=== CONT  chainsaw/template-cache-waits-for-template-readiness
+=== CONT  chainsaw/template-cache-not-available-when-gpu-unavailable
+=== CONT  chainsaw/failure-service-template-wrong-scope
+=== CONT  chainsaw/template-cache-happy-path-cluster
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:20 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1m@chainsaw                                   [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | v1/Namespace @ chainsaw-resolved-terrier
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:20 | [32;1mtemplate-cache-happy-path-namespace[0;22m | [32;1m@chainsaw                          [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | v1/Namespace @ chainsaw-ready-kodiak
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:20 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mCreate the service templates                [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:20 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mCreate the service template        [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/failure-service-template-not-found
+    sink.go:56: | 15:38:20 | [32;1mfailure-service-template-not-found[0;22m | [32;1m@chainsaw                                     [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | v1/Namespace @ chainsaw-exact-cattle
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:20 | [32;1mtemplate-cache-fails-if-service-template-failed[0;22m | [32;1m@chainsaw                                               [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | v1/Namespace @ chainsaw-crack-lobster
+=== NAME  chainsaw/failure-service-template-not-found
+    sink.go:56: | 15:38:20 | [36;1mfailure-service-template-not-found[0;22m | [36;1mCreate the template cache                     [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:20 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mCreate the service template (without the model)         [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:20 | [32;1mtemplate-cache-waits-for-template-readiness[0;22m | [32;1m@chainsaw                                                         [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | v1/Namespace @ chainsaw-key-buffalo
+    sink.go:56: | 15:38:20 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mCreate the model and service template                             [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:20 | [32;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [32;1m@chainsaw                                                     [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | v1/Namespace @ chainsaw-fit-kitten
+    sink.go:56: | 15:38:20 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mCreate the model and service template                         [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-happy-path-cluster
+    sink.go:56: | 15:38:20 | [32;1mtemplate-cache-happy-path-cluster[0;22m | [32;1m@chainsaw                          [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | v1/Namespace @ chainsaw-enough-asp
+    sink.go:56: | 15:38:20 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mCreate the service template        [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:21 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mCreate the service template        [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-ready-kodiak/happy-path-namespace
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:21 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mCreate the service templates                [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-resolved-terrier/service-template-wrong-scope-namespace
+=== NAME  chainsaw/failure-service-template-not-found
+    sink.go:56: | 15:38:21 | [36;1mfailure-service-template-not-found[0;22m | [36;1mCreate the template cache                     [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-exact-cattle/failure-service-template-not-found
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:21 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mCreate the service template (without the model)         [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-crack-lobster/fails-if-service-template-failed
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:21 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mCreate the model and service template                             [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMModel @ chainsaw-key-buffalo/template-cache-waits-for-template-readiness
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:21 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mCreate the model and service template                         [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMModel @ chainsaw-fit-kitten/template-cache-not-available-model
+=== NAME  chainsaw/template-cache-happy-path-cluster
+    sink.go:56: | 15:38:21 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mCreate the service template        [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMClusterServiceTemplate @ happy-path-cluster
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:21 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1mCreate the service templates                [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-resolved-terrier/service-template-wrong-scope-namespace
+    sink.go:56: | 15:38:21 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1mCreate the service templates                [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-resolved-terrier/service-template-wrong-scope-namespace
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:21 | [32;1mtemplate-cache-happy-path-namespace[0;22m | [32;1mCreate the service template        [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-ready-kodiak/happy-path-namespace
+    sink.go:56: | 15:38:21 | [32;1mtemplate-cache-happy-path-namespace[0;22m | [32;1mCreate the service template        [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-ready-kodiak/happy-path-namespace
+    sink.go:56: | 15:38:21 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mCreate the service template        [0;22m | [36;1mCMD[0;22m       | [36;1mRUN[0;22m   |
+        === COMMAND
+        /usr/bin/sh -c kubectl patch aimservicetemplate happy-path-namespace -n $NAMESPACE --type=merge --subresource=status -p '
+        {
+          "status": {
+            "status": "Ready",
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "True",
+                "reason": "AllComponentsReady",
+                "message": "All components are ready",
+                "lastTransitionTime": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
+              }
+            ]
+          }
+        }'
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:21 | [32;1mtemplate-cache-fails-if-service-template-failed[0;22m | [32;1mCreate the service template (without the model)         [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-crack-lobster/fails-if-service-template-failed
+    sink.go:56: | 15:38:21 | [32;1mtemplate-cache-fails-if-service-template-failed[0;22m | [32;1mCreate the service template (without the model)         [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-crack-lobster/fails-if-service-template-failed
+=== NAME  chainsaw/failure-service-template-not-found
+    sink.go:56: | 15:38:21 | [32;1mfailure-service-template-not-found[0;22m | [32;1mCreate the template cache                     [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-exact-cattle/failure-service-template-not-found
+    sink.go:56: | 15:38:21 | [32;1mfailure-service-template-not-found[0;22m | [32;1mCreate the template cache                     [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-exact-cattle/failure-service-template-not-found
+    sink.go:56: | 15:38:21 | [36;1mfailure-service-template-not-found[0;22m | [36;1mCreate the template cache                     [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:21 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mCreate the service template (without the model)         [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+=== NAME  chainsaw/failure-service-template-not-found
+    sink.go:56: | 15:38:21 | [36;1mfailure-service-template-not-found[0;22m | [36;1mEnsure the template cache is in a failed state[0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:21 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mCreate the template cache                               [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:21 | [32;1mtemplate-cache-waits-for-template-readiness[0;22m | [32;1mCreate the model and service template                             [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMModel @ chainsaw-key-buffalo/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:21 | [32;1mtemplate-cache-waits-for-template-readiness[0;22m | [32;1mCreate the model and service template                             [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMModel @ chainsaw-key-buffalo/template-cache-waits-for-template-readiness
+=== NAME  chainsaw/template-cache-happy-path-cluster
+    sink.go:56: | 15:38:21 | [32;1mtemplate-cache-happy-path-cluster[0;22m | [32;1mCreate the service template        [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMClusterServiceTemplate @ happy-path-cluster
+    sink.go:56: | 15:38:21 | [32;1mtemplate-cache-happy-path-cluster[0;22m | [32;1mCreate the service template        [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMClusterServiceTemplate @ happy-path-cluster
+    sink.go:56: | 15:38:21 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mCreate the service template        [0;22m | [36;1mCMD[0;22m       | [36;1mRUN[0;22m   |
+        === COMMAND
+        /usr/bin/sh -c kubectl patch aimclusterservicetemplate happy-path-cluster --type=merge --subresource=status -p '
+        {
+          "status": {
+            "status": "Ready",
+            "conditions": [
+              {
+                "type": "Ready",
+                "status": "True",
+                "reason": "AllComponentsReady",
+                "message": "All components are ready",
+                "lastTransitionTime": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
+              }
+            ]
+          }
+        }'
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:21 | [32;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [32;1mCreate the model and service template                         [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMModel @ chainsaw-fit-kitten/template-cache-not-available-model
+    sink.go:56: | 15:38:21 | [32;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [32;1mCreate the model and service template                         [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMModel @ chainsaw-fit-kitten/template-cache-not-available-model
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:21 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mCreate the service templates                [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMClusterServiceTemplate @ service-template-wrong-scope-cluster
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:21 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mCreate the template cache                               [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-crack-lobster/fails-if-service-template-failed
+=== NAME  chainsaw/failure-service-template-not-found
+    sink.go:56: | 15:38:21 | [36;1mfailure-service-template-not-found[0;22m | [36;1mEnsure the template cache is in a failed state[0;22m | [36;1mASSERT[0;22m    | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-exact-cattle/failure-service-template-not-found
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:21 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mCreate the model and service template                             [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-key-buffalo/waits-for-template-readiness
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mCreate the model and service template                         [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-fit-kitten/not-available-due-to-gpu
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:22 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1mCreate the service templates                [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMClusterServiceTemplate @ service-template-wrong-scope-cluster
+    sink.go:56: | 15:38:22 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1mCreate the service templates                [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMClusterServiceTemplate @ service-template-wrong-scope-cluster
+    sink.go:56: | 15:38:22 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mCreate the service templates                [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:22 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mCreate the template caches                  [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/failure-service-template-not-found
+    sink.go:56: | 15:38:22 | [32;1mfailure-service-template-not-found[0;22m | [32;1mEnsure the template cache is in a failed state[0;22m | [32;1mASSERT[0;22m    | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-exact-cattle/failure-service-template-not-found
+    sink.go:56: | 15:38:22 | [36;1mfailure-service-template-not-found[0;22m | [36;1mEnsure the template cache is in a failed state[0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:22 | [36;1mfailure-service-template-not-found[0;22m | [36;1mCreate the template cache                     [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:22 | [32;1mtemplate-cache-fails-if-service-template-failed[0;22m | [32;1mCreate the template cache                               [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-crack-lobster/fails-if-service-template-failed
+    sink.go:56: | 15:38:22 | [32;1mtemplate-cache-fails-if-service-template-failed[0;22m | [32;1mCreate the template cache                               [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-crack-lobster/fails-if-service-template-failed
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mCreate the template cache                               [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mEnsure the template cache is also failed                [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:22 | [32;1mtemplate-cache-waits-for-template-readiness[0;22m | [32;1mCreate the model and service template                             [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-key-buffalo/waits-for-template-readiness
+    sink.go:56: | 15:38:22 | [32;1mtemplate-cache-waits-for-template-readiness[0;22m | [32;1mCreate the model and service template                             [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-key-buffalo/waits-for-template-readiness
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mCreate the model and service template                             [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mCreate the template cache                                         [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/failure-service-template-not-found
+    sink.go:56: | 15:38:22 | [32;1mfailure-service-template-not-found[0;22m | [32;1mCreate the template cache                     [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-exact-cattle/failure-service-template-not-found
+    sink.go:56: | 15:38:22 | [36;1mfailure-service-template-not-found[0;22m | [36;1mCreate the template cache                     [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:22 | [36;1mfailure-service-template-not-found[0;22m | [36;1m@chainsaw                                     [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:22 | [32;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [32;1mCreate the model and service template                         [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-fit-kitten/not-available-due-to-gpu
+    sink.go:56: | 15:38:22 | [32;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [32;1mCreate the model and service template                         [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-fit-kitten/not-available-due-to-gpu
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mCreate the model and service template                         [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mEnsure the service template is NotAvailable                   [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:22 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mCreate the template caches                  [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-resolved-terrier/failure-service-template-not-found-cluster
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mEnsure the template cache is also failed                [0;22m | [36;1mASSERT[0;22m    | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-crack-lobster/fails-if-service-template-failed
+=== NAME  chainsaw/failure-service-template-not-found
+    sink.go:56: | 15:38:22 | [32;1mfailure-service-template-not-found[0;22m | [32;1m@chainsaw                                     [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | v1/Namespace @ chainsaw-exact-cattle
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mCreate the template cache                                         [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-key-buffalo/waits-for-template-readiness
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:22 | [32;1mtemplate-cache-fails-if-service-template-failed[0;22m | [32;1mEnsure the template cache is also failed                [0;22m | [32;1mASSERT[0;22m    | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-crack-lobster/fails-if-service-template-failed
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mEnsure the template cache is also failed                [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mVerify the service template is failed with missing model[0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mEnsure the service template is NotAvailable                   [0;22m | [36;1mASSERT[0;22m    | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-fit-kitten/not-available-due-to-gpu
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:22 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1mCreate the template caches                  [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-resolved-terrier/failure-service-template-not-found-cluster
+    sink.go:56: | 15:38:22 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1mCreate the template caches                  [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-resolved-terrier/failure-service-template-not-found-cluster
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mCreate the service template        [0;22m | [36;1mSCRIPT[0;22m    | [36;1mLOG[0;22m   |
+        === STDOUT
+        aimservicetemplate.aim.eai.amd.com/happy-path-namespace patched
+    sink.go:56: | 15:38:22 | [32;1mtemplate-cache-happy-path-namespace[0;22m | [32;1mCreate the service template        [0;22m | [32;1mSCRIPT[0;22m    | [32;1mDONE[0;22m  |
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mCreate the service template        [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mCreate the template cache          [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:22 | [32;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [32;1mEnsure the service template is NotAvailable                   [0;22m | [32;1mASSERT[0;22m    | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-fit-kitten/not-available-due-to-gpu
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mEnsure the service template is NotAvailable                   [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:22 | [32;1mtemplate-cache-waits-for-template-readiness[0;22m | [32;1mCreate the template cache                                         [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-key-buffalo/waits-for-template-readiness
+    sink.go:56: | 15:38:22 | [32;1mtemplate-cache-waits-for-template-readiness[0;22m | [32;1mCreate the template cache                                         [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-key-buffalo/waits-for-template-readiness
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mCreate the template cache                                     [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mCreate the template cache                                         [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mEnsure the template cache is not Ready while template is not ready[0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mVerify the service template is failed with missing model[0;22m | [36;1mASSERT[0;22m    | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-crack-lobster/fails-if-service-template-failed
+=== NAME  chainsaw/template-cache-happy-path-cluster
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mCreate the service template        [0;22m | [36;1mSCRIPT[0;22m    | [36;1mLOG[0;22m   |
+        === STDOUT
+        aimclusterservicetemplate.aim.eai.amd.com/happy-path-cluster patched
+    sink.go:56: | 15:38:22 | [32;1mtemplate-cache-happy-path-cluster[0;22m | [32;1mCreate the service template        [0;22m | [32;1mSCRIPT[0;22m    | [32;1mDONE[0;22m  |
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mCreate the service template        [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:22 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mCreate the template cache          [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:23 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mCreate the template caches                  [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-resolved-terrier/failure-service-template-not-found-namespace
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:23 | [32;1mtemplate-cache-fails-if-service-template-failed[0;22m | [32;1mVerify the service template is failed with missing model[0;22m | [32;1mASSERT[0;22m    | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-crack-lobster/fails-if-service-template-failed
+    sink.go:56: | 15:38:23 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mVerify the service template is failed with missing model[0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:23 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mCreate the template cache                               [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:23 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mCreate the template cache          [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-ready-kodiak/happy-path-namespace
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:23 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mCreate the template cache                                     [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-fit-kitten/not-available-due-to-gpu
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:24 | [32;1mtemplate-cache-fails-if-service-template-failed[0;22m | [32;1mCreate the template cache                               [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-crack-lobster/fails-if-service-template-failed
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mEnsure the template cache is not Ready while template is not ready[0;22m | [36;1mASSERT[0;22m    | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-key-buffalo/waits-for-template-readiness
+=== NAME  chainsaw/template-cache-happy-path-cluster
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mCreate the template cache          [0;22m | [36;1mAPPLY[0;22m     | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-enough-asp/happy-path-cluster
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:24 | [32;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [32;1mCreate the template cache                                     [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-fit-kitten/not-available-due-to-gpu
+    sink.go:56: | 15:38:24 | [32;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [32;1mCreate the template cache                                     [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-fit-kitten/not-available-due-to-gpu
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mCreate the template cache                                     [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mEnsure the template cache reflects upstream NotAvailable state[0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:24 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1mCreate the template caches                  [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-resolved-terrier/failure-service-template-not-found-namespace
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:24 | [32;1mtemplate-cache-happy-path-namespace[0;22m | [32;1mCreate the template cache          [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-ready-kodiak/happy-path-namespace
+    sink.go:56: | 15:38:24 | [32;1mtemplate-cache-happy-path-namespace[0;22m | [32;1mCreate the template cache          [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-ready-kodiak/happy-path-namespace
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mCreate the template cache          [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:24 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1mCreate the template caches                  [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-resolved-terrier/failure-service-template-not-found-namespace
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mEnsure the model caches are created[0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:24 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mCreate the template caches                  [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mCreate the template cache                               [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:24 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mEnsure the both caches are in a Failed state[0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mCreate the service template (without the model)         [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:24 | [32;1mtemplate-cache-waits-for-template-readiness[0;22m | [32;1mEnsure the template cache is not Ready while template is not ready[0;22m | [32;1mASSERT[0;22m    | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-key-buffalo/waits-for-template-readiness
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mEnsure the template cache is not Ready while template is not ready[0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mVerify the service template is also not ready                     [0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:24 | [32;1mtemplate-cache-fails-if-service-template-failed[0;22m | [32;1mCreate the service template (without the model)         [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-crack-lobster/fails-if-service-template-failed
+=== NAME  chainsaw/template-cache-happy-path-cluster
+    sink.go:56: | 15:38:24 | [32;1mtemplate-cache-happy-path-cluster[0;22m | [32;1mCreate the template cache          [0;22m | [32;1mCREATE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-enough-asp/happy-path-cluster
+    sink.go:56: | 15:38:24 | [32;1mtemplate-cache-happy-path-cluster[0;22m | [32;1mCreate the template cache          [0;22m | [32;1mAPPLY[0;22m     | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-enough-asp/happy-path-cluster
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mCreate the template cache          [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mEnsure the model caches are created[0;22m | [36;1mTRY[0;22m       | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mEnsure the model caches are created[0;22m | [36;1mASSERT[0;22m    | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMModelCache @ chainsaw-ready-kodiak/*
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1mCreate the service template (without the model)         [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1m@chainsaw                                               [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:24 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mEnsure the both caches are in a Failed state[0;22m | [36;1mASSERT[0;22m    | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-resolved-terrier/failure-service-template-not-found-cluster
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mEnsure the template cache reflects upstream NotAvailable state[0;22m | [36;1mASSERT[0;22m    | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-fit-kitten/not-available-due-to-gpu
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mVerify the service template is also not ready                     [0;22m | [36;1mASSERT[0;22m    | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-key-buffalo/waits-for-template-readiness
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:24 | [32;1mtemplate-cache-fails-if-service-template-failed[0;22m | [32;1m@chainsaw                                               [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | v1/Namespace @ chainsaw-crack-lobster
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:24 | [32;1mtemplate-cache-happy-path-namespace[0;22m | [32;1mEnsure the model caches are created[0;22m | [32;1mASSERT[0;22m    | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMModelCache @ chainsaw-ready-kodiak/*
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:24 | [32;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [32;1mEnsure the template cache reflects upstream NotAvailable state[0;22m | [32;1mASSERT[0;22m    | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-fit-kitten/not-available-due-to-gpu
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mEnsure the template cache reflects upstream NotAvailable state[0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mCreate the template cache                                     [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:24 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1mEnsure the both caches are in a Failed state[0;22m | [32;1mASSERT[0;22m    | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-resolved-terrier/failure-service-template-not-found-cluster
+=== NAME  chainsaw/template-cache-happy-path-cluster
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mEnsure the model caches are created[0;22m | [36;1mASSERT[0;22m    | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMModelCache @ chainsaw-enough-asp/*
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:24 | [32;1mtemplate-cache-waits-for-template-readiness[0;22m | [32;1mVerify the service template is also not ready                     [0;22m | [32;1mASSERT[0;22m    | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-key-buffalo/waits-for-template-readiness
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mVerify the service template is also not ready                     [0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mCreate the template cache                                         [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:24 | [32;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [32;1mCreate the template cache                                     [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-fit-kitten/not-available-due-to-gpu
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:24 | [32;1mtemplate-cache-waits-for-template-readiness[0;22m | [32;1mCreate the template cache                                         [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-key-buffalo/waits-for-template-readiness
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mCreate the template cache                                     [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mCreate the model and service template                         [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:24 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mEnsure the model caches are created[0;22m | [36;1mASSERT[0;22m    | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMModelCache @ chainsaw-ready-kodiak/*
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:25 | [32;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [32;1mCreate the model and service template                         [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-fit-kitten/not-available-due-to-gpu
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:25 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mCreate the template cache                                         [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:25 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mCreate the model and service template                             [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:25 | [32;1mtemplate-cache-happy-path-namespace[0;22m | [32;1mEnsure the model caches are created[0;22m | [32;1mASSERT[0;22m    | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMModelCache @ chainsaw-ready-kodiak/*
+    sink.go:56: | 15:38:25 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mEnsure the model caches are created[0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:25 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mCreate the template cache          [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:25 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mEnsure the both caches are in a Failed state[0;22m | [36;1mASSERT[0;22m    | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-resolved-terrier/failure-service-template-not-found-namespace
+=== NAME  chainsaw/template-cache-happy-path-cluster
+    sink.go:56: | 15:38:25 | [32;1mtemplate-cache-happy-path-cluster[0;22m | [32;1mEnsure the model caches are created[0;22m | [32;1mASSERT[0;22m    | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMModelCache @ chainsaw-enough-asp/*
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:25 | [32;1mtemplate-cache-waits-for-template-readiness[0;22m | [32;1mCreate the model and service template                             [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-key-buffalo/waits-for-template-readiness
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:25 | [32;1mtemplate-cache-happy-path-namespace[0;22m | [32;1mCreate the template cache          [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-ready-kodiak/happy-path-namespace
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:25 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1mEnsure the both caches are in a Failed state[0;22m | [32;1mASSERT[0;22m    | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-resolved-terrier/failure-service-template-not-found-namespace
+    sink.go:56: | 15:38:25 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mEnsure the both caches are in a Failed state[0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:25 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mCreate the template caches                  [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:25 | [32;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [32;1mCreate the model and service template                         [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMModel @ chainsaw-fit-kitten/template-cache-not-available-model
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:25 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mCreate the template cache          [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:25 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mCreate the service template        [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:25 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1mCreate the template caches                  [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-resolved-terrier/failure-service-template-not-found-namespace
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:25 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1mCreate the model and service template                         [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:25 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1m@chainsaw                                                     [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:25 | [32;1mtemplate-cache-waits-for-template-readiness[0;22m | [32;1mCreate the model and service template                             [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMModel @ chainsaw-key-buffalo/template-cache-waits-for-template-readiness
+=== NAME  chainsaw/template-cache-happy-path-cluster
+    sink.go:56: | 15:38:25 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mEnsure the model caches are created[0;22m | [36;1mASSERT[0;22m    | [36;1mRUN[0;22m   | aim.eai.amd.com/v1alpha1/AIMModelCache @ chainsaw-enough-asp/*
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:25 | [32;1mtemplate-cache-happy-path-namespace[0;22m | [32;1mCreate the service template        [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-ready-kodiak/happy-path-namespace
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:25 | [32;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [32;1m@chainsaw                                                     [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | v1/Namespace @ chainsaw-fit-kitten
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:25 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1mCreate the model and service template                             [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:25 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1m@chainsaw                                                         [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:25 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1mCreate the service template        [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:25 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1m@chainsaw                          [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-happy-path-cluster
+    sink.go:56: | 15:38:26 | [32;1mtemplate-cache-happy-path-cluster[0;22m | [32;1mEnsure the model caches are created[0;22m | [32;1mASSERT[0;22m    | [32;1mDONE[0;22m  | aim.eai.amd.com/v1alpha1/AIMModelCache @ chainsaw-enough-asp/*
+    sink.go:56: | 15:38:26 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mEnsure the model caches are created[0;22m | [36;1mTRY[0;22m       | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:26 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mCreate the template cache          [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:26 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1mCreate the template caches                  [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-resolved-terrier/failure-service-template-not-found-cluster
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:26 | [32;1mtemplate-cache-happy-path-namespace[0;22m | [32;1m@chainsaw                          [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | v1/Namespace @ chainsaw-ready-kodiak
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:26 | [32;1mtemplate-cache-waits-for-template-readiness[0;22m | [32;1m@chainsaw                                                         [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | v1/Namespace @ chainsaw-key-buffalo
+=== NAME  chainsaw/template-cache-happy-path-cluster
+    sink.go:56: | 15:38:26 | [32;1mtemplate-cache-happy-path-cluster[0;22m | [32;1mCreate the template cache          [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMTemplateCache @ chainsaw-enough-asp/happy-path-cluster
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:26 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mCreate the template caches                  [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:26 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mCreate the service templates                [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/template-cache-happy-path-cluster
+    sink.go:56: | 15:38:26 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mCreate the template cache          [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:26 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mCreate the service template        [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:26 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1mCreate the service templates                [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMClusterServiceTemplate @ service-template-wrong-scope-cluster
+=== NAME  chainsaw/template-cache-happy-path-cluster
+    sink.go:56: | 15:38:26 | [32;1mtemplate-cache-happy-path-cluster[0;22m | [32;1mCreate the service template        [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMClusterServiceTemplate @ happy-path-cluster
+    sink.go:56: | 15:38:26 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1mCreate the service template        [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:26 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1m@chainsaw                          [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:26 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1mCreate the service templates                [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | aim.eai.amd.com/v1alpha1/AIMServiceTemplate @ chainsaw-resolved-terrier/service-template-wrong-scope-namespace
+=== NAME  chainsaw/template-cache-happy-path-cluster
+    sink.go:56: | 15:38:26 | [32;1mtemplate-cache-happy-path-cluster[0;22m | [32;1m@chainsaw                          [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | v1/Namespace @ chainsaw-enough-asp
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:26 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1mCreate the service templates                [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+    sink.go:56: | 15:38:26 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1m@chainsaw                                   [0;22m | [36;1mCLEANUP[0;22m   | [36;1mBEGIN[0;22m |
+    sink.go:56: | 15:38:26 | [32;1mfailure-service-template-wrong-scope[0;22m | [32;1m@chainsaw                                   [0;22m | [32;1mDELETE[0;22m    | [32;1mOK[0;22m    | v1/Namespace @ chainsaw-resolved-terrier
+=== NAME  chainsaw/failure-service-template-not-found
+    sink.go:56: | 15:38:28 | [36;1mfailure-service-template-not-found[0;22m | [36;1m@chainsaw                                     [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+=== NAME  chainsaw/template-cache-fails-if-service-template-failed
+    sink.go:56: | 15:38:30 | [36;1mtemplate-cache-fails-if-service-template-failed[0;22m | [36;1m@chainsaw                                               [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+=== NAME  chainsaw/template-cache-not-available-when-gpu-unavailable
+    sink.go:56: | 15:38:32 | [36;1mtemplate-cache-not-available-when-gpu-unavailable[0;22m | [36;1m@chainsaw                                                     [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+=== NAME  chainsaw/template-cache-happy-path-namespace
+    sink.go:56: | 15:38:32 | [36;1mtemplate-cache-happy-path-namespace[0;22m | [36;1m@chainsaw                          [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+=== NAME  chainsaw/template-cache-waits-for-template-readiness
+    sink.go:56: | 15:38:33 | [36;1mtemplate-cache-waits-for-template-readiness[0;22m | [36;1m@chainsaw                                                         [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+=== NAME  chainsaw/failure-service-template-wrong-scope
+    sink.go:56: | 15:38:33 | [36;1mfailure-service-template-wrong-scope[0;22m | [36;1m@chainsaw                                   [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+=== NAME  chainsaw/template-cache-happy-path-cluster
+    sink.go:56: | 15:38:33 | [36;1mtemplate-cache-happy-path-cluster[0;22m | [36;1m@chainsaw                          [0;22m | [36;1mCLEANUP[0;22m   | [36;1mEND[0;22m   |
+--- PASS: chainsaw (0.00s)
+    --- PASS: chainsaw/failure-service-template-not-found (9.12s)
+    --- PASS: chainsaw/template-cache-fails-if-service-template-failed (10.84s)
+    --- PASS: chainsaw/template-cache-not-available-when-gpu-unavailable (12.45s)
+    --- PASS: chainsaw/template-cache-happy-path-namespace (12.90s)
+    --- PASS: chainsaw/template-cache-waits-for-template-readiness (13.17s)
+    --- PASS: chainsaw/failure-service-template-wrong-scope (13.44s)
+    --- PASS: chainsaw/template-cache-happy-path-cluster (13.71s)
+PASS
+Tests Summary...
+- Passed  tests 7
+- Failed  tests 0
+- Skipped tests 0
+Done.

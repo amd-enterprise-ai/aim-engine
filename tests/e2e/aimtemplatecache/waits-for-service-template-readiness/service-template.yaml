@@ -3,7 +3,7 @@ kind: AIMServiceTemplate
 metadata:
   name: waits-for-template-readiness
 spec:
+  # Reference a model with a fake image - discovery will fail (image can't be pulled)
+  # This causes the template to stay in Progressing then move to Failed
   modelName: template-cache-waits-for-template-readiness
-  modelSources:
-    - sourceUri: hf://hello/world
-      size: 2Gi
+  # No modelSources - requires discovery which will fail due to fake image

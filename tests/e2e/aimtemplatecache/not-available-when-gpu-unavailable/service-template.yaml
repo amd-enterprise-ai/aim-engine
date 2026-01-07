@@ -1,0 +1,11 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: not-available-due-to-gpu
+spec:
+  modelName: template-cache-not-available-model
+  # Require a GPU that doesn't exist - this causes NotAvailable status
+  gpuSelector:
+    model: "NONEXISTENT-GPU-MODEL-12345"
+    count: 1
+
