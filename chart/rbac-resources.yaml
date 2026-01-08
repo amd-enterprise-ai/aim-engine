@@ -1,0 +1,186 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/log
+  verbs:
+  - get
+- apiGroups:
+  - aim.eai.amd.com
+  resources:
+  - aimclustermodels
+  - aimclustermodelsources
+  - aimclusterruntimeconfigs
+  - aimclusterservicetemplates
+  - aimmodelcaches
+  - aimmodels
+  - aimruntimeconfigs
+  - aimservices
+  - aimservicetemplates
+  - aimtemplatecaches
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - aim.eai.amd.com
+  resources:
+  - aimclustermodels/finalizers
+  - aimclustermodelsources/finalizers
+  - aimclusterruntimeconfigs/finalizers
+  - aimclusterservicetemplates/finalizers
+  - aimmodelcaches/finalizers
+  - aimmodels/finalizers
+  - aimruntimeconfigs/finalizers
+  - aimservices/finalizers
+  - aimservicetemplates/finalizers
+  - aimtemplatecaches/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - aim.eai.amd.com
+  resources:
+  - aimclustermodels/status
+  - aimclustermodelsources/status
+  - aimclusterruntimeconfigs/status
+  - aimclusterservicetemplates/status
+  - aimmodelcaches/status
+  - aimmodels/status
+  - aimruntimeconfigs/status
+  - aimservices/status
+  - aimservicetemplates/status
+  - aimtemplatecaches/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: aim-engine
+    app.kubernetes.io/managed-by: kustomize
+  name: manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: manager-role
+subjects:
+- kind: ServiceAccount
+  name: controller-manager
+  namespace: system
+---
+# permissions to do leader election.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/name: aim-engine
+    app.kubernetes.io/managed-by: kustomize
+  name: leader-election-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: aim-engine
+    app.kubernetes.io/managed-by: kustomize
+  name: leader-election-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: controller-manager
+  namespace: system

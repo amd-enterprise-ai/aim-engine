@@ -1,0 +1,20 @@
+apiVersion: v2
+name: aim-engine
+description: AIM Engine - A Kubernetes operator for AI model lifecycle management and inference serving
+home: https://github.com/amd-enterprise-ai/aim-engine
+sources:
+- https://github.com/amd-enterprise-ai/aim-engine
+type: application
+version: 0.0.1
+appVersion: "latest"
+keywords:
+- ai
+- inference
+- model-management
+- operator
+- kubernetes
+- amd
+annotations:
+  category: AI/ML
+  licenses: Apache-2.0
+

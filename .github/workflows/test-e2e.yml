@@ -84,7 +84,7 @@ jobs:
         run: make helm
 
       - name: Install operator via Helm
-        run: helm install aim-engine dist/chart --namespace aim-system --create-namespace --set manager.image.repository=aim-engine --set manager.image.tag=test
+        run: helm install aim-engine dist/chart --namespace aim-system --create-namespace --set image.tag=test
 
       - name: Wait for operator to be ready
         run: kubectl wait --for=condition=Available --timeout=120s deployment/aim-engine-controller-manager -n aim-system

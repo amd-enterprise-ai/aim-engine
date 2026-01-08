@@ -1,6 +1,17 @@
-# Image URL to use all building/pushing image targets
+# Default tag from git
 TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "latest")
+
+# Image URL to use for all building/pushing image targets
 IMG ?= ghcr.io/amd-enterprise-ai/aim-engine:$(TAG)
+
+# Helm chart configuration
+CHART_DIR ?= chart
+CHART_NAME ?= aim-engine
+CHART_VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.1")
+APP_VERSION ?= $(TAG)
+CHART_OCI_REGISTRY ?= $(shell echo $(IMG) | cut -d'/' -f1)
+CHART_OCI_OWNER ?= $(shell echo $(IMG) | cut -d'/' -f2)
+CHART_OCI_REPO ?= oci://$(CHART_OCI_REGISTRY)/$(CHART_OCI_OWNER)/charts
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -150,10 +161,82 @@ build-installer: manifests generate ## Generate a consolidated YAML with CRDs an
 	mkdir -p dist
 	cd config/manager && kustomize edit set image controller=${IMG}
 	kustomize build config/default > dist/install.yaml
+	# Reset the image to the default
+	cd config/manager && kustomize edit set image controller=ghcr.io/amd-enterprise-ai/aim-engine:v-e2e
+
+##@ Helm
+
+# Function to copy resources needed for Helm chart
+define copy-helm-resources
+	@echo "Copying RBAC resources from config/rbac..."
+	@cat config/rbac/role.yaml > $(CHART_DIR)/rbac-resources.yaml
+	@echo "---" >> $(CHART_DIR)/rbac-resources.yaml
+	@cat config/rbac/role_binding.yaml >> $(CHART_DIR)/rbac-resources.yaml
+	@echo "---" >> $(CHART_DIR)/rbac-resources.yaml
+	@cat config/rbac/leader_election_role.yaml >> $(CHART_DIR)/rbac-resources.yaml
+	@echo "---" >> $(CHART_DIR)/rbac-resources.yaml
+	@cat config/rbac/leader_election_role_binding.yaml >> $(CHART_DIR)/rbac-resources.yaml
+endef
+
+.PHONY: copy-helm-resources
+copy-helm-resources: ## Copy necessary resources into Helm chart directory
+	$(call copy-helm-resources)
+
+# Function to clean up copied resources
+define clean-helm-resources
+	@rm -f $(CHART_DIR)/rbac-resources.yaml
+endef
+
+.PHONY: helm-package
+helm-package: build-installer ## Package the Helm chart
+	@command -v helm >/dev/null 2>&1 || { \
+		echo "Helm is not installed. Please install Helm."; \
+		exit 1; \
+	}
+	@echo "Packaging Helm chart with version $(CHART_VERSION) and app version $(APP_VERSION)"
+	$(call copy-helm-resources)
+	@sed -i.bak 's/^version:.*/version: $(CHART_VERSION)/' $(CHART_DIR)/Chart.yaml
+	@sed -i.bak 's/^appVersion:.*/appVersion: "$(APP_VERSION)"/' $(CHART_DIR)/Chart.yaml
+	helm package $(CHART_DIR) --version=$(CHART_VERSION) --app-version=$(APP_VERSION) --destination=dist/
+	@rm -f $(CHART_DIR)/Chart.yaml.bak
+	$(call clean-helm-resources)
+
+.PHONY: helm-install
+helm-install: helm-package ## Install the Helm chart locally
+	@echo "Installing Helm chart to aim-engine-system namespace..."
+	helm upgrade --install aim-engine dist/$(CHART_NAME)-$(CHART_VERSION).tgz --namespace aim-engine-system --create-namespace
+
+.PHONY: helm-uninstall
+helm-uninstall: ## Uninstall the Helm chart
+	helm uninstall aim-engine -n aim-engine-system
+
+.PHONY: helm-template
+helm-template: build-installer ## Generate Helm templates for inspection
+	$(call copy-helm-resources)
+	@sed -i.bak 's/^appVersion:.*/appVersion: "$(APP_VERSION)"/' $(CHART_DIR)/Chart.yaml
+	helm template aim-engine $(CHART_DIR) --namespace aim-engine-system --output-dir dist/helm-output/
+	@rm -f $(CHART_DIR)/Chart.yaml.bak
+	@echo "Note: rbac-resources.yaml left in chart/ for direct helm usage. Run 'make helm-clean' to remove."
+
+.PHONY: helm-push-oci
+helm-push-oci: helm-package ## Push Helm chart to OCI registry
+	@echo "Pushing Helm chart to OCI registry..."
+	helm push dist/$(CHART_NAME)-$(CHART_VERSION).tgz $(CHART_OCI_REPO)
+
+.PHONY: helm-release
+helm-release: helm-package ## Package chart for release (used by CI)
+	@echo "Helm chart packaged for release: dist/$(CHART_NAME)-$(CHART_VERSION).tgz"
 
 .PHONY: helm
-helm: build-installer ## Generate Helm chart from kustomize output.
-	kubebuilder edit --plugins=helm/v2-alpha
+helm: build-installer copy-helm-resources ## Generate Helm chart for CI/CD (copies chart to dist/chart for compatibility)
+	@mkdir -p dist/chart
+	@cp -r $(CHART_DIR)/* dist/chart/
+	@echo "Helm chart copied to dist/chart/"
+
+.PHONY: helm-clean
+helm-clean: ## Clean up generated Helm resources from chart directory
+	$(call clean-helm-resources)
+	@echo "Cleaned up generated Helm resources from chart/"
 
 ##@ Deployment
 
