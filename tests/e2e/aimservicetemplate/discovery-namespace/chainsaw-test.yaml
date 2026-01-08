@@ -74,20 +74,6 @@ spec:
                     sourceUri: hf://HuggingFaceTB/SmolLM2-135M
                     size: "512Mi"
 
-    - name: Verify the serving runtime was created
-      try:
-        - assert:
-            resource:
-              apiVersion: serving.kserve.io/v1alpha1
-              kind: ServingRuntime
-              metadata:
-                name: test-template-discovery-namespace
-              spec:
-                containers:
-                  - image: ghcr.io/silogen/aim-dummy:0.1.8
-                supportedModelFormats:
-                  - name: aim
-
     - name: Verify resolved model reference in status
       try:
         - assert:

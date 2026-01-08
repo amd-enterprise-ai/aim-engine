@@ -377,12 +377,10 @@ func (r *ServiceTemplateReconciler) PlanResources(
 		return planResult
 	}
 
-	// Check if inline model sources are provided - skip discovery and build ServingRuntime directly
+	// Check if inline model sources are provided - template is immediately ready
 	// NOTE: Inline model sources bypass GPU availability check - GPU is a runtime concern, not a definition concern
 	if len(template.Spec.ModelSources) > 0 {
-		logger.V(1).Info("template has inline model sources, building ServingRuntime directly")
-		runtime := BuildServingRuntime(template, model, obs.mergedRuntimeConfig.Value)
-		planResult.Apply(runtime)
+		logger.V(1).Info("template has inline model sources, skipping discovery")
 
 		// Create template cache if caching is enabled
 		if template.Spec.Caching != nil && template.Spec.Caching.Enabled {
@@ -401,12 +399,8 @@ func (r *ServiceTemplateReconciler) PlanResources(
 		return planResult
 	}
 
-	// If template is Ready, build ServingRuntime
+	// If template is Ready, create template cache if caching is enabled
 	if template.Status.Status == constants.AIMStatusReady {
-		runtime := BuildServingRuntime(template, model, obs.mergedRuntimeConfig.Value)
-		planResult.Apply(runtime)
-
-		// Create template cache if caching is enabled and model sources are available
 		if template.Spec.Caching != nil && template.Spec.Caching.Enabled && len(template.Status.ModelSources) > 0 {
 			if !HasExistingTemplateCache(template.UID, obs.templateCaches) {
 				cache := BuildTemplateCache(template)
@@ -471,12 +465,10 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 		return planResult
 	}
 
-	// Check if inline model sources are provided - skip discovery and build ClusterServingRuntime directly
+	// Check if inline model sources are provided - template is immediately ready
 	// NOTE: Inline model sources bypass GPU availability check - GPU is a runtime concern, not a definition concern
 	if len(template.Spec.ModelSources) > 0 {
-		logger.V(1).Info("template has inline model sources, building ClusterServingRuntime directly")
-		runtime := BuildClusterServingRuntime(template, clusterModel, obs.mergedRuntimeConfig.Value)
-		planResult.Apply(runtime)
+		logger.V(1).Info("template has inline model sources, skipping discovery")
 		return planResult
 	}
 
@@ -486,10 +478,8 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 		return planResult
 	}
 
-	// If template is Ready, build ClusterServingRuntime
+	// If template is Ready, nothing more to plan
 	if template.Status.Status == constants.AIMStatusReady {
-		runtime := BuildClusterServingRuntime(template, clusterModel, obs.mergedRuntimeConfig.Value)
-		planResult.Apply(runtime)
 		return planResult
 	}
 

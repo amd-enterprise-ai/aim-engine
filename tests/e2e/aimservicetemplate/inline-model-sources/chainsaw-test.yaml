@@ -67,20 +67,6 @@ spec:
                 labels:
                   aim.eai.amd.com/template: test-template-inline-modelsources
 
-    - name: Verify the serving runtime was created
-      try:
-        - assert:
-            resource:
-              apiVersion: serving.kserve.io/v1alpha1
-              kind: ServingRuntime
-              metadata:
-                name: test-template-inline-modelsources
-              spec:
-                containers:
-                  - image: ghcr.io/silogen/aim-dummy:0.1.8
-                supportedModelFormats:
-                  - name: aim
-
     - name: Verify resolved model reference in status
       try:
         - assert:
