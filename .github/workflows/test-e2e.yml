@@ -83,6 +83,9 @@ jobs:
       - name: Generate Helm chart
         run: make helm
 
+      - name: Install CRDs
+        run: kustomize build config/crd | kubectl apply --server-side -f -
+
       - name: Install operator via Helm
         run: helm install aim-engine dist/chart --namespace aim-system --create-namespace --set image.tag=test
 
