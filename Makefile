@@ -229,6 +229,7 @@ helm-release: helm-package ## Package chart for release (used by CI)
 
 .PHONY: helm
 helm: build-installer copy-helm-resources ## Generate Helm chart for CI/CD (copies chart to dist/chart for compatibility)
+	@rm -rf dist/chart
 	@mkdir -p dist/chart
 	@cp -r $(CHART_DIR)/* dist/chart/
 	@echo "Helm chart copied to dist/chart/"
