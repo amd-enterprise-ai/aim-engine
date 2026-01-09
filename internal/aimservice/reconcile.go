@@ -189,12 +189,12 @@ func (obs ServiceObservation) getModelHealth() controllerutils.ComponentHealth {
 	}
 
 	// Check namespace-scoped model first (check errors before value since Fetch always sets Value)
+	// State is explicitly set to Failed for upstream dependency errors (requires user action).
+	// Reason/Message are derived from the error via CategorizeError if already wrapped.
 	if mr.Model.Error != nil {
 		return controllerutils.ComponentHealth{
 			Component:      "Model",
 			State:          constants.AIMStatusFailed,
-			Reason:         aimv1alpha1.AIMServiceReasonModelNotFound,
-			Message:        mr.Model.Error.Error(),
 			Errors:         []error{mr.Model.Error},
 			DependencyType: controllerutils.DependencyTypeUpstream,
 		}
@@ -205,12 +205,12 @@ func (obs ServiceObservation) getModelHealth() controllerutils.ComponentHealth {
 	}
 
 	// Check cluster-scoped model
+	// State is explicitly set to Failed for upstream dependency errors (requires user action).
+	// Reason/Message are derived from the error via CategorizeError if already wrapped.
 	if mr.ClusterModel.Error != nil {
 		return controllerutils.ComponentHealth{
 			Component:      "Model",
 			State:          constants.AIMStatusFailed,
-			Reason:         aimv1alpha1.AIMServiceReasonModelNotFound,
-			Message:        mr.ClusterModel.Error.Error(),
 			Errors:         []error{mr.ClusterModel.Error},
 			DependencyType: controllerutils.DependencyTypeUpstream,
 		}
@@ -278,10 +278,10 @@ func (obs ServiceObservation) getTemplateHealth() controllerutils.ComponentHealt
 	}
 
 	// Check for fetch errors first (Fetch always sets Value, so check errors before OK)
+	// State is explicitly set to Failed for upstream dependency errors (requires user action).
+	// Reason/Message are derived from the error via CategorizeError if already wrapped.
 	if obs.template.Error != nil {
 		health.State = constants.AIMStatusFailed
-		health.Reason = aimv1alpha1.AIMServiceReasonTemplateNotFound
-		health.Message = obs.template.Error.Error()
 		health.Errors = []error{obs.template.Error}
 		return health
 	}
@@ -297,11 +297,11 @@ func (obs ServiceObservation) getTemplateHealth() controllerutils.ComponentHealt
 	}
 
 	// Check for selection errors
+	// State is explicitly set to Failed for selection errors (requires user action).
+	// Reason/Message are derived from the error via CategorizeError.
 	if obs.templateSelection != nil {
 		if obs.templateSelection.Error != nil {
 			health.State = constants.AIMStatusFailed
-			health.Reason = aimv1alpha1.AIMServiceReasonTemplateSelectionFailed
-			health.Message = obs.templateSelection.Error.Error()
 			health.Errors = []error{obs.templateSelection.Error}
 			return health
 		}
