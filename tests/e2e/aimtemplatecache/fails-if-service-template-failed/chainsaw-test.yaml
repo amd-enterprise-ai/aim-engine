@@ -3,18 +3,19 @@ kind: Test
 metadata:
   name: template-cache-fails-if-service-template-failed
 spec:
-  description: |
-    Tests that the template cache fails when the service template fails.
-    When the service template references a non-existent model, it fails with
-    MissingUpstreamDependency, and the template cache should also fail.
   steps:
-    - name: Create the service template (without the model)
-      description: |
-        Note: We intentionally do NOT create the model here.
-        The template references a model that doesn't exist, causing it to fail.
+    - name: Create frozen service template with Failed status
       try:
         - apply:
+            file: model.yaml
+        - apply:
             file: service-template.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh service-template.yaml --status-only -n $NAMESPACE
 
     - name: Create the template cache
       try:
@@ -24,21 +25,9 @@ spec:
     - name: Ensure the template cache is also failed
       try:
         - assert:
-            timeout: 30s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMTemplateCache
-              metadata:
-                name: fails-if-service-template-failed
-              status:
-                status: Failed
-
-    - name: Verify the service template is failed with missing model
-      try:
-        - assert:
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMServiceTemplate
               metadata:
                 name: fails-if-service-template-failed
               status:

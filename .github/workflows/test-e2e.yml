@@ -90,4 +90,4 @@ jobs:
         run: kubectl wait --for=condition=Available --timeout=120s deployment/aim-engine-controller-manager -n aim-system
 
       - name: Run Chainsaw tests
-        run: chainsaw test tests/e2e/ --selector 'requires!=longhorn'
+        run: make test-chainsaw-kind

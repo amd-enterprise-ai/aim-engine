@@ -1,26 +1,22 @@
 apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMClusterServiceTemplate
+kind: AIMServiceTemplate
 metadata:
-  name: happy-path-cluster
+  name: waits-for-template-readiness
   annotations:
     aim.eai.amd.com/reconciliation-paused: "true"
 spec:
-  modelName: test-model
+  modelName: template-cache-waits-for-template-readiness
   modelSources:
     - sourceUri: hf://hello/world
       size: 2Gi
-    - sourceUri: s3://hello2/world2
-      size: 4Gi
 status:
   status: Ready
   conditions:
     - type: Ready
       status: "True"
       reason: AllComponentsReady
-      message: All components are ready
+      message: Everything is ready
       lastTransitionTime: "2024-01-01T00:00:00Z"
   modelSources:
     - sourceUri: hf://hello/world
       size: 2Gi
-    - sourceUri: s3://hello2/world2
-      size: 4Gi

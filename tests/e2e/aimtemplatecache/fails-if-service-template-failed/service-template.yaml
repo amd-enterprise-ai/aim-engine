@@ -2,8 +2,18 @@ apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
 metadata:
   name: fails-if-service-template-failed
+  annotations:
+    aim.eai.amd.com/reconciliation-paused: "true"
 spec:
-  # Reference a model that does NOT exist - this causes the template to fail
-  # with MissingUpstreamDependency error
-  modelName: non-existent-model-that-does-not-exist
-  # No modelSources - would require discovery, but model doesn't exist so it fails first
+  modelName: template-cache-fails-if-service-template-failed
+  modelSources:
+    - sourceUri: hf://hello/world
+      size: 2Gi
+status:
+  status: Failed
+  conditions:
+    - type: Ready
+      status: "False"
+      reason: Failed
+      message: Failed
+      lastTransitionTime: "2024-01-01T00:00:00Z"

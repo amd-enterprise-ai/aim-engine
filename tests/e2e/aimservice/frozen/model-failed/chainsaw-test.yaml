@@ -24,7 +24,7 @@ spec:
               - name: NAMESPACE
                 value: ($namespace)
             content: |
-              kubectl patch aimmodel test-model -n $NAMESPACE --type=merge --subresource=status -p '{"status":{"status":"Failed"}}'
+              apply-with-status.sh model.yaml --status-only -n $NAMESPACE
 
     - name: Create service referencing the failed model
       try:

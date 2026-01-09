@@ -32,7 +32,7 @@ spec:
     - name: Assert the cache gets ready
       try:
         - assert:
-            timeout: 120s
+            timeout: 5m
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMModelCache

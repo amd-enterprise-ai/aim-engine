@@ -91,9 +91,21 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
-.PHONY: chainsaw
-chainsaw: ## Run chainsaw e2e tests. Pass CHAINSAW_ARGS to specify test directories or options.
-	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test $(CHAINSAW_ARGS)
+# Chainsaw test configuration
+CHAINSAW_TEST_DIR := tests/e2e
+CHAINSAW_SELECTOR_KIND := requires!=longhorn
+
+.PHONY: test-chainsaw
+test-chainsaw: ## Run chainsaw e2e tests. Pass CHAINSAW_ARGS to specify additional options.
+	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test --test-dir $(CHAINSAW_TEST_DIR) $(CHAINSAW_ARGS)
+
+.PHONY: test-chainsaw-kind
+test-chainsaw-kind: ## Run chainsaw tests for Kind environments (local/CI). Excludes tests requiring special infrastructure.
+	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test --test-dir $(CHAINSAW_TEST_DIR) --selector '$(CHAINSAW_SELECTOR_KIND)' $(CHAINSAW_ARGS)
+
+.PHONY: test-chainsaw-gpu
+test-chainsaw-gpu: ## Run all chainsaw tests for GPU cluster environments with full infrastructure.
+	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test --test-dir $(CHAINSAW_TEST_DIR) $(CHAINSAW_ARGS)
 
 .PHONY: lint
 lint: ## Run golangci-lint linter
