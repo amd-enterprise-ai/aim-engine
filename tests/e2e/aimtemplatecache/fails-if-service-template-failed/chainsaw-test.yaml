@@ -3,34 +3,18 @@ kind: Test
 metadata:
   name: template-cache-fails-if-service-template-failed
 spec:
+  description: |
+    Tests that the template cache fails when the service template fails.
+    When the service template references a non-existent model, it fails with
+    MissingUpstreamDependency, and the template cache should also fail.
   steps:
-    - name: Create the service template
+    - name: Create the service template (without the model)
+      description: |
+        Note: We intentionally do NOT create the model here.
+        The template references a model that doesn't exist, causing it to fail.
       try:
         - apply:
-            file: model.yaml
-        - apply:
             file: service-template.yaml
-        - script:
-            # TODO remove once the template controller is merged
-            env:
-              - name: NAMESPACE
-                value: ($namespace)
-            content: |
-              kubectl patch aimservicetemplate fails-if-service-template-failed -n $NAMESPACE --type=merge --subresource=status -p '
-              {
-                "status": {
-                  "status": "Failed",
-                  "conditions": [
-                    {
-                      "type": "Ready",
-                      "status": "False",
-                      "reason": "Failed",
-                      "message": "Failed",
-                      "lastTransitionTime": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
-                    }
-                  ]
-                }
-              }'
 
     - name: Create the template cache
       try:
@@ -40,9 +24,21 @@ spec:
     - name: Ensure the template cache is also failed
       try:
         - assert:
+            timeout: 30s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMTemplateCache
+              metadata:
+                name: fails-if-service-template-failed
+              status:
+                status: Failed
+
+    - name: Verify the service template is failed with missing model
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
               metadata:
                 name: fails-if-service-template-failed
               status:

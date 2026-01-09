@@ -8,8 +8,8 @@ nodes:
   - role: worker
     labels:
       # AMD Instinct MI300X
-      amd.com/gpu.product.id: "0x74a1"
+      amd.com/gpu.device-id: "0x74a1"
   - role: worker
     labels:
       # AMD Instinct MI350X
-      amd.com/gpu.product.id: "75a0"
+      amd.com/gpu.device-id: "75a0"

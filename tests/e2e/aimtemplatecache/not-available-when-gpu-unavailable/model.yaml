@@ -1,0 +1,8 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: template-cache-not-available-model
+spec:
+  # Use a valid image - the GPU selector will cause NotAvailable, not the image
+  image: ghcr.io/silogen/aim-dummy:0.1.8
+

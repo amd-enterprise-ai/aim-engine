@@ -3,4 +3,5 @@ kind: AIMModel
 metadata:
   name: template-cache-waits-for-template-readiness
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.1.9
+  # Use a fake image that cannot be pulled - this ensures discovery fails
+  image: ghcr.io/silogen/fake-image-that-does-not-exist:v999.999.999

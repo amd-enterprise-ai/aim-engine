@@ -3,7 +3,7 @@ kind: AIMServiceTemplate
 metadata:
   name: fails-if-service-template-failed
 spec:
-  modelName: template-cache-fails-if-service-template-failed
-  modelSources:
-    - sourceUri: hf://hello/world
-      size: 2Gi
+  # Reference a model that does NOT exist - this causes the template to fail
+  # with MissingUpstreamDependency error
+  modelName: non-existent-model-that-does-not-exist
+  # No modelSources - would require discovery, but model doesn't exist so it fails first

@@ -111,7 +111,7 @@ type AIMModelCacheStatus struct {
 
 	// Status represents the current status of the model cache
 	// +kubebuilder:default=Pending
-	// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Degraded;Failed
+	// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Degraded;Failed;NotAvailable
 	Status constants.AIMStatus `json:"status,omitempty"`
 
 	// Progress represents the download progress when Status is Progressing

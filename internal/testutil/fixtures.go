@@ -287,7 +287,8 @@ func NewTemplateCache(opts ...TemplateCacheOption) *aimv1alpha1.AIMTemplateCache
 			Namespace: "default",
 		},
 		Spec: aimv1alpha1.AIMTemplateCacheSpec{
-			TemplateName: "test-template",
+			TemplateName:  "test-template",
+			TemplateScope: aimv1alpha1.AIMServiceTemplateScopeNamespace,
 		},
 		Status: aimv1alpha1.AIMTemplateCacheStatus{
 			Status: constants.AIMStatusPending,

@@ -96,7 +96,7 @@ type AIMTemplateCacheStatus struct {
 
 	// Status represents the current high-level status of the template cache.
 	// +kubebuilder:default=Pending
-	// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Failed;Degraded
+	// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Failed;Degraded;NotAvailable
 	Status constants.AIMStatus `json:"status,omitempty"`
 
 	// ResolvedTemplateKind indicates whether the template resolved to a namespace-scoped

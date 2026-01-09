@@ -25,45 +25,244 @@ package controller
 import (
 	"context"
 
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimservicetemplate"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+)
+
+const (
+	clusterServiceTemplateName = "cluster-service-template"
+
+	// clusterServiceTemplateRuntimeConfigIndexKey is used to index cluster service templates by runtime config name
+	clusterServiceTemplateRuntimeConfigIndexKey = ".spec.runtimeConfigName"
 )
 
 // AIMClusterServiceTemplateReconciler reconciles a AIMClusterServiceTemplate object
 type AIMClusterServiceTemplateReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme    *runtime.Scheme
+	Recorder  record.EventRecorder
+	Clientset kubernetes.Interface
+
+	reconciler controllerutils.DomainReconciler[
+		*aimv1alpha1.AIMClusterServiceTemplate,
+		*aimv1alpha1.AIMServiceTemplateStatus,
+		aimservicetemplate.ClusterServiceTemplateFetchResult,
+		aimservicetemplate.ClusterServiceTemplateObservation,
+	]
+	pipeline controllerutils.Pipeline[
+		*aimv1alpha1.AIMClusterServiceTemplate,
+		*aimv1alpha1.AIMServiceTemplateStatus,
+		aimservicetemplate.ClusterServiceTemplateFetchResult,
+		aimservicetemplate.ClusterServiceTemplateObservation,
+	]
 }
 
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterservicetemplates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterservicetemplates/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterservicetemplates/finalizers,verbs=update
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterruntimeconfigs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimruntimeconfigs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclustermodels,verbs=get;list;watch
+// +kubebuilder:rbac:groups=serving.kserve.io,resources=clusterservingruntimes,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the AIMClusterServiceTemplate object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
 func (r *AIMClusterServiceTemplateReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	logger := log.FromContext(ctx)
 
-	// TODO(user): your logic here
+	// Fetch the template
+	var template aimv1alpha1.AIMClusterServiceTemplate
+	if err := r.Get(ctx, req.NamespacedName, &template); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		logger.Error(err, "Failed to fetch AIMClusterServiceTemplate")
+		return ctrl.Result{}, err
+	}
+
+	if err := r.pipeline.Run(ctx, &template); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *AIMClusterServiceTemplateReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	ctx := context.Background()
+
+	// Initialize the domain reconciler
+	r.reconciler = &aimservicetemplate.ClusterServiceTemplateReconciler{
+		Clientset: r.Clientset,
+		Scheme:    r.Scheme,
+	}
+
+	// Initialize the pipeline
+	r.pipeline = controllerutils.Pipeline[
+		*aimv1alpha1.AIMClusterServiceTemplate,
+		*aimv1alpha1.AIMServiceTemplateStatus,
+		aimservicetemplate.ClusterServiceTemplateFetchResult,
+		aimservicetemplate.ClusterServiceTemplateObservation,
+	]{
+		Client:         mgr.GetClient(),
+		StatusClient:   mgr.GetClient().Status(),
+		Recorder:       r.Recorder,
+		ControllerName: clusterServiceTemplateName,
+		Reconciler:     r.reconciler,
+		Scheme:         r.Scheme,
+		Clientset:      r.Clientset,
+	}
+	r.Recorder = mgr.GetEventRecorderFor(r.pipeline.GetFullName())
+	r.pipeline.Recorder = r.Recorder
+
+	// Index AIMClusterServiceTemplate by runtimeConfigName for efficient lookup when config changes
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMClusterServiceTemplate{}, clusterServiceTemplateRuntimeConfigIndexKey, func(obj client.Object) []string {
+		template, ok := obj.(*aimv1alpha1.AIMClusterServiceTemplate)
+		if !ok {
+			return nil
+		}
+		// Return default if not specified
+		name := template.Spec.Name
+		if name == "" {
+			name = "default"
+		}
+		return []string{name}
+	}); err != nil {
+		return err
+	}
+
+	// Handler for cluster-scoped RuntimeConfig changes
+	clusterRuntimeConfigHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		config, ok := obj.(*aimv1alpha1.AIMClusterRuntimeConfig)
+		if !ok {
+			return nil
+		}
+
+		var templates aimv1alpha1.AIMClusterServiceTemplateList
+		if err := r.List(ctx, &templates,
+			client.MatchingFields{clusterServiceTemplateRuntimeConfigIndexKey: config.Name},
+		); err != nil {
+			log.FromContext(ctx).Error(err, "failed to list AIMClusterServiceTemplates for AIMClusterRuntimeConfig",
+				"config", config.Name)
+			return nil
+		}
+
+		return requestsFromClusterServiceTemplates(templates.Items)
+	})
+
+	// Handler for namespace-scoped RuntimeConfig changes (in operator namespace)
+	runtimeConfigHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		config, ok := obj.(*aimv1alpha1.AIMRuntimeConfig)
+		if !ok {
+			return nil
+		}
+
+		// Only process runtime configs in the operator namespace
+		operatorNamespace := constants.GetOperatorNamespace()
+		if config.Namespace != operatorNamespace {
+			return nil
+		}
+
+		var templates aimv1alpha1.AIMClusterServiceTemplateList
+		if err := r.List(ctx, &templates,
+			client.MatchingFields{clusterServiceTemplateRuntimeConfigIndexKey: config.Name},
+		); err != nil {
+			log.FromContext(ctx).Error(err, "failed to list AIMClusterServiceTemplates for AIMRuntimeConfig",
+				"config", config.Name, "namespace", config.Namespace)
+			return nil
+		}
+
+		return requestsFromClusterServiceTemplates(templates.Items)
+	})
+
+	// Handler for node changes - reconcile templates that require GPUs
+	nodeHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		_, ok := obj.(*corev1.Node)
+		if !ok {
+			return nil
+		}
+
+		var templates aimv1alpha1.AIMClusterServiceTemplateList
+		if err := r.List(ctx, &templates); err != nil {
+			log.FromContext(ctx).Error(err, "failed to list AIMClusterServiceTemplates for Node event")
+			return nil
+		}
+
+		// Filter to templates that require GPUs
+		filtered := make([]aimv1alpha1.AIMClusterServiceTemplate, 0, len(templates.Items))
+		for i := range templates.Items {
+			if aimservicetemplate.TemplateRequiresGPU(templates.Items[i].Spec.AIMServiceTemplateSpecCommon) {
+				filtered = append(filtered, templates.Items[i])
+			}
+		}
+
+		return requestsFromClusterServiceTemplates(filtered)
+	})
+
+	// Handler for AIMClusterModel changes - reconcile templates that reference the model
+	clusterModelHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		model, ok := obj.(*aimv1alpha1.AIMClusterModel)
+		if !ok {
+			return nil
+		}
+
+		var templates aimv1alpha1.AIMClusterServiceTemplateList
+		if err := r.List(ctx, &templates,
+			client.MatchingFields{aimv1alpha1.ServiceTemplateModelNameIndexKey: model.Name},
+		); err != nil {
+			log.FromContext(ctx).Error(err, "failed to list AIMClusterServiceTemplates for AIMClusterModel",
+				"model", model.Name)
+			return nil
+		}
+
+		return requestsFromClusterServiceTemplates(templates.Items)
+	})
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMClusterServiceTemplate{}).
-		Named("aimclusterservicetemplate").
+		Owns(&batchv1.Job{}).
+		Watches(&aimv1alpha1.AIMClusterRuntimeConfig{}, clusterRuntimeConfigHandler).
+		Watches(&aimv1alpha1.AIMRuntimeConfig{}, runtimeConfigHandler).
+		Watches(&corev1.Node{}, nodeHandler, builder.WithPredicates(utils.NodeGPUChangePredicate())).
+		Watches(&aimv1alpha1.AIMClusterModel{}, clusterModelHandler).
+		Named(clusterServiceTemplateName).
 		Complete(r)
+}
+
+// requestsFromClusterServiceTemplates converts a list of cluster templates to reconcile requests.
+func requestsFromClusterServiceTemplates(templates []aimv1alpha1.AIMClusterServiceTemplate) []reconcile.Request {
+	if len(templates) == 0 {
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(templates))
+	for _, tpl := range templates {
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name: tpl.Name,
+			},
+		})
+	}
+	return requests
 }
