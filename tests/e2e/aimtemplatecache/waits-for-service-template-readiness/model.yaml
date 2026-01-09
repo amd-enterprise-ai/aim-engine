@@ -4,4 +4,4 @@ metadata:
   name: template-cache-waits-for-template-readiness
 spec:
   # Use a fake image that cannot be pulled - this ensures discovery fails
-  image: ghcr.io/nonexistent-org/fake-image-that-does-not-exist:v999.999.999
+  image: ghcr.io/silogen/fake-image-that-does-not-exist:v999.999.999
