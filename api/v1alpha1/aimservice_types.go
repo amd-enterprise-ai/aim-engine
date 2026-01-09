@@ -77,7 +77,7 @@ type AIMServiceTemplateConfig struct {
 }
 
 // AIMServiceModel specifies which model to deploy. Exactly one field must be set.
-// +kubebuilder:validation:XValidation:rule="(has(self.ref) && !has(self.image) && !has(self.custom)) || (!has(self.ref) && has(self.image) && !has(self.custom)) || (!has(self.ref) && !has(self.image) && has(self.custom))",message="exactly one of ref, image, or custom must be specified"
+// +kubebuilder:validation:XValidation:rule="(has(self.name) && !has(self.image)) || (!has(self.name) && has(self.image))",message="exactly one of name or image must be specified"
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="model selection is immutable after creation"
 type AIMServiceModel struct {
 	// Name references an existing AIMModel or AIMClusterModel by metadata.name.
@@ -256,7 +256,17 @@ func (s *AIMServiceStatus) SetConditions(conditions []metav1.Condition) {
 }
 
 func (s *AIMServiceStatus) SetStatus(status string) {
-	s.Status = constants.AIMStatus(status)
+	// Map framework statuses to AIMService-specific statuses.
+	// AIMService uses: Pending, Starting, Running, Failed, Degraded
+	// Framework uses: Pending, Progressing, Ready, Failed, Degraded
+	switch constants.AIMStatus(status) {
+	case constants.AIMStatusProgressing:
+		s.Status = constants.AIMStatusStarting
+	case constants.AIMStatusReady:
+		s.Status = constants.AIMStatusRunning
+	default:
+		s.Status = constants.AIMStatus(status)
+	}
 }
 
 func (s *AIMServiceStatus) GetAIMStatus() constants.AIMStatus {

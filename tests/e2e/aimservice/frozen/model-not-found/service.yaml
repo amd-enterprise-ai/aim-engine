@@ -1,0 +1,9 @@
+# AIMService referencing a non-existent model
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-service
+spec:
+  model:
+    name: nonexistent-model
+  replicas: 1

@@ -134,10 +134,9 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-validations:
-                - message: exactly one of ref, image, or custom must be specified
-                  rule: (has(self.ref) && !has(self.image) && !has(self.custom)) ||
-                    (!has(self.ref) && has(self.image) && !has(self.custom)) || (!has(self.ref)
-                    && !has(self.image) && has(self.custom))
+                - message: exactly one of name or image must be specified
+                  rule: (has(self.name) && !has(self.image)) || (!has(self.name) &&
+                    has(self.image))
                 - message: model selection is immutable after creation
                   rule: self == oldSelf
               overrides:

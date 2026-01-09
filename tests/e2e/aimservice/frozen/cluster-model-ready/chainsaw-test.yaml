@@ -1,0 +1,57 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Cluster Model Ready
+#
+# This test validates that an AIMService correctly resolves a cluster-scoped model
+# and cluster-scoped template.
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMClusterModel (Ready), AIMClusterServiceTemplate (Ready)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: cluster-model-ready
+spec:
+  steps:
+    - name: Create frozen cluster model with Ready status
+      try:
+        - apply:
+            file: cluster-model.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-model.yaml --status-only
+
+    - name: Create frozen cluster template with Ready status
+      try:
+        - apply:
+            file: cluster-template.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-template.yaml --status-only
+
+    - name: Create service referencing the cluster model
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert service resolves cluster model and template
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-service
+              status:
+                status: Starting
+                (conditions[?type == 'ModelReady']):
+                  - status: "True"
+                    reason: ModelResolved
+                (conditions[?type == 'TemplateReady']):
+                  - status: "True"
+                    reason: Resolved
+                resolvedTemplate:
+                  name: test-cluster-template
+                  scope: Cluster

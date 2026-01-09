@@ -168,6 +168,16 @@ func (e InfrastructureError) Unwrap() []error {
 	return e.Errors
 }
 
+// IsReconciliationPaused returns true if the resource has the reconciliation-paused annotation set to "true".
+// When paused, the controller skips all reconciliation logic and returns immediately.
+func IsReconciliationPaused(obj client.Object) bool {
+	annotations := obj.GetAnnotations()
+	if annotations == nil {
+		return false
+	}
+	return annotations[constants.AnnotationReconciliationPaused] == "true"
+}
+
 // DomainReconciler is implemented by domain-specific logic for a CRD.
 type DomainReconciler[T ObjectWithStatus[S], S StatusWithConditions, F any, Obs any] interface {
 	// FetchRemoteState hits the API via client and returns the fetched objects.
@@ -232,6 +242,15 @@ type ReconcileContext[T client.Object] struct {
 // - deletion / finalizers
 // Those remain in the controller's Reconcile.
 func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
+	logger := log.FromContext(ctx)
+
+	// === Pre-check: Skip reconciliation if paused ===
+	if IsReconciliationPaused(obj) {
+		logger.V(1).Info("Reconciliation paused, skipping",
+			"annotation", constants.AnnotationReconciliationPaused)
+		return nil
+	}
+
 	// 1) Get current status pointer (will be mutated)
 	status := obj.GetStatus() // S, e.g. *AIMServiceStatus
 

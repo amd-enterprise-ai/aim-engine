@@ -1,0 +1,59 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Template Failed
+#
+# This test validates that an AIMService correctly reports TemplateNotReady when
+# the template is in Failed state. Failed templates are filtered out during
+# auto-selection, but the service reports TemplateNotReady since templates
+# exist but are not available.
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMModel (Ready), AIMServiceTemplate (Failed)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: template-failed
+spec:
+  steps:
+    - name: Create frozen model with Ready status
+      try:
+        - apply:
+            file: model.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh model.yaml --status-only -n $NAMESPACE
+
+    - name: Create frozen template with Failed status
+      try:
+        - apply:
+            file: template.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh template.yaml --status-only -n $NAMESPACE
+
+    - name: Create service
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert service shows TemplateNotReady (templates exist but are not available)
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-service
+              status:
+                status: Pending
+                (conditions[?type == 'TemplateReady']):
+                  - status: "False"
+                    reason: TemplateNotReady

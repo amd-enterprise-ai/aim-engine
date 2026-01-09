@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Template Not Found
+#
+# This test validates that an AIMService correctly reports TemplateNotFound when
+# the model is Ready but no matching template exists.
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMModel (Ready), no template
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: template-not-found
+spec:
+  steps:
+    - name: Create frozen model with Ready status
+      try:
+        - apply:
+            file: model.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh model.yaml --status-only -n $NAMESPACE
+
+    - name: Create service (no template exists)
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert service shows TemplateNotFound
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-service
+              status:
+                status: Pending
+                (conditions[?type == 'ModelReady']):
+                  - status: "True"
+                    reason: ModelResolved
+                (conditions[?type == 'TemplateReady']):
+                  - status: "False"
+                    reason: TemplateNotFound

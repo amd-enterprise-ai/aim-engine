@@ -24,6 +24,7 @@ package aimservice
 
 import (
 	"context"
+	"fmt"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
@@ -187,10 +188,7 @@ func (obs ServiceObservation) getModelHealth() controllerutils.ComponentHealth {
 		}
 	}
 
-	// Check namespace-scoped model first
-	if mr.Model.Value != nil {
-		return evaluateModelStatus(mr.Model.Value.Status.Status, "AIMModel", mr.Model.Value.Name)
-	}
+	// Check namespace-scoped model first (check errors before value since Fetch always sets Value)
 	if mr.Model.Error != nil {
 		return controllerutils.ComponentHealth{
 			Component:      "Model",
@@ -201,11 +199,12 @@ func (obs ServiceObservation) getModelHealth() controllerutils.ComponentHealth {
 			DependencyType: controllerutils.DependencyTypeUpstream,
 		}
 	}
+	// Check OK() and that model was actually populated (Name != "" guards against empty Fetch result)
+	if mr.Model.OK() && mr.Model.Value != nil && mr.Model.Value.Name != "" {
+		return evaluateModelStatus(mr.Model.Value.Status.Status, "AIMModel", mr.Model.Value.Name)
+	}
 
 	// Check cluster-scoped model
-	if mr.ClusterModel.Value != nil {
-		return evaluateModelStatus(mr.ClusterModel.Value.Status.Status, "AIMClusterModel", mr.ClusterModel.Value.Name)
-	}
 	if mr.ClusterModel.Error != nil {
 		return controllerutils.ComponentHealth{
 			Component:      "Model",
@@ -213,6 +212,23 @@ func (obs ServiceObservation) getModelHealth() controllerutils.ComponentHealth {
 			Reason:         aimv1alpha1.AIMServiceReasonModelNotFound,
 			Message:        mr.ClusterModel.Error.Error(),
 			Errors:         []error{mr.ClusterModel.Error},
+			DependencyType: controllerutils.DependencyTypeUpstream,
+		}
+	}
+	// Check OK() and that model was actually populated (Name != "" guards against empty Fetch result)
+	if mr.ClusterModel.OK() && mr.ClusterModel.Value != nil && mr.ClusterModel.Value.Name != "" {
+		return evaluateModelStatus(mr.ClusterModel.Value.Status.Status, "AIMClusterModel", mr.ClusterModel.Value.Name)
+	}
+
+	// If InferenceService exists and model was previously resolved, report as ready.
+	// When ISVC exists, we skip fetching upstream resources (optimization), so
+	// we rely on the resolved reference in status.
+	if obs.inferenceService.OK() && obs.service.Status.ResolvedModel != nil {
+		return controllerutils.ComponentHealth{
+			Component:      "Model",
+			State:          constants.AIMStatusReady,
+			Reason:         aimv1alpha1.AIMServiceReasonModelResolved,
+			Message:        fmt.Sprintf("%s %s is ready", obs.service.Status.ResolvedModel.Scope, obs.service.Status.ResolvedModel.Name),
 			DependencyType: controllerutils.DependencyTypeUpstream,
 		}
 	}
@@ -255,32 +271,41 @@ func evaluateModelStatus(status constants.AIMStatus, kind, name string) controll
 	return health
 }
 
-func (f ServiceFetchResult) getTemplateHealth() controllerutils.ComponentHealth {
+func (obs ServiceObservation) getTemplateHealth() controllerutils.ComponentHealth {
 	health := controllerutils.ComponentHealth{
 		Component:      "Template",
 		DependencyType: controllerutils.DependencyTypeUpstream,
 	}
 
-	// Check namespace-scoped template first
-	if f.template.Value != nil {
-		return evaluateTemplateStatus(f.template.Value.Status.Status, "AIMServiceTemplate", f.template.Value.Name)
+	// Check for fetch errors first (Fetch always sets Value, so check errors before OK)
+	if obs.template.Error != nil {
+		health.State = constants.AIMStatusFailed
+		health.Reason = aimv1alpha1.AIMServiceReasonTemplateNotFound
+		health.Message = obs.template.Error.Error()
+		health.Errors = []error{obs.template.Error}
+		return health
 	}
 
-	// Check cluster-scoped template
-	if f.clusterTemplate.Value != nil {
-		return evaluateTemplateStatus(f.clusterTemplate.Value.Status.Status, "AIMClusterServiceTemplate", f.clusterTemplate.Value.Name)
+	// Check namespace-scoped template (OK() means no error, Name != "" guards against empty Fetch result)
+	if obs.template.OK() && obs.template.Value != nil && obs.template.Value.Name != "" {
+		return evaluateTemplateStatus(obs.template.Value.Status.Status, "AIMServiceTemplate", obs.template.Value.Name)
+	}
+
+	// Check cluster-scoped template (same guards for empty Fetch result)
+	if obs.clusterTemplate.OK() && obs.clusterTemplate.Value != nil && obs.clusterTemplate.Value.Name != "" {
+		return evaluateTemplateStatus(obs.clusterTemplate.Value.Status.Status, "AIMClusterServiceTemplate", obs.clusterTemplate.Value.Name)
 	}
 
 	// Check for selection errors
-	if f.templateSelection != nil {
-		if f.templateSelection.Error != nil {
+	if obs.templateSelection != nil {
+		if obs.templateSelection.Error != nil {
 			health.State = constants.AIMStatusFailed
 			health.Reason = aimv1alpha1.AIMServiceReasonTemplateSelectionFailed
-			health.Message = f.templateSelection.Error.Error()
-			health.Errors = []error{f.templateSelection.Error}
+			health.Message = obs.templateSelection.Error.Error()
+			health.Errors = []error{obs.templateSelection.Error}
 			return health
 		}
-		if f.templateSelection.TemplatesExistButNotReady {
+		if obs.templateSelection.TemplatesExistButNotReady {
 			health.State = constants.AIMStatusProgressing
 			health.Reason = aimv1alpha1.AIMServiceReasonTemplateNotReady
 			health.Message = "Templates exist but are not ready yet"
@@ -288,13 +313,17 @@ func (f ServiceFetchResult) getTemplateHealth() controllerutils.ComponentHealth 
 		}
 	}
 
-	// Check for fetch errors
-	if f.template.Error != nil {
-		health.State = constants.AIMStatusFailed
-		health.Reason = aimv1alpha1.AIMServiceReasonTemplateNotFound
-		health.Message = f.template.Error.Error()
-		health.Errors = []error{f.template.Error}
-		return health
+	// If InferenceService exists and template was previously resolved, report as ready.
+	// When ISVC exists, we skip fetching upstream resources (optimization), so
+	// we rely on the resolved reference in status.
+	if obs.inferenceService.OK() && obs.service.Status.ResolvedTemplate != nil {
+		return controllerutils.ComponentHealth{
+			Component:      "Template",
+			State:          constants.AIMStatusReady,
+			Reason:         aimv1alpha1.AIMServiceReasonResolved,
+			Message:        fmt.Sprintf("%s %s is ready", obs.service.Status.ResolvedTemplate.Scope, obs.service.Status.ResolvedTemplate.Name),
+			DependencyType: controllerutils.DependencyTypeUpstream,
+		}
 	}
 
 	// No template found
@@ -337,28 +366,12 @@ func evaluateTemplateStatus(status constants.AIMStatus, kind, name string) contr
 }
 
 func (f ServiceFetchResult) getInferenceServiceHealth() controllerutils.ComponentHealth {
-	health := controllerutils.ComponentHealth{
-		Component:      "InferenceService",
-		DependencyType: controllerutils.DependencyTypeDownstream,
-	}
+	return f.inferenceService.ToDownstreamComponentHealth("InferenceService", getInferenceServiceHealthFromValue)
+}
 
-	if f.inferenceService.Error != nil {
-		health.State = constants.AIMStatusFailed
-		health.Reason = aimv1alpha1.AIMServiceReasonRuntimeFailed
-		health.Message = f.inferenceService.Error.Error()
-		health.Errors = []error{f.inferenceService.Error}
-		return health
-	}
-
-	if f.inferenceService.Value == nil {
-		health.State = constants.AIMStatusProgressing
-		health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
-		health.Message = "InferenceService not yet created"
-		return health
-	}
-
+// getInferenceServiceHealthFromValue inspects an InferenceService to determine its health.
+func getInferenceServiceHealthFromValue(isvc *servingv1beta1.InferenceService) controllerutils.ComponentHealth {
 	// Check InferenceService conditions
-	isvc := f.inferenceService.Value
 	ready := false
 	for _, cond := range isvc.Status.Conditions {
 		if cond.Type == "Ready" && cond.Status == "True" {
@@ -368,16 +381,17 @@ func (f ServiceFetchResult) getInferenceServiceHealth() controllerutils.Componen
 	}
 
 	if ready {
-		health.State = constants.AIMStatusReady
-		health.Reason = aimv1alpha1.AIMServiceReasonRuntimeReady
-		health.Message = "InferenceService is ready"
-	} else {
-		health.State = constants.AIMStatusProgressing
-		health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
-		health.Message = "InferenceService is not ready"
+		return controllerutils.ComponentHealth{
+			State:   constants.AIMStatusReady,
+			Reason:  aimv1alpha1.AIMServiceReasonRuntimeReady,
+			Message: "InferenceService is ready",
+		}
 	}
-
-	return health
+	return controllerutils.ComponentHealth{
+		State:   constants.AIMStatusProgressing,
+		Reason:  aimv1alpha1.AIMServiceReasonCreatingRuntime,
+		Message: "InferenceService is not ready",
+	}
 }
 
 func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {

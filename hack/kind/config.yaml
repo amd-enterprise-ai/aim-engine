@@ -12,4 +12,4 @@ nodes:
   - role: worker
     labels:
       # AMD Instinct MI350X
-      amd.com/gpu.device-id: "75a0"
+      amd.com/gpu.device-id: "0x75a0"

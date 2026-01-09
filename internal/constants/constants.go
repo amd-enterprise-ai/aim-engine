@@ -234,6 +234,14 @@ const (
 	AutoscalerClassNone = "none"
 )
 
+// AIM annotation keys
+const (
+	// AnnotationReconciliationPaused, when set to "true", pauses reconciliation for the resource.
+	// The controller will skip all reconciliation logic and return immediately.
+	// This is useful for testing or debugging purposes.
+	AnnotationReconciliationPaused = AimLabelDomain + "/reconciliation-paused"
+)
+
 // Template-related constants
 const (
 	// TemplateNameMaxLength is the maximum length for template names (Kubernetes name limit)

@@ -91,6 +91,10 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
+.PHONY: chainsaw
+chainsaw: ## Run chainsaw e2e tests. Pass CHAINSAW_ARGS to specify test directories or options.
+	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test $(CHAINSAW_ARGS)
+
 .PHONY: lint
 lint: ## Run golangci-lint linter
 	golangci-lint run

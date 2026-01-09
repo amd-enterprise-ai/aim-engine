@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Model Failed
+#
+# This test validates that an AIMService correctly reflects a Failed model state.
+# The model is frozen with status=Failed, and we verify the service shows the
+# appropriate error state.
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMModel (Failed)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: model-failed
+spec:
+  steps:
+    - name: Create frozen model with Failed status
+      try:
+        - apply:
+            file: model.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              kubectl patch aimmodel test-model -n $NAMESPACE --type=merge --subresource=status -p '{"status":{"status":"Failed"}}'
+
+    - name: Create service referencing the failed model
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert service reflects model failure
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-service
+              status:
+                status: Failed
+                (conditions[?type == 'ModelReady']):
+                  - status: "False"
+                    reason: ModelNotReady

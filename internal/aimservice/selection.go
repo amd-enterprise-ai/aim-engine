@@ -266,7 +266,12 @@ func filterByAvailability(candidates []TemplateCandidate, rejected map[string][]
 func filterByOptimizationStatus(candidates []TemplateCandidate, allowUnoptimized bool, rejected map[string][]TemplateCandidate) []TemplateCandidate {
 	var result []TemplateCandidate
 	for _, c := range candidates {
-		if c.Status.Profile.Metadata.Type == aimv1alpha1.AIMProfileTypeOptimized || allowUnoptimized {
+		// If profile is nil, treat as unoptimized
+		profileType := aimv1alpha1.AIMProfileTypeUnoptimized
+		if c.Status.Profile != nil {
+			profileType = c.Status.Profile.Metadata.Type
+		}
+		if profileType == aimv1alpha1.AIMProfileTypeOptimized || allowUnoptimized {
 			result = append(result, c)
 		} else {
 			rejected[stageUnoptimized] = append(rejected[stageUnoptimized], c)

@@ -121,10 +121,12 @@ func fetchTemplate(
 	logger.V(1).Info("auto-selecting template")
 
 	// Get model name for template lookup
+	// Use OK() to check if model was actually found (Fetch always sets Value even on error)
+	// Also check Name != "" to ensure the model was actually populated (not an empty struct)
 	var modelName string
-	if model.Value != nil {
+	if model.OK() && model.Value != nil && model.Value.Name != "" {
 		modelName = model.Value.Name
-	} else if clusterModel.Value != nil {
+	} else if clusterModel.OK() && clusterModel.Value != nil && clusterModel.Value.Name != "" {
 		modelName = clusterModel.Value.Name
 	}
 

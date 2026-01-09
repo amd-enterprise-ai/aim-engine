@@ -2172,3 +2172,134 @@ func TestPipeline_UnspecifiedDependencyType_DefaultsToProgressing(t *testing.T) 
 		t.Errorf("Status should be Progressing for unspecified dependency type, got %s", status.Status)
 	}
 }
+
+// ======================================================
+// RECONCILIATION PAUSE TESTS
+// ======================================================
+
+func TestIsReconciliationPaused(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        bool
+	}{
+		{
+			name:        "no annotations - not paused",
+			annotations: nil,
+			want:        false,
+		},
+		{
+			name:        "empty annotations - not paused",
+			annotations: map[string]string{},
+			want:        false,
+		},
+		{
+			name: "annotation set to true - paused",
+			annotations: map[string]string{
+				constants.AnnotationReconciliationPaused: "true",
+			},
+			want: true,
+		},
+		{
+			name: "annotation set to false - not paused",
+			annotations: map[string]string{
+				constants.AnnotationReconciliationPaused: "false",
+			},
+			want: false,
+		},
+		{
+			name: "annotation set to empty - not paused",
+			annotations: map[string]string{
+				constants.AnnotationReconciliationPaused: "",
+			},
+			want: false,
+		},
+		{
+			name: "annotation set to True (capital) - not paused",
+			annotations: map[string]string{
+				constants.AnnotationReconciliationPaused: "True",
+			},
+			want: false, // Only "true" (lowercase) is recognized
+		},
+		{
+			name: "other annotations present - not paused",
+			annotations: map[string]string{
+				"some-other-annotation": "value",
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obj := &testObject{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: tt.annotations,
+				},
+			}
+
+			got := IsReconciliationPaused(obj)
+			if got != tt.want {
+				t.Errorf("IsReconciliationPaused() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPipeline_Run_SkipsWhenPaused(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = metav1.AddMetaToScheme(scheme)
+	scheme.AddKnownTypes(metav1.SchemeGroupVersion, &testObject{})
+
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "meta.k8s.io/v1",
+			Kind:       "testObject",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-obj",
+			Namespace: "default",
+			Annotations: map[string]string{
+				constants.AnnotationReconciliationPaused: "true",
+			},
+		},
+		Status: testStatus{
+			Status: "SomeExistingStatus",
+		},
+	}
+
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).Build()
+	recorder := record.NewFakeRecorder(100)
+
+	reconciler := &testReconciler{
+		fetchResult: testFetch{ModelReady: true},
+	}
+
+	pipeline := &Pipeline[*testObject, *testStatus, testFetch, testObservation]{
+		Client:         cl,
+		StatusClient:   cl.Status(),
+		Recorder:       recorder,
+		ControllerName: "test",
+		Reconciler:     reconciler,
+		Scheme:         scheme,
+	}
+
+	err := pipeline.Run(context.Background(), obj)
+	// Should return nil (no error, reconciliation skipped)
+	if err != nil {
+		t.Fatalf("Run() should return nil when paused, got: %v", err)
+	}
+
+	// Status should NOT be modified (reconciliation was skipped)
+	if obj.Status.Status != "SomeExistingStatus" {
+		t.Errorf("Status should remain unchanged when paused, got: %s", obj.Status.Status)
+	}
+
+	// No events should be emitted
+	select {
+	case event := <-recorder.Events:
+		t.Errorf("No events should be emitted when paused, got: %s", event)
+	default:
+		// Expected - no events
+	}
+}
