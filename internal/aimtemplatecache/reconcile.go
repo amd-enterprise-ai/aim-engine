@@ -117,10 +117,10 @@ func (r *TemplateCacheReconciler) FetchRemoteState(
 		mergedRuntimeConfig: reconcileCtx.MergedRuntimeConfig,
 	}
 
-	result.serviceTemplate = controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Name, Namespace: templateCache.Namespace}, &aimv1alpha1.AIMServiceTemplate{})
+	result.serviceTemplate = controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Spec.TemplateName, Namespace: templateCache.Namespace}, &aimv1alpha1.AIMServiceTemplate{})
 
 	if result.serviceTemplate.IsNotFound() {
-		clusterServiceTemplate := controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Name}, &aimv1alpha1.AIMClusterServiceTemplate{})
+		clusterServiceTemplate := controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Spec.TemplateName}, &aimv1alpha1.AIMClusterServiceTemplate{})
 		result.clusterServiceTemplate = &clusterServiceTemplate
 	}
 
@@ -188,13 +188,14 @@ func (r *TemplateCacheReconciler) ComposeState(
 		TemplateCacheFetchResult: fetch,
 	}
 
-	var serviceTemplateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon
+	var templateModelSources []aimv1alpha1.AIMModelSource
 	tc := reconcileCtx.Object
 
+	// Read model sources from Status (populated by discovery), not Spec
 	if fetch.serviceTemplate.OK() {
-		serviceTemplateSpec = &fetch.serviceTemplate.Value.Spec.AIMServiceTemplateSpecCommon
+		templateModelSources = fetch.serviceTemplate.Value.Status.ModelSources
 	} else if fetch.clusterServiceTemplate.OK() {
-		serviceTemplateSpec = &fetch.clusterServiceTemplate.Value.Spec.AIMServiceTemplateSpecCommon
+		templateModelSources = fetch.clusterServiceTemplate.Value.Status.ModelSources
 	} else {
 		return obs
 	}
@@ -202,7 +203,7 @@ func (r *TemplateCacheReconciler) ComposeState(
 	obs.BestModelCaches = map[string]aimv1alpha1.AIMModelCache{}
 
 	// Loop through model sources from the template and check with what's available in our namespace
-	for _, model := range serviceTemplateSpec.ModelSources {
+	for _, model := range templateModelSources {
 		found := false
 		bestStatusModelCache := aimv1alpha1.AIMModelCache{}
 		for _, cached := range fetch.modelCaches.Value.Items {

@@ -69,12 +69,12 @@ releases:
     needs:
       - kserve-system/kserve-crd
       - cert-manager/cert-manager
-#    values:
-#      - kserve:
-#          controller:
-#            deploymentMode: RawDeployment
-#            gateway:
-#              ingressGateway:
-#                enableGatewayApi: false
-#          localmodel:
-#            enabled: false
+    values:
+      - kserve:
+          controller:
+            deploymentMode: RawDeployment
+            gateway:
+              ingressGateway:
+                enableGatewayApi: false
+          localmodel:
+            enabled: false

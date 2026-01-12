@@ -67,6 +67,18 @@ func fetchInferenceService(
 	}, &servingv1beta1.InferenceService{})
 }
 
+// fetchInferenceServiceEvents fetches events for the InferenceService to detect configuration errors.
+func fetchInferenceServiceEvents(
+	ctx context.Context,
+	c client.Client,
+	isvc *servingv1beta1.InferenceService,
+) controllerutils.FetchResult[*corev1.EventList] {
+	return controllerutils.FetchList(ctx, c, &corev1.EventList{},
+		client.InNamespace(isvc.Namespace),
+		client.MatchingFields{"involvedObject.name": isvc.Name},
+	)
+}
+
 // planInferenceService creates the KServe InferenceService.
 func planInferenceService(
 	ctx context.Context,

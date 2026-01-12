@@ -137,12 +137,36 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
+	// Index AIMService by resolved template name for efficient lookup when template caches change
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMService{}, aimv1alpha1.AIMServiceResolvedTemplateIndexKey, func(obj client.Object) []string {
+		svc, ok := obj.(*aimv1alpha1.AIMService)
+		if !ok {
+			return nil
+		}
+		if svc.Status.ResolvedTemplate == nil || svc.Status.ResolvedTemplate.Name == "" {
+			return nil
+		}
+		return []string{svc.Status.ResolvedTemplate.Name}
+	}); err != nil {
+		return err
+	}
+
+	// Index Events by involvedObject.name for efficient lookup when fetching InferenceService events
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &corev1.Event{}, "involvedObject.name", func(obj client.Object) []string {
+		event, ok := obj.(*corev1.Event)
+		if !ok {
+			return nil
+		}
+		return []string{event.InvolvedObject.Name}
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMService{}).
 		Owns(&servingv1beta1.InferenceService{}).
 		Owns(&gatewayapiv1.HTTPRoute{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
-		Owns(&aimv1alpha1.AIMTemplateCache{}).
 		// Watch namespace-scoped templates and enqueue services that reference them
 		Watches(
 			&aimv1alpha1.AIMServiceTemplate{},
@@ -177,6 +201,11 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&aimv1alpha1.AIMTemplateCache{},
 			handler.EnqueueRequestsFromMapFunc(r.findServicesForTemplateCache),
+		).
+		// Watch events for InferenceServices to detect configuration errors like ServerlessModeRejected
+		Watches(
+			&corev1.Event{},
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForInferenceServiceEvent),
 		).
 		Named(serviceName).
 		Complete(r)
@@ -361,22 +390,75 @@ func (r *AIMServiceReconciler) findServicesForClusterRuntimeConfig(ctx context.C
 	return requests
 }
 
-// findServicesForTemplateCache returns reconcile requests for the AIMService
-// that owns the given template cache.
+// findServicesForTemplateCache returns reconcile requests for all AIMServices
+// that use the same template as the given template cache.
+// Template caches are not owned by services (to allow sharing), so we find services
+// by matching the cache's templateName against services' resolved template name.
 func (r *AIMServiceReconciler) findServicesForTemplateCache(ctx context.Context, obj client.Object) []reconcile.Request {
 	cache, ok := obj.(*aimv1alpha1.AIMTemplateCache)
 	if !ok {
 		return nil
 	}
 
-	// Find owner service from labels or owner references
-	for _, ownerRef := range cache.OwnerReferences {
+	// Find all services in the same namespace that have resolved to this template
+	var services aimv1alpha1.AIMServiceList
+	if err := r.List(ctx, &services,
+		client.InNamespace(cache.Namespace),
+		client.MatchingFields{aimv1alpha1.AIMServiceResolvedTemplateIndexKey: cache.Spec.TemplateName},
+	); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMServices for template cache",
+			"cache", cache.Name, "templateName", cache.Spec.TemplateName)
+		return nil
+	}
+
+	requests := make([]reconcile.Request, len(services.Items))
+	for i, svc := range services.Items {
+		requests[i] = reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      svc.Name,
+				Namespace: svc.Namespace,
+			},
+		}
+	}
+	return requests
+}
+
+// findServicesForInferenceServiceEvent returns reconcile requests for AIMServices
+// when an event is created for an InferenceService they own.
+// This enables detection of configuration errors like ServerlessModeRejected.
+func (r *AIMServiceReconciler) findServicesForInferenceServiceEvent(ctx context.Context, obj client.Object) []reconcile.Request {
+	event, ok := obj.(*corev1.Event)
+	if !ok {
+		return nil
+	}
+
+	// Only process events for InferenceServices
+	if event.InvolvedObject.Kind != "InferenceService" {
+		return nil
+	}
+
+	// Only process warning events that indicate configuration problems
+	if event.Type != corev1.EventTypeWarning {
+		return nil
+	}
+
+	// Find the InferenceService
+	isvc := &servingv1beta1.InferenceService{}
+	if err := r.Get(ctx, client.ObjectKey{
+		Namespace: event.InvolvedObject.Namespace,
+		Name:      event.InvolvedObject.Name,
+	}, isvc); err != nil {
+		return nil
+	}
+
+	// Find owner AIMService from the InferenceService's owner references
+	for _, ownerRef := range isvc.OwnerReferences {
 		if ownerRef.Kind == "AIMService" {
 			return []reconcile.Request{
 				{
 					NamespacedName: types.NamespacedName{
 						Name:      ownerRef.Name,
-						Namespace: cache.Namespace,
+						Namespace: event.InvolvedObject.Namespace,
 					},
 				},
 			}

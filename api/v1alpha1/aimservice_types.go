@@ -31,8 +31,12 @@ import (
 
 const (
 	// AIMServiceTemplateIndexKey is the field index key for AIMService template reference
-	// Indexes by .spec.TemplateName or status.ResolvedTemplate.Name
+	// Indexes by .spec.template.name for finding services that reference a specific template
 	AIMServiceTemplateIndexKey = ".spec.templateRef"
+
+	// AIMServiceResolvedTemplateIndexKey is the field index key for resolved template name
+	// Indexes by .status.resolvedTemplate.name for finding services using a specific template
+	AIMServiceResolvedTemplateIndexKey = ".status.resolvedTemplate.name"
 )
 
 // AIMCachingMode controls caching behavior for a service.

@@ -67,10 +67,11 @@ type ServiceFetchResult struct {
 	templateSelection *TemplateSelectionResult
 
 	// Existing downstream resources
-	inferenceService controllerutils.FetchResult[*servingv1beta1.InferenceService]
-	httpRoute        controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
-	templateCache    controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]
-	pvc              controllerutils.FetchResult[*corev1.PersistentVolumeClaim]
+	inferenceService       controllerutils.FetchResult[*servingv1beta1.InferenceService]
+	inferenceServiceEvents controllerutils.FetchResult[*corev1.EventList]
+	httpRoute              controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
+	templateCache          controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]
+	pvc                    controllerutils.FetchResult[*corev1.PersistentVolumeClaim]
 
 	// Model caches (for template cache)
 	modelCaches controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]
@@ -100,6 +101,11 @@ func (r *ServiceReconciler) FetchRemoteState(
 
 	// 1. Fetch existing InferenceService first (gates other fetches)
 	result.inferenceService = fetchInferenceService(ctx, c, service)
+
+	// 1b. Fetch events for InferenceService to detect configuration errors like ServerlessModeRejected
+	if result.inferenceService.OK() && result.inferenceService.Value != nil {
+		result.inferenceServiceEvents = fetchInferenceServiceEvents(ctx, c, result.inferenceService.Value)
+	}
 
 	// 2. Fetch HTTPRoute if routing might be enabled (we own this, always check)
 	result.httpRoute = fetchHTTPRoute(ctx, c, service, reconcileCtx.MergedRuntimeConfig.Value)
@@ -366,11 +372,40 @@ func evaluateTemplateStatus(status constants.AIMStatus, kind, name string) contr
 }
 
 func (f ServiceFetchResult) getInferenceServiceHealth() controllerutils.ComponentHealth {
-	return f.inferenceService.ToDownstreamComponentHealth("InferenceService", getInferenceServiceHealthFromValue)
-}
+	health := controllerutils.ComponentHealth{
+		Component:      "InferenceService",
+		DependencyType: controllerutils.DependencyTypeDownstream,
+	}
 
-// getInferenceServiceHealthFromValue inspects an InferenceService to determine its health.
-func getInferenceServiceHealthFromValue(isvc *servingv1beta1.InferenceService) controllerutils.ComponentHealth {
+	// Check if InferenceService exists
+	if !f.inferenceService.OK() {
+		if f.inferenceService.IsNotFound() {
+			health.State = constants.AIMStatusProgressing
+			health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
+			health.Message = "InferenceService not found"
+			return health
+		}
+		health.State = constants.AIMStatusFailed
+		health.Reason = "FetchError"
+		health.Message = f.inferenceService.Error.Error()
+		health.Errors = []error{f.inferenceService.Error}
+		return health
+	}
+
+	isvc := f.inferenceService.Value
+
+	// Check for fatal configuration errors in events (e.g., ServerlessModeRejected)
+	if f.inferenceServiceEvents.OK() && f.inferenceServiceEvents.Value != nil {
+		for _, event := range f.inferenceServiceEvents.Value.Items {
+			if event.Reason == "ServerlessModeRejected" {
+				health.State = constants.AIMStatusFailed
+				health.Reason = "ServerlessModeRejected"
+				health.Message = "Knative is not available. Configure KServe to use RawDeployment mode."
+				return health
+			}
+		}
+	}
+
 	// Check InferenceService conditions
 	ready := false
 	for _, cond := range isvc.Status.Conditions {
@@ -381,17 +416,16 @@ func getInferenceServiceHealthFromValue(isvc *servingv1beta1.InferenceService) c
 	}
 
 	if ready {
-		return controllerutils.ComponentHealth{
-			State:   constants.AIMStatusReady,
-			Reason:  aimv1alpha1.AIMServiceReasonRuntimeReady,
-			Message: "InferenceService is ready",
-		}
+		health.State = constants.AIMStatusReady
+		health.Reason = aimv1alpha1.AIMServiceReasonRuntimeReady
+		health.Message = "InferenceService is ready"
+		return health
 	}
-	return controllerutils.ComponentHealth{
-		State:   constants.AIMStatusProgressing,
-		Reason:  aimv1alpha1.AIMServiceReasonCreatingRuntime,
-		Message: "InferenceService is not ready",
-	}
+
+	health.State = constants.AIMStatusProgressing
+	health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
+	health.Message = "InferenceService is not ready"
+	return health
 }
 
 func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
@@ -601,8 +635,9 @@ func (r *ServiceReconciler) PlanResources(
 	}
 
 	// 2. Plan template cache if caching is enabled
+	// Use ApplyWithoutOwnerRef so caches can be shared across services and outlive the creating service
 	if templateCache := planTemplateCache(service, templateName, templateStatus, obs); templateCache != nil {
-		planResult.Apply(templateCache)
+		planResult.ApplyWithoutOwnerRef(templateCache)
 	}
 
 	// 3. Plan PVC if no template cache available
