@@ -139,33 +139,6 @@ func (s *AIMKVCacheStatus) SetStatus(status string) {
 	s.Status = constants.AIMStatus(status)
 }
 
-// Condition types for AIMKVCache
-const (
-	// AIMKVCacheConditionProgressing is True when the cache is actively being deployed
-	AIMKVCacheConditionProgressing = "Progressing"
-
-	// AIMKVCacheConditionReady is True when the cache is ready to be used
-	AIMKVCacheConditionReady = "Ready"
-
-	// AIMKVCacheConditionFailure is True when deployment has failed
-	AIMKVCacheConditionFailure = "Failure"
-)
-
-// Condition reasons for AIMKVCache
-const (
-	// Progressing-related reasons
-	AIMKVCacheReasonStatefulSetCreated = "StatefulSetCreated"
-	AIMKVCacheReasonWaitingForPods     = "WaitingForPods"
-
-	// Ready-related reasons
-	AIMKVCacheReasonStatefulSetReady   = "StatefulSetReady"
-	AIMKVCacheReasonStatefulSetPending = "StatefulSetPending"
-
-	// Failure-related reasons
-	AIMKVCacheReasonNoFailure         = "NoFailure"
-	AIMKVCacheReasonStatefulSetFailed = "StatefulSetFailed"
-)
-
 func (s *AIMKVCacheStatus) GetConditions() []metav1.Condition {
 	return s.Conditions
 }
