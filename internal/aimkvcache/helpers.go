@@ -121,11 +121,6 @@ func (r *AIMKVCacheReconciler) buildRedisStatefulSet(kvc *aimv1alpha1.AIMKVCache
 		},
 	}
 
-	// Set controller reference
-	if err := ctrl.SetControllerReference(kvc, statefulSet, r.Scheme); err != nil {
-		return nil
-	}
-
 	return statefulSet
 }
 

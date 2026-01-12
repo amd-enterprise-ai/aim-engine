@@ -8,7 +8,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -96,20 +95,12 @@ func (r *AIMKVCacheReconciler) PlanResources(
 
 	desiredService := r.buildRedisService(kvc)
 	if desiredService != nil {
-		if err := ctrl.SetControllerReference(kvc, desiredService, r.Scheme); err == nil {
-			planResult.Apply(desiredService)
-		} else {
-			logger.Error(err, "failed to set controller reference for service")
-		}
+		planResult.Apply(desiredService)
 	}
 
 	desiredStatefulSet := r.buildRedisStatefulSet(kvc)
 	if desiredStatefulSet != nil {
-		if err := ctrl.SetControllerReference(kvc, desiredStatefulSet, r.Scheme); err == nil {
-			planResult.Apply(desiredStatefulSet)
-		} else {
-			logger.Error(err, "failed to set controller reference for statefulset")
-		}
+		planResult.Apply(desiredStatefulSet)
 	}
 
 	return planResult
