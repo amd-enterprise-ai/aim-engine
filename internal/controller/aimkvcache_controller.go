@@ -43,7 +43,7 @@ import (
 )
 
 const (
-	kvCacheControllerName = "aimkvcache-controller"
+	kvCacheControllerName = "kvcache"
 )
 
 // AIMKVCacheReconciler reconciles a AIMKVCache object
