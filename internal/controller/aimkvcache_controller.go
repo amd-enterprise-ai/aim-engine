@@ -99,7 +99,6 @@ func (r *AIMKVCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 }
 
 func (r *AIMKVCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.Recorder = mgr.GetEventRecorderFor(kvCacheControllerName)
 
 	r.reconciler = &aimkvcache.AIMKVCacheReconciler{
 		Clientset: r.Clientset,
@@ -119,6 +118,8 @@ func (r *AIMKVCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Reconciler:     r.reconciler,
 		Scheme:         r.Scheme,
 	}
+	r.Recorder = mgr.GetEventRecorderFor(r.pipeline.GetFullName())
+	r.pipeline.Recorder = r.Recorder
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMKVCache{}).
