@@ -1,0 +1,29 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+# Build command
+cmd = "go build -o ./.tmp/manager ./cmd/main.go"
+# Binary to run
+bin = "./.tmp/manager"
+# Full binary command with logging to file for AI agent consumption
+full_bin = "./.tmp/manager 2>&1 | tee .tmp/air.log"
+# Watch these extensions
+include_ext = ["go"]
+# Ignore these directories
+exclude_dir = [".tmp", "vendor", "tests", "docs", "config", "dist", "hack", "third-party-licenses"]
+# Ignore generated files
+exclude_regex = ["_test\\.go$", "zz_generated.*\\.go$"]
+# Delay before rebuilding (ms)
+delay = 500
+
+[log]
+main_only = true
+
+[color]
+main = "yellow"
+watcher = "cyan"
+build = "green"
+
+[misc]
+clean_on_exit = true

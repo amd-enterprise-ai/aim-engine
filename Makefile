@@ -2,6 +2,15 @@
 TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "latest")
 IMG ?= ghcr.io/amd-enterprise-ai/aim-engine:$(TAG)
 
+# Cluster environment configuration
+# ENV is read from .tmp/current-env if it exists, otherwise defaults to 'kind'
+# For GPU, set KUBE_CONTEXT_GPU to your vcluster context name (e.g., in .envrc or shell)
+ENV_FILE := .tmp/current-env
+ENV ?= $(shell cat $(ENV_FILE) 2>/dev/null || echo kind)
+KUBE_CONTEXT_KIND := kind-aim-engine
+KUBE_CONTEXT_GPU ?=
+KUBE_CONTEXT = $(if $(filter gpu,$(ENV)),$(or $(KUBE_CONTEXT_GPU),$(error ENV=gpu requires KUBE_CONTEXT_GPU to be set)),$(KUBE_CONTEXT_KIND))
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -92,20 +101,19 @@ cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
 # Chainsaw test configuration
+# Selector is applied automatically based on ENV (kind excludes infra-dependent tests)
 CHAINSAW_TEST_DIR := tests/e2e
 CHAINSAW_SELECTOR_KIND := requires!=longhorn
+CHAINSAW_REPORT_DIR := .tmp/chainsaw-reports
+CHAINSAW_ENV_SELECTOR := $(if $(filter kind,$(ENV)),--selector '$(CHAINSAW_SELECTOR_KIND)',)
 
 .PHONY: test-chainsaw
-test-chainsaw: ## Run chainsaw e2e tests. Pass CHAINSAW_ARGS to specify additional options.
-	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test --test-dir $(CHAINSAW_TEST_DIR) $(CHAINSAW_ARGS)
-
-.PHONY: test-chainsaw-kind
-test-chainsaw-kind: ## Run chainsaw tests for Kind environments (local/CI). Excludes tests requiring special infrastructure.
-	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test --test-dir $(CHAINSAW_TEST_DIR) --selector '$(CHAINSAW_SELECTOR_KIND)' $(CHAINSAW_ARGS)
-
-.PHONY: test-chainsaw-gpu
-test-chainsaw-gpu: ## Run all chainsaw tests for GPU cluster environments with full infrastructure.
-	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test --test-dir $(CHAINSAW_TEST_DIR) $(CHAINSAW_ARGS)
+test-chainsaw: ## Run chainsaw e2e tests (selector based on ENV). Pass CHAINSAW_ARGS for additional options.
+	@mkdir -p $(CHAINSAW_REPORT_DIR)
+	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test --test-dir $(CHAINSAW_TEST_DIR) \
+		$(CHAINSAW_ENV_SELECTOR) \
+		--report-format JSON --report-name chainsaw-report --report-path $(CHAINSAW_REPORT_DIR) \
+		$(CHAINSAW_ARGS)
 
 .PHONY: lint
 lint: ## Run golangci-lint linter
@@ -118,6 +126,22 @@ lint-fix: ## Run golangci-lint linter and perform fixes
 .PHONY: lint-config
 lint-config: ## Verify golangci-lint linter configuration
 	golangci-lint config verify
+
+##@ Environment Switching
+
+.PHONY: switch-env
+switch-env: ## Switch kubectl context based on ENV (kind|gpu). Restart 'make watch' after switching.
+	@echo "Switching to $(ENV) environment (context: $(KUBE_CONTEXT))..."
+	@mkdir -p $(dir $(ENV_FILE))
+	@echo "$(ENV)" > $(ENV_FILE)
+	@kubectl config use-context $(KUBE_CONTEXT)
+	@echo "Context switched. Restart 'make watch' to use new context."
+
+.PHONY: env-info
+env-info: ## Show current environment configuration.
+	@echo "ENV:          $(ENV) (from $(ENV_FILE))"
+	@echo "KUBE_CONTEXT: $(KUBE_CONTEXT)"
+	@echo "Current ctx:  $$(kubectl config current-context 2>/dev/null || echo 'none')"
 
 ##@ Build
 
@@ -132,6 +156,15 @@ run: manifests generate fmt vet ## Run a controller from your host.
 .PHONY: run-debug
 run-debug: manifests generate fmt vet ## Run a controller with debug logging enabled.
 	go run ./cmd/main.go --zap-log-level=debug
+
+.PHONY: watch
+watch: manifests generate ## Run controller with live reload on file changes.
+	air
+
+.PHONY: wait-ready
+wait-ready: ## Wait for operator readiness probe to succeed.
+	@until curl -sf http://localhost:8081/readyz >/dev/null 2>&1; do sleep 0.5; done
+	@echo "Operator ready"
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.

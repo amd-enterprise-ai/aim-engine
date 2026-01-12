@@ -37,3 +37,7 @@ dist/
 # Python environments
 venv/
 .venv/
+
+# Temporary and local directories
+.tmp
+tmp
