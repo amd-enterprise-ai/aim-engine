@@ -119,7 +119,9 @@ rules:
 - apiGroups:
   - serving.kserve.io
   resources:
+  - clusterservingruntimes
   - inferenceservices
+  - servingruntimes
   verbs:
   - create
   - delete

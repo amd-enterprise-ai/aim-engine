@@ -35,8 +35,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -240,6 +242,10 @@ func (r *AIMClusterServiceTemplateReconciler) SetupWithManager(mgr ctrl.Manager)
 		return requestsFromClusterServiceTemplates(templates.Items)
 	})
 
+	// Handler for discovery Pod changes - reconcile cluster template when pod status changes
+	// Cluster-scoped templates run discovery jobs in the operator namespace
+	discoveryPodHandler := handler.EnqueueRequestsFromMapFunc(r.findClusterTemplateForDiscoveryPod)
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMClusterServiceTemplate{}).
 		Owns(&batchv1.Job{}).
@@ -247,8 +253,116 @@ func (r *AIMClusterServiceTemplateReconciler) SetupWithManager(mgr ctrl.Manager)
 		Watches(&aimv1alpha1.AIMRuntimeConfig{}, runtimeConfigHandler).
 		Watches(&corev1.Node{}, nodeHandler, builder.WithPredicates(utils.NodeGPUChangePredicate())).
 		Watches(&aimv1alpha1.AIMClusterModel{}, clusterModelHandler).
+		Watches(&corev1.Pod{}, discoveryPodHandler, builder.WithPredicates(clusterDiscoveryPodPredicate())).
 		Named(clusterServiceTemplateName).
 		Complete(r)
+}
+
+// findClusterTemplateForDiscoveryPod maps a discovery Pod to its owning AIMClusterServiceTemplate using the template label.
+func (r *AIMClusterServiceTemplateReconciler) findClusterTemplateForDiscoveryPod(ctx context.Context, pod client.Object) []reconcile.Request {
+	templateName, ok := pod.GetLabels()[constants.LabelKeyTemplate]
+	if !ok || templateName == "" {
+		return nil
+	}
+
+	// For cluster-scoped templates, the template is cluster-scoped (no namespace)
+	return []reconcile.Request{
+		{
+			NamespacedName: client.ObjectKey{
+				Name: templateName,
+			},
+		},
+	}
+}
+
+// clusterDiscoveryPodPredicate filters pod events to only react to significant state changes
+// for cluster-scoped service template discovery pods (which run in the operator namespace).
+func clusterDiscoveryPodPredicate() predicate.Predicate {
+	operatorNamespace := constants.GetOperatorNamespace()
+
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			pod := e.Object.(*corev1.Pod)
+			// Only care about pods in the operator namespace
+			if pod.GetNamespace() != operatorNamespace {
+				return false
+			}
+			// Only care about discovery pods (those with template label)
+			if _, ok := pod.GetLabels()[constants.LabelKeyTemplate]; !ok {
+				return false
+			}
+			// React to pods that have issues right away
+			return hasClusterDiscoveryPodIssue(pod)
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			newPod := e.ObjectNew.(*corev1.Pod)
+			// Only care about pods in the operator namespace
+			if newPod.GetNamespace() != operatorNamespace {
+				return false
+			}
+			// Only care about discovery pods (those with template label)
+			if _, ok := newPod.GetLabels()[constants.LabelKeyTemplate]; !ok {
+				return false
+			}
+
+			oldPod := e.ObjectOld.(*corev1.Pod)
+
+			// React if issue status changed
+			oldHasIssue := hasClusterDiscoveryPodIssue(oldPod)
+			newHasIssue := hasClusterDiscoveryPodIssue(newPod)
+			if oldHasIssue != newHasIssue {
+				return true
+			}
+
+			// React if pod phase changed
+			if oldPod.Status.Phase != newPod.Status.Phase {
+				return true
+			}
+
+			// React to container status changes (for cases where phase doesn't change)
+			if len(oldPod.Status.ContainerStatuses) != len(newPod.Status.ContainerStatuses) {
+				return true
+			}
+
+			return false
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			pod := e.Object
+			// Only care about pods in the operator namespace with template label
+			if pod.GetNamespace() != operatorNamespace {
+				return false
+			}
+			_, ok := pod.GetLabels()[constants.LabelKeyTemplate]
+			return ok
+		},
+	}
+}
+
+// hasClusterDiscoveryPodIssue checks if a pod has issues that should be reported.
+func hasClusterDiscoveryPodIssue(pod *corev1.Pod) bool {
+	// Check for image pull errors
+	if utils.CheckPodImagePullStatus(pod) != nil {
+		return true
+	}
+
+	// Check for crash loop backoff
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.State.Waiting != nil && status.State.Waiting.Reason == "CrashLoopBackOff" {
+			return true
+		}
+	}
+
+	// Check for config errors
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.State.Waiting != nil {
+			reason := status.State.Waiting.Reason
+			if reason == "CreateContainerConfigError" || reason == "CreateContainerError" {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // requestsFromClusterServiceTemplates converts a list of cluster templates to reconcile requests.

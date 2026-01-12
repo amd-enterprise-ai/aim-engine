@@ -35,12 +35,15 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimservicetemplate"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
@@ -236,6 +239,9 @@ func (r *AIMServiceTemplateReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		return requestsFromServiceTemplates(templates.Items)
 	})
 
+	// Handler for discovery Pod changes - reconcile template when pod status changes
+	discoveryPodHandler := handler.EnqueueRequestsFromMapFunc(r.findTemplateForDiscoveryPod)
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMServiceTemplate{}).
 		Owns(&batchv1.Job{}).
@@ -244,8 +250,103 @@ func (r *AIMServiceTemplateReconciler) SetupWithManager(mgr ctrl.Manager) error 
 		Watches(&aimv1alpha1.AIMClusterRuntimeConfig{}, clusterRuntimeConfigHandler).
 		Watches(&corev1.Node{}, nodeHandler, builder.WithPredicates(utils.NodeGPUChangePredicate())).
 		Watches(&aimv1alpha1.AIMModel{}, modelHandler).
+		Watches(&corev1.Pod{}, discoveryPodHandler, builder.WithPredicates(discoveryPodPredicate())).
 		Named(serviceTemplateName).
 		Complete(r)
+}
+
+// findTemplateForDiscoveryPod maps a discovery Pod to its owning AIMServiceTemplate using the template label.
+func (r *AIMServiceTemplateReconciler) findTemplateForDiscoveryPod(ctx context.Context, pod client.Object) []reconcile.Request {
+	templateName, ok := pod.GetLabels()[constants.LabelKeyTemplate]
+	if !ok || templateName == "" {
+		return nil
+	}
+
+	return []reconcile.Request{
+		{
+			NamespacedName: client.ObjectKey{
+				Namespace: pod.GetNamespace(),
+				Name:      templateName,
+			},
+		},
+	}
+}
+
+// discoveryPodPredicate filters pod events to only react to significant state changes
+// that should be reflected in the AIMServiceTemplate status.
+func discoveryPodPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			pod := e.Object.(*corev1.Pod)
+			// Only care about discovery pods (those with template label)
+			if _, ok := pod.GetLabels()[constants.LabelKeyTemplate]; !ok {
+				return false
+			}
+			// React to pods that have issues right away
+			return hasDiscoveryPodIssue(pod)
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			newPod := e.ObjectNew.(*corev1.Pod)
+			// Only care about discovery pods (those with template label)
+			if _, ok := newPod.GetLabels()[constants.LabelKeyTemplate]; !ok {
+				return false
+			}
+
+			oldPod := e.ObjectOld.(*corev1.Pod)
+
+			// React if issue status changed
+			oldHasIssue := hasDiscoveryPodIssue(oldPod)
+			newHasIssue := hasDiscoveryPodIssue(newPod)
+			if oldHasIssue != newHasIssue {
+				return true
+			}
+
+			// React if pod phase changed
+			if oldPod.Status.Phase != newPod.Status.Phase {
+				return true
+			}
+
+			// React to container status changes (for cases where phase doesn't change)
+			// This catches transitions like Pending -> Pending with ErrImagePull added
+			if len(oldPod.Status.ContainerStatuses) != len(newPod.Status.ContainerStatuses) {
+				return true
+			}
+
+			return false
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			// React to pod deletions for discovery pods
+			_, ok := e.Object.GetLabels()[constants.LabelKeyTemplate]
+			return ok
+		},
+	}
+}
+
+// hasDiscoveryPodIssue checks if a pod has issues that should be reported.
+func hasDiscoveryPodIssue(pod *corev1.Pod) bool {
+	// Check for image pull errors
+	if utils.CheckPodImagePullStatus(pod) != nil {
+		return true
+	}
+
+	// Check for crash loop backoff
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.State.Waiting != nil && status.State.Waiting.Reason == "CrashLoopBackOff" {
+			return true
+		}
+	}
+
+	// Check for config errors
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.State.Waiting != nil {
+			reason := status.State.Waiting.Reason
+			if reason == "CreateContainerConfigError" || reason == "CreateContainerError" {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // requestsFromServiceTemplates converts a list of templates to reconcile requests.

@@ -1,0 +1,75 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Auto Template Selection (Kind)
+#
+# This test validates that AIMService can automatically select a template
+# when none is explicitly specified, using the model's defaultServiceTemplate.
+#
+# Uses: ghcr.io/silogen/aim-dummy:0.1.9 (lightweight test image)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-auto-template-selection
+spec:
+  description: Test AIMService auto-selects template from model's defaultServiceTemplate
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create model with defaultServiceTemplate
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Create service template
+      try:
+        - apply:
+            file: template.yaml
+
+    - name: Wait for template discovery to complete
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: test-auto-select-template
+              status:
+                status: Ready
+
+    - name: Create service without explicit template
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify service auto-selects the template
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-auto-select-service
+              status:
+                resolvedModel:
+                  name: test-auto-select-model
+                resolvedTemplate:
+                  name: test-auto-select-template
+                (conditions[?type == 'ModelReady']):
+                  - status: "True"
+                (conditions[?type == 'TemplateReady']):
+                  - status: "True"
+
+    - name: Verify service starts
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-auto-select-service
+              status:
+                status: Starting
