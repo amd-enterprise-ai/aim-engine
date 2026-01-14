@@ -22,6 +22,36 @@ mise exec -- make watch           # Live reload via air (rebuilds on file change
 mise exec -- make wait-ready      # Wait for operator readiness probe (localhost:8081/readyz)
 ```
 
+## Operator Logs
+
+When running via `make watch`, operator logs are written to timestamped files in `.tmp/logs/`. The 10 most recent log files are kept.
+
+```bash
+# Find the latest log file
+ls -t .tmp/logs/air-*.log | head -1
+
+# Tail the latest log
+tail -f "$(ls -t .tmp/logs/air-*.log | head -1)"
+
+# Search for errors in latest log
+grep -E '"level":"error"' "$(ls -t .tmp/logs/air-*.log | head -1)"
+
+# Search for a specific resource/namespace across all logs
+grep "my-resource-name" .tmp/logs/air-*.log
+
+# Search for reconciliation activity for a CRD
+grep '"controller":"model-cache"' "$(ls -t .tmp/logs/air-*.log | head -1)"
+
+# Find all error messages with context
+grep -B2 -A2 '"level":"error"' "$(ls -t .tmp/logs/air-*.log | head -1)"
+```
+
+Log entries are JSON formatted. Key fields:
+- `level`: info, error, debug
+- `controller`: which controller (model-cache, service, model, etc.)
+- `namespace`, `name`: the resource being reconciled
+- `condition`, `status`, `reason`: status updates
+
 ## Environment Switching
 
 Switch between Kind (local) and GPU (vcluster) environments. The current ENV is persisted to `.tmp/current-env` so it's shared across terminals (e.g., operator terminal and agent terminal).
@@ -85,25 +115,30 @@ Chainsaw creates unique namespaces like `chainsaw-<adjective>-<noun>` for each t
 
 **4. Correlate with operator logs:**
 
-The operator logs to `.tmp/air.log` when running via `mise exec -- make watch`:
+The operator logs to timestamped files in `.tmp/logs/` when running via `mise exec -- make watch`:
 ```bash
+# Get the latest log file
+LOG=$(ls -t .tmp/logs/air-*.log | head -1)
+
 # Search for errors related to a specific test namespace
-grep "chainsaw-profound-cowbird" .tmp/air.log
+grep "chainsaw-profound-cowbird" "$LOG"
 
 # Search for all chainsaw-related errors
-grep "chainsaw-" .tmp/air.log | grep -iE "(error|failed)"
+grep "chainsaw-" "$LOG" | grep -iE "(error|failed)"
 
 # View recent operator log entries
-tail -100 .tmp/air.log
+tail -100 "$LOG"
 ```
 
 **5. Common failure patterns:**
 ```bash
+LOG=$(ls -t .tmp/logs/air-*.log | head -1)
+
 # General errors in operator logs
-grep -E '"level":"error"' .tmp/air.log
+grep -E '"level":"error"' "$LOG"
 
 # Reconciliation failures
-grep -E '(error|failed|Error|Failed)' .tmp/air.log
+grep -E '(error|failed|Error|Failed)' "$LOG"
 ```
 
 **Report structure:** Tests are in `.tests[]` array. Each test has `name`, `basePath`, and `steps[]`. Failures are in `.steps[].operations[].failure.error`. The error message contains the full resource path including namespace.

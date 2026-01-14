@@ -91,6 +91,42 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
 	esac
 
+.PHONY: setup-kind
+setup-kind: manifests ## Create kind cluster with all dependencies for local development.
+	@echo "=== Setting up kind cluster for local development ==="
+	@# Create cluster if it doesn't exist
+	@if ! kind get clusters 2>/dev/null | grep -q "^aim-engine$$"; then \
+		echo "Creating kind cluster 'aim-engine'..."; \
+		kind create cluster --config hack/kind/config.yaml; \
+	else \
+		echo "Kind cluster 'aim-engine' already exists."; \
+	fi
+	@# Switch to kind context
+	@kubectl config use-context kind-aim-engine
+	@# Create aim-system namespace (needed for cluster-scoped resources)
+	@echo "Creating aim-system namespace..."
+	@kubectl create namespace aim-system --dry-run=client -o yaml | kubectl apply -f -
+	@# Install core dependencies (cert-manager, kgateway, kserve)
+	@echo "Installing core dependencies..."
+	@helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
+	@# Install kind-specific dependencies (NFS provisioner)
+	@echo "Installing kind-specific dependencies..."
+	@helmfile sync -f hack/kind/helmfile.yaml.gotmpl
+	@# Install CRDs
+	@echo "Installing CRDs..."
+	@$(MAKE) install
+	@# Set ENV to kind
+	@mkdir -p $(dir $(ENV_FILE))
+	@echo "kind" > $(ENV_FILE)
+	@echo ""
+	@echo "=== Kind cluster setup complete ==="
+	@echo "Run 'make watch' to start the operator with live reload."
+
+.PHONY: teardown-kind
+teardown-kind: ## Delete the kind cluster.
+	@echo "Deleting kind cluster 'aim-engine'..."
+	@kind delete cluster --name aim-engine || true
+
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
 	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
@@ -103,7 +139,8 @@ cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 # Chainsaw test configuration
 # Selector is applied automatically based on ENV (kind excludes infra-dependent tests)
 CHAINSAW_TEST_DIR := tests/e2e
-CHAINSAW_SELECTOR_KIND := requires!=longhorn
+# Kind environment excludes tests requiring infrastructure (longhorn) or reliable external network
+CHAINSAW_SELECTOR_KIND := requires notin (longhorn,external-network)
 CHAINSAW_REPORT_DIR := .tmp/chainsaw-reports
 CHAINSAW_ENV_SELECTOR := $(if $(filter kind,$(ENV)),--selector '$(CHAINSAW_SELECTOR_KIND)',)
 

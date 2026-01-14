@@ -4,10 +4,8 @@ tmp_dir = "tmp"
 [build]
 # Build command
 cmd = "go build -o ./.tmp/manager ./cmd/main.go"
-# Binary to run
-bin = "./.tmp/manager"
-# Full binary command with logging to file for AI agent consumption
-full_bin = "./.tmp/manager 2>&1 | tee .tmp/air.log"
+# Entrypoint: wrapper script with log rotation (keeps 10 most recent in .tmp/logs/)
+entrypoint = ["./hack/run-manager.sh"]
 # Watch these extensions
 include_ext = ["go"]
 # Ignore these directories

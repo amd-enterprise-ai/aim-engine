@@ -3,6 +3,9 @@ apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
   name: basic-lifecycle-hf
+  labels:
+    # This test requires reliable network access to HuggingFace which may be slow in Kind
+    requires: external-network
 spec:
   steps:
     - name: Create model cache

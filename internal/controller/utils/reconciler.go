@@ -350,10 +350,10 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	var phaseErr error
 	if len(deleteErrs) > 0 {
 		phaseErr = InfrastructureError{Count: len(deleteErrs), Errors: deleteErrs}
-		cm.Set(ConditionTypeDependenciesReachable, metav1.ConditionFalse, ReasonDependenciesNotReachable, "Failed to delete resources", AsError())
+		cm.Set(ConditionTypeDependenciesReachable, metav1.ConditionFalse, ReasonDependenciesNotReachable, fmt.Sprintf("Failed to delete resources: %v", deleteErrs[0]), AsError())
 	} else if applyErr != nil {
 		phaseErr = InfrastructureError{Count: 1, Errors: []error{applyErr}}
-		cm.Set(ConditionTypeDependenciesReachable, metav1.ConditionFalse, ReasonDependenciesNotReachable, "Failed to apply resources", AsError())
+		cm.Set(ConditionTypeDependenciesReachable, metav1.ConditionFalse, ReasonDependenciesNotReachable, fmt.Sprintf("Failed to apply resources: %v", applyErr), AsError())
 	}
 
 	// === Phase 8: Update Conditions ===
