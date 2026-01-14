@@ -26,8 +26,14 @@ spec:
     - jsonPath: .status.status
       name: Status
       type: string
+    - jsonPath: .status.replicas
+      name: Replicas
+      type: string
     - jsonPath: .status.readyReplicas
-      name: Ready
+      name: ReplicasReady
+      type: string
+    - jsonPath: .status.storageSize
+      name: StorageSize
       type: string
     - jsonPath: .status.endpoint
       name: Endpoint
@@ -411,11 +417,6 @@ spec:
                 description: |-
                   Endpoint provides the connection information for accessing the KV cache.
                   Format depends on the backend type (e.g., "redis://service-name:6379" for Redis).
-                type: string
-              lastError:
-                description: |-
-                  LastError contains details about the most recent error encountered.
-                  This field is cleared when the error is resolved.
                 type: string
               observedGeneration:
                 format: int64

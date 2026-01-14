@@ -126,11 +126,6 @@ type AIMKVCacheStatus struct {
 	// This reflects the size specified in the PersistentVolumeClaim.
 	// +optional
 	StorageSize string `json:"storageSize,omitempty"`
-
-	// LastError contains details about the most recent error encountered.
-	// This field is cleared when the error is resolved.
-	// +optional
-	LastError string `json:"lastError,omitempty"`
 }
 
 func (m *AIMKVCache) GetStatus() *AIMKVCacheStatus {
@@ -154,7 +149,9 @@ func (s *AIMKVCacheStatus) SetConditions(conditions []metav1.Condition) {
 // +kubebuilder:resource:shortName=aimkvc,categories=aim;all
 // +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.kvCacheType`
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
-// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.readyReplicas`
+// +kubebuilder:printcolumn:name="Replicas",type=string,JSONPath=`.status.replicas`
+// +kubebuilder:printcolumn:name="ReplicasReady",type=string,JSONPath=`.status.readyReplicas`
+// +kubebuilder:printcolumn:name="StorageSize",type=string,JSONPath=`.status.storageSize`
 // +kubebuilder:printcolumn:name="Endpoint",type=string,JSONPath=`.status.endpoint`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

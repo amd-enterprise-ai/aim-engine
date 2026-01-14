@@ -91,6 +91,39 @@ func (result FetchResult) GetComponentHealth() []controllerutils.ComponentHealth
 	}
 }
 
+func (r *AIMKVCacheReconciler) DecorateStatus(
+	status *aimv1alpha1.AIMKVCacheStatus,
+	_ *controllerutils.ConditionManager,
+	obs Observation,
+) {
+	kvc := obs.kvCache
+
+	// Record that we've observed this generation
+	status.ObservedGeneration = obs.kvCache.Generation
+
+	// Set resource names
+	status.StatefulSetName, _ = r.GetStatefulSetName(kvc)
+	status.ServiceName, _ = r.GetServiceName(kvc)
+
+	// Set endpoint
+	if svcName, _ := r.GetServiceName(kvc); svcName != "" {
+		status.Endpoint = fmt.Sprintf("redis://%s.%s:6379", svcName, kvc.Namespace)
+	}
+
+	// Set replica info from StatefulSet
+	if obs.statefulSet.OK() && obs.statefulSet.Value != nil {
+		ss := obs.statefulSet.Value
+		if ss.Spec.Replicas != nil {
+			status.Replicas = *ss.Spec.Replicas
+		}
+		status.ReadyReplicas = ss.Status.ReadyReplicas
+	}
+
+	// Set storage size from spec
+	storageSize := r.getStorageSize(kvc)
+	status.StorageSize = storageSize.String()
+}
+
 type Observation struct {
 	FetchResult
 }
