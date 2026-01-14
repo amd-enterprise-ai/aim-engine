@@ -4,6 +4,4 @@ metadata:
   name: status-test
 spec:
   kvCacheType: redis
-  storage:
-    storageClassName: ($values.storageClass)
 

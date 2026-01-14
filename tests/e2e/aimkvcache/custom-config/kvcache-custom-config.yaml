@@ -10,6 +10,3 @@ spec:
     value: testpassword
   - name: REDIS_MAX_MEMORY
     value: 512mb
-  storage:
-    storageClassName: ($values.storageClass)
-
