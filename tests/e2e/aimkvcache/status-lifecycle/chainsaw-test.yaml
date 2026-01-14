@@ -1,0 +1,94 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: kvcache-status-lifecycle
+spec:
+  description: |
+    - Status progression (Pending → Progressing → Ready)
+  concurrent: true
+  timeouts:
+    assert: 120s
+  steps:
+  - name: Create KVCache to track status progression
+    try:
+    - apply:
+        file: kvcache-status-test.yaml
+
+  - name: Verify resources are created correctly with ownership
+    try:
+    - assert:
+        timeout: 20s
+        resource:
+          apiVersion: apps/v1
+          kind: StatefulSet
+          metadata:
+            labels:
+              aim.eai.amd.com/kvcache: status-test
+            ownerReferences:
+            - name: status-test
+              kind: AIMKVCache
+          spec:
+            replicas: 1
+            template:
+              spec:
+                containers:
+                - name: redis
+                  resources:
+                    requests:
+                      cpu: "1"
+                      memory: "1Gi"
+                    limits:
+                      cpu: "1"
+                      memory: "1Gi"
+    - assert:
+        timeout: 20s
+        resource:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            labels:
+              aim.eai.amd.com/kvcache: status-test
+            ownerReferences:
+            - name: status-test
+              kind: AIMKVCache
+          spec:
+            ports:
+            - port: 6379
+              name: redis
+
+  - name: Verify status becomes Progressing with component conditions
+    try:
+    - assert:
+        timeout: 30s
+        resource:
+          apiVersion: aim.eai.amd.com/v1alpha1
+          kind: AIMKVCache
+          metadata:
+            name: status-test
+          status:
+            (status == 'Progressing' || status == 'Ready'): true
+
+  - name: Verify status becomes Ready when pods are running
+    try:
+    - assert:
+        timeout: 180s
+        resource:
+          apiVersion: aim.eai.amd.com/v1alpha1
+          kind: AIMKVCache
+          metadata:
+            name: status-test
+          status:
+            status: Ready
+            (conditions[?type == 'Ready']):
+            - type: Ready
+              status: "True"
+              reason: Ready
+            (conditions[?type == 'StatefulSetReady']):
+            - type: StatefulSetReady
+              status: "True"
+              reason: Ready
+            (conditions[?type == 'ServiceReady']):
+            - type: ServiceReady
+              status: "True"
+              reason: Ready

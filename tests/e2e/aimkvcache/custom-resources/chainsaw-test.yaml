@@ -1,0 +1,89 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: kvcache-custom-resources
+spec:
+  description: |
+    - Custom resources and storage
+  concurrent: true
+  timeouts:
+    assert: 120s
+  steps:
+  - name: Create KVCache with custom resources and storage
+    try:
+    - apply:
+        file: kvcache-custom-resources.yaml
+    
+  - name: Verify StatefulSet has custom resource requirements
+    try:
+    - assert:
+        timeout: 15s
+        resource:
+          apiVersion: apps/v1
+          kind: StatefulSet
+          metadata:
+            labels:
+              aim.eai.amd.com/kvcache: custom-resources
+          spec:
+            template:
+              spec:
+                containers:
+                - name: redis
+                  resources:
+                    requests:
+                      cpu: "500m"
+                      memory: "512Mi"
+                    limits:
+                      cpu: "1500m"
+                      memory: "1536Mi"
+
+  - name: Verify StatefulSet has custom storage configuration
+    try:
+    - assert:
+        timeout: 15s
+        resource:
+          apiVersion: apps/v1
+          kind: StatefulSet
+          metadata:
+            labels:
+              aim.eai.amd.com/kvcache: custom-resources
+          spec:
+            volumeClaimTemplates:
+            - metadata:
+                name: redis-data
+              spec:
+                accessModes:
+                - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 5Gi
+
+  - name: Verify custom resources KVCache becomes Ready
+    try:
+    - assert:
+        timeout: 90s
+        resource:
+          apiVersion: aim.eai.amd.com/v1alpha1
+          kind: AIMKVCache
+          metadata:
+            name: custom-resources
+          status:
+            status: Ready
+
+  - name: Verify PVC is created with correct size
+    try:
+    - assert:
+        timeout: 15s
+        resource:
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            labels:
+              aim.eai.amd.com/kvcache: custom-resources
+          spec:
+            resources:
+              requests:
+                storage: 5Gi
+          status:
+            phase: Bound
