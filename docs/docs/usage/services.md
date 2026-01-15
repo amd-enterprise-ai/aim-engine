@@ -341,7 +341,7 @@ The `status` field shows the overall service state:
 | `observedGeneration` | Most recent generation observed by the controller |
 | `conditions` | Detailed conditions tracking different aspects of service lifecycle |
 | `resolvedRuntimeConfig` | Metadata about the runtime config that was resolved (name, namespace, scope, UID) |
-| `resolvedImage` | Metadata about the model image that was resolved (name, namespace, scope, UID) |
+| `resolvedModel` | Metadata about the model image that was resolved (name, namespace, scope, UID) |
 | `resolvedTemplate` | Metadata about the template that was selected (name, namespace, scope, UID) |
 | `routing` | Observed routing configuration including the rendered HTTP path |
 
@@ -357,7 +357,7 @@ Services track detailed conditions to help diagnose issues:
 **CacheReady**: Model caching status
 - `True`: Required caches are present or warmed as requested
 - `False`: Caches are not ready
-- Reasons: `CacheWarm`, `WaitingForCache`, `CacheWarming`, `CacheFailed`
+- Reasons: `CacheReady`, `WaitingForCache`, `CacheWarming`, `CacheFailed`
 
 **RuntimeReady**: KServe InferenceService status
 - `True`: The underlying KServe InferenceService is ready and serving traffic
@@ -398,7 +398,7 @@ status:
       message: "Model and template resolved successfully"
     - type: CacheReady
       status: "True"
-      reason: CacheWarm
+      reason: CacheReady
       message: "Model sources cached"
     - type: RuntimeReady
       status: "True"
@@ -417,7 +417,7 @@ status:
     namespace: ml-team
     scope: Namespace
     kind: aim.silogen.ai/v1alpha1/AIMRuntimeConfig
-  resolvedImage:
+  resolvedModel:
     name: meta-llama-3-8b
     namespace: ml-team
     scope: Namespace

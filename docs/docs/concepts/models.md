@@ -1,6 +1,6 @@
 # AIM Models
 
-AIM Model resources form a catalog that maps logical model identifiers to specific container images. This document explains the model resource types, discovery mechanism, and lifecycle.
+AIM Model resources form a catalog that maps model identifiers to specific container images. This document explains the model resource types, discovery mechanism, and lifecycle.
 
 ## Overview
 
@@ -74,26 +74,23 @@ Discovery is an automatic process that extracts metadata from container images a
 
 When discovery is enabled:
 
-1. **Job Creation**: The controller creates a Kubernetes Job in the appropriate namespace (operator namespace for cluster images, image namespace for namespace images)
+1. **Registry Inspection**: The controller directly queries the container registry
+   using the operator's network context and any configured imagePullSecrets
 
-2. **Image Inspection**: The job pulls the container image using credentials from the referenced runtime config and extracts:
+2. **Image Metadata Fetch**: Using go-containerregistry, the controller pulls
+   image metadata (labels) without downloading the full image
 
-    - Required model artifact sources (Hugging Face Hub references, etc.)
-    - GPU requirements and recommended deployment configurations
-    - Runtime metadata from container labels
-
-3. **Metadata Storage**: Extracted metadata is written to `status.discoveredMetadata`
+3. **Metadata Storage**: Extracted metadata is written to `status.imageMetadata`
 
 4. **Template Generation**: If `autoCreateTemplates: true`, the controller examines the image's recommended deployments and creates corresponding ServiceTemplate resources
 
-### Required Labels
+### Expected Labels
 
-AIM discovery expects container images to include specific labels. Official AIM container images include:
-
-- `org.amd.silogen.model.canonicalName`: Model identifier
-- `org.amd.silogen.model.deployments`: JSON array of recommended deployment configurations
-
-Missing required labels causes the `MetadataExtracted` condition to flip to `False` and marks the model resource `Failed`.
+AIM discovery looks for container image labels with either the new or legacy prefix:
+- `com.amd.aim.model.canonicalName` or `org.amd.silogen.model.canonicalName`
+- `com.amd.aim.model.deployments` or `org.amd.silogen.model.deployments`
+Images without these labels will have minimal metadata. If `autoCreateTemplates: true`
+but no `recommendedDeployments` are found, no templates are created.
 
 ## Lifecycle and Status
 
@@ -246,23 +243,13 @@ spec:
 
 ## Troubleshooting
 
-### Discovery Job Fails
+### Discovery Fails
 
-Check the job logs:
-
-```bash
-# For cluster images
-kubectl -n aim-system logs -l job-name=<image-name>-discovery
-
-# For namespace images
-kubectl -n <namespace> logs -l job-name=<image-name>-discovery
-```
-
-Common causes:
-
-- Missing or invalid imagePullSecrets
+Check the operator logs for registry access errors:
+kubectl -n aim-system logs -l app.kubernetes.io/name=aim-operator --tail=100 | grep -i "model-name"Common causes:
+- Missing or invalid imagePullSecrets (secrets must exist in operator namespace for cluster models)
 - Image doesn't exist or tag is invalid
-- Required labels missing from image
+- Network connectivity issues to the registry
 
 ### Templates Not Auto-Created
 
@@ -301,7 +288,7 @@ When a service uses `spec.model.image` directly (instead of `spec.model.ref`), A
 
 ### Creation Scope
 
-The runtime config's `spec.model.creationScope` field controls whether the auto-created model is cluster-scoped or namespace-scoped:
+The runtime config's `spec.model.creationScope` field controls whether the auto-created model is cluster-scoped or namespace-scoped. The default is namespace-scoped:
 
 ```yaml
 # In runtime config

@@ -9,7 +9,7 @@ Templates fulfill two roles:
 1. **Runtime Configuration**: Define optimization goals (latency vs throughput), numeric precision, and GPU requirements
 2. **Discovery Cache**: Store model artifact metadata to avoid repeated discovery operations
 
-The discovery cache function is critical. When a template is created, the operator inspects the container to determine which model artifacts must be downloaded. This information is stored in `status.modelSources[]` and reused by services and caching mechanisms.
+The discovery cache function is critical. When a template is created, the operator runs the container with dry-run argument and inspects the result to determine which model artifacts must be downloaded. This information is stored in `status.modelSources[]` and reused by services and caching mechanisms.
 
 ## Cluster vs Namespace Scope
 
@@ -83,7 +83,6 @@ spec:
 | `env` | Environment variables for model downloads (typically authentication tokens). |
 | `caching` | Caching configuration for namespace-scoped templates. When enabled, models are cached on startup. |
 
-## Discovery as Cache
 
 ### Discovery Process
 
@@ -193,7 +192,7 @@ Services can specify runtime overrides without creating explicit templates. The 
 
 When `AIMService.spec.overrides` is specified:
 
-1. **Base Template Resolution**: The controller resolves the base template using automatic selection or explicit `templateRef`
+1. **Base Template Resolution**: The controller resolves the base template using automatic selection or explicit `templateName`
 
 2. **Hash Computation**: A SHA256 hash is computed from the override structure (metric, precision, gpuSelector) to ensure deterministic naming
 
@@ -231,7 +230,7 @@ metadata:
 spec:
   model:
     ref: meta-llama-3-8b
-  templateRef: base-template
+  templateName: base-template
   overrides:
     metric: throughput
     precision: fp16
@@ -263,9 +262,9 @@ spec:
 | ----- | ---- | ----------- |
 | `observedGeneration` | int64 | Most recent generation observed |
 | `status` | enum | `Pending`, `Progressing`, `NotAvailable`, `Ready`, `Degraded`, `Failed` |
-| `conditions` | []Condition | Detailed conditions: `Discovered`, `CacheWarm`, `Ready`, `Progressing`, `Failure` |
+| `conditions` | []Condition | Detailed conditions: `Discovered`, `CacheReady`, `Ready`, `Progressing`, `Failure` |
 | `resolvedRuntimeConfig` | object | Metadata about the runtime config that was resolved (name, namespace, scope, UID) |
-| `resolvedImage` | object | Metadata about the model image that was resolved (name, namespace, scope, UID) |
+| `resolvedModel` | object | Metadata about the model image that was resolved (name, namespace, scope, UID) |
 | `modelSources` | []ModelSource | Discovered or static model artifacts with URIs and sizes |
 | `profile` | JSON | Complete discovery result with engine arguments and metadata |
 
@@ -288,12 +287,14 @@ Services wait for templates to reach `Ready` before deploying.
 - `AwaitingDiscovery`: Discovery job has been created and is waiting to run
 - `DiscoveryFailed`: Discovery job failed (check job logs for details)
 
-**CacheWarm**: Reports caching status (namespace-scoped templates only). Reasons:
+**CacheReady**: Reports caching status (namespace-scoped templates only). Reasons:
 
-- `Warm`: All model sources have been cached successfully
-- `WarmRequested`: Caching has been enabled but not yet started
-- `Warming`: Cache warming is in progress
-- `WarmFailed`: Cache warming failed
+- `Ready`: All model sources have been cached successfully
+- `WaitingForCache`: Caching has been requested but cache is not yet ready
+- `CacheDegraded`: Cache is partially available but has issues
+- `CacheFailed`: Cache warming failed
+
+ **Note:** The underlying `AIMTemplateCache` resource uses different reasons (`Warm`, `Warming`, `Failed`) which are translated to the above reasons at the template level.
 
 **Ready**: Reports overall readiness
 
@@ -323,7 +324,7 @@ These auto-created templates:
 
 ## Template Selection
 
-When `AIMService.spec.templateRef` is omitted, the controller automatically selects a template:
+When `AIMService.spec.templateName` is omitted, the controller automatically selects a template:
 
 1. **Enumeration**: Find all templates referencing the model (either by `spec.model.ref` or matching the auto-created model from `spec.model.image`)
 2. **Filtering**: Exclude templates not in `Ready` status
