@@ -1,0 +1,10 @@
+# Service with 3 replicas - verify this propagates to InferenceService
+# Template is auto-selected from model's discovered templates
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-replicas-service
+spec:
+  model:
+    name: test-replicas-model
+  replicas: 3

@@ -1,0 +1,12 @@
+# Service using spec.model.image with caching enabled
+# Controller should find or create an AIMModel with this image
+# Template is auto-selected from model's discovered templates
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-gpu-cached
+spec:
+  model:
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+  caching:
+    mode: Always

@@ -41,6 +41,7 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimservice"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
@@ -207,6 +208,11 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&corev1.Event{},
 			handler.EnqueueRequestsFromMapFunc(r.findServicesForInferenceServiceEvent),
 		).
+		// Watch pods for InferenceServices to detect ImagePull errors, pending states, etc.
+		Watches(
+			&corev1.Pod{},
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForInferenceServicePod),
+		).
 		Named(serviceName).
 		Complete(r)
 }
@@ -271,7 +277,7 @@ func (r *AIMServiceReconciler) findServicesForClusterTemplate(ctx context.Contex
 }
 
 // findServicesForModel returns reconcile requests for all AIMServices
-// that reference the given model.
+// that reference the given model by name or by image.
 func (r *AIMServiceReconciler) findServicesForModel(ctx context.Context, obj client.Object) []reconcile.Request {
 	model, ok := obj.(*aimv1alpha1.AIMModel)
 	if !ok {
@@ -295,13 +301,23 @@ func (r *AIMServiceReconciler) findServicesForModel(ctx context.Context, obj cli
 					Namespace: svc.Namespace,
 				},
 			})
+			continue
+		}
+		// Check if service references this model by image
+		if svc.Spec.Model.Image != nil && *svc.Spec.Model.Image == model.Spec.Image {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      svc.Name,
+					Namespace: svc.Namespace,
+				},
+			})
 		}
 	}
 	return requests
 }
 
 // findServicesForClusterModel returns reconcile requests for all AIMServices
-// that reference the given cluster model.
+// that reference the given cluster model by name or by image.
 func (r *AIMServiceReconciler) findServicesForClusterModel(ctx context.Context, obj client.Object) []reconcile.Request {
 	model, ok := obj.(*aimv1alpha1.AIMClusterModel)
 	if !ok {
@@ -319,6 +335,16 @@ func (r *AIMServiceReconciler) findServicesForClusterModel(ctx context.Context, 
 	for _, svc := range services.Items {
 		// Check if service references this cluster model by name
 		if svc.Spec.Model.Name != nil && *svc.Spec.Model.Name == model.Name {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      svc.Name,
+					Namespace: svc.Namespace,
+				},
+			})
+			continue
+		}
+		// Check if service references this cluster model by image
+		if svc.Spec.Model.Image != nil && *svc.Spec.Model.Image == model.Spec.Image {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      svc.Name,
@@ -421,6 +447,47 @@ func (r *AIMServiceReconciler) findServicesForTemplateCache(ctx context.Context,
 		}
 	}
 	return requests
+}
+
+// findServicesForInferenceServicePod returns reconcile requests for AIMServices
+// when a pod belonging to one of their InferenceServices changes.
+// This enables detection of ImagePull errors, pending states, etc.
+func (r *AIMServiceReconciler) findServicesForInferenceServicePod(ctx context.Context, obj client.Object) []reconcile.Request {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return nil
+	}
+
+	// Check if this pod belongs to a KServe InferenceService
+	isvcName, hasLabel := pod.Labels[constants.LabelKServeInferenceService]
+	if !hasLabel {
+		return nil
+	}
+
+	// Find the InferenceService
+	isvc := &servingv1beta1.InferenceService{}
+	if err := r.Get(ctx, client.ObjectKey{
+		Namespace: pod.Namespace,
+		Name:      isvcName,
+	}, isvc); err != nil {
+		return nil
+	}
+
+	// Find owner AIMService from the InferenceService's owner references
+	for _, ownerRef := range isvc.OwnerReferences {
+		if ownerRef.Kind == "AIMService" {
+			return []reconcile.Request{
+				{
+					NamespacedName: types.NamespacedName{
+						Name:      ownerRef.Name,
+						Namespace: pod.Namespace,
+					},
+				},
+			}
+		}
+	}
+
+	return nil
 }
 
 // findServicesForInferenceServiceEvent returns reconcile requests for AIMServices

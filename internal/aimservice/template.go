@@ -350,7 +350,7 @@ func generateDerivedTemplateName(baseTemplateName string, overrides *aimv1alpha1
 
 	// Construct: base-ovr-{parts}-{hash}
 	allParts := append([]string{baseTemplateName, "ovr"}, nameParts...)
-	name, err := utils.GenerateDerivedNameWithHashLength(allParts, 4, hashInputs...)
+	name, err := utils.GenerateDerivedName(allParts, utils.WithHashSource(hashInputs...), utils.WithHashLength(4))
 	if err != nil {
 		// Fall back to base name if generation fails (shouldn't happen with valid inputs)
 		return baseTemplateName

@@ -25,6 +25,7 @@ package aimservice
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
@@ -69,6 +70,7 @@ type ServiceFetchResult struct {
 	// Existing downstream resources
 	inferenceService       controllerutils.FetchResult[*servingv1beta1.InferenceService]
 	inferenceServiceEvents controllerutils.FetchResult[*corev1.EventList]
+	inferenceServicePods   *controllerutils.FetchResult[*corev1.PodList]
 	httpRoute              controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
 	templateCache          controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]
 	pvc                    controllerutils.FetchResult[*corev1.PersistentVolumeClaim]
@@ -102,9 +104,17 @@ func (r *ServiceReconciler) FetchRemoteState(
 	// 1. Fetch existing InferenceService first (gates other fetches)
 	result.inferenceService = fetchInferenceService(ctx, c, service)
 
-	// 1b. Fetch events for InferenceService to detect configuration errors like ServerlessModeRejected
+	// 1b. Fetch events and pods for InferenceService to detect configuration errors
 	if result.inferenceService.OK() && result.inferenceService.Value != nil {
 		result.inferenceServiceEvents = fetchInferenceServiceEvents(ctx, c, result.inferenceService.Value)
+
+		// Fetch predictor pods to detect ImagePull errors, pending states, etc.
+		isvc := result.inferenceService.Value
+		podsFetchResult := controllerutils.FetchList(ctx, c, &corev1.PodList{},
+			client.InNamespace(isvc.Namespace),
+			client.MatchingLabels{constants.LabelKServeInferenceService: isvc.Name},
+		)
+		result.inferenceServicePods = &podsFetchResult
 	}
 
 	// 2. Fetch HTTPRoute if routing might be enabled (we own this, always check)
@@ -118,8 +128,15 @@ func (r *ServiceReconciler) FetchRemoteState(
 		result.modelCaches = fetchModelCaches(ctx, c, service.Namespace)
 	}
 
-	// 5. Fetch PVC if not using template cache
-	if !result.templateCache.OK() || result.templateCache.Value == nil {
+	// 5. Fetch service PVC when needed:
+	// - When caching is Never: always need the service's temp PVC for downloads
+	// - When caching is Auto: need PVC as fallback if template cache is not ready
+	// - When caching is Always: don't need service PVC (use template cache)
+	cachingMode := service.Spec.GetCachingMode()
+	needsServicePVC := cachingMode == aimv1alpha1.CachingModeNever ||
+		(cachingMode == aimv1alpha1.CachingModeAuto && (result.templateCache.Value == nil || result.templateCache.Value.Status.Status != constants.AIMStatusReady))
+
+	if needsServicePVC {
 		result.pvc = fetchServicePVC(ctx, c, service)
 	}
 
@@ -147,7 +164,7 @@ func (r *ServiceReconciler) FetchRemoteState(
 // ServiceObservation because model health depends on derived state (needsModelCreation)
 // computed in ComposeState. The template/isvc/cache health helpers remain on ServiceFetchResult
 // and are accessible via embedding.
-func (obs ServiceObservation) GetComponentHealth() []controllerutils.ComponentHealth {
+func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset kubernetes.Interface) []controllerutils.ComponentHealth {
 	var health []controllerutils.ComponentHealth
 
 	// Model health (on ServiceObservation - needs needsModelCreation)
@@ -172,6 +189,13 @@ func (obs ServiceObservation) GetComponentHealth() []controllerutils.ComponentHe
 	// InferenceService health (downstream)
 	if obs.inferenceService.Value != nil || obs.inferenceService.Error != nil {
 		health = append(health, obs.getInferenceServiceHealth())
+	}
+
+	// InferenceService pod health (downstream) - for ImagePull errors, pending states, etc.
+	if obs.inferenceServicePods != nil {
+		health = append(health, obs.inferenceServicePods.ToComponentHealthWithContext(
+			ctx, clientset, "InferenceServicePods", controllerutils.GetPodsHealth,
+		))
 	}
 
 	// Cache health (if caching is enabled)
@@ -394,13 +418,23 @@ func (f ServiceFetchResult) getInferenceServiceHealth() controllerutils.Componen
 
 	isvc := f.inferenceService.Value
 
-	// Check for fatal configuration errors in events (e.g., ServerlessModeRejected)
+	// Check for fatal configuration errors in events (e.g., ServerlessModeRejected, InternalError)
 	if f.inferenceServiceEvents.OK() && f.inferenceServiceEvents.Value != nil {
 		for _, event := range f.inferenceServiceEvents.Value.Items {
 			if event.Reason == "ServerlessModeRejected" {
 				health.State = constants.AIMStatusFailed
 				health.Reason = "ServerlessModeRejected"
 				health.Message = "Knative is not available. Configure KServe to use RawDeployment mode."
+				return health
+			}
+			if event.Reason == "InternalError" && event.Type == "Warning" {
+				// Skip transient conflict errors - KServe will retry these automatically
+				if isTransientKServeError(event.Message) {
+					continue
+				}
+				health.State = constants.AIMStatusFailed
+				health.Reason = "InternalError"
+				health.Message = event.Message
 				return health
 			}
 		}
@@ -426,6 +460,20 @@ func (f ServiceFetchResult) getInferenceServiceHealth() controllerutils.Componen
 	health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
 	health.Message = "InferenceService is not ready"
 	return health
+}
+
+// isTransientKServeError checks if a KServe error message indicates a transient condition
+// that will be automatically retried. These should not cause AIMService to fail.
+func isTransientKServeError(message string) bool {
+	// Conflict errors from optimistic locking during status updates
+	// Example: "Operation cannot be fulfilled on inferenceservices.serving.kserve.io: the object has been modified"
+	if strings.Contains(message, "the object has been modified") {
+		return true
+	}
+	if strings.Contains(message, "Operation cannot be fulfilled") {
+		return true
+	}
+	return false
 }
 
 func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {

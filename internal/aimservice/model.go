@@ -375,5 +375,5 @@ func GenerateModelName(imageURI string) (string, error) {
 	}
 
 	// Generate name from image name and tag with hash for uniqueness
-	return utils.GenerateDerivedName([]string{parts.Name, parts.Tag}, imageURI)
+	return utils.GenerateDerivedName([]string{parts.Name, parts.Tag}, utils.WithHashSource(imageURI))
 }

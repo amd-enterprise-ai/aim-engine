@@ -246,9 +246,7 @@ func (r *TemplateCacheReconciler) PlanResources(
 		modelCacheName, _ := utils.GenerateDerivedName([]string{nameWithoutDots},
 			// Include all the fields that can impact the model cache uniqueness
 			// TODO verify for any side effects
-			cache.SourceURI,
-			tc.Spec.Env,
-			tc.Spec.StorageClassName,
+			utils.WithHashSource(cache.SourceURI, tc.Spec.Env, tc.Spec.StorageClassName),
 		)
 		// sanitizedName := utils.MakeRFC1123Compliant(nameWithoutDots)
 

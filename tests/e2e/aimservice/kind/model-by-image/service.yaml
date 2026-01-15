@@ -1,0 +1,11 @@
+# Service using spec.model.image instead of spec.model.name
+# Controller should find or create an AIMModel with this image
+# Template is auto-selected from model's discovered templates
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-image-service
+spec:
+  model:
+    image: ghcr.io/silogen/aim-dummy:0.1.8
+  replicas: 1

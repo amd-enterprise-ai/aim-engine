@@ -32,6 +32,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -410,17 +411,21 @@ func GetPodsHealth(ctx context.Context, clientset kubernetes.Interface, podList 
 	}
 
 	if hasRunningOrSucceeded {
-		// No errors = Ready state (derived automatically)
-		return ComponentHealth{}
+		return ComponentHealth{
+			State:   constants.AIMStatusReady,
+			Reason:  "PodsReady",
+			Message: "Pods are running",
+		}
 	}
 
 	// Distinguish between Pending (waiting for resources) and Progressing (actively working)
 	if hasPending {
-		// Pods are pending - waiting for scheduling, image pull, volume mount, etc.
+		// Pods are pending - analyze events to determine if waiting (Pending) or actively working (Progressing)
+		state, reason, message := getPendingPodDetails(ctx, clientset, podList)
 		return ComponentHealth{
-			State:   constants.AIMStatusPending,
-			Reason:  "PodsPending",
-			Message: "Pods are pending",
+			State:   state,
+			Reason:  reason,
+			Message: message,
 		}
 	}
 
@@ -430,6 +435,87 @@ func GetPodsHealth(ctx context.Context, clientset kubernetes.Interface, podList 
 		Reason:  "PodsProgressing",
 		Message: "Pods are progressing",
 	}
+}
+
+// pendingPodEventReasons are the event reasons that explain why a pod is pending (waiting for external resources).
+// These result in Pending state.
+var pendingPodEventReasons = []string{
+	"FailedScheduling",       // Pod can't be scheduled (insufficient resources, affinity, taints)
+	"FailedMount",            // Volume mount failed
+	"FailedAttachVolume",     // Volume attachment failed
+	"FailedCreatePodSandBox", // Network/sandbox creation failed
+}
+
+// progressingPodEventReasons are the event reasons that indicate active work in progress.
+// These result in Progressing state instead of Pending.
+var progressingPodEventReasons = []string{
+	"Pulling", // Image is being pulled
+}
+
+// getPendingPodDetails fetches events for pending pods to provide more specific status information.
+// Returns:
+// - state: Pending (waiting for external resources) or Progressing (actively working)
+// - reason: Event reason or default "PodsPending"
+// - message: Event message or default "Pods are pending"
+func getPendingPodDetails(ctx context.Context, clientset kubernetes.Interface, podList *corev1.PodList) (constants.AIMStatus, string, string) {
+	defaultState := constants.AIMStatusPending
+	defaultReason := "PodsPending"
+	defaultMessage := "Pods are pending"
+
+	if clientset == nil || podList == nil {
+		return defaultState, defaultReason, defaultMessage
+	}
+
+	// Find pending pods and check their events
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		if pod.Status.Phase != corev1.PodPending {
+			continue
+		}
+
+		// Fetch events for this pod
+		events, err := clientset.CoreV1().Events(pod.Namespace).List(ctx, metav1.ListOptions{
+			FieldSelector: fmt.Sprintf("involvedObject.name=%s,involvedObject.uid=%s", pod.Name, pod.UID),
+		})
+		if err != nil || events == nil || len(events.Items) == 0 {
+			continue
+		}
+
+		// Check for pending reasons first (external wait)
+		pendingEvent := findLatestEventByReasons(events.Items, pendingPodEventReasons)
+		if pendingEvent != nil {
+			return constants.AIMStatusPending, pendingEvent.Reason, pendingEvent.Message
+		}
+
+		// Check for progressing reasons (active work)
+		progressingEvent := findLatestEventByReasons(events.Items, progressingPodEventReasons)
+		if progressingEvent != nil {
+			return constants.AIMStatusProgressing, progressingEvent.Reason, progressingEvent.Message
+		}
+	}
+
+	return defaultState, defaultReason, defaultMessage
+}
+
+// findLatestEventByReasons finds the most recent event matching any of the given reasons.
+// Returns the latest matching event, or nil if no match found.
+func findLatestEventByReasons(events []corev1.Event, reasons []string) *corev1.Event {
+	reasonSet := make(map[string]bool, len(reasons))
+	for _, r := range reasons {
+		reasonSet[r] = true
+	}
+
+	var latestEvent *corev1.Event
+	for i := range events {
+		event := &events[i]
+		if !reasonSet[event.Reason] {
+			continue
+		}
+		if latestEvent == nil || event.LastTimestamp.After(latestEvent.LastTimestamp.Time) {
+			latestEvent = event
+		}
+	}
+	return latestEvent
 }
 
 func GetJobHealth(job *batchv1.Job) ComponentHealth {

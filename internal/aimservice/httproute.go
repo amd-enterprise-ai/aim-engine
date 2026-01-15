@@ -49,7 +49,7 @@ const (
 
 // GenerateHTTPRouteName creates a deterministic name for the HTTPRoute.
 func GenerateHTTPRouteName(serviceName, namespace string) (string, error) {
-	return utils.GenerateDerivedName([]string{serviceName}, namespace)
+	return utils.GenerateDerivedName([]string{serviceName}, utils.WithHashSource(namespace))
 }
 
 // fetchHTTPRoute fetches the existing HTTPRoute for the service.

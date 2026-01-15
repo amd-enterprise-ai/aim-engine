@@ -1,0 +1,11 @@
+# Service referencing a template that doesn't exist
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-missing-tpl-service
+spec:
+  model:
+    name: test-missing-tpl-model
+  template:
+    name: nonexistent-template
+  replicas: 1

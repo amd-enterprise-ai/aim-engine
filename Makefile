@@ -115,6 +115,10 @@ setup-kind: manifests ## Create kind cluster with all dependencies for local dev
 	@# Install CRDs
 	@echo "Installing CRDs..."
 	@$(MAKE) install
+	@# Pre-load test images for faster e2e tests
+	@echo "Pre-loading test images..."
+	@docker pull ghcr.io/silogen/aim-dummy:0.1.8 2>/dev/null || true
+	@kind load docker-image ghcr.io/silogen/aim-dummy:0.1.8 --name aim-engine 2>/dev/null || true
 	@# Set ENV to kind
 	@mkdir -p $(dir $(ENV_FILE))
 	@echo "kind" > $(ENV_FILE)
@@ -143,12 +147,15 @@ CHAINSAW_TEST_DIR := tests/e2e
 CHAINSAW_SELECTOR_KIND := requires notin (longhorn,external-network)
 CHAINSAW_REPORT_DIR := .tmp/chainsaw-reports
 CHAINSAW_ENV_SELECTOR := $(if $(filter kind,$(ENV)),--selector '$(CHAINSAW_SELECTOR_KIND)',)
+# Kind environment uses lower parallelism due to limited node resources (16Gi per node)
+CHAINSAW_KIND_PARALLEL := $(if $(filter kind,$(ENV)),--parallel 4,)
 
 .PHONY: test-chainsaw
 test-chainsaw: ## Run chainsaw e2e tests (selector based on ENV). Pass CHAINSAW_ARGS for additional options.
 	@mkdir -p $(CHAINSAW_REPORT_DIR)
 	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test --test-dir $(CHAINSAW_TEST_DIR) \
 		$(CHAINSAW_ENV_SELECTOR) \
+		$(CHAINSAW_KIND_PARALLEL) \
 		--report-format JSON --report-name chainsaw-report --report-path $(CHAINSAW_REPORT_DIR) \
 		$(CHAINSAW_ARGS)
 
@@ -163,6 +170,29 @@ lint-fix: ## Run golangci-lint linter and perform fixes
 .PHONY: lint-config
 lint-config: ## Verify golangci-lint linter configuration
 	golangci-lint config verify
+
+##@ vCluster Management
+
+# vCluster naming convention: aim-{username}-dev
+VCLUSTER_NAME := aim-$(shell whoami)-dev
+
+.PHONY: vcluster-up
+vcluster-up: ## Create personal vcluster, install dependencies, and connect.
+	@echo "Creating vcluster '$(VCLUSTER_NAME)'..."
+	vcluster create $(VCLUSTER_NAME) --namespace $(VCLUSTER_NAME) -f hack/dependencies/vcluster.yaml
+	@echo "Installing dependencies..."
+	helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
+	@echo "vCluster '$(VCLUSTER_NAME)' ready."
+
+.PHONY: vcluster-down
+vcluster-down: ## Delete personal vcluster.
+	@echo "Deleting vcluster '$(VCLUSTER_NAME)'..."
+	vcluster delete $(VCLUSTER_NAME) --namespace $(VCLUSTER_NAME)
+
+.PHONY: vcluster-connect
+vcluster-connect: ## Connect to personal vcluster and switch context.
+	@echo "Connecting to vcluster '$(VCLUSTER_NAME)'..."
+	vcluster connect $(VCLUSTER_NAME) --namespace $(VCLUSTER_NAME)
 
 ##@ Environment Switching
 
@@ -195,7 +225,7 @@ run-debug: manifests generate fmt vet ## Run a controller with debug logging ena
 	go run ./cmd/main.go --zap-log-level=debug
 
 .PHONY: watch
-watch: manifests generate ## Run controller with live reload on file changes.
+watch: manifests generate install ## Run controller with live reload on file changes.
 	air
 
 .PHONY: wait-ready

@@ -23,6 +23,7 @@
 package aimservice
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -354,7 +355,7 @@ func TestGetComponentHealth_ModelHealth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			health := tt.obs.GetComponentHealth()
+			health := tt.obs.GetComponentHealth(context.Background(), nil)
 
 			// Find model health
 			var modelHealth *controllerutils.ComponentHealth
@@ -500,7 +501,7 @@ func TestGetComponentHealth_CacheHealth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			health := tt.obs.GetComponentHealth()
+			health := tt.obs.GetComponentHealth(context.Background(), nil)
 
 			// Find cache health
 			var cacheHealth *controllerutils.ComponentHealth

@@ -226,12 +226,13 @@ func TestIsReadyForInferenceService(t *testing.T) {
 
 func TestResolveResources(t *testing.T) {
 	tests := []struct {
-		name         string
-		service      *aimv1alpha1.AIMService
-		templateSpec *aimv1alpha1.AIMServiceTemplateSpec
-		gpuCount     int64
-		expectGPU    bool
-		expectMemory string
+		name           string
+		service        *aimv1alpha1.AIMService
+		templateSpec   *aimv1alpha1.AIMServiceTemplateSpec
+		gpuCount       int64 // Template profile GPU count
+		expectGPU      bool
+		expectGPUCount int64  // Expected final GPU count (defaults to gpuCount if 0)
+		expectMemory   string
 	}{
 		{
 			name:         "no GPU",
@@ -249,7 +250,7 @@ func TestResolveResources(t *testing.T) {
 			expectMemory: "128Gi", // 4 * 32Gi
 		},
 		{
-			name: "service overrides resources",
+			name: "service overrides memory resources",
 			service: func() *aimv1alpha1.AIMService {
 				svc := NewService("svc").Build()
 				svc.Spec.Resources = &corev1.ResourceRequirements{
@@ -263,6 +264,25 @@ func TestResolveResources(t *testing.T) {
 			gpuCount:     4,
 			expectGPU:    true,
 			expectMemory: "64Gi", // Override
+		},
+		{
+			name: "service overrides GPU count",
+			service: func() *aimv1alpha1.AIMService {
+				svc := NewService("svc").Build()
+				svc.Spec.Resources = &corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceName(constants.DefaultGPUResourceName): resource.MustParse("8"),
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceName(constants.DefaultGPUResourceName): resource.MustParse("8"),
+					},
+				}
+				return svc
+			}(),
+			templateSpec:   nil,
+			gpuCount:       1, // Template says 1 GPU
+			expectGPU:      true,
+			expectGPUCount: 8, // Service overrides to 8 GPUs
 		},
 		{
 			name:    "template spec resources",
@@ -288,8 +308,12 @@ func TestResolveResources(t *testing.T) {
 
 			if tt.expectGPU {
 				gpuQty := result.Requests[corev1.ResourceName(constants.DefaultGPUResourceName)]
-				if gpuQty.Value() != tt.gpuCount {
-					t.Errorf("expected GPU count %d, got %d", tt.gpuCount, gpuQty.Value())
+				expectedGPU := tt.expectGPUCount
+				if expectedGPU == 0 {
+					expectedGPU = tt.gpuCount // Default to template GPU count
+				}
+				if gpuQty.Value() != expectedGPU {
+					t.Errorf("expected GPU count %d, got %d", expectedGPU, gpuQty.Value())
 				}
 			}
 

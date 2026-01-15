@@ -627,7 +627,7 @@ func TestPlanTemplateCache(t *testing.T) {
 			expectCache:    false,
 		},
 		{
-			name:         "creates cache when conditions met (auto mode)",
+			name:         "auto mode does not create cache (uses existing only)",
 			service:      NewService("svc").Build(), // Default is Auto
 			templateName: "template",
 			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
@@ -636,7 +636,7 @@ func TestPlanTemplateCache(t *testing.T) {
 				},
 			},
 			obs:         ServiceObservation{},
-			expectCache: true,
+			expectCache: false, // Auto mode uses existing caches but doesn't create new ones
 		},
 		{
 			name:         "creates cache when conditions met (always mode)",
@@ -671,7 +671,7 @@ func TestPlanTemplateCache(t *testing.T) {
 
 func TestPlanTemplateCache_Spec(t *testing.T) {
 	storageClass := testStorageClassName
-	service := NewService("my-svc").Build()
+	service := NewService("my-svc").WithCachingMode(aimv1alpha1.CachingModeAlways).Build()
 	service.Spec.Storage = &aimv1alpha1.AIMStorageConfig{
 		DefaultStorageClassName: &storageClass,
 	}

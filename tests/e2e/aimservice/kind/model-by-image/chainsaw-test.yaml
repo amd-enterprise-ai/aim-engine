@@ -1,0 +1,77 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Model by Image (Kind)
+#
+# This test validates that AIMService can reference a model by image URI
+# instead of by name. The controller should find or create an AIMModel
+# with the specified image, and auto-select a template from discovery.
+#
+# Uses: ghcr.io/silogen/aim-dummy:0.1.8 (lightweight test image)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-model-by-image
+spec:
+  description: Test AIMService with spec.model.image instead of spec.model.name
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create service with model.image
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify model is created and resolved
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-image-service
+              status:
+                resolvedModel:
+                  (name != ''): true
+                (conditions[?type == 'ModelReady']):
+                  - status: "True"
+
+    - name: Verify template is auto-selected and service starts
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-image-service
+              status:
+                resolvedTemplate:
+                  (name != ''): true
+                (conditions[?type == 'TemplateReady']):
+                  - status: "True"
+                status: Starting
+
+    - name: Verify InferenceService is created
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-image-service
+
+    - name: Verify service reaches Running status
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-image-service
+              status:
+                status: Running

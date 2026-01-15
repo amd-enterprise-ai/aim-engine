@@ -7,9 +7,9 @@ nodes:
   - role: control-plane
   - role: worker
     labels:
-      # AMD Instinct MI300X
-      amd.com/gpu.device-id: "0x74a1"
+      # AMD Instinct MI300X (device ID without 0x prefix, matching k8s-device-plugin format)
+      amd.com/gpu.device-id: "74a1"
   - role: worker
     labels:
-      # AMD Instinct MI350X
-      amd.com/gpu.device-id: "0x75a0"
+      # AMD Instinct MI350X (device ID without 0x prefix, matching k8s-device-plugin format)
+      amd.com/gpu.device-id: "75a0"

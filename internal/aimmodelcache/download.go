@@ -44,7 +44,7 @@ var downloadScript string
 var progressMonitorScript string
 
 func getDownloadJobName(mc *aimv1alpha1.AIMModelCache) string {
-	name, _ := utils.GenerateDerivedName([]string{mc.Name, "download"}, mc.UID)
+	name, _ := utils.GenerateDerivedName([]string{mc.Name, "download"}, utils.WithHashSource(mc.UID))
 	return name
 }
 

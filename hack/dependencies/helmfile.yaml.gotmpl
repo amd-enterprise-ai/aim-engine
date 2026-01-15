@@ -1,7 +1,5 @@
 ---
 repositories:
-  - name: rocm
-    url: https://rocm.github.io/gpu-operator
   - name: jetstack
     url: https://charts.jetstack.io
 
@@ -78,3 +76,9 @@ releases:
                 enableGatewayApi: false
           localmodel:
             enabled: false
+          inferenceService:
+            resource:
+              # Remove default limits - not efficient Kubernetes practice
+              # Let workloads set their own limits as needed
+              cpuLimit: ""
+              memoryLimit: ""

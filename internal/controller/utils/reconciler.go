@@ -599,8 +599,6 @@ type componentScanResult struct {
 	firstErrorComponent string
 	firstErrorReason    string
 	firstErrorMessage   string
-	readyReason         string
-	readyMessage        string
 }
 
 // scanComponentConditions scans all component Ready conditions and aggregates their status.
@@ -650,17 +648,23 @@ func deriveComponentStatus(condStatus metav1.ConditionStatus, componentName stri
 	case metav1.ConditionTrue:
 		return constants.AIMStatusReady
 	case metav1.ConditionFalse:
-		// For not-ready components, check if the original state is an error state.
-		// If so, preserve it (Failed/Degraded/NotAvailable are more specific than Pending/Progressing).
+		// For not-ready components, check if the original state should be preserved.
+		// Preserve specific states that indicate:
+		// - Error states (Failed/Degraded/NotAvailable): these are more specific than Pending/Progressing
+		// - Pending state: component is explicitly waiting for external resources (e.g., pod scheduling)
 		// Otherwise, derive from dependency type for correct semantics (Upstream→Pending, Downstream→Progressing).
-		if originalState, ok := componentStates[componentName]; ok && isErrorState(originalState) {
-			return originalState
+		if originalState, ok := componentStates[componentName]; ok {
+			if isErrorState(originalState) || originalState == constants.AIMStatusPending {
+				return originalState
+			}
 		}
 		return deriveStatusFromDependencyType(componentDepTypes[componentName])
 	case metav1.ConditionUnknown:
 		// Unknown status: use original if available and specific, otherwise derive from dependency type
-		if originalState, ok := componentStates[componentName]; ok && isErrorState(originalState) {
-			return originalState
+		if originalState, ok := componentStates[componentName]; ok {
+			if isErrorState(originalState) || originalState == constants.AIMStatusPending {
+				return originalState
+			}
 		}
 		// Fallback: upstream → Pending, downstream/unspecified → Progressing
 		if componentDepTypes[componentName] == DependencyTypeUpstream {
@@ -674,13 +678,7 @@ func deriveComponentStatus(condStatus metav1.ConditionStatus, componentName stri
 
 // processComponentStatus updates the scan result based on the component's condition and status.
 func processComponentStatus(cond metav1.Condition, componentName string, componentStatus constants.AIMStatus, result *componentScanResult) {
-	if componentStatus == constants.AIMStatusReady {
-		// Capture reason/message from ready components (last one wins, typically most specific)
-		if cond.Reason != "" {
-			result.readyReason = cond.Reason
-			result.readyMessage = cond.Message
-		}
-	} else {
+	if componentStatus != constants.AIMStatusReady {
 		result.allReady = false
 		// Track first component in actual error state (Failed, Degraded, NotAvailable).
 		// Normal progression states (Progressing, Pending) don't count as errors.
@@ -695,15 +693,10 @@ func processComponentStatus(cond metav1.Condition, componentName string, compone
 // setReadyConditionFromScan sets the Ready condition based on the scan results.
 func setReadyConditionFromScan(cm *ConditionManager, result componentScanResult, cats errorCategories) {
 	if result.allReady {
-		reason := result.readyReason
-		message := result.readyMessage
-		if reason == "" {
-			reason = ReasonAllComponentsReady
-		}
-		if message == "" {
-			message = MessageAllComponentsReady
-		}
-		cm.Set(ConditionTypeReady, metav1.ConditionTrue, reason, message, AsInfo())
+		// When all components are ready, use the standard aggregated reason/message.
+		// Don't inherit from individual components to avoid leaking implementation details
+		// (e.g., "PodsReady" / "Pods are running" from InferenceServicePodsReady).
+		cm.Set(ConditionTypeReady, metav1.ConditionTrue, ReasonAllComponentsReady, MessageAllComponentsReady, AsInfo())
 		return
 	}
 

@@ -35,7 +35,7 @@ import (
 )
 
 func getCachePvcName(mc *aimv1alpha1.AIMModelCache) string {
-	name, _ := utils.GenerateDerivedName([]string{mc.Name, "cache"}, mc.UID)
+	name, _ := utils.GenerateDerivedName([]string{mc.Name, "cache"}, utils.WithHashSource(mc.UID))
 	return name
 }
 

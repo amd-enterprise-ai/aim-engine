@@ -1,49 +1,44 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
 #
-# AIMService E2E Test: Auto Template Selection (Kind)
+# AIMService E2E Test: Caching Mode Never (Kind)
 #
-# This test validates that AIMService can automatically select a template
-# when none is explicitly specified, using the model's defaultServiceTemplate.
+# This test validates that AIMService with caching.mode: Never
+# does not use caching and proceeds directly to runtime creation.
 #
 # Uses: ghcr.io/silogen/aim-dummy:0.1.8 (lightweight test image)
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
-  name: aimservice-auto-template-selection
+  name: aimservice-caching-mode-never
 spec:
-  description: Test AIMService auto-selects template from model's defaultServiceTemplate
+  description: Test AIMService with caching.mode Never bypasses cache
   timeouts:
     assert: 180s
   steps:
-    - name: Create model with defaultServiceTemplate
+    - name: Create model
       try:
         - apply:
             file: model.yaml
 
-    - name: Create service template
-      try:
-        - apply:
-            file: template.yaml
-
-    - name: Wait for template discovery to complete
+    - name: Wait for model to be ready (discovery complete)
       try:
         - assert:
             timeout: 120s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMServiceTemplate
+              kind: AIMModel
               metadata:
-                name: test-auto-select-template
+                name: test-no-cache-model
               status:
                 status: Ready
 
-    - name: Create service without explicit template
+    - name: Create service with caching mode Never
       try:
         - apply:
             file: service.yaml
 
-    - name: Verify service auto-selects the template
+    - name: Verify service resolves and starts without cache
       try:
         - assert:
             timeout: 60s
@@ -51,28 +46,28 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMService
               metadata:
-                name: test-auto-select-service
+                name: test-no-cache-service
               status:
                 resolvedModel:
-                  name: test-auto-select-model
+                  name: test-no-cache-model
                 resolvedTemplate:
-                  name: test-auto-select-template
+                  (name != ''): true
                 (conditions[?type == 'ModelReady']):
                   - status: "True"
                 (conditions[?type == 'TemplateReady']):
                   - status: "True"
+                status: Starting
 
-    - name: Verify service starts
+    - name: Verify InferenceService is created
       try:
         - assert:
-            timeout: 60s
+            timeout: 120s
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMService
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
               metadata:
-                name: test-auto-select-service
-              status:
-                status: Starting
+                labels:
+                  aim.eai.amd.com/service: test-no-cache-service
 
     - name: Verify service reaches Running status
       try:
@@ -82,6 +77,6 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMService
               metadata:
-                name: test-auto-select-service
+                name: test-no-cache-service
               status:
                 status: Running

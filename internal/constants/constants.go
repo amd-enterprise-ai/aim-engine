@@ -226,12 +226,14 @@ const (
 	EnvVLLMEnableMetrics = "VLLM_ENABLE_METRICS"
 )
 
-// KServe annotation keys and values
+// KServe annotation and label keys
 const (
 	// AnnotationKServeAutoscalerClass is the annotation key for autoscaler class
 	AnnotationKServeAutoscalerClass = "serving.kserve.io/autoscalerClass"
 	// AutoscalerClassNone disables autoscaling
 	AutoscalerClassNone = "none"
+	// LabelKServeInferenceService is the label key used by KServe on predictor pods
+	LabelKServeInferenceService = "serving.kserve.io/inferenceservice"
 )
 
 // AIM annotation keys

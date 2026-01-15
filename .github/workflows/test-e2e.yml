@@ -13,6 +13,9 @@ jobs:
 
       - name: Setup mise
         uses: jdx/mise-action@v2
+        env:
+          # Skip mise.local.toml which contains dev-only tools not needed in CI
+          MISE_LOCAL_CONFIG_ALLOWED: "0"
 
       - name: Cache Go build
         uses: actions/cache@v4
@@ -47,6 +50,9 @@ jobs:
 
       - name: Setup mise
         uses: jdx/mise-action@v2
+        env:
+          # Skip mise.local.toml which contains dev-only tools not needed in CI
+          MISE_LOCAL_CONFIG_ALLOWED: "0"
 
       - name: Cache Go build
         uses: actions/cache@v4

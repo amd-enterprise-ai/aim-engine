@@ -88,3 +88,15 @@ spec:
               metadata:
                 labels:
                   aim.eai.amd.com/service: test-service
+
+    - name: Verify service reaches Running status
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-service
+              status:
+                status: Running

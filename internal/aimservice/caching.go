@@ -50,7 +50,7 @@ const (
 
 // GenerateServicePVCName creates a deterministic name for the service's temporary PVC.
 func GenerateServicePVCName(serviceName, namespace string) (string, error) {
-	return utils.GenerateDerivedName([]string{serviceName, "temp-cache"}, namespace)
+	return utils.GenerateDerivedName([]string{serviceName, "temp-cache"}, utils.WithHashSource(namespace))
 }
 
 // planServicePVC creates a PVC for the service if no template cache is available.
@@ -154,10 +154,11 @@ func planServicePVC(
 
 // GenerateTemplateCacheName creates a deterministic name for a template cache.
 func GenerateTemplateCacheName(templateName, namespace string) (string, error) {
-	return utils.GenerateDerivedName([]string{templateName}, namespace)
+	return utils.GenerateDerivedName([]string{templateName}, utils.WithHashSource(namespace))
 }
 
-// planTemplateCache creates a template cache if caching is enabled and one doesn't exist.
+// planTemplateCache creates a template cache if caching mode is Always and one doesn't exist.
+// Auto mode uses existing caches but doesn't create new ones.
 func planTemplateCache(
 	service *aimv1alpha1.AIMService,
 	templateName string,
@@ -166,8 +167,8 @@ func planTemplateCache(
 ) client.Object {
 	cachingMode := service.Spec.GetCachingMode()
 
-	// Only create cache for Always or Auto mode
-	if cachingMode == aimv1alpha1.CachingModeNever {
+	// Only create cache for Always mode - Auto uses existing but doesn't create
+	if cachingMode != aimv1alpha1.CachingModeAlways {
 		return nil
 	}
 

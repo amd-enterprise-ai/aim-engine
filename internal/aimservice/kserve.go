@@ -46,8 +46,23 @@ import (
 
 // GenerateInferenceServiceName creates a deterministic name for the InferenceService.
 // KServe creates hostnames in format {isvc-name}-predictor-{namespace}, which must be ≤ 63 chars.
+// We calculate the maximum allowed InferenceService name length based on the namespace length
+// to ensure the final hostname stays within DNS limits.
 func GenerateInferenceServiceName(serviceName, namespace string) (string, error) {
-	return utils.GenerateDerivedName([]string{serviceName}, namespace)
+	// KServe hostname format: {isvc-name}-predictor-{namespace}.{domain}
+	// The first DNS label ({isvc-name}-predictor-{namespace}) must be ≤ 63 chars
+	// "-predictor-" is 11 characters
+	predictorSuffix := len("-predictor-") + len(namespace)
+	maxIsvcNameLength := utils.MaxKubernetesNameLength - predictorSuffix
+
+	// Ensure minimum length for the name
+	if maxIsvcNameLength < 10 {
+		return "", fmt.Errorf("namespace %q is too long (%d chars); InferenceService hostname would exceed 63 characters", namespace, len(namespace))
+	}
+
+	return utils.GenerateDerivedName([]string{serviceName},
+		utils.WithHashSource(namespace),
+		utils.WithMaxLength(maxIsvcNameLength))
 }
 
 // fetchInferenceService fetches the existing InferenceService for the service.
@@ -68,15 +83,29 @@ func fetchInferenceService(
 }
 
 // fetchInferenceServiceEvents fetches events for the InferenceService to detect configuration errors.
+// Events are filtered by UID to avoid matching stale events from previous objects with the same name.
 func fetchInferenceServiceEvents(
 	ctx context.Context,
 	c client.Client,
 	isvc *servingv1beta1.InferenceService,
 ) controllerutils.FetchResult[*corev1.EventList] {
-	return controllerutils.FetchList(ctx, c, &corev1.EventList{},
+	result := controllerutils.FetchList(ctx, c, &corev1.EventList{},
 		client.InNamespace(isvc.Namespace),
 		client.MatchingFields{"involvedObject.name": isvc.Name},
 	)
+
+	// Filter events by UID to only include events for the current object
+	if result.OK() && result.Value != nil {
+		filtered := make([]corev1.Event, 0, len(result.Value.Items))
+		for _, event := range result.Value.Items {
+			if event.InvolvedObject.UID == isvc.UID {
+				filtered = append(filtered, event)
+			}
+		}
+		result.Value.Items = filtered
+	}
+
+	return result
 }
 
 // planInferenceService creates the KServe InferenceService.
@@ -342,6 +371,11 @@ func buildMergedEnvVars(
 }
 
 // resolveResources builds resource requirements for the inference container.
+// Priority order (highest to lowest):
+// 1. Service spec resources (user override)
+// 2. Template spec resources
+// 3. Default GPU resources from profile
+// 4. Default CPU/memory based on GPU count
 func resolveResources(
 	service *aimv1alpha1.AIMService,
 	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
@@ -351,17 +385,7 @@ func resolveResources(
 	// Start with defaults based on GPU count
 	resources := defaultResourceRequirementsForGPU(gpuCount)
 
-	// Override with template spec resources
-	if templateSpec != nil && templateSpec.Resources != nil {
-		resources = mergeResourceRequirements(resources, templateSpec.Resources)
-	}
-
-	// Override with service spec resources
-	if service.Spec.Resources != nil {
-		resources = mergeResourceRequirements(resources, service.Spec.Resources)
-	}
-
-	// Ensure GPU resources are set
+	// Set default GPU resources from template profile
 	if gpuCount > 0 {
 		if resources.Requests == nil {
 			resources.Requests = corev1.ResourceList{}
@@ -372,6 +396,16 @@ func resolveResources(
 		qty := resource.NewQuantity(gpuCount, resource.DecimalSI)
 		resources.Requests[gpuResourceName] = *qty
 		resources.Limits[gpuResourceName] = *qty
+	}
+
+	// Override with template spec resources
+	if templateSpec != nil && templateSpec.Resources != nil {
+		resources = mergeResourceRequirements(resources, templateSpec.Resources)
+	}
+
+	// Override with service spec resources (highest priority - user can override GPU count)
+	if service.Spec.Resources != nil {
+		resources = mergeResourceRequirements(resources, service.Spec.Resources)
 	}
 
 	return resources

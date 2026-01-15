@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Model Not Found (Kind)
+#
+# This test validates error handling when the referenced model doesn't exist.
+# The service should fail with ModelNotFound reason.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-model-not-found
+spec:
+  description: Test AIMService fails when referenced model doesn't exist
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create service referencing non-existent model
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify service fails with ModelNotFound
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-missing-model-service
+              status:
+                status: Failed
+                (conditions[?type == 'ModelReady']):
+                  - status: "False"
+                    reason: ModelNotFound

@@ -2173,6 +2173,86 @@ func TestPipeline_UnspecifiedDependencyType_DefaultsToProgressing(t *testing.T) 
 	}
 }
 
+func TestPipeline_ExplicitPendingState_PreservedForDownstream(t *testing.T) {
+	// Test that explicit Pending state from a downstream component is preserved,
+	// rather than being overwritten to Progressing based on dependency type.
+	// This covers the case where pods are pending due to insufficient resources (e.g., GPU scheduling).
+	obs := testObservationCustomHealth{
+		health: []ComponentHealth{
+			{
+				Component:      "InferenceServicePods",
+				State:          constants.AIMStatusPending, // ← Explicit Pending state
+				Reason:         "PodsPending",
+				Message:        "Pods are pending - waiting for resources",
+				DependencyType: DependencyTypeDownstream, // Would normally become Progressing
+			},
+		},
+	}
+	cm := NewConditionManager([]metav1.Condition{})
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	_, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	// Verify status is Pending (explicit state preserved, not overwritten to Progressing)
+	if status.Status != string(constants.AIMStatusPending) {
+		t.Errorf("Status should be Pending when component explicitly reports Pending, got %s", status.Status)
+	}
+
+	// Verify the condition reason is preserved
+	podsReady := cm.Get("InferenceServicePodsReady")
+	if podsReady == nil {
+		t.Fatal("InferenceServicePodsReady condition should be set")
+	}
+	if podsReady.Reason != "PodsPending" {
+		t.Errorf("Condition reason should be PodsPending, got %s", podsReady.Reason)
+	}
+}
+
+func TestPipeline_ExplicitPendingState_OverridesDownstreamDefault(t *testing.T) {
+	// Test that Pending state takes precedence when mixed with Progressing downstream components
+	obs := testObservationCustomHealth{
+		health: []ComponentHealth{
+			{
+				Component:      "InferenceService",
+				State:          constants.AIMStatusProgressing, // Downstream, would be Progressing
+				Reason:         "CreatingRuntime",
+				Message:        "InferenceService is being created",
+				DependencyType: DependencyTypeDownstream,
+			},
+			{
+				Component:      "InferenceServicePods",
+				State:          constants.AIMStatusPending, // Explicit Pending
+				Reason:         "PodsPending",
+				Message:        "Pods are waiting for GPU resources",
+				DependencyType: DependencyTypeDownstream,
+			},
+		},
+	}
+	cm := NewConditionManager([]metav1.Condition{})
+	status := &testStatus{}
+
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	_, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	// Verify status is Pending (Pending is worse than Progressing in priority)
+	if status.Status != string(constants.AIMStatusPending) {
+		t.Errorf("Status should be Pending when any component is explicitly Pending, got %s", status.Status)
+	}
+}
+
 // ======================================================
 // RECONCILIATION PAUSE TESTS
 // ======================================================
