@@ -1,0 +1,100 @@
+name: publish-chart
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'api/**'
+      - 'internal/**'
+      - 'cmd/**'
+      - 'config/**'
+      - 'Makefile'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up mise
+        uses: jdx/mise-action@v2
+
+      - name: Generate Helm chart
+        run: make helm
+
+      - name: Validate chart with helm template
+        run: helm template aim-engine ./dist/chart > /dev/null
+
+      - name: Lint Helm chart
+        run: helm lint ./dist/chart
+
+      - name: Derive version info
+        id: ver
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "SHORT_SHA=${SHORT_SHA}" >> "$GITHUB_ENV"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update publish-main branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Create orphan branch or checkout existing
+          git checkout --orphan publish-main-temp || true
+          
+          # Clear the index
+          git rm -rf --cached . || true
+          
+          # Add only the chart directory
+          mkdir -p chart
+          cp -r dist/chart/* chart/
+          git add chart/
+          
+          # Also include CRDs for reference
+          mkdir -p crds
+          cp -r config/crd/bases/* crds/ 2>/dev/null || true
+          git add crds/ || true
+          
+          # Create a README for the branch
+          cat > README.md << 'EOF'
+          # aim-engine Helm Chart
+          
+          This branch contains the auto-generated Helm chart for aim-engine.
+          
+          ## Usage
+          
+          ```bash
+          # Clone this branch
+          git clone -b publish-main https://github.com/${{ github.repository }}.git aim-engine-chart
+          cd aim-engine-chart
+          
+          # Render templates
+          helm template my-release ./chart
+          
+          # Install
+          helm install my-release ./chart --namespace aim-engine-system --create-namespace
+          ```
+          
+          ## Source
+          
+          Generated from commit: ${{ github.sha }}
+          EOF
+          git add README.md
+          
+          # Commit
+          git commit -m "Publish chart from ${GITHUB_SHA::7}" --allow-empty
+          
+          # Force push to publish-main
+          git push origin HEAD:publish-main --force
+
+

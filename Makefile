@@ -154,6 +154,12 @@ build-installer: manifests generate ## Generate a consolidated YAML with CRDs an
 .PHONY: helm
 helm: build-installer ## Generate Helm chart from kustomize output.
 	kubebuilder edit --plugins=helm/v2-alpha
+	@# Fix hardcoded namespace in kubebuilder-generated templates (known limitation of helm/v2-alpha)
+	@find dist/chart/templates -name '*.yaml' -exec sed -i 's/namespace: aim-system/namespace: {{ .Release.Namespace }}/g' {} \;
+	@# Apply custom values.yaml if it exists (since dist/ is gitignored, we need persistent config)
+	@if [ -f config/helm/values.yaml ]; then cp config/helm/values.yaml dist/chart/values.yaml; fi
+	@echo "Helm chart generated at dist/chart/"
+	@echo "Run 'helm template <release-name> ./dist/chart' to render templates"
 
 ##@ Deployment
 
