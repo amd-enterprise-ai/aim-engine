@@ -1,0 +1,13 @@
+# Runtime config with routing enabled for integration testing
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: test-gpu-non-cached
+spec:
+  routing:
+    enabled: true
+    gatewayRef:
+      name: kserve-ingress-gateway
+      namespace: kgateway-system
+    pathTemplate: "/integration/gpu-non-cached/{.metadata.name}"
+    requestTimeout: "180s"

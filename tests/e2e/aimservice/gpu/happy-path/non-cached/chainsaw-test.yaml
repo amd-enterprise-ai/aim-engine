@@ -5,6 +5,7 @@
 # This test validates AIMService with caching.mode: Never on GPU infrastructure.
 # The service uses spec.model.image to reference the model directly.
 # Without caching, the model is pulled directly at runtime.
+# Also validates chat completions endpoint works correctly.
 #
 # Uses: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
 # Requires: GPU infrastructure
@@ -20,6 +21,11 @@ spec:
   timeouts:
     assert: 600s
   steps:
+    - name: Create runtime config with routing
+      try:
+        - apply:
+            file: runtime-config.yaml
+
     - name: Create service with caching disabled
       try:
         - apply:
@@ -89,3 +95,12 @@ spec:
                 name: test-gpu-non-cached
               status:
                 status: Running
+
+    - name: Verify chat completions endpoint works
+      try:
+        - script:
+            timeout: 2m
+            env:
+              - name: HTTP_BASE_PATH
+                value: /integration/gpu-non-cached/test-gpu-non-cached/v1
+            content: bash ../../_shared/validate-http.sh
