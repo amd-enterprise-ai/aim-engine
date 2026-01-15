@@ -48,7 +48,6 @@ AIM Engine automatically:
     - [Runtime Configuration](concepts/runtime-config.md) - Configure credentials and settings
 
 - **[Concepts](concepts/overview.md)**: Deep dive into AIM Engine architecture and internals
-    - [Overview](concepts/overview.md) - Overview of AIM Engine architecture
     - [Models](concepts/models.md) - Model catalog and discovery mechanism
     - [Templates](concepts/templates.md) - Runtime profiles and discovery
     - [Runtime Config](concepts/runtime-config.md) - Resolution algorithm and architecture
@@ -58,7 +57,7 @@ AIM Engine automatically:
 
 1. **Deploy a service**: Start with the [Services usage guide](usage/services.md) to deploy your first inference endpoint
 
-2. **Configure authentication**: Set up credentials for private registries using [Runtime Configuration](concepts/runtime-config.md)
+2. **Configure authentication**: Set up credentials as environment variables for private registries, S3, etc. using [Runtime Configuration](concepts/runtime-config.md)
 
 3. **Explore advanced features**: Learn about automatic template selection, model caching, and custom routing in the [Concepts documentation](concepts/overview.md)
 
@@ -73,4 +72,4 @@ AIM builds on Kubernetes and KServe to provide:
 
 ## Support
 
-For issues, questions, or contributions, please refer to the main project repository.
+For issues, questions, or contributions, please refer to the [project repository](https://github.com/amd-enterprise-ai/aim-engine).

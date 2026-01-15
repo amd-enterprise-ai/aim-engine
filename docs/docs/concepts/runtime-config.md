@@ -14,41 +14,40 @@ The AIM operator resolves runtime settings from two Custom Resource Definitions:
 When a workload references `runtimeConfigName: my-config`:
 
 1. The controller first looks for `AIMRuntimeConfig` named `my-config` in the workload's namespace
-2. If found, the namespace config is used **exclusively**
+2. If both namespace and cluster configs exist, they are **merged** (namespace values take precedence). Note also that any runtimeconfig embedded in AIMService takes precedence over namespaced runtimeconfig values.
 3. If not found, the controller falls back to `AIMClusterRuntimeConfig` named `my-config`
-4. The resolved configuration is published in the consumer's `status.effectiveRuntimeConfig`
+4. The resolved configuration is published in the consumer's `status.resolvedRuntimeConfig`
 
 When `runtimeConfigName` is omitted, the controller resolves a config named `default`. If this is not found, no error is raised. However, if a config that is not named `default` is specified, it must exist, otherwise an error is raised.
 
-## Effective Runtime Config Tracking
+## Resolved Runtime Config Tracking
 
-The resolved configuration is published in `status.effectiveRuntimeConfig` with:
+The resolved configuration is published in `status.resolvedRuntimeConfig` with:
 - Reference to the source object (namespace or cluster scope)
-- Hash of the spec for change detection
+- UID of the resolved config for identity tracking
 
 ### Namespace Config Status
 
 ```yaml
 status:
-  effectiveRuntimeConfig:
-    namespaceRef:
-      kind: AIMRuntimeConfig
-      namespace: ml-team
-      name: default
-      scope: Namespace
-    hash: 792403ad…
+  resolvedRuntimeConfig:
+    kind: AIMRuntimeConfig
+    name: default
+    namespace: ml-team
+    scope: Namespace
+    uid: abc123-def456-...
 ```
 
 ### Cluster Config Status
 
 ```yaml
 status:
-  effectiveRuntimeConfig:
-    clusterRef:
-      kind: AIMClusterRuntimeConfig
-      name: default
-      scope: Cluster
-    hash: 5f8a9b2c…
+  resolvedRuntimeConfig:
+    kind: AIMClusterRuntimeConfig
+    name: default
+    namespace: ""
+    scope: Cluster
+    uid: xyz123-uvw123-...
 ```
 
 Only one ref (namespace or cluster) is present, never both.
@@ -220,18 +219,17 @@ spec:
 
 Result:
 - Reconciliation fails
-- Workload reports `ConfigResolved=False` (or equivalent failure condition)
+- Workload enters `Failed` or `Degraded` state with reason `ConfigNotFound`
 - Reconciliation retries until the config appears
 
 ### Missing Default Config
 
 When the implicit `default` config doesn't exist:
 
-Result:
-- Controller emits event: `DefaultRuntimeConfigNotFound`
-- Reconciliation continues without overrides
-- Workloads relying on private registries fail later unless a namespace config supplies credentials
-
+- A `RuntimeConfigReady` condition is set to `True` with reason `DefaultConfigNotFound`
+- A Normal event is emitted on the first reconcile with reason `DefaultConfigNotFound`
+- Reconciliation continues without runtime config overrides
+- Workloads relying on private registries may fail later unless a namespace config supplies credentials
 This allows workloads without special requirements to proceed even when no default config exists.
 
 ## Label Propagation
@@ -321,7 +319,7 @@ The operator propagates these labels to the InferenceService, HTTPRoute, and any
 
 ## Operator Namespace
 
-The AIM controllers determine the operator namespace from the `AIM_OPERATOR_NAMESPACE` environment variable (default: `aim-system`).
+The AIM controllers determine the operator namespace from the `AIM_SYSTEM_NAMESPACE` environment variable (default: `aim-system`).
 
 Cluster-scoped workflows such as:
 - Cluster template discovery

@@ -13,7 +13,6 @@ During LLM inference, the model processes input tokens and generates attention k
 
 ## Architecture
 
-The KV cache implementation in Kaiwo consists of two key components:
 
 ```
 ┌─────────────────┐
@@ -59,10 +58,10 @@ The KV cache implementation in Kaiwo consists of two key components:
 ### Creation Patterns
 
 **Pattern 1: AIMService Creates KV Cache**
-When an `AIMService` specifies `kvCache.type` without a `name`, a new `AIMKVCache` resource is automatically created with the name `kvcache-{namespace}`.
+When an `AIMService` specifies `kvCache.type` a new `AIMKVCache` resource is automatically created. This kvcache can be used by other services but is garbage collected when the `AIMService` is deleted.
 
-**Pattern 2: Shared KV Cache**
-Multiple `AIMService` resources can reference the same `AIMKVCache` by specifying `kvCache.name`. This enables cache sharing across multiple inference endpoints.
+**Pattern 2: Manually created KV Cache**
+A manually created `AIMKVCache` can safely be referenced by multiple `AIMService` resources in the same namespace by specifying `kvCache.name`.
 
 ### Ownership
 
@@ -94,10 +93,6 @@ The `AIMKVCache` status provides comprehensive information about the cache state
 - `readyReplicas` - Number of replicas currently ready and serving
 - `storageSize` - Allocated storage capacity (e.g., `50Gi`)
 
-**Error Tracking**:
-- `lastError` - Most recent error message (cleared when resolved)
-- `conditions` - Detailed condition history for troubleshooting
-
 ## Storage Considerations
 
 ### Sizing
@@ -124,7 +119,7 @@ The KV cache uses Kubernetes `PersistentVolumeClaims` for durable storage. If no
 
 ### Redis
 
-Redis is the default and currently supported backend. It provides:
+Redis is the default and currently only supported backend. It provides:
 - High-performance in-memory caching with disk persistence
 - Mature, battle-tested reliability
 - Straightforward configuration
@@ -136,6 +131,37 @@ Redis is the default and currently supported backend. It provides:
 3. **Monitor storage**: Set up alerts for storage capacity
 4. **Use fast storage**: SSD-backed storage classes provide best performance
 5. **Plan for growth**: KV cache storage needs grow with traffic volume
+
+### Example
+
+```
+apiVersion: aim.silogen.ai/v1alpha1
+kind: AIMService
+metadata:
+  name: llama-with-custom-kvcache
+  namespace: default
+spec:
+  model:
+    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
+  kvCache:
+    name: llama-kvcache
+    type: redis
+    image: redis:latest
+    resources:
+      limits:
+        cpu: "0.8"
+        memory: 2Gi
+    lmCacheConfig: |
+      local_cpu: false
+      chunk_size: 100
+      max_local_cpu_size: 1.0
+      remote_url: "redis://{SERVICE_URL}"
+      remote_serde: "naive"
+    storage:
+      storageClassName: rwx-nfs
+```
+
+Note that {SERVICE_URL} placeholder will automatically be updated with the proper URL by the AIM Engine when the service starts.
 
 ## See Also
 

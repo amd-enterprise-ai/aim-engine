@@ -46,7 +46,7 @@ Note that a `Failed` AIMModelCache will retry the download periodically, causing
 
 ## Deletion Behavior
 
-AIM implements a cache cleanup process that preserves useful caches while cleaning up non-functioning ones.
+AIM implements a cache cleanup process that preserves useful caches while cleaning up non-functioning ones. Manually created AIMTemplateCaches and AIMModelCaches are never garbage collected.
 
 ### Cache handling when AIMService is deleted
 
@@ -84,10 +84,10 @@ Note that if an AIMService has caching enabled, a new AIMTemplateCache will be i
 
 When an `AIMModelCache` is deleted:
 
-1. The **PVC** containing downloaded model files is garbage-collected
+1. The **PVC** containing downloaded model files is marked for garbage-collection.
 2. Any running **download Job** is garbage-collected
 
-NOTE: Any AIMService running with this Model will keep the PVC mounted 
+NOTE: Any AIMService running with this Model will keep the PVC mounted
 
 ## Cache Reuse
 
@@ -96,8 +96,8 @@ NOTE: Any AIMService running with this Model will keep the PVC mounted
 Services automatically detect and use existing caches:
 
 1. Service resolves its template
-2. Controller looks for `AIMTemplateCache` matching the template
-3. If an Available cache exists, the service mounts its PVCs directly
+2. Controller looks for `AIMTemplateCache` matching the template. If `AIMTemplateCache` isn't available, the service waits until it is.
+3. PVCs from the AIMModelCaches linked in the AIMTemplateCache are mounted into the InferenceService.
 4. No re-download is needed
 
 ### Cross-Service Sharing
@@ -110,8 +110,52 @@ Multiple services can share the same cached models:
 ## Manual Cache Management
 
 * To manually make sure a model is available create an AIMModelCache for that model.
-* To make sure all models that belong to a AIMServiceTemplate or AIMClusterServiceTemplate is available, create an AIMTemplateCache in the namespace.
+* To make sure all models that belong to a AIMServiceTemplate or AIMClusterServiceTemplate is available, create an AIMTemplateCache with correctly set templateName in the namespace.
 * Manual cleanup is necessary for all `Available` AIMModelCaches.
+
+### AIMService with cache enabled
+
+```
+apiVersion: aim.silogen.ai/v1alpha1
+kind: AIMService
+metadata:
+  name: llama-chat
+  namespace: ml-team
+  labels:
+    project: conversational-ai
+spec:
+  model:
+    ref: meta-llama-3-8b
+  cacheModel: true
+```
+
+#### AIMTemplateCache to prepopulate the namespace with caches for a AIMServiceTemplate
+
+```
+apiVersion: aim.silogen.ai/v1alpha1
+kind: AIMTemplateCache
+metadata:
+  name: template-cache
+spec:
+  templateName: name-of-service-template
+```
+
+#### AIMModelCache that uses the kserve downloader with XET disabled
+
+```
+apiVersion: aim.silogen.ai/v1alpha1
+kind: AIMModelCache
+metadata:
+  name: kserve-smollm2-135mx
+spec:
+  modelDownloadImage: kserve/storage-initializer:v0.16.0
+  env:
+    - name: HF_HUB_DISABLE_XET
+      value: "1"
+  sourceUri: hf://HuggingFaceTB/SmolLM2-135Mx
+  size: 500M
+  storageClassName: rwx-nfs
+```
 
 ## Related Documentation
 
