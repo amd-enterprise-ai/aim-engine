@@ -172,6 +172,19 @@ func buildHTTPRoute(
 		},
 	}
 
+	// Build URL rewrite filter to strip the path prefix
+	// The backend expects requests at /v1/... but we match on a prefix like /namespace/service/...
+	rewriteType := gatewayapiv1.PrefixMatchHTTPPathModifier
+	urlRewriteFilter := gatewayapiv1.HTTPRouteFilter{
+		Type: gatewayapiv1.HTTPRouteFilterURLRewrite,
+		URLRewrite: &gatewayapiv1.HTTPURLRewriteFilter{
+			Path: &gatewayapiv1.HTTPPathModifier{
+				Type:            rewriteType,
+				ReplacePrefixMatch: ptr.To("/"),
+			},
+		},
+	}
+
 	// Build rule
 	rule := gatewayapiv1.HTTPRouteRule{
 		Matches: []gatewayapiv1.HTTPRouteMatch{
@@ -179,6 +192,7 @@ func buildHTTPRoute(
 				Path: &pathMatch,
 			},
 		},
+		Filters:     []gatewayapiv1.HTTPRouteFilter{urlRewriteFilter},
 		BackendRefs: []gatewayapiv1.HTTPBackendRef{backendRef},
 	}
 
