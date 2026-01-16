@@ -18,7 +18,7 @@ releases:
   - name: kgateway-crd
     namespace: kgateway-system
     chart: oci://cr.kgateway.dev/kgateway-dev/charts/kgateway-crds
-    version: v2.1.0-main
+    version: v2.1.2
     createNamespace: true
     wait: true
     timeout: 600
@@ -35,7 +35,7 @@ releases:
   - name: kgateway
     namespace: kgateway-system
     chart: oci://cr.kgateway.dev/kgateway-dev/charts/kgateway
-    version: v2.1.0-main
+    version: v2.1.2
     createNamespace: false
     wait: false
     disableValidation: true
@@ -46,6 +46,14 @@ releases:
     values:
       - agentgateway:
           enabled: true
+    hooks:
+      - events: ["postsync"]
+        showlogs: true
+        command: kubectl
+        args:
+          - apply
+          - -f
+          - gateway.yaml
 
   - name: kserve-crd
     namespace: kserve-system
@@ -76,9 +84,10 @@ releases:
                 enableGatewayApi: false
           localmodel:
             enabled: false
-          inferenceService:
-            resource:
-              # Remove default limits - not efficient Kubernetes practice
-              # Let workloads set their own limits as needed
-              cpuLimit: ""
-              memoryLimit: ""
+          # Remove default resource limits/requests for inference services
+          # Let workloads set their own resources as needed
+          # See: helm show values oci://ghcr.io/kserve/charts/kserve
+          inferenceservice:
+            resources:
+              limits: {}
+              requests: {}

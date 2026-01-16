@@ -78,7 +78,7 @@ func generateModelName(img RegistryImage) string {
 	name, _ := utils.GenerateDerivedName(
 		[]string{img.Repository, img.Tag},
 		utils.WithHashSource(img.Registry, img.Repository, img.Tag), // Hash inputs for determinism
-		utils.WithHashLength(6), // 6-char hash for collision avoidance
+		utils.WithHashLength(6),                                     // 6-char hash for collision avoidance
 	)
 	return name
 }

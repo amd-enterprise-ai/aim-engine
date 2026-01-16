@@ -197,6 +197,10 @@ func (t *AIMTemplateCache) GetStatus() *AIMTemplateCacheStatus {
 	return &t.Status
 }
 
+func (t *AIMTemplateCache) GetRuntimeConfigRef() RuntimeConfigRef {
+	return t.Spec.RuntimeConfigRef
+}
+
 func init() {
 	SchemeBuilder.Register(&AIMTemplateCache{}, &AIMTemplateCacheList{})
 }

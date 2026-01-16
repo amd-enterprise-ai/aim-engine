@@ -34,6 +34,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
@@ -344,6 +345,17 @@ func categorizeByReason(failureReason, failureMessage string) error {
 	}
 }
 
+// isPodReady checks if a pod is ready by examining its Ready condition.
+// A pod is ready when all its containers are ready (passing readiness probes).
+func isPodReady(pod *corev1.Pod) bool {
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
 func GetPodsHealth(ctx context.Context, clientset kubernetes.Interface, podList *corev1.PodList) ComponentHealth {
 	if podList == nil || len(podList.Items) == 0 {
 		return ComponentHealth{
@@ -394,27 +406,49 @@ func GetPodsHealth(ctx context.Context, clientset kubernetes.Interface, podList 
 		}
 	}
 
-	// Check for running or succeeded pods - both indicate healthy state
-	// For health monitoring, we care that pods are functioning, not completion
-	hasRunningOrSucceeded := false
+	// Check pod states - we need to distinguish between:
+	// - Ready: Pods are running AND passing readiness probes
+	// - Starting: Pods are running but not yet ready (initializing)
+	// - Pending: Pods are waiting for scheduling or resources
+	hasReady := false
+	hasRunningNotReady := false
 	hasPending := false
 
 	for i := range podList.Items {
 		pod := &podList.Items[i]
-		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodSucceeded {
-			hasRunningOrSucceeded = true
-			break
+		if pod.Status.Phase == corev1.PodSucceeded {
+			hasReady = true
+			continue
+		}
+		if pod.Status.Phase == corev1.PodRunning {
+			// Check if pod is actually ready (passing readiness probes)
+			if isPodReady(pod) {
+				hasReady = true
+			} else {
+				hasRunningNotReady = true
+			}
+			continue
 		}
 		if pod.Status.Phase == corev1.PodPending {
 			hasPending = true
 		}
 	}
 
-	if hasRunningOrSucceeded {
+	// Pods are ready when at least one is running AND ready
+	if hasReady {
 		return ComponentHealth{
 			State:   constants.AIMStatusReady,
 			Reason:  "PodsReady",
-			Message: "Pods are running",
+			Message: "Pods are ready",
+		}
+	}
+
+	// Pods are running but not yet ready (still initializing)
+	if hasRunningNotReady {
+		return ComponentHealth{
+			State:   constants.AIMStatusStarting,
+			Reason:  "PodsStarting",
+			Message: "Pods are running, waiting for readiness",
 		}
 	}
 
@@ -639,5 +673,53 @@ func GetPvcHealth(pvc *corev1.PersistentVolumeClaim) ComponentHealth {
 		State:   constants.AIMStatusProgressing,
 		Reason:  "PvcPending",
 		Message: "PVC is pending",
+	}
+}
+
+// GetHTTPRouteHealth evaluates the health of an HTTPRoute.
+// An HTTPRoute is ready when at least one parent has accepted it.
+func GetHTTPRouteHealth(route *gatewayapiv1.HTTPRoute) ComponentHealth {
+	if route == nil {
+		return ComponentHealth{
+			Errors: []error{
+				NewMissingDownstreamDependencyError("HTTPRouteNotFound", "HTTPRoute not found", nil),
+			},
+		}
+	}
+
+	// Check if any parent has accepted the route
+	for _, parent := range route.Status.Parents {
+		for _, cond := range parent.Conditions {
+			if cond.Type == "Accepted" {
+				if cond.Status == metav1.ConditionTrue {
+					return ComponentHealth{
+						State:   constants.AIMStatusReady,
+						Reason:  "HTTPRouteAccepted",
+						Message: "HTTPRoute is accepted by gateway",
+					}
+				}
+				// Route was rejected
+				return ComponentHealth{
+					Errors: []error{
+						NewInvalidSpecError(cond.Reason, fmt.Sprintf("HTTPRoute rejected: %s", cond.Message), nil),
+					},
+				}
+			}
+
+			if cond.Type == "ResolvedRefs" && cond.Status == metav1.ConditionFalse {
+				return ComponentHealth{
+					Errors: []error{
+						NewMissingDownstreamDependencyError(cond.Reason, fmt.Sprintf("HTTPRoute backend not resolved: %s", cond.Message), nil),
+					},
+				}
+			}
+		}
+	}
+
+	// No parents have processed the route yet
+	return ComponentHealth{
+		State:   constants.AIMStatusProgressing,
+		Reason:  "HTTPRoutePending",
+		Message: "HTTPRoute is waiting for gateway acceptance",
 	}
 }

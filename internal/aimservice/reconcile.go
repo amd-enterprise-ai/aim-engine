@@ -201,6 +201,9 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	// Cache health (if caching is enabled)
 	health = append(health, obs.getCacheHealth())
 
+	// HTTPRoute health (if routing is enabled)
+	health = append(health, obs.getHTTPRouteHealth())
+
 	return health
 }
 
@@ -476,6 +479,57 @@ func isTransientKServeError(message string) bool {
 	return false
 }
 
+func (obs ServiceObservation) getHTTPRouteHealth() controllerutils.ComponentHealth {
+	health := controllerutils.ComponentHealth{
+		Component:      "HTTPRoute",
+		DependencyType: controllerutils.DependencyTypeDownstream,
+	}
+
+	runtimeConfig := obs.mergedRuntimeConfig.Value
+
+	// If routing is disabled, no health check needed
+	if !isRoutingEnabled(obs.service, runtimeConfig) {
+		return controllerutils.ComponentHealth{}
+	}
+
+	// Routing is enabled - check if gateway ref is configured
+	gatewayRef := resolveGatewayRef(obs.service, runtimeConfig)
+	if gatewayRef == nil {
+		// Routing is enabled but no gateway configured - configuration error
+		health.State = constants.AIMStatusFailed
+		health.Reason = "GatewayNotConfigured"
+		health.Message = "Routing is enabled but no gatewayRef is configured in service or runtime config"
+		health.Errors = []error{
+			controllerutils.NewInvalidSpecError(
+				"GatewayNotConfigured",
+				"Routing is enabled but no gatewayRef is configured. Set spec.routing.gatewayRef on the service or runtimeConfig.routing.gatewayRef on the runtime config.",
+				nil,
+			),
+		}
+		return health
+	}
+
+	// Gateway is configured - check the HTTPRoute status
+	if obs.httpRoute.Error != nil {
+		if obs.httpRoute.IsNotFound() {
+			// Route doesn't exist yet but will be created
+			health.State = constants.AIMStatusProgressing
+			health.Reason = "HTTPRouteCreating"
+			health.Message = "HTTPRoute is being created"
+			return health
+		}
+		// Other fetch error
+		health.State = constants.AIMStatusFailed
+		health.Reason = "HTTPRouteFetchError"
+		health.Message = obs.httpRoute.Error.Error()
+		health.Errors = []error{obs.httpRoute.Error}
+		return health
+	}
+
+	// Delegate to the standard HTTPRoute health check
+	return obs.httpRoute.ToComponentHealth("HTTPRoute", controllerutils.GetHTTPRouteHealth)
+}
+
 func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 	health := controllerutils.ComponentHealth{
 		Component:      "Cache",
@@ -661,46 +715,47 @@ func (r *ServiceReconciler) PlanResources(
 		planResult.ApplyWithoutOwnerRef(model)
 	}
 
+	// 1. Plan HTTPRoute if routing is enabled (independent of template resolution)
+	// HTTPRoute only needs service + runtime config, not the template
+	if route := planHTTPRoute(ctx, service, obs); route != nil {
+		planResult.Apply(route)
+	}
+
 	// Get resolved template info
 	templateName, templateNamespace, templateNsSpec, templateStatus := obs.getResolvedTemplate()
 	_ = templateNamespace // Used for future enhancements
 	if templateName == "" {
-		logger.V(1).Info("no template resolved, skipping resource planning")
+		logger.V(1).Info("no template resolved, skipping template-dependent resource planning")
 		return planResult
 	}
 
 	// Check if template is ready
 	if templateStatus == nil || templateStatus.Status != constants.AIMStatusReady {
-		logger.V(1).Info("template not ready, skipping resource planning", "template", templateName)
+		logger.V(1).Info("template not ready, skipping template-dependent resource planning", "template", templateName)
 		return planResult
 	}
 
-	// 1. Plan derived template if service has overrides (only for namespace-scoped templates)
+	// 2. Plan derived template if service has overrides (only for namespace-scoped templates)
 	if templateNsSpec != nil {
 		if derivedTemplate := planDerivedTemplate(service, templateName, templateNsSpec, obs); derivedTemplate != nil {
 			planResult.Apply(derivedTemplate)
 		}
 	}
 
-	// 2. Plan template cache if caching is enabled
+	// 3. Plan template cache if caching is enabled
 	// Use ApplyWithoutOwnerRef so caches can be shared across services and outlive the creating service
 	if templateCache := planTemplateCache(service, templateName, templateStatus, obs); templateCache != nil {
 		planResult.ApplyWithoutOwnerRef(templateCache)
 	}
 
-	// 3. Plan PVC if no template cache available
+	// 4. Plan PVC if no template cache available
 	if pvc := planServicePVC(service, templateName, templateStatus, obs); pvc != nil {
 		planResult.Apply(pvc)
 	}
 
-	// 4. Plan InferenceService
+	// 5. Plan InferenceService
 	if isvc := planInferenceService(ctx, service, templateName, templateNsSpec, templateStatus, obs); isvc != nil {
 		planResult.Apply(isvc)
-	}
-
-	// 5. Plan HTTPRoute if routing is enabled
-	if route := planHTTPRoute(service, obs); route != nil {
-		planResult.Apply(route)
 	}
 
 	return planResult

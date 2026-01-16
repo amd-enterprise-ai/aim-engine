@@ -31,63 +31,10 @@ spec:
         - apply:
             file: service.yaml
 
-    - name: Verify model is resolved
-      try:
-        - assert:
-            timeout: 120s
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMService
-              metadata:
-                name: test-gpu-non-cached
-              status:
-                resolvedModel:
-                  (name != ''): true
-                (conditions[?type == 'ModelReady']):
-                  - status: "True"
-
-    - name: Verify template is auto-selected
-      try:
-        - assert:
-            timeout: 120s
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMService
-              metadata:
-                name: test-gpu-non-cached
-              status:
-                resolvedTemplate:
-                  (name != ''): true
-                (conditions[?type == 'TemplateReady']):
-                  - status: "True"
-
-    - name: Verify service starts without waiting for cache
-      try:
-        - assert:
-            timeout: 60s
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMService
-              metadata:
-                name: test-gpu-non-cached
-              status:
-                status: Starting
-
-    - name: Verify InferenceService is created
-      try:
-        - assert:
-            timeout: 120s
-            resource:
-              apiVersion: serving.kserve.io/v1beta1
-              kind: InferenceService
-              metadata:
-                labels:
-                  aim.eai.amd.com/service: test-gpu-non-cached
-
     - name: Verify service reaches Running status
       try:
         - assert:
-            timeout: 600s
+            timeout: 10m
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMService

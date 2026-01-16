@@ -129,6 +129,10 @@ func (m *AIMModelCache) GetStatus() *AIMModelCacheStatus {
 	return &m.Status
 }
 
+func (m *AIMModelCache) GetRuntimeConfigRef() RuntimeConfigRef {
+	return m.Spec.RuntimeConfigRef
+}
+
 func (s *AIMModelCacheStatus) GetConditions() []metav1.Condition {
 	return s.Conditions
 }

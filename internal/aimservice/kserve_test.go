@@ -231,7 +231,7 @@ func TestResolveResources(t *testing.T) {
 		templateSpec   *aimv1alpha1.AIMServiceTemplateSpec
 		gpuCount       int64 // Template profile GPU count
 		expectGPU      bool
-		expectGPUCount int64  // Expected final GPU count (defaults to gpuCount if 0)
+		expectGPUCount int64 // Expected final GPU count (defaults to gpuCount if 0)
 		expectMemory   string
 	}{
 		{

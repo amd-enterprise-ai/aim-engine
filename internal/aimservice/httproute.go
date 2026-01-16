@@ -31,6 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
@@ -77,20 +78,31 @@ func fetchHTTPRoute(
 
 // planHTTPRoute creates the HTTPRoute if routing is enabled.
 func planHTTPRoute(
+	ctx context.Context,
 	service *aimv1alpha1.AIMService,
 	obs ServiceObservation,
 ) client.Object {
+	logger := log.FromContext(ctx).WithName("planHTTPRoute")
 	runtimeConfig := obs.mergedRuntimeConfig.Value
+
+	logger.V(1).Info("checking routing",
+		"runtimeConfigNil", runtimeConfig == nil,
+		"serviceRoutingNil", service.Spec.Routing == nil,
+	)
+
 	if !isRoutingEnabled(service, runtimeConfig) {
+		logger.V(1).Info("routing not enabled")
 		return nil
 	}
 
 	// Need gateway ref to create route
 	gatewayRef := resolveGatewayRef(service, runtimeConfig)
 	if gatewayRef == nil {
+		logger.V(1).Info("gateway ref not configured")
 		return nil
 	}
 
+	logger.V(1).Info("creating HTTPRoute", "gatewayRef", gatewayRef.Name)
 	return buildHTTPRoute(service, gatewayRef, runtimeConfig)
 }
 

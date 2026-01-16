@@ -6,6 +6,7 @@ kind: AIMService
 metadata:
   name: test-gpu-non-cached
 spec:
+  runtimeConfigName: test-gpu-non-cached
   model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   caching:

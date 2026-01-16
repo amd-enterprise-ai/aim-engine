@@ -251,6 +251,10 @@ type AIMServiceCacheStatus struct {
 	RetryAttempts int `json:"retryAttempts,omitempty"`
 }
 
+func (s *AIMService) GetRuntimeConfigRef() RuntimeConfigRef {
+	return s.Spec.RuntimeConfigRef
+}
+
 func (s *AIMServiceStatus) GetConditions() []metav1.Condition {
 	return s.Conditions
 }

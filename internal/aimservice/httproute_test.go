@@ -23,6 +23,7 @@
 package aimservice
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -665,7 +666,7 @@ func TestPlanHTTPRoute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := planHTTPRoute(tt.obs.service, tt.obs)
+			result := planHTTPRoute(context.Background(), tt.obs.service, tt.obs)
 
 			if tt.expectRoute {
 				if result == nil {
@@ -712,7 +713,7 @@ func TestPlanHTTPRoute_Labels(t *testing.T) {
 		},
 	}
 
-	result := planHTTPRoute(service, obs)
+	result := planHTTPRoute(context.Background(), service, obs)
 	if result == nil {
 		t.Fatal("expected HTTPRoute, got nil")
 	}
@@ -746,7 +747,7 @@ func TestPlanHTTPRoute_OwnerReference(t *testing.T) {
 		},
 	}
 
-	result := planHTTPRoute(service, obs)
+	result := planHTTPRoute(context.Background(), service, obs)
 	if result == nil {
 		t.Fatal("expected HTTPRoute, got nil")
 	}

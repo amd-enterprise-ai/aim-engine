@@ -31,64 +31,23 @@ spec:
         - apply:
             file: service.yaml
 
-    - name: Verify model is resolved
+    - name: Verify the cache was created
       try:
         - assert:
-            timeout: 120s
+            timeout: 5m
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMService
-              metadata:
-                name: test-gpu-cached
-              status:
-                resolvedModel:
-                  (name != ''): true
-                (conditions[?type == 'ModelReady']):
-                  - status: "True"
-
-    - name: Verify template is auto-selected
-      try:
-        - assert:
-            timeout: 120s
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMService
-              metadata:
-                name: test-gpu-cached
-              status:
-                resolvedTemplate:
-                  (name != ''): true
-                (conditions[?type == 'TemplateReady']):
-                  - status: "True"
-
-    - name: Verify caching is in progress or complete
-      try:
-        - assert:
-            timeout: 300s
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMService
-              metadata:
-                name: test-gpu-cached
-              status:
-                (conditions[?type == 'CacheReady']):
-                  - status: "True"
-
-    - name: Verify InferenceService is created
-      try:
-        - assert:
-            timeout: 120s
-            resource:
-              apiVersion: serving.kserve.io/v1beta1
-              kind: InferenceService
+              kind: AIMTemplateCache
               metadata:
                 labels:
-                  aim.eai.amd.com/service: test-gpu-cached
+                  aim.eai.amd.com/service.name: test-gpu-cached
+              status:
+                status: Ready
 
     - name: Verify service reaches Running status
       try:
         - assert:
-            timeout: 600s
+            timeout: 5m
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMService

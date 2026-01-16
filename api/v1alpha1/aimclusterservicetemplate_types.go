@@ -72,6 +72,10 @@ func (t *AIMClusterServiceTemplate) GetSpecModelSources() []AIMModelSource {
 	return t.Spec.ModelSources
 }
 
+func (t *AIMClusterServiceTemplate) GetRuntimeConfigRef() RuntimeConfigRef {
+	return t.Spec.RuntimeConfigRef
+}
+
 func init() {
 	SchemeBuilder.Register(&AIMClusterServiceTemplate{}, &AIMClusterServiceTemplateList{})
 }
