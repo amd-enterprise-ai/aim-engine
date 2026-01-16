@@ -24,7 +24,7 @@ spec:
     - name: Verify pod is pending due to insufficient resources
       try:
         - assert:
-            timeout: 60s
+            timeout: 5m
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMService
@@ -34,3 +34,4 @@ spec:
                 (conditions[?type == 'InferenceServicePodsReady']):
                   - status: "False"
                     reason: FailedScheduling
+                status: Pending

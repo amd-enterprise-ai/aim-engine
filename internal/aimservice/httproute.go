@@ -24,9 +24,6 @@ package aimservice
 
 import (
 	"context"
-	"fmt"
-	"strings"
-	"text/template"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -39,13 +36,6 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
-)
-
-const (
-	// DefaultPathTemplate is used when no path template is specified
-	DefaultPathTemplate = "/{{.Namespace}}/{{.Name}}"
-	// MaxPathLength is the maximum length for rendered paths
-	MaxPathLength = 200
 )
 
 // GenerateHTTPRouteName creates a deterministic name for the HTTPRoute.
@@ -140,12 +130,11 @@ func buildHTTPRoute(
 	// Build annotations
 	annotations := mergeRouteAnnotations(runtimeConfig)
 
-	// Resolve path template
-	pathTemplate := resolvePathTemplate(service, runtimeConfig)
-	path, err := renderPathTemplate(pathTemplate, service)
+	// Resolve path using JSONPath template
+	path, err := ResolveServiceRoutePath(service, runtimeConfig)
 	if err != nil {
-		// Use a fallback path based on name if template fails
-		path = "/" + service.Namespace + "/" + service.Name
+		// Use a fallback path based on namespace/UID if template fails
+		path = DefaultRoutePath(service)
 	}
 
 	// Build parent reference
@@ -179,7 +168,7 @@ func buildHTTPRoute(
 		Type: gatewayapiv1.HTTPRouteFilterURLRewrite,
 		URLRewrite: &gatewayapiv1.HTTPURLRewriteFilter{
 			Path: &gatewayapiv1.HTTPPathModifier{
-				Type:            rewriteType,
+				Type:               rewriteType,
 				ReplacePrefixMatch: ptr.To("/"),
 			},
 		},
@@ -263,62 +252,6 @@ func mergeRouteAnnotations(runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) ma
 	}
 
 	return annotations
-}
-
-// resolvePathTemplate gets the path template to use.
-func resolvePathTemplate(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) string {
-	// Service-level override
-	if service.Spec.Routing != nil && service.Spec.Routing.PathTemplate != nil {
-		return *service.Spec.Routing.PathTemplate
-	}
-
-	// Runtime config default
-	if runtimeConfig != nil && runtimeConfig.Routing != nil && runtimeConfig.Routing.PathTemplate != nil {
-		return *runtimeConfig.Routing.PathTemplate
-	}
-
-	return DefaultPathTemplate
-}
-
-// renderPathTemplate renders the path template with service data.
-func renderPathTemplate(pathTemplate string, service *aimv1alpha1.AIMService) (string, error) {
-	// Create template data
-	data := struct {
-		Name      string
-		Namespace string
-		UID       string
-		Labels    map[string]string
-	}{
-		Name:      service.Name,
-		Namespace: service.Namespace,
-		UID:       string(service.UID),
-		Labels:    service.Labels,
-	}
-
-	// Parse and execute template
-	tmpl, err := template.New("path").Parse(pathTemplate)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse path template: %w", err)
-	}
-
-	var buf strings.Builder
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("failed to execute path template: %w", err)
-	}
-
-	path := buf.String()
-
-	// Validate path
-	if len(path) > MaxPathLength {
-		return "", fmt.Errorf("rendered path exceeds maximum length of %d characters", MaxPathLength)
-	}
-
-	// Ensure path starts with /
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-
-	return path, nil
 }
 
 // resolveRequestTimeout gets the request timeout to use.

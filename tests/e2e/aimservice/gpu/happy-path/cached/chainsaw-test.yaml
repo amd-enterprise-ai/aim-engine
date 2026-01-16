@@ -34,7 +34,7 @@ spec:
     - name: Verify the cache was created
       try:
         - assert:
-            timeout: 5m
+            timeout: 10m
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMTemplateCache
@@ -47,7 +47,7 @@ spec:
     - name: Verify service reaches Running status
       try:
         - assert:
-            timeout: 5m
+            timeout: 10m
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMService

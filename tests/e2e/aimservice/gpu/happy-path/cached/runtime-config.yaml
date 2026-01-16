@@ -9,5 +9,5 @@ spec:
     gatewayRef:
       name: kserve-ingress-gateway
       namespace: kgateway-system
-    pathTemplate: "/integration/gpu-cached/{{.metadata.name}}"
+    pathTemplate: "/integration/gpu-cached/{.metadata.name}"
     requestTimeout: "180s"

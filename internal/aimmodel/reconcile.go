@@ -179,7 +179,9 @@ func (r *ModelReconciler) FetchRemoteState(
 
 	// Service templates
 	templates := &aimv1alpha1.AIMServiceTemplateList{}
-	result.serviceTemplates = controllerutils.FetchList(ctx, c, templates, client.MatchingFields{aimv1alpha1.ServiceTemplateModelNameIndexKey: model.Name})
+	result.serviceTemplates = controllerutils.FetchList(ctx, c, templates,
+		client.InNamespace(model.Namespace),
+		client.MatchingFields{aimv1alpha1.ServiceTemplateModelNameIndexKey: model.Name})
 
 	return result
 }
