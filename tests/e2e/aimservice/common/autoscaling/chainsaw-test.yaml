@@ -1,0 +1,95 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Autoscaling Configuration (Kind)
+#
+# This test validates that autoscaling configuration (minReplicas, maxReplicas, autoScaling)
+# propagates correctly to the InferenceService with KEDA annotations.
+#
+# Note: This test verifies the InferenceService configuration only.
+# Full KEDA integration (ScaledObject, HPA) requires KEDA infrastructure.
+#
+# Uses: ghcr.io/silogen/aim-dummy:0.1.8 (lightweight test image)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-autoscaling
+spec:
+  description: Test AIMService autoscaling configuration propagates to InferenceService
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create model
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for model to be ready (discovery complete)
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-autoscaling-model
+              status:
+                status: Ready
+
+    - name: Create service with autoscaling
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify service starts
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-autoscaling-service
+              status:
+                status: Starting
+
+    - name: Verify InferenceService has KEDA autoscaler annotations
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-autoscaling-service
+                annotations:
+                  serving.kserve.io/autoscalerClass: "keda"
+                  prometheus.kserve.io/port: "8000"
+
+    - name: Verify InferenceService has correct replica configuration
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-autoscaling-service
+              spec:
+                predictor:
+                  minReplicas: 1
+                  maxReplicas: 3
+
+    - name: Verify service reaches Running status
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-autoscaling-service
+              status:
+                status: Running

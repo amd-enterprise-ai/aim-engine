@@ -232,8 +232,16 @@ const (
 	AnnotationKServeAutoscalerClass = "serving.kserve.io/autoscalerClass"
 	// AutoscalerClassNone disables autoscaling
 	AutoscalerClassNone = "none"
+	// AutoscalerClassKeda enables KEDA-based autoscaling
+	AutoscalerClassKeda = "keda"
 	// LabelKServeInferenceService is the label key used by KServe on predictor pods
 	LabelKServeInferenceService = "serving.kserve.io/inferenceservice"
+	// AnnotationOTelSidecarInject is the annotation for OpenTelemetry sidecar injection
+	AnnotationOTelSidecarInject = "sidecar.opentelemetry.io/inject"
+	// AnnotationPrometheusPort is the annotation for Prometheus metrics port
+	AnnotationPrometheusPort = "prometheus.kserve.io/port"
+	// DefaultPrometheusPort is the default port for vLLM metrics
+	DefaultPrometheusPort = "8000"
 )
 
 // AIM annotation keys

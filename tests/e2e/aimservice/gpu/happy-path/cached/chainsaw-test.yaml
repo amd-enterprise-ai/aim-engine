@@ -59,7 +59,7 @@ spec:
     - name: Verify chat completions endpoint works
       try:
         - script:
-            timeout: 2m
+            timeout: 3m
             env:
               - name: HTTP_BASE_PATH
                 value: /integration/gpu-cached/test-gpu-cached/v1

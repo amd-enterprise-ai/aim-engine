@@ -22,13 +22,13 @@ helm install kserve oci://ghcr.io/kserve/charts/kserve \
 
 ### Deployment Mode
 
-AIM Engine uses KServe in RawDeployment mode (without Knative):
+AIM Engine uses KServe in Standard mode (without Knative) to support KEDA-based autoscaling with OpenTelemetry metrics:
 
 ```yaml
 # kserve-values.yaml
 kserve:
   controller:
-    deploymentMode: RawDeployment
+    deploymentMode: Standard
     gateway:
       ingressGateway:
         enableGatewayApi: false
@@ -41,12 +41,14 @@ By default, KServe applies resource limits to all InferenceService containers:
 ```yaml
 # KServe defaults (not recommended)
 kserve:
-  inferenceService:
-    resource:
-      cpuLimit: "1"
-      memoryLimit: "2Gi"
-      cpuRequest: "200m"
-      memoryRequest: "512Mi"
+  inferenceservice:
+    resources:
+      limits:
+        cpu: "1"
+        memory: "2Gi"
+      requests:
+        cpu: "1"
+        memory: "2Gi"
 ```
 
 These defaults can cause issues with GPU workloads where AIM Engine sets higher CPU requests based on GPU count (4 CPUs per GPU). When the default CPU limit (1) is lower than the calculated request (4), Kubernetes rejects the deployment.
@@ -56,10 +58,14 @@ These defaults can cause issues with GPU workloads where AIM Engine sets higher 
 ```yaml
 # kserve-values.yaml
 kserve:
-  inferenceService:
-    resource:
-      cpuLimit: ""
-      memoryLimit: ""
+  inferenceservice:
+    resources:
+      limits:
+        cpu: ""
+        memory: ""
+      requests:
+        cpu: ""
+        memory: ""
 ```
 
 This follows Kubernetes best practices where limits are set intentionally per workload rather than globally.
@@ -81,16 +87,20 @@ kserve:
 # kserve-values.yaml
 kserve:
   controller:
-    deploymentMode: RawDeployment
+    deploymentMode: Standard
     gateway:
       ingressGateway:
         enableGatewayApi: false
   localmodel:
     enabled: false
-  inferenceService:
-    resource:
-      cpuLimit: ""
-      memoryLimit: ""
+  inferenceservice:
+    resources:
+      limits:
+        cpu: ""
+        memory: ""
+      requests:
+        cpu: ""
+        memory: ""
 ```
 
 ## Verifying Configuration

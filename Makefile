@@ -3,10 +3,14 @@ TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "latest")
 IMG ?= ghcr.io/amd-enterprise-ai/aim-engine:$(TAG)
 
 # Cluster environment configuration
-# ENV is read from .tmp/current-env if it exists, otherwise defaults to 'kind'
-# For GPU, set KUBE_CONTEXT_GPU to your vcluster context name (e.g., in .envrc or shell)
+# ENV is auto-detected from kubectl context if not set:
+#   - Context starting with "kind-" -> ENV=kind
+#   - Otherwise -> ENV=gpu
+# Can be overridden via ENV variable or .tmp/current-env file
 ENV_FILE := .tmp/current-env
-ENV ?= $(shell cat $(ENV_FILE) 2>/dev/null || echo kind)
+CURRENT_CONTEXT := $(shell kubectl config current-context 2>/dev/null)
+AUTO_ENV := $(if $(filter kind-%,$(CURRENT_CONTEXT)),kind,gpu)
+ENV ?= $(or $(shell cat $(ENV_FILE) 2>/dev/null),$(AUTO_ENV))
 KUBE_CONTEXT_KIND := kind-aim-engine
 KUBE_CONTEXT_GPU ?=
 KUBE_CONTEXT = $(if $(filter gpu,$(ENV)),$(or $(KUBE_CONTEXT_GPU),$(error ENV=gpu requires KUBE_CONTEXT_GPU to be set)),$(KUBE_CONTEXT_KIND))
@@ -141,21 +145,28 @@ cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
 # Chainsaw test configuration
-# Selector is applied automatically based on ENV (kind excludes infra-dependent tests)
+# Selector is applied automatically based on ENV
 CHAINSAW_TEST_DIR := tests/e2e
-# Kind environment excludes tests requiring infrastructure (longhorn) or reliable external network
-CHAINSAW_SELECTOR_KIND := requires notin (longhorn,external-network)
 CHAINSAW_REPORT_DIR := .tmp/chainsaw-reports
-CHAINSAW_ENV_SELECTOR := $(if $(filter kind,$(ENV)),--selector '$(CHAINSAW_SELECTOR_KIND)',)
-# Kind environment uses lower parallelism due to limited node resources (16Gi per node)
-CHAINSAW_KIND_PARALLEL := $(if $(filter kind,$(ENV)),--parallel 4,)
+
+# Kind environment: exclude tests requiring GPU, longhorn storage, or external network
+CHAINSAW_SELECTOR_KIND := requires notin (gpu,longhorn,external-network)
+
+# GPU environment: exclude tests that only work on Kind (mocked node labels)
+CHAINSAW_SELECTOR_GPU := requires notin (kind,external-network)
+
+# Select appropriate selector and parallelism based on ENV
+CHAINSAW_ENV_SELECTOR := $(if $(filter gpu,$(ENV)),--selector '$(CHAINSAW_SELECTOR_GPU)',$(if $(filter kind,$(ENV)),--selector '$(CHAINSAW_SELECTOR_KIND)',))
+CHAINSAW_ENV_PARALLEL := $(if $(filter kind,$(ENV)),--parallel 4,)
 
 .PHONY: test-chainsaw
 test-chainsaw: ## Run chainsaw e2e tests (selector based on ENV). Pass CHAINSAW_ARGS for additional options.
+	@echo "Environment: $(ENV) (context: $(CURRENT_CONTEXT))"
+	@echo "Selector: $(if $(filter gpu,$(ENV)),$(CHAINSAW_SELECTOR_GPU),$(CHAINSAW_SELECTOR_KIND))"
 	@mkdir -p $(CHAINSAW_REPORT_DIR)
 	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test --test-dir $(CHAINSAW_TEST_DIR) \
 		$(CHAINSAW_ENV_SELECTOR) \
-		$(CHAINSAW_KIND_PARALLEL) \
+		$(CHAINSAW_ENV_PARALLEL) \
 		--report-format JSON --report-name chainsaw-report --report-path $(CHAINSAW_REPORT_DIR) \
 		$(CHAINSAW_ARGS)
 

@@ -169,9 +169,29 @@ type AIMServiceSpec struct {
 	// Replicas specifies the number of replicas for this service.
 	// When not specified, defaults to 1 replica.
 	// This value overrides any replica settings from the template.
+	// For autoscaling, use MinReplicas and MaxReplicas instead.
 	// +optional
 	// +kubebuilder:default=1
 	Replicas *int32 `json:"replicas,omitempty"`
+
+	// MinReplicas specifies the minimum number of replicas for autoscaling.
+	// Defaults to 1. Scale to zero is not supported.
+	// When specified with MaxReplicas, enables autoscaling for the service.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MinReplicas *int32 `json:"minReplicas,omitempty"`
+
+	// MaxReplicas specifies the maximum number of replicas for autoscaling.
+	// Required when MinReplicas is set or when AutoScaling configuration is provided.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
+
+	// AutoScaling configures advanced autoscaling behavior using KEDA.
+	// Supports custom metrics from OpenTelemetry backend.
+	// When specified, MinReplicas and MaxReplicas should also be set.
+	// +optional
+	AutoScaling *AIMServiceAutoScaling `json:"autoScaling,omitempty"`
 
 	// RuntimeConfigRef contains the runtime config reference for this service.
 	// The result of the merged runtime configs is merged with the inline AIMServiceRuntimeConfig configuration.

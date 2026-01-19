@@ -455,17 +455,47 @@ func mergeResourceRequirements(base corev1.ResourceRequirements, override *corev
 	return base
 }
 
-// configureReplicasAndAutoscaling sets up replica counts.
+// configureReplicasAndAutoscaling sets up replica counts and autoscaling configuration.
 func configureReplicasAndAutoscaling(isvc *servingv1beta1.InferenceService, service *aimv1alpha1.AIMService) {
-	// Disable HPA by default
-	disableHPA(isvc)
+	// Check if autoscaling is configured (new fields take precedence)
+	hasAutoscaling := service.Spec.AutoScaling != nil ||
+		service.Spec.MinReplicas != nil ||
+		service.Spec.MaxReplicas != nil
 
-	if service.Spec.Replicas != nil {
-		// Use the specified replica count
+	if hasAutoscaling {
+		// Enable KEDA autoscaling
+		injectAutoscalingAnnotations(isvc)
+
+		// Set min replicas
+		if service.Spec.MinReplicas != nil {
+			isvc.Spec.Predictor.MinReplicas = service.Spec.MinReplicas
+		} else {
+			one := int32(1)
+			isvc.Spec.Predictor.MinReplicas = &one
+		}
+
+		// Set max replicas
+		if service.Spec.MaxReplicas != nil {
+			isvc.Spec.Predictor.MaxReplicas = *service.Spec.MaxReplicas
+		} else if service.Spec.MinReplicas != nil {
+			// Default max to min if only min specified
+			isvc.Spec.Predictor.MaxReplicas = *service.Spec.MinReplicas
+		} else {
+			isvc.Spec.Predictor.MaxReplicas = 1
+		}
+
+		// Apply autoscaling configuration if provided
+		if service.Spec.AutoScaling != nil {
+			isvc.Spec.Predictor.AutoScaling = convertToKServeAutoScaling(service.Spec.AutoScaling)
+		}
+	} else if service.Spec.Replicas != nil {
+		// Legacy: fixed replica count, disable HPA
+		disableHPA(isvc)
 		isvc.Spec.Predictor.MinReplicas = service.Spec.Replicas
 		isvc.Spec.Predictor.MaxReplicas = *service.Spec.Replicas
 	} else {
-		// Default: 1 replica
+		// Default: 1 replica, disable HPA
+		disableHPA(isvc)
 		one := int32(1)
 		isvc.Spec.Predictor.MinReplicas = &one
 		isvc.Spec.Predictor.MaxReplicas = 1
@@ -480,6 +510,82 @@ func disableHPA(isvc *servingv1beta1.InferenceService) {
 	if _, exists := isvc.Annotations[constants.AnnotationKServeAutoscalerClass]; !exists {
 		isvc.Annotations[constants.AnnotationKServeAutoscalerClass] = constants.AutoscalerClassNone
 	}
+}
+
+// injectAutoscalingAnnotations adds required annotations for KEDA autoscaling.
+// This includes KEDA autoscaler class, OpenTelemetry sidecar injection, and Prometheus metrics port.
+func injectAutoscalingAnnotations(isvc *servingv1beta1.InferenceService) {
+	if isvc.Annotations == nil {
+		isvc.Annotations = make(map[string]string)
+	}
+
+	// Add KEDA autoscaler class annotation if not already present
+	if _, exists := isvc.Annotations[constants.AnnotationKServeAutoscalerClass]; !exists {
+		isvc.Annotations[constants.AnnotationKServeAutoscalerClass] = constants.AutoscalerClassKeda
+	}
+
+	// Add OpenTelemetry sidecar injection annotation if not already present
+	if _, exists := isvc.Annotations[constants.AnnotationOTelSidecarInject]; !exists {
+		predictorName := isvc.Name + constants.PredictorServiceSuffix
+		isvc.Annotations[constants.AnnotationOTelSidecarInject] = predictorName
+	}
+
+	// Add Prometheus metrics port annotation if not already present
+	if _, exists := isvc.Annotations[constants.AnnotationPrometheusPort]; !exists {
+		isvc.Annotations[constants.AnnotationPrometheusPort] = constants.DefaultPrometheusPort
+	}
+}
+
+// convertToKServeAutoScaling converts AIM autoscaling config to KServe AutoScalingSpec.
+func convertToKServeAutoScaling(aimAutoScaling *aimv1alpha1.AIMServiceAutoScaling) *servingv1beta1.AutoScalingSpec {
+	if aimAutoScaling == nil {
+		return nil
+	}
+
+	kserveAutoScaling := &servingv1beta1.AutoScalingSpec{}
+
+	if len(aimAutoScaling.Metrics) > 0 {
+		kserveAutoScaling.Metrics = make([]servingv1beta1.MetricsSpec, len(aimAutoScaling.Metrics))
+		for i, metric := range aimAutoScaling.Metrics {
+			kserveMetric := servingv1beta1.MetricsSpec{
+				Type: servingv1beta1.MetricSourceType(metric.Type),
+			}
+
+			if metric.Type == "PodMetric" && metric.PodMetric != nil {
+				kserveMetric.PodMetric = &servingv1beta1.PodMetricSource{}
+
+				if metric.PodMetric.Metric != nil {
+					kserveMetric.PodMetric.Metric = servingv1beta1.PodMetrics{
+						Backend:           servingv1beta1.PodsMetricsBackend(metric.PodMetric.Metric.Backend),
+						ServerAddress:     metric.PodMetric.Metric.ServerAddress,
+						MetricNames:       metric.PodMetric.Metric.MetricNames,
+						Query:             metric.PodMetric.Metric.Query,
+						OperationOverTime: metric.PodMetric.Metric.OperationOverTime,
+					}
+				}
+
+				if metric.PodMetric.Target != nil {
+					kserveMetric.PodMetric.Target = servingv1beta1.MetricTarget{
+						Type: servingv1beta1.MetricTargetType(metric.PodMetric.Target.Type),
+					}
+
+					if metric.PodMetric.Target.Value != "" {
+						kserveMetric.PodMetric.Target.Value = servingv1beta1.NewMetricQuantity(metric.PodMetric.Target.Value)
+					}
+					if metric.PodMetric.Target.AverageValue != "" {
+						kserveMetric.PodMetric.Target.AverageValue = servingv1beta1.NewMetricQuantity(metric.PodMetric.Target.AverageValue)
+					}
+					if metric.PodMetric.Target.AverageUtilization != nil {
+						kserveMetric.PodMetric.Target.AverageUtilization = metric.PodMetric.Target.AverageUtilization
+					}
+				}
+			}
+
+			kserveAutoScaling.Metrics[i] = kserveMetric
+		}
+	}
+
+	return kserveAutoScaling
 }
 
 // addStorageVolumes adds cache or PVC volumes to the InferenceService.

@@ -64,6 +64,19 @@ spec:
                 predictor:
                   minReplicas: 3
 
+    - name: Verify InferenceService has HPA disabled (legacy replicas mode)
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-replicas-service
+                annotations:
+                  serving.kserve.io/autoscalerClass: "none"
+
     - name: Verify service reaches Running status
       try:
         - assert:
