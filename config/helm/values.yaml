@@ -63,3 +63,40 @@ certManager:
 # Prometheus ServiceMonitor for metrics scraping
 prometheus:
   enable: false
+
+# Cluster-wide runtime configuration for AIM resources
+# Creates an AIMClusterRuntimeConfig CR when enabled
+clusterRuntimeConfig:
+  enable: false
+  name: amd-aim-cluster-runtime-config
+
+  # Spec fields for the AIMClusterRuntimeConfig
+  spec:
+    # Storage configuration defaults
+    storage:
+      # defaultStorageClassName: "standard"
+      pvcHeadroomPercent: 100
+
+    # HTTP routing configuration for inference services
+    # routing:
+    #   enabled: true
+    #   gatewayRef:
+    #     group: gateway.networking.k8s.io
+    #     kind: Gateway
+    #     name: aim-gateway
+    #     namespace: kgateway-system
+    #   pathTemplate: "/{.metadata.namespace}/{.metadata.name}"
+      # annotations: {}
+
+    # Model discovery configuration
+    # model:
+    #   autoDiscovery: true
+
+    # Environment variables (for runtime config, not propagated to child resources)
+    # env: []
+
+    # Label propagation to child resources
+    # labelPropagation:
+    #   enabled: true
+    #   match:
+    #     - "aim.eai.amd.com/*"
