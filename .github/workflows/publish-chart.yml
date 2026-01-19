@@ -29,7 +29,7 @@ jobs:
       - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: feature/publish-image
           fetch-depth: 0
 
       - name: Set up mise
