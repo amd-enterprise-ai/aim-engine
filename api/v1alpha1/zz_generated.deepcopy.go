@@ -843,13 +843,6 @@ func (in *AIMRuntimeConfigCommon) DeepCopyInto(out *AIMRuntimeConfigCommon) {
 		*out = new(AIMModelConfig)
 		(*in).DeepCopyInto(*out)
 	}
-	if in.Env != nil {
-		in, out := &in.Env, &out.Env
-		*out = make([]v1.EnvVar, len(*in))
-		for i := range *in {
-			(*in)[i].DeepCopyInto(&(*out)[i])
-		}
-	}
 	if in.LabelPropagation != nil {
 		in, out := &in.LabelPropagation, &out.LabelPropagation
 		*out = new(AIMRuntimeConfigLabelPropagationSpec)
@@ -1326,6 +1319,13 @@ func (in *AIMServiceRuntimeConfig) DeepCopyInto(out *AIMServiceRuntimeConfig) {
 		in, out := &in.Routing, &out.Routing
 		*out = new(AIMRuntimeRoutingConfig)
 		(*in).DeepCopyInto(*out)
+	}
+	if in.Env != nil {
+		in, out := &in.Env, &out.Env
+		*out = make([]v1.EnvVar, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
 	}
 }
 

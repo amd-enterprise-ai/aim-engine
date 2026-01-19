@@ -23,6 +23,7 @@
 package utils
 
 import (
+	"encoding/json"
 	"reflect"
 	"regexp"
 	"strings"
@@ -35,6 +36,9 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// EnvVarAIMEngineArgs is the env var name for AIM engine arguments that should be JSON-merged.
+const EnvVarAIMEngineArgs = "AIM_ENGINE_ARGS"
 
 // ValueOrDefault returns the value pointed to by d, or the zero value of type T if d is nil.
 // This is a generic helper to safely dereference pointers with a fallback to the type's zero value.
@@ -146,32 +150,116 @@ func MergePullSecretRefs(base []corev1.LocalObjectReference, extras []corev1.Loc
 	return base
 }
 
-// MergeEnvVars merges multiple env var slices with later slices taking precedence.
+// MergeEnvVars merges two env var slices with overrides taking precedence over defaults.
 // Env vars are keyed by Name, matching the +listMapKey=name kubebuilder annotation.
-// Pass slices in order of increasing precedence (e.g., cluster, namespace, resource).
+// If jsonMergeKeys is provided, env vars with those names are deep-merged as JSON objects
+// instead of being replaced. This is useful for AIM_ENGINE_ARGS which should merge
+// contributions from multiple sources.
 //
 // Example:
 //
-//	merged := MergeEnvVars(clusterEnv, namespaceEnv, resourceEnv)
-//	// resourceEnv vars override namespaceEnv, which override clusterEnv
-func MergeEnvVars(envSlices ...[]corev1.EnvVar) []corev1.EnvVar {
-	// Build map keyed by name, later slices override earlier ones
-	merged := make(map[string]corev1.EnvVar)
-	for _, slice := range envSlices {
-		for _, env := range slice {
-			merged[env.Name] = env
+//	merged := MergeEnvVars(defaults, overrides)
+//	// overrides take precedence over defaults
+//
+//	merged := MergeEnvVars(defaults, overrides, "AIM_ENGINE_ARGS")
+//	// AIM_ENGINE_ARGS values are deep-merged as JSON, others are replaced
+func MergeEnvVars(defaults, overrides []corev1.EnvVar, jsonMergeKeys ...string) []corev1.EnvVar {
+	// Build set of JSON-mergeable keys
+	jsonMerge := make(map[string]bool, len(jsonMergeKeys))
+	for _, key := range jsonMergeKeys {
+		jsonMerge[key] = true
+	}
+
+	// Create a map for quick lookup of overrides
+	overrideMap := make(map[string]corev1.EnvVar)
+	for _, env := range overrides {
+		overrideMap[env.Name] = env
+	}
+
+	// Start with defaults, replacing or merging any that are overridden
+	merged := make([]corev1.EnvVar, 0, len(defaults)+len(overrides))
+	for _, env := range defaults {
+		if override, exists := overrideMap[env.Name]; exists {
+			// Check if this is a JSON-mergeable env var
+			if jsonMerge[env.Name] {
+				mergedValue := MergeJSONEnvVarValues(env.Value, override.Value)
+				merged = append(merged, corev1.EnvVar{
+					Name:  env.Name,
+					Value: mergedValue,
+				})
+			} else {
+				merged = append(merged, override)
+			}
+			delete(overrideMap, env.Name) // Mark as processed
+		} else {
+			merged = append(merged, env)
 		}
+	}
+
+	// Add any remaining overrides that weren't in defaults
+	for _, env := range overrides {
+		if _, processed := overrideMap[env.Name]; !processed {
+			continue // Already added in the loop above
+		}
+		merged = append(merged, env)
 	}
 
 	if len(merged) == 0 {
 		return nil
 	}
 
-	result := make([]corev1.EnvVar, 0, len(merged))
-	for _, env := range merged {
-		result = append(result, env)
+	return merged
+}
+
+// MergeJSONEnvVarValues deep-merges two JSON object strings.
+// The higher precedence value (from overrides) takes priority in case of key conflicts.
+// Non-JSON values or parsing errors result in the higher precedence value being used directly.
+func MergeJSONEnvVarValues(base, higher string) string {
+	if base == "" {
+		return higher
 	}
-	return result
+	if higher == "" {
+		return base
+	}
+
+	var baseObj, higherObj map[string]any
+	if err := json.Unmarshal([]byte(base), &baseObj); err != nil {
+		// base is not valid JSON, use higher precedence value
+		return higher
+	}
+	if err := json.Unmarshal([]byte(higher), &higherObj); err != nil {
+		// higher is not valid JSON, use it as-is (overwrite)
+		return higher
+	}
+
+	// Deep merge: higher takes precedence
+	DeepMergeMap(baseObj, higherObj)
+
+	result, err := json.Marshal(baseObj)
+	if err != nil {
+		// Merge failed, use higher precedence value
+		return higher
+	}
+
+	return string(result)
+}
+
+// DeepMergeMap recursively merges src into dst.
+// Values from src take precedence. Nested maps are merged recursively.
+func DeepMergeMap(dst, src map[string]any) {
+	for key, srcVal := range src {
+		if dstVal, exists := dst[key]; exists {
+			// Both have this key, check if both are maps for recursive merge
+			srcMap, srcIsMap := srcVal.(map[string]any)
+			dstMap, dstIsMap := dstVal.(map[string]any)
+			if srcIsMap && dstIsMap {
+				DeepMergeMap(dstMap, srcMap)
+				continue
+			}
+		}
+		// Not both maps, or key doesn't exist in dst - use src value
+		dst[key] = srcVal
+	}
 }
 
 // envVarSliceType is cached for transformer type comparison.
@@ -179,9 +267,11 @@ var envVarSliceType = reflect.TypeOf([]corev1.EnvVar{})
 
 // envVarMergeTransformer implements mergo.Transformers to handle []corev1.EnvVar
 // with key-based merging by Name, matching +listMapKey=name semantics.
+// It also performs JSON deep-merge for AIM_ENGINE_ARGS.
 type envVarMergeTransformer struct{}
 
 // Transformer returns a merge function for []corev1.EnvVar that merges by Name key.
+// AIM_ENGINE_ARGS values are deep-merged as JSON objects.
 func (t envVarMergeTransformer) Transformer(typ reflect.Type) func(dst, src reflect.Value) error {
 	if typ != envVarSliceType {
 		return nil
@@ -196,7 +286,7 @@ func (t envVarMergeTransformer) Transformer(typ reflect.Type) func(dst, src refl
 
 		dstEnv, _ := dst.Interface().([]corev1.EnvVar)
 		srcEnv, _ := src.Interface().([]corev1.EnvVar)
-		merged := MergeEnvVars(dstEnv, srcEnv)
+		merged := MergeEnvVars(dstEnv, srcEnv, EnvVarAIMEngineArgs)
 		dst.Set(reflect.ValueOf(merged))
 		return nil
 	}

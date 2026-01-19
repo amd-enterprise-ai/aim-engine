@@ -488,6 +488,7 @@ func TestMergeResourceRequirements(t *testing.T) {
 func TestBuildMergedEnvVars(t *testing.T) {
 	tests := []struct {
 		name             string
+		service          *aimv1alpha1.AIMService
 		templateSpec     *aimv1alpha1.AIMServiceTemplateSpec
 		templateStatus   *aimv1alpha1.AIMServiceTemplateStatus
 		obs              ServiceObservation
@@ -496,13 +497,15 @@ func TestBuildMergedEnvVars(t *testing.T) {
 	}{
 		{
 			name:           "system defaults always present",
+			service:        &aimv1alpha1.AIMService{},
 			templateSpec:   nil,
 			templateStatus: nil,
 			obs:            ServiceObservation{},
 			expectContains: []string{constants.EnvAIMCachePath, constants.EnvVLLMEnableMetrics},
 		},
 		{
-			name: "template spec env vars",
+			name:    "template spec env vars",
+			service: &aimv1alpha1.AIMService{},
 			templateSpec: &aimv1alpha1.AIMServiceTemplateSpec{
 				Env: []corev1.EnvVar{
 					{Name: "CUSTOM_VAR", Value: "custom-value"},
@@ -513,7 +516,8 @@ func TestBuildMergedEnvVars(t *testing.T) {
 			expectContains: []string{"CUSTOM_VAR"},
 		},
 		{
-			name: "template spec metric and precision",
+			name:    "template spec metric and precision",
+			service: &aimv1alpha1.AIMService{},
 			templateSpec: func() *aimv1alpha1.AIMServiceTemplateSpec {
 				latency := aimv1alpha1.AIMMetricLatency
 				fp16 := aimv1alpha1.AIMPrecisionFP16
@@ -531,7 +535,8 @@ func TestBuildMergedEnvVars(t *testing.T) {
 			expectContains: []string{constants.EnvAIMMetric, constants.EnvAIMPrecision},
 		},
 		{
-			name:         "profile env vars have highest precedence",
+			name:         "profile env vars",
+			service:      &aimv1alpha1.AIMService{},
 			templateSpec: nil,
 			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
 				Profile: &aimv1alpha1.AIMProfile{
@@ -543,11 +548,32 @@ func TestBuildMergedEnvVars(t *testing.T) {
 			obs:            ServiceObservation{},
 			expectContains: []string{"PROFILE_VAR"},
 		},
+		{
+			name: "service env vars have highest precedence",
+			service: &aimv1alpha1.AIMService{
+				Spec: aimv1alpha1.AIMServiceSpec{
+					AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+						Env: []corev1.EnvVar{
+							{Name: "SERVICE_VAR", Value: "service-value"},
+							{Name: "SHARED_VAR", Value: "from-service"},
+						},
+					},
+				},
+			},
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpec{
+				Env: []corev1.EnvVar{
+					{Name: "SHARED_VAR", Value: "from-template"},
+				},
+			},
+			templateStatus: nil,
+			obs:            ServiceObservation{},
+			expectContains: []string{"SERVICE_VAR", "SHARED_VAR"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildMergedEnvVars(tt.templateSpec, tt.templateStatus, tt.obs)
+			result := buildMergedEnvVars(tt.service, tt.templateSpec, tt.templateStatus, tt.obs)
 
 			envMap := make(map[string]string)
 			for _, env := range result {
@@ -570,6 +596,7 @@ func TestBuildMergedEnvVars(t *testing.T) {
 }
 
 func TestBuildMergedEnvVars_IsSorted(t *testing.T) {
+	service := &aimv1alpha1.AIMService{}
 	templateSpec := &aimv1alpha1.AIMServiceTemplateSpec{
 		Env: []corev1.EnvVar{
 			{Name: "ZEBRA", Value: "z"},
@@ -578,11 +605,61 @@ func TestBuildMergedEnvVars_IsSorted(t *testing.T) {
 		},
 	}
 
-	result := buildMergedEnvVars(templateSpec, nil, ServiceObservation{})
+	result := buildMergedEnvVars(service, templateSpec, nil, ServiceObservation{})
 
 	for i := 1; i < len(result); i++ {
 		if result[i-1].Name > result[i].Name {
 			t.Errorf("env vars not sorted: %s > %s", result[i-1].Name, result[i].Name)
 		}
+	}
+}
+
+func TestBuildMergedEnvVars_ServiceOverridesAll(t *testing.T) {
+	// Test that service env vars override profile, template, and runtime config
+	service := &aimv1alpha1.AIMService{
+		Spec: aimv1alpha1.AIMServiceSpec{
+			AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+				Env: []corev1.EnvVar{
+					{Name: "SHARED_VAR", Value: "from-service"},
+				},
+			},
+		},
+	}
+	templateSpec := &aimv1alpha1.AIMServiceTemplateSpec{
+		Env: []corev1.EnvVar{
+			{Name: "SHARED_VAR", Value: "from-template"},
+		},
+	}
+	templateStatus := &aimv1alpha1.AIMServiceTemplateStatus{
+		Profile: &aimv1alpha1.AIMProfile{
+			EnvVars: map[string]string{
+				"SHARED_VAR": "from-profile",
+			},
+		},
+	}
+	obs := ServiceObservation{
+		ServiceFetchResult: ServiceFetchResult{
+			mergedRuntimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{
+				Value: &aimv1alpha1.AIMRuntimeConfigCommon{
+					AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+						Env: []corev1.EnvVar{
+							{Name: "SHARED_VAR", Value: "from-runtime-config"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result := buildMergedEnvVars(service, templateSpec, templateStatus, obs)
+
+	envMap := make(map[string]string)
+	for _, env := range result {
+		envMap[env.Name] = env.Value
+	}
+
+	// Service should win
+	if envMap["SHARED_VAR"] != "from-service" {
+		t.Errorf("expected SHARED_VAR='from-service', got '%s'", envMap["SHARED_VAR"])
 	}
 }

@@ -62,6 +62,15 @@ type AIMServiceRuntimeConfig struct {
 	// When set, these values override namespace/cluster runtime config defaults.
 	// +optional
 	Routing *AIMRuntimeRoutingConfig `json:"routing,omitempty"`
+
+	// Env specifies environment variables for inference containers.
+	// When set on AIMService, these take highest precedence in the merge hierarchy.
+	// When set on RuntimeConfig, these provide namespace/cluster-level defaults.
+	// Merge order (highest to lowest): Service.Env > RuntimeConfig.Env > Template.Env > Profile.Env
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Env []corev1.EnvVar `json:"env,omitempty"`
 }
 
 type AIMModelConfig struct {
@@ -82,15 +91,6 @@ type AIMRuntimeConfigCommon struct {
 	// This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services.
 	// +optional
 	Model *AIMModelConfig `json:"model,omitempty"`
-
-	// Env specifies environment variables to use for the runtime config.
-	// These variables are propagated to AIMServices.
-	// If configmaps or secrets are referenced, they need to exist in the namespace referencing this runtime config.
-	// For cluster scoped runtime configs, any referenced configmaps or secrets need to exist in the system namespace.
-	// +optional
-	// +listType=map
-	// +listMapKey=name
-	Env []corev1.EnvVar `json:"env,omitempty"`
 
 	// LabelPropagation controls how labels from parent AIM resources are propagated to child resources.
 	// When enabled, labels matching the specified patterns are automatically copied from parent resources

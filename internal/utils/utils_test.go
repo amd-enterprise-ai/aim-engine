@@ -30,83 +30,70 @@ import (
 
 func TestMergeEnvVars(t *testing.T) {
 	tests := []struct {
-		name     string
-		slices   [][]corev1.EnvVar
-		wantKeys map[string]string // name -> value
+		name          string
+		defaults      []corev1.EnvVar
+		overrides     []corev1.EnvVar
+		jsonMergeKeys []string
+		wantKeys      map[string]string // name -> value
 	}{
 		{
 			name:     "empty input",
-			slices:   nil,
+			defaults: nil,
 			wantKeys: nil,
 		},
 		{
-			name:     "single empty slice",
-			slices:   [][]corev1.EnvVar{{}},
-			wantKeys: nil,
+			name:      "both empty slices",
+			defaults:  []corev1.EnvVar{},
+			overrides: []corev1.EnvVar{},
+			wantKeys:  nil,
 		},
 		{
-			name: "single slice",
-			slices: [][]corev1.EnvVar{
-				{
-					{Name: "FOO", Value: "bar"},
-					{Name: "BAZ", Value: "qux"},
-				},
+			name: "defaults only",
+			defaults: []corev1.EnvVar{
+				{Name: "FOO", Value: "bar"},
+				{Name: "BAZ", Value: "qux"},
 			},
 			wantKeys: map[string]string{"FOO": "bar", "BAZ": "qux"},
 		},
 		{
-			name: "two slices no overlap",
-			slices: [][]corev1.EnvVar{
-				{{Name: "FOO", Value: "bar"}},
-				{{Name: "BAZ", Value: "qux"}},
-			},
-			wantKeys: map[string]string{"FOO": "bar", "BAZ": "qux"},
+			name:      "overrides only",
+			defaults:  nil,
+			overrides: []corev1.EnvVar{{Name: "FOO", Value: "bar"}},
+			wantKeys:  map[string]string{"FOO": "bar"},
 		},
 		{
-			name: "two slices with override",
-			slices: [][]corev1.EnvVar{
-				{{Name: "FOO", Value: "original"}},
-				{{Name: "FOO", Value: "override"}},
-			},
-			wantKeys: map[string]string{"FOO": "override"},
+			name:      "two slices no overlap",
+			defaults:  []corev1.EnvVar{{Name: "FOO", Value: "bar"}},
+			overrides: []corev1.EnvVar{{Name: "BAZ", Value: "qux"}},
+			wantKeys:  map[string]string{"FOO": "bar", "BAZ": "qux"},
 		},
 		{
-			name: "three layer merge - cluster namespace resource",
-			slices: [][]corev1.EnvVar{
-				{ // cluster
-					{Name: "CLUSTER_VAR", Value: "cluster"},
-					{Name: "SHARED", Value: "cluster-value"},
-				},
-				{ // namespace
-					{Name: "NS_VAR", Value: "namespace"},
-					{Name: "SHARED", Value: "namespace-value"},
-				},
-				{ // resource
-					{Name: "RESOURCE_VAR", Value: "resource"},
-					{Name: "SHARED", Value: "resource-value"},
-				},
+			name:      "overrides take precedence",
+			defaults:  []corev1.EnvVar{{Name: "FOO", Value: "original"}},
+			overrides: []corev1.EnvVar{{Name: "FOO", Value: "override"}},
+			wantKeys:  map[string]string{"FOO": "override"},
+		},
+		{
+			name: "mixed override and new",
+			defaults: []corev1.EnvVar{
+				{Name: "KEEP", Value: "kept"},
+				{Name: "OVERRIDE", Value: "old"},
+			},
+			overrides: []corev1.EnvVar{
+				{Name: "OVERRIDE", Value: "new"},
+				{Name: "NEW", Value: "added"},
 			},
 			wantKeys: map[string]string{
-				"CLUSTER_VAR":  "cluster",
-				"NS_VAR":       "namespace",
-				"RESOURCE_VAR": "resource",
-				"SHARED":       "resource-value", // last wins
+				"KEEP":     "kept",
+				"OVERRIDE": "new",
+				"NEW":      "added",
 			},
-		},
-		{
-			name: "middle slice empty",
-			slices: [][]corev1.EnvVar{
-				{{Name: "FOO", Value: "first"}},
-				{},
-				{{Name: "BAR", Value: "third"}},
-			},
-			wantKeys: map[string]string{"FOO": "first", "BAR": "third"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := MergeEnvVars(tt.slices...)
+			got := MergeEnvVars(tt.defaults, tt.overrides, tt.jsonMergeKeys...)
 
 			if tt.wantKeys == nil {
 				if got != nil {
@@ -133,6 +120,259 @@ func TestMergeEnvVars(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMergeEnvVars_JSONDeepMerge(t *testing.T) {
+	tests := []struct {
+		name          string
+		defaults      []corev1.EnvVar
+		overrides     []corev1.EnvVar
+		jsonMergeKeys []string
+		wantValue     string // expected value for AIM_ENGINE_ARGS
+	}{
+		{
+			name: "JSON deep merge combines keys",
+			defaults: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"max-model-len":4096}`},
+			},
+			overrides: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"kv-transfer-config":"value"}`},
+			},
+			jsonMergeKeys: []string{"AIM_ENGINE_ARGS"},
+			wantValue:     `{"kv-transfer-config":"value","max-model-len":4096}`,
+		},
+		{
+			name: "JSON deep merge - override takes precedence for same key",
+			defaults: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"key":"base-value"}`},
+			},
+			overrides: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"key":"override-value"}`},
+			},
+			jsonMergeKeys: []string{"AIM_ENGINE_ARGS"},
+			wantValue:     `{"key":"override-value"}`,
+		},
+		{
+			name: "JSON deep merge - nested objects",
+			defaults: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"outer":{"inner1":"a"}}`},
+			},
+			overrides: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"outer":{"inner2":"b"}}`},
+			},
+			jsonMergeKeys: []string{"AIM_ENGINE_ARGS"},
+			wantValue:     `{"outer":{"inner1":"a","inner2":"b"}}`,
+		},
+		{
+			name: "without jsonMergeKeys - simple replace",
+			defaults: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"max-model-len":4096}`},
+			},
+			overrides: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"kv-transfer-config":"value"}`},
+			},
+			jsonMergeKeys: nil,                              // no JSON merge
+			wantValue:     `{"kv-transfer-config":"value"}`, // simple replace
+		},
+		{
+			name: "invalid base JSON - use override",
+			defaults: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `not-valid-json`},
+			},
+			overrides: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"valid":"json"}`},
+			},
+			jsonMergeKeys: []string{"AIM_ENGINE_ARGS"},
+			wantValue:     `{"valid":"json"}`,
+		},
+		{
+			name: "invalid override JSON - use override as-is",
+			defaults: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"valid":"json"}`},
+			},
+			overrides: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `not-valid-json`},
+			},
+			jsonMergeKeys: []string{"AIM_ENGINE_ARGS"},
+			wantValue:     `not-valid-json`,
+		},
+		{
+			name:     "empty base - use override",
+			defaults: []corev1.EnvVar{},
+			overrides: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"key":"value"}`},
+			},
+			jsonMergeKeys: []string{"AIM_ENGINE_ARGS"},
+			wantValue:     `{"key":"value"}`,
+		},
+		{
+			name: "empty override - use base",
+			defaults: []corev1.EnvVar{
+				{Name: "AIM_ENGINE_ARGS", Value: `{"key":"value"}`},
+			},
+			overrides:     []corev1.EnvVar{},
+			jsonMergeKeys: []string{"AIM_ENGINE_ARGS"},
+			wantValue:     `{"key":"value"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MergeEnvVars(tt.defaults, tt.overrides, tt.jsonMergeKeys...)
+
+			// Find AIM_ENGINE_ARGS in result
+			var gotValue string
+			for _, env := range got {
+				if env.Name == "AIM_ENGINE_ARGS" {
+					gotValue = env.Value
+					break
+				}
+			}
+
+			if gotValue != tt.wantValue {
+				t.Errorf("MergeEnvVars()[AIM_ENGINE_ARGS] = %q, want %q", gotValue, tt.wantValue)
+			}
+		})
+	}
+}
+
+func TestMergeJSONEnvVarValues(t *testing.T) {
+	tests := []struct {
+		name   string
+		base   string
+		higher string
+		want   string
+	}{
+		{
+			name:   "empty base",
+			base:   "",
+			higher: `{"key":"value"}`,
+			want:   `{"key":"value"}`,
+		},
+		{
+			name:   "empty higher",
+			base:   `{"key":"value"}`,
+			higher: "",
+			want:   `{"key":"value"}`,
+		},
+		{
+			name:   "both empty",
+			base:   "",
+			higher: "",
+			want:   "",
+		},
+		{
+			name:   "merge different keys",
+			base:   `{"a":"1"}`,
+			higher: `{"b":"2"}`,
+			want:   `{"a":"1","b":"2"}`,
+		},
+		{
+			name:   "higher overrides same key",
+			base:   `{"key":"base"}`,
+			higher: `{"key":"higher"}`,
+			want:   `{"key":"higher"}`,
+		},
+		{
+			name:   "nested merge",
+			base:   `{"outer":{"a":"1"}}`,
+			higher: `{"outer":{"b":"2"}}`,
+			want:   `{"outer":{"a":"1","b":"2"}}`,
+		},
+		{
+			name:   "invalid base returns higher",
+			base:   `not-json`,
+			higher: `{"valid":"json"}`,
+			want:   `{"valid":"json"}`,
+		},
+		{
+			name:   "invalid higher returns higher",
+			base:   `{"valid":"json"}`,
+			higher: `not-json`,
+			want:   `not-json`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MergeJSONEnvVarValues(tt.base, tt.higher)
+			if got != tt.want {
+				t.Errorf("MergeJSONEnvVarValues(%q, %q) = %q, want %q", tt.base, tt.higher, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDeepMergeMap(t *testing.T) {
+	tests := []struct {
+		name string
+		dst  map[string]any
+		src  map[string]any
+		want map[string]any
+	}{
+		{
+			name: "simple merge",
+			dst:  map[string]any{"a": "1"},
+			src:  map[string]any{"b": "2"},
+			want: map[string]any{"a": "1", "b": "2"},
+		},
+		{
+			name: "src overrides dst",
+			dst:  map[string]any{"key": "dst"},
+			src:  map[string]any{"key": "src"},
+			want: map[string]any{"key": "src"},
+		},
+		{
+			name: "nested maps merge",
+			dst:  map[string]any{"outer": map[string]any{"a": "1"}},
+			src:  map[string]any{"outer": map[string]any{"b": "2"}},
+			want: map[string]any{"outer": map[string]any{"a": "1", "b": "2"}},
+		},
+		{
+			name: "nested - src overrides nested key",
+			dst:  map[string]any{"outer": map[string]any{"key": "dst"}},
+			src:  map[string]any{"outer": map[string]any{"key": "src"}},
+			want: map[string]any{"outer": map[string]any{"key": "src"}},
+		},
+		{
+			name: "src replaces non-map with map",
+			dst:  map[string]any{"key": "string"},
+			src:  map[string]any{"key": map[string]any{"nested": "value"}},
+			want: map[string]any{"key": map[string]any{"nested": "value"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			DeepMergeMap(tt.dst, tt.src)
+			// Compare by converting back to string
+			if !mapsEqual(tt.dst, tt.want) {
+				t.Errorf("DeepMergeMap() = %v, want %v", tt.dst, tt.want)
+			}
+		})
+	}
+}
+
+func mapsEqual(a, b map[string]any) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, av := range a {
+		bv, ok := b[k]
+		if !ok {
+			return false
+		}
+		aMap, aIsMap := av.(map[string]any)
+		bMap, bIsMap := bv.(map[string]any)
+		if aIsMap && bIsMap {
+			if !mapsEqual(aMap, bMap) {
+				return false
+			}
+		} else if av != bv {
+			return false
+		}
+	}
+	return true
 }
 
 type testConfig struct {

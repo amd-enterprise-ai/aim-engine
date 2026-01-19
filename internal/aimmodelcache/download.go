@@ -62,13 +62,15 @@ func buildDownloadJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alp
 	}
 
 	// Merge env vars with precedence: mc.Spec.Env > runtimeConfigSpec.Env > defaults
-	newEnv := utils.MergeEnvVars([]corev1.EnvVar{
+	defaultEnv := []corev1.EnvVar{
 		{Name: "HF_XET_CHUNK_CACHE_SIZE_BYTES", Value: "0"},
 		{Name: "HF_XET_SHARD_CACHE_SIZE_BYTES", Value: "0"},
 		{Name: "HF_XET_HIGH_PERFORMANCE", Value: "1"},
 		{Name: "HF_HOME", Value: mountPath + "/.hf"},
 		{Name: "UMASK", Value: "0022"},
-	}, runtimeEnv, mc.Spec.Env)
+	}
+	newEnv := utils.MergeEnvVars(defaultEnv, runtimeEnv)
+	newEnv = utils.MergeEnvVars(newEnv, mc.Spec.Env)
 
 	// Expected size in bytes for progress calculation
 	expectedSizeBytes := mc.Spec.Size.Value()
