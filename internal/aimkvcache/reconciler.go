@@ -150,14 +150,18 @@ func (r *AIMKVCacheReconciler) PlanResources(
 		return controllerutils.PlanResult{}
 	}
 
-	desiredService := r.buildRedisService(kvc)
-	if desiredService != nil {
-		planResult.Apply(desiredService)
+	if obs.service.IsNotFound() {
+		desiredService := r.buildRedisService(kvc)
+		if desiredService != nil {
+			planResult.Apply(desiredService)
+		}
 	}
 
-	desiredStatefulSet := r.buildRedisStatefulSet(kvc)
-	if desiredStatefulSet != nil {
-		planResult.Apply(desiredStatefulSet)
+	if obs.statefulSet.IsNotFound() {
+		desiredStatefulSet := r.buildRedisStatefulSet(kvc)
+		if desiredStatefulSet != nil {
+			planResult.Apply(desiredStatefulSet)
+		}
 	}
 
 	return planResult
