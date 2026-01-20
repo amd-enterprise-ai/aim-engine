@@ -508,7 +508,7 @@ func preferNamespaceTemplates(candidates []TemplateCandidate) []TemplateCandidat
 // 1. Profile Type: optimized > preview > unoptimized
 // 2. GPU Tier: MI325X > MI300X > MI250X > MI210 > A100 > H100 (AMD preferred)
 // 3. Metric: latency > throughput
-// 4. Precision: fp8 > fp16 > bf16 > fp32 (lower precision preferred for performance)
+// 4. Precision: smaller bit-width preferred (fp4 > int4 > fp8 > int8 > fp16 > bf16 > fp32)
 //
 // Lower scores indicate higher preference. Unknown values get a high score (len+1000).
 // Returns the best candidate and count of candidates with identical best scores.
@@ -623,8 +623,10 @@ var (
 	metricPreferenceOrder = []string{
 		"latency", "throughput",
 	}
+	// Precision preference: primary ordering by bit-width (smaller preferred for performance).
+	// Secondary ordering by type: fp > bf > int (floating point preferred for accuracy).
 	precisionPreferenceOrder = []string{
-		"fp8", "fp16", "bf16", "fp32",
+		"fp4", "int4", "fp8", "int8", "fp16", "bf16", "fp32",
 	}
 	profileTypePreferenceOrder = []string{
 		string(aimv1alpha1.AIMProfileTypeOptimized),

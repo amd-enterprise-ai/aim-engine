@@ -155,7 +155,7 @@ If multiple templates remain after filtering, AIM Engine scores them using this 
 1. **Profile Type**: optimized > preview > unoptimized
 2. **GPU Tier**: MI325X > MI300X > MI250X > MI210 > A100 > H100
 3. **Metric**: latency > throughput
-4. **Precision**: Smaller precision types are preferred. Primary ordering is fp, bf, int. Within each type: fp4 > fp8 > fp16 > fp32, bf16, int4 > int8
+4. **Precision**: Primary ordering by bit-width (smaller preferred). Secondary ordering by type: fp > bf > int. Full order: fp4 > int4 > fp8 > int8 > fp16 > bf16 > fp32
 
 The template with the best score is selected.
 
