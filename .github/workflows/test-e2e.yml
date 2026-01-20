@@ -95,5 +95,27 @@ jobs:
       - name: Wait for operator to be ready
         run: kubectl wait --for=condition=Available --timeout=120s deployment/aim-engine-controller-manager -n aim-system
 
+      - name: Debug operator status
+        if: always()
+        run: |
+          echo "=== Operator Deployment ==="
+          kubectl get deployment -n aim-system
+          echo "=== Operator Pods ==="
+          kubectl get pods -n aim-system
+          echo "=== Operator Pod Describe ==="
+          kubectl describe pods -n aim-system -l control-plane=controller-manager || true
+          echo "=== Operator Logs (last 50 lines) ==="
+          kubectl logs -n aim-system -l control-plane=controller-manager --tail=50 || true
+          echo "=== CRDs ==="
+          kubectl get crds | grep aim || true
+
       - name: Run Chainsaw tests
         run: make test-chainsaw-kind
+
+      - name: Debug on failure
+        if: failure()
+        run: |
+          echo "=== Operator Logs (full) ==="
+          kubectl logs -n aim-system -l control-plane=controller-manager --tail=200 || true
+          echo "=== All AIM resources ==="
+          kubectl get aimservice,aimmodel,aimtemplatecache,aimmodelcache -A || true
