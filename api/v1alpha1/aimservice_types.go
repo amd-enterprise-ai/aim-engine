@@ -30,8 +30,9 @@ import (
 )
 
 const (
-	// AIMServiceTemplateIndexKey is the field index key for AIMService template reference
-	// Indexes by .spec.template.name for finding services that reference a specific template
+	// AIMServiceTemplateIndexKey is the field index key used by controller-runtime for
+	// indexing AIMService resources by their template reference (.spec.template.name).
+	// This enables efficient lookups of services that reference a specific template.
 	AIMServiceTemplateIndexKey = ".spec.templateRef"
 
 	// AIMServiceResolvedTemplateIndexKey is the field index key for resolved template name
@@ -305,27 +306,6 @@ func (s *AIMServiceStatus) GetAIMStatus() constants.AIMStatus {
 // +kubebuilder:validation:Enum=Pending;Starting;Running;Failed;Degraded
 type AIMServiceStatusEnum string
 
-// Condition types for AIMService
-const (
-	// ConditionResolved is True when the model and template have been validated and a runtime profile has been selected.
-	AIMServiceConditionTemplateResolved = "TemplateResolved"
-
-	// ConditionCacheReady is True when required caches are present or warmed as requested.
-	AIMServiceConditionCacheReady = "CacheReady"
-
-	// ConditionRuntimeReady is True when the underlying KServe runtime and inferenceService are ready.
-	AIMServiceConditionRuntimeReady = "RuntimeReady"
-
-	// ConditionRoutingReady is True when exposure and routing through the configured gateway are ready.
-	AIMServiceConditionRoutingReady = "RoutingReady"
-
-	// ConditionModelResolved is True when the model has been resolved.
-	AIMServiceConditionModelResolved = "ModelResolved"
-
-	// ConditionStorageReady is True when storage (PVC or cache) is ready.
-	AIMServiceConditionStorageReady = "StorageReady"
-)
-
 // Condition reasons for AIMService
 const (
 	// Model Resolution
@@ -334,18 +314,14 @@ const (
 	AIMServiceReasonCreatingModel         = "CreatingModel"
 	AIMServiceReasonModelNotReady         = "ModelNotReady"
 	AIMServiceReasonModelResolved         = "ModelResolved"
-	AIMServiceReasonMultipleModelsFound   = "MultipleModelsFound"
 
 	// Template Resolution
 	AIMServiceReasonTemplateNotFound           = "TemplateNotFound"
-	AIMServiceReasonTemplateSelectionFailed    = "TemplateSelectionFailed"
 	AIMServiceReasonTemplateNotReady           = "TemplateNotReady"
 	AIMServiceReasonResolved                   = "Resolved"
-	AIMServiceReasonValidationFailed           = "ValidationFailed"
 	AIMServiceReasonTemplateSelectionAmbiguous = "TemplateSelectionAmbiguous"
 
 	// Storage
-	AIMServiceReasonCreatingPVC      = "CreatingPVC"
 	AIMServiceReasonPVCNotBound      = "PVCNotBound"
 	AIMServiceReasonStorageReady     = "StorageReady"
 	AIMServiceReasonStorageSizeError = "StorageSizeError"
@@ -354,18 +330,13 @@ const (
 	AIMServiceReasonCacheCreating = "CacheCreating"
 	AIMServiceReasonCacheNotReady = "CacheNotReady"
 	AIMServiceReasonCacheReady    = "CacheReady"
-	AIMServiceReasonCacheRetrying = "CacheRetrying"
 	AIMServiceReasonCacheFailed   = "CacheFailed"
 
 	// Runtime
 	AIMServiceReasonCreatingRuntime = "CreatingRuntime"
 	AIMServiceReasonRuntimeReady    = "RuntimeReady"
-	AIMServiceReasonRuntimeFailed   = "RuntimeFailed"
 
 	// Routing
-	AIMServiceReasonConfiguringRoute    = "ConfiguringRoute"
-	AIMServiceReasonRouteReady          = "RouteReady"
-	AIMServiceReasonRouteFailed         = "RouteFailed"
 	AIMServiceReasonPathTemplateInvalid = "PathTemplateInvalid"
 )
 

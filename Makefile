@@ -95,8 +95,8 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
 	esac
 
-.PHONY: setup-kind
-setup-kind: manifests ## Create kind cluster with all dependencies for local development.
+.PHONY: kind-create
+kind-create: manifests ## Create kind cluster with all dependencies for local development.
 	@echo "=== Setting up kind cluster for local development ==="
 	@# Create cluster if it doesn't exist
 	@if ! kind get clusters 2>/dev/null | grep -q "^aim-engine$$"; then \
@@ -130,8 +130,8 @@ setup-kind: manifests ## Create kind cluster with all dependencies for local dev
 	@echo "=== Kind cluster setup complete ==="
 	@echo "Run 'make watch' to start the operator with live reload."
 
-.PHONY: teardown-kind
-teardown-kind: ## Delete the kind cluster.
+.PHONY: kind-delete
+kind-delete: ## Delete the kind cluster.
 	@echo "Deleting kind cluster 'aim-engine'..."
 	@kind delete cluster --name aim-engine || true
 
@@ -195,16 +195,16 @@ lint-config: ## Verify golangci-lint linter configuration
 # vCluster naming convention: aim-{username}-dev
 VCLUSTER_NAME := aim-$(shell whoami)-dev
 
-.PHONY: vcluster-up
-vcluster-up: ## Create personal vcluster, install dependencies, and connect.
+.PHONY: vcluster-create
+vcluster-create: ## Create personal vcluster, install dependencies, and connect.
 	@echo "Creating vcluster '$(VCLUSTER_NAME)'..."
 	vcluster create $(VCLUSTER_NAME) --namespace $(VCLUSTER_NAME) -f hack/dependencies/vcluster.yaml
 	@echo "Installing dependencies..."
 	helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
 	@echo "vCluster '$(VCLUSTER_NAME)' ready."
 
-.PHONY: vcluster-down
-vcluster-down: ## Delete personal vcluster.
+.PHONY: vcluster-delete
+vcluster-delete: ## Delete personal vcluster.
 	@echo "Deleting vcluster '$(VCLUSTER_NAME)'..."
 	vcluster delete $(VCLUSTER_NAME) --namespace $(VCLUSTER_NAME)
 

@@ -174,7 +174,16 @@ else
     info "Skipping apply (--status-only mode) for $KIND/$NAME${NAMESPACE:+ in namespace $NAMESPACE}"
 fi
 
-# Step 2: Patch status if present
+# Step 2: Freeze if requested (before patching status to prevent reconciliation race)
+if [[ "$FREEZE" == "true" ]]; then
+    info "Freezing resource (adding reconciliation-paused annotation)..."
+    kubectl annotate "$RESOURCE_TYPE" "$NAME" $NS_FLAG \
+        aim.eai.amd.com/reconciliation-paused=true \
+        --overwrite
+    info "Resource frozen"
+fi
+
+# Step 3: Patch status if present (after freeze to ensure status is preserved)
 if [[ "$HAS_STATUS" == "true" ]]; then
     info "Patching status subresource..."
 
@@ -193,15 +202,6 @@ if [[ "$HAS_STATUS" == "true" ]]; then
     info "Status patched successfully"
 else
     warn "No status field found in $FILE, skipping status patch"
-fi
-
-# Step 3: Freeze if requested
-if [[ "$FREEZE" == "true" ]]; then
-    info "Freezing resource (adding reconciliation-paused annotation)..."
-    kubectl annotate "$RESOURCE_TYPE" "$NAME" $NS_FLAG \
-        aim.eai.amd.com/reconciliation-paused=true \
-        --overwrite
-    info "Resource frozen"
 fi
 
 info "Done: $KIND/$NAME"

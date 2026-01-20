@@ -6,16 +6,17 @@ An AIMService is the primary resource for deploying AI/ML models as inference en
 
 When you create an AIMService, the operator:
 
-1. Resolves the model (by name reference or image URI)
-2. Resolves the template (explicit reference or auto-selection)
-3. Creates a KServe InferenceService with the appropriate configuration
-4. Optionally configures caching and routing
+1. Resolves the model (by name reference or image URI), creating an AIMModel if needed
+2. Resolves the template (explicit reference or auto-selection), creating derived templates if overrides are specified
+3. Configures caching if enabled (creates AIMTemplateCache and AIMModelCache resources)
+4. Creates a KServe InferenceService with the appropriate configuration
+5. Optionally configures routing via Gateway API
 
 ## Basic Examples
 
 ### Deploy by Model Name
 
-Reference an existing model and let AIM auto-select the best template:
+Reference an existing model and let AIM Engine auto-select the best template:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -30,7 +31,7 @@ spec:
 
 ### Deploy by Image URI
 
-Specify a container image directly. AIM will find or create a matching AIMModel:
+Specify a container image directly. AIM Engine will find or create a matching AIMModel:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -43,7 +44,7 @@ spec:
     image: ghcr.io/amd/llama-3-8b:v1.0.0
 ```
 
-When using `model.image`, AIM searches for existing models with that image URI. If none exist, it creates an AIMModel automatically (without owner references, so it persists for reuse by other services).
+When using `model.image`, AIM Engine searches for existing models with that image URI. If none exist, it creates an AIMModel automatically (without owner references, so it persists for reuse by other services).
 
 ### Deploy with Explicit Template
 
@@ -74,14 +75,14 @@ AIMService supports three ways to specify the model:
 
 ### Resolution Order
 
-When resolving by name, AIM checks:
+When resolving by name, AIM Engine checks:
 
 1. Namespace-scoped `AIMModel` with that name
 2. Cluster-scoped `AIMClusterModel` with that name
 
 Namespace-scoped resources take precedence.
 
-When resolving by image URI, AIM searches both namespace and cluster-scoped models for a matching `spec.image`. If multiple matches exist, resolution fails with an error to prevent ambiguity.
+When resolving by image URI, AIM Engine searches both namespace and cluster-scoped models for a matching `spec.image`. If no match exists, AIM Engine creates an AIMModel automatically. If multiple matches exist, resolution fails with an error to prevent ambiguity.
 
 ## Template Resolution
 
@@ -89,7 +90,7 @@ Templates define how to run a model: GPU requirements, precision, optimization m
 
 ### Explicit Template
 
-When you specify `template.name`, AIM looks up that template directly:
+When you specify `template.name`, AIM Engine looks up that template directly:
 
 ```yaml
 spec:
@@ -103,7 +104,7 @@ Resolution order:
 
 ### Auto-Selection
 
-When no template name is specified, AIM automatically selects the best template for the model. This is the recommended approach for most deployments.
+When no template name is specified, AIM Engine automatically selects the best template for the model. This is the recommended approach for most deployments.
 
 Auto-selection uses a multi-stage filtering and scoring algorithm:
 
@@ -149,18 +150,18 @@ When both namespace-scoped and cluster-scoped templates match, namespace-scoped 
 
 #### Stage 6: Preference Scoring
 
-If multiple templates remain after filtering, AIM scores them using this preference hierarchy (highest to lowest priority):
+If multiple templates remain after filtering, AIM Engine scores them using this preference hierarchy (highest to lowest priority):
 
 1. **Profile Type**: optimized > preview > unoptimized
 2. **GPU Tier**: MI325X > MI300X > MI250X > MI210 > A100 > H100
 3. **Metric**: latency > throughput
-4. **Precision**: fp8 > fp16 > bf16 > fp32
+4. **Precision**: Smaller precision types are preferred. Primary ordering is fp, bf, int. Within each type: fp4 > fp8 > fp16 > fp32, bf16, int4 > int8
 
 The template with the best score is selected.
 
 ### Ambiguous Selection
 
-If multiple templates have identical scores after all filtering and scoring, AIM reports an ambiguous selection error. Resolve this by:
+If multiple templates have identical scores after all filtering and scoring, AIM Engine reports an ambiguous selection error. Resolve this by:
 
 - Specifying `template.name` explicitly
 - Adding overrides to narrow the selection
@@ -168,7 +169,7 @@ If multiple templates have identical scores after all filtering and scoring, AIM
 
 ## Derived Templates
 
-When you specify overrides on a service that uses an explicit template, AIM creates a **derived template**. This is a namespace-scoped copy of the base template with your overrides applied.
+When you specify overrides on a service that uses an explicit template, AIM Engine creates a **derived template**. This is a namespace-scoped copy of the base template with your overrides applied.
 
 ```yaml
 spec:
@@ -214,7 +215,7 @@ With `caching: Auto`, services can start immediately while model caches populate
 
 ## Overrides
 
-Overrides let you customize template behavior without creating a new template:
+Overrides let you customize template behavior without manually creating a new template (a derived template is created automatically):
 
 ```yaml
 spec:
@@ -263,10 +264,9 @@ Service status reflects the health of all components:
 |--------|---------|
 | `Pending` | Waiting for upstream dependencies (model, template) |
 | `Progressing` | Creating downstream resources (InferenceService, cache) |
-| `Ready` | InferenceService is ready and serving traffic |
+| `Running` | InferenceService is ready and serving traffic |
 | `Degraded` | Partially functional (e.g., cache failed but service running) |
 | `Failed` | Critical failure preventing deployment |
-| `NotAvailable` | Required hardware not available in cluster |
 
 ### Component Health
 
