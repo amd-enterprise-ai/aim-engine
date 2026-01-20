@@ -56,6 +56,8 @@ const (
 	LabelPrecision = AimLabelDomain + "/precision"
 	// LabelCacheType indicates the type of cache (temp or persistent)
 	LabelCacheType = AimLabelDomain + "/cache-type"
+	// LabelTemplateCacheName is the label key for the template cache name (used on model caches)
+	LabelTemplateCacheName = AimLabelDomain + "/template-cache.name"
 )
 
 // Label values

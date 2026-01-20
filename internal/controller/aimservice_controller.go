@@ -24,6 +24,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
@@ -34,6 +35,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -43,10 +45,16 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
 const (
 	serviceName = "service"
+
+	// finalizerTemplateCacheCleanup is the finalizer for cleaning up non-Available template caches
+	// when an AIMService is deleted. Template caches that are stuck in Failed/Pending states
+	// cannot be re-created while they exist, so we must delete them on service deletion.
+	finalizerTemplateCacheCleanup = "aim.eai.amd.com/template-cache-cleanup"
 )
 
 // AIMServiceReconciler reconciles a AIMService object
@@ -90,6 +98,44 @@ func (r *AIMServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 		logger.Error(err, "Failed to fetch AIMService")
 		return ctrl.Result{}, err
+	}
+
+	// Handle finalizer for template cache cleanup
+	if service.DeletionTimestamp != nil {
+		// Service is being deleted
+		if controllerutil.ContainsFinalizer(&service, finalizerTemplateCacheCleanup) {
+			// Run cleanup logic
+			if err := r.cleanupTemplateCaches(ctx, &service); err != nil {
+				logger.Error(err, "Failed to cleanup template caches")
+				return ctrl.Result{}, err
+			}
+
+			// Remove the finalizer
+			controllerutil.RemoveFinalizer(&service, finalizerTemplateCacheCleanup)
+			if err := r.Update(ctx, &service); err != nil {
+				if apierrors.IsConflict(err) {
+					// Conflict, retry on next reconcile
+					return ctrl.Result{Requeue: true}, nil
+				}
+				return ctrl.Result{}, err
+			}
+		}
+		// Stop reconciliation as the resource is being deleted
+		return ctrl.Result{}, nil
+	}
+
+	// Ensure finalizer is present
+	if !controllerutil.ContainsFinalizer(&service, finalizerTemplateCacheCleanup) {
+		controllerutil.AddFinalizer(&service, finalizerTemplateCacheCleanup)
+		if err := r.Update(ctx, &service); err != nil {
+			if apierrors.IsConflict(err) {
+				// Conflict, retry on next reconcile
+				return ctrl.Result{Requeue: true}, nil
+			}
+			return ctrl.Result{}, err
+		}
+		// Requeue to continue with main reconciliation after finalizer is added
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	if err := r.pipeline.Run(ctx, &service); err != nil {
@@ -532,5 +578,60 @@ func (r *AIMServiceReconciler) findServicesForInferenceServiceEvent(ctx context.
 		}
 	}
 
+	return nil
+}
+
+// cleanupTemplateCaches deletes AIMTemplateCaches created by this service that are not Available.
+// Template caches that are stuck in Failed/Pending states cannot be re-created while they exist,
+// blocking any future service that would use the same template. Deleting non-Available caches
+// on service deletion ensures a clean slate for recreation.
+func (r *AIMServiceReconciler) cleanupTemplateCaches(ctx context.Context, service *aimv1alpha1.AIMService) error {
+	logger := log.FromContext(ctx)
+
+	// Sanitize service name for label matching
+	serviceLabelValue, err := utils.SanitizeLabelValue(service.Name)
+	if err != nil {
+		return fmt.Errorf("failed to sanitize service name for label: %w", err)
+	}
+
+	// List all AIMTemplateCaches created by this AIMService
+	var templateCaches aimv1alpha1.AIMTemplateCacheList
+	if err := r.List(ctx, &templateCaches,
+		client.InNamespace(service.Namespace),
+		client.MatchingLabels{
+			constants.LabelService: serviceLabelValue,
+		},
+	); err != nil {
+		// If the namespace is being deleted, skip cleanup
+		if apierrors.IsForbidden(err) || apierrors.IsNotFound(err) {
+			logger.Info("Skipping cleanup, namespace may be terminating", "service", service.Name)
+			return nil
+		}
+		return fmt.Errorf("failed to list template caches for cleanup: %w", err)
+	}
+
+	// Delete only the ones that are not Available
+	var errs []error
+	for i := range templateCaches.Items {
+		tc := &templateCaches.Items[i]
+		if tc.Status.Status != constants.AIMStatusReady {
+			if deleteErr := r.Delete(ctx, tc); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
+				// If namespace is terminating, continue
+				if apierrors.IsForbidden(deleteErr) {
+					continue
+				}
+				errs = append(errs, fmt.Errorf("failed to delete template cache %s: %w", tc.Name, deleteErr))
+			} else {
+				logger.Info("Deleted non-available template cache during service cleanup",
+					"templateCache", tc.Name,
+					"service", service.Name,
+					"cacheStatus", tc.Status.Status)
+			}
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("cleanup errors: %v", errs)
+	}
 	return nil
 }

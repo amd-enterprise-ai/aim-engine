@@ -24,6 +24,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -32,6 +33,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -41,10 +43,16 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimtemplatecache"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
 const (
 	templateCacheName = "template-cache"
+
+	// finalizerModelCacheCleanup is the finalizer for cleaning up non-Available model caches
+	// when an AIMTemplateCache is deleted. Model caches that are stuck in Failed/Pending states
+	// cannot be re-created while they exist, so we must delete them on template cache deletion.
+	finalizerModelCacheCleanup = "aim.eai.amd.com/model-cache-cleanup"
 )
 
 // AIMTemplateCacheReconciler reconciles a AIMTemplateCache object
@@ -77,19 +85,12 @@ type AIMTemplateCacheReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the AIMTemplateCache object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
 func (r *AIMTemplateCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Fetch the model
-	var model aimv1alpha1.AIMTemplateCache
-	if err := r.Get(ctx, req.NamespacedName, &model); err != nil {
+	// Fetch the template cache
+	var templateCache aimv1alpha1.AIMTemplateCache
+	if err := r.Get(ctx, req.NamespacedName, &templateCache); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
@@ -97,7 +98,45 @@ func (r *AIMTemplateCacheReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	if err := r.pipeline.Run(ctx, &model); err != nil {
+	// Handle finalizer for model cache cleanup
+	if templateCache.DeletionTimestamp != nil {
+		// Template cache is being deleted
+		if controllerutil.ContainsFinalizer(&templateCache, finalizerModelCacheCleanup) {
+			// Run cleanup logic
+			if err := r.cleanupModelCaches(ctx, &templateCache); err != nil {
+				logger.Error(err, "Failed to cleanup model caches")
+				return ctrl.Result{}, err
+			}
+
+			// Remove the finalizer
+			controllerutil.RemoveFinalizer(&templateCache, finalizerModelCacheCleanup)
+			if err := r.Update(ctx, &templateCache); err != nil {
+				if apierrors.IsConflict(err) {
+					// Conflict, retry on next reconcile
+					return ctrl.Result{Requeue: true}, nil
+				}
+				return ctrl.Result{}, err
+			}
+		}
+		// Stop reconciliation as the resource is being deleted
+		return ctrl.Result{}, nil
+	}
+
+	// Ensure finalizer is present
+	if !controllerutil.ContainsFinalizer(&templateCache, finalizerModelCacheCleanup) {
+		controllerutil.AddFinalizer(&templateCache, finalizerModelCacheCleanup)
+		if err := r.Update(ctx, &templateCache); err != nil {
+			if apierrors.IsConflict(err) {
+				// Conflict, retry on next reconcile
+				return ctrl.Result{Requeue: true}, nil
+			}
+			return ctrl.Result{}, err
+		}
+		// Requeue to continue with main reconciliation after finalizer is added
+		return ctrl.Result{Requeue: true}, nil
+	}
+
+	if err := r.pipeline.Run(ctx, &templateCache); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -186,7 +225,12 @@ func (r *AIMTemplateCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMTemplateCache{}).
-		Owns(&aimv1alpha1.AIMModelCache{}).
+		// Watch model caches and enqueue template caches that created them (via label)
+		// Model caches are shared resources without owner references
+		Watches(
+			&aimv1alpha1.AIMModelCache{},
+			handler.EnqueueRequestsFromMapFunc(r.findTemplateCachesForModelCache),
+		).
 		Watches(
 			&aimv1alpha1.AIMServiceTemplate{},
 			handler.EnqueueRequestsFromMapFunc(r.findTemplateCachesForServiceTemplate),
@@ -265,6 +309,29 @@ func (r *AIMTemplateCacheReconciler) findTemplateCachesForClusterServiceTemplate
 	return requests
 }
 
+// findTemplateCachesForModelCache finds all template caches that created a model cache (via label).
+// Model caches are shared resources without owner references, so we use a label-based lookup.
+func (r *AIMTemplateCacheReconciler) findTemplateCachesForModelCache(ctx context.Context, obj client.Object) []ctrl.Request {
+	modelCache := obj.(*aimv1alpha1.AIMModelCache)
+
+	// Get the template cache name from the label
+	templateCacheName := modelCache.Labels[constants.LabelTemplateCacheName]
+	if templateCacheName == "" {
+		// Model cache was not created by a template cache (or is a legacy cache)
+		return nil
+	}
+
+	// Return a reconcile request for the template cache
+	return []ctrl.Request{
+		{
+			NamespacedName: client.ObjectKey{
+				Name:      templateCacheName,
+				Namespace: modelCache.Namespace,
+			},
+		},
+	}
+}
+
 // getTemplateStatus extracts the status from a template object (works for both namespace and cluster scoped)
 func getTemplateStatus(obj client.Object) constants.AIMStatus {
 	switch t := obj.(type) {
@@ -275,4 +342,59 @@ func getTemplateStatus(obj client.Object) constants.AIMStatus {
 	default:
 		return ""
 	}
+}
+
+// cleanupModelCaches deletes AIMModelCaches created by this template cache that are not Available.
+// Model caches that are stuck in Failed/Pending states cannot be re-created while they exist,
+// blocking any future template cache that would use the same template. Deleting non-Available caches
+// on template cache deletion ensures a clean slate for recreation.
+func (r *AIMTemplateCacheReconciler) cleanupModelCaches(ctx context.Context, templateCache *aimv1alpha1.AIMTemplateCache) error {
+	logger := log.FromContext(ctx)
+
+	// Sanitize template cache name for label matching
+	templateCacheLabelValue, err := utils.SanitizeLabelValue(templateCache.Name)
+	if err != nil {
+		return fmt.Errorf("failed to sanitize template cache name for label: %w", err)
+	}
+
+	// List all AIMModelCaches created by this template cache (via label)
+	var modelCaches aimv1alpha1.AIMModelCacheList
+	if err := r.List(ctx, &modelCaches,
+		client.InNamespace(templateCache.Namespace),
+		client.MatchingLabels{
+			constants.LabelTemplateCacheName: templateCacheLabelValue,
+		},
+	); err != nil {
+		// If the namespace is being deleted, skip cleanup
+		if apierrors.IsForbidden(err) || apierrors.IsNotFound(err) {
+			logger.Info("Skipping cleanup, namespace may be terminating", "templateCache", templateCache.Name)
+			return nil
+		}
+		return fmt.Errorf("failed to list model caches for cleanup: %w", err)
+	}
+
+	// Delete only the ones that are not in Ready state
+	var errs []error
+	for i := range modelCaches.Items {
+		mc := &modelCaches.Items[i]
+		if mc.Status.Status != constants.AIMStatusReady {
+			if deleteErr := r.Delete(ctx, mc); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
+				// If namespace is terminating, continue
+				if apierrors.IsForbidden(deleteErr) {
+					continue
+				}
+				errs = append(errs, fmt.Errorf("failed to delete model cache %s: %w", mc.Name, deleteErr))
+			} else {
+				logger.Info("Deleted non-available model cache during template cache cleanup",
+					"modelCache", mc.Name,
+					"templateCache", templateCache.Name,
+					"cacheStatus", mc.Status.Status)
+			}
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("cleanup errors: %v", errs)
+	}
+	return nil
 }

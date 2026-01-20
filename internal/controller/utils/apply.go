@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
 // ApplyDesiredState applies the desired set of objects via Server-Side Apply (SSA).
@@ -250,32 +252,21 @@ func applyControllerLabels(obj client.Object, labels map[string]string) {
 	}
 }
 
-// PropagateLabels propagates labels from a parent resource to a child resource based on the runtime config's
-// label propagation settings. Only labels whose keys match the patterns defined in the config are copied.
-// The child's existing labels are preserved and only new labels are added.
+// PropagateLabels propagates labels from a parent resource to a child resource.
+// AIM system labels (aim.eai.amd.com/*) are always propagated to maintain traceability
+// across the resource hierarchy. User-defined labels are propagated based on the
+// runtime config's label propagation settings.
 //
 // Parameters:
 //   - parent: The source resource whose labels should be propagated
 //   - child: The target resource that will receive the propagated labels
 //   - config: The runtime config common spec containing label propagation settings
 //
-// The function does nothing if:
-//   - Label propagation is not enabled in the config
-//   - The config is nil or has no label propagation settings
-//   - The parent has no labels
+// The function does nothing if the parent has no labels.
+// The child's existing labels are preserved and only new labels are added.
 //
 // Special handling for Jobs: Labels are also propagated to the PodTemplateSpec.
 func PropagateLabels(parent, child client.Object, config *aimv1alpha1.AIMRuntimeConfigCommon) {
-	// Early exit if label propagation is not configured or not enabled
-	if config == nil || config.LabelPropagation == nil || !config.LabelPropagation.Enabled {
-		return
-	}
-
-	// Early exit if there are no match patterns
-	if len(config.LabelPropagation.Match) == 0 {
-		return
-	}
-
 	parentLabels := parent.GetLabels()
 	if len(parentLabels) == 0 {
 		return
@@ -290,15 +281,28 @@ func PropagateLabels(parent, child client.Object, config *aimv1alpha1.AIMRuntime
 	// Collect labels to propagate
 	labelsToPropagate := make(map[string]string)
 
-	// Iterate through parent labels and collect matching ones
+	// Check if user-defined label propagation is enabled
+	userPropagationEnabled := config != nil &&
+		config.LabelPropagation != nil &&
+		config.LabelPropagation.Enabled &&
+		len(config.LabelPropagation.Match) > 0
+
+	// Iterate through parent labels and collect ones to propagate
 	for key, value := range parentLabels {
 		// Skip if child already has this label
 		if _, exists := childLabels[key]; exists {
 			continue
 		}
 
-		// Check if this label key matches any of the patterns
-		if matchesAnyPattern(key, config.LabelPropagation.Match) {
+		// Always propagate AIM system labels for traceability across the resource hierarchy
+		if strings.HasPrefix(key, constants.AimLabelDomain+"/") {
+			childLabels[key] = value
+			labelsToPropagate[key] = value
+			continue
+		}
+
+		// Propagate labels matching user-defined patterns if enabled
+		if userPropagationEnabled && matchesAnyPattern(key, config.LabelPropagation.Match) {
 			childLabels[key] = value
 			labelsToPropagate[key] = value
 		}
