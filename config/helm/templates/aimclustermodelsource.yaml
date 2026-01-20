@@ -1,0 +1,33 @@
+{{- if .Values.clusterModelSource.enable }}
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModelSource
+metadata:
+  name: {{ .Values.clusterModelSource.name }}
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+spec:
+  {{- with .Values.clusterModelSource.spec }}
+  {{- if .registry }}
+  registry: {{ .registry }}
+  {{- end }}
+  {{- if .imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml .imagePullSecrets | nindent 4 }}
+  {{- end }}
+  {{- if .filters }}
+  filters:
+    {{- toYaml .filters | nindent 4 }}
+  {{- end }}
+  {{- if .syncInterval }}
+  syncInterval: {{ .syncInterval }}
+  {{- end }}
+  {{- if .versions }}
+  versions:
+    {{- toYaml .versions | nindent 4 }}
+  {{- end }}
+  {{- if .maxModels }}
+  maxModels: {{ .maxModels }}
+  {{- end }}
+  {{- end }}
+{{- end }}
+
