@@ -68,7 +68,7 @@ prometheus:
 # Creates an AIMClusterRuntimeConfig CR when enabled
 clusterRuntimeConfig:
   enable: false
-  name: amd-aim-cluster-runtime-config
+  name: default
 
   # Spec fields for the AIMClusterRuntimeConfig
   spec:
