@@ -71,11 +71,11 @@ clusterRuntimeConfig:
   name: default
 
   # Spec fields for the AIMClusterRuntimeConfig
-  spec:
+  # spec:
     # Storage configuration defaults
-    storage:
+    # storage:
       # defaultStorageClassName: "standard"
-      pvcHeadroomPercent: 100
+      # pvcHeadroomPercent: 10
 
     # HTTP routing configuration for inference services
     # routing:
