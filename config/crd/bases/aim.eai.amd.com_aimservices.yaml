@@ -29,9 +29,15 @@ spec:
     - jsonPath: .status.resolvedTemplate.name
       name: Template
       type: string
-    - jsonPath: .spec.replicas
+    - jsonPath: .status.runtime.currentReplicas
       name: Replicas
-      type: integer
+      type: string
+    - jsonPath: .status.runtime.minReplicas
+      name: Min
+      type: string
+    - jsonPath: .status.runtime.maxReplicas
+      name: Max
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -1033,6 +1039,31 @@ spec:
                       Path is the HTTP path prefix used when routing is enabled.
                       Example: `/tenant/svc-uuid`
                     type: string
+                type: object
+              runtime:
+                description: Runtime captures runtime status including replica counts
+                  and resource usage.
+                properties:
+                  currentReplicas:
+                    description: CurrentReplicas is the current number of replicas
+                      as reported by the HPA.
+                    format: int32
+                    type: integer
+                  desiredReplicas:
+                    description: DesiredReplicas is the desired number of replicas
+                      as determined by the HPA.
+                    format: int32
+                    type: integer
+                  maxReplicas:
+                    description: MaxReplicas is the maximum number of replicas configured
+                      for autoscaling.
+                    format: int32
+                    type: integer
+                  minReplicas:
+                    description: MinReplicas is the minimum number of replicas configured
+                      for autoscaling.
+                    format: int32
+                    type: integer
                 type: object
               status:
                 default: Pending

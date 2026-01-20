@@ -1195,6 +1195,25 @@ _Appears in:_
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for inference containers.<br />When set on AIMService, these take highest precedence in the merge hierarchy.<br />When set on RuntimeConfig, these provide namespace/cluster-level defaults.<br />Merge order (highest to lowest): Service.Env > RuntimeConfig.Env > Template.Env > Profile.Env |  |  |
 
 
+#### AIMServiceRuntimeStatus
+
+
+
+AIMServiceRuntimeStatus captures runtime status including replica counts from HPA.
+
+
+
+_Appears in:_
+- [AIMServiceStatus](#aimservicestatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `currentReplicas` _integer_ | CurrentReplicas is the current number of replicas as reported by the HPA. |  |  |
+| `desiredReplicas` _integer_ | DesiredReplicas is the desired number of replicas as determined by the HPA. |  |  |
+| `minReplicas` _integer_ | MinReplicas is the minimum number of replicas configured for autoscaling. |  |  |
+| `maxReplicas` _integer_ | MaxReplicas is the maximum number of replicas configured for autoscaling. |  |  |
+
+
 #### AIMServiceSpec
 
 
@@ -1252,6 +1271,7 @@ _Appears in:_
 | `routing` _[AIMServiceRoutingStatus](#aimserviceroutingstatus)_ | Routing surfaces information about the configured HTTP routing, when enabled. |  |  |
 | `resolvedTemplate` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedTemplate captures metadata about the template that satisfied the reference. |  |  |
 | `cache` _[AIMServiceCacheStatus](#aimservicecachestatus)_ | Cache captures cache-related status for this service. |  |  |
+| `runtime` _[AIMServiceRuntimeStatus](#aimserviceruntimestatus)_ | Runtime captures runtime status including replica counts and resource usage. |  |  |
 
 
 
