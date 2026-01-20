@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -71,6 +72,7 @@ type ServiceFetchResult struct {
 	inferenceService       controllerutils.FetchResult[*servingv1beta1.InferenceService]
 	inferenceServiceEvents controllerutils.FetchResult[*corev1.EventList]
 	inferenceServicePods   *controllerutils.FetchResult[*corev1.PodList]
+	hpa                    controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]
 	httpRoute              controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
 	templateCache          controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]
 	pvc                    controllerutils.FetchResult[*corev1.PersistentVolumeClaim]
@@ -115,6 +117,9 @@ func (r *ServiceReconciler) FetchRemoteState(
 			client.MatchingLabels{constants.LabelKServeInferenceService: isvc.Name},
 		)
 		result.inferenceServicePods = &podsFetchResult
+
+		// Fetch HPA to get replica status (KEDA creates HPA with name: keda-hpa-{isvc-name}-predictor)
+		result.hpa = fetchHPA(ctx, c, isvc)
 	}
 
 	// 2. Fetch HTTPRoute if routing might be enabled (we own this, always check)
@@ -627,6 +632,10 @@ type ServiceObservation struct {
 	// storageSizeError is set when storage size calculation fails due to missing model source sizes.
 	// This indicates the template hasn't fully resolved its model sources yet.
 	storageSizeError error
+
+	// runtimeStatus captures the computed runtime status including replica counts and resource usage.
+	// Derived in ComposeState from the InferenceService and pods.
+	runtimeStatus *aimv1alpha1.AIMServiceRuntimeStatus
 }
 
 // ComposeState creates the observation from fetched data, deriving semantic state.
@@ -662,6 +671,9 @@ func (r *ServiceReconciler) ComposeState(
 	// This catches configuration issues early (model sources without sizes)
 	obs.storageSizeError = r.validateStorageSize(fetch)
 
+	// Compute runtime status from InferenceService and pods
+	obs.runtimeStatus = r.computeRuntimeStatus(fetch)
+
 	return obs
 }
 
@@ -695,6 +707,40 @@ func (r *ServiceReconciler) validateStorageSize(fetch ServiceFetchResult) error 
 	headroomPercent := resolvePVCHeadroomPercent(fetch.service, ServiceObservation{ServiceFetchResult: fetch})
 	_, err := calculateRequiredStorageSize(templateStatus.ModelSources, headroomPercent)
 	return err
+}
+
+// computeRuntimeStatus extracts replica counts from HPA or falls back to spec defaults.
+func (r *ServiceReconciler) computeRuntimeStatus(fetch ServiceFetchResult) *aimv1alpha1.AIMServiceRuntimeStatus {
+	status := &aimv1alpha1.AIMServiceRuntimeStatus{}
+	service := fetch.service
+
+	if fetch.hpa.OK() && fetch.hpa.Value != nil {
+		// HPA exists - use its spec and status for replica information
+		hpa := fetch.hpa.Value
+
+		if hpa.Spec.MinReplicas != nil {
+			status.MinReplicas = *hpa.Spec.MinReplicas
+		}
+		status.MaxReplicas = hpa.Spec.MaxReplicas
+		status.CurrentReplicas = hpa.Status.CurrentReplicas
+		status.DesiredReplicas = hpa.Status.DesiredReplicas
+	} else {
+		// No HPA - fixed replica count from spec
+		// Precedence: MinReplicas > Replicas > default (1)
+		var replicas int32 = 1
+		if service.Spec.MinReplicas != nil {
+			replicas = *service.Spec.MinReplicas
+		} else if service.Spec.Replicas != nil {
+			replicas = *service.Spec.Replicas
+		}
+
+		status.MinReplicas = replicas
+		status.MaxReplicas = replicas
+		status.CurrentReplicas = replicas
+		status.DesiredReplicas = replicas
+	}
+
+	return status
 }
 
 // ============================================================================
@@ -854,5 +900,10 @@ func (r *ServiceReconciler) DecorateStatus(
 	if obs.httpRoute.Value != nil {
 		// TODO: Extract path from HTTPRoute
 		status.Routing = &aimv1alpha1.AIMServiceRoutingStatus{}
+	}
+
+	// Set runtime status (replica counts and resource usage)
+	if obs.runtimeStatus != nil {
+		status.Runtime = obs.runtimeStatus
 	}
 }
