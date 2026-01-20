@@ -170,6 +170,14 @@ test-chainsaw: ## Run chainsaw e2e tests (selector based on ENV). Pass CHAINSAW_
 		--report-format JSON --report-name chainsaw-report --report-path $(CHAINSAW_REPORT_DIR) \
 		$(CHAINSAW_ARGS)
 
+.PHONY: test-chainsaw-kind
+test-chainsaw-kind: ## Run chainsaw e2e tests for KIND environment
+	$(MAKE) test-chainsaw ENV=kind
+
+.PHONY: test-chainsaw-gpu
+test-chainsaw-gpu: ## Run chainsaw e2e tests for GPU environment
+	$(MAKE) test-chainsaw ENV=gpu
+
 .PHONY: lint
 lint: ## Run golangci-lint linter
 	golangci-lint run
