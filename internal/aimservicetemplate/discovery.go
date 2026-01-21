@@ -31,6 +31,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -39,6 +40,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -57,8 +59,10 @@ const (
 	discoveryJobHashLength = 4
 	discoveryJobHashHexLen = 8
 
-	// DiscoveryJobBackoffLimit is the number of retries before marking the discovery job as failed
-	DiscoveryJobBackoffLimit = 3
+	// DiscoveryJobBackoffLimit is the number of pod retries before marking the discovery job as failed.
+	// Set to 0 so that pod failure immediately fails the job, allowing the controller to manage
+	// retries with exponential backoff instead of Kubernetes' built-in retry mechanism.
+	DiscoveryJobBackoffLimit = 0
 
 	// DiscoveryJobTTLSeconds defines how long completed discovery jobs persist
 	// before automatic cleanup. This allows time for status inspection and log retrieval.
@@ -315,6 +319,8 @@ func IsJobFailed(job *batchv1.Job) bool {
 }
 
 // GetDiscoveryJobHealth inspects a discovery job to determine component health.
+// This delegates to the shared GetJobHealth function which properly classifies
+// failures using the error category system (terminal vs transient).
 func GetDiscoveryJobHealth(job *batchv1.Job) controllerutils.ComponentHealth {
 	if job == nil {
 		// No job found - this is expected initially, will be created
@@ -325,42 +331,8 @@ func GetDiscoveryJobHealth(job *batchv1.Job) controllerutils.ComponentHealth {
 		}
 	}
 
-	// Check if job succeeded
-	if IsJobSucceeded(job) {
-		return controllerutils.ComponentHealth{
-			State:   constants.AIMStatusReady,
-			Reason:  "DiscoveryComplete",
-			Message: "Discovery job completed successfully",
-		}
-	}
-
-	// Check if job failed
-	if IsJobFailed(job) {
-		// Get failure reason from job conditions
-		var failureMessage string
-		for _, condition := range job.Status.Conditions {
-			if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
-				failureMessage = condition.Message
-				break
-			}
-		}
-		if failureMessage == "" {
-			failureMessage = "Discovery job failed"
-		}
-
-		return controllerutils.ComponentHealth{
-			State:   constants.AIMStatusFailed,
-			Reason:  "DiscoveryFailed",
-			Message: failureMessage,
-		}
-	}
-
-	// Job is still running
-	return controllerutils.ComponentHealth{
-		State:   constants.AIMStatusProgressing,
-		Reason:  "DiscoveryRunning",
-		Message: "Discovery job is running",
-	}
+	// Delegate to shared job health function which properly classifies errors
+	return controllerutils.GetJobHealth(job)
 }
 
 // ============================================================================
@@ -653,4 +625,98 @@ func HasActiveDiscoveryJob(jobResult controllerutils.FetchResult[*batchv1.Job]) 
 		return false
 	}
 	return !IsJobComplete(jobResult.Value)
+}
+
+// ============================================================================
+// CONCURRENT JOB LIMITING & BACKOFF
+// ============================================================================
+
+// CountActiveDiscoveryJobs counts the number of active (non-complete) discovery jobs
+// across all namespaces. This is used to enforce the concurrent job limit.
+func CountActiveDiscoveryJobs(ctx context.Context, c client.Client) (int, error) {
+	logger := log.FromContext(ctx)
+
+	var jobList batchv1.JobList
+	if err := c.List(ctx, &jobList, client.MatchingLabels{
+		"app.kubernetes.io/name":       "aim-discovery",
+		"app.kubernetes.io/component":  constants.LabelValueComponentDiscovery,
+		"app.kubernetes.io/managed-by": constants.LabelValueManagedByController,
+	}); err != nil {
+		logger.Error(err, "Failed to list discovery jobs")
+		return 0, err
+	}
+
+	activeCount := 0
+	for i := range jobList.Items {
+		if !IsJobComplete(&jobList.Items[i]) {
+			activeCount++
+		}
+	}
+
+	return activeCount, nil
+}
+
+// CalculateBackoffDuration computes the backoff duration for the given attempt number.
+// Uses exponential backoff: base * 2^(attempts-1), capped at max.
+func CalculateBackoffDuration(attempts int32) time.Duration {
+	if attempts <= 0 {
+		return 0
+	}
+
+	// Calculate exponential backoff: base * 2^(attempts-1)
+	multiplier := int64(1) << (attempts - 1) // 2^(attempts-1)
+	backoffSeconds := int64(constants.DiscoveryBaseBackoffSeconds) * multiplier
+
+	// Cap at maximum
+	if backoffSeconds > int64(constants.DiscoveryMaxBackoffSeconds) {
+		backoffSeconds = int64(constants.DiscoveryMaxBackoffSeconds)
+	}
+
+	return time.Duration(backoffSeconds) * time.Second
+}
+
+// ShouldCreateDiscoveryJob determines whether a new discovery job should be created
+// based on backoff timing from previous attempts.
+// Returns (shouldCreate, reason, message).
+func ShouldCreateDiscoveryJob(discoveryState *aimv1alpha1.DiscoveryState, now time.Time) (bool, string, string) {
+	// No discovery state means this is the first attempt
+	if discoveryState == nil || discoveryState.Attempts == 0 {
+		return true, "", ""
+	}
+
+	// Check backoff period
+	if discoveryState.LastAttemptTime != nil && discoveryState.Attempts > 0 {
+		backoffDuration := CalculateBackoffDuration(discoveryState.Attempts)
+		nextAttemptTime := discoveryState.LastAttemptTime.Add(backoffDuration)
+
+		if now.Before(nextAttemptTime) {
+			remaining := nextAttemptTime.Sub(now).Round(time.Second)
+			return false, aimv1alpha1.AIMTemplateReasonAwaitingDiscovery,
+				fmt.Sprintf("Waiting %s before retry (attempt %d)", remaining, discoveryState.Attempts+1)
+		}
+	}
+
+	return true, "", ""
+}
+
+// GetJobFailureReason extracts the failure reason from a failed job.
+// Returns empty string if the job hasn't failed.
+func GetJobFailureReason(job *batchv1.Job) string {
+	if job == nil {
+		return ""
+	}
+
+	for _, condition := range job.Status.Conditions {
+		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+			if condition.Message != "" {
+				return condition.Message
+			}
+			if condition.Reason != "" {
+				return condition.Reason
+			}
+			return "Unknown failure"
+		}
+	}
+
+	return ""
 }

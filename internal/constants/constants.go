@@ -70,6 +70,31 @@ const (
 	LabelValueCacheTypePersistent = "persistent"
 )
 
+// Discovery circuit breaker configuration
+const (
+	// DiscoveryMaxAttempts is the maximum number of discovery job attempts before
+	// the circuit breaker trips and marks the template as permanently failed.
+	DiscoveryMaxAttempts = 5
+
+	// DiscoveryBaseBackoffSeconds is the base backoff duration in seconds.
+	// Actual backoff = base * 2^(attempts-1), capped at DiscoveryMaxBackoffSeconds.
+	DiscoveryBaseBackoffSeconds = 60 // 1 minute
+
+	// DiscoveryMaxBackoffSeconds is the maximum backoff duration in seconds.
+	DiscoveryMaxBackoffSeconds = 3600 // 1 hour
+)
+
+// Discovery failure reasons for classification
+const (
+	// DiscoveryFailureTerminal indicates an unrecoverable failure that should not be retried.
+	// Examples: image not found, invalid configuration, auth failures.
+	DiscoveryFailureTerminal = "Terminal"
+
+	// DiscoveryFailureTransient indicates a potentially recoverable failure.
+	// Examples: timeout, resource pressure, temporary network issues.
+	DiscoveryFailureTransient = "Transient"
+)
+
 // Shared condition reasons used across multiple resource types
 const (
 	// Image-related reasons (used by AIMModel, AIMService, AIMServiceTemplate)

@@ -24,6 +24,8 @@ package aimservicetemplate
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -77,6 +79,10 @@ type ServiceTemplateFetchResult struct {
 	// GPU availability state
 	gpuResources map[string]utils.GPUResourceInfo
 	gpuFetchErr  error
+
+	// Active discovery job count across all namespaces (for concurrent limit)
+	activeDiscoveryJobCount int
+	activeJobCountErr       error
 }
 
 // FetchRemoteState fetches all required resources for namespace-scoped templates.
@@ -132,6 +138,12 @@ func (r *ServiceTemplateReconciler) FetchRemoteState(
 					result.parsedDiscovery = discovery
 				}
 			}
+		}
+
+		// Fetch active discovery job count for concurrent limit enforcement
+		// Only needed if we might create a new job (no active or completed job exists)
+		if !HasActiveDiscoveryJob(result.discoveryJob) && !HasCompletedDiscoveryJob(result.discoveryJob) {
+			result.activeDiscoveryJobCount, result.activeJobCountErr = CountActiveDiscoveryJobs(ctx, c)
 		}
 	}
 
@@ -200,6 +212,10 @@ type ClusterServiceTemplateFetchResult struct {
 	// GPU availability state
 	gpuResources map[string]utils.GPUResourceInfo
 	gpuFetchErr  error
+
+	// Active discovery job count across all namespaces (for concurrent limit)
+	activeDiscoveryJobCount int
+	activeJobCountErr       error
 }
 
 // FetchRemoteState fetches all required resources for cluster-scoped templates.
@@ -256,6 +272,12 @@ func (r *ClusterServiceTemplateReconciler) FetchRemoteState(
 					result.parsedDiscovery = discovery
 				}
 			}
+		}
+
+		// Fetch active discovery job count for concurrent limit enforcement
+		// Only needed if we might create a new job (no active or completed job exists)
+		if !HasActiveDiscoveryJob(result.discoveryJob) && !HasCompletedDiscoveryJob(result.discoveryJob) {
+			result.activeDiscoveryJobCount, result.activeJobCountErr = CountActiveDiscoveryJobs(ctx, c)
 		}
 	}
 
@@ -405,7 +427,28 @@ func (r *ServiceTemplateReconciler) PlanResources(
 
 	// Template not ready - check if we need to create discovery job
 	if !HasCompletedDiscoveryJob(obs.discoveryJob) && !HasActiveDiscoveryJob(obs.discoveryJob) {
+		// Check backoff timing from previous failed attempts
+		shouldCreate, reason, message := ShouldCreateDiscoveryJob(template.Status.Discovery, time.Now())
+		if !shouldCreate {
+			logger.V(1).Info("discovery job creation blocked by backoff",
+				"reason", reason,
+				"message", message,
+				"attempts", template.Status.Discovery.Attempts)
+			return planResult
+		}
+
 		// Check concurrent job limit
+		if obs.activeJobCountErr != nil {
+			logger.Error(obs.activeJobCountErr, "failed to count active discovery jobs, skipping job creation")
+			return planResult
+		}
+		if obs.activeDiscoveryJobCount >= constants.MaxConcurrentDiscoveryJobs {
+			logger.V(1).Info("discovery job creation blocked by concurrent limit",
+				"activeJobs", obs.activeDiscoveryJobCount,
+				"limit", constants.MaxConcurrentDiscoveryJobs)
+			return planResult
+		}
+
 		job := BuildDiscoveryJob(DiscoveryJobSpec{
 			TemplateName:     template.Name,
 			Namespace:        template.Namespace,
@@ -478,6 +521,28 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 	// Template not ready - check if we need to create discovery job
 	operatorNamespace := constants.GetOperatorNamespace()
 	if !HasCompletedDiscoveryJob(obs.discoveryJob) && !HasActiveDiscoveryJob(obs.discoveryJob) {
+		// Check backoff timing from previous failed attempts
+		shouldCreate, reason, message := ShouldCreateDiscoveryJob(template.Status.Discovery, time.Now())
+		if !shouldCreate {
+			logger.V(1).Info("discovery job creation blocked by backoff",
+				"reason", reason,
+				"message", message,
+				"attempts", template.Status.Discovery.Attempts)
+			return planResult
+		}
+
+		// Check concurrent job limit
+		if obs.activeJobCountErr != nil {
+			logger.Error(obs.activeJobCountErr, "failed to count active discovery jobs, skipping job creation")
+			return planResult
+		}
+		if obs.activeDiscoveryJobCount >= constants.MaxConcurrentDiscoveryJobs {
+			logger.V(1).Info("discovery job creation blocked by concurrent limit",
+				"activeJobs", obs.activeDiscoveryJobCount,
+				"limit", constants.MaxConcurrentDiscoveryJobs)
+			return planResult
+		}
+
 		job := BuildDiscoveryJob(DiscoveryJobSpec{
 			TemplateName:     template.Name,
 			Namespace:        operatorNamespace,
@@ -512,7 +577,7 @@ func (r *ServiceTemplateReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ServiceTemplateObservation,
 ) {
-	decorateTemplateStatus(status, cm, obs.template.Spec.ModelSources, obs.discoveryJob, obs.parsedDiscovery, obs.model.Value)
+	decorateTemplateStatus(status, cm, obs.template.Spec.ModelSources, obs.discoveryJob, obs.parsedDiscovery, obs.model.Value, obs.activeDiscoveryJobCount)
 }
 
 // DecorateStatus adds domain-specific status fields for cluster-scoped templates.
@@ -521,7 +586,7 @@ func (r *ClusterServiceTemplateReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ClusterServiceTemplateObservation,
 ) {
-	decorateClusterTemplateStatus(status, cm, obs.template.Spec.ModelSources, obs.discoveryJob, obs.parsedDiscovery, obs.clusterModel.Value)
+	decorateClusterTemplateStatus(status, cm, obs.template.Spec.ModelSources, obs.discoveryJob, obs.parsedDiscovery, obs.clusterModel.Value, obs.activeDiscoveryJobCount)
 }
 
 // decorateTemplateStatus handles common status decoration for namespace-scoped templates.
@@ -532,6 +597,7 @@ func decorateTemplateStatus(
 	discoveryJobResult controllerutils.FetchResult[*batchv1.Job],
 	parsedDiscovery *ParsedDiscovery,
 	model *aimv1alpha1.AIMModel,
+	activeDiscoveryJobCount int,
 ) {
 	// Set resolved model reference if available
 	if model != nil {
@@ -556,6 +622,11 @@ func decorateTemplateStatus(
 			Name:      job.Name,
 			Namespace: job.Namespace,
 		}
+
+		// Track discovery state for failed jobs (for backoff)
+		if IsJobFailed(job) {
+			updateDiscoveryStateOnFailure(status, job)
+		}
 	}
 
 	// Set parsed discovery results if available
@@ -564,7 +635,16 @@ func decorateTemplateStatus(
 		if parsedDiscovery.Profile != nil {
 			status.Profile = parsedDiscovery.Profile
 		}
+		// Clear discovery state on success
+		status.Discovery = nil
 		cm.MarkTrue("Discovered", "DiscoveryComplete", "Discovery job completed successfully")
+		return
+	}
+
+	// If waiting due to concurrent limit, set appropriate status
+	if activeDiscoveryJobCount >= constants.MaxConcurrentDiscoveryJobs {
+		cm.MarkFalse("Discovered", aimv1alpha1.AIMTemplateReasonAwaitingDiscovery,
+			fmt.Sprintf("Waiting for discovery slot (%d/%d jobs running)", activeDiscoveryJobCount, constants.MaxConcurrentDiscoveryJobs))
 	}
 }
 
@@ -576,6 +656,7 @@ func decorateClusterTemplateStatus(
 	discoveryJobResult controllerutils.FetchResult[*batchv1.Job],
 	parsedDiscovery *ParsedDiscovery,
 	clusterModel *aimv1alpha1.AIMClusterModel,
+	activeDiscoveryJobCount int,
 ) {
 	// Set resolved model reference if available
 	if clusterModel != nil {
@@ -599,6 +680,11 @@ func decorateClusterTemplateStatus(
 			Name:      job.Name,
 			Namespace: job.Namespace,
 		}
+
+		// Track discovery state for failed jobs (for backoff)
+		if IsJobFailed(job) {
+			updateDiscoveryStateOnFailure(status, job)
+		}
 	}
 
 	// Set parsed discovery results if available
@@ -607,6 +693,34 @@ func decorateClusterTemplateStatus(
 		if parsedDiscovery.Profile != nil {
 			status.Profile = parsedDiscovery.Profile
 		}
+		// Clear discovery state on success
+		status.Discovery = nil
 		cm.MarkTrue("Discovered", "DiscoveryComplete", "Discovery job completed successfully")
+		return
+	}
+
+	// If waiting due to concurrent limit, set appropriate status
+	if activeDiscoveryJobCount >= constants.MaxConcurrentDiscoveryJobs {
+		cm.MarkFalse("Discovered", aimv1alpha1.AIMTemplateReasonAwaitingDiscovery,
+			fmt.Sprintf("Waiting for discovery slot (%d/%d jobs running)", activeDiscoveryJobCount, constants.MaxConcurrentDiscoveryJobs))
+	}
+}
+
+// updateDiscoveryStateOnFailure updates the discovery tracking state when a job fails.
+// This increments the attempt counter and records the failure time for backoff calculation.
+func updateDiscoveryStateOnFailure(status *aimv1alpha1.AIMServiceTemplateStatus, job *batchv1.Job) {
+	now := metav1.Now()
+
+	// Initialize discovery state if needed
+	if status.Discovery == nil {
+		status.Discovery = &aimv1alpha1.DiscoveryState{}
+	}
+
+	// Only increment if this is a new failure (job creation time > last attempt time)
+	// This prevents double-counting on subsequent reconciles
+	if status.Discovery.LastAttemptTime == nil || job.CreationTimestamp.After(status.Discovery.LastAttemptTime.Time) {
+		status.Discovery.Attempts++
+		status.Discovery.LastAttemptTime = &now
+		status.Discovery.LastFailureReason = GetJobFailureReason(job)
 	}
 }
