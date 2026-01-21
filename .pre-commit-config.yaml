@@ -10,28 +10,28 @@ repos:
 
   - id: make-generate
     name: Run make generate
-    entry: make generate
+    entry: mise exec -- make generate
     language: system
     pass_filenames: false
     files: ^api/
 
   - id: make-manifests
     name: Run make manifests
-    entry: make manifests
+    entry: mise exec -- make manifests
     language: system
     pass_filenames: false
     files: ^api/
 
   - id: make-crd-docs
     name: Run CRD docs generation
-    entry: make generate-crd-docs
+    entry: mise exec -- make generate-crd-docs
     language: system
     pass_filenames: false
     files: ^api/
 
   - id: third-party-licenses
     name: Generate third-party licenses
-    entry: make third-party-licenses
+    entry: mise exec -- make third-party-licenses
     language: system
     pass_filenames: false
     files: ^go\.(mod|sum)$
@@ -51,7 +51,7 @@ repos:
   - id: golangci-lint
     name: golangci-lint
     description: Fast linters runner for Go. Note that only modified files are linted, so linters like 'unused' that need to scan all files won't work as expected.
-    entry: golangci-lint run --new-from-rev=HEAD --timeout 10m
+    entry: mise exec -- golangci-lint run --new-from-rev=HEAD --timeout 10m
     types: [ go ]
     language: system
     require_serial: true
