@@ -29,7 +29,7 @@ spec:
                   aim.eai.amd.com/template.index: "0"
                   aim.eai.amd.com/template.scope: "Cluster"
               spec:
-                sourceUri: hf://hello/world
+                sourceUri: hf://sshleifer/tiny-gpt2
                 size: 2Gi
                 env:
                   - name: HF_TOKEN
@@ -44,7 +44,7 @@ spec:
                   aim.eai.amd.com/template.index: "1"
                   aim.eai.amd.com/template.scope: "Cluster"
               spec:
-                sourceUri: s3://hello2/world2
+                sourceUri: hf://HuggingFaceTB/SmolLM-135M
                 size: 4Gi
 
     # TODO add an assert to check the template cache becomes ready (once the model cache is merged)
