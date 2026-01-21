@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: test-auto-select-model
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.8
+  defaultServiceTemplate: test-auto-select-template
+  discovery:
+    extractMetadata: false
+    createServiceTemplates: false
+  resources:
+    limits:
+      memory: 1Gi
+    requests:
+      memory: 100Mi
+      cpu: 100m

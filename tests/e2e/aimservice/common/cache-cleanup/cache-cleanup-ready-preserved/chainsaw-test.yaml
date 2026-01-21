@@ -1,0 +1,98 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Cache Cleanup - Ready Caches Preserved
+#
+# This test validates that when an AIMService is deleted, Ready template caches
+# and model caches are NOT deleted (they should be preserved for potential reuse).
+#
+# Test flow:
+# 1. Create AIMService with model.image and caching.mode: Always
+# 2. Wait for template cache and model cache to become Ready
+# 3. Delete the AIMService
+# 4. Verify the template cache and model cache still exist (preserved because Ready)
+#
+# Note: This test requires external network access for HuggingFace downloads.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-cache-cleanup-ready-preserved
+  labels:
+    requires: external-network
+spec:
+  description: Test that Ready caches are preserved when AIMService is deleted
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create service with caching enabled
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Wait for template cache to become Ready
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: cache-cleanup-ready-service
+              status:
+                status: Ready
+
+    - name: Verify model cache is Ready
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModelCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: cache-cleanup-ready-service
+              status:
+                status: Ready
+
+    - name: Delete the AIMService
+      try:
+        - delete:
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              name: cache-cleanup-ready-service
+
+    - name: Wait for service deletion to complete
+      try:
+        - error:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: cache-cleanup-ready-service
+
+    - name: Verify template cache still exists (Ready caches preserved)
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: cache-cleanup-ready-service
+              status:
+                status: Ready
+
+    - name: Verify model cache still exists (Ready caches preserved)
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModelCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: cache-cleanup-ready-service
+              status:
+                status: Ready

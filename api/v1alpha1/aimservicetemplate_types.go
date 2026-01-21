@@ -70,6 +70,10 @@ func (t *AIMServiceTemplate) GetSpecModelSources() []AIMModelSource {
 	return t.Spec.ModelSources
 }
 
+func (t *AIMServiceTemplate) GetRuntimeConfigRef() RuntimeConfigRef {
+	return t.Spec.RuntimeConfigRef
+}
+
 func init() {
 	SchemeBuilder.Register(&AIMServiceTemplate{}, &AIMServiceTemplateList{})
 }

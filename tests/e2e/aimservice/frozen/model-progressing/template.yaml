@@ -1,0 +1,18 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template
+  annotations:
+    aim.eai.amd.com/reconciliation-paused: "true"
+spec:
+  modelName: test-model
+  gpuSelector:
+    model: MI300X
+    count: 1
+status:
+  status: Ready
+  profile:
+    metadata:
+      type: optimized
+      gpu: MI300X
+      gpuCount: 1

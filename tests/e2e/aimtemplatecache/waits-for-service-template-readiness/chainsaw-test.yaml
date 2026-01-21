@@ -1,50 +1,69 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMTemplateCache Dynamic Test: Waits for Service Template Readiness
+#
+# This test validates that an AIMTemplateCache correctly waits for its referenced
+# AIMServiceTemplate to become ready before progressing. The template starts in
+# Progressing state, and we verify the cache shows Pending, then transitions to
+# Progressing after the template becomes Ready.
+#
+# Test type: Dynamic dependency test (tests state transitions)
+# Uses frozen resources that are updated mid-test to simulate state changes.
+#
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
   name: template-cache-waits-for-template-readiness
 spec:
-  description: |
-    Tests that the template cache waits for the service template to become ready.
-    When the service template is not ready (e.g., discovery in progress or failing),
-    the template cache should reflect that it cannot proceed yet.
   steps:
-    - name: Create the model and service template
+    - name: Create frozen service template with Progressing status
       try:
         - apply:
             file: model.yaml
         - apply:
             file: service-template.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh service-template.yaml --status-only -n $NAMESPACE
 
     - name: Create the template cache
       try:
         - apply:
             file: template-cache.yaml
 
-    - name: Ensure the template cache is not Ready while template is not ready
-      description: |
-        The service template will struggle with discovery (fake image can't be pulled).
-        The template cache should NOT be Ready - it will be Pending or Failed
-        depending on the current state of the service template.
+    - name: Ensure the template cache is waiting for the template to become ready
       try:
         - assert:
-            timeout: 30s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMTemplateCache
               metadata:
                 name: waits-for-template-readiness
               status:
-                (conditions[?type == 'Ready']):
-                  - status: "False"
+                status: Pending
 
-    - name: Verify the service template is also not ready
+    - name: Update frozen service template to Ready status
+      try:
+        - apply:
+            file: service-template-ready.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh service-template-ready.yaml --status-only -n $NAMESPACE
+
+    # TODO change to Ready once model cache is merged
+    - name: Ensure the template cache moves to progressing (pending model cache creation)
       try:
         - assert:
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMServiceTemplate
+              kind: AIMTemplateCache
               metadata:
                 name: waits-for-template-readiness
               status:
-                (conditions[?type == 'Ready']):
-                  - status: "False"
+                status: Progressing

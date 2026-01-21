@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: cache-cleanup-fail-config
+spec:
+  # This env var causes the download script to fail immediately
+  env:
+    - name: AIM_DEBUG_CAUSE_FAILURE
+      value: "true"

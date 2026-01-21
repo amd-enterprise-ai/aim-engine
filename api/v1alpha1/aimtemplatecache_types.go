@@ -121,6 +121,10 @@ func (s *AIMTemplateCacheStatus) SetStatus(status string) {
 	s.Status = constants.AIMStatus(status)
 }
 
+func (s *AIMTemplateCacheStatus) GetAIMStatus() constants.AIMStatus {
+	return s.Status
+}
+
 // Condition types for AIMTemplateCache
 const (
 	// AIMTemplateCacheConditionResolved is True when the template reference has been resolved.
@@ -191,6 +195,10 @@ type AIMTemplateCacheList struct {
 
 func (t *AIMTemplateCache) GetStatus() *AIMTemplateCacheStatus {
 	return &t.Status
+}
+
+func (t *AIMTemplateCache) GetRuntimeConfigRef() RuntimeConfigRef {
+	return t.Spec.RuntimeConfigRef
 }
 
 func init() {

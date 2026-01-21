@@ -179,7 +179,9 @@ func (r *ModelReconciler) FetchRemoteState(
 
 	// Service templates
 	templates := &aimv1alpha1.AIMServiceTemplateList{}
-	result.serviceTemplates = controllerutils.FetchList(ctx, c, templates, client.MatchingFields{aimv1alpha1.ServiceTemplateModelNameIndexKey: model.Name})
+	result.serviceTemplates = controllerutils.FetchList(ctx, c, templates,
+		client.InNamespace(model.Namespace),
+		client.MatchingFields{aimv1alpha1.ServiceTemplateModelNameIndexKey: model.Name})
 
 	return result
 }
@@ -220,7 +222,15 @@ func aggregateTemplateStatuses(expectsTemplates *bool, statuses []constants.AIMS
 	var reason, message string
 
 	switch {
-	// Handle no templates case first
+	// Handle templates disabled first (createServiceTemplates: false)
+	// When disabled, the model doesn't care about template statuses - it's Ready immediately.
+	// Any templates that exist were created externally and are not the model's responsibility.
+	case expectsTemplates != nil && !*expectsTemplates:
+		status = constants.AIMStatusReady
+		reason = aimv1alpha1.AIMModelReasonNoTemplatesExpected
+		message = "Template creation disabled for this model"
+
+	// Handle no templates case
 	case total == 0:
 		switch {
 		case expectsTemplates == nil:

@@ -30,9 +30,14 @@ import (
 )
 
 const (
-	// AIMServiceTemplateIndexKey is the field index key for AIMService template reference
-	// Indexes by .spec.TemplateName or status.ResolvedTemplate.Name
+	// AIMServiceTemplateIndexKey is the field index key used by controller-runtime for
+	// indexing AIMService resources by their template reference (.spec.template.name).
+	// This enables efficient lookups of services that reference a specific template.
 	AIMServiceTemplateIndexKey = ".spec.templateRef"
+
+	// AIMServiceResolvedTemplateIndexKey is the field index key for resolved template name
+	// Indexes by .status.resolvedTemplate.name for finding services using a specific template
+	AIMServiceResolvedTemplateIndexKey = ".status.resolvedTemplate.name"
 )
 
 // AIMCachingMode controls caching behavior for a service.
@@ -62,15 +67,29 @@ type AIMServiceCachingConfig struct {
 	Mode AIMCachingMode `json:"mode,omitempty"`
 }
 
+// AIMServiceTemplateConfig contains template selection configuration for AIMService.
+type AIMServiceTemplateConfig struct {
+	// Name is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.
+	// The template selects the runtime profile and GPU parameters.
+	// When not specified, a template will be automatically selected based on the model.
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// AllowUnoptimized, if true, will allow automatic selection of templates
+	// that resolve to an unoptimized profile.
+	// +optional
+	AllowUnoptimized bool `json:"allowUnoptimized,omitempty"`
+}
+
 // AIMServiceModel specifies which model to deploy. Exactly one field must be set.
-// +kubebuilder:validation:XValidation:rule="(has(self.ref) && !has(self.image) && !has(self.custom)) || (!has(self.ref) && has(self.image) && !has(self.custom)) || (!has(self.ref) && !has(self.image) && has(self.custom))",message="exactly one of ref, image, or custom must be specified"
+// +kubebuilder:validation:XValidation:rule="(has(self.name) && !has(self.image)) || (!has(self.name) && has(self.image))",message="exactly one of name or image must be specified"
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="model selection is immutable after creation"
 type AIMServiceModel struct {
-	// Ref references an existing AIMModel or AIMClusterModel by metadata.name.
+	// Name references an existing AIMModel or AIMClusterModel by metadata.name.
 	// The controller looks for a namespace-scoped AIMModel first, then falls back to cluster-scoped AIMClusterModel.
 	// Example: `meta-llama-3-8b`
 	// +optional
-	Ref *string `json:"ref,omitempty"`
+	Name *string `json:"name,omitempty"`
 
 	// Image specifies a container image URI directly.
 	// The controller searches for an existing model with this image, or creates one if none exists.
@@ -82,7 +101,7 @@ type AIMServiceModel struct {
 	// Custom specifies a custom model configuration with explicit base image,
 	// model sources, and GPU requirements.
 	// +optional
-	Custom *AIMServiceModelCustom `json:"custom,omitempty"`
+	// Custom *AIMServiceModelCustom `json:"custom,omitempty"`
 }
 
 // AIMServiceModelCustom specifies a custom model configuration with explicit base image,
@@ -130,9 +149,10 @@ type AIMServiceSpec struct {
 	// to specify a container image URI directly (which will auto-create a model if needed).
 	Model AIMServiceModel `json:"model"`
 
-	// TemplateName is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.
-	// The template selects the runtime profile and GPU parameters.
-	TemplateName string `json:"templateName,omitempty"`
+	// Template contains template selection and configuration.
+	// Use Template.Name to specify an explicit template, or omit to auto-select.
+	// +optional
+	Template AIMServiceTemplateConfig `json:"template,omitempty"`
 
 	// Caching controls caching behavior for this service.
 	// When nil, defaults to Auto mode (use cache if available, don't create).
@@ -150,9 +170,29 @@ type AIMServiceSpec struct {
 	// Replicas specifies the number of replicas for this service.
 	// When not specified, defaults to 1 replica.
 	// This value overrides any replica settings from the template.
+	// For autoscaling, use MinReplicas and MaxReplicas instead.
 	// +optional
 	// +kubebuilder:default=1
 	Replicas *int32 `json:"replicas,omitempty"`
+
+	// MinReplicas specifies the minimum number of replicas for autoscaling.
+	// Defaults to 1. Scale to zero is not supported.
+	// When specified with MaxReplicas, enables autoscaling for the service.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MinReplicas *int32 `json:"minReplicas,omitempty"`
+
+	// MaxReplicas specifies the maximum number of replicas for autoscaling.
+	// Required when MinReplicas is set or when AutoScaling configuration is provided.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxReplicas *int32 `json:"maxReplicas,omitempty"`
+
+	// AutoScaling configures advanced autoscaling behavior using KEDA.
+	// Supports custom metrics from OpenTelemetry backend.
+	// When specified, MinReplicas and MaxReplicas should also be set.
+	// +optional
+	AutoScaling *AIMServiceAutoScaling `json:"autoScaling,omitempty"`
 
 	// RuntimeConfigRef contains the runtime config reference for this service.
 	// The result of the merged runtime configs is merged with the inline AIMServiceRuntimeConfig configuration.
@@ -232,6 +272,10 @@ type AIMServiceCacheStatus struct {
 	RetryAttempts int `json:"retryAttempts,omitempty"`
 }
 
+func (s *AIMService) GetRuntimeConfigRef() RuntimeConfigRef {
+	return s.Spec.RuntimeConfigRef
+}
+
 func (s *AIMServiceStatus) GetConditions() []metav1.Condition {
 	return s.Conditions
 }
@@ -241,33 +285,26 @@ func (s *AIMServiceStatus) SetConditions(conditions []metav1.Condition) {
 }
 
 func (s *AIMServiceStatus) SetStatus(status string) {
-	s.Status = constants.AIMStatus(status)
+	// Map framework statuses to AIMService-specific statuses.
+	// AIMService uses: Pending, Starting, Running, Failed, Degraded
+	// Framework uses: Pending, Progressing, Ready, Failed, Degraded
+	switch constants.AIMStatus(status) {
+	case constants.AIMStatusProgressing:
+		s.Status = constants.AIMStatusStarting
+	case constants.AIMStatusReady:
+		s.Status = constants.AIMStatusRunning
+	default:
+		s.Status = constants.AIMStatus(status)
+	}
+}
+
+func (s *AIMServiceStatus) GetAIMStatus() constants.AIMStatus {
+	return s.Status
 }
 
 // AIMServiceStatusEnum defines coarse-grained states for a service.
 // +kubebuilder:validation:Enum=Pending;Starting;Running;Failed;Degraded
 type AIMServiceStatusEnum string
-
-// Condition types for AIMService
-const (
-	// ConditionResolved is True when the model and template have been validated and a runtime profile has been selected.
-	AIMServiceConditionTemplateResolved = "TemplateResolved"
-
-	// ConditionCacheReady is True when required caches are present or warmed as requested.
-	AIMServiceConditionCacheReady = "CacheReady"
-
-	// ConditionRuntimeReady is True when the underlying KServe runtime and inferenceService are ready.
-	AIMServiceConditionRuntimeReady = "RuntimeReady"
-
-	// ConditionRoutingReady is True when exposure and routing through the configured gateway are ready.
-	AIMServiceConditionRoutingReady = "RoutingReady"
-
-	// ConditionModelResolved is True when the model has been resolved.
-	AIMServiceConditionModelResolved = "ModelResolved"
-
-	// ConditionStorageReady is True when storage (PVC or cache) is ready.
-	AIMServiceConditionStorageReady = "StorageReady"
-)
 
 // Condition reasons for AIMService
 const (
@@ -277,37 +314,29 @@ const (
 	AIMServiceReasonCreatingModel         = "CreatingModel"
 	AIMServiceReasonModelNotReady         = "ModelNotReady"
 	AIMServiceReasonModelResolved         = "ModelResolved"
-	AIMServiceReasonMultipleModelsFound   = "MultipleModelsFound"
 
 	// Template Resolution
 	AIMServiceReasonTemplateNotFound           = "TemplateNotFound"
-	AIMServiceReasonTemplateSelectionFailed    = "TemplateSelectionFailed"
 	AIMServiceReasonTemplateNotReady           = "TemplateNotReady"
 	AIMServiceReasonResolved                   = "Resolved"
-	AIMServiceReasonValidationFailed           = "ValidationFailed"
 	AIMServiceReasonTemplateSelectionAmbiguous = "TemplateSelectionAmbiguous"
 
 	// Storage
-	AIMServiceReasonCreatingPVC  = "CreatingPVC"
-	AIMServiceReasonPVCNotBound  = "PVCNotBound"
-	AIMServiceReasonStorageReady = "StorageReady"
+	AIMServiceReasonPVCNotBound      = "PVCNotBound"
+	AIMServiceReasonStorageReady     = "StorageReady"
+	AIMServiceReasonStorageSizeError = "StorageSizeError"
 
 	// Cache
 	AIMServiceReasonCacheCreating = "CacheCreating"
 	AIMServiceReasonCacheNotReady = "CacheNotReady"
 	AIMServiceReasonCacheReady    = "CacheReady"
-	AIMServiceReasonCacheRetrying = "CacheRetrying"
 	AIMServiceReasonCacheFailed   = "CacheFailed"
 
 	// Runtime
 	AIMServiceReasonCreatingRuntime = "CreatingRuntime"
 	AIMServiceReasonRuntimeReady    = "RuntimeReady"
-	AIMServiceReasonRuntimeFailed   = "RuntimeFailed"
 
 	// Routing
-	AIMServiceReasonConfiguringRoute    = "ConfiguringRoute"
-	AIMServiceReasonRouteReady          = "RouteReady"
-	AIMServiceReasonRouteFailed         = "RouteFailed"
 	AIMServiceReasonPathTemplateInvalid = "PathTemplateInvalid"
 )
 

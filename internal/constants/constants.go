@@ -42,6 +42,34 @@ const (
 	AimLabelDomain = "aim.eai.amd.com"
 )
 
+// Label keys for AIM resources
+const (
+	// LabelTemplate is the label key for the template name
+	LabelTemplate = AimLabelDomain + "/template"
+	// LabelService is the label key for the service name
+	LabelService = AimLabelDomain + "/service"
+	// LabelModelID is the label key for the model ID
+	LabelModelID = AimLabelDomain + "/model"
+	// LabelMetric is the label key for the optimization metric
+	LabelMetric = AimLabelDomain + "/metric"
+	// LabelPrecision is the label key for the numeric precision
+	LabelPrecision = AimLabelDomain + "/precision"
+	// LabelCacheType indicates the type of cache (temp or persistent)
+	LabelCacheType = AimLabelDomain + "/cache-type"
+	// LabelTemplateCacheName is the label key for the template cache name (used on model caches)
+	LabelTemplateCacheName = AimLabelDomain + "/template-cache.name"
+)
+
+// Label values
+const (
+	// LabelValueManagedBy is the standard managed-by label value
+	LabelValueManagedBy = "aim-engine"
+	// LabelValueCacheTypeTemp indicates a temporary cache
+	LabelValueCacheTypeTemp = "temp"
+	// LabelValueCacheTypePersistent indicates a persistent cache
+	LabelValueCacheTypePersistent = "persistent"
+)
+
 // Shared condition reasons used across multiple resource types
 const (
 	// Image-related reasons (used by AIMModel, AIMService, AIMServiceTemplate)
@@ -79,6 +107,11 @@ const (
 	AIMStatusNotAvailable AIMStatus = "NotAvailable"
 	AIMStatusFailed       AIMStatus = "Failed"
 )
+
+// StatusProvider is implemented by status types that expose their AIMStatus.
+type StatusProvider interface {
+	GetAIMStatus() AIMStatus
+}
 
 // AIMStatusPriority maps AIMStatus values to priority levels.
 // Higher values indicate more desirable statuses for sorting and filtering.
@@ -141,4 +174,92 @@ const (
 
 	// NodeLabelBetaAMDGPUDeviceID is the legacy/beta node label for AMD GPU device IDs
 	NodeLabelBetaAMDGPUDeviceID = "beta.amd.com/gpu.device-id"
+)
+
+// Standard Kubernetes label keys
+const (
+	// LabelK8sComponent is the standard Kubernetes component label
+	LabelK8sComponent = "app.kubernetes.io/component"
+	// LabelK8sManagedBy is the standard Kubernetes managed-by label
+	LabelK8sManagedBy = "app.kubernetes.io/managed-by"
+)
+
+// InferenceService constants
+const (
+	// ContainerKServe is the name of the main inference container
+	ContainerKServe = "kserve-container"
+	// VolumeSharedMemory is the name of the shared memory volume
+	VolumeSharedMemory = "dshm"
+	// VolumeModelStorage is the name of the model storage volume
+	VolumeModelStorage = "model-storage"
+	// MountPathSharedMemory is the mount path for shared memory
+	MountPathSharedMemory = "/dev/shm"
+	// DefaultSharedMemorySize is the default size for /dev/shm
+	DefaultSharedMemorySize = "8Gi"
+	// DefaultHTTPPort is the default HTTP port for inference services
+	DefaultHTTPPort = 8000
+	// DefaultGatewayPort is the default gateway port
+	DefaultGatewayPort = 80
+	// DefaultGPUResourceName is the default resource name for AMD GPUs
+	DefaultGPUResourceName = "amd.com/gpu"
+	// AIMCacheBasePath is the base directory for cached models
+	AIMCacheBasePath = "/workspace/model-cache"
+)
+
+// Component values for resource labels
+const (
+	// ComponentInference is the component value for inference-related resources
+	ComponentInference = "inference"
+	// ComponentRouting is the component value for routing-related resources
+	ComponentRouting = "routing"
+	// ComponentModelStorage is the component value for storage-related resources
+	ComponentModelStorage = "model-storage"
+)
+
+// Environment variable names
+const (
+	// EnvAIMCachePath is the environment variable for the cache path
+	EnvAIMCachePath = "AIM_CACHE_PATH"
+	// EnvAIMMetric is the environment variable for the optimization metric
+	EnvAIMMetric = "AIM_METRIC"
+	// EnvAIMPrecision is the environment variable for the numeric precision
+	EnvAIMPrecision = "AIM_PRECISION"
+	// EnvVLLMEnableMetrics enables vLLM metrics
+	EnvVLLMEnableMetrics = "VLLM_ENABLE_METRICS"
+)
+
+// KServe annotation and label keys
+const (
+	// AnnotationKServeAutoscalerClass is the annotation key for autoscaler class
+	AnnotationKServeAutoscalerClass = "serving.kserve.io/autoscalerClass"
+	// AutoscalerClassNone disables autoscaling
+	AutoscalerClassNone = "none"
+	// AutoscalerClassKeda enables KEDA-based autoscaling
+	AutoscalerClassKeda = "keda"
+	// LabelKServeInferenceService is the label key used by KServe on predictor pods
+	LabelKServeInferenceService = "serving.kserve.io/inferenceservice"
+	// AnnotationOTelSidecarInject is the annotation for OpenTelemetry sidecar injection
+	AnnotationOTelSidecarInject = "sidecar.opentelemetry.io/inject"
+	// AnnotationPrometheusPort is the annotation for Prometheus metrics port
+	AnnotationPrometheusPort = "prometheus.kserve.io/port"
+	// DefaultPrometheusPort is the default port for vLLM metrics
+	DefaultPrometheusPort = "8000"
+)
+
+// AIM annotation keys
+const (
+	// AnnotationReconciliationPaused, when set to "true", pauses reconciliation for the resource.
+	// The controller will skip all reconciliation logic and return immediately.
+	// This is useful for testing or debugging purposes.
+	AnnotationReconciliationPaused = AimLabelDomain + "/reconciliation-paused"
+)
+
+// Template-related constants
+const (
+	// TemplateNameMaxLength is the maximum length for template names (Kubernetes name limit)
+	TemplateNameMaxLength = 63
+	// DerivedTemplateSuffix is the suffix used for derived templates
+	DerivedTemplateSuffix = "-ovr-"
+	// PredictorServiceSuffix is the suffix added to InferenceService names for predictor services
+	PredictorServiceSuffix = "-predictor"
 )

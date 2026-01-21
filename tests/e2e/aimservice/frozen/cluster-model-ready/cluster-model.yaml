@@ -1,0 +1,11 @@
+# Frozen Cluster Model: Ready status (cluster-scoped)
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModel
+metadata:
+  name: test-cluster-model
+  annotations:
+    aim.eai.amd.com/reconciliation-paused: "true"
+spec:
+  image: ghcr.io/example/model:v1
+status:
+  status: Ready

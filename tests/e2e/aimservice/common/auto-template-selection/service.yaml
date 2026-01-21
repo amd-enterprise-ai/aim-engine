@@ -1,0 +1,9 @@
+# Service without explicit template - relies on auto-selection via model's defaultServiceTemplate
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-auto-select-service
+spec:
+  model:
+    name: test-auto-select-model
+  replicas: 1

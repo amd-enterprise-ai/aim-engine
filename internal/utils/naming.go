@@ -39,68 +39,94 @@ const (
 	DefaultHashLength = 8
 )
 
+// NameOption configures name generation behavior.
+type NameOption func(*nameConfig)
+
+type nameConfig struct {
+	hashInputs []any
+	hashLength int
+	maxLength  int
+}
+
+// WithHashSource specifies the values to hash for the name suffix.
+// Multiple values are combined for deterministic hashing.
+// Slices and maps are sorted recursively to ensure determinism.
+func WithHashSource(inputs ...any) NameOption {
+	return func(c *nameConfig) {
+		c.hashInputs = inputs
+	}
+}
+
+// WithHashLength specifies the number of characters to use from the hash (default: 8).
+// Set to 0 to disable hash suffix even if hash sources are provided.
+func WithHashLength(length int) NameOption {
+	return func(c *nameConfig) {
+		c.hashLength = length
+	}
+}
+
+// WithMaxLength specifies a custom maximum length for the generated name.
+// This is useful when the name will have additional suffixes added by external systems.
+// For example, KServe adds "-predictor-{namespace}" to InferenceService names.
+// Default is 63 (MaxKubernetesNameLength).
+func WithMaxLength(length int) NameOption {
+	return func(c *nameConfig) {
+		c.maxLength = length
+	}
+}
+
 // GenerateDerivedName creates a deterministic name for a derived resource.
 // It combines multiple name parts with an optional hash suffix, ensuring the result
-// is a valid Kubernetes name (max 63 characters, lowercase alphanumeric and hyphens).
+// is a valid Kubernetes name (lowercase alphanumeric and hyphens).
 //
 // Format:
-//   - With hash inputs: {part1}-{part2}-...-{partN}-{hash}
-//   - Without hash inputs: {part1}-{part2}-...-{partN}
+//   - With hash: {part1}-{part2}-...-{partN}-{hash}
+//   - Without hash: {part1}-{part2}-...-{partN}
 //
-// If the combined name exceeds 63 characters, the longest part is iteratively truncated
-// until the total length fits. The hash (if present) is never truncated beyond the specified length.
+// If the combined name exceeds the max length, the longest part is iteratively truncated.
 //
-// Parameters:
-//   - nameParts: The parts to combine into the name (e.g., ["my-service", "temp", "cache"]).
-//     Must not be empty.
-//   - hashInputs: Optional values to hash. Can be strings, structs, slices, or maps.
-//     Slices and maps are sorted recursively for deterministic hashing.
-//     If empty, no hash suffix is added.
-//
-// Returns:
-//   - A valid Kubernetes resource name and nil error on success
-//   - Empty string and error if nameParts is empty
+// Options:
+//   - WithHashSource(...): Values to hash for the suffix (required for hash)
+//   - WithHashLength(n): Number of hash characters (default: 8)
+//   - WithMaxLength(n): Maximum name length (default: 63)
 //
 // Example:
 //
-//	name, err := GenerateDerivedName([]string{"my-service", "temp"}, "metric=latency", "precision=fp16")
-//	// Returns: "my-service-temp-a1b2c3d4", nil
+//	name, _ := GenerateDerivedName([]string{"my-service", "temp"},
+//	    WithHashSource("metric=latency", "precision=fp16"))
+//	// Returns: "my-service-temp-a1b2c3d4"
 //
-//	name, err := GenerateDerivedName([]string{"my-service", "temp-cache"})
-//	// Returns: "my-service-temp-cache", nil (no hash)
+//	name, _ := GenerateDerivedName([]string{"my-service", "temp-cache"})
+//	// Returns: "my-service-temp-cache" (no hash)
 //
-//	name, err := GenerateDerivedName([]string{"my-service", "derived"},
-//	    map[string]string{"metric": "latency", "precision": "fp16"})
-//	// Returns: "my-service-derived-b2c3d4e5", nil (map sorted before hashing)
-func GenerateDerivedName(nameParts []string, hashInputs ...any) (string, error) {
-	if len(hashInputs) == 0 {
-		// No hash inputs - just join the parts
-		return GenerateDerivedNameWithHashLength(nameParts, 0, hashInputs...)
-	}
-	return GenerateDerivedNameWithHashLength(nameParts, DefaultHashLength, hashInputs...)
-}
-
-// GenerateDerivedNameWithHashLength is like GenerateDerivedName but allows specifying hash length.
-//
-// Parameters:
-//   - nameParts: The parts to combine into the name. Must not be empty.
-//   - hashLength: The number of characters to use from the hash (recommended: 6-12).
-//     Set to 0 to omit the hash suffix.
-//   - hashInputs: Variable number of values to hash (any type)
-//
-// Returns:
-//   - A valid Kubernetes resource name and nil error on success
-//   - Empty string and error if nameParts is empty
-func GenerateDerivedNameWithHashLength(nameParts []string, hashLength int, hashInputs ...any) (string, error) {
+//	name, _ := GenerateDerivedName([]string{"my-service"},
+//	    WithHashSource(namespace), WithMaxLength(30))
+//	// Returns truncated name to fit 30 chars
+func GenerateDerivedName(nameParts []string, opts ...NameOption) (string, error) {
 	if len(nameParts) == 0 {
 		return "", fmt.Errorf("nameParts cannot be empty")
+	}
+
+	// Apply defaults
+	cfg := &nameConfig{
+		hashLength: DefaultHashLength,
+		maxLength:  MaxKubernetesNameLength,
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	// Validate
+	if cfg.maxLength <= 0 || cfg.maxLength > MaxKubernetesNameLength {
+		return "", fmt.Errorf("maxLength must be between 1 and %d, got %d", MaxKubernetesNameLength, cfg.maxLength)
 	}
 
 	// Sanitize all parts to be Kubernetes-compliant
 	sanitizedParts := make([]string, len(nameParts))
 	for i, part := range nameParts {
 		sanitizedParts[i] = MakeRFC1123Compliant(part)
-		// Ensure no part is empty after sanitization
 		if sanitizedParts[i] == "" {
 			sanitizedParts[i] = "part"
 		}
@@ -108,30 +134,27 @@ func GenerateDerivedNameWithHashLength(nameParts []string, hashLength int, hashI
 
 	// Compute hash from inputs (if any)
 	var hashSuffix string
-	if hashLength > 0 && len(hashInputs) > 0 {
-		hash := computeHash(hashInputs...)
-		hashSuffix = hash[:hashLength]
+	if cfg.hashLength > 0 && len(cfg.hashInputs) > 0 {
+		hash := computeHash(cfg.hashInputs...)
+		hashSuffix = hash[:cfg.hashLength]
 	}
 
 	// Calculate current total length
-	// With hash: sum(parts) + (n-1 hyphens between parts) + 1 hyphen before hash + hash
-	// Without hash: sum(parts) + (n-1 hyphens between parts)
 	calculateLength := func(parts []string) int {
 		total := 0
 		for _, part := range parts {
-			total += len(part) + 1 // part + hyphen after it
+			total += len(part) + 1
 		}
 		if hashSuffix != "" {
-			total += len(hashSuffix) // hash (hyphen already counted above)
+			total += len(hashSuffix)
 		} else {
-			total-- // Remove trailing hyphen when no hash
+			total--
 		}
 		return total
 	}
 
 	// Iteratively truncate the longest part until we fit
-	for calculateLength(sanitizedParts) > MaxKubernetesNameLength {
-		// Find the longest part
+	for calculateLength(sanitizedParts) > cfg.maxLength {
 		longestIdx := 0
 		longestLen := len(sanitizedParts[0])
 		for i := 1; i < len(sanitizedParts); i++ {
@@ -141,18 +164,14 @@ func GenerateDerivedNameWithHashLength(nameParts []string, hashLength int, hashI
 			}
 		}
 
-		// Truncate the longest part by 1 character (or stop if at minimum length)
 		if longestLen > 1 {
 			sanitizedParts[longestIdx] = sanitizedParts[longestIdx][:longestLen-1]
 			sanitizedParts[longestIdx] = strings.TrimRight(sanitizedParts[longestIdx], "-")
 		} else {
-			// All parts are at minimum length, can't truncate further
-			// This shouldn't happen in practice with reasonable inputs
 			break
 		}
 	}
 
-	// Join all parts with hyphens and append hash (if present)
 	result := strings.Join(sanitizedParts, "-")
 	if hashSuffix != "" {
 		result += "-" + hashSuffix

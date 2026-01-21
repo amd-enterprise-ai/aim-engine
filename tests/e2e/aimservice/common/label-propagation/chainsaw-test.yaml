@@ -1,0 +1,138 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Label Propagation
+#
+# This test validates that labels from parent resources (AIMService) are correctly
+# propagated to child resources based on the AIMClusterRuntimeConfig label propagation settings.
+#
+# Test flow:
+# 1. Create AIMClusterRuntimeConfig with labelPropagation enabled (matching "team-*", "cost-center")
+# 2. Create AIMModel with HF source
+# 3. Create AIMService with labels and caching.mode: Always
+# 4. Verify labels are propagated to all child resources
+# 5. Verify non-matching labels (env) are NOT propagated
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-label-propagation
+  labels:
+    requires: external-network
+spec:
+  description: Test AIMService label propagation to child resources via RuntimeConfig
+  timeouts:
+    assert: 3m
+  steps:
+    - name: Create runtime config with label propagation and routing
+      try:
+        - apply:
+            file: runtimeconfig.yaml
+
+    - name: Create service with labels and caching enabled
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify AIMTemplateCache has propagated labels
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: test-label-propagation
+                  team-alpha: "frontend"
+                  cost-center: "cc-12345"
+
+    - name: Verify AIMModelCache has propagated labels
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModelCache
+              metadata:
+                labels:
+                  team-alpha: "frontend"
+                  cost-center: "cc-12345"
+
+    - name: Verify PVC has propagated labels
+      try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: PersistentVolumeClaim
+              metadata:
+                labels:
+                  team-alpha: "frontend"
+                  cost-center: "cc-12345"
+
+    - name: Verify download Job has propagated labels
+      try:
+        - assert:
+            resource:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                labels:
+                  team-alpha: "frontend"
+                  cost-center: "cc-12345"
+
+    - name: Verify InferenceService has propagated labels
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-label-propagation
+                  team-alpha: "frontend"
+                  cost-center: "cc-12345"
+
+    - name: Verify HTTPRoute has propagated labels
+      try:
+        - assert:
+            resource:
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-label-propagation
+                  team-alpha: "frontend"
+                  cost-center: "cc-12345"
+
+    - name: Verify InferenceService Pod has propagated labels
+      try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: test-label-propagation
+                  app.kubernetes.io/component: inference
+                  team-alpha: "frontend"
+                  cost-center: "cc-12345"
+
+    - name: Verify non-matching labels are NOT propagated to AIMModelCache
+      try:
+        - error:
+            timeout: 5s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModelCache
+              metadata:
+                labels:
+                  env: "test"
+
+    - name: Verify non-matching labels are NOT propagated to InferenceService
+      try:
+        - error:
+            timeout: 5s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  env: "test"

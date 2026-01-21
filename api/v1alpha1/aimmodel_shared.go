@@ -177,6 +177,10 @@ func (s *AIMModelStatus) SetStatus(status string) {
 	s.Status = constants.AIMStatus(status)
 }
 
+func (s *AIMModelStatus) GetAIMStatus() constants.AIMStatus {
+	return s.Status
+}
+
 // GetEffectiveImageMetadata returns metadata from spec (if provided) or status (if extracted).
 // Spec takes precedence over status since it represents user intent.
 func (s *AIMModelSpec) GetEffectiveImageMetadata(status *AIMModelStatus) *ImageMetadata {

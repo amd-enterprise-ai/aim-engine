@@ -32,7 +32,9 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
@@ -343,6 +345,17 @@ func categorizeByReason(failureReason, failureMessage string) error {
 	}
 }
 
+// isPodReady checks if a pod is ready by examining its Ready condition.
+// A pod is ready when all its containers are ready (passing readiness probes).
+func isPodReady(pod *corev1.Pod) bool {
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
 func GetPodsHealth(ctx context.Context, clientset kubernetes.Interface, podList *corev1.PodList) ComponentHealth {
 	if podList == nil || len(podList.Items) == 0 {
 		return ComponentHealth{
@@ -393,34 +406,60 @@ func GetPodsHealth(ctx context.Context, clientset kubernetes.Interface, podList 
 		}
 	}
 
-	// Check for running or succeeded pods - both indicate healthy state
-	// For health monitoring, we care that pods are functioning, not completion
-	hasRunningOrSucceeded := false
+	// Check pod states - we need to distinguish between:
+	// - Ready: Pods are running AND passing readiness probes
+	// - Starting: Pods are running but not yet ready (initializing)
+	// - Pending: Pods are waiting for scheduling or resources
+	hasReady := false
+	hasRunningNotReady := false
 	hasPending := false
 
 	for i := range podList.Items {
 		pod := &podList.Items[i]
-		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodSucceeded {
-			hasRunningOrSucceeded = true
-			break
+		if pod.Status.Phase == corev1.PodSucceeded {
+			hasReady = true
+			continue
+		}
+		if pod.Status.Phase == corev1.PodRunning {
+			// Check if pod is actually ready (passing readiness probes)
+			if isPodReady(pod) {
+				hasReady = true
+			} else {
+				hasRunningNotReady = true
+			}
+			continue
 		}
 		if pod.Status.Phase == corev1.PodPending {
 			hasPending = true
 		}
 	}
 
-	if hasRunningOrSucceeded {
-		// No errors = Ready state (derived automatically)
-		return ComponentHealth{}
+	// Pods are ready when at least one is running AND ready
+	if hasReady {
+		return ComponentHealth{
+			State:   constants.AIMStatusReady,
+			Reason:  "PodsReady",
+			Message: "Pods are ready",
+		}
+	}
+
+	// Pods are running but not yet ready (still initializing)
+	if hasRunningNotReady {
+		return ComponentHealth{
+			State:   constants.AIMStatusStarting,
+			Reason:  "PodsStarting",
+			Message: "Pods are running, waiting for readiness",
+		}
 	}
 
 	// Distinguish between Pending (waiting for resources) and Progressing (actively working)
 	if hasPending {
-		// Pods are pending - waiting for scheduling, image pull, volume mount, etc.
+		// Pods are pending - analyze events to determine if waiting (Pending) or actively working (Progressing)
+		state, reason, message := getPendingPodDetails(ctx, clientset, podList)
 		return ComponentHealth{
-			State:   constants.AIMStatusPending,
-			Reason:  "PodsPending",
-			Message: "Pods are pending",
+			State:   state,
+			Reason:  reason,
+			Message: message,
 		}
 	}
 
@@ -430,6 +469,87 @@ func GetPodsHealth(ctx context.Context, clientset kubernetes.Interface, podList 
 		Reason:  "PodsProgressing",
 		Message: "Pods are progressing",
 	}
+}
+
+// pendingPodEventReasons are the event reasons that explain why a pod is pending (waiting for external resources).
+// These result in Pending state.
+var pendingPodEventReasons = []string{
+	"FailedScheduling",       // Pod can't be scheduled (insufficient resources, affinity, taints)
+	"FailedMount",            // Volume mount failed
+	"FailedAttachVolume",     // Volume attachment failed
+	"FailedCreatePodSandBox", // Network/sandbox creation failed
+}
+
+// progressingPodEventReasons are the event reasons that indicate active work in progress.
+// These result in Progressing state instead of Pending.
+var progressingPodEventReasons = []string{
+	"Pulling", // Image is being pulled
+}
+
+// getPendingPodDetails fetches events for pending pods to provide more specific status information.
+// Returns:
+// - state: Pending (waiting for external resources) or Progressing (actively working)
+// - reason: Event reason or default "PodsPending"
+// - message: Event message or default "Pods are pending"
+func getPendingPodDetails(ctx context.Context, clientset kubernetes.Interface, podList *corev1.PodList) (constants.AIMStatus, string, string) {
+	defaultState := constants.AIMStatusPending
+	defaultReason := "PodsPending"
+	defaultMessage := "Pods are pending"
+
+	if clientset == nil || podList == nil {
+		return defaultState, defaultReason, defaultMessage
+	}
+
+	// Find pending pods and check their events
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		if pod.Status.Phase != corev1.PodPending {
+			continue
+		}
+
+		// Fetch events for this pod
+		events, err := clientset.CoreV1().Events(pod.Namespace).List(ctx, metav1.ListOptions{
+			FieldSelector: fmt.Sprintf("involvedObject.name=%s,involvedObject.uid=%s", pod.Name, pod.UID),
+		})
+		if err != nil || events == nil || len(events.Items) == 0 {
+			continue
+		}
+
+		// Check for pending reasons first (external wait)
+		pendingEvent := findLatestEventByReasons(events.Items, pendingPodEventReasons)
+		if pendingEvent != nil {
+			return constants.AIMStatusPending, pendingEvent.Reason, pendingEvent.Message
+		}
+
+		// Check for progressing reasons (active work)
+		progressingEvent := findLatestEventByReasons(events.Items, progressingPodEventReasons)
+		if progressingEvent != nil {
+			return constants.AIMStatusProgressing, progressingEvent.Reason, progressingEvent.Message
+		}
+	}
+
+	return defaultState, defaultReason, defaultMessage
+}
+
+// findLatestEventByReasons finds the most recent event matching any of the given reasons.
+// Returns the latest matching event, or nil if no match found.
+func findLatestEventByReasons(events []corev1.Event, reasons []string) *corev1.Event {
+	reasonSet := make(map[string]bool, len(reasons))
+	for _, r := range reasons {
+		reasonSet[r] = true
+	}
+
+	var latestEvent *corev1.Event
+	for i := range events {
+		event := &events[i]
+		if !reasonSet[event.Reason] {
+			continue
+		}
+		if latestEvent == nil || event.LastTimestamp.After(latestEvent.LastTimestamp.Time) {
+			latestEvent = event
+		}
+	}
+	return latestEvent
 }
 
 func GetJobHealth(job *batchv1.Job) ComponentHealth {
@@ -553,5 +673,53 @@ func GetPvcHealth(pvc *corev1.PersistentVolumeClaim) ComponentHealth {
 		State:   constants.AIMStatusProgressing,
 		Reason:  "PvcPending",
 		Message: "PVC is pending",
+	}
+}
+
+// GetHTTPRouteHealth evaluates the health of an HTTPRoute.
+// An HTTPRoute is ready when at least one parent has accepted it.
+func GetHTTPRouteHealth(route *gatewayapiv1.HTTPRoute) ComponentHealth {
+	if route == nil {
+		return ComponentHealth{
+			Errors: []error{
+				NewMissingDownstreamDependencyError("HTTPRouteNotFound", "HTTPRoute not found", nil),
+			},
+		}
+	}
+
+	// Check if any parent has accepted the route
+	for _, parent := range route.Status.Parents {
+		for _, cond := range parent.Conditions {
+			if cond.Type == "Accepted" {
+				if cond.Status == metav1.ConditionTrue {
+					return ComponentHealth{
+						State:   constants.AIMStatusReady,
+						Reason:  "HTTPRouteAccepted",
+						Message: "HTTPRoute is accepted by gateway",
+					}
+				}
+				// Route was rejected
+				return ComponentHealth{
+					Errors: []error{
+						NewInvalidSpecError(cond.Reason, fmt.Sprintf("HTTPRoute rejected: %s", cond.Message), nil),
+					},
+				}
+			}
+
+			if cond.Type == "ResolvedRefs" && cond.Status == metav1.ConditionFalse {
+				return ComponentHealth{
+					Errors: []error{
+						NewMissingDownstreamDependencyError(cond.Reason, fmt.Sprintf("HTTPRoute backend not resolved: %s", cond.Message), nil),
+					},
+				}
+			}
+		}
+	}
+
+	// No parents have processed the route yet
+	return ComponentHealth{
+		State:   constants.AIMStatusProgressing,
+		Reason:  "HTTPRoutePending",
+		Message: "HTTPRoute is waiting for gateway acceptance",
 	}
 }

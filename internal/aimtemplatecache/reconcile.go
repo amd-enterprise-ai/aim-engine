@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimruntimeconfig"
@@ -117,10 +118,10 @@ func (r *TemplateCacheReconciler) FetchRemoteState(
 		mergedRuntimeConfig: reconcileCtx.MergedRuntimeConfig,
 	}
 
-	result.serviceTemplate = controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Name, Namespace: templateCache.Namespace}, &aimv1alpha1.AIMServiceTemplate{})
+	result.serviceTemplate = controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Spec.TemplateName, Namespace: templateCache.Namespace}, &aimv1alpha1.AIMServiceTemplate{})
 
 	if result.serviceTemplate.IsNotFound() {
-		clusterServiceTemplate := controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Name}, &aimv1alpha1.AIMClusterServiceTemplate{})
+		clusterServiceTemplate := controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Spec.TemplateName}, &aimv1alpha1.AIMClusterServiceTemplate{})
 		result.clusterServiceTemplate = &clusterServiceTemplate
 	}
 
@@ -179,48 +180,107 @@ type TemplateCacheObservation struct {
 	BestModelCaches    map[string]aimv1alpha1.AIMModelCache
 }
 
+// GetComponentHealth overrides the embedded FetchResult's method to include model cache health.
+// This is necessary because cache matching happens in ComposeState, which runs after FetchRemoteState.
+func (obs TemplateCacheObservation) GetComponentHealth() []controllerutils.ComponentHealth {
+	// Start with the base health from the embedded FetchResult
+	health := obs.TemplateCacheFetchResult.GetComponentHealth()
+
+	// Report model cache health if we have matched caches (computed in ComposeState)
+	if len(obs.BestModelCaches) > 0 {
+		// Find the worst status among all caches
+		worstStatus := constants.AIMStatusReady
+		for _, mc := range obs.BestModelCaches {
+			if constants.CompareAIMStatus(mc.Status.Status, worstStatus) < 0 {
+				worstStatus = mc.Status.Status
+			}
+		}
+
+		health = append(health, controllerutils.ComponentHealth{
+			Component:      modelCachesComponentName,
+			State:          worstStatus,
+			DependencyType: controllerutils.DependencyTypeDownstream,
+		})
+	} else if len(obs.MissingCaches) > 0 {
+		// Caches are being created
+		health = append(health, controllerutils.ComponentHealth{
+			Component:      modelCachesComponentName,
+			State:          constants.AIMStatusProgressing,
+			DependencyType: controllerutils.DependencyTypeDownstream,
+		})
+	}
+
+	return health
+}
+
 func (r *TemplateCacheReconciler) ComposeState(
-	_ context.Context,
+	ctx context.Context,
 	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha1.AIMTemplateCache],
 	fetch TemplateCacheFetchResult,
 ) TemplateCacheObservation {
+	logger := log.FromContext(ctx)
 	obs := TemplateCacheObservation{
 		TemplateCacheFetchResult: fetch,
 	}
 
-	var serviceTemplateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon
+	var templateModelSources []aimv1alpha1.AIMModelSource
 	tc := reconcileCtx.Object
 
+	// Read model sources from Status (populated by discovery), not Spec
 	if fetch.serviceTemplate.OK() {
-		serviceTemplateSpec = &fetch.serviceTemplate.Value.Spec.AIMServiceTemplateSpecCommon
+		templateModelSources = fetch.serviceTemplate.Value.Status.ModelSources
 	} else if fetch.clusterServiceTemplate.OK() {
-		serviceTemplateSpec = &fetch.clusterServiceTemplate.Value.Spec.AIMServiceTemplateSpecCommon
+		templateModelSources = fetch.clusterServiceTemplate.Value.Status.ModelSources
 	} else {
 		return obs
 	}
 
 	obs.BestModelCaches = map[string]aimv1alpha1.AIMModelCache{}
 
+	logger.Info("ComposeState: checking model caches",
+		"templateCache", tc.Name,
+		"templateModelSources", len(templateModelSources),
+		"fetchedModelCaches", len(fetch.modelCaches.Value.Items))
+
 	// Loop through model sources from the template and check with what's available in our namespace
-	for _, model := range serviceTemplateSpec.ModelSources {
+	for _, model := range templateModelSources {
 		found := false
 		bestStatusModelCache := aimv1alpha1.AIMModelCache{}
 		for _, cached := range fetch.modelCaches.Value.Items {
+			logger.Info("ComposeState: evaluating model cache",
+				"cacheName", cached.Name,
+				"cacheStatus", cached.Status.Status,
+				"cacheSourceURI", cached.Spec.SourceURI,
+				"modelSourceURI", model.SourceURI)
+
 			if cached.Status.Status == "" {
+				logger.Info("ComposeState: skipping cache with empty status", "cacheName", cached.Name)
 				continue
 			}
 			// ModelCache is a match if it has the same SourceURI and a StorageClass matching our config
 			if cached.Spec.SourceURI == model.SourceURI &&
 				(tc.Spec.StorageClassName == "" || tc.Spec.StorageClassName == cached.Spec.StorageClassName) {
-				if constants.CompareAIMStatus(bestStatusModelCache.Status.Status, cached.Status.Status) < 0 {
+				// Select the first matching cache, or replace with a better one
+				// Note: !found is needed because CompareAIMStatus("", "Failed") returns 0 (equal),
+				// since empty string gets priority 0 from the map (same as Failed)
+				if !found || constants.CompareAIMStatus(bestStatusModelCache.Status.Status, cached.Status.Status) < 0 {
+					logger.Info("ComposeState: selected cache as best match",
+						"cacheName", cached.Name,
+						"cacheStatus", cached.Status.Status,
+						"previousBestStatus", bestStatusModelCache.Status.Status)
 					found = true
 					bestStatusModelCache = cached
 				}
 			}
 		}
 		if found {
+			logger.Info("ComposeState: model source matched",
+				"modelName", model.Name,
+				"bestCacheName", bestStatusModelCache.Name,
+				"bestCacheStatus", bestStatusModelCache.Status.Status)
 			obs.BestModelCaches[model.Name] = bestStatusModelCache
 		} else {
+			logger.Info("ComposeState: model source missing cache", "modelName", model.Name)
 			obs.MissingCaches = append(obs.MissingCaches, model)
 		}
 	}
@@ -245,11 +305,12 @@ func (r *TemplateCacheReconciler) PlanResources(
 		modelCacheName, _ := utils.GenerateDerivedName([]string{nameWithoutDots},
 			// Include all the fields that can impact the model cache uniqueness
 			// TODO verify for any side effects
-			cache.SourceURI,
-			tc.Spec.Env,
-			tc.Spec.StorageClassName,
+			utils.WithHashSource(cache.SourceURI, tc.Spec.Env, tc.Spec.StorageClassName),
 		)
 		// sanitizedName := utils.MakeRFC1123Compliant(nameWithoutDots)
+
+		// Sanitize template cache name for label value
+		templateCacheLabelValue, _ := utils.SanitizeLabelValue(tc.Name)
 
 		mc := &aimv1alpha1.AIMModelCache{
 			TypeMeta: metav1.TypeMeta{
@@ -264,6 +325,7 @@ func (r *TemplateCacheReconciler) PlanResources(
 					constants.AimLabelDomain + "/template.name":  tc.Spec.TemplateName,
 					constants.AimLabelDomain + "/template.scope": string(tc.Spec.TemplateScope),
 					constants.AimLabelDomain + "/template.index": strconv.Itoa(idx),
+					constants.LabelTemplateCacheName:             templateCacheLabelValue,
 				},
 			},
 			Spec: aimv1alpha1.AIMModelCacheSpec{
@@ -274,7 +336,9 @@ func (r *TemplateCacheReconciler) PlanResources(
 				RuntimeConfigRef: tc.Spec.RuntimeConfigRef,
 			},
 		}
-		result.Apply(mc)
+		// Use ApplyWithoutOwnerRef so model caches can be shared across template caches
+		// and outlive the creating template cache (if Ready)
+		result.ApplyWithoutOwnerRef(mc)
 	}
 	return result
 }
