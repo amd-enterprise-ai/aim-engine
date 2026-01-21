@@ -569,8 +569,10 @@ func choosePreferredTemplate(candidates []TemplateCandidate) (*TemplateCandidate
 }
 
 func candidateMetric(c TemplateCandidate) string {
-	if m := c.Status.Profile.Metadata.Metric; m != "" {
-		return string(m)
+	if c.Status.Profile != nil {
+		if m := c.Status.Profile.Metadata.Metric; m != "" {
+			return string(m)
+		}
 	}
 	if c.Spec.Metric != nil {
 		return string(*c.Spec.Metric)
@@ -579,8 +581,10 @@ func candidateMetric(c TemplateCandidate) string {
 }
 
 func candidatePrecision(c TemplateCandidate) string {
-	if p := c.Status.Profile.Metadata.Precision; p != "" {
-		return string(p)
+	if c.Status.Profile != nil {
+		if p := c.Status.Profile.Metadata.Precision; p != "" {
+			return string(p)
+		}
 	}
 	if c.Spec.Precision != nil {
 		return string(*c.Spec.Precision)
@@ -595,8 +599,10 @@ func candidateGPUModel(c TemplateCandidate) string {
 			return model
 		}
 	}
-	if gpu := strings.TrimSpace(c.Status.Profile.Metadata.GPU); gpu != "" {
-		return gpu
+	if c.Status.Profile != nil {
+		if gpu := strings.TrimSpace(c.Status.Profile.Metadata.GPU); gpu != "" {
+			return gpu
+		}
 	}
 	return ""
 }
@@ -605,14 +611,17 @@ func candidateGPUCount(c TemplateCandidate) int32 {
 	if c.Spec.GpuSelector != nil && c.Spec.GpuSelector.Count > 0 {
 		return c.Spec.GpuSelector.Count
 	}
-	if c.Status.Profile.Metadata.GPUCount > 0 {
+	if c.Status.Profile != nil && c.Status.Profile.Metadata.GPUCount > 0 {
 		return c.Status.Profile.Metadata.GPUCount
 	}
 	return 0
 }
 
 func candidateProfileType(c TemplateCandidate) string {
-	return string(c.Status.Profile.Metadata.Type)
+	if c.Status.Profile != nil {
+		return string(c.Status.Profile.Metadata.Type)
+	}
+	return ""
 }
 
 // Preference orders for template selection

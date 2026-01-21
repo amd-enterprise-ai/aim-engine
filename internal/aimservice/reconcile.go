@@ -142,7 +142,9 @@ func (r *ServiceReconciler) FetchRemoteState(
 
 	// 6. Only fetch Model and Template if InferenceService needs to be (re)created.
 	// Once the ISVC exists, the config is baked in and we don't need these upstream resources.
-	if !result.inferenceService.OK() {
+	// Use IsNotFound() rather than !OK() to avoid re-resolving when there's a transient error
+	// fetching an existing ISVC (which could cause SSA to update an existing resource).
+	if result.inferenceService.IsNotFound() {
 		logger.V(1).Info("InferenceService not found, fetching upstream resources")
 
 		// Resolve model (handles ref, image, and custom modes)
