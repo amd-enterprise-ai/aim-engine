@@ -32,6 +32,7 @@ import (
 )
 
 // AIMKVCacheSpec defines the desired state of AIMKVCache
+// +kubebuilder:validation:XValidation:rule="self.kvCacheType == oldSelf.kvCacheType",message="kvCacheType is immutable"
 type AIMKVCacheSpec struct {
 	// KVCacheType specifies the type of key-value cache to create
 	// +kubebuilder:validation:Enum=redis

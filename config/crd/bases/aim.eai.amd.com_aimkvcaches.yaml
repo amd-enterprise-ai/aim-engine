@@ -349,6 +349,9 @@ spec:
             required:
             - kvCacheType
             type: object
+            x-kubernetes-validations:
+            - message: kvCacheType is immutable
+              rule: self.kvCacheType == oldSelf.kvCacheType
           status:
             description: AIMKVCacheStatus defines the observed state of AIMKVCache
             properties:

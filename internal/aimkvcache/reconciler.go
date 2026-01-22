@@ -30,6 +30,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -126,6 +127,71 @@ func (r *AIMKVCacheReconciler) DecorateStatus(
 
 type Observation struct {
 	FetchResult
+
+	// needsStatefulSetUpdate is true if the existing StatefulSet differs from desired state
+	needsStatefulSetUpdate bool
+	// needsServiceUpdate is true if the existing Service differs from desired state
+	needsServiceUpdate bool
+}
+
+// envVarsEqual compares two slices of EnvVar, ignoring order
+func envVarsEqual(desired, observed []corev1.EnvVar) bool {
+	if len(desired) != len(observed) {
+		return false
+	}
+	observedMap := make(map[string]corev1.EnvVar, len(observed))
+	for _, env := range observed {
+		observedMap[env.Name] = env
+	}
+	for _, env := range desired {
+		if obs, ok := observedMap[env.Name]; !ok || !equality.Semantic.DeepEqual(env, obs) {
+			return false
+		}
+	}
+	return true
+}
+
+// statefulSetNeedsUpdate returns true if the observed StatefulSet differs from desired mutable fields
+func (r *AIMKVCacheReconciler) statefulSetNeedsUpdate(kvc *aimv1alpha1.AIMKVCache, observed *appsv1.StatefulSet) bool {
+	// Find the redis container
+	var container *corev1.Container
+	for i := range observed.Spec.Template.Spec.Containers {
+		if observed.Spec.Template.Spec.Containers[i].Name == "redis" {
+			container = &observed.Spec.Template.Spec.Containers[i]
+			break
+		}
+	}
+	if container == nil {
+		return true
+	}
+
+	// Check image
+	if container.Image != r.getImage(kvc) {
+		return true
+	}
+
+	// Check env vars
+	if !envVarsEqual(r.getEnv(kvc), container.Env) {
+		return true
+	}
+
+	// Check resources
+	if !equality.Semantic.DeepEqual(r.getResources(kvc), container.Resources) {
+		return true
+	}
+
+	return false
+}
+
+// serviceNeedsUpdate returns true if the observed Service differs from desired mutable fields
+func (r *AIMKVCacheReconciler) serviceNeedsUpdate(kvc *aimv1alpha1.AIMKVCache, observed *corev1.Service) bool {
+	// Service ports are hardcoded, check if expected port exists
+	for _, port := range observed.Spec.Ports {
+		if port.Port == 6379 && port.Name == "redis" {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *AIMKVCacheReconciler) ComposeState(
@@ -133,7 +199,20 @@ func (r *AIMKVCacheReconciler) ComposeState(
 	_ controllerutils.ReconcileContext[*aimv1alpha1.AIMKVCache],
 	fetch FetchResult,
 ) Observation {
-	return Observation{FetchResult: fetch}
+	obs := Observation{FetchResult: fetch}
+	kvc := fetch.kvCache
+
+	// Check if StatefulSet needs update
+	if fetch.statefulSet.OK() && fetch.statefulSet.Value != nil {
+		obs.needsStatefulSetUpdate = r.statefulSetNeedsUpdate(kvc, fetch.statefulSet.Value)
+	}
+
+	// Check if Service needs update
+	if fetch.service.OK() && fetch.service.Value != nil {
+		obs.needsServiceUpdate = r.serviceNeedsUpdate(kvc, fetch.service.Value)
+	}
+
+	return obs
 }
 
 func (r *AIMKVCacheReconciler) PlanResources(
@@ -150,17 +229,17 @@ func (r *AIMKVCacheReconciler) PlanResources(
 		return controllerutils.PlanResult{}
 	}
 
-	if obs.service.IsNotFound() {
-		desiredService := r.buildRedisService(kvc)
-		if desiredService != nil {
-			planResult.Apply(desiredService)
+	// Plan Service
+	if obs.service.IsNotFound() || obs.needsServiceUpdate {
+		if svc := r.buildRedisService(kvc); svc != nil {
+			planResult.Apply(svc)
 		}
 	}
 
-	if obs.statefulSet.IsNotFound() {
-		desiredStatefulSet := r.buildRedisStatefulSet(kvc)
-		if desiredStatefulSet != nil {
-			planResult.Apply(desiredStatefulSet)
+	// Plan StatefulSet
+	if obs.statefulSet.IsNotFound() || obs.needsStatefulSetUpdate {
+		if ss := r.buildRedisStatefulSet(kvc); ss != nil {
+			planResult.Apply(ss)
 		}
 	}
 

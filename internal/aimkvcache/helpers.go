@@ -181,11 +181,11 @@ func (r *AIMKVCacheReconciler) buildRedisService(kvc *aimv1alpha1.AIMKVCache) *c
 }
 
 func (r *AIMKVCacheReconciler) GetStatefulSetName(kvc *aimv1alpha1.AIMKVCache) (string, error) {
-	return utils.GenerateDerivedName([]string{kvc.Name, kvc.Spec.KVCacheType}, kvc.Namespace, kvc.Name)
+	return utils.GenerateDerivedName([]string{kvc.Name, kvc.Spec.KVCacheType}, utils.WithHashSource(kvc.Namespace, kvc.Name))
 }
 
 func (r *AIMKVCacheReconciler) GetServiceName(kvc *aimv1alpha1.AIMKVCache) (string, error) {
-	return utils.GenerateDerivedName([]string{kvc.Name, kvc.Spec.KVCacheType, "svc"}, kvc.Namespace, kvc.Name)
+	return utils.GenerateDerivedName([]string{kvc.Name, kvc.Spec.KVCacheType, "svc"}, utils.WithHashSource(kvc.Namespace, kvc.Name))
 }
 
 func (r *AIMKVCacheReconciler) getStorageSize(kvc *aimv1alpha1.AIMKVCache) resource.Quantity {
