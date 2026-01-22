@@ -317,6 +317,45 @@ _Appears in:_
 | `profileId` _string_ | ProfileId is the specific AIM profile ID that this template should use.<br />When set, the discovery job will be instructed to use this specific profile. |  |  |
 
 
+#### AIMCpuRequirements
+
+
+
+AIMCpuRequirements specifies CPU resource requirements.
+
+
+
+_Appears in:_
+- [AIMHardwareRequirements](#aimhardwarerequirements)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `requests` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Requests is the number of CPU cores to request. |  |  |
+| `limits` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Limits is the maximum number of CPU cores to allow. |  |  |
+
+
+#### AIMCustomTemplate
+
+
+
+AIMCustomTemplate defines a custom template configuration for a model.
+When modelSources are specified directly on AIMModel, customTemplates allow
+defining explicit hardware requirements and profiles, skipping the discovery job.
+
+
+
+_Appears in:_
+- [AIMModelSpec](#aimmodelspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name is the template name. If not provided, auto-generated from model name + profile. |  |  |
+| `type` _[AIMProfileType](#aimprofiletype)_ | Type indicates the optimization status of this template.<br />- optimized: Template has been tuned for performance<br />- preview: Template is experimental/pre-release<br />- unoptimized: Default, no specific optimizations applied | unoptimized | Enum: [optimized preview unoptimized] <br /> |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variable overrides when this template is selected. |  |  |
+| `hardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | Hardware specifies GPU and CPU requirements for this template.<br />Optional when spec.hardware is set (inherits from spec).<br />When both are set, values are merged field-by-field with template taking precedence. |  |  |
+| `profile` _[AIMTemplateProfile](#aimtemplateprofile)_ | Profile declares runtime profile variables for template selection.<br />Used when multiple templates exist to select based on metric/precision. |  |  |
+
+
 
 
 #### AIMDiscoveryProfileMetadata
@@ -340,19 +379,39 @@ _Appears in:_
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type specifies the optimization level of this profile (optimized, unoptimized, preview). |  | Enum: [optimized preview unoptimized] <br /> |
 
 
+#### AIMGpuRequirements
+
+
+
+AIMGpuRequirements specifies GPU resource requirements for custom models.
+Unlike AIMGpuSelector, this supports multiple GPU models and VRAM constraints.
+
+
+
+_Appears in:_
+- [AIMHardwareRequirements](#aimhardwarerequirements)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `requests` _integer_ | Requests is the number of GPUs to set as requests/limits. Required when GPU is specified. |  | Minimum: 1 <br /> |
+| `models` _string array_ | Models limits deployment to specific GPU models.<br />When multiple models are specified, the scheduler picks from any available.<br />Examples: ["MI300X"], ["MI300X", "MI325X"] |  |  |
+| `minVram` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | MinVRAM limits deployment to GPUs having at least this much VRAM.<br />Used for capacity planning when model size is known. |  |  |
+| `resourceName` _string_ | ResourceName is the Kubernetes resource name for GPU resources.<br />Defaults to "amd.com/gpu" if not specified. | amd.com/gpu |  |
+
+
 #### AIMGpuSelector
 
 
 
 AIMGpuSelector specifies GPU requirements for a deployment.
 It defines the number and type of GPUs needed for each replica.
+Deprecated: Use AIMHardwareRequirements with AIMGpuRequirements instead.
 
 
 
 _Appears in:_
 - [AIMClusterServiceTemplateSpec](#aimclusterservicetemplatespec)
 - [AIMRuntimeParameters](#aimruntimeparameters)
-- [AIMServiceModelCustom](#aimservicemodelcustom)
 - [AIMServiceOverrides](#aimserviceoverrides)
 - [AIMServiceTemplateSpec](#aimservicetemplatespec)
 - [AIMServiceTemplateSpecCommon](#aimservicetemplatespeccommon)
@@ -362,6 +421,26 @@ _Appears in:_
 | `count` _integer_ | Count is the number of GPU resources requested per replica.<br />Must be at least 1. |  | Minimum: 1 <br /> |
 | `model` _string_ | Model is the GPU model name required for this deployment.<br />Examples: `MI300X`, `MI325X` |  | MinLength: 1 <br /> |
 | `resourceName` _string_ | ResourceName is the Kubernetes resource name for GPU resources.<br />Defaults to "amd.com/gpu" if not specified. | amd.com/gpu |  |
+
+
+#### AIMHardwareRequirements
+
+
+
+AIMHardwareRequirements specifies compute resource requirements for custom models.
+Used in AIMModelSpec and AIMCustomTemplate to define GPU and CPU needs.
+
+
+
+_Appears in:_
+- [AIMCustomTemplate](#aimcustomtemplate)
+- [AIMModelSpec](#aimmodelspec)
+- [AIMServiceModelCustom](#aimservicemodelcustom)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `gpu` _[AIMGpuRequirements](#aimgpurequirements)_ | GPU specifies GPU requirements. If not set, no GPUs are requested (CPU-only model). |  |  |
+| `cpu` _[AIMCpuRequirements](#aimcpurequirements)_ | CPU specifies CPU requirements. |  |  |
 
 
 #### AIMMetric
@@ -381,6 +460,7 @@ _Appears in:_
 - [AIMServiceOverrides](#aimserviceoverrides)
 - [AIMServiceTemplateSpec](#aimservicetemplatespec)
 - [AIMServiceTemplateSpecCommon](#aimservicetemplatespeccommon)
+- [AIMTemplateProfile](#aimtemplateprofile)
 
 | Field | Description |
 | --- | --- |
@@ -562,9 +642,28 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `name` _string_ | Name is a human-readable identifier for this model artifact.<br />May be empty if the source represents the primary model. |  |  |
+| `modelId` _string_ | ModelID is the canonical identifier in \{org\}/\{name\} format.<br />Determines the cache mount path: /workspace/model-cache/\{modelId\}<br />For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).<br />For S3 sources, users define their own organizational structure. |  | Pattern: `^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$` <br /> |
 | `sourceUri` _string_ | SourceURI is the location from which the model should be downloaded.<br />Supported schemes:<br />- hf://org/model - Hugging Face Hub model<br />- s3://bucket/key - S3-compatible storage |  | Pattern: `^(hf\|s3)://[^ \t\r\n]+$` <br /> |
-| `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Size is the expected storage space required for this model artifact.<br />Used for PVC sizing and capacity planning during cache creation.<br />Optional for custom models (will be populated by discovery job). |  |  |
+| `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Size is the expected storage space required for this model artifact.<br />Used for PVC sizing and capacity planning during cache creation.<br />Required for custom models (discovery does not run for inline sources).<br />For image-based models, this is populated by the discovery job. |  |  |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies per-source credential overrides.<br />These variables are used for authentication when downloading this specific source.<br />Takes precedence over base-level env for the same variable name. |  |  |
+
+
+#### AIMModelSourceType
+
+_Underlying type:_ _string_
+
+AIMModelSourceType indicates how a model's artifacts are sourced.
+
+_Validation:_
+- Enum: [Image Custom]
+
+_Appears in:_
+- [AIMModelStatus](#aimmodelstatus)
+
+| Field | Description |
+| --- | --- |
+| `Image` | AIMModelSourceTypeImage indicates the model is discovered from container image labels.<br /> |
+| `Custom` | AIMModelSourceTypeCustom indicates the model uses explicit spec.modelSources.<br /> |
 
 
 #### AIMModelSpec
@@ -584,7 +683,10 @@ _Appears in:_
 | `image` _string_ | Image is the container image URI for this AIM model.<br />This image is inspected by the operator to select runtime profiles used by templates.<br />Discovery behavior is controlled by the discovery field and runtime config's AutoDiscovery setting. |  | MinLength: 1 <br /> |
 | `discovery` _[AIMModelDiscoveryConfig](#aimmodeldiscoveryconfig)_ | Discovery controls discovery behavior for this model.<br />When unset, uses runtime config defaults. |  |  |
 | `defaultServiceTemplate` _string_ | DefaultServiceTemplate specifies the default AIMServiceTemplate to use when creating services for this model.<br />When set, services that reference this model will use this template if no template is explicitly specified.<br />If this is not set, a template will be automatically selected. |  |  |
-| `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources to use for this model.<br />When specified, these sources are used instead of auto-discovery from the container image.<br />This enables pre-creating custom models with explicit model sources.<br />The discovery job will validate and enrich these sources with size information.<br />AIM runtime currently supports only one model source. |  | MaxItems: 1 <br /> |
+| `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources to use for this model.<br />When specified, these sources are used instead of auto-discovery from the container image.<br />This enables pre-creating custom models with explicit model sources.<br />For custom models, modelSources[].size is required (discovery does not run).<br />AIM runtime currently supports only one model source. |  | MaxItems: 1 <br /> |
+| `hardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | Hardware specifies default hardware requirements for all custom templates.<br />Individual templates can override these defaults.<br />Required when modelSources is set and customTemplates is empty. |  |  |
+| `type` _[AIMProfileType](#aimprofiletype)_ | Type specifies default type for all custom templates.<br />Individual templates can override this default.<br />When nil, templates default to "unoptimized". |  | Enum: [optimized preview unoptimized] <br /> |
+| `customTemplates` _[AIMCustomTemplate](#aimcustomtemplate) array_ | CustomTemplates defines explicit template configurations for this model.<br />When modelSources are specified, these templates are created directly<br />without running a discovery job.<br />If omitted when modelSources is set, a single template is auto-generated<br />using the spec-level hardware requirements. |  |  |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  |  |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets lists secrets containing credentials for pulling the model container image.<br />These secrets are used for:<br />- OCI registry metadata extraction during discovery<br />- Pulling the image for inference services<br />The secrets are merged with any runtime config defaults.<br />For namespace-scoped models, secrets must exist in the same namespace.<br />For cluster-scoped models, secrets must exist in the operator namespace. |  |  |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for authentication during model discovery and metadata extraction.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  |  |
@@ -612,6 +714,7 @@ _Appears in:_
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#condition-v1-meta) array_ | Conditions represent the latest available observations of the model's state |  |  |
 | `resolvedRuntimeConfig` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedRuntimeConfig captures metadata about the runtime config that was resolved. |  |  |
 | `imageMetadata` _[ImageMetadata](#imagemetadata)_ | ImageMetadata is the metadata extracted from an AIM image |  |  |
+| `sourceType` _[AIMModelSourceType](#aimmodelsourcetype)_ | SourceType indicates how this model's artifacts are sourced.<br />- "Image": Model discovered from container image labels<br />- "Custom": Model uses explicit spec.modelSources<br />Set by the controller based on whether spec.modelSources is populated. |  | Enum: [Image Custom] <br /> |
 
 
 #### AIMPrecision
@@ -631,6 +734,7 @@ _Appears in:_
 - [AIMServiceOverrides](#aimserviceoverrides)
 - [AIMServiceTemplateSpec](#aimservicetemplatespec)
 - [AIMServiceTemplateSpecCommon](#aimservicetemplatespeccommon)
+- [AIMTemplateProfile](#aimtemplateprofile)
 
 | Field | Description |
 | --- | --- |
@@ -704,7 +808,9 @@ _Validation:_
 - Enum: [optimized preview unoptimized]
 
 _Appears in:_
+- [AIMCustomTemplate](#aimcustomtemplate)
 - [AIMDiscoveryProfileMetadata](#aimdiscoveryprofilemetadata)
+- [AIMModelSpec](#aimmodelspec)
 - [AIMProfileMetadata](#aimprofilemetadata)
 
 | Field | Description |
@@ -1092,8 +1198,26 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `name` _string_ | Name references an existing AIMModel or AIMClusterModel by metadata.name.<br />The controller looks for a namespace-scoped AIMModel first, then falls back to cluster-scoped AIMClusterModel.<br />Example: `meta-llama-3-8b` |  |  |
 | `image` _string_ | Image specifies a container image URI directly.<br />The controller searches for an existing model with this image, or creates one if none exists.<br />The scope of the created model is controlled by the runtime config's ModelCreationScope field.<br />Example: `ghcr.io/silogen/llama-3-8b:v1.2.0` |  |  |
+| `custom` _[AIMServiceModelCustom](#aimservicemodelcustom)_ | Custom specifies a custom model configuration with explicit base image,<br />model sources, and hardware requirements. The controller will search for<br />an existing matching AIMModel or auto-create one if not found. |  |  |
 
 
+#### AIMServiceModelCustom
+
+
+
+AIMServiceModelCustom specifies a custom model configuration with explicit base image,
+model sources, and hardware requirements. Used for ad-hoc custom model deployments.
+
+
+
+_Appears in:_
+- [AIMServiceModel](#aimservicemodel)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `baseImage` _string_ | BaseImage is the container image URI for the AIM base image.<br />This will be used as the image for the auto-created AIMModel.<br />Example: `ghcr.io/silogen/aim-base:0.7.0` |  |  |
+| `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources to use.<br />The controller will search for or create an AIMModel with these sources.<br />For custom models, modelSources[].size should be specified (discovery does not run).<br />AIM runtime currently supports only one model source. |  | MaxItems: 1 <br />MinItems: 1 <br /> |
+| `hardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | Hardware specifies the GPU and CPU requirements for this custom model.<br />GPU is optional - if not set, no GPUs are requested (CPU-only model). |  |  |
 
 
 #### AIMServiceOverrides
@@ -1528,6 +1652,24 @@ _Appears in:_
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables to use when downloading the model for caching.<br />These variables are available to the model download process and can be used<br />to configure download behavior, authentication, proxies, etc.<br />If not set, falls back to the template's top-level Env field. |  |  |
 
 
+
+
+#### AIMTemplateProfile
+
+
+
+AIMTemplateProfile declares profile variables for template selection.
+Used in AIMCustomTemplate to specify optimization targets.
+
+
+
+_Appears in:_
+- [AIMCustomTemplate](#aimcustomtemplate)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `metric` _[AIMMetric](#aimmetric)_ | Metric specifies the optimization target (e.g., latency, throughput). |  | Enum: [latency throughput] <br /> |
+| `precision` _[AIMPrecision](#aimprecision)_ | Precision specifies the numerical precision (e.g., fp8, fp16, bf16). |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br /> |
 
 
 #### DownloadProgress

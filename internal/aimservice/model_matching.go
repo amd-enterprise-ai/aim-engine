@@ -117,11 +117,7 @@ func modelSourceEquals(a, b aimv1alpha1.AIMModelSource) bool {
 	// Compare relevant env vars (AWS_ENDPOINT_URL is important for S3 differentiation)
 	aEndpoint := getEnvValue(a.Env, "AWS_ENDPOINT_URL")
 	bEndpoint := getEnvValue(b.Env, "AWS_ENDPOINT_URL")
-	if aEndpoint != bEndpoint {
-		return false
-	}
-
-	return true
+	return aEndpoint == bEndpoint
 }
 
 // getEnvValue extracts the value of an environment variable by name.

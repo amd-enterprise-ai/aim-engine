@@ -128,10 +128,11 @@ func fetchModel(
 	}
 
 	// Case 3: Model.Custom - custom model configuration
+	// Custom models from AIMService are always namespace-scoped
 	if service.Spec.Model.Custom != nil {
 		logger.V(1).Info("resolving custom model")
 		result.CustomSpec = service.Spec.Model.Custom
-		result.Model, result.ClusterModel = resolveCustomModel(ctx, c, service, service.Spec.Model.Custom)
+		result.Model = resolveCustomModel(ctx, c, service, service.Spec.Model.Custom)
 		return result
 	}
 
@@ -386,35 +387,35 @@ func GenerateModelName(imageURI string) (string, error) {
 }
 
 // resolveCustomModel searches for an existing model matching the custom spec,
-// or returns empty results to signal that a model needs to be created.
+// or returns empty result to signal that a model needs to be created.
+// Custom models from AIMService are always namespace-scoped.
 func resolveCustomModel(
 	ctx context.Context,
 	c client.Client,
 	service *aimv1alpha1.AIMService,
 	custom *aimv1alpha1.AIMServiceModelCustom,
-) (controllerutils.FetchResult[*aimv1alpha1.AIMModel], controllerutils.FetchResult[*aimv1alpha1.AIMClusterModel]) {
+) controllerutils.FetchResult[*aimv1alpha1.AIMModel] {
 	logger := log.FromContext(ctx)
 
 	var modelResult controllerutils.FetchResult[*aimv1alpha1.AIMModel]
-	var clusterModelResult controllerutils.FetchResult[*aimv1alpha1.AIMClusterModel]
 
 	// Search for existing matching model
 	existingModel, err := FindMatchingCustomModel(ctx, c, service.Namespace, custom)
 	if err != nil {
 		modelResult.Error = fmt.Errorf("failed to search for matching custom model: %w", err)
-		return modelResult, clusterModelResult
+		return modelResult
 	}
 
 	if existingModel != nil {
 		logger.V(1).Info("found existing matching custom model", "name", existingModel.Name)
 		modelResult.Value = existingModel
-		return modelResult, clusterModelResult
+		return modelResult
 	}
 
-	// No matching model found - return empty results
+	// No matching model found - return empty result
 	// ComposeState will determine that creation is needed based on CustomSpec being set
 	logger.V(1).Info("no matching custom model found, will create new one")
-	return modelResult, clusterModelResult
+	return modelResult
 }
 
 // buildModelForCustom constructs a new namespace-scoped AIMModel for a custom model spec.
