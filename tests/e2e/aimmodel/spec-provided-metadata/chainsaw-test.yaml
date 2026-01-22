@@ -28,7 +28,6 @@ spec:
     - name: Assert model reaches Ready (proves no fetch attempted)
       try:
         - assert:
-            timeout: 30s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMModel

@@ -45,7 +45,6 @@ spec:
     - name: Verify model cache is Ready
       try:
         - assert:
-            timeout: 30s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMModelCache
@@ -66,7 +65,6 @@ spec:
     - name: Wait for service deletion to complete
       try:
         - error:
-            timeout: 30s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMService

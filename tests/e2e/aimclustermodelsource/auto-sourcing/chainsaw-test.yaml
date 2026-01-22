@@ -39,7 +39,6 @@ spec:
     - name: Verify models were created with correct labels
       try:
         - assert:
-            timeout: 30s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMClusterModel

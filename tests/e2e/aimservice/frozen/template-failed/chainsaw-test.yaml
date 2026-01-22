@@ -46,7 +46,6 @@ spec:
     - name: Assert service shows TemplateNotReady (templates exist but are not available)
       try:
         - assert:
-            timeout: 30s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMService

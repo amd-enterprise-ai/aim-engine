@@ -45,7 +45,6 @@ spec:
     - name: Assert service is Pending waiting for model
       try:
         - assert:
-            timeout: 30s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMService

@@ -34,7 +34,6 @@ spec:
     - name: Assert service reflects model failure
       try:
         - assert:
-            timeout: 30s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMService

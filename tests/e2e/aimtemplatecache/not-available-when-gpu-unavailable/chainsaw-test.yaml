@@ -41,7 +41,6 @@ spec:
         should also be NotAvailable since the upstream dependency cannot be satisfied.
       try:
         - assert:
-            timeout: 30s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMTemplateCache
