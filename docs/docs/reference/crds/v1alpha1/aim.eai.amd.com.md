@@ -308,7 +308,7 @@ _Appears in:_
 | `modelName` _string_ | ModelName is the model name. Matches `metadata.name` of an AIMModel or AIMClusterModel. Immutable.<br />Example: `meta/llama-3-8b:1.1+20240915` |  | MinLength: 1 <br /> |
 | `metric` _[AIMMetric](#aimmetric)_ | Metric selects the optimization goal.<br />- `latency`: prioritize low end‑to‑end latency<br />- `throughput`: prioritize sustained requests/second |  | Enum: [latency throughput] <br /> |
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision selects the numeric precision used by the runtime. |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br /> |
-| `gpuSelector` _[AIMGpuSelector](#aimgpuselector)_ | GpuSelector specifies GPU requirements for each replica.<br />Defines the GPU count and model type required for deployment.<br />This field is immutable after creation. |  |  |
+| `gpu` _[AIMGpuRequirements](#aimgpurequirements)_ | Gpu specifies GPU requirements for each replica.<br />Defines the GPU count and model types required for deployment.<br />When multiple models are specified, the template is ready if any are available,<br />and node affinity ensures pods land on nodes with matching GPUs.<br />This field is immutable after creation. |  |  |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  |  |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets lists secrets containing credentials for pulling container images.<br />These secrets are used for:<br />- Discovery dry-run jobs that inspect the model container<br />- Pulling the image for inference services<br />The secrets are merged with any model or runtime config defaults.<br />For namespace-scoped templates, secrets must exist in the same namespace.<br />For cluster-scoped templates, secrets must exist in the operator namespace. |  |  |
 | `serviceAccountName` _string_ | ServiceAccountName specifies the Kubernetes service account to use for workloads related to this template.<br />This includes discovery dry-run jobs and inference services created from this template.<br />If empty, the default service account for the namespace is used. |  |  |
@@ -383,34 +383,14 @@ _Appears in:_
 
 
 
-AIMGpuRequirements specifies GPU resource requirements for custom models.
-Unlike AIMGpuSelector, this supports multiple GPU models and VRAM constraints.
-
-
-
-_Appears in:_
-- [AIMHardwareRequirements](#aimhardwarerequirements)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `requests` _integer_ | Requests is the number of GPUs to set as requests/limits. Required when GPU is specified. |  | Minimum: 1 <br /> |
-| `models` _string array_ | Models limits deployment to specific GPU models.<br />When multiple models are specified, the scheduler picks from any available.<br />Examples: ["MI300X"], ["MI300X", "MI325X"] |  |  |
-| `minVram` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | MinVRAM limits deployment to GPUs having at least this much VRAM.<br />Used for capacity planning when model size is known. |  |  |
-| `resourceName` _string_ | ResourceName is the Kubernetes resource name for GPU resources.<br />Defaults to "amd.com/gpu" if not specified. | amd.com/gpu |  |
-
-
-#### AIMGpuSelector
-
-
-
-AIMGpuSelector specifies GPU requirements for a deployment.
-It defines the number and type of GPUs needed for each replica.
-Deprecated: Use AIMHardwareRequirements with AIMGpuRequirements instead.
+AIMGpuRequirements specifies GPU resource requirements.
+Supports multiple GPU models and VRAM constraints.
 
 
 
 _Appears in:_
 - [AIMClusterServiceTemplateSpec](#aimclusterservicetemplatespec)
+- [AIMHardwareRequirements](#aimhardwarerequirements)
 - [AIMRuntimeParameters](#aimruntimeparameters)
 - [AIMServiceOverrides](#aimserviceoverrides)
 - [AIMServiceTemplateSpec](#aimservicetemplatespec)
@@ -418,8 +398,9 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `count` _integer_ | Count is the number of GPU resources requested per replica.<br />Must be at least 1. |  | Minimum: 1 <br /> |
-| `model` _string_ | Model is the GPU model name required for this deployment.<br />Examples: `MI300X`, `MI325X` |  | MinLength: 1 <br /> |
+| `requests` _integer_ | Requests is the number of GPUs to set as requests/limits. Required when GPU is specified. |  | Minimum: 1 <br /> |
+| `models` _string array_ | Models limits deployment to specific GPU models.<br />When multiple models are specified, the scheduler picks from any available.<br />Examples: ["MI300X"], ["MI300X", "MI325X"] |  |  |
+| `minVram` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | MinVRAM limits deployment to GPUs having at least this much VRAM.<br />Used for capacity planning when model size is known. |  |  |
 | `resourceName` _string_ | ResourceName is the Kubernetes resource name for GPU resources.<br />Defaults to "amd.com/gpu" if not specified. | amd.com/gpu |  |
 
 
@@ -1028,7 +1009,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `metric` _[AIMMetric](#aimmetric)_ | Metric selects the optimization goal.<br />- `latency`: prioritize low end‑to‑end latency<br />- `throughput`: prioritize sustained requests/second |  | Enum: [latency throughput] <br /> |
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision selects the numeric precision used by the runtime. |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br /> |
-| `gpuSelector` _[AIMGpuSelector](#aimgpuselector)_ | GpuSelector specifies GPU requirements for each replica.<br />Defines the GPU count and model type required for deployment.<br />This field is immutable after creation. |  |  |
+| `gpu` _[AIMGpuRequirements](#aimgpurequirements)_ | Gpu specifies GPU requirements for each replica.<br />Defines the GPU count and model types required for deployment.<br />When multiple models are specified, the template is ready if any are available,<br />and node affinity ensures pods land on nodes with matching GPUs.<br />This field is immutable after creation. |  |  |
 
 
 #### AIMRuntimeRoutingConfig
@@ -1238,7 +1219,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `metric` _[AIMMetric](#aimmetric)_ | Metric selects the optimization goal.<br />- `latency`: prioritize low end‑to‑end latency<br />- `throughput`: prioritize sustained requests/second |  | Enum: [latency throughput] <br /> |
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision selects the numeric precision used by the runtime. |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br /> |
-| `gpuSelector` _[AIMGpuSelector](#aimgpuselector)_ | GpuSelector specifies GPU requirements for each replica.<br />Defines the GPU count and model type required for deployment.<br />This field is immutable after creation. |  |  |
+| `gpu` _[AIMGpuRequirements](#aimgpurequirements)_ | Gpu specifies GPU requirements for each replica.<br />Defines the GPU count and model types required for deployment.<br />When multiple models are specified, the template is ready if any are available,<br />and node affinity ensures pods land on nodes with matching GPUs.<br />This field is immutable after creation. |  |  |
 
 
 #### AIMServicePodMetric
@@ -1471,7 +1452,7 @@ _Appears in:_
 | `modelName` _string_ | ModelName is the model name. Matches `metadata.name` of an AIMModel or AIMClusterModel. Immutable.<br />Example: `meta/llama-3-8b:1.1+20240915` |  | MinLength: 1 <br /> |
 | `metric` _[AIMMetric](#aimmetric)_ | Metric selects the optimization goal.<br />- `latency`: prioritize low end‑to‑end latency<br />- `throughput`: prioritize sustained requests/second |  | Enum: [latency throughput] <br /> |
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision selects the numeric precision used by the runtime. |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br /> |
-| `gpuSelector` _[AIMGpuSelector](#aimgpuselector)_ | GpuSelector specifies GPU requirements for each replica.<br />Defines the GPU count and model type required for deployment.<br />This field is immutable after creation. |  |  |
+| `gpu` _[AIMGpuRequirements](#aimgpurequirements)_ | Gpu specifies GPU requirements for each replica.<br />Defines the GPU count and model types required for deployment.<br />When multiple models are specified, the template is ready if any are available,<br />and node affinity ensures pods land on nodes with matching GPUs.<br />This field is immutable after creation. |  |  |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  |  |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets lists secrets containing credentials for pulling container images.<br />These secrets are used for:<br />- Discovery dry-run jobs that inspect the model container<br />- Pulling the image for inference services<br />The secrets are merged with any model or runtime config defaults.<br />For namespace-scoped templates, secrets must exist in the same namespace.<br />For cluster-scoped templates, secrets must exist in the operator namespace. |  |  |
 | `serviceAccountName` _string_ | ServiceAccountName specifies the Kubernetes service account to use for workloads related to this template.<br />This includes discovery dry-run jobs and inference services created from this template.<br />If empty, the default service account for the namespace is used. |  |  |
@@ -1499,7 +1480,7 @@ _Appears in:_
 | `modelName` _string_ | ModelName is the model name. Matches `metadata.name` of an AIMModel or AIMClusterModel. Immutable.<br />Example: `meta/llama-3-8b:1.1+20240915` |  | MinLength: 1 <br /> |
 | `metric` _[AIMMetric](#aimmetric)_ | Metric selects the optimization goal.<br />- `latency`: prioritize low end‑to‑end latency<br />- `throughput`: prioritize sustained requests/second |  | Enum: [latency throughput] <br /> |
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision selects the numeric precision used by the runtime. |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br /> |
-| `gpuSelector` _[AIMGpuSelector](#aimgpuselector)_ | GpuSelector specifies GPU requirements for each replica.<br />Defines the GPU count and model type required for deployment.<br />This field is immutable after creation. |  |  |
+| `gpu` _[AIMGpuRequirements](#aimgpurequirements)_ | Gpu specifies GPU requirements for each replica.<br />Defines the GPU count and model types required for deployment.<br />When multiple models are specified, the template is ready if any are available,<br />and node affinity ensures pods land on nodes with matching GPUs.<br />This field is immutable after creation. |  |  |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  |  |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets lists secrets containing credentials for pulling container images.<br />These secrets are used for:<br />- Discovery dry-run jobs that inspect the model container<br />- Pulling the image for inference services<br />The secrets are merged with any model or runtime config defaults.<br />For namespace-scoped templates, secrets must exist in the same namespace.<br />For cluster-scoped templates, secrets must exist in the operator namespace. |  |  |
 | `serviceAccountName` _string_ | ServiceAccountName specifies the Kubernetes service account to use for workloads related to this template.<br />This includes discovery dry-run jobs and inference services created from this template.<br />If empty, the default service account for the namespace is used. |  |  |

@@ -312,9 +312,10 @@ func buildInferenceService(
 	// Configure replicas and autoscaling
 	configureReplicasAndAutoscaling(inferenceService, service)
 
-	// Add GPU node affinity
-	if templateStatus != nil && templateStatus.Profile != nil && templateStatus.Profile.Metadata.GPU != "" {
-		addGPUNodeAffinity(inferenceService, templateStatus.Profile.Metadata.GPU)
+	// Add GPU node affinity - use spec.Gpu.Models if available, fall back to status profile
+	gpuModels := getGPUModelsForAffinity(templateSpec, templateStatus)
+	if len(gpuModels) > 0 {
+		addGPUNodeAffinity(inferenceService, gpuModels)
 	}
 
 	// Add storage volumes (cache or PVC)
@@ -694,25 +695,51 @@ func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1
 	})
 }
 
+// getGPUModelsForAffinity extracts GPU models for node affinity.
+// Prefers spec.Gpu.Models if available, falls back to status profile GPU.
+func getGPUModelsForAffinity(
+	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
+	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
+) []string {
+	// First check template spec Gpu.Models (new unified field)
+	if templateSpec != nil && templateSpec.Gpu != nil && len(templateSpec.Gpu.Models) > 0 {
+		return templateSpec.Gpu.Models
+	}
+
+	// Fall back to status profile GPU (for backward compatibility with discovered templates)
+	if templateStatus != nil && templateStatus.Profile != nil && templateStatus.Profile.Metadata.GPU != "" {
+		return []string{templateStatus.Profile.Metadata.GPU}
+	}
+
+	return nil
+}
+
 // addGPUNodeAffinity adds node affinity rules for GPU selection to the InferenceService.
 // Uses device ID-based matching which is more reliable than product name labels.
-func addGPUNodeAffinity(isvc *servingv1beta1.InferenceService, gpuModel string) {
-	if gpuModel == "" {
+// When multiple GPU models are specified, the pod can be scheduled on nodes with ANY of the models.
+func addGPUNodeAffinity(isvc *servingv1beta1.InferenceService, gpuModels []string) {
+	if len(gpuModels) == 0 {
 		return
 	}
 
-	// Normalize and get all device IDs for this GPU model
-	deviceIDs := utils.GetAMDDeviceIDsForModel(gpuModel)
-	if len(deviceIDs) == 0 {
-		// Unknown GPU model, skip affinity (will schedule on any GPU node)
+	// Collect all device IDs for all GPU models
+	var allDeviceIDs []string
+	for _, gpuModel := range gpuModels {
+		deviceIDs := utils.GetAMDDeviceIDsForModel(gpuModel)
+		allDeviceIDs = append(allDeviceIDs, deviceIDs...)
+	}
+
+	if len(allDeviceIDs) == 0 {
+		// No known device IDs, skip affinity (will schedule on any GPU node)
 		return
 	}
 
 	// Create the node selector requirement using device ID label
+	// Using "In" operator with all device IDs means pod can be scheduled on nodes with ANY of the GPUs
 	requirement := corev1.NodeSelectorRequirement{
 		Key:      utils.LabelAMDGPUDeviceID,
 		Operator: corev1.NodeSelectorOpIn,
-		Values:   deviceIDs,
+		Values:   allDeviceIDs,
 	}
 
 	// Ensure Affinity exists

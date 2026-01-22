@@ -23,6 +23,8 @@
 package aimmodel
 
 import (
+	"dario.cat/mergo"
+
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 )
 
@@ -34,7 +36,7 @@ func IsCustomModel(spec *aimv1alpha1.AIMModelSpec) bool {
 
 // MergeHardware merges spec-level default hardware with template-level overrides.
 // Template values take precedence over spec defaults.
-// Field-by-field merging is applied - template replaces spec for each field set.
+// Uses mergo for field-by-field merging - non-zero template values override spec defaults.
 func MergeHardware(specDefault, templateOverride *aimv1alpha1.AIMHardwareRequirements) *aimv1alpha1.AIMHardwareRequirements {
 	// If no spec default, use template override directly
 	if specDefault == nil {
@@ -46,74 +48,9 @@ func MergeHardware(specDefault, templateOverride *aimv1alpha1.AIMHardwareRequire
 		return specDefault
 	}
 
-	// Merge field by field
-	result := &aimv1alpha1.AIMHardwareRequirements{}
-
-	// Merge GPU requirements
-	result.GPU = mergeGpuRequirements(specDefault.GPU, templateOverride.GPU)
-
-	// Merge CPU requirements
-	result.CPU = mergeCpuRequirements(specDefault.CPU, templateOverride.CPU)
-
-	return result
-}
-
-// mergeGpuRequirements merges GPU requirements. Template values take precedence.
-func mergeGpuRequirements(specDefault, templateOverride *aimv1alpha1.AIMGpuRequirements) *aimv1alpha1.AIMGpuRequirements {
-	if specDefault == nil {
-		return templateOverride
-	}
-	if templateOverride == nil {
-		return specDefault
-	}
-
-	result := &aimv1alpha1.AIMGpuRequirements{
-		// Start with spec defaults
-		Requests:     specDefault.Requests,
-		Models:       specDefault.Models,
-		MinVRAM:      specDefault.MinVRAM,
-		ResourceName: specDefault.ResourceName,
-	}
-
-	// Override with template values if set
-	if templateOverride.Requests > 0 {
-		result.Requests = templateOverride.Requests
-	}
-	if len(templateOverride.Models) > 0 {
-		// Models is replaced entirely, not merged
-		result.Models = templateOverride.Models
-	}
-	if templateOverride.MinVRAM != nil {
-		result.MinVRAM = templateOverride.MinVRAM
-	}
-	if templateOverride.ResourceName != "" {
-		result.ResourceName = templateOverride.ResourceName
-	}
-
-	return result
-}
-
-// mergeCpuRequirements merges CPU requirements. Template values take precedence.
-func mergeCpuRequirements(specDefault, templateOverride *aimv1alpha1.AIMCpuRequirements) *aimv1alpha1.AIMCpuRequirements {
-	if specDefault == nil {
-		return templateOverride
-	}
-	if templateOverride == nil {
-		return specDefault
-	}
-
-	result := &aimv1alpha1.AIMCpuRequirements{
-		Requests: specDefault.Requests,
-		Limits:   specDefault.Limits,
-	}
-
-	// Override with template values if set
-	if templateOverride.Requests != nil {
-		result.Requests = templateOverride.Requests
-	}
-	if templateOverride.Limits != nil {
-		result.Limits = templateOverride.Limits
-	}
+	// Deep copy spec default as base, then merge template override on top
+	result := specDefault.DeepCopy()
+	_ = mergo.Merge(result, templateOverride, mergo.WithOverride)
 
 	return result
 }

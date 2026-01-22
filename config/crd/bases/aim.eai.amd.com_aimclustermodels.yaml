@@ -1103,6 +1103,20 @@ spec:
             required:
             - image
             type: object
+            x-kubernetes-validations:
+            - message: modelSources[].size is required for custom models (discovery
+                does not run to populate it)
+              rule: '!has(self.modelSources) || size(self.modelSources) == 0 || self.modelSources.all(s,
+                has(s.size))'
+            - message: customTemplates can only be specified when modelSources is
+                set
+              rule: '!has(self.customTemplates) || size(self.customTemplates) == 0
+                || (has(self.modelSources) && size(self.modelSources) > 0)'
+            - message: hardware must be specified either at spec level or on each
+                customTemplate when using modelSources
+              rule: '!has(self.modelSources) || size(self.modelSources) == 0 || has(self.hardware)
+                || (has(self.customTemplates) && size(self.customTemplates) > 0 &&
+                self.customTemplates.all(t, has(t.hardware)))'
           status:
             description: AIMModelStatus defines the observed state of AIMModel.
             properties:

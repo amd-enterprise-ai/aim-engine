@@ -119,6 +119,9 @@ type AIMTemplateProfile struct {
 }
 
 // AIMModelSpec defines the desired state of AIMModel.
+// +kubebuilder:validation:XValidation:rule="!has(self.modelSources) || size(self.modelSources) == 0 || self.modelSources.all(s, has(s.size))",message="modelSources[].size is required for custom models (discovery does not run to populate it)"
+// +kubebuilder:validation:XValidation:rule="!has(self.customTemplates) || size(self.customTemplates) == 0 || (has(self.modelSources) && size(self.modelSources) > 0)",message="customTemplates can only be specified when modelSources is set"
+// +kubebuilder:validation:XValidation:rule="!has(self.modelSources) || size(self.modelSources) == 0 || has(self.hardware) || (has(self.customTemplates) && size(self.customTemplates) > 0 && self.customTemplates.all(t, has(t.hardware)))",message="hardware must be specified either at spec level or on each customTemplate when using modelSources"
 type AIMModelSpec struct {
 	// Image is the container image URI for this AIM model.
 	// This image is inspected by the operator to select runtime profiles used by templates.

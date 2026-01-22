@@ -433,7 +433,7 @@ func filterTemplatesByOverrides(candidates []TemplateCandidate, overrides *aimv1
 	for _, c := range candidates {
 		templateMetric := candidateMetric(c)
 		templatePrecision := candidatePrecision(c)
-		templateGPU := candidateGPUModel(c)
+		templateGPUModels := candidateGPUModels(c)
 		templateGPUCount := candidateGPUCount(c)
 
 		if overrides.Metric != nil && !strings.EqualFold(templateMetric, string(*overrides.Metric)) {
@@ -442,19 +442,35 @@ func filterTemplatesByOverrides(candidates []TemplateCandidate, overrides *aimv1
 		if overrides.Precision != nil && !strings.EqualFold(templatePrecision, string(*overrides.Precision)) {
 			continue
 		}
-		if overrides.GpuSelector != nil {
-			overrideGPU := strings.TrimSpace(overrides.GpuSelector.Model)
-			if overrideGPU != "" && !strings.EqualFold(templateGPU, overrideGPU) {
-				continue
+		if overrides.Gpu != nil {
+			// Check if any of the override GPU models match any template GPU models
+			if len(overrides.Gpu.Models) > 0 && len(templateGPUModels) > 0 {
+				if !gpuModelsOverlap(overrides.Gpu.Models, templateGPUModels) {
+					continue
+				}
 			}
 			// Filter by GPU count if specified
-			if overrides.GpuSelector.Count > 0 && templateGPUCount > 0 && templateGPUCount != overrides.GpuSelector.Count {
+			if overrides.Gpu.Requests > 0 && templateGPUCount > 0 && templateGPUCount != overrides.Gpu.Requests {
 				continue
 			}
 		}
 		result = append(result, c)
 	}
 	return result
+}
+
+// gpuModelsOverlap returns true if any GPU model from a matches any from b.
+func gpuModelsOverlap(a, b []string) bool {
+	for _, modelA := range a {
+		normalizedA := utils.NormalizeGPUModel(strings.TrimSpace(modelA))
+		for _, modelB := range b {
+			normalizedB := utils.NormalizeGPUModel(strings.TrimSpace(modelB))
+			if strings.EqualFold(normalizedA, normalizedB) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func filterTemplatesByGPUAvailability(candidates []TemplateCandidate, availableGPUs []string) []TemplateCandidate {
@@ -468,14 +484,19 @@ func filterTemplatesByGPUAvailability(candidates []TemplateCandidate, availableG
 
 	result := make([]TemplateCandidate, 0, len(candidates))
 	for _, c := range candidates {
-		model := strings.TrimSpace(candidateGPUModel(c))
-		if model == "" {
+		models := candidateGPUModels(c)
+		// If no GPU models specified, include the candidate (CPU-only)
+		if len(models) == 0 {
 			result = append(result, c)
 			continue
 		}
-		normalized := utils.NormalizeGPUModel(model)
-		if _, ok := gpuMap[normalized]; ok {
-			result = append(result, c)
+		// Check if ANY of the template's required GPU models are available
+		for _, model := range models {
+			normalized := utils.NormalizeGPUModel(strings.TrimSpace(model))
+			if _, ok := gpuMap[normalized]; ok {
+				result = append(result, c)
+				break
+			}
 		}
 	}
 	return result
@@ -593,8 +614,9 @@ func candidatePrecision(c TemplateCandidate) string {
 }
 
 func candidateGPUModel(c TemplateCandidate) string {
-	if c.Spec.GpuSelector != nil {
-		model := strings.TrimSpace(c.Spec.GpuSelector.Model)
+	// Check Gpu.Models from spec (new field)
+	if c.Spec.Gpu != nil && len(c.Spec.Gpu.Models) > 0 {
+		model := strings.TrimSpace(c.Spec.Gpu.Models[0])
 		if model != "" {
 			return model
 		}
@@ -607,9 +629,24 @@ func candidateGPUModel(c TemplateCandidate) string {
 	return ""
 }
 
+// candidateGPUModels returns all GPU models from the candidate spec.
+// Used for GPU availability filtering where any model match is acceptable.
+func candidateGPUModels(c TemplateCandidate) []string {
+	if c.Spec.Gpu != nil && len(c.Spec.Gpu.Models) > 0 {
+		return c.Spec.Gpu.Models
+	}
+	// Fallback to status profile
+	if c.Status.Profile != nil {
+		if gpu := strings.TrimSpace(c.Status.Profile.Metadata.GPU); gpu != "" {
+			return []string{gpu}
+		}
+	}
+	return nil
+}
+
 func candidateGPUCount(c TemplateCandidate) int32 {
-	if c.Spec.GpuSelector != nil && c.Spec.GpuSelector.Count > 0 {
-		return c.Spec.GpuSelector.Count
+	if c.Spec.Gpu != nil && c.Spec.Gpu.Requests > 0 {
+		return c.Spec.Gpu.Requests
 	}
 	if c.Status.Profile != nil && c.Status.Profile.Metadata.GPUCount > 0 {
 		return c.Status.Profile.Metadata.GPUCount

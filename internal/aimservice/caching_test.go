@@ -580,7 +580,7 @@ func TestPlanTemplateCache(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := planTemplateCache(tt.service, tt.templateName, tt.templateStatus, tt.obs)
+			result := planTemplateCache(tt.service, tt.templateName, nil, tt.templateStatus, tt.obs)
 
 			if tt.expectCache {
 				if result == nil {
@@ -608,7 +608,7 @@ func TestPlanTemplateCache_Spec(t *testing.T) {
 		},
 	}
 
-	result := planTemplateCache(service, "my-template", templateStatus, ServiceObservation{})
+	result := planTemplateCache(service, "my-template", nil, templateStatus, ServiceObservation{})
 
 	if result == nil {
 		t.Fatal("expected cache, got nil")

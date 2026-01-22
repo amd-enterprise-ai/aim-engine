@@ -131,7 +131,8 @@ func planDedicatedModelCaches(
 				ModelID:          modelSource.ModelID,
 				Size:             *modelSource.Size,
 				StorageClassName: storageClassName,
-				Env:              service.Spec.Env,
+				// Merge base-level env with per-source env (source takes precedence)
+				Env:              utils.MergeEnvVars(service.Spec.Env, modelSource.Env),
 				RuntimeConfigRef: service.Spec.RuntimeConfigRef,
 			},
 		}
@@ -196,6 +197,7 @@ func GenerateTemplateCacheName(templateName, namespace string) (string, error) {
 func planTemplateCache(
 	service *aimv1alpha1.AIMService,
 	templateName string,
+	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
 	obs ServiceObservation,
 ) client.Object {
@@ -245,6 +247,11 @@ func planTemplateCache(
 			StorageClassName: storageClassName,
 			RuntimeConfigRef: service.Spec.RuntimeConfigRef,
 		},
+	}
+
+	// Copy env from template spec (used for download authentication)
+	if templateSpec != nil && len(templateSpec.Env) > 0 {
+		cache.Spec.Env = utils.CopyEnvVars(templateSpec.Env)
 	}
 
 	return cache

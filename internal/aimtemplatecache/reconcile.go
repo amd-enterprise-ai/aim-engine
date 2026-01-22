@@ -333,7 +333,8 @@ func (r *TemplateCacheReconciler) PlanResources(
 				SourceURI:        cache.SourceURI,
 				ModelID:          cache.ModelID,
 				Size:             *cache.Size,
-				Env:              tc.Spec.Env,
+				// Merge base-level env with per-source env (source takes precedence)
+				Env:              utils.MergeEnvVars(tc.Spec.Env, cache.Env),
 				RuntimeConfigRef: tc.Spec.RuntimeConfigRef,
 			},
 		}

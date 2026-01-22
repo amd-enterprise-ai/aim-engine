@@ -341,7 +341,7 @@ Implement spec-based model matching:
   - [x] Labels: `aim.silogen.ai/origin: auto-generated`, `aim.silogen.ai/custom-model: true`
   - [x] `spec.hardware` set from custom.hardware
   - [x] `spec.modelSources` set from custom.modelSources
-- [x] Name generated from hash of modelId + baseImage + endpoint
+- [x] Name generated from hash of baseImage + all modelSources (modelId, sourceUri, endpoint)
 
 ### Step 3.4: Single Template Creation for Custom
 
@@ -390,28 +390,25 @@ Implement spec-based model matching:
 
 ### Step 5.1: CEL Validation Rules
 
-**File**: `api/v1alpha1/aimmodel_types.go`
+**File**: `api/v1alpha1/aimmodel_shared.go`
 
-Add CEL validations:
+Add CEL validations to `AIMModelSpec`:
 
-- [ ] If `modelSources` is set, `modelSources[].size` is required
-- [ ] At least one of `spec.hardware` or each `customTemplates[].hardware` must be set
-- [ ] `customTemplates` only valid when `modelSources` is set
+- [x] If `modelSources` is set, `modelSources[].size` is required
+- [x] At least one of `spec.hardware` or each `customTemplates[].hardware` must be set
+- [x] `customTemplates` only valid when `modelSources` is set
 
 ### Step 5.2: Secret Existence Validation
 
-**File**: `internal/aimmodel/reconcile.go`
-
-- [ ] Validate referenced secrets exist before starting download
-- [ ] Return `AuthValid=False` condition if secrets missing
-- [ ] Clear error message indicating which secret is missing
+**Status**: Removed - secrets are validated by Kubernetes when the download job runs.
+Any secret errors will surface as job failures with clear error messages in pod events.
 
 ### Step 5.3: Endpoint URL Handling
 
-**File**: `internal/aimmodel/reconcile.go`
+**File**: `internal/aimservice/model_matching.go`
 
-- [ ] Extract AWS_ENDPOINT_URL from env for S3 sources
-- [ ] Include in model matching to distinguish different MinIO instances
+- [x] Extract AWS_ENDPOINT_URL from env for S3 sources (already implemented)
+- [x] Include in model matching to distinguish different MinIO instances (already implemented)
 
 ---
 
@@ -499,8 +496,13 @@ Recommended order to minimize conflicts:
 
 ## Notes
 
-- `AIMGpuSelector` can be deprecated but kept for backward compatibility
-- Custom models always create namespace-scoped resources
-- Discovery job still runs for custom models to validate sources (but doesn't discover them)
-- Consider adding conversion webhooks if breaking changes need gradual migration
+- `AIMGpuSelector` has been removed and replaced with `AIMGpuRequirements` in the unified `Gpu` field
+- Templates now support multiple GPU models via `Gpu.Models []string`
+- Template is ready if ANY of the specified GPU models is available in the cluster
+- InferenceService pods get node affinity for the specified GPU models (uses device ID-based matching)
+- Custom models respect scope:
+  - `AIMModel` with `modelSources` → creates `AIMServiceTemplate` (namespace-scoped)
+  - `AIMClusterModel` with `modelSources` → creates `AIMClusterServiceTemplate` (cluster-scoped)
+- AIMService with `spec.model.custom` auto-creates a namespace-scoped `AIMModel` (owned by the service)
+- Discovery job is skipped for custom models (no image metadata extraction needed)
 

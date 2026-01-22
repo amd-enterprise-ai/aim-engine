@@ -148,10 +148,14 @@ func GenerateCustomModelName(custom *aimv1alpha1.AIMServiceModelCustom) string {
 	// Use the first model source's modelId as the base name part
 	modelID := custom.ModelSources[0].ModelID
 
-	// Build hash inputs for uniqueness (includes endpoint for S3 differentiation)
-	hashInputs := []any{custom.BaseImage, modelID, custom.ModelSources[0].SourceURI}
-	if endpoint := getEnvValue(custom.ModelSources[0].Env, "AWS_ENDPOINT_URL"); endpoint != "" {
-		hashInputs = append(hashInputs, endpoint)
+	// Build hash inputs for uniqueness - include ALL model sources
+	// to distinguish models that share the first source but differ in others
+	hashInputs := []any{custom.BaseImage}
+	for _, source := range custom.ModelSources {
+		hashInputs = append(hashInputs, source.ModelID, source.SourceURI)
+		if endpoint := getEnvValue(source.Env, "AWS_ENDPOINT_URL"); endpoint != "" {
+			hashInputs = append(hashInputs, endpoint)
+		}
 	}
 
 	// GenerateDerivedName handles sanitization, length limits, and hash suffix

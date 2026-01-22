@@ -31,6 +31,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -103,8 +104,11 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 	if spec.TemplateSpec.Precision != nil {
 		hashInput += string(*spec.TemplateSpec.Precision)
 	}
-	if spec.TemplateSpec.GpuSelector != nil {
-		hashInput += spec.TemplateSpec.GpuSelector.Model + strconv.Itoa(int(spec.TemplateSpec.GpuSelector.Count))
+	if spec.TemplateSpec.Gpu != nil {
+		for _, model := range spec.TemplateSpec.Gpu.Models {
+			hashInput += model
+		}
+		hashInput += strconv.Itoa(int(spec.TemplateSpec.Gpu.Requests))
 	}
 	if spec.TemplateSpec.ProfileId != "" {
 		hashInput += spec.TemplateSpec.ProfileId
@@ -151,17 +155,18 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 		})
 	}
 
-	if spec.TemplateSpec.GpuSelector != nil {
-		if spec.TemplateSpec.GpuSelector.Model != "" {
+	if spec.TemplateSpec.Gpu != nil {
+		// Pass all GPU models as comma-separated list
+		if len(spec.TemplateSpec.Gpu.Models) > 0 {
 			env = append(env, corev1.EnvVar{
 				Name:  "AIM_GPU_MODEL",
-				Value: spec.TemplateSpec.GpuSelector.Model,
+				Value: strings.Join(spec.TemplateSpec.Gpu.Models, ","),
 			})
 		}
-		if spec.TemplateSpec.GpuSelector.Count > 0 {
+		if spec.TemplateSpec.Gpu.Requests > 0 {
 			env = append(env, corev1.EnvVar{
 				Name:  "AIM_GPU_COUNT",
-				Value: strconv.Itoa(int(spec.TemplateSpec.GpuSelector.Count)),
+				Value: strconv.Itoa(int(spec.TemplateSpec.Gpu.Requests)),
 			})
 		}
 	}

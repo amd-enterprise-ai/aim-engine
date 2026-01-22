@@ -99,10 +99,16 @@ func getMetricShorthand(metric string) string {
 	return metric
 }
 
-// TemplateRequiresGPU returns true if the template spec declares a GPU selector with a model.
+// TemplateRequiresGPU returns true if the template spec declares GPU requirements with models.
 func TemplateRequiresGPU(spec aimv1alpha1.AIMServiceTemplateSpecCommon) bool {
-	if spec.GpuSelector == nil {
+	if spec.Gpu == nil {
 		return false
 	}
-	return strings.TrimSpace(spec.GpuSelector.Model) != ""
+	// Has GPU requirement if there are any models specified
+	for _, model := range spec.Gpu.Models {
+		if strings.TrimSpace(model) != "" {
+			return true
+		}
+	}
+	return false
 }

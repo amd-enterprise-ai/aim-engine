@@ -795,7 +795,7 @@ func (r *ServiceReconciler) PlanResources(
 
 	// 3. Plan template cache if caching is enabled
 	// Use ApplyWithoutOwnerRef so caches can be shared across services and outlive the creating service
-	if templateCache := planTemplateCache(service, templateName, templateStatus, obs); templateCache != nil {
+	if templateCache := planTemplateCache(service, templateName, templateNsSpec, templateStatus, obs); templateCache != nil {
 		planResult.ApplyWithoutOwnerRef(templateCache)
 	}
 

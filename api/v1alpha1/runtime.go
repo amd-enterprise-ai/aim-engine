@@ -46,12 +46,14 @@ type AIMRuntimeParameters struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="precision is immutable"
 	Precision *AIMPrecision `json:"precision,omitempty"`
 
-	// GpuSelector specifies GPU requirements for each replica.
-	// Defines the GPU count and model type required for deployment.
+	// Gpu specifies GPU requirements for each replica.
+	// Defines the GPU count and model types required for deployment.
+	// When multiple models are specified, the template is ready if any are available,
+	// and node affinity ensures pods land on nodes with matching GPUs.
 	// This field is immutable after creation.
 	// +optional
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="gpuSelector is immutable"
-	GpuSelector *AIMGpuSelector `json:"gpuSelector,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="gpu is immutable"
+	Gpu *AIMGpuRequirements `json:"gpu,omitempty"`
 }
 
 // AIMMetric enumerates the targeted service characteristic
@@ -78,27 +80,6 @@ const (
 	AIMPrecisionInt8 AIMPrecision = "int8"
 )
 
-// AIMGpuSelector specifies GPU requirements for a deployment.
-// It defines the number and type of GPUs needed for each replica.
-// Deprecated: Use AIMHardwareRequirements with AIMGpuRequirements instead.
-type AIMGpuSelector struct {
-	// Count is the number of GPU resources requested per replica.
-	// Must be at least 1.
-	// +kubebuilder:validation:Minimum=1
-	Count int32 `json:"count"`
-
-	// Model is the GPU model name required for this deployment.
-	// Examples: `MI300X`, `MI325X`
-	// +kubebuilder:validation:MinLength=1
-	Model string `json:"model"`
-
-	// ResourceName is the Kubernetes resource name for GPU resources.
-	// Defaults to "amd.com/gpu" if not specified.
-	// +optional
-	// +kubebuilder:default="amd.com/gpu"
-	ResourceName string `json:"resourceName,omitempty"`
-}
-
 // AIMHardwareRequirements specifies compute resource requirements for custom models.
 // Used in AIMModelSpec and AIMCustomTemplate to define GPU and CPU needs.
 type AIMHardwareRequirements struct {
@@ -111,8 +92,8 @@ type AIMHardwareRequirements struct {
 	CPU *AIMCpuRequirements `json:"cpu,omitempty"`
 }
 
-// AIMGpuRequirements specifies GPU resource requirements for custom models.
-// Unlike AIMGpuSelector, this supports multiple GPU models and VRAM constraints.
+// AIMGpuRequirements specifies GPU resource requirements.
+// Supports multiple GPU models and VRAM constraints.
 type AIMGpuRequirements struct {
 	// Requests is the number of GPUs to set as requests/limits. Required when GPU is specified.
 	// +required
