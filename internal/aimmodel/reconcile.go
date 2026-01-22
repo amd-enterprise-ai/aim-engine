@@ -92,12 +92,22 @@ func (result ClusterModelFetchResult) GetComponentHealth() []controllerutils.Com
 	// RuntimeConfig is optional for models - they can operate without one
 	runtimeConfigHealth := result.mergedRuntimeConfig.ToUpstreamComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth)
 
-	imageMetadataHealth := result.imageMetadata.ToUpstreamComponentHealth("ImageMetadata", func(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
-		return controllerutils.ComponentHealth{
-			State:  constants.AIMStatusReady,
-			Reason: "ImageMetadataFound",
+	// For custom models, skip image metadata health - we don't need it
+	var imageMetadataHealth controllerutils.ComponentHealth
+	if IsCustomModel(&result.model.Spec) {
+		imageMetadataHealth = controllerutils.ComponentHealth{
+			Component: "ImageMetadata",
+			State:     constants.AIMStatusReady,
+			Reason:    "CustomModelSkipped",
 		}
-	})
+	} else {
+		imageMetadataHealth = result.imageMetadata.ToUpstreamComponentHealth("ImageMetadata", func(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
+			return controllerutils.ComponentHealth{
+				State:  constants.AIMStatusReady,
+				Reason: "ImageMetadataFound",
+			}
+		})
+	}
 
 	clusterServiceTemplateHealth := result.clusterServiceTemplates.ToUpstreamComponentHealth("ClusterServiceTemplates", func(list *aimv1alpha1.AIMClusterServiceTemplateList) controllerutils.ComponentHealth {
 		return inspectClusterTemplateStatuses(
@@ -134,12 +144,22 @@ func (result ModelFetchResult) GetComponentHealth() []controllerutils.ComponentH
 	// RuntimeConfig is optional for models - they can operate without one
 	runtimeConfigHealth := result.mergedRuntimeConfig.ToComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth)
 
-	imageMetadataHealth := result.imageMetadata.ToComponentHealth("ImageMetadata", func(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
-		return controllerutils.ComponentHealth{
-			State:  constants.AIMStatusReady,
-			Reason: "ImageMetadataFound",
+	// For custom models, skip image metadata health - we don't need it
+	var imageMetadataHealth controllerutils.ComponentHealth
+	if IsCustomModel(&result.model.Spec) {
+		imageMetadataHealth = controllerutils.ComponentHealth{
+			Component: "ImageMetadata",
+			State:     constants.AIMStatusReady,
+			Reason:    "CustomModelSkipped",
 		}
-	})
+	} else {
+		imageMetadataHealth = result.imageMetadata.ToComponentHealth("ImageMetadata", func(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
+			return controllerutils.ComponentHealth{
+				State:  constants.AIMStatusReady,
+				Reason: "ImageMetadataFound",
+			}
+		})
+	}
 
 	serviceTemplateHealth := result.serviceTemplates.ToComponentHealth("ServiceTemplates", func(list *aimv1alpha1.AIMServiceTemplateList) controllerutils.ComponentHealth {
 		return inspectServiceTemplateStatuses(
@@ -300,10 +320,12 @@ func aggregateTemplateStatuses(expectsTemplates *bool, statuses []constants.AIMS
 }
 
 // fetchImageMetadata determines how to obtain image metadata for a model.
-// It handles three cases:
-//  1. Spec-provided metadata (air-gapped environments) - returns the spec value directly
-//  2. Already cached in status - returns empty result (no fetch needed)
-//  3. Needs remote fetch - calls inspectImage to fetch from registry
+// It handles these cases:
+//  0. Custom model (has modelSources) - skip fetch entirely, templates are built from customTemplates
+//  1. Extraction explicitly disabled - skip fetch entirely
+//  2. Spec-provided metadata (air-gapped environments) - returns the spec value directly
+//  3. Already cached in status - returns empty result (no fetch needed)
+//  4. Needs remote fetch - calls inspectImage to fetch from registry
 func fetchImageMetadata(
 	ctx context.Context,
 	clientset kubernetes.Interface,
@@ -311,13 +333,20 @@ func fetchImageMetadata(
 	status *aimv1alpha1.AIMModelStatus,
 	secretNamespace string,
 ) controllerutils.FetchResult[*aimv1alpha1.ImageMetadata] {
-	// Case 0: Extraction explicitly disabled - skip fetch entirely
+	// Case 0: Custom model - skip image metadata extraction entirely
+	// Custom models use spec.customTemplates instead of discovered templates
+	if IsCustomModel(&spec) {
+		log.FromContext(ctx).V(1).Info("custom model detected, skipping image metadata extraction")
+		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{}
+	}
+
+	// Case 1: Extraction explicitly disabled - skip fetch entirely
 	if spec.Discovery != nil && !spec.Discovery.ExtractMetadata {
 		log.FromContext(ctx).V(1).Info("metadata extraction disabled in spec")
 		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{}
 	}
 
-	// Case 1: Use spec-provided metadata (air-gapped environments)
+	// Case 2: Use spec-provided metadata (air-gapped environments)
 	if spec.ImageMetadata != nil {
 		log.FromContext(ctx).V(1).Info("using spec-provided imageMetadata")
 		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{
@@ -325,12 +354,12 @@ func fetchImageMetadata(
 		}
 	}
 
-	// Case 2: Already cached in status - no fetch needed
+	// Case 3: Already cached in status - no fetch needed
 	if !shouldExtractMetadata(status) {
 		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{}
 	}
 
-	// Case 3: Fetch from registry
+	// Case 4: Fetch from registry
 	metadata, err := inspectImage(
 		ctx,
 		spec.Image,
@@ -399,7 +428,18 @@ func (r *ClusterModelReconciler) PlanResources(
 		return controllerutils.PlanResult{}
 	}
 
-	// Get metadata to create templates from
+	// For custom models, build templates from customTemplates
+	if IsCustomModel(&model.Spec) {
+		logger.V(1).Info("building custom templates for cluster model")
+		templates := buildCustomClusterServiceTemplates(model)
+		for _, template := range templates {
+			_ = controllerutil.SetControllerReference(model, template, r.Scheme)
+			planResult.Apply(template)
+		}
+		return planResult
+	}
+
+	// For image-based models, get metadata to create templates from
 	metadata := model.Spec.GetEffectiveImageMetadata(&model.Status)
 	if metadata == nil || metadata.Model == nil {
 		logger.V(1).Info("no metadata available yet")
@@ -432,7 +472,18 @@ func (r *ModelReconciler) PlanResources(
 		return controllerutils.PlanResult{}
 	}
 
-	// Get metadata to create templates from
+	// For custom models, build templates from customTemplates
+	if IsCustomModel(&model.Spec) {
+		logger.V(1).Info("building custom templates for model")
+		templates := buildCustomServiceTemplates(model)
+		for _, template := range templates {
+			_ = controllerutil.SetControllerReference(model, template, r.Scheme)
+			planResult.Apply(template)
+		}
+		return planResult
+	}
+
+	// For image-based models, get metadata to create templates from
 	metadata := model.Spec.GetEffectiveImageMetadata(&model.Status)
 	if metadata == nil || metadata.Model == nil {
 		logger.V(1).Info("no metadata available yet")
@@ -458,7 +509,7 @@ func (r *ClusterModelReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ClusterModelObservation,
 ) {
-	decorateModelStatus(status, cm, obs.imageMetadata)
+	decorateModelStatus(status, cm, &obs.model.Spec, obs.imageMetadata)
 }
 
 func (r *ModelReconciler) DecorateStatus(
@@ -466,16 +517,24 @@ func (r *ModelReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ModelObservation,
 ) {
-	decorateModelStatus(status, cm, obs.imageMetadata)
+	decorateModelStatus(status, cm, &obs.model.Spec, obs.imageMetadata)
 }
 
 // decorateModelStatus handles common status decoration for both cluster and namespace-scoped models.
 func decorateModelStatus(
 	status *aimv1alpha1.AIMModelStatus,
 	_ *controllerutils.ConditionManager,
+	spec *aimv1alpha1.AIMModelSpec,
 	imageMetadataResult controllerutils.FetchResult[*aimv1alpha1.ImageMetadata],
 ) {
-	// Copy extracted imageMetadata to status
+	// Set source type based on whether this is a custom model
+	if IsCustomModel(spec) {
+		status.SourceType = aimv1alpha1.AIMModelSourceTypeCustom
+	} else {
+		status.SourceType = aimv1alpha1.AIMModelSourceTypeImage
+	}
+
+	// Copy extracted imageMetadata to status (only for image-based models)
 	if imageMetadataResult.OK() && imageMetadataResult.Value != nil {
 		status.ImageMetadata = imageMetadataResult.Value
 	}

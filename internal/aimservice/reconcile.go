@@ -214,11 +214,17 @@ func (obs ServiceObservation) getModelHealth() controllerutils.ComponentHealth {
 
 	// Check if model needs to be created (downstream dependency - pending state)
 	if obs.needsModelCreation {
+		message := "Model will be created"
+		if mr.ImageURI != "" {
+			message = "Model will be created for image " + mr.ImageURI
+		} else if mr.CustomSpec != nil && len(mr.CustomSpec.ModelSources) > 0 {
+			message = "Custom model will be created for " + mr.CustomSpec.ModelSources[0].ModelID
+		}
 		return controllerutils.ComponentHealth{
 			Component:      "Model",
 			State:          constants.AIMStatusPending,
 			Reason:         aimv1alpha1.AIMServiceReasonCreatingModel,
-			Message:        "Model will be created for image " + mr.ImageURI,
+			Message:        message,
 			DependencyType: controllerutils.DependencyTypeDownstream,
 		}
 	}
@@ -637,11 +643,13 @@ func (r *ServiceReconciler) ComposeState(
 ) ServiceObservation {
 	obs := ServiceObservation{ServiceFetchResult: fetch}
 
-	// Derive needsModelCreation: When a service specifies Model.Image (image URI) instead of
-	// Model.Name (reference), we search for existing models with that image. If no model is found
-	// AND no error occurred during search, then we need to create a new AIMModel for this image.
-	// The model is created without owner references so it can be shared across services.
 	mr := fetch.modelResult
+
+	// Derive needsModelCreation for Image-based models:
+	// When a service specifies Model.Image (image URI) instead of Model.Name (reference),
+	// we search for existing models with that image. If no model is found AND no error occurred
+	// during search, then we need to create a new AIMModel for this image.
+	// The model is created without owner references so it can be shared across services.
 	if mr.ImageURI != "" && mr.Model.Value == nil && mr.ClusterModel.Value == nil && mr.Model.Error == nil && mr.ClusterModel.Error == nil {
 		// Validate the image URI can generate a valid model name
 		modelName, err := GenerateModelName(mr.ImageURI)
@@ -656,6 +664,16 @@ func (r *ServiceReconciler) ComposeState(
 			obs.needsModelCreation = true
 			obs.pendingModelName = modelName
 		}
+	}
+
+	// Derive needsModelCreation for Custom models:
+	// When a service specifies Model.Custom, we search for existing models matching the spec.
+	// If no model is found AND no error occurred during search, create a new AIMModel.
+	// Custom models are created with owner references to the AIMService.
+	if mr.CustomSpec != nil && mr.Model.Value == nil && mr.ClusterModel.Value == nil && mr.Model.Error == nil && mr.ClusterModel.Error == nil {
+		modelName := GenerateCustomModelName(mr.CustomSpec)
+		obs.needsModelCreation = true
+		obs.pendingModelName = modelName
 	}
 
 	// Validate storage size can be calculated when template has model sources
@@ -714,7 +732,13 @@ func (r *ServiceReconciler) PlanResources(
 
 	// 0. Plan model creation if needed (before template check - model can be created independently)
 	if model := planModel(service, obs); model != nil {
-		planResult.ApplyWithoutOwnerRef(model)
+		// Custom models are owned by the service (deleted when service is deleted)
+		// Image-based models are shared (no owner reference)
+		if obs.modelResult.CustomSpec != nil {
+			planResult.Apply(model)
+		} else {
+			planResult.ApplyWithoutOwnerRef(model)
+		}
 	}
 
 	// 1. Plan HTTPRoute if routing is enabled (independent of template resolution)

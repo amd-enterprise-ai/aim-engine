@@ -82,7 +82,7 @@ type AIMServiceTemplateConfig struct {
 }
 
 // AIMServiceModel specifies which model to deploy. Exactly one field must be set.
-// +kubebuilder:validation:XValidation:rule="(has(self.name) && !has(self.image)) || (!has(self.name) && has(self.image))",message="exactly one of name or image must be specified"
+// +kubebuilder:validation:XValidation:rule="(has(self.name) ? 1 : 0) + (has(self.image) ? 1 : 0) + (has(self.custom) ? 1 : 0) == 1",message="exactly one of name, image, or custom must be specified"
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="model selection is immutable after creation"
 type AIMServiceModel struct {
 	// Name references an existing AIMModel or AIMClusterModel by metadata.name.
@@ -99,15 +99,15 @@ type AIMServiceModel struct {
 	Image *string `json:"image,omitempty"`
 
 	// Custom specifies a custom model configuration with explicit base image,
-	// model sources, and GPU requirements.
+	// model sources, and hardware requirements. The controller will search for
+	// an existing matching AIMModel or auto-create one if not found.
 	// +optional
-	// Custom *AIMServiceModelCustom `json:"custom,omitempty"`
+	Custom *AIMServiceModelCustom `json:"custom,omitempty"`
 }
 
 // AIMServiceModelCustom specifies a custom model configuration with explicit base image,
-// model sources, and GPU requirements.
+// model sources, and hardware requirements. Used for ad-hoc custom model deployments.
 // +kubebuilder:validation:XValidation:rule="size(self.modelSources) >= 1",message="at least one model source must be specified"
-// +kubebuilder:validation:XValidation:rule="has(self.gpuSelector) && self.gpuSelector.model != \"\" && self.gpuSelector.count > 0",message="gpuSelector must be fully specified with model and count"
 type AIMServiceModelCustom struct {
 	// BaseImage is the container image URI for the AIM base image.
 	// This will be used as the image for the auto-created AIMModel.
@@ -116,18 +116,18 @@ type AIMServiceModelCustom struct {
 	BaseImage string `json:"baseImage"`
 
 	// ModelSources specifies the model sources to use.
-	// The controller will create a template with these sources inline,
-	// and discovery will validate/enrich them with size information.
+	// The controller will search for or create an AIMModel with these sources.
+	// For custom models, modelSources[].size should be specified (discovery does not run).
 	// AIM runtime currently supports only one model source.
 	// +required
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=1
 	ModelSources []AIMModelSource `json:"modelSources"`
 
-	// GpuSelector specifies the GPU requirements for this custom model.
-	// This is mandatory and cannot be overridden by service-level overrides.
+	// Hardware specifies the GPU and CPU requirements for this custom model.
+	// GPU is optional - if not set, no GPUs are requested (CPU-only model).
 	// +required
-	GpuSelector AIMGpuSelector `json:"gpuSelector"`
+	Hardware AIMHardwareRequirements `json:"hardware"`
 }
 
 // AIMServiceOverrides allows overriding template parameters at the service level.

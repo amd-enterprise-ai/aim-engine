@@ -515,8 +515,8 @@ func TestConvertToAIMModelSources(t *testing.T) {
 				return
 			}
 
-			if tt.wantName != "" && result[0].Name != tt.wantName {
-				t.Errorf("name = %q, want %q", result[0].Name, tt.wantName)
+			if tt.wantName != "" && result[0].ModelID != tt.wantName {
+				t.Errorf("modelID = %q, want %q", result[0].ModelID, tt.wantName)
 			}
 
 			if tt.wantSource != "" && result[0].SourceURI != tt.wantSource {

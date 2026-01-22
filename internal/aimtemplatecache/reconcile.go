@@ -275,12 +275,12 @@ func (r *TemplateCacheReconciler) ComposeState(
 		}
 		if found {
 			logger.Info("ComposeState: model source matched",
-				"modelName", model.Name,
+				"modelID", model.ModelID,
 				"bestCacheName", bestStatusModelCache.Name,
 				"bestCacheStatus", bestStatusModelCache.Status.Status)
-			obs.BestModelCaches[model.Name] = bestStatusModelCache
+			obs.BestModelCaches[model.ModelID] = bestStatusModelCache
 		} else {
-			logger.Info("ComposeState: model source missing cache", "modelName", model.Name)
+			logger.Info("ComposeState: model source missing cache", "modelID", model.ModelID)
 			obs.MissingCaches = append(obs.MissingCaches, model)
 		}
 	}

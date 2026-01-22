@@ -22,6 +22,10 @@
 
 package v1alpha1
 
+import (
+	"k8s.io/apimachinery/pkg/api/resource"
+)
+
 // AIMRuntimeParameters contains the runtime configuration parameters shared
 // across templates and services. Fields use pointers to allow optional usage
 // in different contexts (required in templates, optional in service overrides).
@@ -76,6 +80,7 @@ const (
 
 // AIMGpuSelector specifies GPU requirements for a deployment.
 // It defines the number and type of GPUs needed for each replica.
+// Deprecated: Use AIMHardwareRequirements with AIMGpuRequirements instead.
 type AIMGpuSelector struct {
 	// Count is the number of GPU resources requested per replica.
 	// Must be at least 1.
@@ -92,4 +97,53 @@ type AIMGpuSelector struct {
 	// +optional
 	// +kubebuilder:default="amd.com/gpu"
 	ResourceName string `json:"resourceName,omitempty"`
+}
+
+// AIMHardwareRequirements specifies compute resource requirements for custom models.
+// Used in AIMModelSpec and AIMCustomTemplate to define GPU and CPU needs.
+type AIMHardwareRequirements struct {
+	// GPU specifies GPU requirements. If not set, no GPUs are requested (CPU-only model).
+	// +optional
+	GPU *AIMGpuRequirements `json:"gpu,omitempty"`
+
+	// CPU specifies CPU requirements.
+	// +optional
+	CPU *AIMCpuRequirements `json:"cpu,omitempty"`
+}
+
+// AIMGpuRequirements specifies GPU resource requirements for custom models.
+// Unlike AIMGpuSelector, this supports multiple GPU models and VRAM constraints.
+type AIMGpuRequirements struct {
+	// Requests is the number of GPUs to set as requests/limits. Required when GPU is specified.
+	// +required
+	// +kubebuilder:validation:Minimum=1
+	Requests int32 `json:"requests"`
+
+	// Models limits deployment to specific GPU models.
+	// When multiple models are specified, the scheduler picks from any available.
+	// Examples: ["MI300X"], ["MI300X", "MI325X"]
+	// +optional
+	Models []string `json:"models,omitempty"`
+
+	// MinVRAM limits deployment to GPUs having at least this much VRAM.
+	// Used for capacity planning when model size is known.
+	// +optional
+	MinVRAM *resource.Quantity `json:"minVram,omitempty"`
+
+	// ResourceName is the Kubernetes resource name for GPU resources.
+	// Defaults to "amd.com/gpu" if not specified.
+	// +optional
+	// +kubebuilder:default="amd.com/gpu"
+	ResourceName string `json:"resourceName,omitempty"`
+}
+
+// AIMCpuRequirements specifies CPU resource requirements.
+type AIMCpuRequirements struct {
+	// Requests is the number of CPU cores to request.
+	// +optional
+	Requests *resource.Quantity `json:"requests,omitempty"`
+
+	// Limits is the maximum number of CPU cores to allow.
+	// +optional
+	Limits *resource.Quantity `json:"limits,omitempty"`
 }

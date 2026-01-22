@@ -438,7 +438,7 @@ func convertToAIMModelSources(models []discoveryModelResult) []aimv1alpha1.AIMMo
 		size := resource.NewQuantity(sizeBytes, resource.BinarySI)
 
 		modelSources = append(modelSources, aimv1alpha1.AIMModelSource{
-			Name:      model.Name,
+			ModelID:   model.Name,
 			SourceURI: model.Source,
 			Size:      size,
 		})

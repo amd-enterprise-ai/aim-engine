@@ -61,6 +61,10 @@ const (
 	// Values: inference, discovery, cache
 	LabelKeyComponent = AimLabelDomain + "/component"
 
+	// LabelKeyCustomModel indicates this is a custom model with inline model sources.
+	// Value: "true"
+	LabelKeyCustomModel = AimLabelDomain + "/custom-model"
+
 	// ==========================================================================
 	// Template configuration labels - queryable metadata for templates
 	// ==========================================================================
