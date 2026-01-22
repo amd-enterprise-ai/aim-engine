@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-backoff
+spec:
+  modelName: test-model-backoff
+  gpuSelector:
+    count: 1
+    model: MI300X

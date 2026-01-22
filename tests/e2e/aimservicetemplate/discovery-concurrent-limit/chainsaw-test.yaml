@@ -1,0 +1,87 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: servicetemplate-discovery-concurrent-limit
+  labels:
+    requires: gpu
+spec:
+  description: |
+    Test that discovery jobs are limited to 10 concurrent executions.
+    Creates 15 templates and verifies that only 10 jobs run at a time.
+  timeouts:
+    assert: 30s
+  steps:
+    - name: Create model with busybox (will fail discovery)
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Create 15 templates simultaneously
+      try:
+        - apply:
+            file: templates.yaml
+
+    - name: Wait for jobs to be created
+      try:
+        - sleep:
+            duration: 5s
+
+    - name: Assert max 10 active jobs exist
+      description: |
+        Count jobs with app.kubernetes.io/component=discovery that are not complete.
+        Should be <= 10 due to concurrent limit.
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              #!/bin/bash
+              set -e
+
+              # Count active (non-complete) discovery jobs
+              ACTIVE_JOBS=$(kubectl get jobs -n $NAMESPACE \
+                -l app.kubernetes.io/component=discovery \
+                -o jsonpath='{range .items[*]}{.status.conditions[*].type}{"\n"}{end}' | \
+                grep -v -E "^(Complete|Failed)$" | wc -l || echo "0")
+
+              # Also count jobs that have no conditions yet (just created)
+              TOTAL_JOBS=$(kubectl get jobs -n $NAMESPACE \
+                -l app.kubernetes.io/component=discovery \
+                --no-headers 2>/dev/null | wc -l || echo "0")
+
+              COMPLETE_JOBS=$(kubectl get jobs -n $NAMESPACE \
+                -l app.kubernetes.io/component=discovery \
+                -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Complete")].status}{"\n"}{end}' | \
+                grep -c "True" || echo "0")
+
+              FAILED_JOBS=$(kubectl get jobs -n $NAMESPACE \
+                -l app.kubernetes.io/component=discovery \
+                -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Failed")].status}{"\n"}{end}' | \
+                grep -c "True" || echo "0")
+
+              ACTIVE=$((TOTAL_JOBS - COMPLETE_JOBS - FAILED_JOBS))
+
+              echo "Total jobs: $TOTAL_JOBS"
+              echo "Complete jobs: $COMPLETE_JOBS"
+              echo "Failed jobs: $FAILED_JOBS"
+              echo "Active jobs: $ACTIVE"
+
+              if [ "$ACTIVE" -gt 10 ]; then
+                echo "ERROR: Active jobs ($ACTIVE) exceeds limit of 10"
+                exit 1
+              fi
+
+              echo "SUCCESS: Active jobs ($ACTIVE) within limit"
+
+    - name: Verify some templates show AwaitingDiscovery
+      description: |
+        With 15 templates and max 10 jobs, at least some should be waiting.
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: test-template-concurrent-15
+              status:
+                (conditions[?type == 'Discovered']):
+                  - status: "False"

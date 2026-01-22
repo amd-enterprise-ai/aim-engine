@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: test-model-backoff
+spec:
+  # busybox will fail discovery because it doesn't have dry-run command
+  image: busybox:latest
+  discovery:
+    extractMetadata: false
+    createServiceTemplates: false
+  resources:
+    limits:
+      memory: 100Mi
+    requests:
+      memory: 50Mi
+      cpu: 50m

@@ -1,0 +1,81 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: servicetemplate-discovery-success-with-failures
+  labels:
+    requires: gpu
+spec:
+  description: |
+    Test that a new template can succeed even when other templates are failing.
+    This verifies that failed templates in backoff don't block new templates
+    from getting discovery jobs.
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create failing model (busybox)
+      try:
+        - apply:
+            file: model-fail.yaml
+
+    - name: Create successful model (aim-dummy)
+      try:
+        - apply:
+            file: model-success.yaml
+
+    - name: Create 10 templates that will fail
+      try:
+        - apply:
+            file: templates-fail.yaml
+
+    - name: Wait for failing templates to fail and enter backoff
+      try:
+        - sleep:
+            duration: 30s
+
+    - name: Verify failing templates have discovery attempts
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: test-template-fail-01
+              status:
+                discovery:
+                  (attempts >= `1`): true
+
+    - name: Create a new template that will succeed
+      try:
+        - apply:
+            file: template-success.yaml
+
+    - name: Verify successful template reaches Ready
+      description: |
+        Even with 10 failed templates in backoff, a new template with a working
+        image should be able to get a discovery job and complete successfully.
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: test-template-success
+              status:
+                status: Ready
+
+    - name: Verify successful template has no discovery state
+      description: |
+        On successful discovery, the discovery state should be cleared.
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: test-template-success
+              status:
+                (discovery == null): true
+                modelSources:
+                  - name: HuggingFaceTB/SmolLM2-135M
