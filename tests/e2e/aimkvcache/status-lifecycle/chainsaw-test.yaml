@@ -83,7 +83,7 @@ spec:
             (conditions[?type == 'Ready']):
             - type: Ready
               status: "True"
-              reason: Ready
+              reason: AllComponentsReady
             (conditions[?type == 'StatefulSetReady']):
             - type: StatefulSetReady
               status: "True"
