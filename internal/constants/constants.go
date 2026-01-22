@@ -68,6 +68,9 @@ const (
 	LabelValueCacheTypeTemp = "temp"
 	// LabelValueCacheTypePersistent indicates a persistent cache
 	LabelValueCacheTypePersistent = "persistent"
+	// LabelValueCacheTypeDedicated indicates a dedicated cache owned by an AIMService.
+	// These caches are created for non-cached modes (Never/Auto) to enable unified downloads.
+	LabelValueCacheTypeDedicated = "dedicated"
 )
 
 // Shared condition reasons used across multiple resource types

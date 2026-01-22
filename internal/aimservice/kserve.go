@@ -25,7 +25,6 @@ package aimservice
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -144,25 +143,33 @@ func isReadyForInferenceService(service *aimv1alpha1.AIMService, obs ServiceObse
 		return false
 	}
 
-	// Check if we have storage
+	// Get template model sources for cache check
+	var templateModelSources []aimv1alpha1.AIMModelSource
+	if obs.template.Value != nil {
+		templateModelSources = obs.template.Value.Status.ModelSources
+	} else if obs.clusterTemplate.Value != nil {
+		templateModelSources = obs.clusterTemplate.Value.Status.ModelSources
+	}
+
+	// Check if we have storage (unified download architecture: all modes use engine downloads)
 	switch cachingMode {
 	case aimv1alpha1.CachingModeAlways:
-		// Require template cache to be ready
+		// Require template cache to be ready (shared cache)
 		if obs.templateCache.Value == nil ||
 			obs.templateCache.Value.Status.Status != constants.AIMStatusReady {
 			return false
 		}
 	case aimv1alpha1.CachingModeAuto:
-		// Either cache or PVC is fine
-		hasCache := obs.templateCache.Value != nil &&
+		// Either shared cache or dedicated caches are fine
+		hasSharedCache := obs.templateCache.Value != nil &&
 			obs.templateCache.Value.Status.Status == constants.AIMStatusReady
-		hasPVC := obs.pvc.Value != nil
-		if !hasCache && !hasPVC {
+		hasDedicatedCaches := areDedicatedCachesReady(obs.dedicatedModelCaches.Value, templateModelSources)
+		if !hasSharedCache && !hasDedicatedCaches {
 			return false
 		}
 	case aimv1alpha1.CachingModeNever:
-		// No cache required, but need PVC for download
-		if obs.pvc.Value == nil {
+		// Require dedicated model caches to be ready
+		if !areDedicatedCachesReady(obs.dedicatedModelCaches.Value, templateModelSources) {
 			return false
 		}
 	}
@@ -600,19 +607,21 @@ func convertToKServeAutoScaling(aimAutoScaling *aimv1alpha1.AIMServiceAutoScalin
 }
 
 // addStorageVolumes adds cache or PVC volumes to the InferenceService.
+// Unified download architecture: all modes use engine-managed downloads to PVCs.
 func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObservation) {
 	if len(isvc.Spec.Predictor.Containers) == 0 {
 		return
 	}
 	container := &isvc.Spec.Predictor.Containers[0]
 
-	// Check if we have template cache with model caches
+	// Priority 1: Check if we have template cache with model caches (shared mode)
 	if obs.templateCache.Value != nil &&
 		obs.templateCache.Value.Status.Status == constants.AIMStatusReady &&
 		obs.modelCaches.Value != nil {
 
-		// Mount model cache PVCs
-		for _, modelCache := range obs.modelCaches.Value.Items {
+		// Mount model cache PVCs from shared template cache
+		for i := range obs.modelCaches.Value.Items {
+			modelCache := &obs.modelCaches.Value.Items[i]
 			if modelCache.Status.Status != constants.AIMStatusReady {
 				continue
 			}
@@ -620,13 +629,25 @@ func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObserva
 				continue
 			}
 
-			// Find the model name from the model cache spec
-			modelName := modelCache.Spec.SourceURI
-			addModelCacheMount(isvc, container, &modelCache, modelName)
+			addModelCacheMount(isvc, container, modelCache)
 		}
-	} else if obs.pvc.Value != nil {
-		// Mount service PVC for downloads
-		addServicePVCMount(isvc, container, obs.pvc.Value.Name)
+		return
+	}
+
+	// Priority 2: Check if we have dedicated model caches (for Never/Auto modes)
+	if obs.dedicatedModelCaches.Value != nil && len(obs.dedicatedModelCaches.Value.Items) > 0 {
+		// Mount dedicated model cache PVCs
+		for i := range obs.dedicatedModelCaches.Value.Items {
+			modelCache := &obs.dedicatedModelCaches.Value.Items[i]
+			if modelCache.Status.Status != constants.AIMStatusReady {
+				continue
+			}
+			if modelCache.Status.PersistentVolumeClaim == "" {
+				continue
+			}
+
+			addModelCacheMount(isvc, container, modelCache)
+		}
 	}
 }
 
@@ -648,7 +669,9 @@ func addServicePVCMount(isvc *servingv1beta1.InferenceService, container *corev1
 }
 
 // addModelCacheMount adds a model cache PVC volume mount.
-func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1.Container, modelCache *aimv1alpha1.AIMModelCache, modelName string) {
+// The mount path is determined by the modelId (or derived from sourceURI).
+// This aligns with the unified download architecture where models are downloaded to ${MOUNT_PATH}/${modelId}.
+func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1.Container, modelCache *aimv1alpha1.AIMModelCache) {
 	// Sanitize volume name
 	volumeName := utils.MakeRFC1123Compliant(modelCache.Name)
 	volumeName = strings.ReplaceAll(volumeName, ".", "-")
@@ -662,17 +685,12 @@ func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1
 		},
 	})
 
-	// Sanitize model name to prevent path traversal (remove ".." and other unsafe sequences)
-	// and ensure it's a valid path component
-	safeModelName := filepath.Base(strings.ReplaceAll(modelName, "..", ""))
-	if safeModelName == "" || safeModelName == "." {
-		safeModelName = volumeName // Fall back to volume name if model name is invalid
-	}
-	mountPath := filepath.Join(constants.AIMCacheBasePath, safeModelName)
-
+	// Mount the entire PVC at the cache base path
+	// The download job places models at ${MOUNT_PATH}/${modelId}, so the inference container
+	// will find them at ${AIMCacheBasePath}/${modelId}
 	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 		Name:      volumeName,
-		MountPath: mountPath,
+		MountPath: constants.AIMCacheBasePath,
 	})
 }
 

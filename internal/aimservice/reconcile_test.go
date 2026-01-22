@@ -27,7 +27,7 @@ import (
 	"errors"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -217,7 +217,7 @@ func TestComposeState_ValidatesStorageSize(t *testing.T) {
 			expectStorageSizeError: false,
 		},
 		{
-			name: "PVC exists - no error (skip validation)",
+			name: "dedicated caches exist - no error (skip validation)",
 			fetch: ServiceFetchResult{
 				service: NewService("svc").Build(),
 				template: controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]{
@@ -229,8 +229,13 @@ func TestComposeState_ValidatesStorageSize(t *testing.T) {
 						return t
 					}(),
 				},
-				pvc: controllerutils.FetchResult[*corev1.PersistentVolumeClaim]{
-					Value: &corev1.PersistentVolumeClaim{},
+				dedicatedModelCaches: controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]{
+					Value: &aimv1alpha1.AIMModelCacheList{
+						Items: []aimv1alpha1.AIMModelCache{{
+							Spec:   aimv1alpha1.AIMModelCacheSpec{SourceURI: "hf://model/file.safetensors"},
+							Status: aimv1alpha1.AIMModelCacheStatus{Status: constants.AIMStatusReady},
+						}},
+					},
 				},
 			},
 			expectStorageSizeError: false,
@@ -389,10 +394,39 @@ func TestGetComponentHealth_CacheHealth(t *testing.T) {
 		expectReason string
 	}{
 		{
-			name: "caching disabled - always ready",
+			name: "never mode no dedicated caches - progressing (creating dedicated caches)",
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
 					service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeNever).Build(),
+				},
+			},
+			expectState:  constants.AIMStatusProgressing,
+			expectReason: aimv1alpha1.AIMServiceReasonCacheCreating,
+		},
+		{
+			name: "never mode with ready dedicated caches",
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeNever).Build(),
+					template: controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]{
+						Value: &aimv1alpha1.AIMServiceTemplate{
+							Status: aimv1alpha1.AIMServiceTemplateStatus{
+								ModelSources: []aimv1alpha1.AIMModelSource{
+									{SourceURI: "hf://model/test"},
+								},
+							},
+						},
+					},
+					dedicatedModelCaches: controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]{
+						Value: &aimv1alpha1.AIMModelCacheList{
+							Items: []aimv1alpha1.AIMModelCache{
+								{
+									Spec:   aimv1alpha1.AIMModelCacheSpec{SourceURI: "hf://model/test"},
+									Status: aimv1alpha1.AIMModelCacheStatus{Status: constants.AIMStatusReady},
+								},
+							},
+						},
+					},
 				},
 			},
 			expectState:  constants.AIMStatusReady,
@@ -444,48 +478,64 @@ func TestGetComponentHealth_CacheHealth(t *testing.T) {
 			expectReason: aimv1alpha1.AIMServiceReasonCacheNotReady,
 		},
 		{
-			name: "PVC bound",
+			name: "dedicated caches progressing",
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
 					service: NewService("svc").Build(),
-					pvc: controllerutils.FetchResult[*corev1.PersistentVolumeClaim]{
-						Value: &corev1.PersistentVolumeClaim{
-							Status: corev1.PersistentVolumeClaimStatus{
-								Phase: corev1.ClaimBound,
+					template: controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]{
+						Value: &aimv1alpha1.AIMServiceTemplate{
+							Status: aimv1alpha1.AIMServiceTemplateStatus{
+								ModelSources: []aimv1alpha1.AIMModelSource{
+									{SourceURI: "hf://model/test"},
+								},
 							},
 						},
 					},
-				},
-			},
-			expectState:  constants.AIMStatusReady,
-			expectReason: aimv1alpha1.AIMServiceReasonStorageReady,
-		},
-		{
-			name: "PVC pending",
-			obs: ServiceObservation{
-				ServiceFetchResult: ServiceFetchResult{
-					service: NewService("svc").Build(),
-					pvc: controllerutils.FetchResult[*corev1.PersistentVolumeClaim]{
-						Value: &corev1.PersistentVolumeClaim{
-							Status: corev1.PersistentVolumeClaimStatus{
-								Phase: corev1.ClaimPending,
+					dedicatedModelCaches: controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]{
+						Value: &aimv1alpha1.AIMModelCacheList{
+							Items: []aimv1alpha1.AIMModelCache{
+								{
+									Spec:   aimv1alpha1.AIMModelCacheSpec{SourceURI: "hf://model/test"},
+									Status: aimv1alpha1.AIMModelCacheStatus{Status: constants.AIMStatusProgressing},
+								},
 							},
 						},
 					},
 				},
 			},
 			expectState:  constants.AIMStatusProgressing,
-			expectReason: aimv1alpha1.AIMServiceReasonPVCNotBound,
+			expectReason: aimv1alpha1.AIMServiceReasonCacheNotReady,
 		},
 		{
-			name: "auto mode no cache - ready",
+			name: "dedicated cache failed",
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					service: NewService("svc").Build(),
+					dedicatedModelCaches: controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]{
+						Value: &aimv1alpha1.AIMModelCacheList{
+							Items: []aimv1alpha1.AIMModelCache{
+								{
+									ObjectMeta: metav1.ObjectMeta{Name: "test-cache"},
+									Spec:       aimv1alpha1.AIMModelCacheSpec{SourceURI: "hf://model/test"},
+									Status:     aimv1alpha1.AIMModelCacheStatus{Status: constants.AIMStatusFailed},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectState:  constants.AIMStatusFailed,
+			expectReason: aimv1alpha1.AIMServiceReasonCacheFailed,
+		},
+		{
+			name: "auto mode no cache - progressing (creating dedicated caches)",
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
 					service: NewService("svc").Build(), // Default is Auto
 				},
 			},
-			expectState:  constants.AIMStatusReady,
-			expectReason: aimv1alpha1.AIMServiceReasonCacheReady,
+			expectState:  constants.AIMStatusProgressing,
+			expectReason: aimv1alpha1.AIMServiceReasonCacheCreating,
 		},
 		{
 			name: "always mode no cache - progressing",

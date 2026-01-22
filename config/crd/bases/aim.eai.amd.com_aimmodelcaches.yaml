@@ -246,6 +246,15 @@ spec:
                   This image runs as a job to download model artifacts from the source URI to the cache volume.
                   When not specified, defaults to kserve/storage-initializer:v0.16.0.
                 type: string
+              modelId:
+                description: |-
+                  ModelID is the canonical identifier in {org}/{name} format.
+                  Determines the cache download path: /workspace/model-cache/{modelId}
+                  For HuggingFace sources, this is typically derived from the URI (e.g., "meta-llama/Llama-3-8B").
+                  For S3 sources, this must be explicitly provided (e.g., "my-team/fine-tuned-llama").
+                  When not specified, derived from SourceURI for HuggingFace sources.
+                pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
+                type: string
               runtimeConfigName:
                 description: |-
                   Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both

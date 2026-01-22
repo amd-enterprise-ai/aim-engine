@@ -355,30 +355,34 @@ Implement spec-based model matching:
 
 ## Phase 4: Unified Download Architecture
 
-### Step 4.1: Refactor AIMModelCache for Non-Cached Mode
+### Step 4.1: Refactor AIMModelCache for Dedicated Mode
 
-**File**: `internal/aimmodelcache/reconcile.go`
+**Files**: `api/v1alpha1/aimmodelcache_types.go`, `internal/aimservice/caching.go`
 
-Currently downloads only happen for cached mode. Extend to support:
-
-- [ ] Add `Dedicated` caching mode concept (PVC owned by service)
-- [ ] Create dedicated PVCs with owner reference to AIMService
+- [x] Add `ModelID` field to `AIMModelCacheSpec` for consistent mount paths
+- [x] Add `LabelValueCacheTypeDedicated` constant for dedicated caches
+- [x] Add `planDedicatedModelCaches()` to create AIMModelCache resources owned by service
+- [x] Add `fetchDedicatedModelCaches()` to fetch service-owned model caches
+- [x] Add `areDedicatedCachesReady()` and `getDedicatedCacheForModel()` helpers
 
 ### Step 4.2: Update AIMService to Always Use Engine Downloads
 
-**File**: `internal/aimservice/reconcile.go`
+**Files**: `internal/aimservice/reconcile.go`, `internal/aimservice/kserve.go`
 
-- [ ] Remove logic that sets `AIM_MODEL_ID` to remote URI
-- [ ] Always use local PVC path: `/workspace/model-cache/{modelId}`
-- [ ] For non-cached mode, create dedicated AIMModelCache owned by service
+- [x] Add `dedicatedModelCaches` field to `ServiceFetchResult`
+- [x] Replace PVC-based storage with dedicated model caches for non-cached modes
+- [x] Update `isReadyForInferenceService()` to check dedicated cache readiness
+- [x] Update `addStorageVolumes()` to mount from dedicated model caches
+- [x] Update `getCacheHealth()` to report dedicated cache status
 
 ### Step 4.3: Download Job Uses ModelId for Path
 
-**File**: `internal/aimmodelcache/download.go` (or similar)
+**Files**: `internal/aimmodelcache/download.go`, `internal/aimmodelcache/download.sh`
 
-- [ ] Download to `${AIM_CACHE_PATH}/${modelId}` path
-- [ ] Ensure mount path is `/workspace/model-cache`
-- [ ] Pass modelId to download job as target directory
+- [x] Add `resolveModelID()` function to derive modelId from sourceURI or spec
+- [x] Pass `MODEL_ID` environment variable to download job
+- [x] Update download.sh to download to `${MOUNT_PATH}/${MODEL_ID}` when MODEL_ID is set
+- [x] Update `aimtemplatecache/reconcile.go` to set ModelID on created caches
 
 ---
 

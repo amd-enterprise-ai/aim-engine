@@ -331,6 +331,7 @@ func (r *TemplateCacheReconciler) PlanResources(
 			Spec: aimv1alpha1.AIMModelCacheSpec{
 				StorageClassName: tc.Spec.StorageClassName,
 				SourceURI:        cache.SourceURI,
+				ModelID:          cache.ModelID,
 				Size:             *cache.Size,
 				Env:              tc.Spec.Env,
 				RuntimeConfigRef: tc.Spec.RuntimeConfigRef,

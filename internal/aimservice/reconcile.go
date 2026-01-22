@@ -75,8 +75,12 @@ type ServiceFetchResult struct {
 	templateCache          controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]
 	pvc                    controllerutils.FetchResult[*corev1.PersistentVolumeClaim]
 
-	// Model caches (for template cache)
+	// Model caches (for template cache - shared mode)
 	modelCaches controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]
+
+	// Dedicated model caches (for unified downloads in non-cached mode)
+	// These are owned by the service and deleted when the service is deleted
+	dedicatedModelCaches controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]
 }
 
 // FetchRemoteState fetches all resources needed for AIMService reconciliation.
@@ -128,16 +132,16 @@ func (r *ServiceReconciler) FetchRemoteState(
 		result.modelCaches = fetchModelCaches(ctx, c, service.Namespace)
 	}
 
-	// 5. Fetch service PVC when needed:
-	// - When caching is Never: always need the service's temp PVC for downloads
-	// - When caching is Auto: need PVC as fallback if template cache is not ready
-	// - When caching is Always: don't need service PVC (use template cache)
+	// 5. Fetch dedicated model caches for non-cached modes (unified download architecture):
+	// - When caching is Never: always use dedicated model caches for downloads
+	// - When caching is Auto: use dedicated caches if template cache is not available/ready
+	// - When caching is Always: don't need dedicated caches (use shared template cache)
 	cachingMode := service.Spec.GetCachingMode()
-	needsServicePVC := cachingMode == aimv1alpha1.CachingModeNever ||
+	needsDedicatedCaches := cachingMode == aimv1alpha1.CachingModeNever ||
 		(cachingMode == aimv1alpha1.CachingModeAuto && (result.templateCache.Value == nil || result.templateCache.Value.Status.Status != constants.AIMStatusReady))
 
-	if needsServicePVC {
-		result.pvc = fetchServicePVC(ctx, c, service)
+	if needsDedicatedCaches {
+		result.dedicatedModelCaches = fetchDedicatedModelCaches(ctx, c, service)
 	}
 
 	// 6. Only fetch Model and Template if InferenceService needs to be (re)created.
@@ -546,14 +550,6 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 
 	cachingMode := obs.service.Spec.GetCachingMode()
 
-	// If caching is disabled, cache is always ready
-	if cachingMode == aimv1alpha1.CachingModeNever {
-		health.State = constants.AIMStatusReady
-		health.Reason = aimv1alpha1.AIMServiceReasonCacheReady
-		health.Message = "Caching disabled"
-		return health
-	}
-
 	// Check for storage size calculation errors (invalid template configuration)
 	if obs.storageSizeError != nil {
 		health.State = constants.AIMStatusFailed
@@ -563,7 +559,7 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 		return health
 	}
 
-	// Check template cache
+	// Check template cache first (used for Always mode and Auto with available cache)
 	if obs.templateCache.Value != nil {
 		switch obs.templateCache.Value.Status.Status {
 		case constants.AIMStatusReady:
@@ -586,25 +582,54 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 		return health
 	}
 
-	// No template cache - check PVC for fallback storage
-	if obs.pvc.Value != nil {
-		if obs.pvc.Value.Status.Phase == corev1.ClaimBound {
-			health.State = constants.AIMStatusReady
-			health.Reason = aimv1alpha1.AIMServiceReasonStorageReady
-			health.Message = "Service PVC is bound"
-		} else {
-			health.State = constants.AIMStatusProgressing
-			health.Reason = aimv1alpha1.AIMServiceReasonPVCNotBound
-			health.Message = "Service PVC is not bound yet"
+	// No template cache - check dedicated model caches (unified download architecture)
+	// This applies to both Never mode and Auto mode without existing shared cache
+	if obs.dedicatedModelCaches.Value != nil && len(obs.dedicatedModelCaches.Value.Items) > 0 {
+		// Get template model sources to check if all are cached
+		var templateModelSources []aimv1alpha1.AIMModelSource
+		if obs.template.Value != nil {
+			templateModelSources = obs.template.Value.Status.ModelSources
+		} else if obs.clusterTemplate.Value != nil {
+			templateModelSources = obs.clusterTemplate.Value.Status.ModelSources
 		}
+
+		if areDedicatedCachesReady(obs.dedicatedModelCaches.Value, templateModelSources) {
+			health.State = constants.AIMStatusReady
+			health.Reason = aimv1alpha1.AIMServiceReasonCacheReady
+			health.Message = "Dedicated model caches are ready"
+			return health
+		}
+
+		// Check if any cache failed
+		for _, cache := range obs.dedicatedModelCaches.Value.Items {
+			if cache.Status.Status == constants.AIMStatusFailed {
+				health.State = constants.AIMStatusFailed
+				health.Reason = aimv1alpha1.AIMServiceReasonCacheFailed
+				health.Message = "Dedicated model cache failed: " + cache.Name
+				return health
+			}
+		}
+
+		// Caches exist but not all ready - progressing
+		health.State = constants.AIMStatusProgressing
+		health.Reason = aimv1alpha1.AIMServiceReasonCacheNotReady
+		health.Message = "Dedicated model caches are downloading"
 		return health
 	}
 
-	// For Auto mode, cache is optional
+	// For Auto mode without any cache, it's acceptable - will create dedicated caches
 	if cachingMode == aimv1alpha1.CachingModeAuto {
-		health.State = constants.AIMStatusReady
-		health.Reason = aimv1alpha1.AIMServiceReasonCacheReady
-		health.Message = "No cache available, using download mode"
+		health.State = constants.AIMStatusProgressing
+		health.Reason = aimv1alpha1.AIMServiceReasonCacheCreating
+		health.Message = "Creating dedicated model caches for download"
+		return health
+	}
+
+	// For Never mode without caches, still progressing (unified downloads require caches)
+	if cachingMode == aimv1alpha1.CachingModeNever {
+		health.State = constants.AIMStatusProgressing
+		health.Reason = aimv1alpha1.AIMServiceReasonCacheCreating
+		health.Message = "Creating dedicated model caches for download"
 		return health
 	}
 
@@ -704,8 +729,8 @@ func (r *ServiceReconciler) validateStorageSize(fetch ServiceFetchResult) error 
 		return nil
 	}
 
-	// PVC already exists - no need to calculate
-	if fetch.pvc.Value != nil {
+	// Dedicated model caches already exist for all sources - no need to calculate
+	if fetch.dedicatedModelCaches.Value != nil && areDedicatedCachesReady(fetch.dedicatedModelCaches.Value, templateStatus.ModelSources) {
 		return nil
 	}
 
@@ -774,9 +799,10 @@ func (r *ServiceReconciler) PlanResources(
 		planResult.ApplyWithoutOwnerRef(templateCache)
 	}
 
-	// 4. Plan PVC if no template cache available
-	if pvc := planServicePVC(service, templateName, templateStatus, obs); pvc != nil {
-		planResult.Apply(pvc)
+	// 4. Plan dedicated model caches for non-cached modes (unified download architecture)
+	// These caches are owned by the service and deleted when the service is deleted
+	for _, cache := range planDedicatedModelCaches(service, templateStatus, obs) {
+		planResult.Apply(cache)
 	}
 
 	// 5. Plan InferenceService

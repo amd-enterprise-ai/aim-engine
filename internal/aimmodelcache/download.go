@@ -25,6 +25,7 @@ package aimmodelcache
 import (
 	_ "embed"
 	"fmt"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -46,6 +47,38 @@ var progressMonitorScript string
 func getDownloadJobName(mc *aimv1alpha1.AIMModelCache) string {
 	name, _ := utils.GenerateDerivedName([]string{mc.Name, "download"}, utils.WithHashSource(mc.UID))
 	return name
+}
+
+// resolveModelID returns the effective modelId for a model cache.
+// If spec.modelId is set, it is used directly.
+// Otherwise, for HuggingFace sources, the modelId is derived from the source URI.
+// For S3 sources without explicit modelId, the path after the bucket is used.
+func resolveModelID(mc *aimv1alpha1.AIMModelCache) string {
+	// Use explicit modelId if provided
+	if mc.Spec.ModelID != "" {
+		return mc.Spec.ModelID
+	}
+
+	// Derive from sourceURI
+	sourceURI := mc.Spec.SourceURI
+	if strings.HasPrefix(sourceURI, "hf://") {
+		// hf://org/model -> org/model
+		return strings.TrimPrefix(sourceURI, "hf://")
+	}
+	if strings.HasPrefix(sourceURI, "s3://") {
+		// s3://bucket/path/to/model -> path/to/model (without bucket)
+		path := strings.TrimPrefix(sourceURI, "s3://")
+		if idx := strings.Index(path, "/"); idx != -1 {
+			return strings.TrimSuffix(path[idx+1:], "/")
+		}
+		return path
+	}
+
+	// Fallback: use the sourceURI without scheme
+	if idx := strings.Index(sourceURI, "://"); idx != -1 {
+		return sourceURI[idx+3:]
+	}
+	return sourceURI
 }
 
 func buildDownloadJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon) *batchv1.Job {
@@ -172,6 +205,7 @@ func buildDownloadJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alp
 							Env: append(newEnv, []corev1.EnvVar{
 								{Name: "MOUNT_PATH", Value: mountPath},
 								{Name: "SOURCE_URI", Value: mc.Spec.SourceURI},
+								{Name: "MODEL_ID", Value: resolveModelID(mc)},
 							}...),
 							Command: []string{"/bin/sh"},
 							Args: []string{

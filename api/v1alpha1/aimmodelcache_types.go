@@ -48,6 +48,15 @@ type AIMModelCacheSpec struct {
 	// +kubebuilder:validation:Pattern=`^(hf|s3)://[^ \t\r\n]+$`
 	SourceURI string `json:"sourceUri"`
 
+	// ModelID is the canonical identifier in {org}/{name} format.
+	// Determines the cache download path: /workspace/model-cache/{modelId}
+	// For HuggingFace sources, this is typically derived from the URI (e.g., "meta-llama/Llama-3-8B").
+	// For S3 sources, this must be explicitly provided (e.g., "my-team/fine-tuned-llama").
+	// When not specified, derived from SourceURI for HuggingFace sources.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$`
+	ModelID string `json:"modelId,omitempty"`
+
 	// StorageClassName specifies the storage class for the cache volume.
 	// When not specified, uses the cluster default storage class.
 	// +optional

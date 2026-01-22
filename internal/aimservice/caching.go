@@ -26,10 +26,8 @@ import (
 	"context"
 	"fmt"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -45,107 +43,143 @@ const (
 )
 
 // =======================================================
-// TEMPORARY SERVICE PVC WHEN CACHING IS NOT USED
+// DEDICATED MODEL CACHE (UNIFIED DOWNLOAD ARCHITECTURE)
 // =======================================================
+// For non-cached modes (Never/Auto without existing cache), we create dedicated
+// AIMModelCache resources with owner references to the AIMService. This ensures:
+// 1. Downloads are always handled by the engine (not the inference container)
+// 2. Credentials are never exposed to inference pods
+// 3. Downloads run on CPU nodes (GPU-independent)
+// 4. PVC lifecycle is tied to the service (deleted when service is deleted)
 
-// GenerateServicePVCName creates a deterministic name for the service's temporary PVC.
-func GenerateServicePVCName(serviceName, namespace string) (string, error) {
-	return utils.GenerateDerivedName([]string{serviceName, "temp-cache"}, utils.WithHashSource(namespace))
+// GenerateDedicatedModelCacheName creates a deterministic name for a service's dedicated model cache.
+func GenerateDedicatedModelCacheName(serviceName, modelID string) (string, error) {
+	return utils.GenerateDerivedName([]string{serviceName, "dedicated"}, utils.WithHashSource(modelID))
 }
 
-// planServicePVC creates a PVC for the service if no template cache is available.
-// Returns nil if PVC creation is not needed or prerequisites are not met.
-func planServicePVC(
+// planDedicatedModelCaches creates AIMModelCache resources for non-cached mode.
+// These caches are owned by the service and deleted when the service is deleted.
+// Returns a list of model caches to create.
+func planDedicatedModelCaches(
 	service *aimv1alpha1.AIMService,
-	templateName string,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
 	obs ServiceObservation,
-) client.Object {
+) []client.Object {
 	cachingMode := service.Spec.GetCachingMode()
 
-	// If caching is required (Always mode), don't create a temp PVC
+	// If caching is required (Always mode), don't create dedicated caches
 	if cachingMode == aimv1alpha1.CachingModeAlways {
 		return nil
 	}
 
-	// If template cache exists and is ready, don't need PVC
+	// If template cache exists and is ready, use shared cache instead
 	if obs.templateCache.Value != nil &&
 		obs.templateCache.Value.Status.Status == constants.AIMStatusReady {
 		return nil
 	}
 
-	// If PVC already exists, don't create again
-	if obs.pvc.Value != nil {
-		return nil
-	}
-
-	// Need model sources to calculate size - waiting for template to be ready
+	// Need model sources to determine what to cache
 	if templateStatus == nil || len(templateStatus.ModelSources) == 0 {
 		return nil
 	}
 
-	// Calculate required size - if this fails, model sources don't have sizes yet,
-	// which means template is still resolving. Return nil to wait for next reconcile.
-	headroomPercent := resolvePVCHeadroomPercent(service, obs)
-	size, err := calculateRequiredStorageSize(templateStatus.ModelSources, headroomPercent)
-	if err != nil {
-		// Model sources exist but don't have sizes - template is still resolving
-		return nil
-	}
-
-	pvcName, err := GenerateServicePVCName(service.Name, service.Namespace)
-	if err != nil {
-		// Name generation failed - this would be a programming error
-		return nil
+	// Check which model sources already have dedicated caches
+	existingCaches := make(map[string]bool)
+	if obs.dedicatedModelCaches.Value != nil {
+		for _, cache := range obs.dedicatedModelCaches.Value.Items {
+			existingCaches[cache.Spec.SourceURI] = true
+		}
 	}
 
 	storageClassName := resolveStorageClassName(service, obs)
-	var sc *string
-	if storageClassName != "" {
-		sc = &storageClassName
-	}
-
 	serviceLabelValue, _ := utils.SanitizeLabelValue(service.Name)
-	templateLabelValue, _ := utils.SanitizeLabelValue(templateName)
 
-	pvc := &corev1.PersistentVolumeClaim{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "PersistentVolumeClaim",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      pvcName,
-			Namespace: service.Namespace,
-			Labels: map[string]string{
-				constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
-				constants.LabelK8sComponent: constants.ComponentModelStorage,
-				constants.LabelService:      serviceLabelValue,
-				constants.LabelCacheType:    constants.LabelValueCacheTypeTemp,
-				constants.LabelTemplate:     templateLabelValue,
+	var result []client.Object
+	for _, modelSource := range templateStatus.ModelSources {
+		// Skip if cache already exists for this source
+		if existingCaches[modelSource.SourceURI] {
+			continue
+		}
+
+		// Skip if size is not available (template still resolving)
+		if modelSource.Size == nil || modelSource.Size.IsZero() {
+			continue
+		}
+
+		cacheName, err := GenerateDedicatedModelCacheName(service.Name, modelSource.ModelID)
+		if err != nil {
+			continue
+		}
+
+		cache := &aimv1alpha1.AIMModelCache{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: aimv1alpha1.GroupVersion.String(),
+				Kind:       "AIMModelCache",
 			},
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion:         service.APIVersion,
-					Kind:               service.Kind,
-					Name:               service.Name,
-					UID:                service.UID,
-					Controller:         ptr.To(true),
-					BlockOwnerDeletion: ptr.To(true),
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      cacheName,
+				Namespace: service.Namespace,
+				Labels: map[string]string{
+					constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
+					constants.LabelK8sComponent: constants.ComponentModelStorage,
+					constants.LabelService:      serviceLabelValue,
+					constants.LabelCacheType:    constants.LabelValueCacheTypeDedicated,
 				},
 			},
-		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
-			Resources: corev1.VolumeResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: size,
-				},
+			Spec: aimv1alpha1.AIMModelCacheSpec{
+				SourceURI:        modelSource.SourceURI,
+				ModelID:          modelSource.ModelID,
+				Size:             *modelSource.Size,
+				StorageClassName: storageClassName,
+				Env:              service.Spec.Env,
+				RuntimeConfigRef: service.Spec.RuntimeConfigRef,
 			},
-			StorageClassName: sc,
-		},
+		}
+
+		result = append(result, cache)
 	}
 
-	return pvc
+	return result
+}
+
+// fetchDedicatedModelCaches fetches the service's dedicated model caches.
+func fetchDedicatedModelCaches(
+	ctx context.Context,
+	c client.Client,
+	service *aimv1alpha1.AIMService,
+) controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList] {
+	serviceLabelValue, _ := utils.SanitizeLabelValue(service.Name)
+
+	return controllerutils.FetchList(ctx, c, &aimv1alpha1.AIMModelCacheList{},
+		client.InNamespace(service.Namespace),
+		client.MatchingLabels{
+			constants.LabelService:   serviceLabelValue,
+			constants.LabelCacheType: constants.LabelValueCacheTypeDedicated,
+		},
+	)
+}
+
+// areDedicatedCachesReady returns true if all dedicated model caches are ready.
+func areDedicatedCachesReady(caches *aimv1alpha1.AIMModelCacheList, modelSources []aimv1alpha1.AIMModelSource) bool {
+	if caches == nil || len(modelSources) == 0 {
+		return false
+	}
+
+	// Build map of ready caches by source URI
+	readyCaches := make(map[string]bool)
+	for _, cache := range caches.Items {
+		if cache.Status.Status == constants.AIMStatusReady {
+			readyCaches[cache.Spec.SourceURI] = true
+		}
+	}
+
+	// Check all model sources have a ready cache
+	for _, source := range modelSources {
+		if !readyCaches[source.SourceURI] {
+			return false
+		}
+	}
+	return true
 }
 
 // =======================================================
@@ -321,23 +355,6 @@ func fetchModelCaches(
 	namespace string,
 ) controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList] {
 	return controllerutils.FetchList(ctx, c, &aimv1alpha1.AIMModelCacheList{}, client.InNamespace(namespace))
-}
-
-// fetchServicePVC fetches the service's temporary PVC for model downloads.
-func fetchServicePVC(
-	ctx context.Context,
-	c client.Client,
-	service *aimv1alpha1.AIMService,
-) controllerutils.FetchResult[*corev1.PersistentVolumeClaim] {
-	pvcName, err := GenerateServicePVCName(service.Name, service.Namespace)
-	if err != nil {
-		return controllerutils.FetchResult[*corev1.PersistentVolumeClaim]{Error: err}
-	}
-
-	return controllerutils.Fetch(ctx, c, client.ObjectKey{
-		Namespace: service.Namespace,
-		Name:      pvcName,
-	}, &corev1.PersistentVolumeClaim{})
 }
 
 // resolveStorageClassName determines the storage class to use.
