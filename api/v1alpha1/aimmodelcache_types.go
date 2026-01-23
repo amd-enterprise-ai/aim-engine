@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	DefaultDownloadImage = "kserve/storage-initializer:v0.16.0-rc0"
+	DefaultDownloadImage = "ghcr.io/amd-enterprise-ai/aim-engine/model-downloader:0.1.0"
 
 	// ModelCacheSourceURIIndexKey is the field index key for AIMModelCache.Spec.SourceURI
 	ModelCacheSourceURIIndexKey = ".spec.sourceUri"
@@ -65,9 +65,9 @@ type AIMModelCacheSpec struct {
 
 	// ModelDownloadImage specifies the container image used to download and initialize the model cache.
 	// This image runs as a job to download model artifacts from the source URI to the cache volume.
-	// When not specified, defaults to kserve/storage-initializer:v0.16.0.
+	// When not specified, defaults to "ghcr.io/amd-enterprise-ai/aim-engine/model-downloader:0.1.0".
 	// +optional
-	// +kubebuilder:default="kserve/storage-initializer:v0.16.0"
+	// +kubebuilder:default="ghcr.io/amd-enterprise-ai/aim-engine/model-downloader:0.1.0"
 	ModelDownloadImage string `json:"modelDownloadImage,omitempty"`
 
 	// ImagePullSecrets references secrets for pulling AIM container images.

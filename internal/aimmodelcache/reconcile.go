@@ -214,7 +214,7 @@ func (r *ModelCacheReconciler) FetchRemoteState(
 					pod := &downloadJobPods.Items[i]
 					if pod.Status.Phase == corev1.PodRunning {
 						// Get logs from the progress-monitor init container
-						logLine := r.getLastLogLine(ctx, pod.Namespace, pod.Name, "progress-monitor")
+						logLine := r.getLastLogLine(ctx, pod.Namespace, pod.Name, "model-downloader")
 						if logLine != "" {
 							result.progressLogLine = logLine
 						}

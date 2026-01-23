@@ -28,7 +28,6 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
@@ -36,12 +35,6 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
-
-//go:embed download.sh
-var downloadScript string
-
-//go:embed download-monitor.sh
-var progressMonitorScript string
 
 func getDownloadJobName(mc *aimv1alpha1.AIMModelCache) string {
 	name, _ := utils.GenerateDerivedName([]string{mc.Name, "download"}, utils.WithHashSource(mc.UID))
@@ -61,19 +54,24 @@ func buildDownloadJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alp
 		runtimeEnv = runtimeConfigSpec.Env
 	}
 
+	// Expected size in bytes for progress calculation
+	expectedSizeBytes := mc.Spec.Size.Value()
+
 	// Merge env vars with precedence: mc.Spec.Env > runtimeConfigSpec.Env > defaults
 	defaultEnv := []corev1.EnvVar{
 		{Name: "HF_XET_CHUNK_CACHE_SIZE_BYTES", Value: "0"},
 		{Name: "HF_XET_SHARD_CACHE_SIZE_BYTES", Value: "0"},
-		{Name: "HF_XET_HIGH_PERFORMANCE", Value: "1"},
-		{Name: "HF_HOME", Value: mountPath + "/.hf"},
+		{Name: "HF_HOME", Value: mountPath + "/tmp/.hf"},
 		{Name: "UMASK", Value: "0022"},
+		{Name: "EXPECTED_SIZE_BYTES", Value: fmt.Sprintf("%d", expectedSizeBytes)},
+		{Name: "MOUNT_PATH", Value: mountPath},
+		{Name: "CACHE_NAME", Value: mc.Name},
+		{Name: "CACHE_NAMESPACE", Value: mc.Namespace},
+		{Name: "STALL_TIMEOUT", Value: "120"},
+		{Name: "TARGET_DIR", Value: mountPath},
 	}
 	newEnv := utils.MergeEnvVars(defaultEnv, runtimeEnv)
 	newEnv = utils.MergeEnvVars(newEnv, mc.Spec.Env)
-
-	// Expected size in bytes for progress calculation
-	expectedSizeBytes := mc.Spec.Size.Value()
 
 	return &batchv1.Job{
 		TypeMeta: metav1.TypeMeta{
@@ -111,54 +109,6 @@ func buildDownloadJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alp
 								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: getCachePvcName(mc)},
 							},
 						},
-						{
-							Name: "tmp",
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{
-									SizeLimit: ptr.To(resource.MustParse("500Mi")), // Small temp space for system operations
-								},
-							},
-						},
-					},
-					// Native sidecar (Kubernetes 1.28+): init container with restartPolicy=Always
-					// runs alongside main containers and is automatically terminated by kubelet
-					// when all regular containers complete (success or failure)
-					InitContainers: []corev1.Container{
-						{
-							Name:            "progress-monitor",
-							Image:           "busybox:1.36",
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							// restartPolicy: Always makes this a native sidecar that runs alongside main containers
-							// Kubernetes automatically sends SIGTERM when all regular containers terminate
-							RestartPolicy: ptr.To(corev1.ContainerRestartPolicyAlways),
-							SecurityContext: &corev1.SecurityContext{
-								RunAsUser:  ptr.To(int64(1000)),
-								RunAsGroup: ptr.To(int64(1000)),
-							},
-							Env: []corev1.EnvVar{
-								{Name: "EXPECTED_SIZE_BYTES", Value: fmt.Sprintf("%d", expectedSizeBytes)},
-								{Name: "MOUNT_PATH", Value: mountPath},
-							},
-							Command: []string{"/bin/sh"},
-							Args: []string{
-								"-c",
-								progressMonitorScript,
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{Name: "cache", MountPath: mountPath, ReadOnly: true},
-							},
-							// Minimal resources for the monitor
-							Resources: corev1.ResourceRequirements{
-								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("10m"),
-									corev1.ResourceMemory: resource.MustParse("16Mi"),
-								},
-								Limits: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("50m"),
-									corev1.ResourceMemory: resource.MustParse("32Mi"),
-								},
-							},
-						},
 					},
 					Containers: []corev1.Container{
 						{
@@ -169,18 +119,10 @@ func buildDownloadJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alp
 								RunAsUser:  ptr.To(int64(1000)),
 								RunAsGroup: ptr.To(int64(1000)),
 							},
-							Env: append(newEnv, []corev1.EnvVar{
-								{Name: "MOUNT_PATH", Value: mountPath},
-								{Name: "SOURCE_URI", Value: mc.Spec.SourceURI},
-							}...),
-							Command: []string{"/bin/sh"},
-							Args: []string{
-								"-c",
-								downloadScript,
-							},
+							Env:  newEnv,
+							Args: []string{mc.Spec.SourceURI},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "cache", MountPath: mountPath},
-								{Name: "tmp", MountPath: "/tmp"},
 							},
 						},
 					},
