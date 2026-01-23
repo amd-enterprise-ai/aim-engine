@@ -73,7 +73,6 @@ type ServiceFetchResult struct {
 	inferenceServicePods   *controllerutils.FetchResult[*corev1.PodList]
 	httpRoute              controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
 	templateCache          controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]
-	pvc                    controllerutils.FetchResult[*corev1.PersistentVolumeClaim]
 
 	// Model caches (for template cache - shared mode)
 	modelCaches controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]

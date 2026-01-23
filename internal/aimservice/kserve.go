@@ -652,23 +652,6 @@ func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObserva
 	}
 }
 
-// addServicePVCMount adds a service PVC volume mount.
-func addServicePVCMount(isvc *servingv1beta1.InferenceService, container *corev1.Container, pvcName string) {
-	isvc.Spec.Predictor.Volumes = append(isvc.Spec.Predictor.Volumes, corev1.Volume{
-		Name: constants.VolumeModelStorage,
-		VolumeSource: corev1.VolumeSource{
-			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: pvcName,
-			},
-		},
-	})
-
-	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
-		Name:      constants.VolumeModelStorage,
-		MountPath: constants.AIMCacheBasePath,
-	})
-}
-
 // addModelCacheMount adds a model cache PVC volume mount.
 // The mount path is determined by the modelId (or derived from sourceURI).
 // This aligns with the unified download architecture where models are downloaded to ${MOUNT_PATH}/${modelId}.
