@@ -102,7 +102,7 @@ clusterRuntimeConfig:
     #     - "aim.eai.amd.com/*"
 
 # Cluster-wide model source for automatic model discovery from container registries
-# Creates an AIMClusterModelSource CR when enabled
+# Creates an AIMClusterModelSource CR when enabled, installing latest AIM Container Images
 clusterModelSource:
   enable: false
   name: amd-aim-model-source
