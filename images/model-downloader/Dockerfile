@@ -1,14 +1,21 @@
-FROM python:3.14-alpine
+FROM python:3.14-slim
 
-RUN apk add --no-cache s3cmd procps kubectl \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    s3cmd \
+    procps \
+    && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -U huggingface_hub
+
 
 COPY entrypoint.sh /entrypoint.sh
 COPY progress_monitor.sh /progress_monitor.sh
-RUN chmod +x /entrypoint.sh /progress_monitor.sh
+COPY check-size.sh /check-size.sh
+
+
+RUN chmod +x /entrypoint.sh /check-size.sh /progress_monitor.sh
+
 
 RUN mkdir /cache && chown 1000:1000 /cache
-
 
 WORKDIR /cache
 USER 1000

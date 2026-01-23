@@ -54,8 +54,13 @@ func buildDownloadJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alp
 		runtimeEnv = runtimeConfigSpec.Env
 	}
 
-	// Expected size in bytes for progress calculation
-	expectedSizeBytes := mc.Spec.Size.Value()
+	// Get effective size (from spec or discovered)
+	var expectedSizeBytes int64
+	if !mc.Spec.Size.IsZero() {
+		expectedSizeBytes = mc.Spec.Size.Value()
+	} else if mc.Status.DiscoveredSizeBytes != nil {
+		expectedSizeBytes = *mc.Status.DiscoveredSizeBytes
+	}
 
 	// Merge env vars with precedence: mc.Spec.Env > runtimeConfigSpec.Env > defaults
 	defaultEnv := []corev1.EnvVar{
@@ -81,6 +86,11 @@ func buildDownloadJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alp
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      getDownloadJobName(mc),
 			Namespace: mc.Namespace,
+			Labels: map[string]string{
+				constants.LabelKeyCacheName: mc.Name,
+				constants.LabelKeyCacheType: "model-cache",
+				constants.LabelKeyComponent: "download",
+			},
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            ptr.To(int32(2)),
@@ -124,6 +134,73 @@ func buildDownloadJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alp
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "cache", MountPath: mountPath},
 							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func getCheckSizeJobName(mc *aimv1alpha1.AIMModelCache) string {
+	name, _ := utils.GenerateDerivedName([]string{mc.Name, "check-size"}, utils.WithHashSource(mc.UID))
+	return name
+}
+
+func buildCheckSizeJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon) *batchv1.Job {
+	downloadImage := aimv1alpha1.DefaultDownloadImage
+	if len(mc.Spec.ModelDownloadImage) > 0 {
+		downloadImage = mc.Spec.ModelDownloadImage
+	}
+
+	// Get auth env vars from runtime config and spec
+	var runtimeEnv []corev1.EnvVar
+	if runtimeConfigSpec != nil {
+		runtimeEnv = runtimeConfigSpec.Env
+	}
+	envVars := utils.MergeEnvVars(runtimeEnv, mc.Spec.Env)
+
+	return &batchv1.Job{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: batchv1.SchemeGroupVersion.String(),
+			Kind:       "Job",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      getCheckSizeJobName(mc),
+			Namespace: mc.Namespace,
+			Labels: map[string]string{
+				constants.LabelKeyCacheName: mc.Name,
+				constants.LabelKeyCacheType: "model-cache",
+				constants.LabelKeyComponent: "check-size",
+			},
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit:            ptr.To(int32(2)),
+			TTLSecondsAfterFinished: ptr.To(int32(60 * 5)), // Cleanup after 5min
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						constants.LabelKeyCacheName: mc.Name,
+						constants.LabelKeyCacheType: "model-cache",
+						constants.LabelKeyComponent: "check-size",
+					},
+				},
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyNever,
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsUser:    ptr.To(int64(1000)),
+						RunAsGroup:   ptr.To(int64(1000)),
+						RunAsNonRoot: ptr.To(true),
+					},
+					ImagePullSecrets: mc.Spec.ImagePullSecrets,
+					Containers: []corev1.Container{
+						{
+							Name:            "check-size",
+							Image:           downloadImage,
+							ImagePullPolicy: corev1.PullIfNotPresent,
+							Command:         []string{"/check-size.sh"},
+							Args:            []string{mc.Spec.SourceURI},
+							Env:             envVars,
 						},
 					},
 				},

@@ -54,6 +54,7 @@ type AIMModelCacheSpec struct {
 	StorageClassName string `json:"storageClassName,omitempty"`
 
 	// Size specifies the size of the cache volume
+	// +optional
 	Size resource.Quantity `json:"size"`
 
 	// Env lists the environment variables to use for authentication when downloading models.
@@ -118,11 +119,29 @@ type AIMModelCacheStatus struct {
 	// +optional
 	Progress *DownloadProgress `json:"progress,omitempty"`
 
+	// In AIMModelCacheStatus
+	// DisplaySize is the human-readable effective size (spec or discovered)
+	// +optional
+	DisplaySize string `json:"displaySize,omitempty"`
+
 	// LastUsed represents the last time a model was deployed that used this cache
 	LastUsed *metav1.Time `json:"lastUsed,omitempty"`
 
 	// PersistentVolumeClaim represents the name of the created PVC
 	PersistentVolumeClaim string `json:"persistentVolumeClaim,omitempty"`
+
+	// DiscoveredSizeBytes is the model size discovered via check-size job.
+	// Populated when spec.size is not provided.
+	// +optional
+	DiscoveredSizeBytes *int64 `json:"discoveredSizeBytes,omitempty"`
+
+	// AllocatedSizeBytes is the actual PVC size requested (including headroom).
+	// +optional
+	AllocatedSizeBytes *int64 `json:"allocatedSizeBytes,omitempty"`
+
+	// HeadroomPercent is the headroom percentage that was applied to the PVC size.
+	// +optional
+	HeadroomPercent *int32 `json:"headroomPercent,omitempty"`
 }
 
 func (m *AIMModelCache) GetStatus() *AIMModelCacheStatus {
@@ -149,39 +168,11 @@ func (s *AIMModelCacheStatus) GetAIMStatus() constants.AIMStatus {
 	return s.Status
 }
 
-// Condition types for AIMModelCache
-const (
-	// AIMModelCacheConditionStorageReady is True when storage backing the cache is provisioned and mounted (PVC Bound)
-	AIMModelCacheConditionStorageReady = "StorageReady"
-	AIMModelCacheDownloadReady         = "DownloadReady"
-)
-
-// Condition reasons for AIMModelCache
-const (
-	// StorageReady-related reasons
-	AIMModelCacheReasonPVCProvisioning = "PVCProvisioning"
-	AIMModelCacheReasonPVCBound        = "PVCBound"
-	AIMModelCacheReasonPVCPending      = "PVCPending"
-	AIMModelCacheReasonPVCLost         = "PVCLost"
-
-	// Progressing-related reasons
-	AIMModelCacheReasonWaitingForPVC = "WaitingForPVC"
-	AIMModelCacheReasonDownloading   = "Downloading"
-	AIMModelCacheReasonRetryBackoff  = "RetryBackoff"
-
-	// Ready-related reasons
-	AIMModelCacheReasonWarm = "Warm"
-
-	// Failure-related reasons
-	AIMModelCacheReasonNoFailure      = "NoFailure"
-	AIMModelCacheReasonDownloadFailed = "DownloadFailed"
-)
-
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=aimmc,categories=aim;all
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
-// +kubebuilder:printcolumn:name="Model Size",type=string,JSONPath=`.spec.size`
+// +kubebuilder:printcolumn:name="Model Size",type=string,JSONPath=`.status.displaySize`
 // +kubebuilder:printcolumn:name="Progress",type=string,JSONPath=`.status.progress.displayPercentage`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

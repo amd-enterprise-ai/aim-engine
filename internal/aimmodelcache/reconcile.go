@@ -32,6 +32,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -53,8 +54,15 @@ type ModelCacheFetchResult struct {
 
 	mergedRuntimeConfig controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
 	cachePvc            controllerutils.FetchResult[*corev1.PersistentVolumeClaim]
-	downloadJob         *controllerutils.FetchResult[*batchv1.Job]
-	downloadJobPods     *controllerutils.FetchResult[*corev1.PodList]
+
+	// Check-size job (fetched when spec.size is empty and not yet discovered)
+	checkSizeJob     *controllerutils.FetchResult[*batchv1.Job]
+	checkSizeJobPods *controllerutils.FetchResult[*corev1.PodList]
+	checkSizeOutput  string // Last log line from check-size container
+
+	// Download job pods (existing)
+	downloadJob     *controllerutils.FetchResult[*batchv1.Job]
+	downloadJobPods *controllerutils.FetchResult[*corev1.PodList]
 
 	// progressLogLine stores the last progress log line from the monitor container
 	progressLogLine string
@@ -70,6 +78,54 @@ type progressLog struct {
 	IntervalSeconds int    `json:"intervalSeconds,omitempty"`
 }
 
+type checkSizeOutput struct {
+	URL       string `json:"url"`
+	SizeBytes int64  `json:"sizeBytes"`
+}
+
+func parseCheckSizeOutput(logLine string) (*int64, error) {
+	if logLine == "" {
+		return nil, fmt.Errorf("no output from check-size job")
+	}
+
+	var output checkSizeOutput
+	if err := json.Unmarshal([]byte(logLine), &output); err != nil {
+		return nil, fmt.Errorf("failed to parse check-size output: %w", err)
+	}
+
+	if output.SizeBytes <= 0 {
+		return nil, fmt.Errorf("invalid size: %d bytes", output.SizeBytes)
+	}
+
+	return &output.SizeBytes, nil
+}
+
+// IsSizeKnown returns true if size is available (from spec or discovered)
+func (result ModelCacheFetchResult) IsSizeKnown() bool {
+	mc := result.modelCache
+	return !mc.Spec.Size.IsZero() || mc.Status.DiscoveredSizeBytes != nil
+}
+
+// GetEffectiveSize returns the size to use (spec or discovered)
+func (result ModelCacheFetchResult) GetEffectiveSize() int64 {
+	mc := result.modelCache
+	if !mc.Spec.Size.IsZero() {
+		return mc.Spec.Size.Value()
+	}
+	if mc.Status.DiscoveredSizeBytes != nil {
+		return *mc.Status.DiscoveredSizeBytes
+	}
+	return 0
+}
+
+// CheckSizeJobSucceeded returns true if the check-size job completed successfully
+func (result ModelCacheFetchResult) CheckSizeJobSucceeded() bool {
+	if result.checkSizeJob == nil {
+		return false
+	}
+	return utils.IsJobSucceeded(result.checkSizeJob.Value)
+}
+
 // parseProgressLog parses a JSON progress log line and returns a DownloadProgress if valid
 func parseProgressLog(logLine string) *aimv1alpha1.DownloadProgress {
 	if logLine == "" {
@@ -78,7 +134,6 @@ func parseProgressLog(logLine string) *aimv1alpha1.DownloadProgress {
 
 	var log progressLog
 	if err := json.Unmarshal([]byte(logLine), &log); err != nil {
-		// TODO add error logging
 		return nil
 	}
 
@@ -106,10 +161,7 @@ func parseProgressLog(logLine string) *aimv1alpha1.DownloadProgress {
 	// For "complete" type, ensure we show 100%
 	if log.Type == "complete" {
 		percent = 100
-		fmt.Printf("DEBUG parseProgressLog: log type is 'complete', setting percent to 100\n")
 	}
-
-	// TODO move the display here
 
 	return &aimv1alpha1.DownloadProgress{
 		TotalBytes:        log.ExpectedBytes,
@@ -156,22 +208,58 @@ func (r *ModelCacheReconciler) FetchRemoteState(
 	c client.Client,
 	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha1.AIMModelCache],
 ) ModelCacheFetchResult {
+	mc := reconcileCtx.Object
+	downloadJobName := getDownloadJobName(mc)
 	downloadJob := &batchv1.Job{}
 	downloadJobPods := &corev1.PodList{}
-	cachePvc := &corev1.PersistentVolumeClaim{}
-
-	downloadJobName := getDownloadJobName(reconcileCtx.Object)
 
 	result := ModelCacheFetchResult{
-		modelCache:          reconcileCtx.Object,
+		modelCache:          mc,
 		mergedRuntimeConfig: reconcileCtx.MergedRuntimeConfig,
-
-		// Always fetch the status of the PVC
 		cachePvc: controllerutils.Fetch(
 			ctx, c,
-			client.ObjectKey{Name: getCachePvcName(reconcileCtx.Object), Namespace: reconcileCtx.Object.Namespace},
-			cachePvc,
+			client.ObjectKey{Name: getCachePvcName(mc), Namespace: mc.Namespace},
+			&corev1.PersistentVolumeClaim{},
 		),
+	}
+
+	// Fetch check-size job if size not in spec AND not yet discovered
+	if mc.Spec.Size.IsZero() && mc.Status.DiscoveredSizeBytes == nil {
+		checkSizeJobName := getCheckSizeJobName(mc)
+		checkSizeJob := &batchv1.Job{}
+
+		checkSizeJobFetchResult := controllerutils.Fetch(
+			ctx, c,
+			client.ObjectKey{Name: checkSizeJobName, Namespace: mc.Namespace},
+			checkSizeJob,
+		)
+		result.checkSizeJob = &checkSizeJobFetchResult
+
+		// Fetch pods if job exists
+		if !checkSizeJobFetchResult.IsNotFound() && !checkSizeJobFetchResult.HasError() {
+			checkSizeJobPods := &corev1.PodList{}
+			podsFetchResult := controllerutils.FetchList(
+				ctx, c,
+				checkSizeJobPods,
+				client.InNamespace(mc.Namespace),
+				client.MatchingLabels{"job-name": checkSizeJobName},
+			)
+			result.checkSizeJobPods = &podsFetchResult
+
+			// Get output from completed/running pod
+			if len(checkSizeJobPods.Items) > 0 {
+				for i := range checkSizeJobPods.Items {
+					pod := &checkSizeJobPods.Items[i]
+					if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodRunning {
+						logLine := r.getLastLogLine(ctx, pod.Namespace, pod.Name, "check-size")
+						if logLine != "" {
+							result.checkSizeOutput = logLine
+						}
+						break
+					}
+				}
+			}
+		}
 	}
 
 	// Always fetch the download job to determine if it succeeded
@@ -231,17 +319,32 @@ func (r *ModelCacheReconciler) FetchRemoteState(
 func (result ModelCacheFetchResult) GetComponentHealth(ctx context.Context, clientset kubernetes.Interface) []controllerutils.ComponentHealth {
 	health := []controllerutils.ComponentHealth{
 		result.mergedRuntimeConfig.ToUpstreamComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth),
-		result.cachePvc.ToDownstreamComponentHealth("CachePvc", controllerutils.GetPvcHealth),
 	}
 
-	// Only include Job/Pod health if we're not Ready yet
-	// Once Ready, the Job may be cleaned up by TTL and we don't want its absence to affect status
-	if result.modelCache.Status.Status != constants.AIMStatusReady {
-		if result.downloadJob != nil {
-			health = append(health, result.downloadJob.ToDownstreamComponentHealth("DownloadJob", controllerutils.GetJobHealth))
+	// Phase 1: Check-size job health (when discovering size)
+	if result.checkSizeJob != nil {
+		health = append(health,
+			result.checkSizeJob.ToDownstreamComponentHealth("CheckSizeJob", controllerutils.GetJobHealth))
+		if result.checkSizeJobPods != nil {
+			health = append(health,
+				result.checkSizeJobPods.ToComponentHealthWithContext(ctx, clientset, "CheckSizeJobPods", controllerutils.GetPodsHealth))
 		}
-		if result.downloadJobPods != nil {
-			health = append(health, result.downloadJobPods.ToComponentHealthWithContext(ctx, clientset, "DownloadJobPods", controllerutils.GetPodsHealth))
+	}
+
+	// Phase 2+: PVC and download job health (only after size is known)
+	if result.IsSizeKnown() {
+		health = append(health,
+			result.cachePvc.ToDownstreamComponentHealth("CachePvc", controllerutils.GetPvcHealth))
+
+		if result.modelCache.Status.Status != constants.AIMStatusReady {
+			if result.downloadJob != nil {
+				health = append(health,
+					result.downloadJob.ToDownstreamComponentHealth("DownloadJob", controllerutils.GetJobHealth))
+			}
+			if result.downloadJobPods != nil {
+				health = append(health,
+					result.downloadJobPods.ToComponentHealthWithContext(ctx, clientset, "DownloadJobPods", controllerutils.GetPodsHealth))
+			}
 		}
 	}
 
@@ -284,6 +387,18 @@ func (r *ModelCacheReconciler) PlanResources(
 	// Use runtime config if available, otherwise use nil (functions should handle defaults)
 	runtimeConfig := reconcileCtx.MergedRuntimeConfig.Value
 
+	// Phase 1: Size discovery (when spec.size is empty)
+	if !obs.IsSizeKnown() {
+		if obs.checkSizeJob != nil && obs.checkSizeJob.IsNotFound() {
+			// Create check-size job
+			checkSizeJob := buildCheckSizeJob(mc, runtimeConfig)
+			result.Apply(checkSizeJob)
+		}
+		// Don't proceed until size is known
+		return result
+	}
+
+	// Phase 2: PVC creation - size is known
 	if obs.cachePvc.IsNotFound() {
 		// Include PVC only if it doesn't exist yet
 		// Once created, PVCs are immutable - we never modify them to avoid:
@@ -293,17 +408,17 @@ func (r *ModelCacheReconciler) PlanResources(
 
 		headroomPercent := utils.GetPVCHeadroomPercent(runtimeConfig)
 		storageClassName := utils.ResolveStorageClass(mc.Spec.StorageClassName, runtimeConfig)
-		pvcSize := utils.QuantityWithHeadroom(mc.Spec.Size.Value(), headroomPercent)
+		effectiveSize := obs.GetEffectiveSize()
+		pvcSize := utils.QuantityWithHeadroom(effectiveSize, headroomPercent)
 
 		pvc := buildCachePvc(mc, pvcSize, storageClassName)
 		result.Apply(pvc)
-	} else if mc.Status.Status != constants.AIMStatusReady && obs.downloadJob != nil && obs.downloadJob.IsNotFound() {
-		// Only include the job if:
-		// 1. The PVC exists (not NotFound)
-		// 2. The overall model cache is not ready yet
-		// 3. The job doesn't exist yet (Jobs are immutable once created)
-		// Note: If the job is deleted due to TTL, it won't be recreated (which is expected)
+		return result
+	}
 
+	// Phase 3: Download job creation - size is known and PVC exists
+	if mc.Status.Status != constants.AIMStatusReady &&
+		obs.downloadJob != nil && obs.downloadJob.IsNotFound() {
 		downloadJob := buildDownloadJob(mc, runtimeConfig)
 		result.Apply(downloadJob)
 	}
@@ -317,6 +432,42 @@ func (r *ModelCacheReconciler) DecorateStatus(
 	_ *controllerutils.ConditionManager,
 	obs ModelCacheObservation,
 ) {
+	mc := obs.modelCache
+	runtimeConfig := obs.mergedRuntimeConfig.Value
+
+	// Store discovered size when check-size job succeeds
+	if obs.CheckSizeJobSucceeded() && status.DiscoveredSizeBytes == nil {
+		if size, err := parseCheckSizeOutput(obs.checkSizeOutput); err == nil {
+			status.DiscoveredSizeBytes = size
+		}
+	}
+
+	// Set display size from spec or discovered
+	if !mc.Spec.Size.IsZero() {
+		status.DisplaySize = mc.Spec.Size.String()
+	} else if status.DiscoveredSizeBytes != nil {
+		// Convert bytes to human-readable
+		status.DisplaySize = resource.NewQuantity(*status.DiscoveredSizeBytes, resource.BinarySI).String()
+	}
+
+	// Store allocated size and headroom when PVC is created
+	if !obs.cachePvc.IsNotFound() && status.AllocatedSizeBytes == nil {
+		pvc := obs.cachePvc.Value
+		if pvc != nil && pvc.Spec.Resources.Requests != nil {
+			if qty, ok := pvc.Spec.Resources.Requests[corev1.ResourceStorage]; ok {
+				allocatedSize := qty.Value()
+				status.AllocatedSizeBytes = &allocatedSize
+			}
+		}
+		headroom := int32(utils.GetPVCHeadroomPercent(runtimeConfig))
+		status.HeadroomPercent = &headroom
+	}
+
+	// Set PVC name in status when PVC exists
+	if !obs.cachePvc.IsNotFound() && obs.cachePvc.Value != nil && status.PersistentVolumeClaim == "" {
+		status.PersistentVolumeClaim = obs.cachePvc.Value.Name
+	}
+
 	// Check if the pod has failed (before the job is marked as failed by k8s)
 	// This handles the window between pod failure and job failure status
 	podFailed := false
@@ -354,7 +505,8 @@ func (r *ModelCacheReconciler) DecorateStatus(
 	if jobSucceeded {
 		// When the job succeeds, set progress to 100%
 		// This ensures we show completion even if the sidecar didn't have time to report it
-		expectedSize := obs.modelCache.Spec.Size.Value()
+		expectedSize := obs.GetEffectiveSize()
+
 		status.Progress = &aimv1alpha1.DownloadProgress{
 			TotalBytes:        expectedSize,
 			DownloadedBytes:   expectedSize,

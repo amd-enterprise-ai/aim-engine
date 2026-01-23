@@ -54,6 +54,7 @@ func buildCachePvc(mc *aimv1alpha1.AIMModelCache, pvcSize resource.Quantity, sto
 
 	// Build labels with type and source information
 	labels := map[string]string{}
+	labels[constants.LabelKeyCacheName] = mc.Name
 
 	// Add cache type if it's a template cache
 	if cacheType != "" {

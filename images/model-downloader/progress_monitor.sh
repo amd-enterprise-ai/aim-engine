@@ -57,6 +57,7 @@ stall_timeout=${STALL_TIMEOUT:-60}  # 1 minutes default
 log_json "start" "expectedBytes=$expected_size" "intervalSeconds=$log_interval" "stallTimeoutSeconds=$stall_timeout"
 
 last_size=0
+percent=0
 last_change_time=$(date +%s)
 
 while true; do
