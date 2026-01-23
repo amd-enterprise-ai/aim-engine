@@ -67,6 +67,57 @@ type AIMServiceCachingConfig struct {
 	Mode AIMCachingMode `json:"mode,omitempty"`
 }
 
+// AIMServiceKVCache specifies KV cache configuration for the service.
+// The controller will use an existing AIMKVCache if found, otherwise it will create one.
+type AIMServiceKVCache struct {
+	// Name specifies the name of the AIMKVCache resource to use.
+	// If an AIMKVCache with this name exists, it will be used.
+	// If it doesn't exist, a new AIMKVCache will be created with this name.
+	// If not specified, defaults to "kvcache-{namespace}".
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// Type specifies the type of KV cache backend.
+	// Only used when creating a new AIMKVCache (ignored if referencing existing).
+	// +kubebuilder:validation:Enum=redis
+	// +kubebuilder:default=redis
+	Type string `json:"type,omitempty"`
+
+	// Image specifies the container image to use for the KV cache service.
+	// Only used when creating a new AIMKVCache (ignored if referencing existing).
+	// If not specified, defaults to appropriate images based on Type.
+	// +optional
+	Image *string `json:"image,omitempty"`
+
+	// Env specifies environment variables to set in the KV cache container.
+	// Only used when creating a new AIMKVCache (ignored if referencing existing).
+	// If not specified (nil), no additional environment variables are set.
+	// If explicitly set to an empty array, no environment variables are added.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// Storage defines the persistent storage configuration for the KV cache.
+	// Only used when creating a new AIMKVCache (ignored if referencing existing).
+	// +optional
+	Storage *StorageSpec `json:"storage,omitempty"`
+
+	// Resources defines the resource requirements for the KV cache container.
+	// Only used when creating a new AIMKVCache (ignored if referencing existing).
+	// If not specified, defaults to 1 CPU and 1Gi memory for both requests and limits.
+	// +optional
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// LMCacheConfig specifies the custom LMCache configuration YAML content.
+	// When specified, this exact configuration is used for the lmcache_config.yaml file.
+	// When empty, a default configuration is generated with standard LMCache settings.
+	// Note: The remote_url field in custom configs will have the {SERVICE_URL} placeholder
+	// replaced with the actual KV cache service URL.
+	// +optional
+	LMCacheConfig string `json:"lmCacheConfig,omitempty"`
+}
+
 // AIMServiceTemplateConfig contains template selection configuration for AIMService.
 type AIMServiceTemplateConfig struct {
 	// Name is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.
@@ -158,6 +209,11 @@ type AIMServiceSpec struct {
 	// When nil, defaults to Auto mode (use cache if available, don't create).
 	// +optional
 	Caching *AIMServiceCachingConfig `json:"caching,omitempty"`
+
+	// KVCache specifies KV cache configuration for the service.
+	// When specified, enables LMCache with the configured KV cache backend.
+	// +optional
+	KVCache *AIMServiceKVCache `json:"kvCache,omitempty"`
 
 	// DEPRECATED: Use Caching.Mode instead. This field will be removed in a future version.
 	// For backward compatibility, if Caching is not set, this field is used.
@@ -256,6 +312,10 @@ type AIMServiceStatus struct {
 	// Cache captures cache-related status for this service.
 	// +optional
 	Cache *AIMServiceCacheStatus `json:"cache,omitempty"`
+
+	// ResolvedKVCache captures metadata about the KV cache being used.
+	// +optional
+	ResolvedKVCache *AIMResolvedReference `json:"resolvedKVCache,omitempty"`
 }
 
 // AIMServiceCacheStatus captures cache-related status for an AIMService.

@@ -29,6 +29,8 @@ import (
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -77,6 +79,11 @@ type ServiceFetchResult struct {
 
 	// Model caches (for template cache)
 	modelCaches controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]
+
+	// KV cache (for KV Cache Service)
+	kvCache controllerutils.FetchResult[*aimv1alpha1.AIMKVCache]
+	// LMCache ConfigMap (for KV Cache configuration)
+	kvCacheConfigMap controllerutils.FetchResult[*corev1.ConfigMap]
 }
 
 // FetchRemoteState fetches all resources needed for AIMService reconciliation.
@@ -123,12 +130,22 @@ func (r *ServiceReconciler) FetchRemoteState(
 	// 3. Fetch TemplateCache (always fetch - cascades health from ModelCache/PVC)
 	result.templateCache = fetchTemplateCache(ctx, c, service)
 
-	// 4. Fetch ModelCaches if template cache exists
+	// 4. Fetch KVCache if KVCache is configured
+	if service.Spec.KVCache != nil {
+		result.kvCache = fetchKVCache(ctx, c, service)
+	}
+
+	// 5. Fetch LMCache ConfigMap if KVCache is configured
+	if service.Spec.KVCache != nil {
+		result.kvCacheConfigMap = fetchLMCacheConfigMap(ctx, c, service)
+	}
+
+	// 6. Fetch ModelCaches if template cache exists
 	if result.templateCache.OK() && result.templateCache.Value != nil {
 		result.modelCaches = fetchModelCaches(ctx, c, service.Namespace)
 	}
 
-	// 5. Fetch service PVC when needed:
+	// 7. Fetch service PVC when needed:
 	// - When caching is Never: always need the service's temp PVC for downloads
 	// - When caching is Auto: need PVC as fallback if template cache is not ready
 	// - When caching is Always: don't need service PVC (use template cache)
@@ -140,7 +157,7 @@ func (r *ServiceReconciler) FetchRemoteState(
 		result.pvc = fetchServicePVC(ctx, c, service)
 	}
 
-	// 6. Only fetch Model and Template if InferenceService needs to be (re)created.
+	// 8. Only fetch Model and Template if InferenceService needs to be (re)created.
 	// Once the ISVC exists, the config is baked in and we don't need these upstream resources.
 	// Use IsNotFound() rather than !OK() to avoid re-resolving when there's a transient error
 	// fetching an existing ISVC (which could cause SSA to update an existing resource).
@@ -205,6 +222,9 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 
 	// HTTPRoute health (if routing is enabled)
 	health = append(health, obs.getHTTPRouteHealth())
+
+	// KV Cache health (if KV Cache Service is enabled)
+	health = append(health, obs.getKVCacheHealth())
 
 	return health
 }
@@ -609,6 +629,36 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 	return health
 }
 
+// getKVCacheHealth checks the health of the KV Cache Service.
+func (obs ServiceObservation) getKVCacheHealth() controllerutils.ComponentHealth {
+	if obs.service.Spec.KVCache == nil {
+		return controllerutils.ComponentHealth{}
+	}
+
+	return obs.kvCache.ToDownstreamComponentHealth("KVCache", func(kvc *aimv1alpha1.AIMKVCache) controllerutils.ComponentHealth {
+		health := controllerutils.ComponentHealth{
+			Component:      "KVCache",
+			DependencyType: controllerutils.DependencyTypeDownstream,
+		}
+
+		switch kvc.Status.Status {
+		case constants.AIMStatusReady:
+			health.State = constants.AIMStatusReady
+			health.Reason = "KVCacheReady"
+			health.Message = "KV cache is ready"
+		case constants.AIMStatusPending, constants.AIMStatusProgressing:
+			health.State = constants.AIMStatusProgressing
+			health.Reason = "KVCacheNotReady"
+			health.Message = "KV cache is not ready yet"
+		default:
+			health.State = constants.AIMStatusFailed
+			health.Reason = "KVCacheFailed"
+			health.Message = "KV cache is in failed state"
+		}
+		return health
+	})
+}
+
 // ============================================================================
 // OBSERVATION
 // ============================================================================
@@ -627,11 +677,14 @@ type ServiceObservation struct {
 	// storageSizeError is set when storage size calculation fails due to missing model source sizes.
 	// This indicates the template hasn't fully resolved its model sources yet.
 	storageSizeError error
+
+	// kvCacheSpecMismatch is true when the KV cache spec does not match the observed KV cache.
+	kvCacheSpecMismatch bool
 }
 
 // ComposeState creates the observation from fetched data, deriving semantic state.
 func (r *ServiceReconciler) ComposeState(
-	_ context.Context,
+	ctx context.Context,
 	_ controllerutils.ReconcileContext[*aimv1alpha1.AIMService],
 	fetch ServiceFetchResult,
 ) ServiceObservation {
@@ -662,7 +715,45 @@ func (r *ServiceReconciler) ComposeState(
 	// This catches configuration issues early (model sources without sizes)
 	obs.storageSizeError = r.validateStorageSize(fetch)
 
+	// Check for KVCache spec mismatch (after embedding FetchResult)
+	if obs.service.Spec.KVCache != nil && fetch.kvCache.OK() && fetch.kvCache.Value != nil {
+		obs.kvCacheSpecMismatch = checkKVCacheSpecMismatch(ctx,
+			obs.service.Spec.KVCache, fetch.kvCache.Value,
+		)
+	}
+
 	return obs
+}
+
+func checkKVCacheSpecMismatch(ctx context.Context, desired *aimv1alpha1.AIMServiceKVCache, existing *aimv1alpha1.AIMKVCache) bool {
+	logger := log.FromContext(ctx).WithName("checkKVCacheSpecMismatch")
+
+	if desired.Type != "" && desired.Type != existing.Spec.KVCacheType {
+		logger.V(1).Info("spec mismatch detected", "field", "type", "desired", desired.Type, "existing", existing.Spec.KVCacheType)
+		return true
+	}
+
+	if desired.Image != nil && *desired.Image != "" && existing.Spec.Image != nil && (*desired.Image != *existing.Spec.Image || existing.Spec.Image == nil) {
+		logger.V(1).Info("spec mismatch detected", "field", "image", "desired", *desired.Image, "existing", existing.Spec.Image)
+		return true
+	}
+
+	if desired.Env != nil && !equality.Semantic.DeepEqual(desired.Env, existing.Spec.Env) {
+		logger.V(1).Info("spec mismatch detected", "field", "env", "desired", desired.Env, "existing", existing.Spec.Env)
+		return true
+	}
+
+	if desired.Storage != nil && !equality.Semantic.DeepEqual(desired.Storage, existing.Spec.Storage) {
+		logger.V(1).Info("spec mismatch detected", "field", "storage", "desired", desired.Storage, "existing", existing.Spec.Storage)
+		return true
+	}
+
+	if desired.Resources != nil && !equality.Semantic.DeepEqual(desired.Resources, existing.Spec.Resources) {
+		logger.V(1).Info("spec mismatch detected", "field", "resources", "desired", desired.Resources, "existing", existing.Spec.Resources)
+		return true
+	}
+
+	return false
 }
 
 // validateStorageSize checks if storage size can be calculated for the template's model sources.
@@ -750,12 +841,22 @@ func (r *ServiceReconciler) PlanResources(
 		planResult.ApplyWithoutOwnerRef(templateCache)
 	}
 
-	// 4. Plan PVC if no template cache available
+	// 4. Plan KV Cache if KV Cache Service is enabled
+	if kvCache := planKVCache(service, obs); kvCache != nil {
+		planResult.ApplyWithoutOwnerRef(kvCache)
+	}
+
+	// 5. Plan LMCache ConfigMap if KVCache is enabled
+	if configMap := planLMCacheConfigMap(service, obs); configMap != nil {
+		planResult.Apply(configMap)
+	}
+
+	// 6. Plan PVC if no template cache available
 	if pvc := planServicePVC(service, templateName, templateStatus, obs); pvc != nil {
 		planResult.Apply(pvc)
 	}
 
-	// 5. Plan InferenceService
+	// 7. Plan InferenceService
 	if isvc := planInferenceService(ctx, service, templateName, templateNsSpec, templateStatus, obs); isvc != nil {
 		planResult.Apply(isvc)
 	}
@@ -799,7 +900,7 @@ func (obs ServiceObservation) getResolvedModel() (name string, status *aimv1alph
 // allowing the fetch logic to re-search for better alternatives on subsequent reconciles.
 func (r *ServiceReconciler) DecorateStatus(
 	status *aimv1alpha1.AIMServiceStatus,
-	_ *controllerutils.ConditionManager,
+	cm *controllerutils.ConditionManager,
 	obs ServiceObservation,
 ) {
 	// Set resolved model reference (only if Ready)
@@ -848,6 +949,24 @@ func (r *ServiceReconciler) DecorateStatus(
 				UID:       obs.templateCache.Value.UID,
 			},
 		}
+	}
+
+	// Set resolved KVCache reference (only if Ready and not already resolved)
+	if status.ResolvedKVCache == nil && obs.kvCache.OK() &&
+		obs.kvCache.Value != nil && obs.kvCache.Value.Status.Status == constants.AIMStatusReady {
+		status.ResolvedKVCache = &aimv1alpha1.AIMResolvedReference{
+			Name:      obs.kvCache.Value.Name,
+			Namespace: obs.kvCache.Value.Namespace,
+			UID:       obs.kvCache.Value.UID,
+			Scope:     aimv1alpha1.AIMResolutionScopeNamespace, // KVCache is always namespace-scoped
+		}
+	}
+
+	// Set KVCache spec mismatch condition (informational, doesn't affect Ready)
+	if obs.kvCacheSpecMismatch {
+		cm.Set("KVCacheSpecMismatch", metav1.ConditionTrue, "SpecMismatch", "KV cache spec mismatch", controllerutils.AsWarning())
+	} else if cm.Get("KVCacheSpecMismatch") != nil {
+		cm.Delete("KVCacheSpecMismatch")
 	}
 
 	// Set routing status

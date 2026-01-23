@@ -7,6 +7,20 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
+  - persistentvolumeclaims
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - events
   verbs:
   - create
@@ -23,19 +37,6 @@ rules:
   verbs:
   - get
   - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - persistentvolumeclaims
-  - services
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - ""
