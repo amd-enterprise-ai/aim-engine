@@ -640,33 +640,8 @@ func HasActiveDiscoveryJob(jobResult controllerutils.FetchResult[*batchv1.Job]) 
 }
 
 // ============================================================================
-// CONCURRENT JOB LIMITING & BACKOFF
+// BACKOFF CALCULATION
 // ============================================================================
-
-// CountActiveDiscoveryJobs counts the number of active (non-complete) discovery jobs
-// across all namespaces. This is used to enforce the concurrent job limit.
-func CountActiveDiscoveryJobs(ctx context.Context, c client.Client) (int, error) {
-	logger := log.FromContext(ctx)
-
-	var jobList batchv1.JobList
-	if err := c.List(ctx, &jobList, client.MatchingLabels{
-		"app.kubernetes.io/name":       "aim-discovery",
-		"app.kubernetes.io/component":  constants.LabelValueComponentDiscovery,
-		"app.kubernetes.io/managed-by": constants.LabelValueManagedByController,
-	}); err != nil {
-		logger.Error(err, "Failed to list discovery jobs")
-		return 0, err
-	}
-
-	activeCount := 0
-	for i := range jobList.Items {
-		if !IsJobComplete(&jobList.Items[i]) {
-			activeCount++
-		}
-	}
-
-	return activeCount, nil
-}
 
 // CalculateBackoffDuration computes the backoff duration for the given attempt number.
 // Uses exponential backoff: base * 2^(attempts-1), capped at max.
@@ -688,11 +663,16 @@ func CalculateBackoffDuration(attempts int32) time.Duration {
 }
 
 // ShouldCreateDiscoveryJob determines whether a new discovery job should be created
-// based on backoff timing from previous attempts.
+// based on backoff timing from previous attempts and spec hash comparison.
 // Returns (shouldCreate, reason, message).
-func ShouldCreateDiscoveryJob(discoveryState *aimv1alpha1.DiscoveryState, now time.Time) (bool, string, string) {
+func ShouldCreateDiscoveryJob(discoveryState *aimv1alpha1.DiscoveryState, currentSpecHash string, now time.Time) (bool, string, string) {
 	// No discovery state means this is the first attempt
 	if discoveryState == nil || discoveryState.Attempts == 0 {
+		return true, "", ""
+	}
+
+	// If spec hash changed, reset backoff and allow immediate retry
+	if discoveryState.SpecHash != "" && discoveryState.SpecHash != currentSpecHash {
 		return true, "", ""
 	}
 
@@ -731,4 +711,26 @@ func GetJobFailureReason(job *batchv1.Job) string {
 	}
 
 	return ""
+}
+
+// ComputeDiscoverySpecHash computes a hash of the template spec fields that affect discovery.
+// When this hash changes, the circuit breaker should reset to allow fresh attempts.
+func ComputeDiscoverySpecHash(spec aimv1alpha1.AIMServiceTemplateSpecCommon, modelName, image string) string {
+	hashInput := modelName + image
+
+	if spec.Metric != nil {
+		hashInput += string(*spec.Metric)
+	}
+	if spec.Precision != nil {
+		hashInput += string(*spec.Precision)
+	}
+	if spec.GpuSelector != nil {
+		hashInput += spec.GpuSelector.Model + strconv.Itoa(int(spec.GpuSelector.Count))
+	}
+	if spec.ProfileId != "" {
+		hashInput += spec.ProfileId
+	}
+
+	hash := sha256.Sum256([]byte(hashInput))
+	return fmt.Sprintf("%x", hash[:8])
 }

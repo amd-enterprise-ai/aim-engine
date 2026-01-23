@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-logr/logr"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -79,10 +80,6 @@ type ServiceTemplateFetchResult struct {
 	// GPU availability state
 	gpuResources map[string]utils.GPUResourceInfo
 	gpuFetchErr  error
-
-	// Active discovery job count across all namespaces (for concurrent limit)
-	activeDiscoveryJobCount int
-	activeJobCountErr       error
 }
 
 // FetchRemoteState fetches all required resources for namespace-scoped templates.
@@ -140,11 +137,6 @@ func (r *ServiceTemplateReconciler) FetchRemoteState(
 			}
 		}
 
-		// Fetch active discovery job count for concurrent limit enforcement
-		// Only needed if we might create a new job (no active or completed job exists)
-		if !HasActiveDiscoveryJob(result.discoveryJob) && !HasCompletedDiscoveryJob(result.discoveryJob) {
-			result.activeDiscoveryJobCount, result.activeJobCountErr = CountActiveDiscoveryJobs(ctx, c)
-		}
 	}
 
 	// Fetch template caches if caching is enabled
@@ -212,10 +204,6 @@ type ClusterServiceTemplateFetchResult struct {
 	// GPU availability state
 	gpuResources map[string]utils.GPUResourceInfo
 	gpuFetchErr  error
-
-	// Active discovery job count across all namespaces (for concurrent limit)
-	activeDiscoveryJobCount int
-	activeJobCountErr       error
 }
 
 // FetchRemoteState fetches all required resources for cluster-scoped templates.
@@ -274,11 +262,6 @@ func (r *ClusterServiceTemplateReconciler) FetchRemoteState(
 			}
 		}
 
-		// Fetch active discovery job count for concurrent limit enforcement
-		// Only needed if we might create a new job (no active or completed job exists)
-		if !HasActiveDiscoveryJob(result.discoveryJob) && !HasCompletedDiscoveryJob(result.discoveryJob) {
-			result.activeDiscoveryJobCount, result.activeJobCountErr = CountActiveDiscoveryJobs(ctx, c)
-		}
 	}
 
 	return result
@@ -448,8 +431,11 @@ func (r *ServiceTemplateReconciler) PlanResources(
 		"jobExists", obs.discoveryJob.Value != nil)
 
 	if !hasCompletedJob && !hasActiveJob {
+		// Compute spec hash for backoff reset detection
+		specHash := ComputeDiscoverySpecHash(template.Spec.AIMServiceTemplateSpecCommon, template.Spec.ModelName, image)
+
 		// Check backoff timing from previous failed attempts
-		shouldCreate, reason, message := ShouldCreateDiscoveryJob(template.Status.Discovery, time.Now())
+		shouldCreate, reason, message := ShouldCreateDiscoveryJob(template.Status.Discovery, specHash, time.Now())
 		if !shouldCreate {
 			logger.V(1).Info("discovery job creation blocked by backoff",
 				"reason", reason,
@@ -458,39 +444,10 @@ func (r *ServiceTemplateReconciler) PlanResources(
 			return planResult
 		}
 
-		// Serialize the semaphore check with other reconciliations to prevent race conditions.
-		// Without this lock, multiple reconciliations could all see "no job exists" in FetchRemoteState,
-		// then all try to acquire semaphore slots before any of them actually create the job.
-		var shouldCreateJob bool
-		WithJobCreationLock(func() {
-			// Double-check: another reconciliation may have acquired a slot for this key
-			// while we were waiting for the lock. If so, the job is being created by that
-			// reconciliation, so we should skip creating it here.
-			if GetGlobalSemaphore().IsHeld(semaphoreKey) {
-				logger.V(1).Info("semaphore slot already held for this template, skipping job creation",
-					"semaphoreKey", semaphoreKey)
-				shouldCreateJob = false
-				return
-			}
-
-			// Try to acquire a semaphore slot (non-blocking)
-			shouldCreateJob = GetGlobalSemaphore().TryAcquire(semaphoreKey)
-		})
-
-		if !shouldCreateJob {
-			if !GetGlobalSemaphore().IsHeld(semaphoreKey) {
-				// Not held and not acquired means at capacity
-				logger.V(1).Info("discovery job creation blocked by concurrent limit",
-					"semaphoreKey", semaphoreKey,
-					"activeSlots", GetGlobalSemaphore().ActiveCount(),
-					"limit", constants.MaxConcurrentDiscoveryJobs)
-			}
+		// Try to acquire a semaphore slot for job creation
+		if !tryAcquireDiscoverySlot(logger, semaphoreKey) {
 			return planResult
 		}
-
-		logger.V(1).Info("acquired semaphore slot for discovery job",
-			"semaphoreKey", semaphoreKey,
-			"activeSlots", GetGlobalSemaphore().ActiveCount())
 
 		job := BuildDiscoveryJob(DiscoveryJobSpec{
 			TemplateName:     template.Name,
@@ -576,8 +533,11 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 
 	// Template not ready - check if we need to create discovery job
 	if !HasCompletedDiscoveryJob(obs.discoveryJob) && !HasActiveDiscoveryJob(obs.discoveryJob) {
+		// Compute spec hash for backoff reset detection
+		specHash := ComputeDiscoverySpecHash(template.Spec.AIMServiceTemplateSpecCommon, template.Spec.ModelName, image)
+
 		// Check backoff timing from previous failed attempts
-		shouldCreate, reason, message := ShouldCreateDiscoveryJob(template.Status.Discovery, time.Now())
+		shouldCreate, reason, message := ShouldCreateDiscoveryJob(template.Status.Discovery, specHash, time.Now())
 		if !shouldCreate {
 			logger.V(1).Info("discovery job creation blocked by backoff",
 				"reason", reason,
@@ -586,39 +546,10 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 			return planResult
 		}
 
-		// Serialize the semaphore check with other reconciliations to prevent race conditions.
-		// Without this lock, multiple reconciliations could all see "no job exists" in FetchRemoteState,
-		// then all try to acquire semaphore slots before any of them actually create the job.
-		var shouldCreateJob bool
-		WithJobCreationLock(func() {
-			// Double-check: another reconciliation may have acquired a slot for this key
-			// while we were waiting for the lock. If so, the job is being created by that
-			// reconciliation, so we should skip creating it here.
-			if GetGlobalSemaphore().IsHeld(semaphoreKey) {
-				logger.V(1).Info("semaphore slot already held for this template, skipping job creation",
-					"semaphoreKey", semaphoreKey)
-				shouldCreateJob = false
-				return
-			}
-
-			// Try to acquire a semaphore slot (non-blocking)
-			shouldCreateJob = GetGlobalSemaphore().TryAcquire(semaphoreKey)
-		})
-
-		if !shouldCreateJob {
-			if !GetGlobalSemaphore().IsHeld(semaphoreKey) {
-				// Not held and not acquired means at capacity
-				logger.V(1).Info("discovery job creation blocked by concurrent limit",
-					"semaphoreKey", semaphoreKey,
-					"activeSlots", GetGlobalSemaphore().ActiveCount(),
-					"limit", constants.MaxConcurrentDiscoveryJobs)
-			}
+		// Try to acquire a semaphore slot for job creation
+		if !tryAcquireDiscoverySlot(logger, semaphoreKey) {
 			return planResult
 		}
-
-		logger.V(1).Info("acquired semaphore slot for discovery job",
-			"semaphoreKey", semaphoreKey,
-			"activeSlots", GetGlobalSemaphore().ActiveCount())
 
 		job := BuildDiscoveryJob(DiscoveryJobSpec{
 			TemplateName:     template.Name,
@@ -645,6 +576,52 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 }
 
 // ============================================================================
+// SHARED PLANNING HELPERS
+// ============================================================================
+
+// tryAcquireDiscoverySlot attempts to acquire a semaphore slot for discovery job creation.
+// Returns true if slot was acquired, false if at capacity or already held.
+// Uses a global lock to prevent race conditions between concurrent reconciliations.
+func tryAcquireDiscoverySlot(logger logr.Logger, semaphoreKey string) bool {
+	var shouldCreateJob bool
+
+	// Serialize the semaphore check with other reconciliations to prevent race conditions.
+	// Without this lock, multiple reconciliations could all see "no job exists" in FetchRemoteState,
+	// then all try to acquire semaphore slots before any of them actually create the job.
+	WithJobCreationLock(func() {
+		// Double-check: another reconciliation may have acquired a slot for this key
+		// while we were waiting for the lock. If so, the job is being created by that
+		// reconciliation, so we should skip creating it here.
+		if GetGlobalSemaphore().IsHeld(semaphoreKey) {
+			logger.V(1).Info("semaphore slot already held for this template, skipping job creation",
+				"semaphoreKey", semaphoreKey)
+			shouldCreateJob = false
+			return
+		}
+
+		// Try to acquire a semaphore slot (non-blocking)
+		shouldCreateJob = GetGlobalSemaphore().TryAcquire(semaphoreKey)
+	})
+
+	if !shouldCreateJob {
+		if !GetGlobalSemaphore().IsHeld(semaphoreKey) {
+			// Not held and not acquired means at capacity
+			logger.V(1).Info("discovery job creation blocked by concurrent limit",
+				"semaphoreKey", semaphoreKey,
+				"activeSlots", GetGlobalSemaphore().ActiveCount(),
+				"limit", constants.MaxConcurrentDiscoveryJobs)
+		}
+		return false
+	}
+
+	logger.V(1).Info("acquired semaphore slot for discovery job",
+		"semaphoreKey", semaphoreKey,
+		"activeSlots", GetGlobalSemaphore().ActiveCount())
+
+	return true
+}
+
+// ============================================================================
 // STATUS DECORATION
 // ============================================================================
 
@@ -654,7 +631,24 @@ func (r *ServiceTemplateReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ServiceTemplateObservation,
 ) {
-	decorateTemplateStatus(status, cm, obs.template.Spec.ModelSources, obs.discoveryJob, obs.parsedDiscovery, obs.model.Value)
+	// Compute spec hash for failure state tracking
+	var specHash string
+	if obs.model.Value != nil {
+		specHash = ComputeDiscoverySpecHash(obs.template.Spec.AIMServiceTemplateSpecCommon, obs.template.Spec.ModelName, obs.model.Value.Spec.Image)
+	}
+
+	decorateTemplateStatusCommon(
+		status, cm, obs.template.Spec.ModelSources, obs.discoveryJob, obs.parsedDiscovery,
+		obs.template.Status.Discovery, specHash,
+	)
+
+	// Set resolved model reference if available
+	if obs.model.Value != nil {
+		status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
+			Name:      obs.model.Value.Name,
+			Namespace: obs.model.Value.Namespace,
+		}
+	}
 }
 
 // DecorateStatus adds domain-specific status fields for cluster-scoped templates.
@@ -663,26 +657,35 @@ func (r *ClusterServiceTemplateReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ClusterServiceTemplateObservation,
 ) {
-	decorateClusterTemplateStatus(status, cm, obs.template.Spec.ModelSources, obs.discoveryJob, obs.parsedDiscovery, obs.clusterModel.Value)
+	// Compute spec hash for failure state tracking
+	var specHash string
+	if obs.clusterModel.Value != nil {
+		specHash = ComputeDiscoverySpecHash(obs.template.Spec.AIMServiceTemplateSpecCommon, obs.template.Spec.ModelName, obs.clusterModel.Value.Spec.Image)
+	}
+
+	decorateTemplateStatusCommon(
+		status, cm, obs.template.Spec.ModelSources, obs.discoveryJob, obs.parsedDiscovery,
+		obs.template.Status.Discovery, specHash,
+	)
+
+	// Set resolved model reference if available
+	if obs.clusterModel.Value != nil {
+		status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
+			Name: obs.clusterModel.Value.Name,
+		}
+	}
 }
 
-// decorateTemplateStatus handles common status decoration for namespace-scoped templates.
-func decorateTemplateStatus(
+// decorateTemplateStatusCommon handles shared status decoration for both namespace and cluster-scoped templates.
+func decorateTemplateStatusCommon(
 	status *aimv1alpha1.AIMServiceTemplateStatus,
 	cm *controllerutils.ConditionManager,
 	specModelSources []aimv1alpha1.AIMModelSource,
 	discoveryJobResult controllerutils.FetchResult[*batchv1.Job],
 	parsedDiscovery *ParsedDiscovery,
-	model *aimv1alpha1.AIMModel,
+	currentDiscoveryState *aimv1alpha1.DiscoveryState,
+	specHash string,
 ) {
-	// Set resolved model reference if available
-	if model != nil {
-		status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
-			Name:      model.Name,
-			Namespace: model.Namespace,
-		}
-	}
-
 	// Handle inline model sources - copy from spec to status
 	// This takes precedence over discovery results
 	if len(specModelSources) > 0 {
@@ -701,7 +704,7 @@ func decorateTemplateStatus(
 
 		// Track discovery state for failed jobs (for backoff)
 		if IsJobFailed(job) {
-			updateDiscoveryStateOnFailure(status, job)
+			updateDiscoveryStateOnFailure(status, job, specHash)
 		}
 	}
 
@@ -717,67 +720,22 @@ func decorateTemplateStatus(
 		return
 	}
 
-	// If waiting due to concurrent limit, set appropriate status
-	// Check semaphore state for accurate status (no available slots = at capacity)
-	if GetGlobalSemaphore().AvailableSlots() == 0 {
-		cm.MarkFalse("Discovered", aimv1alpha1.AIMTemplateReasonAwaitingDiscovery,
-			fmt.Sprintf("Waiting for discovery slot (%d/%d slots in use)",
-				GetGlobalSemaphore().ActiveCount(), constants.MaxConcurrentDiscoveryJobs))
-	}
-}
+	// Set appropriate status message based on waiting reason
+	if currentDiscoveryState != nil && currentDiscoveryState.Attempts > 0 && currentDiscoveryState.LastAttemptTime != nil {
+		// Check if we're in backoff period
+		backoffDuration := CalculateBackoffDuration(currentDiscoveryState.Attempts)
+		nextAttemptTime := currentDiscoveryState.LastAttemptTime.Add(backoffDuration)
+		now := time.Now()
 
-// decorateClusterTemplateStatus handles common status decoration for cluster-scoped templates.
-func decorateClusterTemplateStatus(
-	status *aimv1alpha1.AIMServiceTemplateStatus,
-	cm *controllerutils.ConditionManager,
-	specModelSources []aimv1alpha1.AIMModelSource,
-	discoveryJobResult controllerutils.FetchResult[*batchv1.Job],
-	parsedDiscovery *ParsedDiscovery,
-	clusterModel *aimv1alpha1.AIMClusterModel,
-) {
-	// Set resolved model reference if available
-	if clusterModel != nil {
-		status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
-			Name: clusterModel.Name,
+		if now.Before(nextAttemptTime) {
+			remaining := nextAttemptTime.Sub(now).Round(time.Second)
+			cm.MarkFalse("Discovered", aimv1alpha1.AIMTemplateReasonAwaitingDiscovery,
+				fmt.Sprintf("Waiting %s before retry (attempt %d failed)", remaining, currentDiscoveryState.Attempts))
+			return
 		}
 	}
 
-	// Handle inline model sources - copy from spec to status
-	// This takes precedence over discovery results
-	if len(specModelSources) > 0 {
-		status.ModelSources = specModelSources
-		cm.MarkTrue("Discovered", "InlineModelSources", "Model sources provided in-line in spec")
-		return
-	}
-
-	// Set discovery job reference if available
-	if discoveryJobResult.OK() && discoveryJobResult.Value != nil {
-		job := discoveryJobResult.Value
-		status.DiscoveryJob = &aimv1alpha1.AIMResolvedReference{
-			Name:      job.Name,
-			Namespace: job.Namespace,
-		}
-
-		// Track discovery state for failed jobs (for backoff)
-		if IsJobFailed(job) {
-			updateDiscoveryStateOnFailure(status, job)
-		}
-	}
-
-	// Set parsed discovery results if available
-	if parsedDiscovery != nil {
-		status.ModelSources = parsedDiscovery.ModelSources
-		if parsedDiscovery.Profile != nil {
-			status.Profile = parsedDiscovery.Profile
-		}
-		// Clear discovery state on success
-		status.Discovery = nil
-		cm.MarkTrue("Discovered", "DiscoveryComplete", "Discovery job completed successfully")
-		return
-	}
-
-	// If waiting due to concurrent limit, set appropriate status
-	// Check semaphore state for accurate status (no available slots = at capacity)
+	// If semaphore is at capacity, show capacity-related message
 	if GetGlobalSemaphore().AvailableSlots() == 0 {
 		cm.MarkFalse("Discovered", aimv1alpha1.AIMTemplateReasonAwaitingDiscovery,
 			fmt.Sprintf("Waiting for discovery slot (%d/%d slots in use)",
@@ -787,12 +745,18 @@ func decorateClusterTemplateStatus(
 
 // updateDiscoveryStateOnFailure updates the discovery tracking state when a job fails.
 // This increments the attempt counter and records the failure time for backoff calculation.
-func updateDiscoveryStateOnFailure(status *aimv1alpha1.AIMServiceTemplateStatus, job *batchv1.Job) {
+// The specHash parameter is stored to enable backoff reset when the spec changes.
+func updateDiscoveryStateOnFailure(status *aimv1alpha1.AIMServiceTemplateStatus, job *batchv1.Job, specHash string) {
 	now := metav1.Now()
 
 	// Initialize discovery state if needed
 	if status.Discovery == nil {
 		status.Discovery = &aimv1alpha1.DiscoveryState{}
+	}
+
+	// Check if spec hash changed - if so, reset the attempt counter
+	if status.Discovery.SpecHash != "" && status.Discovery.SpecHash != specHash {
+		status.Discovery.Attempts = 0
 	}
 
 	// Only increment if this is a new failure (job creation time > last attempt time)
@@ -801,5 +765,6 @@ func updateDiscoveryStateOnFailure(status *aimv1alpha1.AIMServiceTemplateStatus,
 		status.Discovery.Attempts++
 		status.Discovery.LastAttemptTime = &now
 		status.Discovery.LastFailureReason = GetJobFailureReason(job)
+		status.Discovery.SpecHash = specHash
 	}
 }

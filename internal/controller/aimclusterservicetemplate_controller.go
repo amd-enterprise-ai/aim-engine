@@ -24,6 +24,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -39,6 +40,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -134,6 +136,18 @@ func (r *AIMClusterServiceTemplateReconciler) Reconcile(ctx context.Context, req
 // SetupWithManager sets up the controller with the Manager.
 func (r *AIMClusterServiceTemplateReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
+
+	// Register a runnable to initialize semaphore from cluster state after cache is ready.
+	// This is safe to call multiple times - it only runs once via sync.Once.
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		// Wait for cache to be ready before listing jobs
+		if !mgr.GetCache().WaitForCacheSync(ctx) {
+			return fmt.Errorf("failed to wait for cache sync")
+		}
+		return aimservicetemplate.InitializeSemaphoreFromCluster(ctx, mgr.GetClient())
+	})); err != nil {
+		return fmt.Errorf("failed to add semaphore initializer: %w", err)
+	}
 
 	// Initialize the domain reconciler
 	r.reconciler = &aimservicetemplate.ClusterServiceTemplateReconciler{

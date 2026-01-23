@@ -23,7 +23,12 @@
 package aimservicetemplate
 
 import (
+	"context"
 	"sync"
+
+	batchv1 "k8s.io/api/batch/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
@@ -59,6 +64,9 @@ type DiscoveryJobSemaphore struct {
 
 // globalDiscoverySemaphore is the singleton instance used by all reconcilers.
 var globalDiscoverySemaphore = NewDiscoveryJobSemaphore(constants.MaxConcurrentDiscoveryJobs)
+
+// semaphoreInitOnce ensures InitializeSemaphoreFromCluster is only called once.
+var semaphoreInitOnce sync.Once
 
 // NewDiscoveryJobSemaphore creates a new semaphore with the specified number of slots.
 func NewDiscoveryJobSemaphore(maxSlots int) *DiscoveryJobSemaphore {
@@ -151,4 +159,66 @@ func JobKey(namespace, name string) string {
 		return "cluster:" + name
 	}
 	return namespace + "/" + name
+}
+
+// InitializeSemaphoreFromCluster synchronizes the semaphore state with active discovery jobs
+// in the cluster. This should be called on operator startup to ensure the semaphore reflects
+// actual cluster state, preventing job over-creation after operator restarts.
+// This function is safe to call multiple times - it only runs once.
+func InitializeSemaphoreFromCluster(ctx context.Context, c client.Client) error {
+	var initErr error
+
+	semaphoreInitOnce.Do(func() {
+		logger := log.FromContext(ctx).WithName("semaphore-init")
+
+		var jobList batchv1.JobList
+		if err := c.List(ctx, &jobList, client.MatchingLabels{
+			"app.kubernetes.io/name":       "aim-discovery",
+			"app.kubernetes.io/component":  constants.LabelValueComponentDiscovery,
+			"app.kubernetes.io/managed-by": constants.LabelValueManagedByController,
+		}); err != nil {
+			logger.Error(err, "Failed to list discovery jobs for semaphore initialization")
+			initErr = err
+			return
+		}
+
+		sem := GetGlobalSemaphore()
+		initialized := 0
+
+		for i := range jobList.Items {
+			job := &jobList.Items[i]
+			// Only track active (non-complete) jobs
+			if !IsJobComplete(job) {
+				templateName := job.Labels[constants.LabelKeyTemplate]
+				if templateName == "" {
+					continue
+				}
+
+				// Determine if this is a cluster-scoped template job
+				// Cluster template jobs run in the operator namespace and have no namespace in the template reference
+				var jobKey string
+				if job.Namespace == constants.GetOperatorNamespace() {
+					// Could be cluster-scoped - check if there's a namespace-scoped template with this name
+					// For simplicity, we use the job namespace to determine scope
+					jobKey = JobKey("", templateName)
+				} else {
+					jobKey = JobKey(job.Namespace, templateName)
+				}
+
+				if sem.TryAcquire(jobKey) {
+					initialized++
+					logger.V(1).Info("Acquired semaphore slot for existing active job",
+						"jobKey", jobKey,
+						"jobName", job.Name)
+				}
+			}
+		}
+
+		logger.Info("Semaphore initialized from cluster state",
+			"activeJobs", initialized,
+			"totalSlots", constants.MaxConcurrentDiscoveryJobs,
+			"availableSlots", sem.AvailableSlots())
+	})
+
+	return initErr
 }
