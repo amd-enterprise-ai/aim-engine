@@ -7,7 +7,7 @@ spec:
     allowUnoptimized: true
   runtimeConfigName: test-kvcache
   model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
+    image: amdenterpriseai/aim-meta-llama-llama-3-1-8b-instruct:0.8.5
   caching:
     mode: Never
   kvCache:
