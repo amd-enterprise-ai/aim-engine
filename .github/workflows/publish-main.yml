@@ -1,0 +1,152 @@
+name: publish-main
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'api/**'
+      - 'internal/**'
+      - 'cmd/**'
+      - 'config/**'
+      - 'Makefile'
+      - 'Dockerfile'
+  pull_request:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_REPO: ghcr.io/silogen/aim-engine
+      CHART_NAME: aim-engine
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: feature/helm-chart-publish-main
+          fetch-depth: 0
+
+      - name: Set up mise
+        uses: jdx/mise-action@v2
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4.3.1
+
+      - name: Derive version info
+        id: ver
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          IMAGE_TAG="publish-main-${SHORT_SHA}"
+          CHART_VERSION="0.0.0-publish-main.${SHORT_SHA}"
+          echo "SHORT_SHA=${SHORT_SHA}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
+          echo "CHART_VERSION=${CHART_VERSION}" >> "$GITHUB_ENV"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "chart_version=${CHART_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
+      - name: Build and push Docker image
+        run: |
+          make docker-build IMG=${IMAGE_REPO}:${IMAGE_TAG}
+          make docker-push IMG=${IMAGE_REPO}:${IMAGE_TAG}
+          docker tag ${IMAGE_REPO}:${IMAGE_TAG} ${IMAGE_REPO}:publish-main
+          docker push ${IMAGE_REPO}:publish-main
+
+      - name: Update Helm values with image tag
+        run: |
+          sed -i "s|tag: .*|tag: ${IMAGE_TAG}|" config/helm/values.yaml
+
+      - name: Generate CRDs
+        run: make crds
+
+      - name: Package Helm chart
+        run: |
+          make helm-package TAG=${IMAGE_TAG} CHART_VERSION=${CHART_VERSION}
+
+      - name: Validate chart with helm template
+        run: helm template aim-engine ./dist/chart > /dev/null
+
+      - name: Lint Helm chart
+        run: helm lint ./dist/chart
+
+      - name: Log in to GHCR (Helm/OCI)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
+      - name: Push Helm chart to OCI registry
+        run: |
+          make helm-push-oci CHART_VERSION=${CHART_VERSION}
+
+      - name: Create or update publish-main branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Create orphan branch or checkout existing
+          git checkout --orphan publish-main-temp || true
+          
+          # Clear the index
+          git rm -rf --cached . || true
+          
+          # Add the chart directory
+          mkdir -p chart
+          cp -r dist/chart/* chart/
+          git add chart/
+          
+          # Add CRDs as separate file (distributed independently)
+          cp dist/crds.yaml crds.yaml
+          git add crds.yaml
+          
+          # Create a README for the branch
+          cat > README.md << 'EOF'
+          # aim-engine
+          
+          This branch contains the auto-generated Helm chart and CRDs for aim-engine.
+          
+          ## Installation
+          
+          CRDs are distributed separately and must be installed first:
+          
+          ```bash
+          # 1. Install CRDs
+          kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/publish-main/crds.yaml
+          kubectl wait --for=condition=Established crd --all --timeout=60s
+          
+          # 2a. Install operator via Helm OCI (recommended)
+          helm install aim-engine oci://ghcr.io/silogen/charts/aim-engine \
+            --version ${{ steps.ver.outputs.chart_version }} \
+            --namespace aim-system --create-namespace
+          
+          # 2b. Or install from this branch
+          helm install aim-engine ./chart --namespace aim-system --create-namespace
+          ```
+          
+          Or clone this branch:
+          
+          ```bash
+          git clone -b publish-main https://github.com/${{ github.repository }}.git aim-engine
+          cd aim-engine
+          
+          kubectl apply -f crds.yaml
+          kubectl wait --for=condition=Established crd --all --timeout=60s
+          helm install aim-engine ./chart --namespace aim-system --create-namespace
+          ```
+          
+          ## Source
+          
+          Generated from commit: ${{ github.sha }}
+          EOF
+          git add README.md
+          
+          # Commit
+          git commit -m "Publish chart from ${GITHUB_SHA::7}" --allow-empty
+          
+          # Force push to publish-main
+          git push origin HEAD:publish-main --force

@@ -1,6 +1,14 @@
 # Image URL to use all building/pushing image targets
 TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "latest")
-IMG ?= ghcr.io/amd-enterprise-ai/aim-engine:$(TAG)
+IMG ?= ghcr.io/silogen/aim-engine:$(TAG)
+
+# Helm chart configuration
+CHART_NAME ?= aim-engine
+CHART_VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.1.0")
+APP_VERSION ?= $(TAG)
+CHART_OCI_REGISTRY ?= ghcr.io
+CHART_OCI_OWNER ?= silogen
+CHART_OCI_REPO ?= oci://$(CHART_OCI_REGISTRY)/$(CHART_OCI_OWNER)/charts
 
 # Cluster environment configuration
 # ENV is auto-detected from kubectl context if not set:
@@ -298,6 +306,37 @@ build-installer: manifests generate ## Generate a consolidated YAML with CRDs an
 .PHONY: helm
 helm: build-installer ## Generate Helm chart from kustomize output.
 	kubebuilder edit --plugins=helm/v2-alpha
+	@# Fix hardcoded namespace in kubebuilder-generated templates (known limitation of helm/v2-alpha)
+	@find dist/chart/templates -name '*.yaml' -exec sed -i 's/namespace: aim-system/namespace: {{ .Release.Namespace }}/g' {} \;
+	@# Remove CRDs from chart - they are distributed separately
+	@rm -rf dist/chart/templates/crd
+	@# Apply custom values.yaml if it exists (since dist/ is gitignored, we need persistent config)
+	@if [ -f config/helm/values.yaml ]; then cp config/helm/values.yaml dist/chart/values.yaml; fi
+	@# Copy custom templates if they exist
+	@if [ -d config/helm/templates ]; then cp -r config/helm/templates/* dist/chart/templates/; fi
+	@echo "Helm chart generated at dist/chart/"
+
+.PHONY: crds
+crds: manifests ## Generate consolidated CRDs file for distribution.
+	@mkdir -p dist
+	@cat config/crd/bases/*.yaml > dist/crds.yaml
+	@echo "CRDs generated at dist/crds.yaml"
+
+##@ Helm
+
+.PHONY: helm-package
+helm-package: helm ## Package the Helm chart into a .tgz file.
+	@command -v helm >/dev/null 2>&1 || { echo "Helm is not installed"; exit 1; }
+	@echo "Packaging Helm chart with version $(CHART_VERSION) and app version $(APP_VERSION)"
+	@sed -i.bak 's/^version:.*/version: $(CHART_VERSION)/' dist/chart/Chart.yaml
+	@sed -i.bak 's/^appVersion:.*/appVersion: "$(APP_VERSION)"/' dist/chart/Chart.yaml
+	helm package dist/chart --version=$(CHART_VERSION) --app-version=$(APP_VERSION) --destination=dist/
+	@rm -f dist/chart/Chart.yaml.bak
+
+.PHONY: helm-push-oci
+helm-push-oci: ## Push Helm chart to OCI registry (requires helm-package first).
+	@echo "Pushing Helm chart to OCI registry $(CHART_OCI_REPO)..."
+	helm push dist/$(CHART_NAME)-$(CHART_VERSION).tgz $(CHART_OCI_REPO)
 
 ##@ Deployment
 

@@ -24,6 +24,46 @@ AIM Engine is a Kubernetes operator for running and managing AMD Inference Micro
 - Namespace-scoped and cluster-scoped resources for flexible access control
 - Runtime configurations for team-specific credentials and routing policies
 
+
+## Quick Install (from publish-main branch)
+
+For quick installation using pre-built artifacts from the `publish-main` branch:
+
+```bash
+git clone -b publish-main https://github.com/amd-enterprise-ai/aim-engine.git aim-engine-deploy
+cd aim-engine-deploy
+
+# Install CRDs (distributed separately from Helm chart)
+kubectl apply -f crds.yaml
+kubectl wait --for=condition=Established crd --all --timeout=60s
+
+# Install operator via Helm
+helm install aim-engine ./chart --namespace aim-system --create-namespace
+```
+
+## Manual Build and Deploy
+
+To build and deploy from source with Helm templating:
+
+```bash
+# Generate CRDs and Helm chart
+make crds
+make helm
+
+# Install CRDs
+kubectl apply -f dist/crds.yaml
+kubectl wait --for=condition=Established crd --all --timeout=60s
+
+# Option 1: Install directly with Helm
+helm install aim-engine ./dist/chart --namespace aim-system --create-namespace
+
+# Option 2: Render templates first, then apply
+helm template aim-engine ./dist/chart \
+  --namespace aim-system \
+  --values dist/chart/values.yaml > rendered.yaml
+kubectl apply -f rendered.yaml
+```
+
 ## Example AIMService Deployment
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -34,7 +74,6 @@ spec:
   model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
 ```
-
 
 ## Development Quickstart
 
