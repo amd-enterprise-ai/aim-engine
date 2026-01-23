@@ -23,7 +23,6 @@
 package aimmodel
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -194,7 +193,7 @@ func buildCustomServiceTemplate(
 	effectiveType := GetEffectiveType(model.Spec.Type, customTemplate.Type)
 
 	// Merge env vars (template env takes precedence)
-	mergedEnv := mergeEnvVars(model.Spec.Env, customTemplate.Env)
+	mergedEnv := utils.MergeEnvVars(model.Spec.Env, customTemplate.Env)
 
 	labels := map[string]string{
 		constants.LabelKeyModel:  model.Name,
@@ -378,30 +377,4 @@ func generateCustomTemplateName(modelName string, customTemplate *aimv1alpha1.AI
 
 	name, _ := utils.GenerateDerivedName(nameParts, utils.WithHashSource(hashInputs...))
 	return name
-}
-
-// mergeEnvVars merges two slices of env vars. Override values take precedence.
-func mergeEnvVars(base, override []corev1.EnvVar) []corev1.EnvVar {
-	if len(override) == 0 {
-		return base
-	}
-	if len(base) == 0 {
-		return override
-	}
-
-	// Create a map for quick lookup
-	result := make(map[string]corev1.EnvVar)
-	for _, env := range base {
-		result[env.Name] = env
-	}
-	for _, env := range override {
-		result[env.Name] = env
-	}
-
-	// Convert back to slice
-	merged := make([]corev1.EnvVar, 0, len(result))
-	for _, env := range result {
-		merged = append(merged, env)
-	}
-	return merged
 }

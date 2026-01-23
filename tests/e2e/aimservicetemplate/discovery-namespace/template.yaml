@@ -4,7 +4,8 @@ metadata:
   name: test-template-discovery-namespace
 spec:
   modelName: test-model-discovery-namespace
-  gpuSelector:
-    count: 1
-    model: MI300X
+  gpu:
+    requests: 1
+    models:
+      - MI300X
 

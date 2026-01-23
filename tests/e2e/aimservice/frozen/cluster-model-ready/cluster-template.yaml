@@ -7,9 +7,10 @@ metadata:
     aim.eai.amd.com/reconciliation-paused: "true"
 spec:
   modelName: test-cluster-model
-  gpuSelector:
-    model: MI300X
-    count: 1
+  gpu:
+    models:
+      - MI300X
+    requests: 1
 status:
   status: Ready
   profile:

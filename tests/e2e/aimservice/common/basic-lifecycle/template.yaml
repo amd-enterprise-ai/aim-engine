@@ -4,6 +4,7 @@ metadata:
   name: test-service-template
 spec:
   modelName: test-service-model
-  gpuSelector:
-    count: 1
-    model: MI300X
+  gpu:
+    requests: 1
+    models:
+      - MI300X

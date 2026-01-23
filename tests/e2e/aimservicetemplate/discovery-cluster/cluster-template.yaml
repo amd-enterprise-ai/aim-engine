@@ -4,7 +4,8 @@ metadata:
   name: test-template-discovery-cluster
 spec:
   modelName: test-model-discovery-cluster
-  gpuSelector:
-    count: 1
-    model: MI300X
+  gpu:
+    requests: 1
+    models:
+      - MI300X
 

@@ -5,7 +5,8 @@ metadata:
 spec:
   modelName: template-cache-not-available-model
   # Require a GPU that doesn't exist - this causes NotAvailable status
-  gpuSelector:
-    model: "NONEXISTENT-GPU-MODEL-12345"
-    count: 1
+  gpu:
+    models:
+      - "NONEXISTENT-GPU-MODEL-12345"
+    requests: 1
 
