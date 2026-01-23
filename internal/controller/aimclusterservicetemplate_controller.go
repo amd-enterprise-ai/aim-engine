@@ -24,6 +24,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -98,6 +99,14 @@ func (r *AIMClusterServiceTemplateReconciler) Reconcile(ctx context.Context, req
 	var template aimv1alpha1.AIMClusterServiceTemplate
 	if err := r.Get(ctx, req.NamespacedName, &template); err != nil {
 		if apierrors.IsNotFound(err) {
+			// Template was deleted - release any semaphore slot it might hold
+			semaphoreKey := aimservicetemplate.JobKey("", req.Name) // Cluster-scoped, no namespace
+			if aimservicetemplate.GetGlobalSemaphore().Release(semaphoreKey) {
+				logger.Info("released semaphore slot for deleted cluster template",
+					"semaphoreKey", semaphoreKey,
+					"activeSlots", aimservicetemplate.GetGlobalSemaphore().ActiveCount(),
+					"availableSlots", aimservicetemplate.GetGlobalSemaphore().AvailableSlots())
+			}
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to fetch AIMClusterServiceTemplate")
@@ -106,6 +115,22 @@ func (r *AIMClusterServiceTemplateReconciler) Reconcile(ctx context.Context, req
 
 	if err := r.pipeline.Run(ctx, &template); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// Check if the template is waiting for a semaphore slot and requeue if so.
+	// This is needed because templates blocked by the concurrent limit don't get
+	// automatically requeued when a slot becomes available.
+	semaphoreKey := aimservicetemplate.JobKey("", req.Name) // Cluster-scoped, no namespace
+	if !aimservicetemplate.GetGlobalSemaphore().IsHeld(semaphoreKey) &&
+		template.Status.Status != constants.AIMStatusReady &&
+		len(template.Spec.ModelSources) == 0 {
+		// Template needs discovery but doesn't hold a semaphore slot.
+		// Check if semaphore is at capacity - if so, requeue with delay.
+		if aimservicetemplate.GetGlobalSemaphore().AvailableSlots() == 0 {
+			logger.V(1).Info("cluster template waiting for semaphore slot, requeuing",
+				"semaphoreKey", semaphoreKey)
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
 	}
 
 	return ctrl.Result{}, nil

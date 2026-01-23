@@ -249,6 +249,8 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 // FetchDiscoveryJob fetches the discovery job for a template.
 // Returns the newest job (by CreationTimestamp) if multiple exist.
 func FetchDiscoveryJob(ctx context.Context, c client.Client, namespace, templateName string) controllerutils.FetchResult[*batchv1.Job] {
+	logger := log.FromContext(ctx)
+
 	var jobList batchv1.JobList
 	if err := c.List(ctx, &jobList,
 		client.InNamespace(namespace),
@@ -258,6 +260,9 @@ func FetchDiscoveryJob(ctx context.Context, c client.Client, namespace, template
 	}
 
 	if len(jobList.Items) == 0 {
+		logger.V(1).Info("no discovery job found",
+			"templateName", templateName,
+			"namespace", namespace)
 		return controllerutils.FetchResult[*batchv1.Job]{Value: nil}
 	}
 
@@ -266,8 +271,15 @@ func FetchDiscoveryJob(ctx context.Context, c client.Client, namespace, template
 		return jobList.Items[i].CreationTimestamp.After(jobList.Items[j].CreationTimestamp.Time)
 	})
 
+	job := &jobList.Items[0]
+	logger.V(1).Info("found discovery job",
+		"templateName", templateName,
+		"namespace", namespace,
+		"jobName", job.Name,
+		"isComplete", IsJobComplete(job))
+
 	// Return the newest job
-	return controllerutils.FetchResult[*batchv1.Job]{Value: &jobList.Items[0]}
+	return controllerutils.FetchResult[*batchv1.Job]{Value: job}
 }
 
 // IsJobComplete returns true if the job has completed (successfully or failed).

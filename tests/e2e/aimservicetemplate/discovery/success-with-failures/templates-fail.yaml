@@ -1,4 +1,4 @@
-# 10 templates that will fail (using busybox model)
+# 15 templates that will fail (using busybox model)
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
@@ -94,6 +94,56 @@ apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
 metadata:
   name: test-template-fail-10
+spec:
+  modelName: test-model-fail
+  gpuSelector:
+    count: 1
+    model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-fail-11
+spec:
+  modelName: test-model-fail
+  gpuSelector:
+    count: 1
+    model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-fail-12
+spec:
+  modelName: test-model-fail
+  gpuSelector:
+    count: 1
+    model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-fail-13
+spec:
+  modelName: test-model-fail
+  gpuSelector:
+    count: 1
+    model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-fail-14
+spec:
+  modelName: test-model-fail
+  gpuSelector:
+    count: 1
+    model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-fail-15
 spec:
   modelName: test-model-fail
   gpuSelector:

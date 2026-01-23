@@ -1,0 +1,134 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: servicetemplate-discovery-concurrent-limit
+spec:
+  description: |
+    Test that discovery jobs are limited to ~10 concurrent executions.
+    Creates 30 templates and verifies that the number of active jobs
+    stays within a reasonable bound (allowing for some race conditions).
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Create model with aim-dummy
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for model to be ready
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-model-concurrent
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: Create 30 templates simultaneously
+      try:
+        - apply:
+            file: templates.yaml
+
+    - name: Poll and verify max active jobs stays bounded
+      description: |
+        Poll multiple times over a window and track the maximum number of
+        active discovery jobs observed. Due to race conditions in the soft
+        limit, we allow up to 12 active jobs (10 limit + some slack).
+      try:
+        - script:
+            timeout: 90s
+            content: |
+              #!/bin/bash
+              set -e
+
+              MAX_OBSERVED=0
+              LIMIT=10
+              # Allow some slack for race conditions (soft limit)
+              THRESHOLD=12
+              POLLS=60
+              POLL_INTERVAL=0.5
+
+              for i in $(seq 1 $POLLS); do
+                # Count total discovery jobs
+                TOTAL_JOBS=$(kubectl get jobs -n $NAMESPACE \
+                  -l app.kubernetes.io/component=discovery \
+                  --no-headers 2>/dev/null | wc -l)
+                TOTAL_JOBS=${TOTAL_JOBS:-0}
+
+                # Count completed jobs (grep -c returns 1 if no match, so use || true)
+                COMPLETE_JOBS=$(kubectl get jobs -n $NAMESPACE \
+                  -l app.kubernetes.io/component=discovery \
+                  -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Complete")].status}{"\n"}{end}' 2>/dev/null | \
+                  grep -c "True" || true)
+                COMPLETE_JOBS=${COMPLETE_JOBS:-0}
+
+                # Count failed jobs
+                FAILED_JOBS=$(kubectl get jobs -n $NAMESPACE \
+                  -l app.kubernetes.io/component=discovery \
+                  -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Failed")].status}{"\n"}{end}' 2>/dev/null | \
+                  grep -c "True" || true)
+                FAILED_JOBS=${FAILED_JOBS:-0}
+
+                ACTIVE=$((TOTAL_JOBS - COMPLETE_JOBS - FAILED_JOBS))
+
+                if [ "$ACTIVE" -gt "$MAX_OBSERVED" ]; then
+                  MAX_OBSERVED=$ACTIVE
+                fi
+
+                echo "Poll $i: Total=$TOTAL_JOBS, Complete=$COMPLETE_JOBS, Failed=$FAILED_JOBS, Active=$ACTIVE, MaxObserved=$MAX_OBSERVED"
+
+                # If all jobs are done, we can stop early
+                if [ "$TOTAL_JOBS" -ge 30 ] && [ "$ACTIVE" -eq 0 ]; then
+                  echo "All jobs completed"
+                  break
+                fi
+
+                sleep $POLL_INTERVAL
+              done
+
+              echo ""
+              echo "Final results:"
+              echo "  Maximum active jobs observed: $MAX_OBSERVED"
+              echo "  Configured limit: $LIMIT"
+              echo "  Test threshold: $THRESHOLD"
+
+              if [ "$MAX_OBSERVED" -gt "$THRESHOLD" ]; then
+                echo ""
+                echo "ERROR: Maximum active jobs ($MAX_OBSERVED) exceeds threshold ($THRESHOLD)"
+                exit 1
+              fi
+
+              echo ""
+              echo "SUCCESS: Concurrent limit is working (max observed: $MAX_OBSERVED <= threshold: $THRESHOLD)"
+
+    - name: Verify all templates eventually complete discovery
+      try:
+        - script:
+            timeout: 180s
+            content: |
+              #!/bin/bash
+              set -e
+
+              # Wait for all 30 templates to have Discovered=True
+              for i in $(seq 1 90); do
+                DISCOVERED=$(kubectl get aimservicetemplates -n $NAMESPACE \
+                  -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Discovered")].status}{"\n"}{end}' 2>/dev/null | \
+                  grep -c "True" || true)
+                DISCOVERED=${DISCOVERED:-0}
+
+                echo "Poll $i: $DISCOVERED/30 templates discovered"
+
+                if [ "$DISCOVERED" -ge 30 ]; then
+                  echo "SUCCESS: All 30 templates completed discovery"
+                  exit 0
+                fi
+
+                sleep 2
+              done
+
+              echo "ERROR: Not all templates completed discovery in time"
+              kubectl get aimservicetemplates -n $NAMESPACE -o wide
+              exit 1
