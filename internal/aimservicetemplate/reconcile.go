@@ -431,10 +431,9 @@ func (r *ServiceTemplateReconciler) PlanResources(
 	// Release semaphore slot if job has completed (success or failure)
 	if HasCompletedDiscoveryJob(obs.discoveryJob) {
 		if GetGlobalSemaphore().Release(semaphoreKey) {
-			logger.Info("released semaphore slot for completed discovery job",
+			logger.V(1).Info("released semaphore slot for completed discovery job",
 				"semaphoreKey", semaphoreKey,
-				"activeSlots", GetGlobalSemaphore().ActiveCount(),
-				"availableSlots", GetGlobalSemaphore().AvailableSlots())
+				"activeSlots", GetGlobalSemaphore().ActiveCount())
 		}
 	}
 
@@ -459,12 +458,6 @@ func (r *ServiceTemplateReconciler) PlanResources(
 			return planResult
 		}
 
-		logger.V(1).Info("attempting to acquire semaphore slot",
-			"semaphoreKey", semaphoreKey,
-			"slotCurrentlyHeld", GetGlobalSemaphore().IsHeld(semaphoreKey),
-			"activeSlots", GetGlobalSemaphore().ActiveCount(),
-			"availableSlots", GetGlobalSemaphore().AvailableSlots())
-
 		// Serialize the semaphore check with other reconciliations to prevent race conditions.
 		// Without this lock, multiple reconciliations could all see "no job exists" in FetchRemoteState,
 		// then all try to acquire semaphore slots before any of them actually create the job.
@@ -474,7 +467,7 @@ func (r *ServiceTemplateReconciler) PlanResources(
 			// while we were waiting for the lock. If so, the job is being created by that
 			// reconciliation, so we should skip creating it here.
 			if GetGlobalSemaphore().IsHeld(semaphoreKey) {
-				logger.Info("semaphore slot already held for this template, skipping job creation",
+				logger.V(1).Info("semaphore slot already held for this template, skipping job creation",
 					"semaphoreKey", semaphoreKey)
 				shouldCreateJob = false
 				return
@@ -482,29 +475,22 @@ func (r *ServiceTemplateReconciler) PlanResources(
 
 			// Try to acquire a semaphore slot (non-blocking)
 			shouldCreateJob = GetGlobalSemaphore().TryAcquire(semaphoreKey)
-			logger.Info("semaphore TryAcquire result",
-				"semaphoreKey", semaphoreKey,
-				"acquired", shouldCreateJob,
-				"activeSlots", GetGlobalSemaphore().ActiveCount(),
-				"availableSlots", GetGlobalSemaphore().AvailableSlots())
 		})
 
 		if !shouldCreateJob {
 			if !GetGlobalSemaphore().IsHeld(semaphoreKey) {
 				// Not held and not acquired means at capacity
-				logger.Info("discovery job creation blocked by concurrent limit (semaphore)",
+				logger.V(1).Info("discovery job creation blocked by concurrent limit",
 					"semaphoreKey", semaphoreKey,
 					"activeSlots", GetGlobalSemaphore().ActiveCount(),
-					"availableSlots", GetGlobalSemaphore().AvailableSlots(),
 					"limit", constants.MaxConcurrentDiscoveryJobs)
 			}
 			return planResult
 		}
 
-		logger.Info("acquired semaphore slot for discovery job",
+		logger.V(1).Info("acquired semaphore slot for discovery job",
 			"semaphoreKey", semaphoreKey,
-			"activeSlots", GetGlobalSemaphore().ActiveCount(),
-			"availableSlots", GetGlobalSemaphore().AvailableSlots())
+			"activeSlots", GetGlobalSemaphore().ActiveCount())
 
 		job := BuildDiscoveryJob(DiscoveryJobSpec{
 			TemplateName:     template.Name,
@@ -524,9 +510,6 @@ func (r *ServiceTemplateReconciler) PlanResources(
 				BlockOwnerDeletion: ptr.To(true),
 			},
 		})
-		logger.Info("adding discovery job to plan result",
-			"semaphoreKey", semaphoreKey,
-			"jobName", job.Name)
 		planResult.Apply(job)
 	}
 
@@ -585,10 +568,9 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 	// Release semaphore slot if job has completed (success or failure)
 	if HasCompletedDiscoveryJob(obs.discoveryJob) {
 		if GetGlobalSemaphore().Release(semaphoreKey) {
-			logger.Info("released semaphore slot for completed discovery job",
+			logger.V(1).Info("released semaphore slot for completed discovery job",
 				"semaphoreKey", semaphoreKey,
-				"activeSlots", GetGlobalSemaphore().ActiveCount(),
-				"availableSlots", GetGlobalSemaphore().AvailableSlots())
+				"activeSlots", GetGlobalSemaphore().ActiveCount())
 		}
 	}
 
@@ -626,19 +608,17 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 		if !shouldCreateJob {
 			if !GetGlobalSemaphore().IsHeld(semaphoreKey) {
 				// Not held and not acquired means at capacity
-				logger.Info("discovery job creation blocked by concurrent limit (semaphore)",
+				logger.V(1).Info("discovery job creation blocked by concurrent limit",
 					"semaphoreKey", semaphoreKey,
 					"activeSlots", GetGlobalSemaphore().ActiveCount(),
-					"availableSlots", GetGlobalSemaphore().AvailableSlots(),
 					"limit", constants.MaxConcurrentDiscoveryJobs)
 			}
 			return planResult
 		}
 
-		logger.Info("acquired semaphore slot for discovery job",
+		logger.V(1).Info("acquired semaphore slot for discovery job",
 			"semaphoreKey", semaphoreKey,
-			"activeSlots", GetGlobalSemaphore().ActiveCount(),
-			"availableSlots", GetGlobalSemaphore().AvailableSlots())
+			"activeSlots", GetGlobalSemaphore().ActiveCount())
 
 		job := BuildDiscoveryJob(DiscoveryJobSpec{
 			TemplateName:     template.Name,

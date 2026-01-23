@@ -86,11 +86,11 @@ func ApplyDesiredState(
 		gvk := obj.GetObjectKind().GroupVersionKind()
 		key := client.ObjectKeyFromObject(obj)
 
-		// Log discovery job creation specifically for debugging concurrent limit
+		// Log discovery job creation at verbose level
 		if gvk.Kind == "Job" {
 			if job, ok := obj.(*batchv1.Job); ok {
 				if templateLabel, exists := job.Labels[constants.LabelKeyTemplate]; exists {
-					logger.Info("SSA applying discovery job",
+					logger.V(1).Info("SSA applying discovery job",
 						"jobName", key.Name,
 						"namespace", key.Namespace,
 						"templateName", templateLabel,

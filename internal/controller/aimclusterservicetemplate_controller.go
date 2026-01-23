@@ -101,12 +101,7 @@ func (r *AIMClusterServiceTemplateReconciler) Reconcile(ctx context.Context, req
 		if apierrors.IsNotFound(err) {
 			// Template was deleted - release any semaphore slot it might hold
 			semaphoreKey := aimservicetemplate.JobKey("", req.Name) // Cluster-scoped, no namespace
-			if aimservicetemplate.GetGlobalSemaphore().Release(semaphoreKey) {
-				logger.Info("released semaphore slot for deleted cluster template",
-					"semaphoreKey", semaphoreKey,
-					"activeSlots", aimservicetemplate.GetGlobalSemaphore().ActiveCount(),
-					"availableSlots", aimservicetemplate.GetGlobalSemaphore().AvailableSlots())
-			}
+			aimservicetemplate.GetGlobalSemaphore().Release(semaphoreKey)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to fetch AIMClusterServiceTemplate")
