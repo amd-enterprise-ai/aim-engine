@@ -80,8 +80,14 @@ jobs:
       - name: Load image into Kind
         run: kind load docker-image aim-engine:test --name aim-engine
 
+      - name: Generate CRDs
+        run: make crds
+
       - name: Generate Helm chart
         run: make helm
+
+      - name: Install CRDs
+        run: kubectl apply -f dist/crds.yaml
 
       - name: Install operator via Helm
         run: helm install aim-engine dist/chart --namespace aim-system --create-namespace --set manager.image.repository=aim-engine --set manager.image.tag=test
