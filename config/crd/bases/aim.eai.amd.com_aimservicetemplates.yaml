@@ -32,12 +32,9 @@ spec:
     - jsonPath: .status.profile.metadata.precision
       name: Precision
       type: string
-    - jsonPath: .spec.gpuSelector.count
-      name: GPUs/replica
+    - jsonPath: .spec.gpu.requests
+      name: GPUs
       type: integer
-    - jsonPath: .spec.gpuSelector.model
-      name: GPU
-      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:

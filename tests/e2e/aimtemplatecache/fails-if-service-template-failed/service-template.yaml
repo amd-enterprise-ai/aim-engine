@@ -7,7 +7,8 @@ metadata:
 spec:
   modelName: template-cache-fails-if-service-template-failed
   modelSources:
-    - sourceUri: hf://hello/world
+    - modelId: hello/world
+      sourceUri: hf://hello/world
       size: 2Gi
 status:
   status: Failed
