@@ -104,9 +104,8 @@ func (r *ServiceTemplateReconciler) FetchRemoteState(
 		&aimv1alpha1.AIMModel{},
 	)
 
-	// Fetch GPU resources if GPU is required AND no inline model sources
-	// Inline model sources bypass GPU check - GPU is a runtime concern, not a definition concern
-	if TemplateRequiresGPU(template.Spec.AIMServiceTemplateSpecCommon) && len(template.Spec.ModelSources) == 0 {
+	// Fetch GPU resources if GPU is required
+	if TemplateRequiresGPU(template.Spec.AIMServiceTemplateSpecCommon) {
 		result.gpuResources, result.gpuFetchErr = utils.GetClusterGPUResources(ctx, c)
 	}
 
@@ -164,13 +163,10 @@ func (result ServiceTemplateFetchResult) GetComponentHealth(ctx context.Context,
 		}
 	}
 
-	// GPU availability check - skip for inline model sources
-	// GPU is a runtime concern, not a definition concern
-	if len(result.template.Spec.ModelSources) == 0 {
-		gpuHealth := result.getGPUHealth()
-		if gpuHealth.Component != "" {
-			health = append(health, gpuHealth)
-		}
+	// GPU availability check
+	gpuHealth := result.getGPUHealth()
+	if gpuHealth.Component != "" {
+		health = append(health, gpuHealth)
 	}
 
 	return health
@@ -230,9 +226,8 @@ func (r *ClusterServiceTemplateReconciler) FetchRemoteState(
 		&aimv1alpha1.AIMClusterModel{},
 	)
 
-	// Fetch GPU resources if GPU is required AND no inline model sources
-	// Inline model sources bypass GPU check - GPU is a runtime concern, not a definition concern
-	if TemplateRequiresGPU(template.Spec.AIMServiceTemplateSpecCommon) && len(template.Spec.ModelSources) == 0 {
+	// Fetch GPU resources if GPU is required
+	if TemplateRequiresGPU(template.Spec.AIMServiceTemplateSpecCommon) {
 		result.gpuResources, result.gpuFetchErr = utils.GetClusterGPUResources(ctx, c)
 	}
 
@@ -285,13 +280,10 @@ func (result ClusterServiceTemplateFetchResult) GetComponentHealth(ctx context.C
 		}
 	}
 
-	// GPU availability check - skip for inline model sources
-	// GPU is a runtime concern, not a definition concern
-	if len(result.template.Spec.ModelSources) == 0 {
-		gpuHealth := result.getGPUHealth()
-		if gpuHealth.Component != "" {
-			health = append(health, gpuHealth)
-		}
+	// GPU availability check
+	gpuHealth := result.getGPUHealth()
+	if gpuHealth.Component != "" {
+		health = append(health, gpuHealth)
 	}
 
 	return health
