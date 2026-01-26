@@ -459,7 +459,7 @@ func (r *ModelCacheReconciler) DecorateStatus(
 				status.AllocatedSizeBytes = &allocatedSize
 			}
 		}
-		headroom := int32(utils.GetPVCHeadroomPercent(runtimeConfig))
+		headroom := utils.GetPVCHeadroomPercent(runtimeConfig)
 		status.HeadroomPercent = &headroom
 	}
 
