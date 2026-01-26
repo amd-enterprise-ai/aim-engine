@@ -211,6 +211,9 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	// HTTPRoute health (if routing is enabled)
 	health = append(health, obs.getHTTPRouteHealth())
 
+	// HPA health (if autoscaling is configured)
+	health = append(health, obs.getHPAHealth())
+
 	return health
 }
 
@@ -537,6 +540,57 @@ func (obs ServiceObservation) getHTTPRouteHealth() controllerutils.ComponentHeal
 	return obs.httpRoute.ToComponentHealth("HTTPRoute", controllerutils.GetHTTPRouteHealth)
 }
 
+func (obs ServiceObservation) getHPAHealth() controllerutils.ComponentHealth {
+	health := controllerutils.ComponentHealth{
+		Component:      "HPA",
+		DependencyType: controllerutils.DependencyTypeDownstream,
+	}
+
+	service := obs.service
+
+	// Check if autoscaling is configured (HPA is expected)
+	hasAutoscaling := service.Spec.AutoScaling != nil ||
+		service.Spec.MinReplicas != nil ||
+		service.Spec.MaxReplicas != nil
+
+	// If autoscaling is not configured, no health check needed
+	if !hasAutoscaling {
+		return controllerutils.ComponentHealth{}
+	}
+
+	// Autoscaling is configured - check if HPA exists
+	if obs.hpa.Error != nil {
+		if obs.hpa.IsNotFound() {
+			// HPA doesn't exist yet - KEDA may still be creating it
+			// This is expected during initial deployment, don't fail
+			health.State = constants.AIMStatusProgressing
+			health.Reason = "HPANotFound"
+			health.Message = "Waiting for KEDA to create HorizontalPodAutoscaler"
+			return health
+		}
+		// Other fetch error
+		health.State = constants.AIMStatusFailed
+		health.Reason = "HPAFetchError"
+		health.Message = obs.hpa.Error.Error()
+		health.Errors = []error{obs.hpa.Error}
+		return health
+	}
+
+	// HPA exists - report ready
+	if obs.hpa.Value != nil {
+		health.State = constants.AIMStatusReady
+		health.Reason = "HPAReady"
+		health.Message = "HorizontalPodAutoscaler is active"
+		return health
+	}
+
+	// HPA not found (no error but nil value)
+	health.State = constants.AIMStatusProgressing
+	health.Reason = "HPANotFound"
+	health.Message = "Waiting for KEDA to create HorizontalPodAutoscaler"
+	return health
+}
+
 func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 	health := controllerutils.ComponentHealth{
 		Component:      "Cache",
@@ -738,6 +792,17 @@ func (r *ServiceReconciler) computeRuntimeStatus(fetch ServiceFetchResult) *aimv
 		status.MaxReplicas = replicas
 		status.CurrentReplicas = replicas
 		status.DesiredReplicas = replicas
+	}
+
+	// Compute display string for kubectl output
+	if status.MinReplicas == status.MaxReplicas {
+		// Fixed replicas - just show current
+		status.Replicas = fmt.Sprintf("%d", status.CurrentReplicas)
+	} else {
+		// Autoscaling - show "current/desired (min-max)"
+		status.Replicas = fmt.Sprintf("%d/%d (%d-%d)",
+			status.CurrentReplicas, status.DesiredReplicas,
+			status.MinReplicas, status.MaxReplicas)
 	}
 
 	return status

@@ -29,14 +29,8 @@ spec:
     - jsonPath: .status.resolvedTemplate.name
       name: Template
       type: string
-    - jsonPath: .status.runtime.currentReplicas
+    - jsonPath: .status.runtime.replicas
       name: Replicas
-      type: string
-    - jsonPath: .status.runtime.minReplicas
-      name: Min
-      type: string
-    - jsonPath: .status.runtime.maxReplicas
-      name: Max
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -1041,8 +1035,7 @@ spec:
                     type: string
                 type: object
               runtime:
-                description: Runtime captures runtime status including replica counts
-                  and resource usage.
+                description: Runtime captures runtime status including replica counts.
                 properties:
                   currentReplicas:
                     description: CurrentReplicas is the current number of replicas
@@ -1064,6 +1057,11 @@ spec:
                       for autoscaling.
                     format: int32
                     type: integer
+                  replicas:
+                    description: |-
+                      Replicas is a formatted display string for kubectl output.
+                      Shows "current" for fixed replicas or "current/desired (min-max)" for autoscaling.
+                    type: string
                 type: object
               status:
                 default: Pending
