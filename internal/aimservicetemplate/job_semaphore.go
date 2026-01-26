@@ -161,6 +161,35 @@ func JobKey(namespace, name string) string {
 	return namespace + "/" + name
 }
 
+// ReleaseOrphanedSlot releases a semaphore slot if it's held but no job exists.
+// This handles the race condition where a slot is acquired in PlanResources
+// but job creation fails during Apply. Returns true if a slot was released.
+//
+// Parameters:
+//   - semaphoreKey: the key for the template (use JobKey to generate)
+//   - jobExists: whether a discovery job exists in the cluster for this template
+//   - templateReady: whether the template has reached Ready status
+//
+// A slot is considered orphaned if:
+//   - The slot is held (IsHeld returns true)
+//   - No job exists in the cluster (jobExists is false)
+//   - The template is not Ready (templateReady is false)
+func ReleaseOrphanedSlot(semaphoreKey string, jobExists, templateReady bool) bool {
+	if !GetGlobalSemaphore().IsHeld(semaphoreKey) {
+		return false
+	}
+	if templateReady {
+		// Template is Ready, slot should be released by the normal flow
+		return false
+	}
+	if jobExists {
+		// Job exists, not orphaned
+		return false
+	}
+	// Slot is held, job doesn't exist, template not Ready = orphaned
+	return GetGlobalSemaphore().Release(semaphoreKey)
+}
+
 // InitializeSemaphoreFromCluster synchronizes the semaphore state with active discovery jobs
 // in the cluster. This should be called on operator startup to ensure the semaphore reflects
 // actual cluster state, preventing job over-creation after operator restarts.

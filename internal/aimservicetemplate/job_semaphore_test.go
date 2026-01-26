@@ -157,3 +157,124 @@ func TestJobKey(t *testing.T) {
 		}
 	}
 }
+
+func TestReleaseOrphanedSlot(t *testing.T) {
+	tests := []struct {
+		name           string
+		slotHeld       bool
+		jobExists      bool
+		templateReady  bool
+		expectReleased bool
+	}{
+		{
+			name:           "orphaned slot: held, no job, not ready",
+			slotHeld:       true,
+			jobExists:      false,
+			templateReady:  false,
+			expectReleased: true,
+		},
+		{
+			name:           "not orphaned: slot not held",
+			slotHeld:       false,
+			jobExists:      false,
+			templateReady:  false,
+			expectReleased: false,
+		},
+		{
+			name:           "not orphaned: job exists",
+			slotHeld:       true,
+			jobExists:      true,
+			templateReady:  false,
+			expectReleased: false,
+		},
+		{
+			name:           "not orphaned: template ready",
+			slotHeld:       true,
+			jobExists:      false,
+			templateReady:  true,
+			expectReleased: false,
+		},
+		{
+			name:           "not orphaned: job exists and template ready",
+			slotHeld:       true,
+			jobExists:      true,
+			templateReady:  true,
+			expectReleased: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset semaphore for each test
+			globalDiscoverySemaphore = NewDiscoveryJobSemaphore(10)
+			semaphoreKey := "test-namespace/test-template"
+
+			// Setup initial state
+			if tt.slotHeld {
+				GetGlobalSemaphore().TryAcquire(semaphoreKey)
+			}
+
+			initialActive := GetGlobalSemaphore().ActiveCount()
+
+			// Call the function under test
+			released := ReleaseOrphanedSlot(semaphoreKey, tt.jobExists, tt.templateReady)
+
+			if released != tt.expectReleased {
+				t.Errorf("ReleaseOrphanedSlot() = %v, want %v", released, tt.expectReleased)
+			}
+
+			// Verify semaphore state
+			finalActive := GetGlobalSemaphore().ActiveCount()
+			if tt.expectReleased {
+				if finalActive != initialActive-1 {
+					t.Errorf("expected active count to decrease by 1, was %d, now %d", initialActive, finalActive)
+				}
+			} else {
+				if finalActive != initialActive {
+					t.Errorf("expected active count to stay same, was %d, now %d", initialActive, finalActive)
+				}
+			}
+		})
+	}
+}
+
+// TestOrphanedSlotRecovery simulates the race condition where a slot is acquired
+// but job creation fails, and verifies that the slot can be recovered.
+func TestOrphanedSlotRecovery(t *testing.T) {
+	globalDiscoverySemaphore = NewDiscoveryJobSemaphore(10)
+	semaphoreKey := "default/my-template"
+
+	// Step 1: Acquire a slot (simulating what happens in PlanResources)
+	if !GetGlobalSemaphore().TryAcquire(semaphoreKey) {
+		t.Fatal("failed to acquire initial slot")
+	}
+
+	if GetGlobalSemaphore().ActiveCount() != 1 {
+		t.Errorf("expected 1 active slot, got %d", GetGlobalSemaphore().ActiveCount())
+	}
+
+	// Step 2: Simulate Apply failure - job was never created
+	// At this point, slot is held but no job exists
+
+	// Step 3: On next reconcile, tryAcquireDiscoverySlot would return false
+	// because IsHeld returns true. This is the bug we're fixing.
+
+	// Step 4: Controller detects orphaned slot and releases it
+	released := ReleaseOrphanedSlot(semaphoreKey, false, false)
+	if !released {
+		t.Error("expected orphaned slot to be released")
+	}
+
+	if GetGlobalSemaphore().ActiveCount() != 0 {
+		t.Errorf("expected 0 active slots after recovery, got %d", GetGlobalSemaphore().ActiveCount())
+	}
+
+	// Step 5: Now the template can acquire a slot again
+	if !GetGlobalSemaphore().TryAcquire(semaphoreKey) {
+		t.Error("failed to acquire slot after recovery")
+	}
+
+	if GetGlobalSemaphore().ActiveCount() != 1 {
+		t.Errorf("expected 1 active slot after re-acquire, got %d", GetGlobalSemaphore().ActiveCount())
+	}
+}
