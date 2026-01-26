@@ -396,6 +396,19 @@ func (r *ServiceTemplateReconciler) PlanResources(
 		return planResult
 	}
 
+	// Semaphore key is based on template identity (namespace/name)
+	semaphoreKey := JobKey(template.Namespace, template.Name)
+
+	// Release semaphore slot if job has completed (success or failure)
+	// NOTE: This must happen before the Ready check to avoid slot leaks when templates become Ready
+	if HasCompletedDiscoveryJob(obs.discoveryJob) {
+		if GetGlobalSemaphore().Release(semaphoreKey) {
+			logger.V(1).Info("released semaphore slot for completed discovery job",
+				"semaphoreKey", semaphoreKey,
+				"activeSlots", GetGlobalSemaphore().ActiveCount())
+		}
+	}
+
 	// If template is Ready, create template cache if caching is enabled
 	if template.Status.Status == constants.AIMStatusReady {
 		if template.Spec.Caching != nil && template.Spec.Caching.Enabled && len(template.Status.ModelSources) > 0 {
@@ -406,18 +419,6 @@ func (r *ServiceTemplateReconciler) PlanResources(
 		}
 
 		return planResult
-	}
-
-	// Semaphore key is based on template identity (namespace/name)
-	semaphoreKey := JobKey(template.Namespace, template.Name)
-
-	// Release semaphore slot if job has completed (success or failure)
-	if HasCompletedDiscoveryJob(obs.discoveryJob) {
-		if GetGlobalSemaphore().Release(semaphoreKey) {
-			logger.V(1).Info("released semaphore slot for completed discovery job",
-				"semaphoreKey", semaphoreKey,
-				"activeSlots", GetGlobalSemaphore().ActiveCount())
-		}
 	}
 
 	// Template not ready - check if we need to create discovery job
@@ -513,22 +514,23 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 		return planResult
 	}
 
-	// If template is Ready, nothing more to plan
-	if template.Status.Status == constants.AIMStatusReady {
-		return planResult
-	}
-
 	// Semaphore key is based on template identity (cluster-scoped, so just name)
 	operatorNamespace := constants.GetOperatorNamespace()
 	semaphoreKey := JobKey("", template.Name)
 
 	// Release semaphore slot if job has completed (success or failure)
+	// NOTE: This must happen before the Ready check to avoid slot leaks when templates become Ready
 	if HasCompletedDiscoveryJob(obs.discoveryJob) {
 		if GetGlobalSemaphore().Release(semaphoreKey) {
 			logger.V(1).Info("released semaphore slot for completed discovery job",
 				"semaphoreKey", semaphoreKey,
 				"activeSlots", GetGlobalSemaphore().ActiveCount())
 		}
+	}
+
+	// If template is Ready, nothing more to plan
+	if template.Status.Status == constants.AIMStatusReady {
+		return planResult
 	}
 
 	// Template not ready - check if we need to create discovery job
