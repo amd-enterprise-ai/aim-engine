@@ -399,8 +399,9 @@ func (r *ServiceTemplateReconciler) PlanResources(
 	// Semaphore key is based on template identity (namespace/name)
 	semaphoreKey := JobKey(template.Namespace, template.Name)
 
-	// Release semaphore slot if job has completed (success or failure)
-	// NOTE: This must happen before the Ready check to avoid slot leaks when templates become Ready
+	// Release semaphore slot if job has completed (success or failure).
+	// Note: The controller also releases slots when templates become Ready,
+	// which handles edge cases like garbage-collected jobs.
 	if HasCompletedDiscoveryJob(obs.discoveryJob) {
 		if GetGlobalSemaphore().Release(semaphoreKey) {
 			logger.V(1).Info("released semaphore slot for completed discovery job",
@@ -518,8 +519,9 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 	operatorNamespace := constants.GetOperatorNamespace()
 	semaphoreKey := JobKey("", template.Name)
 
-	// Release semaphore slot if job has completed (success or failure)
-	// NOTE: This must happen before the Ready check to avoid slot leaks when templates become Ready
+	// Release semaphore slot if job has completed (success or failure).
+	// Note: The controller also releases slots when templates become Ready,
+	// which handles edge cases like garbage-collected jobs.
 	if HasCompletedDiscoveryJob(obs.discoveryJob) {
 		if GetGlobalSemaphore().Release(semaphoreKey) {
 			logger.V(1).Info("released semaphore slot for completed discovery job",
@@ -534,7 +536,10 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 	}
 
 	// Template not ready - check if we need to create discovery job
-	if !HasCompletedDiscoveryJob(obs.discoveryJob) && !HasActiveDiscoveryJob(obs.discoveryJob) {
+	hasCompletedJob := HasCompletedDiscoveryJob(obs.discoveryJob)
+	hasActiveJob := HasActiveDiscoveryJob(obs.discoveryJob)
+
+	if !hasCompletedJob && !hasActiveJob {
 		// Compute spec hash for backoff reset detection
 		specHash := ComputeDiscoverySpecHash(template.Spec.AIMServiceTemplateSpecCommon, template.Spec.ModelName, image)
 

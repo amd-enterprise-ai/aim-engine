@@ -97,13 +97,13 @@ type AIMServiceTemplateReconciler struct {
 // move the current state of the cluster closer to the desired state.
 func (r *AIMServiceTemplateReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+	semaphoreKey := aimservicetemplate.JobKey(req.Namespace, req.Name)
 
 	// Fetch the template
 	var template aimv1alpha1.AIMServiceTemplate
 	if err := r.Get(ctx, req.NamespacedName, &template); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Template was deleted - release any semaphore slot it might hold
-			semaphoreKey := aimservicetemplate.JobKey(req.Namespace, req.Name)
 			aimservicetemplate.GetGlobalSemaphore().Release(semaphoreKey)
 			return ctrl.Result{}, nil
 		}
@@ -111,14 +111,46 @@ func (r *AIMServiceTemplateReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 
+	// Release semaphore slot if template no longer needs discovery.
+	// This handles edge cases where the slot was acquired but:
+	// - Template became Ready (discovery succeeded)
+	// - Template has inline model sources (no discovery needed)
+	// Doing this at the controller level ensures we catch all cases.
+	if aimservicetemplate.GetGlobalSemaphore().IsHeld(semaphoreKey) {
+		if template.Status.Status == constants.AIMStatusReady || len(template.Spec.ModelSources) > 0 {
+			if aimservicetemplate.GetGlobalSemaphore().Release(semaphoreKey) {
+				logger.V(1).Info("released semaphore slot (template no longer needs discovery)",
+					"semaphoreKey", semaphoreKey,
+					"status", template.Status.Status)
+			}
+		}
+	}
+
 	if err := r.pipeline.Run(ctx, &template); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// Re-fetch the template to get updated status after pipeline run
+	if err := r.Get(ctx, req.NamespacedName, &template); err != nil {
+		if apierrors.IsNotFound(err) {
+			aimservicetemplate.GetGlobalSemaphore().Release(semaphoreKey)
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
+	// Release semaphore slot if template became Ready after reconciliation
+	if aimservicetemplate.GetGlobalSemaphore().IsHeld(semaphoreKey) &&
+		template.Status.Status == constants.AIMStatusReady {
+		if aimservicetemplate.GetGlobalSemaphore().Release(semaphoreKey) {
+			logger.V(1).Info("released semaphore slot after successful discovery",
+				"semaphoreKey", semaphoreKey)
+		}
 	}
 
 	// Check if the template is waiting for a semaphore slot and requeue if so.
 	// This is needed because templates blocked by the concurrent limit don't get
 	// automatically requeued when a slot becomes available.
-	semaphoreKey := aimservicetemplate.JobKey(req.Namespace, req.Name)
 	if !aimservicetemplate.GetGlobalSemaphore().IsHeld(semaphoreKey) &&
 		template.Status.Status != constants.AIMStatusReady &&
 		len(template.Spec.ModelSources) == 0 {
