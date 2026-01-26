@@ -24,7 +24,6 @@ package controller
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -40,7 +39,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -96,89 +94,41 @@ type AIMClusterServiceTemplateReconciler struct {
 // move the current state of the cluster closer to the desired state.
 func (r *AIMClusterServiceTemplateReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	semaphoreKey := aimservicetemplate.JobKey("", req.Name) // Cluster-scoped, no namespace
 
 	// Fetch the template
 	var template aimv1alpha1.AIMClusterServiceTemplate
 	if err := r.Get(ctx, req.NamespacedName, &template); err != nil {
 		if apierrors.IsNotFound(err) {
-			// Template was deleted - release any semaphore slot it might hold
-			aimservicetemplate.GetGlobalSemaphore().Release(semaphoreKey)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to fetch AIMClusterServiceTemplate")
 		return ctrl.Result{}, err
 	}
 
-	// Release semaphore slot if template no longer needs discovery.
-	// This handles edge cases where the slot was acquired but:
-	// - Template became Ready (discovery succeeded)
-	// - Template has inline model sources (no discovery needed)
-	// Doing this at the controller level ensures we catch all cases.
-	if aimservicetemplate.GetGlobalSemaphore().IsHeld(semaphoreKey) {
-		if template.Status.Status == constants.AIMStatusReady || len(template.Spec.ModelSources) > 0 {
-			if aimservicetemplate.GetGlobalSemaphore().Release(semaphoreKey) {
-				logger.V(1).Info("released semaphore slot (cluster template no longer needs discovery)",
-					"semaphoreKey", semaphoreKey,
-					"status", template.Status.Status)
-			}
+	// Check if this template might need to create a discovery job.
+	// If so, we need to acquire a distributed lock to ensure atomicity
+	// of the "count active jobs + create job" operation.
+	needsLock := aimservicetemplate.NeedsDiscoveryLock(
+		template.Status.Status,
+		len(template.Spec.ModelSources) > 0,
+	)
+
+	if needsLock {
+		// Run pipeline under the discovery lock
+		lockErr := aimservicetemplate.WithDiscoveryLock(ctx, r.Client, 30*time.Second, func() error {
+			return r.pipeline.Run(ctx, &template)
+		})
+
+		if lockErr != nil {
+			// Could not acquire lock - requeue to try later
+			logger.V(1).Info("could not acquire discovery lock, requeuing",
+				"template", template.Name)
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}
-	}
-
-	if err := r.pipeline.Run(ctx, &template); err != nil {
-		// If pipeline failed, check if we should release an orphaned slot.
-		// This handles the case where job creation failed during Apply.
-		operatorNamespace := constants.GetOperatorNamespace()
-		jobResult := aimservicetemplate.FetchDiscoveryJob(ctx, r.Client, operatorNamespace, req.Name)
-		jobExists := jobResult.Value != nil
-		if aimservicetemplate.ReleaseOrphanedSlot(semaphoreKey, jobExists, false) {
-			logger.V(1).Info("released orphaned semaphore slot after pipeline error",
-				"semaphoreKey", semaphoreKey)
-		}
-		return ctrl.Result{}, err
-	}
-
-	// Re-fetch the template to get updated status after pipeline run
-	if err := r.Get(ctx, req.NamespacedName, &template); err != nil {
-		if apierrors.IsNotFound(err) {
-			aimservicetemplate.GetGlobalSemaphore().Release(semaphoreKey)
-			return ctrl.Result{}, nil
-		}
-		return ctrl.Result{}, err
-	}
-
-	// Release semaphore slot if template became Ready after reconciliation
-	if aimservicetemplate.GetGlobalSemaphore().IsHeld(semaphoreKey) &&
-		template.Status.Status == constants.AIMStatusReady {
-		if aimservicetemplate.GetGlobalSemaphore().Release(semaphoreKey) {
-			logger.V(1).Info("released semaphore slot after successful cluster template discovery",
-				"semaphoreKey", semaphoreKey)
-		}
-	}
-
-	// Release orphaned slot: if we hold a slot but no job exists and template is not Ready,
-	// the job creation must have failed. Release the slot so we can retry.
-	operatorNamespace := constants.GetOperatorNamespace()
-	jobResult := aimservicetemplate.FetchDiscoveryJob(ctx, r.Client, operatorNamespace, req.Name)
-	jobExists := jobResult.Value != nil
-	templateReady := template.Status.Status == constants.AIMStatusReady
-	if aimservicetemplate.ReleaseOrphanedSlot(semaphoreKey, jobExists, templateReady) {
-		logger.V(1).Info("released orphaned semaphore slot (no job exists)",
-			"semaphoreKey", semaphoreKey)
-	}
-
-	// Check if the template is waiting for a semaphore slot and requeue if so.
-	// This is needed because templates blocked by the concurrent limit don't get
-	// automatically requeued when a slot becomes available.
-	if !aimservicetemplate.GetGlobalSemaphore().IsHeld(semaphoreKey) &&
-		template.Status.Status != constants.AIMStatusReady &&
-		len(template.Spec.ModelSources) == 0 {
-		// Template needs discovery but doesn't hold a semaphore slot.
-		// Check if semaphore is at capacity - if so, requeue with delay.
-		if aimservicetemplate.GetGlobalSemaphore().AvailableSlots() == 0 {
-			logger.V(1).Info("cluster template waiting for semaphore slot, requeuing",
-				"semaphoreKey", semaphoreKey)
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	} else {
+		// No lock needed - just run pipeline directly
+		if err := r.pipeline.Run(ctx, &template); err != nil {
+			return ctrl.Result{}, err
 		}
 	}
 
@@ -189,20 +139,9 @@ func (r *AIMClusterServiceTemplateReconciler) Reconcile(ctx context.Context, req
 func (r *AIMClusterServiceTemplateReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
 
-	// Register a runnable to initialize semaphore from cluster state after cache is ready.
-	// This is safe to call multiple times - it only runs once via sync.Once.
-	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
-		// Wait for cache to be ready before listing jobs
-		if !mgr.GetCache().WaitForCacheSync(ctx) {
-			return fmt.Errorf("failed to wait for cache sync")
-		}
-		return aimservicetemplate.InitializeSemaphoreFromCluster(ctx, mgr.GetClient())
-	})); err != nil {
-		return fmt.Errorf("failed to add semaphore initializer: %w", err)
-	}
-
 	// Initialize the domain reconciler
 	r.reconciler = &aimservicetemplate.ClusterServiceTemplateReconciler{
+		Client:    mgr.GetClient(),
 		Clientset: r.Clientset,
 		Scheme:    r.Scheme,
 	}

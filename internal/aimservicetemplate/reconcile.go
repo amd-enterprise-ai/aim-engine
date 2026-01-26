@@ -27,7 +27,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-logr/logr"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -50,12 +49,14 @@ import (
 
 // ServiceTemplateReconciler implements the DomainReconciler interface for namespace-scoped templates.
 type ServiceTemplateReconciler struct {
+	Client    client.Client
 	Clientset kubernetes.Interface
 	Scheme    *runtime.Scheme
 }
 
 // ClusterServiceTemplateReconciler implements the DomainReconciler interface for cluster-scoped templates.
 type ClusterServiceTemplateReconciler struct {
+	Client    client.Client
 	Clientset kubernetes.Interface
 	Scheme    *runtime.Scheme
 }
@@ -396,20 +397,6 @@ func (r *ServiceTemplateReconciler) PlanResources(
 		return planResult
 	}
 
-	// Semaphore key is based on template identity (namespace/name)
-	semaphoreKey := JobKey(template.Namespace, template.Name)
-
-	// Release semaphore slot if job has completed (success or failure).
-	// Note: The controller also releases slots when templates become Ready,
-	// which handles edge cases like garbage-collected jobs.
-	if HasCompletedDiscoveryJob(obs.discoveryJob) {
-		if GetGlobalSemaphore().Release(semaphoreKey) {
-			logger.V(1).Info("released semaphore slot for completed discovery job",
-				"semaphoreKey", semaphoreKey,
-				"activeSlots", GetGlobalSemaphore().ActiveCount())
-		}
-	}
-
 	// If template is Ready, create template cache if caching is enabled
 	if template.Status.Status == constants.AIMStatusReady {
 		if template.Spec.Caching != nil && template.Spec.Caching.Enabled && len(template.Status.ModelSources) > 0 {
@@ -427,7 +414,6 @@ func (r *ServiceTemplateReconciler) PlanResources(
 	hasActiveJob := HasActiveDiscoveryJob(obs.discoveryJob)
 
 	logger.V(1).Info("discovery job state check",
-		"semaphoreKey", semaphoreKey,
 		"hasCompletedJob", hasCompletedJob,
 		"hasActiveJob", hasActiveJob,
 		"jobExists", obs.discoveryJob.Value != nil)
@@ -446,10 +432,24 @@ func (r *ServiceTemplateReconciler) PlanResources(
 			return planResult
 		}
 
-		// Try to acquire a semaphore slot for job creation
-		if !tryAcquireDiscoverySlot(logger, semaphoreKey) {
+		// Check concurrent job limit - we're protected by the discovery lock at the controller level
+		// so this count + create is atomic across all reconcilers
+		activeJobs, err := CountActiveDiscoveryJobs(ctx, r.Client)
+		if err != nil {
+			logger.Error(err, "failed to count active discovery jobs")
 			return planResult
 		}
+
+		if activeJobs >= constants.MaxConcurrentDiscoveryJobs {
+			logger.V(1).Info("discovery job creation blocked by concurrent limit",
+				"activeJobs", activeJobs,
+				"limit", constants.MaxConcurrentDiscoveryJobs)
+			return planResult
+		}
+
+		logger.V(1).Info("creating discovery job",
+			"activeJobs", activeJobs,
+			"limit", constants.MaxConcurrentDiscoveryJobs)
 
 		job := BuildDiscoveryJob(DiscoveryJobSpec{
 			TemplateName:     template.Name,
@@ -515,21 +515,6 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 		return planResult
 	}
 
-	// Semaphore key is based on template identity (cluster-scoped, so just name)
-	operatorNamespace := constants.GetOperatorNamespace()
-	semaphoreKey := JobKey("", template.Name)
-
-	// Release semaphore slot if job has completed (success or failure).
-	// Note: The controller also releases slots when templates become Ready,
-	// which handles edge cases like garbage-collected jobs.
-	if HasCompletedDiscoveryJob(obs.discoveryJob) {
-		if GetGlobalSemaphore().Release(semaphoreKey) {
-			logger.V(1).Info("released semaphore slot for completed discovery job",
-				"semaphoreKey", semaphoreKey,
-				"activeSlots", GetGlobalSemaphore().ActiveCount())
-		}
-	}
-
 	// If template is Ready, nothing more to plan
 	if template.Status.Status == constants.AIMStatusReady {
 		return planResult
@@ -538,6 +523,8 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 	// Template not ready - check if we need to create discovery job
 	hasCompletedJob := HasCompletedDiscoveryJob(obs.discoveryJob)
 	hasActiveJob := HasActiveDiscoveryJob(obs.discoveryJob)
+
+	operatorNamespace := constants.GetOperatorNamespace()
 
 	if !hasCompletedJob && !hasActiveJob {
 		// Compute spec hash for backoff reset detection
@@ -553,10 +540,24 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 			return planResult
 		}
 
-		// Try to acquire a semaphore slot for job creation
-		if !tryAcquireDiscoverySlot(logger, semaphoreKey) {
+		// Check concurrent job limit - we're protected by the discovery lock at the controller level
+		// so this count + create is atomic across all reconcilers
+		activeJobs, err := CountActiveDiscoveryJobs(ctx, r.Client)
+		if err != nil {
+			logger.Error(err, "failed to count active discovery jobs")
 			return planResult
 		}
+
+		if activeJobs >= constants.MaxConcurrentDiscoveryJobs {
+			logger.V(1).Info("discovery job creation blocked by concurrent limit",
+				"activeJobs", activeJobs,
+				"limit", constants.MaxConcurrentDiscoveryJobs)
+			return planResult
+		}
+
+		logger.V(1).Info("creating discovery job",
+			"activeJobs", activeJobs,
+			"limit", constants.MaxConcurrentDiscoveryJobs)
 
 		job := BuildDiscoveryJob(DiscoveryJobSpec{
 			TemplateName:     template.Name,
@@ -580,52 +581,6 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 	}
 
 	return planResult
-}
-
-// ============================================================================
-// SHARED PLANNING HELPERS
-// ============================================================================
-
-// tryAcquireDiscoverySlot attempts to acquire a semaphore slot for discovery job creation.
-// Returns true if slot was acquired, false if at capacity or already held.
-// Uses a global lock to prevent race conditions between concurrent reconciliations.
-func tryAcquireDiscoverySlot(logger logr.Logger, semaphoreKey string) bool {
-	var shouldCreateJob bool
-
-	// Serialize the semaphore check with other reconciliations to prevent race conditions.
-	// Without this lock, multiple reconciliations could all see "no job exists" in FetchRemoteState,
-	// then all try to acquire semaphore slots before any of them actually create the job.
-	WithJobCreationLock(func() {
-		// Double-check: another reconciliation may have acquired a slot for this key
-		// while we were waiting for the lock. If so, the job is being created by that
-		// reconciliation, so we should skip creating it here.
-		if GetGlobalSemaphore().IsHeld(semaphoreKey) {
-			logger.V(1).Info("semaphore slot already held for this template, skipping job creation",
-				"semaphoreKey", semaphoreKey)
-			shouldCreateJob = false
-			return
-		}
-
-		// Try to acquire a semaphore slot (non-blocking)
-		shouldCreateJob = GetGlobalSemaphore().TryAcquire(semaphoreKey)
-	})
-
-	if !shouldCreateJob {
-		if !GetGlobalSemaphore().IsHeld(semaphoreKey) {
-			// Not held and not acquired means at capacity
-			logger.V(1).Info("discovery job creation blocked by concurrent limit",
-				"semaphoreKey", semaphoreKey,
-				"activeSlots", GetGlobalSemaphore().ActiveCount(),
-				"limit", constants.MaxConcurrentDiscoveryJobs)
-		}
-		return false
-	}
-
-	logger.V(1).Info("acquired semaphore slot for discovery job",
-		"semaphoreKey", semaphoreKey,
-		"activeSlots", GetGlobalSemaphore().ActiveCount())
-
-	return true
 }
 
 // ============================================================================
@@ -742,12 +697,9 @@ func decorateTemplateStatusCommon(
 		}
 	}
 
-	// If semaphore is at capacity, show capacity-related message
-	if GetGlobalSemaphore().AvailableSlots() == 0 {
-		cm.MarkFalse("Discovered", aimv1alpha1.AIMTemplateReasonAwaitingDiscovery,
-			fmt.Sprintf("Waiting for discovery slot (%d/%d slots in use)",
-				GetGlobalSemaphore().ActiveCount(), constants.MaxConcurrentDiscoveryJobs))
-	}
+	// Generic awaiting discovery message if no other message was set
+	cm.MarkFalse("Discovered", aimv1alpha1.AIMTemplateReasonAwaitingDiscovery,
+		"Waiting for discovery to complete")
 }
 
 // updateDiscoveryStateOnFailure updates the discovery tracking state when a job fails.
