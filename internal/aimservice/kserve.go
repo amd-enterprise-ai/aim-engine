@@ -230,9 +230,13 @@ func buildInferenceService(
 		image = obs.modelResult.ClusterModel.Value.Spec.Image
 	}
 
-	// Get GPU count from template status
+	// Get GPU count from template spec or status
+	// For custom models without discovery, spec.Gpu.Requests is the source of truth
+	// For discovered templates, status.Profile.Metadata.GPUCount is populated
 	gpuCount := int64(0)
-	if templateStatus != nil && templateStatus.Profile != nil {
+	if templateSpec != nil && templateSpec.Gpu != nil && templateSpec.Gpu.Requests > 0 {
+		gpuCount = int64(templateSpec.Gpu.Requests)
+	} else if templateStatus != nil && templateStatus.Profile != nil {
 		gpuCount = int64(templateStatus.Profile.Metadata.GPUCount)
 	}
 
