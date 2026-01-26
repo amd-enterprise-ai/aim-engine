@@ -127,6 +127,18 @@ func (r *AIMServiceTemplateReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	if err := r.pipeline.Run(ctx, &template); err != nil {
+		// If pipeline failed and we hold a slot, check if we should release it.
+		// This handles the case where job creation failed during Apply.
+		if aimservicetemplate.GetGlobalSemaphore().IsHeld(semaphoreKey) {
+			jobResult := aimservicetemplate.FetchDiscoveryJob(ctx, r.Client, req.Namespace, req.Name)
+			if jobResult.Value == nil && jobResult.Error == nil {
+				// Slot is held but no job exists - release the orphaned slot
+				if aimservicetemplate.GetGlobalSemaphore().Release(semaphoreKey) {
+					logger.V(1).Info("released orphaned semaphore slot after pipeline error",
+						"semaphoreKey", semaphoreKey)
+				}
+			}
+		}
 		return ctrl.Result{}, err
 	}
 
@@ -145,6 +157,19 @@ func (r *AIMServiceTemplateReconciler) Reconcile(ctx context.Context, req ctrl.R
 		if aimservicetemplate.GetGlobalSemaphore().Release(semaphoreKey) {
 			logger.V(1).Info("released semaphore slot after successful discovery",
 				"semaphoreKey", semaphoreKey)
+		}
+	}
+
+	// Release orphaned slot: if we hold a slot but no job exists and template is not Ready,
+	// the job creation must have failed. Release the slot so we can retry.
+	if aimservicetemplate.GetGlobalSemaphore().IsHeld(semaphoreKey) &&
+		template.Status.Status != constants.AIMStatusReady {
+		jobResult := aimservicetemplate.FetchDiscoveryJob(ctx, r.Client, req.Namespace, req.Name)
+		if jobResult.Value == nil && jobResult.Error == nil {
+			if aimservicetemplate.GetGlobalSemaphore().Release(semaphoreKey) {
+				logger.V(1).Info("released orphaned semaphore slot (no job exists)",
+					"semaphoreKey", semaphoreKey)
+			}
 		}
 	}
 
