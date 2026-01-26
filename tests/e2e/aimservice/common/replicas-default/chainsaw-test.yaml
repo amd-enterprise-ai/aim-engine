@@ -1,21 +1,18 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
 #
-# AIMService E2E Test: Autoscaling Configuration (Kind)
+# AIMService E2E Test: Default Replicas (Kind)
 #
-# This test validates that autoscaling configuration (minReplicas, maxReplicas, autoScaling)
-# propagates correctly to the InferenceService with KEDA annotations.
-#
-# Note: This test verifies the InferenceService configuration only.
-# Full KEDA integration (ScaledObject, HPA) requires KEDA infrastructure.
+# This test validates that when no replica configuration is specified,
+# the service defaults to 1 replica and status.runtime reflects this.
 #
 # Uses: ghcr.io/silogen/aim-dummy:0.1.8 (lightweight test image)
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
-  name: aimservice-autoscaling
+  name: aimservice-replicas-default
 spec:
-  description: Test AIMService autoscaling configuration propagates to InferenceService
+  description: Test AIMService defaults to 1 replica when not specified
   timeouts:
     assert: 180s
   steps:
@@ -32,11 +29,11 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMModel
               metadata:
-                name: test-autoscaling-model
+                name: test-replicas-default-model
               status:
                 status: Ready
 
-    - name: Create service with autoscaling
+    - name: Create service with no replica config
       try:
         - apply:
             file: service.yaml
@@ -49,11 +46,11 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMService
               metadata:
-                name: test-autoscaling-service
+                name: test-replicas-default-service
               status:
                 status: Starting
 
-    - name: Verify InferenceService has KEDA autoscaler annotations
+    - name: Verify InferenceService has default replica count of 1
       try:
         - assert:
             timeout: 120s
@@ -62,25 +59,23 @@ spec:
               kind: InferenceService
               metadata:
                 labels:
-                  aim.eai.amd.com/service: test-autoscaling-service
-                annotations:
-                  serving.kserve.io/autoscalerClass: "keda"
-                  prometheus.kserve.io/port: "8000"
-
-    - name: Verify InferenceService has correct replica configuration
-      try:
-        - assert:
-            timeout: 120s
-            resource:
-              apiVersion: serving.kserve.io/v1beta1
-              kind: InferenceService
-              metadata:
-                labels:
-                  aim.eai.amd.com/service: test-autoscaling-service
+                  aim.eai.amd.com/service: test-replicas-default-service
               spec:
                 predictor:
                   minReplicas: 1
-                  maxReplicas: 3
+
+    - name: Verify InferenceService has HPA disabled (default replicas mode)
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-replicas-default-service
+                annotations:
+                  serving.kserve.io/autoscalerClass: "none"
 
     - name: Verify service reaches Running status with correct runtime status
       try:
@@ -90,12 +85,14 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMService
               metadata:
-                name: test-autoscaling-service
+                name: test-replicas-default-service
               status:
                 status: Running
                 runtime:
-                  # Autoscaling: min and max differ
+                  # Default replicas: min=max=current=desired=1
+                  currentReplicas: 1
+                  desiredReplicas: 1
                   minReplicas: 1
-                  maxReplicas: 3
-                  # Note: currentReplicas and desiredReplicas depend on HPA
-                  # In test env without KEDA, these fall back to minReplicas
+                  maxReplicas: 1
+                  # Display format for fixed replicas is just the number
+                  replicas: "1"
