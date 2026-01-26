@@ -77,7 +77,7 @@ spec:
                 annotations:
                   serving.kserve.io/autoscalerClass: "none"
 
-    - name: Verify service reaches Running status
+    - name: Verify service reaches Running status with correct runtime status
       try:
         - assert:
             timeout: 180s
@@ -88,3 +88,11 @@ spec:
                 name: test-replicas-service
               status:
                 status: Running
+                runtime:
+                  # Fixed replicas: min=max=current=desired=3
+                  currentReplicas: 3
+                  desiredReplicas: 3
+                  minReplicas: 3
+                  maxReplicas: 3
+                  # Display format for fixed replicas is just the number
+                  replicas: "3"
