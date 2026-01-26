@@ -584,22 +584,7 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 	// No template cache - check dedicated model caches (unified download architecture)
 	// This applies to both Never mode and Auto mode without existing shared cache
 	if obs.dedicatedModelCaches.Value != nil && len(obs.dedicatedModelCaches.Value.Items) > 0 {
-		// Get template model sources to check if all are cached
-		var templateModelSources []aimv1alpha1.AIMModelSource
-		if obs.template.Value != nil {
-			templateModelSources = obs.template.Value.Status.ModelSources
-		} else if obs.clusterTemplate.Value != nil {
-			templateModelSources = obs.clusterTemplate.Value.Status.ModelSources
-		}
-
-		if areDedicatedCachesReady(obs.dedicatedModelCaches.Value, templateModelSources) {
-			health.State = constants.AIMStatusReady
-			health.Reason = aimv1alpha1.AIMServiceReasonCacheReady
-			health.Message = "Dedicated model caches are ready"
-			return health
-		}
-
-		// Check if any cache failed
+		// Check if any cache failed first
 		for _, cache := range obs.dedicatedModelCaches.Value.Items {
 			if cache.Status.Status == constants.AIMStatusFailed {
 				health.State = constants.AIMStatusFailed
@@ -607,6 +592,27 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 				health.Message = "Dedicated model cache failed: " + cache.Name
 				return health
 			}
+		}
+
+		// Check if all caches are ready
+		allReady := true
+		for _, cache := range obs.dedicatedModelCaches.Value.Items {
+			if cache.Status.Status != constants.AIMStatusReady {
+				allReady = false
+				break
+			}
+		}
+
+		if allReady {
+			// All dedicated caches are Ready - consider cache ready
+			// Note: We skip cross-checking with model sources here because:
+			// 1. When ISVC exists, templates are not fetched (optimization)
+			// 2. The caches were created based on model sources during initial setup
+			// 3. If all created caches are Ready, we have what we need
+			health.State = constants.AIMStatusReady
+			health.Reason = aimv1alpha1.AIMServiceReasonCacheReady
+			health.Message = "Dedicated model caches are ready"
+			return health
 		}
 
 		// Caches exist but not all ready - progressing

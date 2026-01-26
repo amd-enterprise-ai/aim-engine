@@ -295,9 +295,9 @@ func (s *AIMModelSpec) ShouldCreateTemplates() bool {
 
 // ExpectsTemplates returns whether this model should have auto-created templates.
 // Returns:
-//   - ptr to true: templates expected (has recommendedDeployments and creation enabled)
+//   - ptr to true: templates expected (has recommendedDeployments, creation enabled, or is custom model)
 //   - ptr to false: no templates expected (no recommendedDeployments or creation disabled)
-//   - nil: unknown (metadata not yet available)
+//   - nil: unknown (metadata not yet available for image-based models)
 func (s *AIMModelSpec) ExpectsTemplates(status *AIMModelStatus) *bool {
 	// Check if template creation is disabled
 	if !s.ShouldCreateTemplates() {
@@ -305,6 +305,14 @@ func (s *AIMModelSpec) ExpectsTemplates(status *AIMModelStatus) *bool {
 		return &result
 	}
 
+	// Custom models (with modelSources) always expect templates to be created
+	// from customTemplates or auto-generated from hardware
+	if len(s.ModelSources) > 0 {
+		result := true
+		return &result
+	}
+
+	// For image-based models, check metadata for recommended deployments
 	metadata := s.GetEffectiveImageMetadata(status)
 	if metadata == nil {
 		return nil // Unknown - still fetching
