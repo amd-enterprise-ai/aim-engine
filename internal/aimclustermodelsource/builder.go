@@ -73,12 +73,12 @@ func buildClusterModel(
 //	{Registry: "ghcr.io", Repository: "silogen/llama-3-8b", Tag: "v1.2.0"} -> silogen-llama-3-8b-v1-2-0-a1b2c3
 //	{Registry: "docker.io", Repository: "library/nginx", Tag: "latest"} -> library-nginx-latest-e5f6g7
 func generateModelName(img RegistryImage) string {
-	// Use GenerateDerivedNameWithHashLength with repository and tag as name parts
+	// Use GenerateDerivedName with repository and tag as name parts
 	// and registry, repository, tag as hash inputs for uniqueness
-	name, _ := utils.GenerateDerivedNameWithHashLength(
+	name, _ := utils.GenerateDerivedName(
 		[]string{img.Repository, img.Tag},
-		6,                                     // 6-char hash for collision avoidance
-		img.Registry, img.Repository, img.Tag, // Hash inputs for determinism
+		utils.WithHashSource(img.Registry, img.Repository, img.Tag), // Hash inputs for determinism
+		utils.WithHashLength(6),                                     // 6-char hash for collision avoidance
 	)
 	return name
 }

@@ -49,6 +49,11 @@ import (
 
 const (
 	modelCacheName = "model-cache"
+
+	// Container status reasons
+	reasonCrashLoopBackOff           = "CrashLoopBackOff"
+	reasonCreateContainerConfigError = "CreateContainerConfigError"
+	reasonCreateContainerError       = "CreateContainerError"
 )
 
 // AIMModelCacheReconciler reconciles a AIMModelCache object
@@ -174,14 +179,14 @@ func hasSignificantPodIssue(pod *corev1.Pod) bool {
 
 	// Check for crash loop backoff
 	for _, status := range pod.Status.ContainerStatuses {
-		if status.State.Waiting != nil && status.State.Waiting.Reason == "CrashLoopBackOff" {
+		if status.State.Waiting != nil && status.State.Waiting.Reason == reasonCrashLoopBackOff {
 			return true
 		}
 	}
 
 	// Check init containers for crash loop backoff too
 	for _, status := range pod.Status.InitContainerStatuses {
-		if status.State.Waiting != nil && status.State.Waiting.Reason == "CrashLoopBackOff" {
+		if status.State.Waiting != nil && status.State.Waiting.Reason == reasonCrashLoopBackOff {
 			return true
 		}
 	}
@@ -190,7 +195,7 @@ func hasSignificantPodIssue(pod *corev1.Pod) bool {
 	for _, status := range pod.Status.ContainerStatuses {
 		if status.State.Waiting != nil {
 			reason := status.State.Waiting.Reason
-			if reason == "CreateContainerConfigError" || reason == "CreateContainerError" {
+			if reason == reasonCreateContainerConfigError || reason == reasonCreateContainerError {
 				return true
 			}
 		}
@@ -200,7 +205,7 @@ func hasSignificantPodIssue(pod *corev1.Pod) bool {
 	for _, status := range pod.Status.InitContainerStatuses {
 		if status.State.Waiting != nil {
 			reason := status.State.Waiting.Reason
-			if reason == "CreateContainerConfigError" || reason == "CreateContainerError" {
+			if reason == reasonCreateContainerConfigError || reason == reasonCreateContainerError {
 				return true
 			}
 		}

@@ -1,0 +1,53 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Happy Path without Caching (GPU)
+#
+# This test validates AIMService with caching.mode: Never on GPU infrastructure.
+# The service uses spec.model.image to reference the model directly.
+# Without caching, the model is pulled directly at runtime.
+# Also validates chat completions endpoint works correctly.
+#
+# Uses: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+# Requires: GPU infrastructure
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-gpu-non-cached
+  labels:
+    requires: gpu
+spec:
+  description: Test AIMService without caching on GPU
+  timeouts:
+    assert: 600s
+  steps:
+    - name: Create runtime config with routing
+      try:
+        - apply:
+            file: runtime-config.yaml
+
+    - name: Create service with caching disabled
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify service reaches Running status
+      try:
+        - assert:
+            timeout: 10m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-gpu-non-cached
+              status:
+                status: Running
+
+    - name: Verify chat completions endpoint works
+      try:
+        - script:
+            timeout: 3m
+            env:
+              - name: HTTP_BASE_PATH
+                value: /integration/gpu-non-cached/test-gpu-non-cached/v1
+            content: bash ../../_shared/validate-http.sh

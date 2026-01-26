@@ -3,6 +3,9 @@ name: Lint
 on:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: lint
@@ -13,6 +16,9 @@ jobs:
 
       - name: Setup mise
         uses: jdx/mise-action@v2
+        env:
+          # Skip mise.local.toml which contains dev-only tools not needed in CI
+          MISE_LOCAL_CONFIG_ALLOWED: "0"
 
       - name: Run linter
         run: golangci-lint run

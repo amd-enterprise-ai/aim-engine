@@ -271,6 +271,15 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterServiceTemplate")
 		os.Exit(1)
 	}
+
+	if err := (&controller.AIMServiceReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Clientset: clientset,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AIMService")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

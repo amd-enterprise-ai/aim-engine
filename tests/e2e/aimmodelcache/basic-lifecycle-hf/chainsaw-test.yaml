@@ -3,6 +3,9 @@ apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
   name: basic-lifecycle-hf
+  labels:
+    # This test requires reliable network access to HuggingFace which may be slow in Kind
+    requires: external-network
 spec:
   steps:
     - name: Create model cache
@@ -32,7 +35,7 @@ spec:
     - name: Assert the cache gets ready
       try:
         - assert:
-            timeout: 120s
+            timeout: 5m
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMModelCache

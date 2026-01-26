@@ -54,10 +54,10 @@ spec:
                 type: string
               env:
                 description: |-
-                  Env specifies environment variables to use for the runtime config.
-                  These variables are used for the runtime config and are not propagated to child resources.
-                  If configmaps or secrets are referenced, they need to exist in the namespace referencing this runtime config.
-                  For cluster scoped runtime configs, any referenced configmaps or secrets need to exist in the system namespace.
+                  Env specifies environment variables for inference containers.
+                  When set on AIMService, these take highest precedence in the merge hierarchy.
+                  When set on RuntimeConfig, these provide namespace/cluster-level defaults.
+                  Merge order (highest to lowest): Service.Env > RuntimeConfig.Env > Template.Env > Profile.Env
                 items:
                   description: EnvVar represents an environment variable present in
                     a Container.

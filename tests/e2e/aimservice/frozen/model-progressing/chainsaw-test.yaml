@@ -1,0 +1,57 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Model Progressing
+#
+# This test validates that an AIMService waits (Pending) when its model is still progressing.
+# The model is frozen with status=Progressing, template is Ready, and we verify the service
+# shows Pending because it's waiting for the model.
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMModel (Progressing), AIMServiceTemplate (Ready)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: model-progressing
+spec:
+  steps:
+    - name: Create frozen model with Progressing status
+      try:
+        - apply:
+            file: model.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh model.yaml --status-only -n $NAMESPACE
+
+    - name: Create frozen template with Ready status
+      try:
+        - apply:
+            file: template.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh template.yaml --status-only -n $NAMESPACE
+
+    - name: Create service referencing the progressing model
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert service is Pending waiting for model
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-service
+              status:
+                status: Pending
+                (conditions[?type == 'ModelReady']):
+                  - status: "False"
+                    reason: ModelNotReady

@@ -1,0 +1,11 @@
+# Service using model.image with caching enabled
+# Caches should complete successfully and be preserved when service is deleted
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: cache-cleanup-ready-service
+spec:
+  model:
+    image: ghcr.io/silogen/aim-dummy:0.1.8
+  caching:
+    mode: Always

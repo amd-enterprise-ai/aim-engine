@@ -1,0 +1,82 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Caching Mode Never (Kind)
+#
+# This test validates that AIMService with caching.mode: Never
+# does not use caching and proceeds directly to runtime creation.
+#
+# Uses: ghcr.io/silogen/aim-dummy:0.1.8 (lightweight test image)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-caching-mode-never
+spec:
+  description: Test AIMService with caching.mode Never bypasses cache
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create model
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for model to be ready (discovery complete)
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-no-cache-model
+              status:
+                status: Ready
+
+    - name: Create service with caching mode Never
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify service resolves and starts without cache
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-no-cache-service
+              status:
+                resolvedModel:
+                  name: test-no-cache-model
+                resolvedTemplate:
+                  (name != ''): true
+                (conditions[?type == 'ModelReady']):
+                  - status: "True"
+                (conditions[?type == 'TemplateReady']):
+                  - status: "True"
+                status: Starting
+
+    - name: Verify InferenceService is created
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-no-cache-service
+
+    - name: Verify service reaches Running status
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-no-cache-service
+              status:
+                status: Running

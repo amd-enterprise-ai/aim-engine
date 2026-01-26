@@ -1,0 +1,90 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Replicas Configuration (Kind)
+#
+# This test validates that spec.replicas propagates correctly
+# to the InferenceService minReplicas field.
+#
+# Uses: ghcr.io/silogen/aim-dummy:0.1.8 (lightweight test image)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-replicas
+spec:
+  description: Test AIMService spec.replicas propagates to InferenceService
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create model
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for model to be ready (discovery complete)
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-replicas-model
+              status:
+                status: Ready
+
+    - name: Create service with 3 replicas
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify service starts
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-replicas-service
+              status:
+                status: Starting
+
+    - name: Verify InferenceService has correct replica count
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-replicas-service
+              spec:
+                predictor:
+                  minReplicas: 3
+
+    - name: Verify InferenceService has HPA disabled (legacy replicas mode)
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-replicas-service
+                annotations:
+                  serving.kserve.io/autoscalerClass: "none"
+
+    - name: Verify service reaches Running status
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-replicas-service
+              status:
+                status: Running

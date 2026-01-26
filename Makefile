@@ -2,6 +2,19 @@
 TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "latest")
 IMG ?= ghcr.io/amd-enterprise-ai/aim-engine:$(TAG)
 
+# Cluster environment configuration
+# ENV is auto-detected from kubectl context if not set:
+#   - Context starting with "kind-" -> ENV=kind
+#   - Otherwise -> ENV=gpu
+# Can be overridden via ENV variable or .tmp/current-env file
+ENV_FILE := .tmp/current-env
+CURRENT_CONTEXT := $(shell kubectl config current-context 2>/dev/null)
+AUTO_ENV := $(if $(filter kind-%,$(CURRENT_CONTEXT)),kind,gpu)
+ENV ?= $(or $(shell cat $(ENV_FILE) 2>/dev/null),$(AUTO_ENV))
+KUBE_CONTEXT_KIND := kind-aim-engine
+KUBE_CONTEXT_GPU ?=
+KUBE_CONTEXT = $(if $(filter gpu,$(ENV)),$(or $(KUBE_CONTEXT_GPU),$(error ENV=gpu requires KUBE_CONTEXT_GPU to be set)),$(KUBE_CONTEXT_KIND))
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -82,6 +95,46 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 			$(KIND) create cluster --name $(KIND_CLUSTER) ;; \
 	esac
 
+.PHONY: kind-create
+kind-create: manifests ## Create kind cluster with all dependencies for local development.
+	@echo "=== Setting up kind cluster for local development ==="
+	@# Create cluster if it doesn't exist
+	@if ! kind get clusters 2>/dev/null | grep -q "^aim-engine$$"; then \
+		echo "Creating kind cluster 'aim-engine'..."; \
+		kind create cluster --config hack/kind/config.yaml; \
+	else \
+		echo "Kind cluster 'aim-engine' already exists."; \
+	fi
+	@# Switch to kind context
+	@kubectl config use-context kind-aim-engine
+	@# Create aim-system namespace (needed for cluster-scoped resources)
+	@echo "Creating aim-system namespace..."
+	@kubectl create namespace aim-system --dry-run=client -o yaml | kubectl apply -f -
+	@# Install core dependencies (cert-manager, kgateway, kserve)
+	@echo "Installing core dependencies..."
+	@helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
+	@# Install kind-specific dependencies (NFS provisioner)
+	@echo "Installing kind-specific dependencies..."
+	@helmfile sync -f hack/kind/helmfile.yaml.gotmpl
+	@# Install CRDs
+	@echo "Installing CRDs..."
+	@$(MAKE) install
+	@# Pre-load test images for faster e2e tests
+	@echo "Pre-loading test images..."
+	@docker pull ghcr.io/silogen/aim-dummy:0.1.8 2>/dev/null || true
+	@kind load docker-image ghcr.io/silogen/aim-dummy:0.1.8 --name aim-engine 2>/dev/null || true
+	@# Set ENV to kind
+	@mkdir -p $(dir $(ENV_FILE))
+	@echo "kind" > $(ENV_FILE)
+	@echo ""
+	@echo "=== Kind cluster setup complete ==="
+	@echo "Run 'make watch' to start the operator with live reload."
+
+.PHONY: kind-delete
+kind-delete: ## Delete the kind cluster.
+	@echo "Deleting kind cluster 'aim-engine'..."
+	@kind delete cluster --name aim-engine || true
+
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
 	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
@@ -90,6 +143,40 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
+
+# Chainsaw test configuration
+# Selector is applied automatically based on ENV
+CHAINSAW_TEST_DIR := tests/e2e
+CHAINSAW_REPORT_DIR := .tmp/chainsaw-reports
+
+# Kind environment: exclude tests requiring GPU, longhorn storage, or external network
+CHAINSAW_SELECTOR_KIND := requires notin (gpu,longhorn,external-network)
+
+# GPU environment: exclude tests that only work on Kind (mocked node labels)
+CHAINSAW_SELECTOR_GPU := requires notin (kind,external-network)
+
+# Select appropriate selector and parallelism based on ENV
+CHAINSAW_ENV_SELECTOR := $(if $(filter gpu,$(ENV)),--selector '$(CHAINSAW_SELECTOR_GPU)',$(if $(filter kind,$(ENV)),--selector '$(CHAINSAW_SELECTOR_KIND)',))
+CHAINSAW_ENV_PARALLEL := $(if $(filter kind,$(ENV)),--parallel 4,)
+
+.PHONY: test-chainsaw
+test-chainsaw: ## Run chainsaw e2e tests (selector based on ENV). Pass CHAINSAW_ARGS for additional options.
+	@echo "Environment: $(ENV) (context: $(CURRENT_CONTEXT))"
+	@echo "Selector: $(if $(filter gpu,$(ENV)),$(CHAINSAW_SELECTOR_GPU),$(CHAINSAW_SELECTOR_KIND))"
+	@mkdir -p $(CHAINSAW_REPORT_DIR)
+	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test --test-dir $(CHAINSAW_TEST_DIR) \
+		$(CHAINSAW_ENV_SELECTOR) \
+		$(CHAINSAW_ENV_PARALLEL) \
+		--report-format JSON --report-name chainsaw-report --report-path $(CHAINSAW_REPORT_DIR) \
+		$(CHAINSAW_ARGS)
+
+.PHONY: test-chainsaw-kind
+test-chainsaw-kind: ## Run chainsaw e2e tests for KIND environment
+	$(MAKE) test-chainsaw ENV=kind
+
+.PHONY: test-chainsaw-gpu
+test-chainsaw-gpu: ## Run chainsaw e2e tests for GPU environment
+	$(MAKE) test-chainsaw ENV=gpu
 
 .PHONY: lint
 lint: ## Run golangci-lint linter
@@ -102,6 +189,45 @@ lint-fix: ## Run golangci-lint linter and perform fixes
 .PHONY: lint-config
 lint-config: ## Verify golangci-lint linter configuration
 	golangci-lint config verify
+
+##@ vCluster Management
+
+# vCluster naming convention: aim-{username}-dev
+VCLUSTER_NAME := aim-$(shell whoami)-dev
+
+.PHONY: vcluster-create
+vcluster-create: ## Create personal vcluster, install dependencies, and connect.
+	@echo "Creating vcluster '$(VCLUSTER_NAME)'..."
+	vcluster create $(VCLUSTER_NAME) --namespace $(VCLUSTER_NAME) -f hack/dependencies/vcluster.yaml
+	@echo "Installing dependencies..."
+	helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
+	@echo "vCluster '$(VCLUSTER_NAME)' ready."
+
+.PHONY: vcluster-delete
+vcluster-delete: ## Delete personal vcluster.
+	@echo "Deleting vcluster '$(VCLUSTER_NAME)'..."
+	vcluster delete $(VCLUSTER_NAME) --namespace $(VCLUSTER_NAME)
+
+.PHONY: vcluster-connect
+vcluster-connect: ## Connect to personal vcluster and switch context.
+	@echo "Connecting to vcluster '$(VCLUSTER_NAME)'..."
+	vcluster connect $(VCLUSTER_NAME) --namespace $(VCLUSTER_NAME)
+
+##@ Environment Switching
+
+.PHONY: switch-env
+switch-env: ## Switch kubectl context based on ENV (kind|gpu). Restart 'make watch' after switching.
+	@echo "Switching to $(ENV) environment (context: $(KUBE_CONTEXT))..."
+	@mkdir -p $(dir $(ENV_FILE))
+	@echo "$(ENV)" > $(ENV_FILE)
+	@kubectl config use-context $(KUBE_CONTEXT)
+	@echo "Context switched. Restart 'make watch' to use new context."
+
+.PHONY: env-info
+env-info: ## Show current environment configuration.
+	@echo "ENV:          $(ENV) (from $(ENV_FILE))"
+	@echo "KUBE_CONTEXT: $(KUBE_CONTEXT)"
+	@echo "Current ctx:  $$(kubectl config current-context 2>/dev/null || echo 'none')"
 
 ##@ Build
 
@@ -116,6 +242,15 @@ run: manifests generate fmt vet ## Run a controller from your host.
 .PHONY: run-debug
 run-debug: manifests generate fmt vet ## Run a controller with debug logging enabled.
 	go run ./cmd/main.go --zap-log-level=debug
+
+.PHONY: watch
+watch: manifests generate install ## Run controller with live reload on file changes.
+	air
+
+.PHONY: wait-ready
+wait-ready: ## Wait for operator readiness probe to succeed.
+	@until curl -sf http://localhost:8081/readyz >/dev/null 2>&1; do sleep 0.5; done
+	@echo "Operator ready"
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.

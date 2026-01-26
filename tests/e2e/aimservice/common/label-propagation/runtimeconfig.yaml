@@ -1,0 +1,17 @@
+# Cluster-wide runtime config with label propagation and routing enabled
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: default
+spec:
+  labelPropagation:
+    enabled: true
+    match:
+      - "team-*"
+      - "cost-center"
+  routing:
+    enabled: true
+    gatewayRef:
+      name: kserve-ingress-gateway
+      namespace: kgateway-system
+    pathTemplate: "/integration/label-propagation/{.metadata.name}"

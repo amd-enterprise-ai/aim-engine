@@ -1,0 +1,11 @@
+# Service referencing a model that doesn't exist
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-missing-model-service
+spec:
+  model:
+    name: nonexistent-model
+  template:
+    name: some-template
+  replicas: 1

@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Template Ready
+#
+# This test validates that an AIMService correctly resolves a Ready template
+# and populates the resolvedTemplate status field.
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMModel (Ready), AIMServiceTemplate (Ready)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: template-ready
+spec:
+  steps:
+    - name: Create frozen model with Ready status
+      try:
+        - apply:
+            file: model.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh model.yaml --status-only -n $NAMESPACE
+
+    - name: Create frozen template with Ready status
+      try:
+        - apply:
+            file: template.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh template.yaml --status-only -n $NAMESPACE
+
+    - name: Create service
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert service resolves template
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-service
+              status:
+                (conditions[?type == 'TemplateReady']):
+                  - status: "True"
+                    reason: Resolved
+                resolvedTemplate:
+                  name: test-template
+                  scope: Namespace

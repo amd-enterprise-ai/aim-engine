@@ -33,3 +33,11 @@ go.work
 # Generated distribution assets (install.yaml, helm chart)
 # These are built in CI and published to releases/registries
 dist/
+
+# Python environments
+venv/
+.venv/
+
+# Temporary and local directories
+.tmp
+tmp

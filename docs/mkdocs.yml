@@ -1,0 +1,36 @@
+site_name: AIM-Engine - AMD Inference Microservice Engine
+theme:
+  name: material
+  features:
+  - navigation.instant
+  - navigation.instant.progress
+  - navigation.tabs
+  - navigation.sections
+  - content.code.copy
+markdown_extensions:
+- def_list
+- pymdownx.highlight:
+    anchor_linenums: true
+    line_spans: __span
+    pygments_lang_class: true
+- pymdownx.inlinehilite
+- pymdownx.snippets
+- admonition
+- pymdownx.details
+- pymdownx.superfences:
+    custom_fences:
+    - name: mermaid
+      class: mermaid
+      format: !!python/name:pymdownx.superfences.fence_code_format
+nav:
+- "Home":
+  - "Overview": "README.md"
+- "Usage":
+    - "Deploying AIM Services": "usage/services.md"
+- "Concepts":
+    - "AIM Models": "concepts/models.md"
+    - "AIM Service Templates": "concepts/templates.md"
+    - "AIM Runtime Configuration": "concepts/runtime-config.md"
+- "Reference":
+  - "API": "reference/crds/v1alpha1/aim.eai.amd.com.md"
+

@@ -410,3 +410,110 @@ type ManualStatusController[T, S, Obs] interface {
 | Standard component tracking | Approach 1: GetComponentHealth() |
 | Custom status fields | Approach 2: GetComponentHealth() + DecorateStatus() |
 | Full control | Approach 3: SetStatus() |
+
+---
+
+## Resolved Reference Pattern
+
+When a controller depends on upstream resources (e.g., AIMService → AIMModel → AIMServiceTemplate → AIMTemplateCache), use the **resolved reference pattern** to optimize fetching while maintaining health visibility.
+
+### Core Principles
+
+1. **Only "lock in" references when Ready**: Store resolved references in status only when the upstream resource is in `Ready` state. This prevents committing to a resource that may never become usable.
+
+2. **Re-search if not Ready or deleted**: If a resolved reference exists but the resource is not Ready (or was deleted), fall through to normal resolution logic to find a better alternative.
+
+3. **Always return something for health visibility**: Even if no Ready resource is found, return the best available match so component health can reflect the current state.
+
+4. **Gate fetching on downstream existence**: For resources only needed during initial creation (e.g., Model/Template for InferenceService), skip fetching if the downstream resource already exists.
+
+### Implementation Pattern
+
+```go
+// In fetch function:
+func fetchUpstreamResource(ctx context.Context, c client.Client, service *MyService) FetchResult[*UpstreamType] {
+    logger := log.FromContext(ctx)
+
+    // 1. Check if we have a resolved reference AND it's Ready
+    if service.Status.ResolvedUpstream != nil {
+        ref := service.Status.ResolvedUpstream
+        result := controllerutils.Fetch(ctx, c, ref.NamespacedName(), &UpstreamType{})
+
+        if result.OK() && result.Value.Status.Status == constants.AIMStatusReady {
+            logger.V(1).Info("using resolved upstream", "name", ref.Name)
+            return result
+        }
+
+        // Not Ready or deleted - log and fall through to search
+        if result.OK() {
+            logger.V(1).Info("resolved upstream not ready, searching for alternatives",
+                "name", ref.Name, "status", result.Value.Status.Status)
+        } else if result.IsNotFound() {
+            logger.V(1).Info("resolved upstream deleted, searching for alternatives", "name", ref.Name)
+        } else {
+            return result // Real error
+        }
+    }
+
+    // 2. Normal resolution logic (search, list, select best, etc.)
+    // ...
+
+    // 3. Return best match for health visibility (even if not Ready)
+    return bestMatch
+}
+```
+
+```go
+// In DecorateStatus:
+func (r *Reconciler) DecorateStatus(status *MyStatus, cm *ConditionManager, obs MyObservation) {
+    // Only set resolved reference if Ready
+    if obs.upstream.Value != nil && obs.upstream.Value.Status.Status == constants.AIMStatusReady {
+        status.ResolvedUpstream = &AIMResolvedReference{
+            Name: obs.upstream.Value.Name,
+            UID:  obs.upstream.Value.UID,
+            // ...
+        }
+    }
+    // If not Ready, don't update the reference - let fetch re-search next time
+}
+```
+
+### When to Apply This Pattern
+
+| Scenario | Behavior |
+|----------|----------|
+| Multiple caches exist for same template | Select the healthiest (Ready) one |
+| Resolved cache becomes Failed | Re-search for a Ready alternative |
+| Resolved template deleted | Fall through to re-select |
+| ISVC exists, template deleted | Don't fetch template (config baked into ISVC) |
+| ISVC deleted, need to recreate | Fetch and resolve dependencies again |
+
+### Gating Fetch on Downstream Existence
+
+For upstream resources only needed during creation:
+
+```go
+func (r *Reconciler) FetchRemoteState(ctx, c, reconcileCtx) FetchResult {
+    result := FetchResult{...}
+
+    // Always fetch downstream resources (we own these)
+    result.inferenceService = fetchInferenceService(ctx, c, service)
+    result.httpRoute = fetchHTTPRoute(ctx, c, service)
+
+    // Always fetch resources that cascade health (e.g., cache chain)
+    result.templateCache = fetchTemplateCache(ctx, c, service)
+
+    // Only fetch upstream if downstream needs (re)creation
+    if !result.inferenceService.OK() {
+        result.model = fetchModel(ctx, c, service)
+        result.template = fetchTemplate(ctx, c, service, result.model)
+    }
+
+    return result
+}
+```
+
+This optimization:
+- Avoids false errors when upstream resources are deleted after successful creation
+- Reduces API calls for running services
+- Still catches cache health issues proactively (TemplateCache → ModelCache → PVC chain)

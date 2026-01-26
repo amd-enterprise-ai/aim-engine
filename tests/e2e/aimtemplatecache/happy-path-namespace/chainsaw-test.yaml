@@ -4,31 +4,16 @@ metadata:
   name: template-cache-happy-path-namespace
 spec:
   steps:
-    - name: Create the service template
+    - name: Create frozen service template with Ready status
       try:
         - apply:
             file: service-template.yaml
         - script:
-            # TODO remove once the template controller is merged
             env:
               - name: NAMESPACE
                 value: ($namespace)
             content: |
-              kubectl patch aimservicetemplate happy-path-namespace -n $NAMESPACE --type=merge --subresource=status -p '
-              {
-                "status": {
-                  "status": "Ready",
-                  "conditions": [
-                    {
-                      "type": "Ready",
-                      "status": "True",
-                      "reason": "AllComponentsReady",
-                      "message": "All components are ready",
-                      "lastTransitionTime": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"
-                    }
-                  ]
-                }
-              }'
+              apply-with-status.sh service-template.yaml --status-only -n $NAMESPACE
 
     - name: Create the template cache
       try:
@@ -47,7 +32,7 @@ spec:
                   aim.eai.amd.com/template.index: "0"
                   aim.eai.amd.com/template.scope: "Namespace"
               spec:
-                sourceUri: hf://hello/world
+                sourceUri: hf://sshleifer/tiny-gpt2
                 size: 2Gi
                 env:
                   - name: HF_TOKEN
@@ -62,7 +47,7 @@ spec:
                   aim.eai.amd.com/template.index: "1"
                   aim.eai.amd.com/template.scope: "Namespace"
               spec:
-                sourceUri: s3://hello2/world2
+                sourceUri: hf://HuggingFaceTB/SmolLM-135M
                 size: 4Gi
 
     # TODO add an assert to check the template cache becomes ready (once the model cache is merged)

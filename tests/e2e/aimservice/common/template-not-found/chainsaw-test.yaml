@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Template Not Found (Kind)
+#
+# This test validates error handling when the referenced template doesn't exist.
+# The service should be Pending with TemplateNotFound reason (waiting for template).
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-template-not-found
+spec:
+  description: Test AIMService waits when referenced template doesn't exist
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create model
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Create service referencing non-existent template
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify service fails with TemplateNotFound
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-missing-tpl-service
+              status:
+                status: Failed
+                (conditions[?type == 'TemplateReady']):
+                  - status: "False"
+                    reason: TemplateNotFound

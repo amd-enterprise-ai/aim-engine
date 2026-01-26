@@ -1,0 +1,18 @@
+# Service with labels for testing label propagation
+# Labels:
+# - team-alpha: should be propagated (matches "team-*" pattern)
+# - cost-center: should be propagated (matches "cost-center" pattern)
+# - env: should NOT be propagated (no matching pattern)
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-label-propagation
+  labels:
+    team-alpha: "frontend"
+    cost-center: "cc-12345"
+    env: "test"
+spec:
+  model:
+    image: ghcr.io/silogen/aim-dummy:0.1.8
+  caching:
+    mode: Always

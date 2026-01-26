@@ -282,7 +282,8 @@ func CategorizeError(err error) StateEngineError {
 			)
 
 		case apierrors.IsConflict(err):
-			return NewInvalidSpecError(
+			// Conflicts are transient - they occur during concurrent updates and will self-heal on retry
+			return NewInfrastructureError(
 				"Conflict",
 				"Resource conflict - version mismatch or concurrent modification",
 				err,

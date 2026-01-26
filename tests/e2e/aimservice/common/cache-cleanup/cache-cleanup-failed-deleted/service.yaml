@@ -1,0 +1,12 @@
+# Service using model.image with caching enabled
+# Uses runtime config with AIM_DEBUG_CAUSE_FAILURE to trigger download failure
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: cache-cleanup-fail-service
+spec:
+  model:
+    image: ghcr.io/silogen/aim-dummy:0.1.8
+  caching:
+    mode: Always
+  runtimeConfigName: cache-cleanup-fail-config

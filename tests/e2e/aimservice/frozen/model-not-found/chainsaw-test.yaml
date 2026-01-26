@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Model Not Found
+#
+# This test validates that an AIMService correctly reports ModelNotFound when
+# the referenced model does not exist.
+#
+# Test type: Frozen dependency test
+# Frozen resources: None (model doesn't exist)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: model-not-found
+spec:
+  steps:
+    - name: Create service referencing non-existent model
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert service shows ModelNotFound
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-service
+              status:
+                status: Failed
+                (conditions[?type == 'ModelReady']):
+                  - status: "False"
+                    reason: ModelNotFound

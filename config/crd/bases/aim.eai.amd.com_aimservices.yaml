@@ -69,6 +69,119 @@ spec:
               runtime selection knobs, while the overrides field allows service-specific
               customization.
             properties:
+              autoScaling:
+                description: |-
+                  AutoScaling configures advanced autoscaling behavior using KEDA.
+                  Supports custom metrics from OpenTelemetry backend.
+                  When specified, MinReplicas and MaxReplicas should also be set.
+                properties:
+                  metrics:
+                    description: |-
+                      Metrics is a list of metrics to be used for autoscaling.
+                      Each metric defines a source (PodMetric) and target values.
+                    items:
+                      description: |-
+                        AIMServiceMetricsSpec defines a single metric for autoscaling.
+                        Specifies the metric source type and configuration.
+                      properties:
+                        podmetric:
+                          description: |-
+                            PodMetric refers to a metric describing each pod in the current scale target.
+                            Used when Type is "PodMetric". Supports backends like OpenTelemetry for custom metrics.
+                          properties:
+                            metric:
+                              description: |-
+                                Metric contains the metric identification and backend configuration.
+                                Defines which metrics to collect and how to query them.
+                              properties:
+                                backend:
+                                  default: opentelemetry
+                                  description: |-
+                                    Backend defines the metrics backend to use.
+                                    If not specified, defaults to "opentelemetry".
+                                  enum:
+                                  - opentelemetry
+                                  type: string
+                                metricNames:
+                                  description: |-
+                                    MetricNames specifies which metrics to collect from pods and send to ServerAddress.
+                                    Example: ["vllm:num_requests_running"]
+                                  items:
+                                    type: string
+                                  type: array
+                                operationOverTime:
+                                  description: |-
+                                    OperationOverTime specifies the operation to aggregate metrics over time.
+                                    Valid values: "last_one", "avg", "max", "min", "rate", "count"
+                                    Default: "last_one"
+                                  type: string
+                                query:
+                                  description: |-
+                                    Query specifies the query to run to retrieve metrics from the backend.
+                                    The query syntax depends on the backend being used.
+                                    Example: "vllm:num_requests_running" for OpenTelemetry.
+                                  type: string
+                                serverAddress:
+                                  description: |-
+                                    ServerAddress specifies the address of the metrics backend server.
+                                    If not specified, defaults to "keda-otel-scaler.keda.svc:4317" for OpenTelemetry backend.
+                                  type: string
+                              type: object
+                            target:
+                              description: |-
+                                Target specifies the target value for the metric.
+                                The autoscaler will scale to maintain this target value.
+                              properties:
+                                averageUtilization:
+                                  description: |-
+                                    AverageUtilization is the target value of the average of the resource metric across all relevant pods,
+                                    represented as a percentage of the requested value of the resource for the pods.
+                                    Used when Type is "Utilization". Only valid for Resource metric source type.
+                                    Example: 80 for 80% utilization
+                                  format: int32
+                                  type: integer
+                                averageValue:
+                                  description: |-
+                                    AverageValue is the target value of the average of the metric across all relevant pods (as a quantity).
+                                    Used when Type is "AverageValue".
+                                    Example: "100m" for 100 millicores per pod
+                                  type: string
+                                type:
+                                  description: |-
+                                    Type specifies how to interpret the metric value.
+                                    "Value": absolute value target (use Value field)
+                                    "AverageValue": average value across all pods (use AverageValue field)
+                                    "Utilization": percentage utilization for resource metrics (use AverageUtilization field)
+                                  enum:
+                                  - Value
+                                  - AverageValue
+                                  - Utilization
+                                  type: string
+                                value:
+                                  description: |-
+                                    Value is the target value of the metric (as a quantity).
+                                    Used when Type is "Value".
+                                    Example: "1" for 1 request, "100m" for 100 millicores
+                                  type: string
+                              required:
+                              - type
+                              type: object
+                          required:
+                          - metric
+                          - target
+                          type: object
+                        type:
+                          description: |-
+                            Type is the type of metric source.
+                            Valid values: "PodMetric" (per-pod custom metrics).
+                          enum:
+                          - PodMetric
+                          type: string
+                      required:
+                      - type
+                      type: object
+                    type: array
+                type: object
               cacheModel:
                 description: |-
                   DEPRECATED: Use Caching.Mode instead. This field will be removed in a future version.
@@ -93,6 +206,170 @@ spec:
                     - Never
                     type: string
                 type: object
+              env:
+                description: |-
+                  Env specifies environment variables for inference containers.
+                  When set on AIMService, these take highest precedence in the merge hierarchy.
+                  When set on RuntimeConfig, these provide namespace/cluster-level defaults.
+                  Merge order (highest to lowest): Service.Env > RuntimeConfig.Env > Template.Env > Profile.Env
+                items:
+                  description: EnvVar represents an environment variable present in
+                    a Container.
+                  properties:
+                    name:
+                      description: |-
+                        Name of the environment variable.
+                        May consist of any printable ASCII characters except '='.
+                      type: string
+                    value:
+                      description: |-
+                        Variable references $(VAR_NAME) are expanded
+                        using the previously defined environment variables in the container and
+                        any service environment variables. If a variable cannot be resolved,
+                        the reference in the input string will be unchanged. Double $$ are reduced
+                        to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                        "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                        Escaped references will never be expanded, regardless of whether the variable
+                        exists or not.
+                        Defaults to "".
+                      type: string
+                    valueFrom:
+                      description: Source for the environment variable's value. Cannot
+                        be used if value is not empty.
+                      properties:
+                        configMapKeyRef:
+                          description: Selects a key of a ConfigMap.
+                          properties:
+                            key:
+                              description: The key to select.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the ConfigMap or its key
+                                must be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        fieldRef:
+                          description: |-
+                            Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                            spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                          properties:
+                            apiVersion:
+                              description: Version of the schema the FieldPath is
+                                written in terms of, defaults to "v1".
+                              type: string
+                            fieldPath:
+                              description: Path of the field to select in the specified
+                                API version.
+                              type: string
+                          required:
+                          - fieldPath
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        fileKeyRef:
+                          description: |-
+                            FileKeyRef selects a key of the env file.
+                            Requires the EnvFiles feature gate to be enabled.
+                          properties:
+                            key:
+                              description: |-
+                                The key within the env file. An invalid key will prevent the pod from starting.
+                                The keys defined within a source may consist of any printable ASCII characters except '='.
+                                During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
+                              type: string
+                            optional:
+                              default: false
+                              description: |-
+                                Specify whether the file or its key must be defined. If the file or key
+                                does not exist, then the env var is not published.
+                                If optional is set to true and the specified key does not exist,
+                                the environment variable will not be set in the Pod's containers.
+
+                                If optional is set to false and the specified key does not exist,
+                                an error will be returned during Pod creation.
+                              type: boolean
+                            path:
+                              description: |-
+                                The path within the volume from which to select the file.
+                                Must be relative and may not contain the '..' path or start with '..'.
+                              type: string
+                            volumeName:
+                              description: The name of the volume mount containing
+                                the env file.
+                              type: string
+                          required:
+                          - key
+                          - path
+                          - volumeName
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        resourceFieldRef:
+                          description: |-
+                            Selects a resource of the container: only resources limits and requests
+                            (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                          properties:
+                            containerName:
+                              description: 'Container name: required for volumes,
+                                optional for env vars'
+                              type: string
+                            divisor:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: Specifies the output format of the exposed
+                                resources, defaults to "1"
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            resource:
+                              description: 'Required: resource to select'
+                              type: string
+                          required:
+                          - resource
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        secretKeyRef:
+                          description: Selects a key of a secret in the pod's namespace
+                          properties:
+                            key:
+                              description: The key of the secret to select from.  Must
+                                be a valid secret key.
+                              type: string
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                            optional:
+                              description: Specify whether the Secret or its key must
+                                be defined
+                              type: boolean
+                          required:
+                          - key
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               imagePullSecrets:
                 description: ImagePullSecrets references secrets for pulling AIM container
                   images.
@@ -113,103 +390,27 @@ spec:
                   type: object
                   x-kubernetes-map-type: atomic
                 type: array
+              maxReplicas:
+                description: |-
+                  MaxReplicas specifies the maximum number of replicas for autoscaling.
+                  Required when MinReplicas is set or when AutoScaling configuration is provided.
+                format: int32
+                minimum: 1
+                type: integer
+              minReplicas:
+                description: |-
+                  MinReplicas specifies the minimum number of replicas for autoscaling.
+                  Defaults to 1. Scale to zero is not supported.
+                  When specified with MaxReplicas, enables autoscaling for the service.
+                format: int32
+                minimum: 1
+                type: integer
               model:
                 description: |-
                   Model specifies which model to deploy using one of the available reference methods.
                   Use `ref` to reference an existing AIMModel/AIMClusterModel by name, or use `image`
                   to specify a container image URI directly (which will auto-create a model if needed).
                 properties:
-                  custom:
-                    description: |-
-                      Custom specifies a custom model configuration with explicit base image,
-                      model sources, and GPU requirements.
-                    properties:
-                      baseImage:
-                        description: |-
-                          BaseImage is the container image URI for the AIM base image.
-                          This will be used as the image for the auto-created AIMModel.
-                          Example: `ghcr.io/silogen/aim-base:0.7.0`
-                        type: string
-                      gpuSelector:
-                        description: |-
-                          GpuSelector specifies the GPU requirements for this custom model.
-                          This is mandatory and cannot be overridden by service-level overrides.
-                        properties:
-                          count:
-                            description: |-
-                              Count is the number of GPU resources requested per replica.
-                              Must be at least 1.
-                            format: int32
-                            minimum: 1
-                            type: integer
-                          model:
-                            description: |-
-                              Model is the GPU model name required for this deployment.
-                              Examples: `MI300X`, `MI325X`
-                            minLength: 1
-                            type: string
-                          resourceName:
-                            default: amd.com/gpu
-                            description: |-
-                              ResourceName is the Kubernetes resource name for GPU resources.
-                              Defaults to "amd.com/gpu" if not specified.
-                            type: string
-                        required:
-                        - count
-                        - model
-                        type: object
-                      modelSources:
-                        description: |-
-                          ModelSources specifies the model sources to use.
-                          The controller will create a template with these sources inline,
-                          and discovery will validate/enrich them with size information.
-                          AIM runtime currently supports only one model source.
-                        items:
-                          description: |-
-                            AIMModelSource describes a model artifact that must be downloaded for inference.
-                            Discovery extracts these from the container's configuration to enable caching and validation.
-                          properties:
-                            name:
-                              description: |-
-                                Name is a human-readable identifier for this model artifact.
-                                May be empty if the source represents the primary model.
-                              type: string
-                            size:
-                              anyOf:
-                              - type: integer
-                              - type: string
-                              description: |-
-                                Size is the expected storage space required for this model artifact.
-                                Used for PVC sizing and capacity planning during cache creation.
-                                Optional for custom models (will be populated by discovery job).
-                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                              x-kubernetes-int-or-string: true
-                            sourceUri:
-                              description: |-
-                                SourceURI is the location from which the model should be downloaded.
-                                Supported schemes:
-                                - hf://org/model - Hugging Face Hub model
-                                - s3://bucket/key - S3-compatible storage
-                              pattern: ^(hf|s3)://[^ \t\r\n]+$
-                              type: string
-                          required:
-                          - sourceUri
-                          type: object
-                        maxItems: 1
-                        minItems: 1
-                        type: array
-                    required:
-                    - baseImage
-                    - gpuSelector
-                    - modelSources
-                    type: object
-                    x-kubernetes-validations:
-                    - message: at least one model source must be specified
-                      rule: size(self.modelSources) >= 1
-                    - message: gpuSelector must be fully specified with model and
-                        count
-                      rule: has(self.gpuSelector) && self.gpuSelector.model != ""
-                        && self.gpuSelector.count > 0
                   image:
                     description: |-
                       Image specifies a container image URI directly.
@@ -217,18 +418,17 @@ spec:
                       The scope of the created model is controlled by the runtime config's ModelCreationScope field.
                       Example: `ghcr.io/silogen/llama-3-8b:v1.2.0`
                     type: string
-                  ref:
+                  name:
                     description: |-
-                      Ref references an existing AIMModel or AIMClusterModel by metadata.name.
+                      Name references an existing AIMModel or AIMClusterModel by metadata.name.
                       The controller looks for a namespace-scoped AIMModel first, then falls back to cluster-scoped AIMClusterModel.
                       Example: `meta-llama-3-8b`
                     type: string
                 type: object
                 x-kubernetes-validations:
-                - message: exactly one of ref, image, or custom must be specified
-                  rule: (has(self.ref) && !has(self.image) && !has(self.custom)) ||
-                    (!has(self.ref) && has(self.image) && !has(self.custom)) || (!has(self.ref)
-                    && !has(self.image) && has(self.custom))
+                - message: exactly one of name or image must be specified
+                  rule: (has(self.name) && !has(self.image)) || (!has(self.name) &&
+                    has(self.image))
                 - message: model selection is immutable after creation
                   rule: self == oldSelf
               overrides:
@@ -314,6 +514,7 @@ spec:
                   Replicas specifies the number of replicas for this service.
                   When not specified, defaults to 1 replica.
                   This value overrides any replica settings from the template.
+                  For autoscaling, use MinReplicas and MaxReplicas instead.
                 format: int32
                 type: integer
               resources:
@@ -602,11 +803,23 @@ spec:
                     minimum: 0
                     type: integer
                 type: object
-              templateName:
+              template:
                 description: |-
-                  TemplateName is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.
-                  The template selects the runtime profile and GPU parameters.
-                type: string
+                  Template contains template selection and configuration.
+                  Use Template.Name to specify an explicit template, or omit to auto-select.
+                properties:
+                  allowUnoptimized:
+                    description: |-
+                      AllowUnoptimized, if true, will allow automatic selection of templates
+                      that resolve to an unoptimized profile.
+                    type: boolean
+                  name:
+                    description: |-
+                      Name is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.
+                      The template selects the runtime profile and GPU parameters.
+                      When not specified, a template will be automatically selected based on the model.
+                    type: string
+                type: object
             required:
             - model
             type: object

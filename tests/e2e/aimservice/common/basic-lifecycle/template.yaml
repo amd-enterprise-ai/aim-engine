@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-service-template
+spec:
+  modelName: test-service-model
+  gpuSelector:
+    count: 1
+    model: MI300X

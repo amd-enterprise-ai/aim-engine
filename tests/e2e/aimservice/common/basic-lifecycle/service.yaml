@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-service
+spec:
+  model:
+    name: test-service-model
+  template:
+    name: test-service-template
+  replicas: 1

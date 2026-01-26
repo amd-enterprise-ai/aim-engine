@@ -823,12 +823,12 @@ spec:
                         - int8
                         type: string
                       type:
-                        description: Type specifies the designation of the profile
-                          (optimized, unoptimized, preview).
+                        description: Type indicates the optimization level of this
+                          profile (optimized, preview, unoptimized).
                         enum:
                         - optimized
-                        - unoptimized
                         - preview
+                        - unoptimized
                         type: string
                     type: object
                   originalDiscoveryOutput:

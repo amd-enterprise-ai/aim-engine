@@ -69,9 +69,18 @@ func (fr FetchResult[T]) HasError() bool {
 //	    }, nil
 //	}
 func Fetch[T client.Object](ctx context.Context, c client.Client, key client.ObjectKey, obj T) FetchResult[T] {
+	err := c.Get(ctx, key, obj)
+	if err != nil {
+		// Return nil Value on error to prevent callers from using uninitialized objects
+		var zero T
+		return FetchResult[T]{
+			Value: zero,
+			Error: err,
+		}
+	}
 	return FetchResult[T]{
 		Value: obj,
-		Error: c.Get(ctx, key, obj),
+		Error: nil,
 	}
 }
 

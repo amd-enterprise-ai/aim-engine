@@ -32,6 +32,46 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// GPU node label keys for AMD GPUs.
+const (
+	// LabelAMDGPUDeviceID is the primary label for AMD GPU device identification.
+	// Values are PCI device IDs (e.g., "74a1" for MI300X).
+	LabelAMDGPUDeviceID = "amd.com/gpu.device-id"
+
+	// LabelAMDGPUDeviceIDBeta is the beta version of the device ID label.
+	LabelAMDGPUDeviceIDBeta = "beta.amd.com/gpu.device-id"
+
+	// LabelAMDGPUFamily is the label for AMD GPU family (e.g., "AI", "NV").
+	LabelAMDGPUFamily = "amd.com/gpu.family"
+
+	// LabelAMDGPUFamilyBeta is the beta version of the family label.
+	LabelAMDGPUFamilyBeta = "beta.amd.com/gpu.family"
+)
+
+// GPU node label keys for NVIDIA GPUs.
+const (
+	// LabelNVIDIAGPUProduct is the label for NVIDIA GPU product name.
+	LabelNVIDIAGPUProduct = "nvidia.com/gpu.product"
+
+	// LabelNVIDIAMIGProduct is the label for NVIDIA MIG product name.
+	LabelNVIDIAMIGProduct = "nvidia.com/mig.product"
+
+	// LabelNVIDIAGPUFamily is the label for NVIDIA GPU family.
+	LabelNVIDIAGPUFamily = "nvidia.com/gpu.family"
+
+	// LabelNFDNVIDIAGPUModel is the Node Feature Discovery label for NVIDIA GPU model.
+	LabelNFDNVIDIAGPUModel = "feature.node.kubernetes.io/nvidia-gpu-model"
+)
+
+// GPU resource name prefixes.
+const (
+	// ResourcePrefixAMD is the resource name prefix for AMD GPUs.
+	ResourcePrefixAMD = "amd.com/"
+
+	// ResourcePrefixNVIDIA is the resource name prefix for NVIDIA GPUs.
+	ResourcePrefixNVIDIA = "nvidia.com/"
+)
+
 // KnownAmdDevices maps AMD GPU device IDs (PCI device IDs) to their commercial model names.
 // This mapping is used to identify GPU models from node labels when the device ID is available.
 // Device IDs are typically exposed by AMD GPU labelers (e.g., amd.com/gpu.device-id).
@@ -122,11 +162,11 @@ func GetClusterGPUResources(ctx context.Context, k8sClient client.Client) (map[s
 // Returns a normalized GPU model name (e.g., "MI300X", "A100") or empty string if model cannot be determined.
 // Nodes with GPU resources but insufficient labels will be excluded from template matching.
 func ExtractGPUModelFromNodeLabels(labels map[string]string, resourceName string) string {
-	if strings.HasPrefix(resourceName, "amd.com/") {
+	if strings.HasPrefix(resourceName, ResourcePrefixAMD) {
 		return ExtractAMDModel(labels)
 	}
 
-	if strings.HasPrefix(resourceName, "nvidia.com/") {
+	if strings.HasPrefix(resourceName, ResourcePrefixNVIDIA) {
 		return extractNvidiaModel(labels)
 	}
 
@@ -192,18 +232,18 @@ func MapAMDDeviceIDToModel(deviceID string) string {
 // Device IDs are mapped using KnownAmdDevices for precise identification.
 func ExtractAMDModel(labels map[string]string) string {
 	// Primary method: Use device ID for accurate model identification
-	if deviceID := labelValue(labels, "amd.com/gpu.device-id", "beta.amd.com/gpu.device-id"); deviceID != "" {
+	if deviceID := labelValue(labels, LabelAMDGPUDeviceID, LabelAMDGPUDeviceIDBeta); deviceID != "" {
 		return MapAMDDeviceIDToModel(deviceID)
 	}
-	if deviceKey := extractLabelSuffix(labels, "amd.com/gpu.device-id.", "beta.amd.com/gpu.device-id."); deviceKey != "" {
+	if deviceKey := extractLabelSuffix(labels, LabelAMDGPUDeviceID+".", LabelAMDGPUDeviceIDBeta+"."); deviceKey != "" {
 		return MapAMDDeviceIDToModel(deviceKey)
 	}
 
 	// GPU family (AI, NV, etc.) as a last resort
-	if family := labelValue(labels, "amd.com/gpu.family", "beta.amd.com/gpu.family"); family != "" {
+	if family := labelValue(labels, LabelAMDGPUFamily, LabelAMDGPUFamilyBeta); family != "" {
 		return NormalizeGPUModel(family)
 	}
-	if familyKey := extractLabelSuffix(labels, "amd.com/gpu.family.", "beta.amd.com/gpu.family."); familyKey != "" {
+	if familyKey := extractLabelSuffix(labels, LabelAMDGPUFamily+".", LabelAMDGPUFamilyBeta+"."); familyKey != "" {
 		return NormalizeGPUModel(familyKey)
 	}
 
@@ -211,20 +251,20 @@ func ExtractAMDModel(labels map[string]string) string {
 }
 
 func extractNvidiaModel(labels map[string]string) string {
-	if product := labelValue(labels, "nvidia.com/gpu.product", "nvidia.com/mig.product"); product != "" {
+	if product := labelValue(labels, LabelNVIDIAGPUProduct, LabelNVIDIAMIGProduct); product != "" {
 		return NormalizeGPUModel(product)
 	}
-	if productKey := extractLabelSuffix(labels, "nvidia.com/gpu.product.", "nvidia.com/mig.product."); productKey != "" {
+	if productKey := extractLabelSuffix(labels, LabelNVIDIAGPUProduct+".", LabelNVIDIAMIGProduct+"."); productKey != "" {
 		return NormalizeGPUModel(productKey)
 	}
-	if family := labelValue(labels, "nvidia.com/gpu.family"); family != "" {
+	if family := labelValue(labels, LabelNVIDIAGPUFamily); family != "" {
 		return NormalizeGPUModel(family)
 	}
-	if familyKey := extractLabelSuffix(labels, "nvidia.com/gpu.family."); familyKey != "" {
+	if familyKey := extractLabelSuffix(labels, LabelNVIDIAGPUFamily+"."); familyKey != "" {
 		return NormalizeGPUModel(familyKey)
 	}
 	// Node Feature Discovery publishes a descriptive label as well
-	if feature := labelValue(labels, "feature.node.kubernetes.io/nvidia-gpu-model"); feature != "" {
+	if feature := labelValue(labels, LabelNFDNVIDIAGPUModel); feature != "" {
 		return NormalizeGPUModel(feature)
 	}
 	return ""
@@ -286,7 +326,7 @@ func pickGPUModelToken(tokens []string) string {
 // filterGPULabelResources performs GPU discovery based on node labels only.
 // Skips GPUs where the model cannot be determined from node labels (strict matching requirement).
 func filterGPULabelResources(node *corev1.Node, aggregate map[string]GPUResourceInfo) {
-	for _, resourcePrefix := range []string{"amd.com/", "nvidia.com/"} {
+	for _, resourcePrefix := range []string{ResourcePrefixAMD, ResourcePrefixNVIDIA} {
 
 		// Extract GPU model from node labels
 		gpuModel := ExtractGPUModelFromNodeLabels(node.Labels, resourcePrefix)
@@ -308,8 +348,8 @@ func filterGPULabelResources(node *corev1.Node, aggregate map[string]GPUResource
 // IsGPUResource checks if a resource name represents a GPU resource.
 // Returns true if the resource name starts with "amd.com/" or "nvidia.com/".
 func IsGPUResource(resourceName string) bool {
-	return strings.HasPrefix(resourceName, "amd.com/") ||
-		strings.HasPrefix(resourceName, "nvidia.com/")
+	return strings.HasPrefix(resourceName, ResourcePrefixAMD) ||
+		strings.HasPrefix(resourceName, ResourcePrefixNVIDIA)
 }
 
 // GetAMDDeviceIDsForModel returns all AMD device IDs that map to a given GPU model name.

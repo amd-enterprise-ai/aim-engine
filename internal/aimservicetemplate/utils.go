@@ -80,7 +80,8 @@ func GenerateTemplateName(modelName string, imageName string, deployment aimv1al
 		hashInput += "-" + deployment.Precision
 	}
 
-	name, _ := utils.GenerateDerivedNameWithHashLength([]string{imageName, strings.Join(suffixParts, "-")}, 4, hashInput)
+	name, _ := utils.GenerateDerivedName([]string{imageName, strings.Join(suffixParts, "-")},
+		utils.WithHashSource(hashInput), utils.WithHashLength(4))
 	return name
 }
 

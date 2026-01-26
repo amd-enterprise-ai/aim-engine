@@ -1,0 +1,9 @@
+# Local development tools - not needed in CI
+[tools]
+kustomize = "5.7.1"
+"go:github.com/google/go-licenses" = "1.6.0"
+kubebuilder = "4.10.1"
+"go:github.com/air-verse/air" = "latest"
+yq = "4.45.1"
+jq = "1.7.1"
+vcluster = "0.30.4"

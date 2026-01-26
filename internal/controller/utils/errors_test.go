@@ -328,7 +328,7 @@ func TestCategorizeError_KubernetesAPIErrors(t *testing.T) {
 					Reason: metav1.StatusReasonConflict,
 				},
 			},
-			expectedCategory: ErrorCategoryInvalidSpec,
+			expectedCategory: ErrorCategoryInfrastructure,
 			expectedReason:   "Conflict",
 		},
 		{

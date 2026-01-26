@@ -202,6 +202,11 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 			BackoffLimit:            &backoffLimit,
 			TTLSecondsAfterFinished: &ttlSeconds,
 			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						constants.LabelKeyTemplate: spec.TemplateName,
+					},
+				},
 				Spec: corev1.PodSpec{
 					RestartPolicy:      corev1.RestartPolicyNever,
 					ImagePullSecrets:   spec.ImagePullSecrets,

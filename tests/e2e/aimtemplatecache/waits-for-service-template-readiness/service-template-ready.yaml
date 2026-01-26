@@ -1,0 +1,22 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: waits-for-template-readiness
+  annotations:
+    aim.eai.amd.com/reconciliation-paused: "true"
+spec:
+  modelName: template-cache-waits-for-template-readiness
+  modelSources:
+    - sourceUri: hf://hello/world
+      size: 2Gi
+status:
+  status: Ready
+  conditions:
+    - type: Ready
+      status: "True"
+      reason: AllComponentsReady
+      message: Everything is ready
+      lastTransitionTime: "2024-01-01T00:00:00Z"
+  modelSources:
+    - sourceUri: hf://hello/world
+      size: 2Gi

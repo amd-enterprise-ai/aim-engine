@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: ghcr.io/amd-enterprise-ai/aim-engine
-  newTag: v-e2e
+  newTag: latest
