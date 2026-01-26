@@ -257,7 +257,7 @@ type AIMServiceStatus struct {
 	// +optional
 	Cache *AIMServiceCacheStatus `json:"cache,omitempty"`
 
-	// Runtime captures runtime status including replica counts and resource usage.
+	// Runtime captures runtime status including replica counts.
 	// +optional
 	Runtime *AIMServiceRuntimeStatus `json:"runtime,omitempty"`
 }
@@ -293,6 +293,11 @@ type AIMServiceRuntimeStatus struct {
 	// MaxReplicas is the maximum number of replicas configured for autoscaling.
 	// +optional
 	MaxReplicas int32 `json:"maxReplicas,omitempty"`
+
+	// Replicas is a formatted display string for kubectl output.
+	// Shows "current" for fixed replicas or "current/desired (min-max)" for autoscaling.
+	// +optional
+	Replicas string `json:"replicas,omitempty"`
 }
 
 func (s *AIMService) GetRuntimeConfigRef() RuntimeConfigRef {
@@ -370,9 +375,7 @@ const (
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 // +kubebuilder:printcolumn:name="Model",type=string,JSONPath=`.status.resolvedModel.name`
 // +kubebuilder:printcolumn:name="Template",type=string,JSONPath=`.status.resolvedTemplate.name`
-// +kubebuilder:printcolumn:name="Replicas",type=string,JSONPath=`.status.runtime.currentReplicas`
-// +kubebuilder:printcolumn:name="Min",type=string,JSONPath=`.status.runtime.minReplicas`
-// +kubebuilder:printcolumn:name="Max",type=string,JSONPath=`.status.runtime.maxReplicas`
+// +kubebuilder:printcolumn:name="Replicas",type=string,JSONPath=`.status.runtime.replicas`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // Note: KServe uses {name}-{namespace} format which must not exceed 63 characters.
 // This constraint is validated at runtime since CEL cannot access metadata.namespace.
