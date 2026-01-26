@@ -32,6 +32,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -64,18 +65,8 @@ type ModelCacheFetchResult struct {
 	downloadJob     *controllerutils.FetchResult[*batchv1.Job]
 	downloadJobPods *controllerutils.FetchResult[*corev1.PodList]
 
-	// progressLogLine stores the last progress log line from the monitor container
-	progressLogLine string
-}
-
-// progressLog represents the JSON structure of progress log lines from download-monitor.sh
-type progressLog struct {
-	Type            string `json:"type"`
-	Percent         int32  `json:"percent,omitempty"`
-	CurrentBytes    int64  `json:"currentBytes,omitempty"`
-	ExpectedBytes   int64  `json:"expectedBytes,omitempty"`
-	Message         string `json:"message,omitempty"`
-	IntervalSeconds int    `json:"intervalSeconds,omitempty"`
+	// roleBinding stores the role binding for updating the model cache status
+	roleBinding controllerutils.FetchResult[*rbacv1.RoleBinding]
 }
 
 type checkSizeOutput struct {
@@ -124,51 +115,6 @@ func (result ModelCacheFetchResult) CheckSizeJobSucceeded() bool {
 		return false
 	}
 	return utils.IsJobSucceeded(result.checkSizeJob.Value)
-}
-
-// parseProgressLog parses a JSON progress log line and returns a DownloadProgress if valid
-func parseProgressLog(logLine string) *aimv1alpha1.DownloadProgress {
-	if logLine == "" {
-		return nil
-	}
-
-	var log progressLog
-	if err := json.Unmarshal([]byte(logLine), &log); err != nil {
-		return nil
-	}
-
-	// Only return progress for "progress", "start", and "complete" type logs
-	// Ignore "terminated" - that just means the container stopped, not that download succeeded
-	if log.Type != "progress" && log.Type != "start" && log.Type != "complete" {
-		return nil
-	}
-
-	// Calculate percentage - multiply first to avoid integer division truncation
-	var percent int32
-	if log.ExpectedBytes > 0 {
-		percent = int32((log.CurrentBytes * 100) / log.ExpectedBytes)
-	} else {
-		percent = 0
-	}
-
-	// Ensure percentage is bounded between 0 and 100
-	if percent < 0 {
-		percent = 0
-	} else if percent > 100 {
-		percent = 100
-	}
-
-	// For "complete" type, ensure we show 100%
-	if log.Type == "complete" {
-		percent = 100
-	}
-
-	return &aimv1alpha1.DownloadProgress{
-		TotalBytes:        log.ExpectedBytes,
-		DownloadedBytes:   log.CurrentBytes,
-		Percentage:        percent,
-		DisplayPercentage: fmt.Sprintf("%d %%", percent),
-	}
 }
 
 // getLastLogLine retrieves the last line from a container's logs
@@ -220,6 +166,11 @@ func (r *ModelCacheReconciler) FetchRemoteState(
 			ctx, c,
 			client.ObjectKey{Name: getCachePvcName(mc), Namespace: mc.Namespace},
 			&corev1.PersistentVolumeClaim{},
+		),
+		roleBinding: controllerutils.Fetch(
+			ctx, c,
+			client.ObjectKey{Name: "aim-modelcache-status-updater", Namespace: mc.Namespace},
+			&rbacv1.RoleBinding{},
 		),
 	}
 
@@ -274,19 +225,8 @@ func (r *ModelCacheReconciler) FetchRemoteState(
 	// Only fetch pods if the job exists and hasn't succeeded yet
 	// Once the job succeeds, we don't need to track pods anymore
 	if !downloadJobFetchResult.IsNotFound() && !downloadJobFetchResult.HasError() {
-		job := downloadJobFetchResult.Value
-		jobSucceeded := false
-		if job != nil {
-			for _, condition := range job.Status.Conditions {
-				if condition.Type == batchv1.JobComplete && condition.Status == corev1.ConditionTrue {
-					jobSucceeded = true
-					break
-				}
-			}
-		}
-
-		// Fetch pods if the job hasn't succeeded yet
-		if !jobSucceeded {
+		// Only fetch pods if the job hasn't succeeded yet
+		if !utils.IsJobSucceeded(downloadJobFetchResult.Value) {
 			downloadJobPodsFetchResult := controllerutils.FetchList(
 				ctx, c,
 				downloadJobPods,
@@ -294,22 +234,6 @@ func (r *ModelCacheReconciler) FetchRemoteState(
 				client.MatchingLabels{"job-name": downloadJobName},
 			)
 			result.downloadJobPods = &downloadJobPodsFetchResult
-
-			// If the download job is active (running), fetch the last log line from the progress monitor
-			if !downloadJobPodsFetchResult.IsNotFound() && downloadJobPods != nil && len(downloadJobPods.Items) > 0 {
-				// Find a running pod
-				for i := range downloadJobPods.Items {
-					pod := &downloadJobPods.Items[i]
-					if pod.Status.Phase == corev1.PodRunning {
-						// Get logs from the progress-monitor init container
-						logLine := r.getLastLogLine(ctx, pod.Namespace, pod.Name, "model-downloader")
-						if logLine != "" {
-							result.progressLogLine = logLine
-						}
-						break // Only need one pod's logs
-					}
-				}
-			}
 		}
 	}
 
@@ -352,14 +276,12 @@ func (result ModelCacheFetchResult) GetComponentHealth(ctx context.Context, clie
 }
 
 func (result ModelCacheFetchResult) DownloadJobSucceeded() bool {
+	if result.downloadJob == nil {
+		return false
+	}
 	// Check if the job itself succeeded (not the old status)
 	// The old status check (Status == Ready) caused issues where we'd show 100% even when failing
 	return utils.IsJobSucceeded(result.downloadJob.Value)
-}
-
-// GetProgress parses the progress log line and returns download progress information
-func (result ModelCacheFetchResult) GetProgress() *aimv1alpha1.DownloadProgress {
-	return parseProgressLog(result.progressLogLine)
 }
 
 // Observe (thin wrapper for now, may be removed later)
@@ -386,6 +308,12 @@ func (r *ModelCacheReconciler) PlanResources(
 
 	// Use runtime config if available, otherwise use nil (functions should handle defaults)
 	runtimeConfig := reconcileCtx.MergedRuntimeConfig.Value
+
+	// Phase 0: Rolebinding creation - if not found
+	if obs.roleBinding.IsNotFound() {
+		roleBinding := buildRoleBinding(mc)
+		result.ApplyWithoutOwnerRef(roleBinding)
+	}
 
 	// Phase 1: Size discovery (when spec.size is empty)
 	if !obs.IsSizeKnown() {
@@ -416,9 +344,9 @@ func (r *ModelCacheReconciler) PlanResources(
 		return result
 	}
 
-	// Phase 3: Download job creation - size is known and PVC exists
+	// Phase 3: Download job creation - size is known and PVC, rolebinding exists
 	if mc.Status.Status != constants.AIMStatusReady &&
-		obs.downloadJob != nil && obs.downloadJob.IsNotFound() {
+		obs.downloadJob != nil && obs.downloadJob.IsNotFound() && obs.roleBinding.OK() {
 		downloadJob := buildDownloadJob(mc, runtimeConfig)
 		result.Apply(downloadJob)
 	}
@@ -504,7 +432,7 @@ func (r *ModelCacheReconciler) DecorateStatus(
 	// Check if download job succeeded
 	if jobSucceeded {
 		// When the job succeeds, set progress to 100%
-		// This ensures we show completion even if the sidecar didn't have time to report it
+		// This ensures we show completion even if the downloader didn't have time to report it
 		expectedSize := obs.GetEffectiveSize()
 
 		status.Progress = &aimv1alpha1.DownloadProgress{
@@ -516,9 +444,4 @@ func (r *ModelCacheReconciler) DecorateStatus(
 		return
 	}
 
-	// Otherwise, we're in progress - show progress from logs if available
-	progress := obs.GetProgress()
-	if progress != nil {
-		status.Progress = progress
-	}
 }

@@ -1,7 +1,7 @@
 FROM python:3.14-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    s3cmd \
+    s3cmd kubectl \
     procps \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -U huggingface_hub

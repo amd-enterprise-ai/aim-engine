@@ -1,0 +1,8 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aim-modelcache-status-updater
+rules:
+- apiGroups: ["aim.eai.amd.com"]
+  resources: ["aimmodelcaches/status"]
+  verbs: ["get", "patch", "update"]

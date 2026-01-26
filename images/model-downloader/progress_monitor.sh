@@ -34,9 +34,13 @@ fi
 update_status() {
     if [ "$can_update_status" = "true" ]; then
         percent=$1
-        kubectl patch aimmodelcache "$CACHE_NAME" -n "$CACHE_NAMESPACE" \
+        current=$2
+        expected=$3
+        if ! kubectl patch aimmodelcache "$CACHE_NAME" -n "$CACHE_NAMESPACE" \
             --type=merge --subresource=status \
-            -p "{\"status\":{\"downloadProgress\":$percent}}" 2>/dev/null || true
+            -p "{\"status\":{\"progress\":{\"percentage\":$percent,\"displayPercentage\":\"$percent %\",\"downloadedBytes\":$current,\"totalBytes\":$expected}}}" 2>&1; then
+            log_json "warning" "message=Failed to update status"
+        fi
     fi
 }
 
@@ -96,7 +100,7 @@ while true; do
         log_json "waiting" "message=Waiting for download to start"
     fi
 
-    update_status "$percent"
+    update_status "$percent" "$current_size" "$expected_size"
 
     # Use a loop with short sleeps so we can check for SIGTERM more frequently
     i=0
