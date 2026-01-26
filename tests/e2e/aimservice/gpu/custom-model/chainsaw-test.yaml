@@ -1,0 +1,126 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Custom Model with GPU (GPU)
+#
+# This test validates AIMService with spec.model.custom on GPU infrastructure.
+# The custom model specification allows deploying models without pre-created
+# AIMModel resources - the controller auto-creates all necessary resources.
+#
+# This test validates:
+# 1. AIMModel is auto-created with correct modelSources and hardware
+# 2. AIMServiceTemplate is auto-created from hardware requirements
+# 3. Dedicated model caches are created for model download
+# 4. InferenceService is created with correct GPU configuration
+# 5. Service reaches Running status
+# 6. Chat completions endpoint works correctly
+#
+# Uses: amdenterpriseai/aim-base:0.8.5 + HuggingFace model
+# Requires: GPU infrastructure
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-gpu-custom-model
+  labels:
+    requires: gpu
+spec:
+  description: Test AIMService with custom model specification on GPU
+  timeouts:
+    assert: 600s
+  steps:
+    - name: Create runtime config with routing
+      try:
+        - apply:
+            file: runtime-config.yaml
+
+    - name: Create service with custom model
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify service starts
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-gpu-custom-model
+              status:
+                status: Starting
+
+    - name: Verify AIMModel is auto-created for custom model
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/managed-by: aim-engine
+              spec:
+                modelSources:
+                  - modelId: Qwen/Qwen3-0.6B
+                    sourceUri: hf://Qwen/Qwen3-0.6B
+              status:
+                status: Ready
+                sourceType: Custom
+
+    - name: Verify AIMServiceTemplate is auto-created from hardware spec
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/managed-by: aim-engine
+              status:
+                status: Ready
+
+    - name: Verify dedicated model cache is created
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModelCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-gpu-custom-model
+                  aim.eai.amd.com/cache-type: dedicated
+
+    - name: Verify InferenceService is created with GPU resources
+      try:
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-gpu-custom-model
+
+    - name: Verify service reaches Running status
+      try:
+        - assert:
+            timeout: 10m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-gpu-custom-model
+              status:
+                status: Running
+
+    - name: Verify chat completions endpoint works
+      try:
+        - script:
+            timeout: 3m
+            env:
+              - name: HTTP_BASE_PATH
+                value: /integration/gpu-custom-model/test-gpu-custom-model/v1
+            content: bash ../../_shared/validate-http.sh

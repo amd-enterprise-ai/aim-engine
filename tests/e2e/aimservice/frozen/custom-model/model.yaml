@@ -1,0 +1,44 @@
+# Frozen AIMModel representing an auto-created custom model
+# This simulates what the controller creates when spec.model.custom is used
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: test-custom-model
+  labels:
+    aim.eai.amd.com/custom-model: "true"
+    aim.eai.amd.com/origin: auto-generated
+    app.kubernetes.io/managed-by: aim-service-controller
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.8
+  modelSources:
+    - modelId: test-org/test-model
+      sourceUri: hf://test-org/test-model
+      size: 100Mi
+  hardware:
+    cpu:
+      requests: 100m
+      limits: 500m
+status:
+  status: Ready
+  sourceType: Custom
+  conditions:
+    - type: RuntimeConfigReady
+      status: "True"
+      reason: ConfigFound
+      message: ""
+      lastTransitionTime: "2024-01-01T00:00:00Z"
+    - type: ImageMetadataReady
+      status: "True"
+      reason: CustomModelSkipped
+      message: ""
+      lastTransitionTime: "2024-01-01T00:00:00Z"
+    - type: ServiceTemplatesReady
+      status: "True"
+      reason: AllTemplatesReady
+      message: "All templates are ready"
+      lastTransitionTime: "2024-01-01T00:00:00Z"
+    - type: Ready
+      status: "True"
+      reason: AllComponentsReady
+      message: "All components are ready"
+      lastTransitionTime: "2024-01-01T00:00:00Z"

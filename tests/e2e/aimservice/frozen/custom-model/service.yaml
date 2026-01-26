@@ -1,0 +1,16 @@
+# AIMService referencing a pre-created custom model by name
+# In real usage, spec.model.custom would auto-create the model,
+# but for frozen tests we reference the pre-created model directly
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-custom-model-service
+spec:
+  model:
+    # Reference the pre-created custom model by name
+    name: test-custom-model
+  # Allow unoptimized templates since custom models without GPU specs
+  # create unoptimized templates
+  template:
+    allowUnoptimized: true
+  replicas: 1
