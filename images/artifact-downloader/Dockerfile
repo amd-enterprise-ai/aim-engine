@@ -8,11 +8,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 
 COPY entrypoint.sh /entrypoint.sh
-COPY progress_monitor.sh /progress_monitor.sh
+COPY progress-monitor.sh /progress-monitor.sh
 COPY check-size.sh /check-size.sh
 
-
-RUN chmod +x /entrypoint.sh /check-size.sh /progress_monitor.sh
+RUN chmod +x /entrypoint.sh /check-size.sh /progress-monitor.sh
 
 
 RUN mkdir /cache && chown 1000:1000 /cache

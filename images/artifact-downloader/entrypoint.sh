@@ -33,7 +33,6 @@ echo "Expected size: $EXPECTED_SIZE_BYTES bytes"
 # Start progress monitor in background
 if [ -f /progress_monitor.sh ]; then
     /progress_monitor.sh &
-    echo "Started progress monitor (PID: $!)"
 fi
 
 ### TESTING WHEN ENV VARS ARE SET ###
