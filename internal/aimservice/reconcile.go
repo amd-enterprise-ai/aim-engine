@@ -963,9 +963,9 @@ func (r *ServiceReconciler) DecorateStatus(
 	}
 
 	// Set KVCache spec mismatch condition (informational, doesn't affect Ready)
-	if obs.kvCacheSpecMismatch {
+	if obs.kvCacheSpecMismatch && cm != nil {
 		cm.Set("KVCacheSpecMismatch", metav1.ConditionTrue, "SpecMismatch", "KV cache spec mismatch", controllerutils.AsWarning())
-	} else if cm.Get("KVCacheSpecMismatch") != nil {
+	} else if cm != nil && cm.Get("KVCacheSpecMismatch") != nil {
 		cm.Delete("KVCacheSpecMismatch")
 	}
 
