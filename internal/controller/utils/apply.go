@@ -34,7 +34,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -79,25 +78,10 @@ func ApplyDesiredState(
 	// Sort deterministically
 	sorted := sortObjects(desired)
 
-	logger := log.FromContext(ctx)
-
 	// Apply each object via SSA
 	for _, obj := range sorted {
 		gvk := obj.GetObjectKind().GroupVersionKind()
 		key := client.ObjectKeyFromObject(obj)
-
-		// Log discovery job creation at verbose level
-		if gvk.Kind == "Job" {
-			if job, ok := obj.(*batchv1.Job); ok {
-				if templateLabel, exists := job.Labels[constants.LabelKeyTemplate]; exists {
-					logger.V(1).Info("SSA applying discovery job",
-						"jobName", key.Name,
-						"namespace", key.Namespace,
-						"templateName", templateLabel,
-						"fieldOwner", fieldOwner)
-				}
-			}
-		}
 
 		// Use Server-Side Apply (SSA) to create/update desired objects.
 		// The FieldOwner parameter ensures this controller owns only the fields it manages.
