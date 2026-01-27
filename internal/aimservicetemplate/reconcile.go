@@ -656,7 +656,7 @@ func decorateTemplateStatusCommon(
 	// This takes precedence over discovery results
 	if len(specModelSources) > 0 {
 		status.ModelSources = specModelSources
-		cm.MarkTrue("Discovered", "InlineModelSources", "Model sources provided in-line in spec")
+		cm.MarkTrue(aimv1alpha1.AIMTemplateDiscoveryConditionType, "InlineModelSources", "Model sources provided in-line in spec")
 		return
 	}
 
@@ -682,7 +682,15 @@ func decorateTemplateStatusCommon(
 		}
 		// Clear discovery state on success
 		status.Discovery = nil
-		cm.MarkTrue("Discovered", "DiscoveryComplete", "Discovery job completed successfully")
+		cm.MarkTrue(aimv1alpha1.AIMTemplateDiscoveryConditionType, "DiscoveryComplete", "Discovery job completed successfully")
+		return
+	}
+
+	// Don't regress the Discovered condition if it's already True.
+	// This prevents stale reconciles (that started before the job completed) from
+	// overwriting Discovered=True back to False.
+	existingDiscovered := cm.Get(aimv1alpha1.AIMTemplateDiscoveryConditionType)
+	if existingDiscovered != nil && existingDiscovered.Status == metav1.ConditionTrue {
 		return
 	}
 
@@ -695,14 +703,14 @@ func decorateTemplateStatusCommon(
 
 		if now.Before(nextAttemptTime) {
 			remaining := nextAttemptTime.Sub(now).Round(time.Second)
-			cm.MarkFalse("Discovered", aimv1alpha1.AIMTemplateReasonAwaitingDiscovery,
+			cm.MarkFalse(aimv1alpha1.AIMTemplateDiscoveryConditionType, aimv1alpha1.AIMTemplateReasonAwaitingDiscovery,
 				fmt.Sprintf("Waiting %s before retry (attempt %d failed)", remaining, currentDiscoveryState.Attempts))
 			return
 		}
 	}
 
 	// Generic awaiting discovery message if no other message was set
-	cm.MarkFalse("Discovered", aimv1alpha1.AIMTemplateReasonAwaitingDiscovery,
+	cm.MarkFalse(aimv1alpha1.AIMTemplateDiscoveryConditionType, aimv1alpha1.AIMTemplateReasonAwaitingDiscovery,
 		"Waiting for discovery to complete")
 }
 

@@ -104,7 +104,7 @@ spec:
               echo ""
               echo "SUCCESS: Concurrent limit is working (max observed: $MAX_OBSERVED <= threshold: $THRESHOLD)"
 
-    - name: Verify all templates eventually complete discovery
+    - name: Verify all templates eventually become Ready
       try:
         - script:
             timeout: 180s
@@ -112,23 +112,23 @@ spec:
               #!/bin/bash
               set -e
 
-              # Wait for all 30 templates to have Discovered=True
+              # Wait for all 30 templates to have status.status=Ready
               for i in $(seq 1 90); do
-                DISCOVERED=$(kubectl get aimservicetemplates -n $NAMESPACE \
-                  -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Discovered")].status}{"\n"}{end}' 2>/dev/null | \
-                  grep -c "True" || true)
-                DISCOVERED=${DISCOVERED:-0}
+                READY=$(kubectl get aimservicetemplates -n $NAMESPACE \
+                  -o jsonpath='{range .items[*]}{.status.status}{"\n"}{end}' 2>/dev/null | \
+                  grep -c "Ready" || true)
+                READY=${READY:-0}
 
-                echo "Poll $i: $DISCOVERED/30 templates discovered"
+                echo "Poll $i: $READY/30 templates ready"
 
-                if [ "$DISCOVERED" -ge 30 ]; then
-                  echo "SUCCESS: All 30 templates completed discovery"
+                if [ "$READY" -ge 30 ]; then
+                  echo "SUCCESS: All 30 templates are Ready"
                   exit 0
                 fi
 
                 sleep 2
               done
 
-              echo "ERROR: Not all templates completed discovery in time"
+              echo "ERROR: Not all templates became Ready in time"
               kubectl get aimservicetemplates -n $NAMESPACE -o wide
               exit 1
