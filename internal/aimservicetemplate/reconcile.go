@@ -444,6 +444,8 @@ func (r *ServiceTemplateReconciler) PlanResources(
 			logger.V(1).Info("discovery job creation blocked by concurrent limit",
 				"activeJobs", activeJobs,
 				"limit", constants.MaxConcurrentDiscoveryJobs)
+			// Signal controller to requeue after a delay to try again
+			planResult.RequeueAfter = 5 * time.Second
 			return planResult
 		}
 
@@ -552,6 +554,8 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 			logger.V(1).Info("discovery job creation blocked by concurrent limit",
 				"activeJobs", activeJobs,
 				"limit", constants.MaxConcurrentDiscoveryJobs)
+			// Signal controller to requeue after a delay to try again
+			planResult.RequeueAfter = 5 * time.Second
 			return planResult
 		}
 

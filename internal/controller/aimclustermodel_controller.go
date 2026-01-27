@@ -79,11 +79,7 @@ func (r *AIMClusterModelReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	if err := r.pipeline.Run(ctx, &model); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{}, nil
+	return r.pipeline.Run(ctx, &model)
 }
 
 func (r *AIMClusterModelReconciler) SetupWithManager(mgr ctrl.Manager) error {

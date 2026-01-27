@@ -99,8 +99,14 @@ func (r *AIMModelCacheReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	if err := r.pipeline.Run(ctx, &model); err != nil {
+	result, err := r.pipeline.Run(ctx, &model)
+	if err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// If pipeline requests a requeue, honor it
+	if result.RequeueAfter > 0 {
+		return result, nil
 	}
 
 	// Requeue periodically while download is in progress to update progress status

@@ -115,8 +115,11 @@ func (r *AIMClusterServiceTemplateReconciler) Reconcile(ctx context.Context, req
 
 	if needsLock {
 		// Run pipeline under the discovery lock
+		var result ctrl.Result
 		lockErr := aimservicetemplate.WithDiscoveryLock(ctx, r.Client, 30*time.Second, func() error {
-			return r.pipeline.Run(ctx, &template)
+			var err error
+			result, err = r.pipeline.Run(ctx, &template)
+			return err
 		})
 
 		if lockErr != nil {
@@ -125,14 +128,11 @@ func (r *AIMClusterServiceTemplateReconciler) Reconcile(ctx context.Context, req
 				"template", template.Name)
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}
-	} else {
-		// No lock needed - just run pipeline directly
-		if err := r.pipeline.Run(ctx, &template); err != nil {
-			return ctrl.Result{}, err
-		}
+		return result, nil
 	}
 
-	return ctrl.Result{}, nil
+	// No lock needed - just run pipeline directly
+	return r.pipeline.Run(ctx, &template)
 }
 
 // SetupWithManager sets up the controller with the Manager.

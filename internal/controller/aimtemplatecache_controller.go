@@ -136,11 +136,7 @@ func (r *AIMTemplateCacheReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	if err := r.pipeline.Run(ctx, &templateCache); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{}, nil
+	return r.pipeline.Run(ctx, &templateCache)
 }
 
 // SetupWithManager sets up the controller with the Manager.
