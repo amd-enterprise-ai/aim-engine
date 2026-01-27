@@ -184,7 +184,7 @@ func (r *AIMKVCacheReconciler) statefulSetNeedsUpdate(kvc *aimv1alpha1.AIMKVCach
 }
 
 // serviceNeedsUpdate returns true if the observed Service differs from desired mutable fields
-func (r *AIMKVCacheReconciler) serviceNeedsUpdate(kvc *aimv1alpha1.AIMKVCache, observed *corev1.Service) bool {
+func (r *AIMKVCacheReconciler) serviceNeedsUpdate(_ *aimv1alpha1.AIMKVCache, observed *corev1.Service) bool {
 	// Service ports are hardcoded, check if expected port exists
 	for _, port := range observed.Spec.Ports {
 		if port.Port == 6379 && port.Name == "redis" {
