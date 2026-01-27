@@ -240,11 +240,11 @@ spec:
                   x-kubernetes-map-type: atomic
                 type: array
               modelDownloadImage:
-                default: ghcr.io/amd-enterprise-ai/aim-engine/model-downloader:0.1.0
+                default: ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0
                 description: |-
                   ModelDownloadImage specifies the container image used to download and initialize the model cache.
                   This image runs as a job to download model artifacts from the source URI to the cache volume.
-                  When not specified, defaults to "ghcr.io/amd-enterprise-ai/aim-engine/model-downloader:0.1.0".
+                  When not specified, defaults to "ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0".
                 type: string
               runtimeConfigName:
                 description: |-

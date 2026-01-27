@@ -123,9 +123,9 @@ kind-create: manifests ## Create kind cluster with all dependencies for local de
 	@echo "Pre-loading test images..."
 	@docker pull ghcr.io/silogen/aim-dummy:0.1.8 2>/dev/null || true
 	@kind load docker-image ghcr.io/silogen/aim-dummy:0.1.8 --name aim-engine 2>/dev/null || true
-	@echo "Pre-loading model-downloader image..."
-	@docker build -t ghcr.io/amd-enterprise-ai/aim-engine/model-downloader:0.1.0 images/model-downloader
-	@kind load docker-image ghcr.io/amd-enterprise-ai/aim-engine/model-downloader:0.1.0 --name aim-engine 2>/dev/null || true
+	@echo "Pre-loading artifact-downloader image..."
+	@docker build -t ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0 images/artifact-downloader
+	@kind load docker-image ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0 --name aim-engine 2>/dev/null || true
 	@# Set ENV to kind
 	@mkdir -p $(dir $(ENV_FILE))
 	@echo "kind" > $(ENV_FILE)
