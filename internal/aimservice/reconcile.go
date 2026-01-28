@@ -576,19 +576,82 @@ func (obs ServiceObservation) getHPAHealth() controllerutils.ComponentHealth {
 		return health
 	}
 
-	// HPA exists - report ready
-	if obs.hpa.Value != nil {
-		health.State = constants.AIMStatusReady
-		health.Reason = "HPAReady"
-		health.Message = "HorizontalPodAutoscaler is active"
+	// HPA not found (no error but nil value)
+	if obs.hpa.Value == nil {
+		health.State = constants.AIMStatusProgressing
+		health.Reason = "HPANotFound"
+		health.Message = "Waiting for KEDA to create HorizontalPodAutoscaler"
 		return health
 	}
 
-	// HPA not found (no error but nil value)
-	health.State = constants.AIMStatusProgressing
-	health.Reason = "HPANotFound"
-	health.Message = "Waiting for KEDA to create HorizontalPodAutoscaler"
+	// HPA exists - check its conditions for operational status
+	hpa := obs.hpa.Value
+
+	// Check if InferenceService is ready (used to contextualize HPA condition failures)
+	isvcReady := obs.isInferenceServiceReady()
+
+	// Get HPA conditions
+	ableToScale := getHPACondition(hpa, autoscalingv2.AbleToScale)
+	scalingActive := getHPACondition(hpa, autoscalingv2.ScalingActive)
+
+	// Check ScalingActive condition - indicates if HPA can get metrics and calculate replicas
+	if scalingActive == nil || scalingActive.Status != corev1.ConditionTrue {
+		if !isvcReady {
+			// Expected during startup - ISVC pods not ready yet, so metrics aren't available
+			health.State = constants.AIMStatusProgressing
+			health.Reason = "WaitingForMetrics"
+			health.Message = "Waiting for InferenceService to be ready before metrics are available"
+			return health
+		}
+		// ISVC is ready but metrics still failing - this indicates a problem
+		health.State = constants.AIMStatusFailed
+		health.Reason = "MetricsFailed"
+		if scalingActive != nil {
+			health.Message = fmt.Sprintf("HPA cannot get metrics: %s", scalingActive.Message)
+		} else {
+			health.Message = "HPA ScalingActive condition not found"
+		}
+		return health
+	}
+
+	// ScalingActive is True - check AbleToScale condition
+	if ableToScale != nil && ableToScale.Status != corev1.ConditionTrue {
+		// HPA can get metrics but cannot update the scale target
+		health.State = constants.AIMStatusProgressing
+		health.Reason = "ScaleTargetNotReady"
+		health.Message = fmt.Sprintf("HPA cannot update scale target: %s", ableToScale.Message)
+		return health
+	}
+
+	// Both conditions are healthy (or AbleToScale not present, which is fine)
+	health.State = constants.AIMStatusReady
+	health.Reason = "HPAOperational"
+	health.Message = "HorizontalPodAutoscaler is actively scaling"
 	return health
+}
+
+// isInferenceServiceReady checks if the InferenceService has Ready=True condition.
+func (obs ServiceObservation) isInferenceServiceReady() bool {
+	if obs.inferenceService.Error != nil || obs.inferenceService.Value == nil {
+		return false
+	}
+	isvc := obs.inferenceService.Value
+	for _, cond := range isvc.Status.Conditions {
+		if cond.Type == "Ready" && cond.Status == "True" {
+			return true
+		}
+	}
+	return false
+}
+
+// getHPACondition finds a condition by type in the HPA status.
+func getHPACondition(hpa *autoscalingv2.HorizontalPodAutoscaler, condType autoscalingv2.HorizontalPodAutoscalerConditionType) *autoscalingv2.HorizontalPodAutoscalerCondition {
+	for i := range hpa.Status.Conditions {
+		if hpa.Status.Conditions[i].Type == condType {
+			return &hpa.Status.Conditions[i]
+		}
+	}
+	return nil
 }
 
 func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
