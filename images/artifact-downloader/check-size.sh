@@ -5,30 +5,31 @@ URL="${1:?Usage: $0 <hf://org/model or s3://bucket/path>}"
 
 case "$URL" in
     hf://*)
-    MODEL_PATH="${URL#hf://}"
+    export MODEL_PATH="${URL#hf://}"
     
     # Capture both stdout and stderr, check exit code
-    if ! SIZE_OUTPUT=$(python -c "
+    if ! SIZE_OUTPUT=$(python -c '
+import os
 import sys
 from huggingface_hub import HfApi
 from huggingface_hub.utils import RepositoryNotFoundError, GatedRepoError
-
+MODEL_PATH = os.environ['MODEL_PATH']
 try:
-    info = HfApi().model_info('$MODEL_PATH', files_metadata=True)
+    info = HfApi().model_info(MODEL_PATH, files_metadata=True)
     print(sum(f.size or 0 for f in info.siblings))
 except RepositoryNotFoundError:
-    print('Repository Not Found: $MODEL_PATH', file=sys.stderr)
+    print('Repository Not Found: MODEL_PATH', file=sys.stderr)
     print('Check the model name or ensure it exists on HuggingFace.', file=sys.stderr)
     sys.exit(1)
 except GatedRepoError:
-    print('Model requires authentication: $MODEL_PATH', file=sys.stderr)
+    print('Model requires authentication: MODEL_PATH', file=sys.stderr)
     print('Set HF_TOKEN environment variable with a valid HuggingFace token.', file=sys.stderr)
-    print('Cannot access gated repo: $MODEL_PATH', file=sys.stderr)
+    print('Cannot access gated repo: MODEL_PATH', file=sys.stderr)
     sys.exit(2)
 except Exception as e:
     print(f'Failed to fetch model info: {e}', file=sys.stderr)
     sys.exit(3)
-" 2>&1); then
+' 2>&1); then
         echo "Error: Failed to get size for $URL" >&2
         echo "$SIZE_OUTPUT" >&2
         exit 1

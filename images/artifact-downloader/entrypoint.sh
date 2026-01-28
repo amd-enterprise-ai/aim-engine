@@ -12,12 +12,14 @@ if [ -z "${EXPECTED_SIZE_BYTES:-}" ]; then
         # Fetch expected size if not set
         if [ -z "${EXPECTED_SIZE_BYTES:-}" ]; then
             echo "Fetching model size from Hugging Face..."
-            MODEL_PATH="${URL#hf://}"
-            EXPECTED_SIZE_BYTES=$(python -c "
+            export MODEL_PATH="${URL#hf://}"
+            EXPECTED_SIZE_BYTES=$(python -c '
+                import os
                 from huggingface_hub import HfApi
-                info = HfApi().model_info('$MODEL_PATH', files_metadata=True)
+                MODEL_PATH = os.environ['MODEL_PATH']
+                info = HfApi().model_info(MODEL_PATH, files_metadata=True)
                 print(sum(f.size or 0 for f in info.siblings))
-                " 2>/dev/null || echo 0)
+                ' 2>/dev/null || echo 0)
         fi
         ;;
         s3://*)
@@ -31,8 +33,8 @@ fi
 echo "Expected size: $EXPECTED_SIZE_BYTES bytes"
 
 # Start progress monitor in background
-if [ -f /progress_monitor.sh ]; then
-    /progress_monitor.sh &
+if [ -f /progress-monitor.sh ]; then
+    /progress-monitor.sh &
 fi
 
 ### TESTING WHEN ENV VARS ARE SET ###
