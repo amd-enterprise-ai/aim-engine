@@ -1,0 +1,13 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: node-gpu-test
+spec:
+  modelName: node-gpu-test-model
+  gpuSelector:
+    model: MI355X
+    count: 1
+  modelSources:
+    - name: test-model
+      sourceUri: hf://test/model
+      size: "1Gi"

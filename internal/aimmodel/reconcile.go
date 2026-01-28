@@ -222,15 +222,7 @@ func aggregateTemplateStatuses(expectsTemplates *bool, statuses []constants.AIMS
 	var reason, message string
 
 	switch {
-	// Handle templates disabled first (createServiceTemplates: false)
-	// When disabled, the model doesn't care about template statuses - it's Ready immediately.
-	// Any templates that exist were created externally and are not the model's responsibility.
-	case expectsTemplates != nil && !*expectsTemplates:
-		status = constants.AIMStatusReady
-		reason = aimv1alpha1.AIMModelReasonNoTemplatesExpected
-		message = "Template creation disabled for this model"
-
-	// Handle no templates case
+	// Handle no templates case first
 	case total == 0:
 		switch {
 		case expectsTemplates == nil:

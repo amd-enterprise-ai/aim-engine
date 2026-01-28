@@ -149,6 +149,11 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMModel{}).
 		Owns(&aimv1alpha1.AIMServiceTemplate{}).
+		// Watch all ServiceTemplates (including externally-created) that reference this model
+		Watches(
+			&aimv1alpha1.AIMServiceTemplate{},
+			handler.EnqueueRequestsFromMapFunc(r.findModelForServiceTemplate),
+		).
 		// Watch namespace-scoped RuntimeConfigs and enqueue models that reference them
 		Watches(
 			&aimv1alpha1.AIMRuntimeConfig{},
@@ -161,6 +166,26 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		).
 		Named(modelName).
 		Complete(r)
+}
+
+// findModelForServiceTemplate returns a reconcile request for the AIMModel
+// referenced by the template's spec.modelName field.
+func (r *AIMModelReconciler) findModelForServiceTemplate(ctx context.Context, obj client.Object) []reconcile.Request {
+	template, ok := obj.(*aimv1alpha1.AIMServiceTemplate)
+	if !ok {
+		return nil
+	}
+
+	if template.Spec.ModelName == "" {
+		return nil
+	}
+
+	return []reconcile.Request{{
+		NamespacedName: types.NamespacedName{
+			Name:      template.Spec.ModelName,
+			Namespace: template.Namespace,
+		},
+	}}
 }
 
 // findModelsForRuntimeConfig returns reconcile requests for all AIMModels
