@@ -2,6 +2,14 @@
 TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "latest")
 IMG ?= ghcr.io/amd-enterprise-ai/aim-engine:$(TAG)
 
+# Helm chart configuration
+CHART_NAME ?= aim-engine
+CHART_VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.1.0")
+APP_VERSION ?= $(TAG)
+CHART_OCI_REGISTRY ?= ghcr.io
+CHART_OCI_OWNER ?= amd-enterprise-ai
+CHART_OCI_REPO ?= oci://$(CHART_OCI_REGISTRY)/$(CHART_OCI_OWNER)/charts
+
 # Cluster environment configuration
 # ENV is auto-detected from kubectl context if not set:
 #   - Context starting with "kind-" -> ENV=kind
@@ -304,6 +312,22 @@ crds: manifests ## Generate consolidated CRDs file for distribution.
 	@mkdir -p dist
 	@cat config/crd/bases/*.yaml > dist/crds.yaml
 	@echo "CRDs generated at dist/crds.yaml"
+
+##@ Helm
+
+.PHONY: helm-package
+helm-package: helm ## Package the Helm chart into a .tgz file.
+	@command -v helm >/dev/null 2>&1 || { echo "Helm is not installed"; exit 1; }
+	@echo "Packaging Helm chart with version $(CHART_VERSION) and app version $(APP_VERSION)"
+	@sed -i.bak 's/^version:.*/version: $(CHART_VERSION)/' dist/chart/Chart.yaml
+	@sed -i.bak 's/^appVersion:.*/appVersion: "$(APP_VERSION)"/' dist/chart/Chart.yaml
+	helm package dist/chart --version=$(CHART_VERSION) --app-version=$(APP_VERSION) --destination=dist/
+	@rm -f dist/chart/Chart.yaml.bak
+
+.PHONY: helm-push-oci
+helm-push-oci: ## Push Helm chart to OCI registry (requires helm-package first).
+	@echo "Pushing Helm chart to OCI registry $(CHART_OCI_REPO)..."
+	helm push dist/$(CHART_NAME)-$(CHART_VERSION).tgz $(CHART_OCI_REPO)
 
 ##@ Deployment
 
