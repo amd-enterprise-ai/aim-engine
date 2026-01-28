@@ -77,7 +77,7 @@ type AIMModelCacheReconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=create;get;list;watch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=create;get;list;watch;patch;update
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,resourceNames=aim-modelcache-status-updater,verbs=bind
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
