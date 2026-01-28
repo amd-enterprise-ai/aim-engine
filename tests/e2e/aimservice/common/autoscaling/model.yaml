@@ -3,7 +3,7 @@ kind: AIMModel
 metadata:
   name: test-autoscaling-model
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.1.8
+  image: ghcr.io/silogen/aim-dummy:0.1.9
   resources:
     limits:
       memory: 1Gi
