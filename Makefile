@@ -119,6 +119,8 @@ kind-create: manifests ## Create kind cluster with all dependencies for local de
 	@# Install CRDs
 	@echo "Installing CRDs..."
 	@$(MAKE) install
+	@echo "Installing RBAC..."
+	@kustomize build config/rbac | kubectl apply -f -
 	@# Pre-load test images for faster e2e tests
 	@echo "Pre-loading test images..."
 	@docker pull ghcr.io/silogen/aim-dummy:0.1.8 2>/dev/null || true
