@@ -23,11 +23,24 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"math"
 )
 
-// ByteUnit represents a unit of digital storage
+var (
+	// ErrNegativeSize is returned when a negative byte size is provided.
+	ErrNegativeSize = errors.New("byte size cannot be negative")
+
+	// ErrSizeTooLarge is returned when the byte size exceeds the maximum supported value.
+	ErrSizeTooLarge = errors.New("byte size exceeds maximum supported value (8 EiB)")
+)
+
+// MaxSupportedBytes is the maximum byte size that can be formatted (just under 8 EiB).
+// This is set to 8 EiB - 1 byte to ensure formatted output stays within reasonable bounds.
+const MaxSupportedBytes = int64(7 << 60) // 7 EiB
+
+// ByteUnit represents a unit of digital storage.
 type ByteUnit struct {
 	Size   int64
 	Suffix string
@@ -45,24 +58,28 @@ var binaryUnits = []ByteUnit{
 
 // FormatBytesHumanReadable converts bytes to a human-readable string
 // with two significant digits (e.g., "42 GiB", "1.5 TiB", "850 MiB").
-func FormatBytesHumanReadable(bytes int64) string {
-	if bytes == 0 {
-		return "0 B"
+// Returns an error if bytes is negative or exceeds MaxSupportedBytes.
+func FormatBytesHumanReadable(bytes int64) (string, error) {
+	if bytes < 0 {
+		return "", ErrNegativeSize
 	}
 
-	// Handle negative values (shouldn't happen for storage, but be safe)
-	if bytes < 0 {
-		return fmt.Sprintf("%d B", bytes)
+	if bytes > MaxSupportedBytes {
+		return "", ErrSizeTooLarge
+	}
+
+	if bytes == 0 {
+		return "0 B", nil
 	}
 
 	for _, unit := range binaryUnits {
 		if bytes >= unit.Size {
 			value := float64(bytes) / float64(unit.Size)
-			return formatWithTwoSigFigs(value, unit.Suffix)
+			return formatWithTwoSigFigs(value, unit.Suffix), nil
 		}
 	}
 
-	return fmt.Sprintf("%d B", bytes)
+	return fmt.Sprintf("%d B", bytes), nil
 }
 
 // formatWithTwoSigFigs formats a value with approximately two significant figures.

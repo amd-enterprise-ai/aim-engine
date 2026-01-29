@@ -38,27 +38,47 @@ func mustParseBytes(s string) int64 {
 
 func TestFormatBytesHumanReadable(t *testing.T) {
 	tests := []struct {
-		name     string
-		bytes    int64
-		expected string
+		name        string
+		bytes       int64
+		expected    string
+		expectError error
 	}{
-		// Zero and negative edge cases
+		// Zero value
 		{
 			name:     "zero bytes",
 			bytes:    0,
 			expected: "0 B",
 		},
+
+		// Error cases - negative values
 		{
-			name:     "negative value",
-			bytes:    -1,
-			expected: "-1 B",
+			name:        "negative value",
+			bytes:       -1,
+			expectError: ErrNegativeSize,
 		},
 		{
-			name:     "large negative value",
-			bytes:    -1073741824,
-			expected: "-1073741824 B",
+			name:        "large negative value",
+			bytes:       -1073741824,
+			expectError: ErrNegativeSize,
+		},
+		{
+			name:        "min int64",
+			bytes:       math.MinInt64,
+			expectError: ErrNegativeSize,
 		},
 
+		// Error cases - too large
+		{
+			name:        "max int64 exceeds limit",
+			bytes:       math.MaxInt64,
+			expectError: ErrSizeTooLarge,
+		},
+		// Boundary - exactly at max supported
+		{
+			name:     "exactly at max supported bytes",
+			bytes:    MaxSupportedBytes,
+			expected: "7 EiB", // Changed from "8 EiB"
+		},
 		// Bytes (< 1 KiB)
 		{
 			name:     "one byte",
@@ -191,7 +211,7 @@ func TestFormatBytesHumanReadable(t *testing.T) {
 			expected: "1.5 PiB",
 		},
 
-		// EiB range (near int64 max)
+		// EiB range
 		{
 			name:     "exactly 1 EiB",
 			bytes:    mustParseBytes("1Ei"),
@@ -203,9 +223,9 @@ func TestFormatBytesHumanReadable(t *testing.T) {
 			expected: "2 EiB",
 		},
 		{
-			name:     "max int64 (approximately 8 EiB)",
-			bytes:    math.MaxInt64,
-			expected: "8 EiB",
+			name:     "7 EiB (within limit)",
+			bytes:    7 * (1 << 60),
+			expected: "7 EiB",
 		},
 
 		// Rounding edge cases using binary fractions
@@ -262,12 +282,46 @@ func TestFormatBytesHumanReadable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FormatBytesHumanReadable(tt.bytes)
+			result, err := FormatBytesHumanReadable(tt.bytes)
+
+			if tt.expectError != nil {
+				if err == nil {
+					t.Errorf("FormatBytesHumanReadable(%d) expected error %v, got nil", tt.bytes, tt.expectError)
+					return
+				}
+				if err != tt.expectError {
+					t.Errorf("FormatBytesHumanReadable(%d) expected error %v, got %v", tt.bytes, tt.expectError, err)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("FormatBytesHumanReadable(%d) unexpected error: %v", tt.bytes, err)
+				return
+			}
+
 			if result != tt.expected {
 				t.Errorf("FormatBytesHumanReadable(%d) = %q, want %q", tt.bytes, result, tt.expected)
 			}
 		})
 	}
+}
+
+func TestFormatBytesHumanReadable_ErrorMessages(t *testing.T) {
+	// Verify error messages are descriptive
+	t.Run("negative error message", func(t *testing.T) {
+		_, err := FormatBytesHumanReadable(-100)
+		if err == nil || err.Error() != "byte size cannot be negative" {
+			t.Errorf("Expected descriptive error for negative value, got: %v", err)
+		}
+	})
+
+	t.Run("too large error message", func(t *testing.T) {
+		_, err := FormatBytesHumanReadable(math.MaxInt64)
+		if err == nil || err.Error() != "byte size exceeds maximum supported value (8 EiB)" {
+			t.Errorf("Expected descriptive error for too large value, got: %v", err)
+		}
+	})
 }
 
 func TestFormatWithTwoSigFigs(t *testing.T) {
@@ -330,13 +384,13 @@ func BenchmarkFormatBytesHumanReadable(b *testing.B) {
 		mustParseBytes("1Gi"),
 		mustParseBytes("40Gi"),
 		mustParseBytes("1Ti"),
-		math.MaxInt64,
+		mustParseBytes("1Ei"),
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, size := range sizes {
-			_ = FormatBytesHumanReadable(size)
+			_, _ = FormatBytesHumanReadable(size)
 		}
 	}
 }
