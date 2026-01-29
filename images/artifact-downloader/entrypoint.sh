@@ -24,9 +24,6 @@ fi
 
 case "$URL" in
     hf://*)
-        export HF_HOME="$TARGET_DIR/.hf"
-        mkdir -p "$HF_HOME"
-        
         MODEL_PATH="${URL#hf://}"
         echo "Downloading from Hugging Face: $MODEL_PATH to $TARGET_DIR"
         hf download \
@@ -39,7 +36,6 @@ case "$URL" in
             "$MODEL_PATH"
         echo "Download complete and verified"
         echo "Size of HF_HOME: $(du -sh "$HF_HOME")"
-        rm -rf "$HF_HOME"
         ;;
     s3://*)
         echo "Syncing from S3: $URL to $TARGET_DIR"

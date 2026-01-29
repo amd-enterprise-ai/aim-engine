@@ -79,7 +79,7 @@ func buildDownloadJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alp
 	defaultEnv := []corev1.EnvVar{
 		{Name: "HF_XET_CHUNK_CACHE_SIZE_BYTES", Value: "0"},
 		{Name: "HF_XET_SHARD_CACHE_SIZE_BYTES", Value: "0"},
-		{Name: "HF_HOME", Value: mountPath + "/tmp/.hf"},
+		{Name: "HF_HOME", Value: "/tmp/.hf"},
 		{Name: "UMASK", Value: "0022"},
 		{Name: "EXPECTED_SIZE_BYTES", Value: fmt.Sprintf("%d", expectedSizeBytes)},
 		{Name: "MOUNT_PATH", Value: mountPath},
@@ -113,7 +113,7 @@ func buildDownloadJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alp
 					Labels: map[string]string{
 						constants.LabelKeyCacheName: mc.Name,
 						constants.LabelKeyCacheType: "model-cache",
-						constants.LabelKeyComponent: "cache",
+						constants.LabelKeyComponent: "download",
 					},
 				},
 				Spec: corev1.PodSpec{
