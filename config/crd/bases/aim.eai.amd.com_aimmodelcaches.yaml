@@ -359,9 +359,8 @@ spec:
                 format: int64
                 type: integer
               displaySize:
-                description: |-
-                  In AIMModelCacheStatus
-                  DisplaySize is the human-readable effective size (spec or discovered)
+                description: DisplaySize is the human-readable effective size (spec
+                  or discovered)
                 type: string
               headroomPercent:
                 description: HeadroomPercent is the headroom percentage that was applied
