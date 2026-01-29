@@ -37,6 +37,20 @@ const (
 	ModelCacheSourceURIIndexKey = ".spec.sourceUri"
 )
 
+// AIMModelCacheMode indicates the ownership mode of a model cache, derived from owner references.
+// +kubebuilder:validation:Enum=Dedicated;Shared
+type AIMModelCacheMode string
+
+const (
+	// ModelCacheModeDedicated indicates the cache has owner references and will be
+	// garbage collected when its owners are deleted.
+	ModelCacheModeDedicated AIMModelCacheMode = "Dedicated"
+
+	// ModelCacheModeShared indicates the cache has no owner references and persists
+	// independently, available for sharing across services.
+	ModelCacheModeShared AIMModelCacheMode = "Shared"
+)
+
 // AIMModelCacheSpec defines the desired state of AIMModelCache
 type AIMModelCacheSpec struct {
 	// SourceURI specifies the source location of the model to download.
@@ -132,6 +146,12 @@ type AIMModelCacheStatus struct {
 
 	// PersistentVolumeClaim represents the name of the created PVC
 	PersistentVolumeClaim string `json:"persistentVolumeClaim,omitempty"`
+
+	// Mode indicates the ownership mode of this model cache, derived from owner references.
+	// - Dedicated: Has owner references, will be garbage collected when owners are deleted.
+	// - Shared: No owner references, persists independently and can be shared.
+	// +optional
+	Mode AIMModelCacheMode `json:"mode,omitempty"`
 }
 
 func (m *AIMModelCache) GetStatus() *AIMModelCacheStatus {
@@ -190,6 +210,7 @@ const (
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=aimmc,categories=aim;all
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
+// +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.status.mode`
 // +kubebuilder:printcolumn:name="Model Size",type=string,JSONPath=`.spec.size`
 // +kubebuilder:printcolumn:name="Progress",type=string,JSONPath=`.status.progress.displayPercentage`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

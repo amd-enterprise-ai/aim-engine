@@ -311,12 +311,21 @@ func (r *ModelCacheReconciler) PlanResources(
 	return result
 }
 
-// DecorateStatus implements StatusDecorator to add download progress to the status
+// DecorateStatus implements StatusDecorator to add download progress and mode to the status
 func (r *ModelCacheReconciler) DecorateStatus(
 	status *aimv1alpha1.AIMModelCacheStatus,
 	_ *controllerutils.ConditionManager,
 	obs ModelCacheObservation,
 ) {
+	// Set Mode based on owner references
+	// Dedicated: has owner references, will be garbage collected with owners
+	// Shared: no owner references, persists independently
+	if len(obs.modelCache.GetOwnerReferences()) > 0 {
+		status.Mode = aimv1alpha1.ModelCacheModeDedicated
+	} else {
+		status.Mode = aimv1alpha1.ModelCacheModeShared
+	}
+
 	// Check if the pod has failed (before the job is marked as failed by k8s)
 	// This handles the window between pod failure and job failure status
 	podFailed := false

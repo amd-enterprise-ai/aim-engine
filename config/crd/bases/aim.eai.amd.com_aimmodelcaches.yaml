@@ -23,6 +23,9 @@ spec:
     - jsonPath: .status.status
       name: Status
       type: string
+    - jsonPath: .status.mode
+      name: Mode
+      type: string
     - jsonPath: .spec.size
       name: Model Size
       type: string
@@ -358,6 +361,15 @@ spec:
                 description: LastUsed represents the last time a model was deployed
                   that used this cache
                 format: date-time
+                type: string
+              mode:
+                description: |-
+                  Mode indicates the ownership mode of this model cache, derived from owner references.
+                  - Dedicated: Has owner references, will be garbage collected when owners are deleted.
+                  - Shared: No owner references, persists independently and can be shared.
+                enum:
+                - Dedicated
+                - Shared
                 type: string
               observedGeneration:
                 format: int64

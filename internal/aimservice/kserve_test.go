@@ -157,7 +157,7 @@ func TestIsReadyForInferenceService(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:    "caching mode Auto - ready with dedicated caches",
+			name:    "caching mode Auto - ready with template cache",
 			service: NewService("svc").Build(), // Auto is default
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
@@ -166,19 +166,11 @@ func TestIsReadyForInferenceService(t *testing.T) {
 							Value: NewModel("m").WithStatus(constants.AIMStatusReady).Build(),
 						},
 					},
-					template: controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]{
-						Value: &aimv1alpha1.AIMServiceTemplate{
-							Status: aimv1alpha1.AIMServiceTemplateStatus{
-								ModelSources: []aimv1alpha1.AIMModelSource{{SourceURI: "hf://test/model"}},
+					templateCache: controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{
+						Value: &aimv1alpha1.AIMTemplateCache{
+							Status: aimv1alpha1.AIMTemplateCacheStatus{
+								Status: constants.AIMStatusReady,
 							},
-						},
-					},
-					dedicatedModelCaches: controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]{
-						Value: &aimv1alpha1.AIMModelCacheList{
-							Items: []aimv1alpha1.AIMModelCache{{
-								Spec:   aimv1alpha1.AIMModelCacheSpec{SourceURI: "hf://test/model"},
-								Status: aimv1alpha1.AIMModelCacheStatus{Status: constants.AIMStatusReady},
-							}},
 						},
 					},
 				},
@@ -186,7 +178,7 @@ func TestIsReadyForInferenceService(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:    "caching mode Never - ready with dedicated caches",
+			name:    "caching mode Never - ready with template cache",
 			service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeNever).Build(),
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
@@ -195,19 +187,14 @@ func TestIsReadyForInferenceService(t *testing.T) {
 							Value: NewModel("m").WithStatus(constants.AIMStatusReady).Build(),
 						},
 					},
-					template: controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]{
-						Value: &aimv1alpha1.AIMServiceTemplate{
-							Status: aimv1alpha1.AIMServiceTemplateStatus{
-								ModelSources: []aimv1alpha1.AIMModelSource{{SourceURI: "hf://test/model"}},
+					templateCache: controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{
+						Value: &aimv1alpha1.AIMTemplateCache{
+							Spec: aimv1alpha1.AIMTemplateCacheSpec{
+								Mode: aimv1alpha1.TemplateCacheModeDedicated,
 							},
-						},
-					},
-					dedicatedModelCaches: controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]{
-						Value: &aimv1alpha1.AIMModelCacheList{
-							Items: []aimv1alpha1.AIMModelCache{{
-								Spec:   aimv1alpha1.AIMModelCacheSpec{SourceURI: "hf://test/model"},
-								Status: aimv1alpha1.AIMModelCacheStatus{Status: constants.AIMStatusReady},
-							}},
+							Status: aimv1alpha1.AIMTemplateCacheStatus{
+								Status: constants.AIMStatusReady,
+							},
 						},
 					},
 				},
@@ -215,7 +202,7 @@ func TestIsReadyForInferenceService(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:    "cluster model ready",
+			name:    "cluster model ready with template cache",
 			service: NewService("svc").Build(),
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
@@ -224,19 +211,11 @@ func TestIsReadyForInferenceService(t *testing.T) {
 							Value: NewClusterModel("cm").WithStatus(constants.AIMStatusReady).Build(),
 						},
 					},
-					clusterTemplate: controllerutils.FetchResult[*aimv1alpha1.AIMClusterServiceTemplate]{
-						Value: &aimv1alpha1.AIMClusterServiceTemplate{
-							Status: aimv1alpha1.AIMServiceTemplateStatus{
-								ModelSources: []aimv1alpha1.AIMModelSource{{SourceURI: "hf://test/model"}},
+					templateCache: controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{
+						Value: &aimv1alpha1.AIMTemplateCache{
+							Status: aimv1alpha1.AIMTemplateCacheStatus{
+								Status: constants.AIMStatusReady,
 							},
-						},
-					},
-					dedicatedModelCaches: controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]{
-						Value: &aimv1alpha1.AIMModelCacheList{
-							Items: []aimv1alpha1.AIMModelCache{{
-								Spec:   aimv1alpha1.AIMModelCacheSpec{SourceURI: "hf://test/model"},
-								Status: aimv1alpha1.AIMModelCacheStatus{Status: constants.AIMStatusReady},
-							}},
 						},
 					},
 				},

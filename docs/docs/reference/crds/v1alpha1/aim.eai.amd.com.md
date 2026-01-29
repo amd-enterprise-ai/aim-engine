@@ -507,6 +507,24 @@ AIMModelCacheList contains a list of AIMModelCache
 | `items` _[AIMModelCache](#aimmodelcache) array_ |  |  |  |
 
 
+#### AIMModelCacheMode
+
+_Underlying type:_ _string_
+
+AIMModelCacheMode indicates the ownership mode of a model cache, derived from owner references.
+
+_Validation:_
+- Enum: [Dedicated Shared]
+
+_Appears in:_
+- [AIMModelCacheStatus](#aimmodelcachestatus)
+
+| Field | Description |
+| --- | --- |
+| `Dedicated` | ModelCacheModeDedicated indicates the cache has owner references and will be<br />garbage collected when its owners are deleted.<br /> |
+| `Shared` | ModelCacheModeShared indicates the cache has no owner references and persists<br />independently, available for sharing across services.<br /> |
+
+
 #### AIMModelCacheSpec
 
 
@@ -549,6 +567,7 @@ _Appears in:_
 | `progress` _[DownloadProgress](#downloadprogress)_ | Progress represents the download progress when Status is Progressing |  |  |
 | `lastUsed` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#time-v1-meta)_ | LastUsed represents the last time a model was deployed that used this cache |  |  |
 | `persistentVolumeClaim` _string_ | PersistentVolumeClaim represents the name of the created PVC |  |  |
+| `mode` _[AIMModelCacheMode](#aimmodelcachemode)_ | Mode indicates the ownership mode of this model cache, derived from owner references.<br />- Dedicated: Has owner references, will be garbage collected when owners are deleted.<br />- Shared: No owner references, persists independently and can be shared. |  | Enum: [Dedicated Shared] <br /> |
 
 
 #### AIMModelConfig
@@ -1573,6 +1592,24 @@ AIMTemplateCacheList contains a list of AIMTemplateCache.
 | `items` _[AIMTemplateCache](#aimtemplatecache) array_ |  |  |  |
 
 
+#### AIMTemplateCacheMode
+
+_Underlying type:_ _string_
+
+AIMTemplateCacheMode controls the ownership behavior of model caches created by a template cache.
+
+_Validation:_
+- Enum: [Dedicated Shared]
+
+_Appears in:_
+- [AIMTemplateCacheSpec](#aimtemplatecachespec)
+
+| Field | Description |
+| --- | --- |
+| `Dedicated` | TemplateCacheModeDedicated means model caches have owner references to the template cache.<br />When the template cache is deleted, all its model caches are garbage collected.<br />Use this mode for service-specific caches that should be cleaned up with the service.<br /> |
+| `Shared` | TemplateCacheModeShared means model caches have no owner references.<br />Model caches persist independently of template cache lifecycle and can be shared.<br />This is the default mode for long-lived, reusable caches.<br /> |
+
+
 #### AIMTemplateCacheSpec
 
 
@@ -1594,6 +1631,7 @@ _Appears in:_
 | `downloadImage` _string_ | DownloadImage specifies the container image used to download and initialize model caches.<br />When not specified, the controller uses the default model download image. |  |  |
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources to cache for this template.<br />These sources are typically copied from the resolved template's model sources. |  |  |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  |  |
+| `mode` _[AIMTemplateCacheMode](#aimtemplatecachemode)_ | Mode controls the ownership behavior of model caches created by this template cache.<br />- Dedicated: Model caches are owned by this template cache and garbage collected when it's deleted.<br />- Shared (default): Model caches have no owner references and persist independently.<br />When a Shared template cache encounters model caches with owner references, it promotes them<br />to shared by removing the owner references, ensuring they persist for long-term use. | Shared | Enum: [Dedicated Shared] <br /> |
 
 
 #### AIMTemplateCacheStatus

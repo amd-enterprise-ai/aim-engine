@@ -23,6 +23,9 @@ spec:
     - jsonPath: .spec.templateName
       name: Template
       type: string
+    - jsonPath: .spec.mode
+      name: Mode
+      type: string
     - jsonPath: .status.status
       name: Status
       type: string
@@ -244,6 +247,18 @@ spec:
                   type: object
                   x-kubernetes-map-type: atomic
                 type: array
+              mode:
+                default: Shared
+                description: |-
+                  Mode controls the ownership behavior of model caches created by this template cache.
+                  - Dedicated: Model caches are owned by this template cache and garbage collected when it's deleted.
+                  - Shared (default): Model caches have no owner references and persist independently.
+                  When a Shared template cache encounters model caches with owner references, it promotes them
+                  to shared by removing the owner references, ensuring they persist for long-term use.
+                enum:
+                - Dedicated
+                - Shared
+                type: string
               modelSources:
                 description: |-
                   ModelSources specifies the model sources to cache for this template.

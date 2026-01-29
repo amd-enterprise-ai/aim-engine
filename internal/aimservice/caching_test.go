@@ -27,7 +27,6 @@ import (
 	"testing"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
@@ -383,129 +382,6 @@ func TestResolvePVCHeadroomPercent(t *testing.T) {
 }
 
 // ============================================================================
-// PLAN DEDICATED MODEL CACHES TESTS
-// ============================================================================
-
-func TestPlanDedicatedModelCaches(t *testing.T) {
-	tests := []struct {
-		name                string
-		service             *aimv1alpha1.AIMService
-		templateStatus      *aimv1alpha1.AIMServiceTemplateStatus
-		obs                 ServiceObservation
-		expectCachesCreated int
-	}{
-		{
-			name:                "no template status",
-			service:             NewService("svc").Build(),
-			templateStatus:      nil,
-			obs:                 ServiceObservation{},
-			expectCachesCreated: 0,
-		},
-		{
-			name:    "caching mode always - no dedicated caches",
-			service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeAlways).Build(),
-			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
-				ModelSources: []aimv1alpha1.AIMModelSource{
-					NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
-				},
-			},
-			obs:                 ServiceObservation{},
-			expectCachesCreated: 0,
-		},
-		{
-			name:    "template cache ready - no dedicated caches",
-			service: NewService("svc").Build(),
-			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
-				ModelSources: []aimv1alpha1.AIMModelSource{
-					NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
-				},
-			},
-			obs: ServiceObservation{
-				ServiceFetchResult: ServiceFetchResult{
-					templateCache: controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{
-						Value: &aimv1alpha1.AIMTemplateCache{
-							Status: aimv1alpha1.AIMTemplateCacheStatus{
-								Status: constants.AIMStatusReady,
-							},
-						},
-					},
-				},
-			},
-			expectCachesCreated: 0,
-		},
-		{
-			name:    "no model sources - no dedicated caches",
-			service: NewService("svc").Build(),
-			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
-				ModelSources: []aimv1alpha1.AIMModelSource{},
-			},
-			obs:                 ServiceObservation{},
-			expectCachesCreated: 0,
-		},
-		{
-			name:    "creates dedicated cache when conditions met",
-			service: NewService("svc").Build(),
-			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
-				ModelSources: []aimv1alpha1.AIMModelSource{
-					NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
-				},
-			},
-			obs:                 ServiceObservation{},
-			expectCachesCreated: 1,
-		},
-		{
-			name:    "caching mode never - creates dedicated cache",
-			service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeNever).Build(),
-			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
-				ModelSources: []aimv1alpha1.AIMModelSource{
-					NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
-				},
-			},
-			obs:                 ServiceObservation{},
-			expectCachesCreated: 1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := planDedicatedModelCaches(tt.service, tt.templateStatus, tt.obs)
-
-			if len(result) != tt.expectCachesCreated {
-				t.Errorf("expected %d caches, got %d", tt.expectCachesCreated, len(result))
-			}
-		})
-	}
-}
-
-func TestPlanDedicatedModelCaches_Labels(t *testing.T) {
-	service := NewService("my-svc").Build()
-	templateStatus := &aimv1alpha1.AIMServiceTemplateStatus{
-		ModelSources: []aimv1alpha1.AIMModelSource{
-			NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
-		},
-	}
-
-	result := planDedicatedModelCaches(service, templateStatus, ServiceObservation{})
-
-	if len(result) == 0 {
-		t.Fatal("expected at least one cache, got none")
-	}
-
-	cache, ok := result[0].(*aimv1alpha1.AIMModelCache)
-	if !ok {
-		t.Fatalf("expected *AIMModelCache, got %T", result[0])
-	}
-
-	// Check labels
-	if cache.Labels[constants.LabelK8sManagedBy] != constants.LabelValueManagedBy {
-		t.Errorf("expected managed-by label")
-	}
-	if cache.Labels[constants.LabelCacheType] != constants.LabelValueCacheTypeDedicated {
-		t.Errorf("expected cache-type=dedicated label, got %s", cache.Labels[constants.LabelCacheType])
-	}
-}
-
-// ============================================================================
 // PLAN TEMPLATE CACHE TESTS
 // ============================================================================
 
@@ -517,14 +393,28 @@ func TestPlanTemplateCache(t *testing.T) {
 		templateStatus *aimv1alpha1.AIMServiceTemplateStatus
 		obs            ServiceObservation
 		expectCache    bool
+		expectMode     aimv1alpha1.AIMTemplateCacheMode
 	}{
 		{
-			name:           "caching mode never - no cache",
+			name:           "never mode no model sources - no cache",
 			service:        NewService("svc").WithCachingMode(aimv1alpha1.CachingModeNever).Build(),
 			templateName:   "template",
 			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{},
 			obs:            ServiceObservation{},
 			expectCache:    false,
+		},
+		{
+			name:         "never mode creates dedicated cache",
+			service:      NewService("svc").WithCachingMode(aimv1alpha1.CachingModeNever).Build(),
+			templateName: "template",
+			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
+				ModelSources: []aimv1alpha1.AIMModelSource{
+					NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
+				},
+			},
+			obs:         ServiceObservation{},
+			expectCache: true,
+			expectMode:  aimv1alpha1.TemplateCacheModeDedicated,
 		},
 		{
 			name:         "cache already exists - no new cache",
@@ -553,7 +443,7 @@ func TestPlanTemplateCache(t *testing.T) {
 			expectCache:    false,
 		},
 		{
-			name:         "auto mode does not create cache (uses existing only)",
+			name:         "auto mode creates dedicated cache when no shared exists",
 			service:      NewService("svc").Build(), // Default is Auto
 			templateName: "template",
 			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
@@ -562,10 +452,11 @@ func TestPlanTemplateCache(t *testing.T) {
 				},
 			},
 			obs:         ServiceObservation{},
-			expectCache: false, // Auto mode uses existing caches but doesn't create new ones
+			expectCache: true,
+			expectMode:  aimv1alpha1.TemplateCacheModeDedicated,
 		},
 		{
-			name:         "creates cache when conditions met (always mode)",
+			name:         "always mode creates shared cache",
 			service:      NewService("svc").WithCachingMode(aimv1alpha1.CachingModeAlways).Build(),
 			templateName: "template",
 			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
@@ -575,6 +466,7 @@ func TestPlanTemplateCache(t *testing.T) {
 			},
 			obs:         ServiceObservation{},
 			expectCache: true,
+			expectMode:  aimv1alpha1.TemplateCacheModeShared,
 		},
 	}
 
@@ -585,6 +477,11 @@ func TestPlanTemplateCache(t *testing.T) {
 			if tt.expectCache {
 				if result == nil {
 					t.Error("expected template cache to be created, got nil")
+				} else {
+					cache := result.(*aimv1alpha1.AIMTemplateCache)
+					if cache.Spec.Mode != tt.expectMode {
+						t.Errorf("expected mode %s, got %s", tt.expectMode, cache.Spec.Mode)
+					}
 				}
 			} else {
 				if result != nil {

@@ -130,9 +130,7 @@ func planInferenceService(
 }
 
 // isReadyForInferenceService checks if all prerequisites are met to create the InferenceService.
-func isReadyForInferenceService(service *aimv1alpha1.AIMService, obs ServiceObservation) bool {
-	cachingMode := service.Spec.GetCachingMode()
-
+func isReadyForInferenceService(_ *aimv1alpha1.AIMService, obs ServiceObservation) bool {
 	// Check model is ready
 	modelReady := false
 	if obs.modelResult.Model.Value != nil {
@@ -144,43 +142,13 @@ func isReadyForInferenceService(service *aimv1alpha1.AIMService, obs ServiceObse
 		return false
 	}
 
-	// Check if we have storage ready
-	// Unified download architecture: all modes use caches (shared or dedicated)
-	switch cachingMode {
-	case aimv1alpha1.CachingModeAlways:
-		// Require shared template cache to be ready
-		if obs.templateCache.Value == nil ||
-			obs.templateCache.Value.Status.Status != constants.AIMStatusReady {
-			return false
-		}
-	case aimv1alpha1.CachingModeAuto:
-		// Either shared template cache or dedicated model caches
-		hasSharedCache := obs.templateCache.Value != nil &&
-			obs.templateCache.Value.Status.Status == constants.AIMStatusReady
-		hasDedicatedCaches := areDedicatedModelCachesReady(obs)
-		if !hasSharedCache && !hasDedicatedCaches {
-			return false
-		}
-	case aimv1alpha1.CachingModeNever:
-		// Dedicated model caches (unified downloads, no shared cache)
-		if !areDedicatedModelCachesReady(obs) {
-			return false
-		}
-	}
-
-	return true
-}
-
-// areDedicatedModelCachesReady checks if all dedicated model caches are ready.
-func areDedicatedModelCachesReady(obs ServiceObservation) bool {
-	if obs.dedicatedModelCaches.Value == nil || len(obs.dedicatedModelCaches.Value.Items) == 0 {
+	// All caching modes now use template cache (both Dedicated and Shared modes)
+	// Template cache must be ready before creating InferenceService
+	if obs.templateCache.Value == nil ||
+		obs.templateCache.Value.Status.Status != constants.AIMStatusReady {
 		return false
 	}
-	for _, cache := range obs.dedicatedModelCaches.Value.Items {
-		if cache.Status.Status != constants.AIMStatusReady {
-			return false
-		}
-	}
+
 	return true
 }
 
@@ -629,19 +597,19 @@ func convertToKServeAutoScaling(aimAutoScaling *aimv1alpha1.AIMServiceAutoScalin
 }
 
 // addStorageVolumes adds cache volumes to the InferenceService.
-// Uses shared template cache (model caches) or dedicated model caches.
+// All model caches are now managed through template cache (both Dedicated and Shared modes).
 func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObservation) {
 	if len(isvc.Spec.Predictor.Containers) == 0 {
 		return
 	}
 	container := &isvc.Spec.Predictor.Containers[0]
 
-	// Check if we have shared template cache with model caches
+	// All caching now flows through template cache
 	if obs.templateCache.Value != nil &&
 		obs.templateCache.Value.Status.Status == constants.AIMStatusReady &&
 		obs.modelCaches.Value != nil {
 
-		// Mount shared model cache PVCs
+		// Mount model cache PVCs from template cache
 		for _, modelCache := range obs.modelCaches.Value.Items {
 			if modelCache.Status.Status != constants.AIMStatusReady {
 				continue
@@ -651,19 +619,6 @@ func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObserva
 			}
 
 			// Find the model name from the model cache spec
-			modelName := modelCache.Spec.SourceURI
-			addModelCacheMount(isvc, container, &modelCache, modelName)
-		}
-	} else if obs.dedicatedModelCaches.Value != nil && len(obs.dedicatedModelCaches.Value.Items) > 0 {
-		// Mount dedicated model cache PVCs (unified download architecture)
-		for _, modelCache := range obs.dedicatedModelCaches.Value.Items {
-			if modelCache.Status.Status != constants.AIMStatusReady {
-				continue
-			}
-			if modelCache.Status.PersistentVolumeClaim == "" {
-				continue
-			}
-
 			modelName := modelCache.Spec.SourceURI
 			addModelCacheMount(isvc, container, &modelCache, modelName)
 		}

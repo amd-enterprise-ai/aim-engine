@@ -43,144 +43,17 @@ const (
 )
 
 // =======================================================
-// DEDICATED MODEL CACHE (UNIFIED DOWNLOAD ARCHITECTURE)
+// DEPRECATED: DEDICATED MODEL CACHE FUNCTIONS
 // =======================================================
-// For non-cached modes (Never/Auto without existing cache), we create dedicated
-// AIMModelCache resources with owner references to the AIMService. This ensures:
-// 1. Downloads are always handled by the engine (not the inference container)
-// 2. Credentials are never exposed to inference pods
-// 3. Downloads run on CPU nodes (GPU-independent)
-// 4. PVC lifecycle is tied to the service (deleted when service is deleted)
+// These functions are deprecated and will be removed in a future release.
+// Model cache creation is now handled by AIMTemplateCache with mode-based ownership.
+// The template cache mode (Dedicated/Shared) determines whether model caches have
+// owner references (Dedicated) or not (Shared).
 
 // GenerateDedicatedModelCacheName creates a deterministic name for a service's dedicated model cache.
+// Deprecated: Use AIMTemplateCache with Mode=Dedicated instead.
 func GenerateDedicatedModelCacheName(serviceName, modelID string) (string, error) {
 	return utils.GenerateDerivedName([]string{serviceName, "dedicated"}, utils.WithHashSource(modelID))
-}
-
-// planDedicatedModelCaches creates AIMModelCache resources for non-cached mode.
-// These caches are owned by the service and deleted when the service is deleted.
-// Returns a list of model caches to create.
-func planDedicatedModelCaches(
-	service *aimv1alpha1.AIMService,
-	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
-	obs ServiceObservation,
-) []client.Object {
-	cachingMode := service.Spec.GetCachingMode()
-
-	// If caching is required (Always mode), don't create dedicated caches
-	if cachingMode == aimv1alpha1.CachingModeAlways {
-		return nil
-	}
-
-	// If template cache exists and is ready, use shared cache instead
-	if obs.templateCache.Value != nil &&
-		obs.templateCache.Value.Status.Status == constants.AIMStatusReady {
-		return nil
-	}
-
-	// Need model sources to determine what to cache
-	if templateStatus == nil || len(templateStatus.ModelSources) == 0 {
-		return nil
-	}
-
-	// Check which model sources already have dedicated caches
-	existingCaches := make(map[string]bool)
-	if obs.dedicatedModelCaches.Value != nil {
-		for _, cache := range obs.dedicatedModelCaches.Value.Items {
-			existingCaches[cache.Spec.SourceURI] = true
-		}
-	}
-
-	storageClassName := resolveStorageClassName(service, obs)
-	serviceLabelValue, _ := utils.SanitizeLabelValue(service.Name)
-
-	var result []client.Object
-	for _, modelSource := range templateStatus.ModelSources {
-		// Skip if cache already exists for this source
-		if existingCaches[modelSource.SourceURI] {
-			continue
-		}
-
-		// Skip if size is not available (template still resolving)
-		if modelSource.Size == nil || modelSource.Size.IsZero() {
-			continue
-		}
-
-		cacheName, err := GenerateDedicatedModelCacheName(service.Name, modelSource.ModelID)
-		if err != nil {
-			continue
-		}
-
-		cache := &aimv1alpha1.AIMModelCache{
-			TypeMeta: metav1.TypeMeta{
-				APIVersion: aimv1alpha1.GroupVersion.String(),
-				Kind:       "AIMModelCache",
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      cacheName,
-				Namespace: service.Namespace,
-				Labels: map[string]string{
-					constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
-					constants.LabelK8sComponent: constants.ComponentModelStorage,
-					constants.LabelService:      serviceLabelValue,
-					constants.LabelCacheType:    constants.LabelValueCacheTypeDedicated,
-				},
-			},
-			Spec: aimv1alpha1.AIMModelCacheSpec{
-				SourceURI:        modelSource.SourceURI,
-				ModelID:          modelSource.ModelID,
-				Size:             *modelSource.Size,
-				StorageClassName: storageClassName,
-				// Merge base-level env with per-source env (source takes precedence)
-				Env:              utils.MergeEnvVars(service.Spec.Env, modelSource.Env),
-				RuntimeConfigRef: service.Spec.RuntimeConfigRef,
-			},
-		}
-
-		result = append(result, cache)
-	}
-
-	return result
-}
-
-// fetchDedicatedModelCaches fetches the service's dedicated model caches.
-func fetchDedicatedModelCaches(
-	ctx context.Context,
-	c client.Client,
-	service *aimv1alpha1.AIMService,
-) controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList] {
-	serviceLabelValue, _ := utils.SanitizeLabelValue(service.Name)
-
-	return controllerutils.FetchList(ctx, c, &aimv1alpha1.AIMModelCacheList{},
-		client.InNamespace(service.Namespace),
-		client.MatchingLabels{
-			constants.LabelService:   serviceLabelValue,
-			constants.LabelCacheType: constants.LabelValueCacheTypeDedicated,
-		},
-	)
-}
-
-// areDedicatedCachesReady returns true if all dedicated model caches are ready.
-func areDedicatedCachesReady(caches *aimv1alpha1.AIMModelCacheList, modelSources []aimv1alpha1.AIMModelSource) bool {
-	if caches == nil || len(modelSources) == 0 {
-		return false
-	}
-
-	// Build map of ready caches by source URI
-	readyCaches := make(map[string]bool)
-	for _, cache := range caches.Items {
-		if cache.Status.Status == constants.AIMStatusReady {
-			readyCaches[cache.Spec.SourceURI] = true
-		}
-	}
-
-	// Check all model sources have a ready cache
-	for _, source := range modelSources {
-		if !readyCaches[source.SourceURI] {
-			return false
-		}
-	}
-	return true
 }
 
 // =======================================================
@@ -192,8 +65,11 @@ func GenerateTemplateCacheName(templateName, namespace string) (string, error) {
 	return utils.GenerateDerivedName([]string{templateName}, utils.WithHashSource(namespace))
 }
 
-// planTemplateCache creates a template cache if caching mode is Always and one doesn't exist.
-// Auto mode uses existing caches but doesn't create new ones.
+// planTemplateCache creates a template cache for all caching modes.
+// The cache mode is determined by the service's caching mode:
+// - Always: creates Shared cache (no owner reference, persists independently)
+// - Never: creates Dedicated cache (owned by service, garbage collected with it)
+// - Auto: uses existing Shared cache if available, otherwise creates Dedicated cache
 func planTemplateCache(
 	service *aimv1alpha1.AIMService,
 	templateName string,
@@ -203,12 +79,15 @@ func planTemplateCache(
 ) client.Object {
 	cachingMode := service.Spec.GetCachingMode()
 
-	// Only create cache for Always mode - Auto uses existing but doesn't create
-	if cachingMode != aimv1alpha1.CachingModeAlways {
-		return nil
+	// For Auto mode, if a Shared cache already exists and is usable, don't create a new one
+	if cachingMode == aimv1alpha1.CachingModeAuto && obs.templateCache.Value != nil {
+		// Only skip if the existing cache is Shared mode (we want to use it)
+		if obs.templateCache.Value.Spec.Mode == aimv1alpha1.TemplateCacheModeShared {
+			return nil
+		}
 	}
 
-	// Don't create if template cache already exists
+	// Don't create if template cache already exists (for any mode)
 	if obs.templateCache.Value != nil {
 		return nil
 	}
@@ -216,6 +95,19 @@ func planTemplateCache(
 	// Need model sources in template status to determine what to cache
 	if templateStatus == nil || len(templateStatus.ModelSources) == 0 {
 		return nil
+	}
+
+	// Determine template cache mode based on service caching mode
+	var cacheMode aimv1alpha1.AIMTemplateCacheMode
+	switch cachingMode {
+	case aimv1alpha1.CachingModeAlways:
+		// Always mode: shared caches that persist independently
+		cacheMode = aimv1alpha1.TemplateCacheModeShared
+	case aimv1alpha1.CachingModeNever, aimv1alpha1.CachingModeAuto:
+		// Never/Auto mode: dedicated caches owned by service
+		cacheMode = aimv1alpha1.TemplateCacheModeDedicated
+	default:
+		cacheMode = aimv1alpha1.TemplateCacheModeShared
 	}
 
 	// Resolve storage class
@@ -246,6 +138,7 @@ func planTemplateCache(
 			TemplateScope:    aimv1alpha1.AIMServiceTemplateScopeNamespace, // Default to namespace scope
 			StorageClassName: storageClassName,
 			RuntimeConfigRef: service.Spec.RuntimeConfigRef,
+			Mode:             cacheMode,
 		},
 	}
 
