@@ -34,7 +34,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
-func getCachePvcName(mc *aimv1alpha1.AIMModelCache) string {
+func GenerateCachePvcName(mc *aimv1alpha1.AIMModelCache) string {
 	name, _ := utils.GenerateDerivedName([]string{mc.Name, "cache"}, utils.WithHashSource(mc.UID))
 	return name
 }
@@ -71,7 +71,7 @@ func buildCachePvc(mc *aimv1alpha1.AIMModelCache, pvcSize resource.Quantity, sto
 	return &corev1.PersistentVolumeClaim{
 		TypeMeta: metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "PersistentVolumeClaim"},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      getCachePvcName(mc),
+			Name:      GenerateCachePvcName(mc),
 			Namespace: mc.Namespace,
 			Labels:    labels,
 		},

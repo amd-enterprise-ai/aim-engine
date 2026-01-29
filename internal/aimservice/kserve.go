@@ -29,6 +29,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimmodelcache"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -36,8 +38,6 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-
-	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -657,7 +657,7 @@ func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1
 		Name: volumeName,
 		VolumeSource: corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: modelCache.Status.PersistentVolumeClaim,
+				ClaimName: aimmodelcache.GenerateCachePvcName(modelCache),
 			},
 		},
 	})

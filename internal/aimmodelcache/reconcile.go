@@ -30,6 +30,12 @@ import (
 	"io"
 	"strings"
 
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimruntimeconfig"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -37,12 +43,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	"github.com/amd-enterprise-ai/aim-engine/internal/aimruntimeconfig"
-	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
-	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
-	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 type ModelCacheReconciler struct {
@@ -84,24 +85,27 @@ func parseCheckSizeOutput(logLine string) (*int64, error) {
 		return nil, fmt.Errorf("failed to parse check-size output: %w", err)
 	}
 
-	if output.SizeBytes <= 0 {
+	const maxReasonableSize = 1 << 50 // 1 PB - no model should be larger
+
+	if output.SizeBytes <= 0 || output.SizeBytes > maxReasonableSize {
 		return nil, fmt.Errorf("invalid size: %d bytes", output.SizeBytes)
 	}
 
 	return &output.SizeBytes, nil
 }
 
-// IsSizeKnown returns true if size is available (from spec or discovered)
-func (result ModelCacheFetchResult) IsSizeKnown() bool {
-	mc := result.modelCache
-	return !mc.Spec.Size.IsZero() || mc.Status.DiscoveredSizeBytes != nil
+func (obs ModelCacheObservation) IsSizeKnown() bool {
+	mc := obs.modelCache
+	return !mc.Spec.Size.IsZero() || obs.discoveredSizeBytes != nil || mc.Status.DiscoveredSizeBytes != nil
 }
 
-// GetEffectiveSize returns the size to use (spec or discovered)
-func (result ModelCacheFetchResult) GetEffectiveSize() int64 {
-	mc := result.modelCache
+func (obs ModelCacheObservation) GetEffectiveSize() int64 {
+	mc := obs.modelCache
 	if !mc.Spec.Size.IsZero() {
 		return mc.Spec.Size.Value()
+	}
+	if obs.discoveredSizeBytes != nil {
+		return *obs.discoveredSizeBytes
 	}
 	if mc.Status.DiscoveredSizeBytes != nil {
 		return *mc.Status.DiscoveredSizeBytes
@@ -164,7 +168,7 @@ func (r *ModelCacheReconciler) FetchRemoteState(
 		mergedRuntimeConfig: reconcileCtx.MergedRuntimeConfig,
 		cachePvc: controllerutils.Fetch(
 			ctx, c,
-			client.ObjectKey{Name: getCachePvcName(mc), Namespace: mc.Namespace},
+			client.ObjectKey{Name: GenerateCachePvcName(mc), Namespace: mc.Namespace},
 			&corev1.PersistentVolumeClaim{},
 		),
 		roleBinding: controllerutils.Fetch(
@@ -240,34 +244,45 @@ func (r *ModelCacheReconciler) FetchRemoteState(
 	return result
 }
 
-func (result ModelCacheFetchResult) GetComponentHealth(ctx context.Context, clientset kubernetes.Interface) []controllerutils.ComponentHealth {
+func (obs ModelCacheObservation) GetComponentHealth(ctx context.Context, clientset kubernetes.Interface) []controllerutils.ComponentHealth {
 	health := []controllerutils.ComponentHealth{
-		result.mergedRuntimeConfig.ToUpstreamComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth),
+		obs.mergedRuntimeConfig.ToUpstreamComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth),
 	}
 
 	// Phase 1: Check-size job health (when discovering size)
-	if result.checkSizeJob != nil {
+	if obs.checkSizeJob != nil {
 		health = append(health,
-			result.checkSizeJob.ToDownstreamComponentHealth("CheckSizeJob", controllerutils.GetJobHealth))
-		if result.checkSizeJobPods != nil {
+			obs.checkSizeJob.ToDownstreamComponentHealth("CheckSizeJob", controllerutils.GetJobHealth))
+		if obs.checkSizeJobPods != nil {
 			health = append(health,
-				result.checkSizeJobPods.ToComponentHealthWithContext(ctx, clientset, "CheckSizeJobPods", controllerutils.GetPodsHealth))
+				obs.checkSizeJobPods.ToComponentHealthWithContext(ctx, clientset, "CheckSizeJobPods", controllerutils.GetPodsHealth))
+		}
+
+		if obs.CheckSizeJobSucceeded() && obs.sizeParseError != nil {
+			health = append(health, controllerutils.ComponentHealth{
+				Component:      "CheckSizeOutput",
+				State:          constants.AIMStatusFailed,
+				Reason:         "InvalidSizeOutput",
+				Message:        obs.sizeParseError.Error(),
+				Errors:         []error{obs.sizeParseError},
+				DependencyType: controllerutils.DependencyTypeDownstream,
+			})
 		}
 	}
 
 	// Phase 2+: PVC and download job health (only after size is known)
-	if result.IsSizeKnown() {
+	if obs.IsSizeKnown() {
 		health = append(health,
-			result.cachePvc.ToDownstreamComponentHealth("CachePvc", controllerutils.GetPvcHealth))
+			obs.cachePvc.ToDownstreamComponentHealth("CachePvc", controllerutils.GetPvcHealth))
 
-		if result.modelCache.Status.Status != constants.AIMStatusReady {
-			if result.downloadJob != nil {
+		if obs.modelCache.Status.Status != constants.AIMStatusReady {
+			if obs.downloadJob != nil {
 				health = append(health,
-					result.downloadJob.ToDownstreamComponentHealth("DownloadJob", controllerutils.GetJobHealth))
+					obs.downloadJob.ToDownstreamComponentHealth("DownloadJob", controllerutils.GetJobHealth))
 			}
-			if result.downloadJobPods != nil {
+			if obs.downloadJobPods != nil {
 				health = append(health,
-					result.downloadJobPods.ToComponentHealthWithContext(ctx, clientset, "DownloadJobPods", controllerutils.GetPodsHealth))
+					obs.downloadJobPods.ToComponentHealthWithContext(ctx, clientset, "DownloadJobPods", controllerutils.GetPodsHealth))
 			}
 		}
 	}
@@ -288,14 +303,35 @@ func (result ModelCacheFetchResult) DownloadJobSucceeded() bool {
 
 type ModelCacheObservation struct {
 	ModelCacheFetchResult
+
+	// Discovered size bytes and parse error from check-size job
+	discoveredSizeBytes *int64
+	sizeParseError      error
 }
 
 func (r *ModelCacheReconciler) ComposeState(
-	_ context.Context,
+	ctx context.Context,
 	_ controllerutils.ReconcileContext[*aimv1alpha1.AIMModelCache],
 	fetch ModelCacheFetchResult,
 ) ModelCacheObservation {
-	return ModelCacheObservation{ModelCacheFetchResult: fetch}
+	logger := log.FromContext(ctx)
+	obs := ModelCacheObservation{ModelCacheFetchResult: fetch}
+
+	// Parse check-size output if job succeeded
+	if fetch.CheckSizeJobSucceeded() && fetch.checkSizeOutput != "" {
+		size, err := parseCheckSizeOutput(fetch.checkSizeOutput)
+		if err != nil {
+			logger.Error(err, "Failed to parse check-size output",
+				"output", fetch.checkSizeOutput,
+				"namespace", fetch.modelCache.Namespace,
+				"name", fetch.modelCache.Name)
+			obs.sizeParseError = err
+		} else {
+			obs.discoveredSizeBytes = size
+		}
+	}
+
+	return obs
 }
 
 func (r *ModelCacheReconciler) PlanResources(
@@ -354,20 +390,17 @@ func (r *ModelCacheReconciler) PlanResources(
 	return result
 }
 
-// DecorateStatus implements StatusDecorator to add download progress to the status
+// DecorateStatus implements StatusDecorator to update download status
 func (r *ModelCacheReconciler) DecorateStatus(
 	status *aimv1alpha1.AIMModelCacheStatus,
-	_ *controllerutils.ConditionManager,
+	cm *controllerutils.ConditionManager,
 	obs ModelCacheObservation,
 ) {
 	mc := obs.modelCache
 	runtimeConfig := obs.mergedRuntimeConfig.Value
 
-	// Store discovered size when check-size job succeeds
-	if obs.CheckSizeJobSucceeded() && status.DiscoveredSizeBytes == nil {
-		if size, err := parseCheckSizeOutput(obs.checkSizeOutput); err == nil {
-			status.DiscoveredSizeBytes = size
-		}
+	if obs.discoveredSizeBytes != nil {
+		status.DiscoveredSizeBytes = obs.discoveredSizeBytes
 	}
 
 	// Set display size from spec or discovered
@@ -379,12 +412,11 @@ func (r *ModelCacheReconciler) DecorateStatus(
 	}
 
 	// Store allocated size and headroom when PVC is created
-	if !obs.cachePvc.IsNotFound() && status.AllocatedSizeBytes == nil {
+	if obs.cachePvc.OK() && status.AllocatedSize.IsZero() {
 		pvc := obs.cachePvc.Value
-		if pvc != nil && pvc.Spec.Resources.Requests != nil {
+		if pvc.Spec.Resources.Requests != nil {
 			if qty, ok := pvc.Spec.Resources.Requests[corev1.ResourceStorage]; ok {
-				allocatedSize := qty.Value()
-				status.AllocatedSizeBytes = &allocatedSize
+				status.AllocatedSize = qty
 			}
 		}
 		headroom := utils.GetPVCHeadroomPercent(runtimeConfig)

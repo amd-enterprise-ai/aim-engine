@@ -557,11 +557,7 @@ func (in *AIMModelCacheStatus) DeepCopyInto(out *AIMModelCacheStatus) {
 		*out = new(int64)
 		**out = **in
 	}
-	if in.AllocatedSizeBytes != nil {
-		in, out := &in.AllocatedSizeBytes, &out.AllocatedSizeBytes
-		*out = new(int64)
-		**out = **in
-	}
+	out.AllocatedSize = in.AllocatedSize.DeepCopy()
 	if in.HeadroomPercent != nil {
 		in, out := &in.HeadroomPercent, &out.HeadroomPercent
 		*out = new(int32)

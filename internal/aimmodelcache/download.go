@@ -137,7 +137,7 @@ func buildDownloadJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alp
 						{
 							Name: "cache",
 							VolumeSource: corev1.VolumeSource{
-								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: getCachePvcName(mc)},
+								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: GenerateCachePvcName(mc)},
 							},
 						},
 					},

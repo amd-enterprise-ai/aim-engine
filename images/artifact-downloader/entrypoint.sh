@@ -4,37 +4,9 @@ set -eu
 URL="${1:?Usage: $0 <hf://org/model or s3://bucket/path>}"
 TARGET_DIR="${TARGET_DIR:-/cache}"
 
-
-# Fetch expected size if not already set
-if [ -z "${EXPECTED_SIZE_BYTES:-}" ]; then
-    case "$URL" in
-        hf://*)
-        # Fetch expected size if not set
-        if [ -z "${EXPECTED_SIZE_BYTES:-}" ]; then
-            echo "Fetching model size from Hugging Face..."
-            export MODEL_PATH="${URL#hf://}"
-            EXPECTED_SIZE_BYTES=$(python -c '
-                import os
-                from huggingface_hub import HfApi
-                MODEL_PATH = os.environ['MODEL_PATH']
-                info = HfApi().model_info(MODEL_PATH, files_metadata=True)
-                print(sum(f.size or 0 for f in info.siblings))
-                ' 2>/dev/null || echo 0)
-        fi
-        ;;
-        s3://*)
-            # Get size from S3 (s3cmd du returns human-readable, need bytes)
-            EXPECTED_SIZE_BYTES=$(s3cmd du "$URL" 2>/dev/null | awk '{print $1}' || echo 0)
-            ;;
-    esac
-    export EXPECTED_SIZE_BYTES
-fi
-
-echo "Expected size: $EXPECTED_SIZE_BYTES bytes"
-
 # Start progress monitor in background
 if [ -f /progress-monitor.sh ]; then
-    /progress-monitor.sh &
+    /progress-monitor.sh "$URL" "$TARGET_DIR" &
 fi
 
 ### TESTING WHEN ENV VARS ARE SET ###
@@ -89,11 +61,11 @@ case "$URL" in
         fi
         
         # shellcheck disable=SC2086
-        s3cmd $S3CMD_ARGS sync --stop-on-error "${URL}/" "$TARGET_DIR/"
+        s3cmd $S3CMD_ARGS sync --stop-on-error "${URL%/}/" "$TARGET_DIR/"
         echo "Sync complete"
         ;;
     *)
-        echo "Error: Unknown protocol. URL must start with hf:// or s3://" >&2
+        echo "Error: Unknown protocol. URL must start with hf:// or s3:// - was $URL" >&2
         exit 1
         ;;
 esac

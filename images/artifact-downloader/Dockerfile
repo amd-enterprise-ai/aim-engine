@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY entrypoint.sh /entrypoint.sh
 COPY progress-monitor.sh /progress-monitor.sh
 COPY check-size.sh /check-size.sh
+RUN mkdir -p /check-size
+COPY check-size/check-hf-size.py /check-size/check-hf-size.py
 
 RUN chmod +x /entrypoint.sh /check-size.sh /progress-monitor.sh
 

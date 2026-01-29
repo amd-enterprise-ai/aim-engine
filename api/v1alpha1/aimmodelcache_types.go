@@ -135,9 +135,9 @@ type AIMModelCacheStatus struct {
 	// +optional
 	DiscoveredSizeBytes *int64 `json:"discoveredSizeBytes,omitempty"`
 
-	// AllocatedSizeBytes is the actual PVC size requested (including headroom).
+	// AllocatedSize is the actual PVC size requested (including headroom).
 	// +optional
-	AllocatedSizeBytes *int64 `json:"allocatedSizeBytes,omitempty"`
+	AllocatedSize resource.Quantity `json:"allocatedSize,omitempty"`
 
 	// HeadroomPercent is the headroom percentage that was applied to the PVC size.
 	// +optional
