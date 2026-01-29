@@ -245,11 +245,15 @@ func TestFormatBytesHumanReadable(t *testing.T) {
 			expected: "9.5 GiB",
 		},
 		{
-			name:     "99.5 GiB rounds to 100",
+			name:     "99.5 GiB",
 			bytes:    mustParseBytes("101888Mi"), // 99.5 GiB
+			expected: "99.5 GiB",
+		},
+		{
+			name:     "99.95 GiB rounds to 100",
+			bytes:    mustParseBytes("102349Mi"), // ~99.95 GiB
 			expected: "100 GiB",
 		},
-
 		// Significant figures boundary tests
 		{
 			name:     "exactly 10 GiB (boundary)",
