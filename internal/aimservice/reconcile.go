@@ -765,15 +765,15 @@ func (r *ServiceReconciler) PlanResources(
 
 // getResolvedTemplate returns the resolved template info from the observation.
 // Returns the template name, namespace (empty for cluster templates),
-// namespace-scoped spec (nil for cluster templates), and status.
-func (obs ServiceObservation) getResolvedTemplate() (name, namespace string, nsSpec *aimv1alpha1.AIMServiceTemplateSpec, status *aimv1alpha1.AIMServiceTemplateStatus) {
+// common spec (works for both namespace and cluster templates), and status.
+func (obs ServiceObservation) getResolvedTemplate() (name, namespace string, spec *aimv1alpha1.AIMServiceTemplateSpecCommon, status *aimv1alpha1.AIMServiceTemplateStatus) {
 	if obs.template.Value != nil {
 		t := obs.template.Value
-		return t.Name, t.Namespace, &t.Spec, &t.Status
+		return t.Name, t.Namespace, &t.Spec.AIMServiceTemplateSpecCommon, &t.Status
 	}
 	if obs.clusterTemplate.Value != nil {
 		t := obs.clusterTemplate.Value
-		return t.Name, "", nil, &t.Status
+		return t.Name, "", &t.Spec.AIMServiceTemplateSpecCommon, &t.Status
 	}
 	return "", "", nil, nil
 }

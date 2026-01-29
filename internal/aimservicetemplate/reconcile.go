@@ -483,7 +483,7 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 			Namespace:        operatorNamespace,
 			ModelID:          template.Spec.ModelName,
 			Image:            image,
-			Env:              nil, // Cluster templates don't have env vars
+			Env:              template.Spec.Env,
 			ImagePullSecrets: clusterModel.Spec.ImagePullSecrets,
 			ServiceAccount:   clusterModel.Spec.ServiceAccountName,
 			TemplateSpec:     template.Spec.AIMServiceTemplateSpecCommon,

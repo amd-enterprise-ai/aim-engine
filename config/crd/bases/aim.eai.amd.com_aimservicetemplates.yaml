@@ -250,8 +250,9 @@ spec:
                 type: object
               env:
                 description: |-
-                  Env specifies environment variables to use for authentication when downloading models.
-                  These variables are used for authentication with model registries (e.g., HuggingFace tokens).
+                  Env specifies environment variables for inference containers.
+                  These variables are passed to the inference runtime and can be used
+                  to configure runtime behavior, authentication, or other settings.
                 items:
                   description: EnvVar represents an environment variable present in
                     a Container.

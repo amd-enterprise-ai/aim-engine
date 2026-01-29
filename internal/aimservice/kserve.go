@@ -113,7 +113,7 @@ func planInferenceService(
 	ctx context.Context,
 	service *aimv1alpha1.AIMService,
 	templateName string,
-	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
+	templateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
 	obs ServiceObservation,
 ) client.Object {
@@ -176,7 +176,7 @@ func isReadyForInferenceService(service *aimv1alpha1.AIMService, obs ServiceObse
 func buildInferenceService(
 	service *aimv1alpha1.AIMService,
 	templateName string,
-	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
+	templateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
 	obs ServiceObservation,
 ) *servingv1beta1.InferenceService {
@@ -319,23 +319,33 @@ func buildInferenceService(
 // buildMergedEnvVars builds environment variables with hierarchical merging.
 // Precedence order (highest to lowest):
 // 1. Service.Spec.Env (user-specified on service)
-// 2. Profile EnvVars (from template status)
-// 3. Template.Spec.Env
-// 4. Runtime config env vars
+// 2. Template.Spec.Env (user-specified on template)
+// 3. RuntimeConfig.Env (cluster/namespace-level defaults)
+// 4. Profile EnvVars (discovered defaults from model)
 // 5. System defaults
 func buildMergedEnvVars(
 	service *aimv1alpha1.AIMService,
-	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
+	templateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
 	obs ServiceObservation,
 ) []corev1.EnvVar {
-	// Start with system defaults
+	// Start with system defaults (lowest precedence)
 	envVars := []corev1.EnvVar{
 		{Name: constants.EnvAIMCachePath, Value: constants.AIMCacheBasePath},
 		{Name: constants.EnvVLLMEnableMetrics, Value: "true"},
 	}
 
-	// Merge runtime config env vars
+	// Merge profile env vars (discovered defaults from model - low precedence)
+	// AIM_ENGINE_ARGS is deep-merged as JSON to preserve contributions from all sources
+	if templateStatus != nil && templateStatus.Profile != nil && len(templateStatus.Profile.EnvVars) > 0 {
+		profileEnvVars := make([]corev1.EnvVar, 0, len(templateStatus.Profile.EnvVars))
+		for name, value := range templateStatus.Profile.EnvVars {
+			profileEnvVars = append(profileEnvVars, corev1.EnvVar{Name: name, Value: value})
+		}
+		envVars = utils.MergeEnvVars(envVars, profileEnvVars, utils.EnvVarAIMEngineArgs)
+	}
+
+	// Merge runtime config env vars (cluster/namespace-level defaults)
 	// AIM_ENGINE_ARGS is deep-merged as JSON to preserve contributions from all sources
 	if obs.mergedRuntimeConfig.Value != nil && len(obs.mergedRuntimeConfig.Value.Env) > 0 {
 		envVars = utils.MergeEnvVars(envVars, obs.mergedRuntimeConfig.Value.Env, utils.EnvVarAIMEngineArgs)
@@ -351,20 +361,10 @@ func buildMergedEnvVars(
 		envVars = append(envVars, corev1.EnvVar{Name: constants.EnvAIMPrecision, Value: string(*templateSpec.Precision)})
 	}
 
-	// Merge template spec env vars
+	// Merge template spec env vars (user-specified on template)
 	// AIM_ENGINE_ARGS is deep-merged as JSON to preserve contributions from all sources
 	if templateSpec != nil && len(templateSpec.Env) > 0 {
 		envVars = utils.MergeEnvVars(envVars, templateSpec.Env, utils.EnvVarAIMEngineArgs)
-	}
-
-	// Merge profile env vars
-	// AIM_ENGINE_ARGS is deep-merged as JSON to preserve contributions from all sources
-	if templateStatus != nil && templateStatus.Profile != nil && len(templateStatus.Profile.EnvVars) > 0 {
-		profileEnvVars := make([]corev1.EnvVar, 0, len(templateStatus.Profile.EnvVars))
-		for name, value := range templateStatus.Profile.EnvVars {
-			profileEnvVars = append(profileEnvVars, corev1.EnvVar{Name: name, Value: value})
-		}
-		envVars = utils.MergeEnvVars(envVars, profileEnvVars, utils.EnvVarAIMEngineArgs)
 	}
 
 	// Merge service-level env vars (highest precedence)
@@ -389,7 +389,7 @@ func buildMergedEnvVars(
 // 4. Default CPU/memory based on GPU count
 func resolveResources(
 	service *aimv1alpha1.AIMService,
-	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
+	templateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon,
 	gpuCount int64,
 	gpuResourceName corev1.ResourceName,
 ) corev1.ResourceRequirements {
