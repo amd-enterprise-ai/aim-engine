@@ -33,12 +33,14 @@ last_size=0
 last_change_time=$(date +%s)
 
 update_progress() {
-    [ -z "${CACHE_NAME:-}" ] && return
-    [ -z "${CACHE_NAMESPACE:-}" ] && return
-    kubectl patch aimmodelcache "$CACHE_NAME" -n "$CACHE_NAMESPACE" \
+    [ -z "${CACHE_NAME:-}" ] && echo "WARN: CACHE_NAME not set" >&2 && return
+    [ -z "${CACHE_NAMESPACE:-}" ] && echo "WARN: CACHE_NAMESPACE not set" >&2 && return
+    
+    if ! kubectl patch aimmodelcache "$CACHE_NAME" -n "$CACHE_NAMESPACE" \
         --type=merge --subresource=status \
-        -p "{\"status\":{\"progress\":{\"percentage\":$1,\"displayPercentage\":\"$1 %\",\"downloadedBytes\":$2,\"totalBytes\":$3}}}" \
-        2>/dev/null || true
+        -p "{\"status\":{\"progress\":{\"percentage\":$1,\"displayPercentage\":\"$1 %\",\"downloadedBytes\":$2,\"totalBytes\":$3}}}"; then
+        echo "WARN: Failed to update progress: $1% ($2/$3 bytes)" >&2
+    fi
 }
 
 echo "Progress monitor started: expected=${expected_size} bytes, interval=${log_interval}s, stall_timeout=${stall_timeout}s" >&2
@@ -65,7 +67,7 @@ while [ "$terminated" = "false" ]; do
         percent=0
     fi
     update_progress "$percent" "$current_size" "$expected_size"
-
+    echo "Progress: ${percent}% (${current_size}/${expected_size} bytes)" >&2
     sleep "$log_interval"
 done
 
