@@ -168,6 +168,7 @@ type AIMModelSpec struct {
 	// If omitted when modelSources is set, a single template is auto-generated
 	// using the spec-level hardware requirements.
 	// +optional
+	// +kubebuilder:validation:MaxItems=16
 	CustomTemplates []AIMCustomTemplate `json:"customTemplates,omitempty"`
 
 	// RuntimeConfigRef contains the runtime config reference for this model, and is used to control discovery behavior.
