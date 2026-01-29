@@ -39,7 +39,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -405,10 +404,16 @@ func (r *ModelCacheReconciler) DecorateStatus(
 
 	// Set display size from spec or discovered
 	if !mc.Spec.Size.IsZero() {
-		status.DisplaySize = mc.Spec.Size.String()
+		// Convert spec size to bytes, then format with two significant digits
+		sizeBytes, ok := mc.Spec.Size.AsInt64()
+		if ok {
+			status.DisplaySize = utils.FormatBytesHumanReadable(sizeBytes)
+		} else {
+			// Fallback for very large values that don't fit in int64
+			status.DisplaySize = mc.Spec.Size.String()
+		}
 	} else if status.DiscoveredSizeBytes != nil {
-		// Convert bytes to human-readable
-		status.DisplaySize = resource.NewQuantity(*status.DiscoveredSizeBytes, resource.BinarySI).String()
+		status.DisplaySize = utils.FormatBytesHumanReadable(*status.DiscoveredSizeBytes)
 	}
 
 	// Store allocated size and headroom when PVC is created
@@ -475,5 +480,4 @@ func (r *ModelCacheReconciler) DecorateStatus(
 		}
 		return
 	}
-
 }
