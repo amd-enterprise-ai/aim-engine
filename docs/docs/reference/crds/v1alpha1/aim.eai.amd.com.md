@@ -334,6 +334,26 @@ _Appears in:_
 | `limits` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Limits is the maximum number of CPU cores to allow. |  |  |
 
 
+#### AIMCustomModelDefaults
+
+
+
+AIMCustomModelDefaults contains default configuration for custom models.
+These fields are only used when modelSources is specified (custom models).
+For image-based models, these settings come from discovery.
+
+
+
+_Appears in:_
+- [AIMModelSpec](#aimmodelspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `hardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | Hardware specifies default hardware requirements for all templates.<br />Individual templates can override these defaults.<br />Required when modelSources is set and templates is empty. |  |  |
+| `type` _[AIMProfileType](#aimprofiletype)_ | Type specifies default type for all templates.<br />Individual templates can override this default.<br />When nil, templates default to "unoptimized". |  | Enum: [optimized preview unoptimized] <br /> |
+| `templates` _[AIMCustomTemplate](#aimcustomtemplate) array_ | Templates defines explicit template configurations for this model.<br />When modelSources are specified, these templates are created directly<br />without running a discovery job.<br />If omitted when modelSources is set, a single template is auto-generated<br />using the hardware requirements. |  |  |
+
+
 #### AIMCustomTemplate
 
 
@@ -345,7 +365,7 @@ defining explicit hardware requirements and profiles, skipping the discovery job
 
 
 _Appears in:_
-- [AIMModelSpec](#aimmodelspec)
+- [AIMCustomModelDefaults](#aimcustommodeldefaults)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -414,8 +434,8 @@ Used in AIMModelSpec and AIMCustomTemplate to define GPU and CPU needs.
 
 
 _Appears in:_
+- [AIMCustomModelDefaults](#aimcustommodeldefaults)
 - [AIMCustomTemplate](#aimcustomtemplate)
-- [AIMModelSpec](#aimmodelspec)
 - [AIMServiceModelCustom](#aimservicemodelcustom)
 
 | Field | Description | Default | Validation |
@@ -665,10 +685,8 @@ _Appears in:_
 | `image` _string_ | Image is the container image URI for this AIM model.<br />This image is inspected by the operator to select runtime profiles used by templates.<br />Discovery behavior is controlled by the discovery field and runtime config's AutoDiscovery setting. |  | MinLength: 1 <br /> |
 | `discovery` _[AIMModelDiscoveryConfig](#aimmodeldiscoveryconfig)_ | Discovery controls discovery behavior for this model.<br />When unset, uses runtime config defaults. |  |  |
 | `defaultServiceTemplate` _string_ | DefaultServiceTemplate specifies the default AIMServiceTemplate to use when creating services for this model.<br />When set, services that reference this model will use this template if no template is explicitly specified.<br />If this is not set, a template will be automatically selected. |  |  |
+| `custom` _[AIMCustomModelDefaults](#aimcustommodeldefaults)_ | Custom contains configuration for custom models (models with inline modelSources).<br />Only used when modelSources are specified; ignored for image-based models. |  |  |
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources to use for this model.<br />When specified, these sources are used instead of auto-discovery from the container image.<br />This enables pre-creating custom models with explicit model sources.<br />For custom models, modelSources[].size is required (discovery does not run).<br />AIM runtime currently supports only one model source. |  | MaxItems: 1 <br /> |
-| `hardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | Hardware specifies default hardware requirements for all custom templates.<br />Individual templates can override these defaults.<br />Required when modelSources is set and customTemplates is empty. |  |  |
-| `type` _[AIMProfileType](#aimprofiletype)_ | Type specifies default type for all custom templates.<br />Individual templates can override this default.<br />When nil, templates default to "unoptimized". |  | Enum: [optimized preview unoptimized] <br /> |
-| `customTemplates` _[AIMCustomTemplate](#aimcustomtemplate) array_ | CustomTemplates defines explicit template configurations for this model.<br />When modelSources are specified, these templates are created directly<br />without running a discovery job.<br />If omitted when modelSources is set, a single template is auto-generated<br />using the spec-level hardware requirements. |  |  |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  |  |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets lists secrets containing credentials for pulling the model container image.<br />These secrets are used for:<br />- OCI registry metadata extraction during discovery<br />- Pulling the image for inference services<br />The secrets are merged with any runtime config defaults.<br />For namespace-scoped models, secrets must exist in the same namespace.<br />For cluster-scoped models, secrets must exist in the operator namespace. |  |  |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for authentication during model discovery and metadata extraction.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  |  |
@@ -790,9 +808,9 @@ _Validation:_
 - Enum: [optimized preview unoptimized]
 
 _Appears in:_
+- [AIMCustomModelDefaults](#aimcustommodeldefaults)
 - [AIMCustomTemplate](#aimcustomtemplate)
 - [AIMDiscoveryProfileMetadata](#aimdiscoveryprofilemetadata)
-- [AIMModelSpec](#aimmodelspec)
 - [AIMProfileMetadata](#aimprofilemetadata)
 
 | Field | Description |

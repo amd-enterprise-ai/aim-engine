@@ -372,11 +372,12 @@ spec:
     - modelId: meta-llama/Llama-3-8B
       sourceUri: s3://my-bucket/models/llama-3-8b
       size: 16Gi
-  hardware:
-    gpu:
-      requests: 1
-      models:
-        - MI300X
+  custom:
+    hardware:
+      gpu:
+        requests: 1
+        models:
+          - MI300X
 ```
 
 #### 2. Inline Custom Model in AIMService
@@ -416,19 +417,22 @@ Each model source specifies:
 
 ### Hardware Requirements
 
-Custom models require explicit hardware specifications since discovery doesn't run:
+Custom models require explicit hardware specifications since discovery doesn't run.
+These go under `spec.custom.hardware` for AIMModel, or `spec.model.custom.hardware` for inline AIMService:
 
 ```yaml
+# For AIMModel:
 spec:
-  hardware:
-    gpu:
-      requests: 2          # Number of GPUs required
-      models:              # Optional: specific GPU models for node affinity
-        - MI300X
-        - MI250
-    cpu:
-      requests: "4"        # Optional: CPU requests
-      limits: "8"          # Optional: CPU limits
+  custom:
+    hardware:
+      gpu:
+        requests: 2          # Number of GPUs required
+        models:              # Optional: specific GPU models for node affinity
+          - MI300X
+          - MI250
+      cpu:
+        requests: "4"        # Optional: CPU requests
+        limits: "8"          # Optional: CPU limits
 ```
 
 If no `models` are specified, the workload can run on any available GPU.
@@ -437,8 +441,8 @@ If no `models` are specified, the workload can run on any available GPU.
 
 When `modelSources` is specified:
 
-1. **Without customTemplates**: A single template is auto-generated using `spec.hardware`
-2. **With customTemplates**: Templates are created per entry, each inheriting from `spec.hardware` unless overridden
+1. **Without custom.templates**: A single template is auto-generated using `custom.hardware`
+2. **With custom.templates**: Templates are created per entry, each inheriting from `custom.hardware` unless overridden
 
 ```yaml
 spec:
@@ -446,19 +450,20 @@ spec:
     - modelId: meta-llama/Llama-3-8B
       sourceUri: s3://bucket/model
       size: 16Gi
-  hardware:
-    gpu:
-      requests: 1
-  customTemplates:
-    - name: high-memory
-      hardware:
-        gpu:
-          requests: 2  # Override
-      env:
-        - name: VLLM_GPU_MEMORY_UTILIZATION
-          value: "0.95"
-    - name: standard
-      # Inherits hardware from spec.hardware
+  custom:
+    hardware:
+      gpu:
+        requests: 1
+    templates:
+      - name: high-memory
+        hardware:
+          gpu:
+            requests: 2  # Override
+        env:
+          - name: VLLM_GPU_MEMORY_UTILIZATION
+            value: "0.95"
+      - name: standard
+        # Inherits hardware from custom.hardware
 ```
 
 ### Authentication
