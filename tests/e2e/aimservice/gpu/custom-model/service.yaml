@@ -8,31 +8,31 @@ metadata:
 spec:
   runtimeConfigName: test-gpu-custom-model
   # Pull secret for ghcr.io/silogen images
-  imagePullSecrets:
-    - name: ghcr-regcred
+  # imagePullSecrets:
+  #   - name: ghcr-regcred
   model:
     custom:
       # AIM base image (not a pre-built model image)
-      baseImage: ghcr.io/silogen/aim-base:0.10-rc2
+      baseImage: amdenterpriseai/aim-base:0.9
       # Model to download from HuggingFace
-      # Using a small model (Qwen3-0.6B) for faster testing
+      # Using tiny-gpt2 (small public model, no auth needed) for faster testing
       modelSources:
-        - modelId: Qwen/Qwen3-0.6B
-          sourceUri: hf://Qwen/Qwen3-0.6B
-          size: 2Gi
+        - modelId: Qwen/Qwen2-0.5B
+          sourceUri: hf://Qwen/Qwen2-0.5B
+          size: 1Gi
       # Hardware requirements for this model
       hardware:
         gpu:
           requests: 1
-          models:
-            - MI300X
+          # models:
+          #   - MI300X
   caching:
     mode: Never
   replicas: 1
   # Environment variables for the inference container
   env:
     - name: AIM_MODEL_ID
-      value: Qwen/Qwen3-0.6B
+      value: Qwen/Qwen2-0.5B
   # Allow unoptimized templates since custom models generate unoptimized profiles
   # (no discovery job runs to determine optimization level)
   template:

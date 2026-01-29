@@ -339,11 +339,240 @@ spec:
     autoCreateTemplates: true
 ```
 
+## Custom Models
+
+Custom models allow you to deploy models from external sources (S3, HuggingFace) without requiring a pre-built AIM container image. The AIM operator uses a generic base container that downloads model weights at runtime.
+
+### Overview
+
+Unlike image-based models where model weights are embedded in the container image, custom models:
+
+- Download weights from external sources (S3 or HuggingFace)
+- Use the `amdenterpriseai/aim-base` container for inference
+- Skip discovery (no image metadata extraction needed)
+- Require explicit hardware specifications
+
+### Creating Custom Models
+
+There are two ways to create custom models:
+
+#### 1. Direct AIMModel with modelSources
+
+Create an AIMModel or AIMClusterModel with `modelSources` instead of relying on image discovery:
+
+```yaml
+apiVersion: aim.silogen.ai/v1alpha1
+kind: AIMModel
+metadata:
+  name: my-custom-llama
+  namespace: ml-team
+spec:
+  image: amdenterpriseai/aim-base:latest
+  modelSources:
+    - modelId: meta-llama/Llama-3-8B
+      sourceUri: s3://my-bucket/models/llama-3-8b
+      size: 16Gi
+  hardware:
+    gpu:
+      requests: 1
+      models:
+        - MI300X
+```
+
+#### 2. Inline Custom Model in AIMService
+
+Create an AIMService with `spec.model.custom` to auto-create a custom model:
+
+```yaml
+apiVersion: aim.silogen.ai/v1alpha1
+kind: AIMService
+metadata:
+  name: my-llama-service
+  namespace: ml-team
+spec:
+  model:
+    custom:
+      modelSources:
+        - modelId: meta-llama/Llama-3-8B
+          sourceUri: hf://meta-llama/Llama-3-8B
+          size: 16Gi
+      hardware:
+        gpu:
+          requests: 1
+```
+
+The service automatically creates a namespace-scoped AIMModel owned by the service. When the service is deleted, the model is garbage collected.
+
+### Model Sources
+
+Each model source specifies:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `modelId` | Yes | Canonical identifier in `{org}/{name}` format. Determines the cache mount path. |
+| `sourceUri` | Yes | Download location. Schemes: `hf://org/model` (HuggingFace) or `s3://bucket/key` (S3) |
+| `size` | Yes | Storage size for PVC provisioning. Must be non-zero. |
+| `env` | No | Per-source credential overrides (e.g., `HF_TOKEN`, `AWS_ACCESS_KEY_ID`) |
+
+### Hardware Requirements
+
+Custom models require explicit hardware specifications since discovery doesn't run:
+
+```yaml
+spec:
+  hardware:
+    gpu:
+      requests: 2          # Number of GPUs required
+      models:              # Optional: specific GPU models for node affinity
+        - MI300X
+        - MI250
+    cpu:
+      requests: "4"        # Optional: CPU requests
+      limits: "8"          # Optional: CPU limits
+```
+
+If no `models` are specified, the workload can run on any available GPU.
+
+### Template Generation
+
+When `modelSources` is specified:
+
+1. **Without customTemplates**: A single template is auto-generated using `spec.hardware`
+2. **With customTemplates**: Templates are created per entry, each inheriting from `spec.hardware` unless overridden
+
+```yaml
+spec:
+  modelSources:
+    - modelId: meta-llama/Llama-3-8B
+      sourceUri: s3://bucket/model
+      size: 16Gi
+  hardware:
+    gpu:
+      requests: 1
+  customTemplates:
+    - name: high-memory
+      hardware:
+        gpu:
+          requests: 2  # Override
+      env:
+        - name: VLLM_GPU_MEMORY_UTILIZATION
+          value: "0.95"
+    - name: standard
+      # Inherits hardware from spec.hardware
+```
+
+### Authentication
+
+Configure credentials for private sources:
+
+#### HuggingFace
+
+```yaml
+spec:
+  modelSources:
+    - modelId: meta-llama/Llama-3-8B
+      sourceUri: hf://meta-llama/Llama-3-8B
+      size: 16Gi
+      env:
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-credentials
+              key: token
+```
+
+#### S3-Compatible Storage
+
+```yaml
+spec:
+  modelSources:
+    - modelId: my-org/custom-model
+      sourceUri: s3://my-bucket/models/custom
+      size: 32Gi
+      env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: s3-credentials
+              key: access-key
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: s3-credentials
+              key: secret-key
+        - name: AWS_ENDPOINT_URL
+          value: "https://s3.my-provider.com"
+```
+
+### Lifecycle Differences
+
+| Aspect | Image-Based Models | Custom Models |
+|--------|-------------------|---------------|
+| Model weights | Embedded in container | Downloaded at runtime |
+| Discovery | Runs to extract metadata | Skipped |
+| Hardware | Optional (from discovery) | Required |
+| Templates | Auto-generated from image labels | Auto-generated from spec |
+| Caching | Uses shared template cache | Uses dedicated model caches |
+
+### Status
+
+Custom models report `sourceType: Custom` in their status:
+
+```yaml
+status:
+  status: Ready
+  sourceType: Custom
+  conditions:
+    - type: Ready
+      status: "True"
+```
+
+### Example: Full Custom Model Deployment
+
+```yaml
+# Secret for HuggingFace access
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hf-token
+  namespace: ml-team
+type: Opaque
+stringData:
+  token: hf_xxxxxxxxxxxxx
+---
+# Custom model service
+apiVersion: aim.silogen.ai/v1alpha1
+kind: AIMService
+metadata:
+  name: llama-custom
+  namespace: ml-team
+spec:
+  model:
+    custom:
+      modelSources:
+        - modelId: meta-llama/Llama-3.1-8B-Instruct
+          sourceUri: hf://meta-llama/Llama-3.1-8B-Instruct
+          size: 16Gi
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+      hardware:
+        gpu:
+          requests: 1
+          models:
+            - MI300X
+  replicas: 1
+```
+
 ## Related Documentation
 
 - [Templates](templates.md) - Understanding ServiceTemplates and discovery
 - [Runtime Config Concepts](runtime-config.md) - Resolution details including model creation
 - [Services Usage](../usage/services.md) - Deploying services
+- [Caching](caching.md) - Model caching and download architecture
 
 ## Note on Terminology
 

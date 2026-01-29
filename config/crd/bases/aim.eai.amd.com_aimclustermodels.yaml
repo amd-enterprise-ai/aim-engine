@@ -1112,11 +1112,12 @@ spec:
                 set
               rule: '!has(self.customTemplates) || size(self.customTemplates) == 0
                 || (has(self.modelSources) && size(self.modelSources) > 0)'
-            - message: hardware must be specified either at spec level or on each
-                customTemplate when using modelSources
+            - message: 'when using modelSources, hardware must be specified: set spec.hardware
+                (inherited by all templates) or set hardware on each customTemplate
+                individually'
               rule: '!has(self.modelSources) || size(self.modelSources) == 0 || has(self.hardware)
-                || (has(self.customTemplates) && size(self.customTemplates) > 0 &&
-                self.customTemplates.all(t, has(t.hardware)))'
+                || !has(self.customTemplates) || size(self.customTemplates) == 0 ||
+                self.customTemplates.all(t, has(t.hardware) || has(self.hardware))'
           status:
             description: AIMModelStatus defines the observed state of AIMModel.
             properties:

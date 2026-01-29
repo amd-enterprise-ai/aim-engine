@@ -9,10 +9,10 @@ metadata:
     aim.eai.amd.com/origin: auto-generated
     app.kubernetes.io/managed-by: aim-service-controller
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.1.8
+  image: amdenterpriseai/aim-base:0.9
   modelSources:
-    - modelId: test-org/test-model
-      sourceUri: hf://test-org/test-model
+    - modelId: sshleifer/tiny-gpt2
+      sourceUri: hf://sshleifer/tiny-gpt2
       size: 100Mi
   hardware:
     cpu:

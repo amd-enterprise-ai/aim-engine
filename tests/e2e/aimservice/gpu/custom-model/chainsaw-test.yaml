@@ -62,8 +62,8 @@ spec:
                   aim.eai.amd.com/managed-by: aim-engine
               spec:
                 modelSources:
-                  - modelId: Qwen/Qwen3-0.6B
-                    sourceUri: hf://Qwen/Qwen3-0.6B
+                  - modelId: Qwen/Qwen2-0.5B
+                    sourceUri: hf://Qwen/Qwen2-0.5B
               status:
                 status: Ready
                 sourceType: Custom

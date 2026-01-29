@@ -25,6 +25,7 @@ package aimservice
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -143,37 +144,43 @@ func isReadyForInferenceService(service *aimv1alpha1.AIMService, obs ServiceObse
 		return false
 	}
 
-	// Get template model sources for cache check
-	var templateModelSources []aimv1alpha1.AIMModelSource
-	if obs.template.Value != nil {
-		templateModelSources = obs.template.Value.Status.ModelSources
-	} else if obs.clusterTemplate.Value != nil {
-		templateModelSources = obs.clusterTemplate.Value.Status.ModelSources
-	}
-
-	// Check if we have storage (unified download architecture: all modes use engine downloads)
+	// Check if we have storage ready
+	// Unified download architecture: all modes use caches (shared or dedicated)
 	switch cachingMode {
 	case aimv1alpha1.CachingModeAlways:
-		// Require template cache to be ready (shared cache)
+		// Require shared template cache to be ready
 		if obs.templateCache.Value == nil ||
 			obs.templateCache.Value.Status.Status != constants.AIMStatusReady {
 			return false
 		}
 	case aimv1alpha1.CachingModeAuto:
-		// Either shared cache or dedicated caches are fine
+		// Either shared template cache or dedicated model caches
 		hasSharedCache := obs.templateCache.Value != nil &&
 			obs.templateCache.Value.Status.Status == constants.AIMStatusReady
-		hasDedicatedCaches := areDedicatedCachesReady(obs.dedicatedModelCaches.Value, templateModelSources)
+		hasDedicatedCaches := areDedicatedModelCachesReady(obs)
 		if !hasSharedCache && !hasDedicatedCaches {
 			return false
 		}
 	case aimv1alpha1.CachingModeNever:
-		// Require dedicated model caches to be ready
-		if !areDedicatedCachesReady(obs.dedicatedModelCaches.Value, templateModelSources) {
+		// Dedicated model caches (unified downloads, no shared cache)
+		if !areDedicatedModelCachesReady(obs) {
 			return false
 		}
 	}
 
+	return true
+}
+
+// areDedicatedModelCachesReady checks if all dedicated model caches are ready.
+func areDedicatedModelCachesReady(obs ServiceObservation) bool {
+	if obs.dedicatedModelCaches.Value == nil || len(obs.dedicatedModelCaches.Value.Items) == 0 {
+		return false
+	}
+	for _, cache := range obs.dedicatedModelCaches.Value.Items {
+		if cache.Status.Status != constants.AIMStatusReady {
+			return false
+		}
+	}
 	return true
 }
 
@@ -230,18 +237,21 @@ func buildInferenceService(
 		image = obs.modelResult.ClusterModel.Value.Spec.Image
 	}
 
-	// Get GPU count from template spec or status
-	// For custom models without discovery, spec.Gpu.Requests is the source of truth
-	// For discovered templates, status.Profile.Metadata.GPUCount is populated
+	// Get GPU count from template status or spec
+	// For image-based models, GPU count comes from discovery (Profile.Metadata.GPUCount)
+	// For custom models, discovery doesn't run, so we fall back to templateSpec.Gpu.Requests
 	gpuCount := int64(0)
-	if templateSpec != nil && templateSpec.Gpu != nil && templateSpec.Gpu.Requests > 0 {
-		gpuCount = int64(templateSpec.Gpu.Requests)
-	} else if templateStatus != nil && templateStatus.Profile != nil {
+	if templateStatus != nil && templateStatus.Profile != nil && templateStatus.Profile.Metadata.GPUCount > 0 {
 		gpuCount = int64(templateStatus.Profile.Metadata.GPUCount)
+	} else if templateSpec != nil && templateSpec.Gpu != nil && templateSpec.Gpu.Requests > 0 {
+		gpuCount = int64(templateSpec.Gpu.Requests)
 	}
 
-	// GPU resource name is always the default AMD GPU resource
+	// GPU resource name from template spec or default
 	gpuResourceName := corev1.ResourceName(constants.DefaultGPUResourceName)
+	if templateSpec != nil && templateSpec.Gpu != nil && templateSpec.Gpu.ResourceName != "" {
+		gpuResourceName = corev1.ResourceName(templateSpec.Gpu.ResourceName)
+	}
 
 	// Build resource requirements
 	resources := resolveResources(service, templateSpec, gpuCount, gpuResourceName)
@@ -316,10 +326,17 @@ func buildInferenceService(
 	// Configure replicas and autoscaling
 	configureReplicasAndAutoscaling(inferenceService, service)
 
-	// Add GPU node affinity - use spec.Gpu.Models if available, fall back to status profile
-	gpuModels := getGPUModelsForAffinity(templateSpec, templateStatus)
-	if len(gpuModels) > 0 {
-		addGPUNodeAffinity(inferenceService, gpuModels)
+	// Add GPU node affinity
+	// For image-based models, the GPU model comes from discovery (Profile.Metadata.GPU)
+	// For custom models, discovery doesn't run, so we fall back to templateSpec.Gpu.Models
+	gpuModel := ""
+	if templateStatus != nil && templateStatus.Profile != nil && templateStatus.Profile.Metadata.GPU != "" {
+		gpuModel = templateStatus.Profile.Metadata.GPU
+	} else if templateSpec != nil && templateSpec.Gpu != nil && len(templateSpec.Gpu.Models) > 0 {
+		gpuModel = templateSpec.Gpu.Models[0]
+	}
+	if gpuModel != "" {
+		addGPUNodeAffinity(inferenceService, gpuModel)
 	}
 
 	// Add storage volumes (cache or PVC)
@@ -611,22 +628,21 @@ func convertToKServeAutoScaling(aimAutoScaling *aimv1alpha1.AIMServiceAutoScalin
 	return kserveAutoScaling
 }
 
-// addStorageVolumes adds cache or PVC volumes to the InferenceService.
-// Unified download architecture: all modes use engine-managed downloads to PVCs.
+// addStorageVolumes adds cache volumes to the InferenceService.
+// Uses shared template cache (model caches) or dedicated model caches.
 func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObservation) {
 	if len(isvc.Spec.Predictor.Containers) == 0 {
 		return
 	}
 	container := &isvc.Spec.Predictor.Containers[0]
 
-	// Priority 1: Check if we have template cache with model caches (shared mode)
+	// Check if we have shared template cache with model caches
 	if obs.templateCache.Value != nil &&
 		obs.templateCache.Value.Status.Status == constants.AIMStatusReady &&
 		obs.modelCaches.Value != nil {
 
-		// Mount model cache PVCs from shared template cache
-		for i := range obs.modelCaches.Value.Items {
-			modelCache := &obs.modelCaches.Value.Items[i]
+		// Mount shared model cache PVCs
+		for _, modelCache := range obs.modelCaches.Value.Items {
 			if modelCache.Status.Status != constants.AIMStatusReady {
 				continue
 			}
@@ -634,16 +650,13 @@ func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObserva
 				continue
 			}
 
-			addModelCacheMount(isvc, container, modelCache)
+			// Find the model name from the model cache spec
+			modelName := modelCache.Spec.SourceURI
+			addModelCacheMount(isvc, container, &modelCache, modelName)
 		}
-		return
-	}
-
-	// Priority 2: Check if we have dedicated model caches (for Never/Auto modes)
-	if obs.dedicatedModelCaches.Value != nil && len(obs.dedicatedModelCaches.Value.Items) > 0 {
-		// Mount dedicated model cache PVCs
-		for i := range obs.dedicatedModelCaches.Value.Items {
-			modelCache := &obs.dedicatedModelCaches.Value.Items[i]
+	} else if obs.dedicatedModelCaches.Value != nil && len(obs.dedicatedModelCaches.Value.Items) > 0 {
+		// Mount dedicated model cache PVCs (unified download architecture)
+		for _, modelCache := range obs.dedicatedModelCaches.Value.Items {
 			if modelCache.Status.Status != constants.AIMStatusReady {
 				continue
 			}
@@ -651,15 +664,14 @@ func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObserva
 				continue
 			}
 
-			addModelCacheMount(isvc, container, modelCache)
+			modelName := modelCache.Spec.SourceURI
+			addModelCacheMount(isvc, container, &modelCache, modelName)
 		}
 	}
 }
 
 // addModelCacheMount adds a model cache PVC volume mount.
-// The mount path is determined by the modelId (or derived from sourceURI).
-// This aligns with the unified download architecture where models are downloaded to ${MOUNT_PATH}/${modelId}.
-func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1.Container, modelCache *aimv1alpha1.AIMModelCache) {
+func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1.Container, modelCache *aimv1alpha1.AIMModelCache, modelName string) {
 	// Sanitize volume name
 	volumeName := utils.MakeRFC1123Compliant(modelCache.Name)
 	volumeName = strings.ReplaceAll(volumeName, ".", "-")
@@ -673,60 +685,39 @@ func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1
 		},
 	})
 
-	// Mount the entire PVC at the cache base path
-	// The download job places models at ${MOUNT_PATH}/${modelId}, so the inference container
-	// will find them at ${AIMCacheBasePath}/${modelId}
+	// Sanitize model name to prevent path traversal (remove ".." and other unsafe sequences)
+	// and ensure it's a valid path component
+	safeModelName := filepath.Base(strings.ReplaceAll(modelName, "..", ""))
+	if safeModelName == "" || safeModelName == "." {
+		safeModelName = volumeName // Fall back to volume name if model name is invalid
+	}
+	mountPath := filepath.Join(constants.AIMCacheBasePath, safeModelName)
+
 	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 		Name:      volumeName,
-		MountPath: constants.AIMCacheBasePath,
+		MountPath: mountPath,
 	})
-}
-
-// getGPUModelsForAffinity extracts GPU models for node affinity.
-// Prefers spec.Gpu.Models if available, falls back to status profile GPU.
-func getGPUModelsForAffinity(
-	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
-	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
-) []string {
-	// First check template spec Gpu.Models (new unified field)
-	if templateSpec != nil && templateSpec.Gpu != nil && len(templateSpec.Gpu.Models) > 0 {
-		return templateSpec.Gpu.Models
-	}
-
-	// Fall back to status profile GPU (for backward compatibility with discovered templates)
-	if templateStatus != nil && templateStatus.Profile != nil && templateStatus.Profile.Metadata.GPU != "" {
-		return []string{templateStatus.Profile.Metadata.GPU}
-	}
-
-	return nil
 }
 
 // addGPUNodeAffinity adds node affinity rules for GPU selection to the InferenceService.
 // Uses device ID-based matching which is more reliable than product name labels.
-// When multiple GPU models are specified, the pod can be scheduled on nodes with ANY of the models.
-func addGPUNodeAffinity(isvc *servingv1beta1.InferenceService, gpuModels []string) {
-	if len(gpuModels) == 0 {
+func addGPUNodeAffinity(isvc *servingv1beta1.InferenceService, gpuModel string) {
+	if gpuModel == "" {
 		return
 	}
 
-	// Collect all device IDs for all GPU models
-	var allDeviceIDs []string
-	for _, gpuModel := range gpuModels {
-		deviceIDs := utils.GetAMDDeviceIDsForModel(gpuModel)
-		allDeviceIDs = append(allDeviceIDs, deviceIDs...)
-	}
-
-	if len(allDeviceIDs) == 0 {
-		// No known device IDs, skip affinity (will schedule on any GPU node)
+	// Normalize and get all device IDs for this GPU model
+	deviceIDs := utils.GetAMDDeviceIDsForModel(gpuModel)
+	if len(deviceIDs) == 0 {
+		// Unknown GPU model, skip affinity (will schedule on any GPU node)
 		return
 	}
 
 	// Create the node selector requirement using device ID label
-	// Using "In" operator with all device IDs means pod can be scheduled on nodes with ANY of the GPUs
 	requirement := corev1.NodeSelectorRequirement{
 		Key:      utils.LabelAMDGPUDeviceID,
 		Operator: corev1.NodeSelectorOpIn,
-		Values:   allDeviceIDs,
+		Values:   deviceIDs,
 	}
 
 	// Ensure Affinity exists
