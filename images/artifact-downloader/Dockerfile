@@ -10,10 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY entrypoint.sh /entrypoint.sh
 COPY progress-monitor.sh /progress-monitor.sh
 COPY check-size.sh /check-size.sh
-RUN mkdir -p /check-size
+RUN mkdir -p /check-size /storage-initializer/scripts
 COPY check-size/check-hf-size.py /check-size/check-hf-size.py
+COPY kserve-entrypoint.sh /storage-initializer/scripts/initializer-entrypoint
 
-RUN chmod +x /entrypoint.sh /check-size.sh /progress-monitor.sh
+RUN chmod +x /entrypoint.sh /check-size.sh /progress-monitor.sh /storage-initializer/scripts/initializer-entrypoint
 
 
 RUN mkdir /cache && chown 1000:1000 /cache
