@@ -119,7 +119,6 @@ type AIMModelCacheStatus struct {
 	// +optional
 	Progress *DownloadProgress `json:"progress,omitempty"`
 
-	// In AIMModelCacheStatus
 	// DisplaySize is the human-readable effective size (spec or discovered)
 	// +optional
 	DisplaySize string `json:"displaySize,omitempty"`
