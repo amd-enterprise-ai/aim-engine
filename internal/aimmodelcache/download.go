@@ -62,7 +62,7 @@ func getDownloadJobName(mc *aimv1alpha1.AIMModelCache) string {
 	return name
 }
 
-func buildDownloadJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon) *batchv1.Job {
+func buildDownloadJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon, expectedSizeBytes int64) *batchv1.Job {
 	mountPath := "/cache"
 	downloadImage := aimv1alpha1.DefaultDownloadImage
 	if len(mc.Spec.ModelDownloadImage) > 0 {
@@ -73,14 +73,6 @@ func buildDownloadJob(mc *aimv1alpha1.AIMModelCache, runtimeConfigSpec *aimv1alp
 	var runtimeEnv []corev1.EnvVar
 	if runtimeConfigSpec != nil {
 		runtimeEnv = runtimeConfigSpec.Env
-	}
-
-	// Get effective size (from spec or discovered)
-	var expectedSizeBytes int64
-	if !mc.Spec.Size.IsZero() {
-		expectedSizeBytes = mc.Spec.Size.Value()
-	} else if mc.Status.DiscoveredSizeBytes != nil {
-		expectedSizeBytes = *mc.Status.DiscoveredSizeBytes
 	}
 
 	// Merge env vars with precedence: mc.Spec.Env > runtimeConfigSpec.Env > defaults

@@ -382,7 +382,7 @@ func (r *ModelCacheReconciler) PlanResources(
 	// Phase 3: Download job creation - size is known and PVC, rolebinding exists
 	if mc.Status.Status != constants.AIMStatusReady &&
 		obs.downloadJob != nil && obs.downloadJob.IsNotFound() && obs.roleBinding.OK() {
-		downloadJob := buildDownloadJob(mc, runtimeConfig)
+		downloadJob := buildDownloadJob(mc, runtimeConfig, obs.GetEffectiveSize())
 		result.Apply(downloadJob)
 	}
 
@@ -407,13 +407,21 @@ func (r *ModelCacheReconciler) DecorateStatus(
 		// Convert spec size to bytes, then format with two significant digits
 		sizeBytes, ok := mc.Spec.Size.AsInt64()
 		if ok {
-			status.DisplaySize = utils.FormatBytesHumanReadable(sizeBytes)
+			if formatted, err := utils.FormatBytesHumanReadable(sizeBytes); err == nil {
+				status.DisplaySize = formatted
+			} else {
+				// Fallback on formatting error (negative or too large)
+				status.DisplaySize = mc.Spec.Size.String()
+			}
 		} else {
 			// Fallback for very large values that don't fit in int64
 			status.DisplaySize = mc.Spec.Size.String()
 		}
 	} else if status.DiscoveredSizeBytes != nil {
-		status.DisplaySize = utils.FormatBytesHumanReadable(*status.DiscoveredSizeBytes)
+		if formatted, err := utils.FormatBytesHumanReadable(*status.DiscoveredSizeBytes); err == nil {
+			status.DisplaySize = formatted
+		}
+		// On error, leave DisplaySize empty (invalid discovered size)
 	}
 
 	// Store allocated size and headroom when PVC is created
