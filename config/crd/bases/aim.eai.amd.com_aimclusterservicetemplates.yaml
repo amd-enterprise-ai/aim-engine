@@ -89,17 +89,12 @@ spec:
                       Used for capacity planning when model size is known.
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
-                  models:
+                  model:
                     description: |-
-                      Models limits deployment to specific GPU models.
-                      When multiple models are specified, the scheduler picks from any available.
-                      Examples: ["MI300X"], ["MI300X", "MI325X"]
-                    items:
-                      maxLength: 64
-                      minLength: 1
-                      type: string
-                    maxItems: 8
-                    type: array
+                      Model limits deployment to a specific GPU model.
+                      Example: "MI300X"
+                    maxLength: 64
+                    type: string
                   requests:
                     description: |-
                       Requests is the number of GPUs to set as requests/limits.
@@ -943,17 +938,12 @@ spec:
                           Used for capacity planning when model size is known.
                         pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                         x-kubernetes-int-or-string: true
-                      models:
+                      model:
                         description: |-
-                          Models limits deployment to specific GPU models.
-                          When multiple models are specified, the scheduler picks from any available.
-                          Examples: ["MI300X"], ["MI300X", "MI325X"]
-                        items:
-                          maxLength: 64
-                          minLength: 1
-                          type: string
-                        maxItems: 8
-                        type: array
+                          Model limits deployment to a specific GPU model.
+                          Example: "MI300X"
+                        maxLength: 64
+                        type: string
                       requests:
                         description: |-
                           Requests is the number of GPUs to set as requests/limits.

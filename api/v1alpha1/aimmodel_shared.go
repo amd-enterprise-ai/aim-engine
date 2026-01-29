@@ -182,6 +182,28 @@ type AIMModelSpec struct {
 	// +kubebuilder:validation:MaxItems=1
 	ModelSources []AIMModelSource `json:"modelSources,omitempty"`
 
+	// Hardware specifies default hardware requirements for all custom templates.
+	// Individual templates can override these defaults.
+	// Required when modelSources is set and customTemplates is empty.
+	// +optional
+	Hardware *AIMHardwareRequirements `json:"hardware,omitempty"`
+
+	// Type specifies default type for all custom templates.
+	// Individual templates can override this default.
+	// When nil, templates default to "unoptimized".
+	// +optional
+	// +kubebuilder:validation:Enum=optimized;preview;unoptimized
+	Type *AIMProfileType `json:"type,omitempty"`
+
+	// CustomTemplates defines explicit template configurations for this model.
+	// When modelSources are specified, these templates are created directly
+	// without running a discovery job.
+	// If omitted when modelSources is set, a single template is auto-generated
+	// using the spec-level hardware requirements.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	CustomTemplates []AIMCustomTemplate `json:"customTemplates,omitempty"`
+
 	// RuntimeConfigRef contains the runtime config reference for this model, and is used to control discovery behavior.
 	RuntimeConfigRef `json:",inline"`
 
