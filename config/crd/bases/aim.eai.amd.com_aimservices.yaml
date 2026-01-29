@@ -444,10 +444,15 @@ spec:
                                 - type: integer
                                 - type: string
                                 description: Requests is the number of CPU cores to
-                                  request.
+                                  request. Required and must be > 0.
                                 pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                                 x-kubernetes-int-or-string: true
+                            required:
+                            - requests
                             type: object
+                            x-kubernetes-validations:
+                            - message: requests must be greater than 0
+                              rule: self.requests.sign() == 1
                           gpu:
                             description: GPU specifies GPU requirements. If not set,
                               no GPUs are requested (CPU-only model).
@@ -485,6 +490,9 @@ spec:
                             - requests
                             type: object
                         type: object
+                        x-kubernetes-validations:
+                        - message: at least one of gpu or cpu must be specified
+                          rule: has(self.gpu) || has(self.cpu)
                       modelSources:
                         description: |-
                           ModelSources specifies the model sources to use.

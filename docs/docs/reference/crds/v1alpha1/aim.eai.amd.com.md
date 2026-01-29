@@ -330,7 +330,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `requests` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Requests is the number of CPU cores to request. |  |  |
+| `requests` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Requests is the number of CPU cores to request. Required and must be > 0. |  |  |
 | `limits` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Limits is the maximum number of CPU cores to allow. |  |  |
 
 
