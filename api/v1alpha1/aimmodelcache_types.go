@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	DefaultDownloadImage = "kserve/storage-initializer:v0.16.0-rc0"
+	DefaultDownloadImage = "ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0"
 
 	// ModelCacheSourceURIIndexKey is the field index key for AIMModelCache.Spec.SourceURI
 	ModelCacheSourceURIIndexKey = ".spec.sourceUri"
@@ -54,6 +54,7 @@ type AIMModelCacheSpec struct {
 	StorageClassName string `json:"storageClassName,omitempty"`
 
 	// Size specifies the size of the cache volume
+	// +optional
 	Size resource.Quantity `json:"size"`
 
 	// Env lists the environment variables to use for authentication when downloading models.
@@ -65,9 +66,9 @@ type AIMModelCacheSpec struct {
 
 	// ModelDownloadImage specifies the container image used to download and initialize the model cache.
 	// This image runs as a job to download model artifacts from the source URI to the cache volume.
-	// When not specified, defaults to kserve/storage-initializer:v0.16.0.
+	// When not specified, defaults to "ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0".
 	// +optional
-	// +kubebuilder:default="kserve/storage-initializer:v0.16.0"
+	// +kubebuilder:default="ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0"
 	ModelDownloadImage string `json:"modelDownloadImage,omitempty"`
 
 	// ImagePullSecrets references secrets for pulling AIM container images.
@@ -118,11 +119,28 @@ type AIMModelCacheStatus struct {
 	// +optional
 	Progress *DownloadProgress `json:"progress,omitempty"`
 
+	// DisplaySize is the human-readable effective size (spec or discovered)
+	// +optional
+	DisplaySize string `json:"displaySize,omitempty"`
+
 	// LastUsed represents the last time a model was deployed that used this cache
 	LastUsed *metav1.Time `json:"lastUsed,omitempty"`
 
 	// PersistentVolumeClaim represents the name of the created PVC
 	PersistentVolumeClaim string `json:"persistentVolumeClaim,omitempty"`
+
+	// DiscoveredSizeBytes is the model size discovered via check-size job.
+	// Populated when spec.size is not provided.
+	// +optional
+	DiscoveredSizeBytes *int64 `json:"discoveredSizeBytes,omitempty"`
+
+	// AllocatedSize is the actual PVC size requested (including headroom).
+	// +optional
+	AllocatedSize resource.Quantity `json:"allocatedSize,omitempty"`
+
+	// HeadroomPercent is the headroom percentage that was applied to the PVC size.
+	// +optional
+	HeadroomPercent *int32 `json:"headroomPercent,omitempty"`
 }
 
 func (m *AIMModelCache) GetStatus() *AIMModelCacheStatus {
@@ -149,39 +167,11 @@ func (s *AIMModelCacheStatus) GetAIMStatus() constants.AIMStatus {
 	return s.Status
 }
 
-// Condition types for AIMModelCache
-const (
-	// AIMModelCacheConditionStorageReady is True when storage backing the cache is provisioned and mounted (PVC Bound)
-	AIMModelCacheConditionStorageReady = "StorageReady"
-	AIMModelCacheDownloadReady         = "DownloadReady"
-)
-
-// Condition reasons for AIMModelCache
-const (
-	// StorageReady-related reasons
-	AIMModelCacheReasonPVCProvisioning = "PVCProvisioning"
-	AIMModelCacheReasonPVCBound        = "PVCBound"
-	AIMModelCacheReasonPVCPending      = "PVCPending"
-	AIMModelCacheReasonPVCLost         = "PVCLost"
-
-	// Progressing-related reasons
-	AIMModelCacheReasonWaitingForPVC = "WaitingForPVC"
-	AIMModelCacheReasonDownloading   = "Downloading"
-	AIMModelCacheReasonRetryBackoff  = "RetryBackoff"
-
-	// Ready-related reasons
-	AIMModelCacheReasonWarm = "Warm"
-
-	// Failure-related reasons
-	AIMModelCacheReasonNoFailure      = "NoFailure"
-	AIMModelCacheReasonDownloadFailed = "DownloadFailed"
-)
-
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=aimmc,categories=aim;all
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
-// +kubebuilder:printcolumn:name="Model Size",type=string,JSONPath=`.spec.size`
+// +kubebuilder:printcolumn:name="Model Size",type=string,JSONPath=`.status.displaySize`
 // +kubebuilder:printcolumn:name="Progress",type=string,JSONPath=`.status.progress.displayPercentage`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
