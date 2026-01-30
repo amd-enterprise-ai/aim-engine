@@ -236,12 +236,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.AIMModelCacheReconciler{
+	if err := (&controller.AIMArtifactReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Clientset: clientset,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AIMModelCache")
+		setupLog.Error(err, "unable to create controller", "controller", "AIMArtifact")
 		os.Exit(1)
 	}
 

@@ -30,10 +30,10 @@ import (
 
 // Shared runtime configuration types for both namespace and cluster-scoped configs
 
-// AIMStorageConfig configures storage defaults for model caches and PVCs.
+// AIMStorageConfig configures storage defaults for artifacts and PVCs.
 type AIMStorageConfig struct {
-	// DefaultStorageClassName specifies the storage class to use for model caches and PVCs
-	// when the consuming resource (AIMModelCache, AIMTemplateCache, AIMServiceTemplate) does not
+	// DefaultStorageClassName specifies the storage class to use for artifacts and PVCs
+	// when the consuming resource (AIMArtifact, AIMTemplateCache, AIMServiceTemplate) does not
 	// specify a storage class. If this field is empty, the cluster's default storage class is used.
 	// +optional
 	DefaultStorageClassName *string `json:"defaultStorageClassName,omitempty"`

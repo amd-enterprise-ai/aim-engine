@@ -56,8 +56,8 @@ spec:
             content: |
               apply-with-status.sh service-template-ready.yaml --status-only -n $NAMESPACE
 
-    # TODO change to Ready once model cache is merged
-    - name: Ensure the template cache moves to progressing (pending model cache creation)
+    # TODO change to Ready once artifact is merged
+    - name: Ensure the template cache moves to progressing (pending artifact creation)
       try:
         - assert:
             resource:

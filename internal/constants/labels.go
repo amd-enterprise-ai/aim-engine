@@ -24,10 +24,10 @@ package constants
 
 // Label key naming conventions:
 //   - Dots (.) separate category from attribute: gpu.model, template.metric
-//   - Hyphens (-) separate words within a name: model-cache, auto-generated
+//   - Hyphens (-) separate words within a name: artifact, auto-generated
 //
 // Example: aim.eai.amd.com/gpu.model=MI300X
-//          aim.eai.amd.com/cache.type=model-cache
+//          aim.eai.amd.com/cache.type=artifact
 
 const (
 	// ==========================================================================
@@ -82,11 +82,11 @@ const (
 	// ==========================================================================
 
 	// LabelKeyCacheType identifies the type of cache.
-	// Values: model-cache, template-cache
+	// Values: artifact, template-cache
 	LabelKeyCacheType = AimLabelDomain + "/cache.type"
 
-	// LabelKeyCacheName identifies the cache resource name.
-	LabelKeyCacheName = AimLabelDomain + "/cache.name"
+	// LabelKeyArtifactName identifies the cache resource name.
+	LabelKeyArtifactName = AimLabelDomain + "/artifact.name"
 
 	// ==========================================================================
 	// Model source labels - for tracking model origins
@@ -132,8 +132,8 @@ const (
 	// Cache type label values
 	// ==========================================================================
 
-	// LabelValueCacheTypeModel indicates a model cache.
-	LabelValueCacheTypeModel = "model-cache"
+	// LabelValueCacheTypeArtifact indicates an artifact.
+	LabelValueCacheTypeArtifact = "artifact"
 
 	// LabelValueCacheTypeTemplate indicates a template cache.
 	LabelValueCacheTypeTemplate = "template-cache"

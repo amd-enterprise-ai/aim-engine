@@ -76,7 +76,7 @@ type ServiceFetchResult struct {
 	pvc                    controllerutils.FetchResult[*corev1.PersistentVolumeClaim]
 
 	// Model caches (for template cache)
-	modelCaches controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]
+	artifacts controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]
 }
 
 // FetchRemoteState fetches all resources needed for AIMService reconciliation.
@@ -120,12 +120,12 @@ func (r *ServiceReconciler) FetchRemoteState(
 	// 2. Fetch HTTPRoute if routing might be enabled (we own this, always check)
 	result.httpRoute = fetchHTTPRoute(ctx, c, service, reconcileCtx.MergedRuntimeConfig.Value)
 
-	// 3. Fetch TemplateCache (always fetch - cascades health from ModelCache/PVC)
+	// 3. Fetch TemplateCache (always fetch - cascades health from Artifact/PVC)
 	result.templateCache = fetchTemplateCache(ctx, c, service)
 
-	// 4. Fetch ModelCaches if template cache exists
+	// 4. Fetch Artifacts if template cache exists
 	if result.templateCache.OK() && result.templateCache.Value != nil {
-		result.modelCaches = fetchModelCaches(ctx, c, service.Namespace)
+		result.artifacts = fetchArtifacts(ctx, c, service.Namespace)
 	}
 
 	// 5. Fetch service PVC when needed:

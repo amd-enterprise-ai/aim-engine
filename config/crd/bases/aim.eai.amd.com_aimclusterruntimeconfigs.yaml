@@ -461,8 +461,8 @@ spec:
                 properties:
                   defaultStorageClassName:
                     description: |-
-                      DefaultStorageClassName specifies the storage class to use for model caches and PVCs
-                      when the consuming resource (AIMModelCache, AIMTemplateCache, AIMServiceTemplate) does not
+                      DefaultStorageClassName specifies the storage class to use for artifacts and PVCs
+                      when the consuming resource (AIMArtifact, AIMTemplateCache, AIMServiceTemplate) does not
                       specify a storage class. If this field is empty, the cluster's default storage class is used.
                     type: string
                   pvcHeadroomPercent:

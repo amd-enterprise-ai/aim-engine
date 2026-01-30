@@ -6,7 +6,7 @@ resources:
 - bases/aim.eai.amd.com_aimclustermodelsources.yaml
 - bases/aim.eai.amd.com_aimclusterruntimeconfigs.yaml
 - bases/aim.eai.amd.com_aimclusterservicetemplates.yaml
-- bases/aim.eai.amd.com_aimmodelcaches.yaml
+- bases/aim.eai.amd.com_aimartifacts.yaml
 - bases/aim.eai.amd.com_aimmodels.yaml
 - bases/aim.eai.amd.com_aimruntimeconfigs.yaml
 - bases/aim.eai.amd.com_aimservices.yaml

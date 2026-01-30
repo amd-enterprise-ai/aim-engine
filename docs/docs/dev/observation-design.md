@@ -189,7 +189,7 @@ Use the context-aware signature when you need:
 ### Example: Conditional Health Checking
 
 ```go
-func (fetch ModelCacheFetch) GetComponentHealth(ctx context.Context, clientset kubernetes.Interface) []controllerutils.ComponentHealth {
+func (fetch ArtifactFetch) GetComponentHealth(ctx context.Context, clientset kubernetes.Interface) []controllerutils.ComponentHealth {
     health := []controllerutils.ComponentHealth{
         fetch.RuntimeConfig.ToComponentHealth("RuntimeConfig", getRuntimeConfigHealth),
         fetch.PVC.ToComponentHealth("Storage", controllerutils.GetPvcHealth),

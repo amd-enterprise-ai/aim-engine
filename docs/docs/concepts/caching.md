@@ -6,8 +6,8 @@ AIM provides a hierarchical caching system that allows model artifacts to be pre
 
 Model caching in AIM uses three resource types:
 
-1. **AIMModelCache**: Stores downloaded model artifacts on a PVC
-2. **AIMTemplateCache**: Groups model caches for a specific template (owned by `AIMServiceTemplate`)
+1. **AIMArtifact**: Stores downloaded model artifacts on a PVC
+2. **AIMTemplateCache**: Groups artifacts for a specific template (owned by `AIMServiceTemplate`)
 3. **AIMService**: Can trigger template cache creation via `spec.cacheModel: true`
 
 ## Caching Hierarchy
@@ -17,8 +17,8 @@ Model caching in AIM uses three resource types:
 ```
 AIMServiceTemplate
     └── AIMTemplateCache (owned by template)
-            └── AIMModelCache(s) (created by template cache)
-                    └── PVC(s) + Download Job(s) (owned by model cache)
+            └── AIMArtifact(s) (created by template cache)
+                    └── PVC(s) + Download Job(s) (owned by artifacts)
 ```
 
 ### Creation Flow
@@ -29,7 +29,7 @@ When an `AIMService` has `spec.cacheModel: true`, the service controller creates
 - Cache preservation when a service is deleted (if the AIMTemplateCache becomes Available)
 - Proper cleanup when the template itself is deleted
 
-The `AIMTemplateCache` creates an `AIMModelCache` for each needed model. The `AIMModelCache` handles the model download.
+The `AIMTemplateCache` creates an `AIMArtifact` for each needed model. The `AIMArtifact` handles the model download.
 
 ## Cache Status Values
 
@@ -42,11 +42,11 @@ Each cache resource tracks its status:
 | `Available` | Cache is ready and can be used |
 | `Failed` | Cache creation failed (download error, storage issue, etc.) |
 
-Note that a `Failed` AIMModelCache will retry the download periodically, causing the Status to change at the same time.
+Note that a `Failed` AIMArtifact will retry the download periodically, causing the Status to change at the same time.
 
 ## Deletion Behavior
 
-AIM implements a cache cleanup process that preserves useful caches while cleaning up non-functioning ones. Manually created AIMTemplateCaches and AIMModelCaches are never garbage collected.
+AIM implements a cache cleanup process that preserves useful caches while cleaning up non-functioning ones. Manually created AIMTemplateCaches and AIMArtifacts are never garbage collected.
 
 ### Cache handling when AIMService is deleted
 
@@ -65,7 +65,7 @@ This design allows cache reuse: if you delete a service and recreate it later, t
 When an `AIMServiceTemplate` is deleted:
 
 1. **Template caches** owned by this template are garbage-collected automatically
-2. This cleans up non-Available model caches
+2. This cleans up non-Available artifacts
 
 ### AIMTemplateCache Deletion
 
@@ -80,9 +80,9 @@ Available Model caches are preserved because they can be shared across template 
 
 Note that if an AIMService has caching enabled, a new AIMTemplateCache will be immediately created by the AIMService.
 
-### AIMModelCache Deletion
+### AIMArtifact Deletion
 
-When an `AIMModelCache` is deleted:
+When an `AIMArtifact` is deleted:
 
 1. The **PVC** containing downloaded model files is marked for garbage-collection.
 2. Any running **download Job** is garbage-collected
@@ -97,7 +97,7 @@ Services automatically detect and use existing caches:
 
 1. Service resolves its template
 2. Controller looks for `AIMTemplateCache` matching the template. If `AIMTemplateCache` isn't available, the service waits until it is.
-3. PVCs from the AIMModelCaches linked in the AIMTemplateCache are mounted into the InferenceService.
+3. PVCs from the AIMArtifacts linked in the AIMTemplateCache are mounted into the InferenceService.
 4. No re-download is needed
 
 ### Cross-Service Sharing
@@ -109,9 +109,9 @@ Multiple services can share the same cached models:
 
 ## Manual Cache Management
 
-* To manually make sure a model is available create an AIMModelCache for that model.
+* To manually make sure a model is available create an AIMArtifact for that model.
 * To make sure all models that belong to a AIMServiceTemplate or AIMClusterServiceTemplate is available, create an AIMTemplateCache with correctly set templateName in the namespace.
-* Manual cleanup is necessary for all `Available` AIMModelCaches.
+* Manual cleanup is necessary for all `Available` AIMArtifacts.
 
 ### AIMService with cache enabled
 
@@ -140,11 +140,11 @@ spec:
   templateName: name-of-service-template
 ```
 
-#### AIMModelCache that uses the kserve downloader with XET disabled
+#### AIMArtifact that uses the kserve downloader with XET disabled
 
 ```
 apiVersion: aim.silogen.ai/v1alpha1
-kind: AIMModelCache
+kind: AIMArtifact
 metadata:
   name: kserve-smollm2-135mx
 spec:

@@ -66,7 +66,7 @@ type AIMTemplateCacheSpec struct {
 	// +optional
 	StorageClassName string `json:"storageClassName,omitempty"`
 
-	// DownloadImage specifies the container image used to download and initialize model caches.
+	// DownloadImage specifies the container image used to download and initialize artifacts.
 	// When not specified, the controller uses the default model download image.
 	// +optional
 	DownloadImage string `json:"downloadImage,omitempty"`
@@ -104,9 +104,9 @@ type AIMTemplateCacheStatus struct {
 	// Values: "AIMServiceTemplate", "AIMClusterServiceTemplate"
 	ResolvedTemplateKind string `json:"resolvedTemplateKind,omitempty"`
 
-	// ModelCaches maps model names to their resolved AIMModelCache resources.
+	// Artifacts maps model names to their resolved AIMArtifact resources.
 	// +optional
-	ModelCaches map[string]AIMResolvedModelCache `json:"modelCaches,omitempty"`
+	Artifacts map[string]AIMResolvedArtifact `json:"artifacts,omitempty"`
 }
 
 func (s *AIMTemplateCacheStatus) GetConditions() []metav1.Condition {
@@ -139,18 +139,18 @@ const (
 	AIMTemplateCacheConditionFailure = "Failure"
 )
 
-type AIMResolvedModelCache struct {
-	// UID of the AIMModelCache resource
+type AIMResolvedArtifact struct {
+	// UID of the AIMArtifact resource
 	UID string `json:"uid"`
-	// Name of the AIMModelCache resource
+	// Name of the AIMArtifact resource
 	Name string `json:"name"`
 	// Model is the name of the model that is cached
 	Model string `json:"model"`
-	// Status of the model cache
+	// Status of the artifact
 	Status constants.AIMStatus `json:"status"`
 	// PersistentVolumeClaim name if available
 	PersistentVolumeClaim string `json:"persistentVolumeClaim,omitempty"`
-	// MountPoint is the mount point for the model cache
+	// MountPoint is the mount point for the artifact
 	MountPoint string `json:"mountPoint,omitempty"`
 }
 
@@ -176,7 +176,7 @@ const (
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 // +kubebuilder:printcolumn:name="Kind",type=string,JSONPath=`.status.resolvedTemplateKind`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
-// AIMTemplateCache pre-warms model caches for a specified template.
+// AIMTemplateCache pre-warms artifacts for a specified template.
 type AIMTemplateCache struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

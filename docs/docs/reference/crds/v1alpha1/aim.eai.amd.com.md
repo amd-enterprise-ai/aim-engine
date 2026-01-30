@@ -18,8 +18,8 @@ Package v1alpha1 contains API Schema definitions for the aim v1alpha1 API group.
 - [AIMClusterServiceTemplate](#aimclusterservicetemplate)
 - [AIMClusterServiceTemplateList](#aimclusterservicetemplatelist)
 - [AIMModel](#aimmodel)
-- [AIMModelCache](#aimmodelcache)
-- [AIMModelCacheList](#aimmodelcachelist)
+- [AIMArtifact](#aimartifact)
+- [AIMArtifactList](#aimartifactlist)
 - [AIMModelList](#aimmodellist)
 - [AIMRuntimeConfig](#aimruntimeconfig)
 - [AIMRuntimeConfigList](#aimruntimeconfiglist)
@@ -408,31 +408,31 @@ _Appears in:_
 | `status` _[AIMModelStatus](#aimmodelstatus)_ |  |  |  |
 
 
-#### AIMModelCache
+#### AIMArtifact
 
 
 
-AIMModelCache is the Schema for the modelcaches API
+AIMArtifact is the Schema for the artifacts API
 
 
 
 _Appears in:_
-- [AIMModelCacheList](#aimmodelcachelist)
+- [AIMArtifactList](#aimartifactlist)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `apiVersion` _string_ | `aim.eai.amd.com/v1alpha1` | | |
-| `kind` _string_ | `AIMModelCache` | | |
+| `kind` _string_ | `AIMArtifact` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
-| `spec` _[AIMModelCacheSpec](#aimmodelcachespec)_ |  |  |  |
-| `status` _[AIMModelCacheStatus](#aimmodelcachestatus)_ |  |  |  |
+| `spec` _[AIMArtifactSpec](#aimartifactspec)_ |  |  |  |
+| `status` _[AIMArtifactStatus](#aimartifactstatus)_ |  |  |  |
 
 
-#### AIMModelCacheList
+#### AIMArtifactList
 
 
 
-AIMModelCacheList contains a list of AIMModelCache
+AIMArtifactList contains a list of AIMArtifact
 
 
 
@@ -441,21 +441,21 @@ AIMModelCacheList contains a list of AIMModelCache
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `apiVersion` _string_ | `aim.eai.amd.com/v1alpha1` | | |
-| `kind` _string_ | `AIMModelCacheList` | | |
+| `kind` _string_ | `AIMArtifactList` | | |
 | `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
-| `items` _[AIMModelCache](#aimmodelcache) array_ |  |  |  |
+| `items` _[AIMArtifact](#aimartifact) array_ |  |  |  |
 
 
-#### AIMModelCacheSpec
+#### AIMArtifactSpec
 
 
 
-AIMModelCacheSpec defines the desired state of AIMModelCache
+AIMArtifactSpec defines the desired state of AIMArtifact
 
 
 
 _Appears in:_
-- [AIMModelCache](#aimmodelcache)
+- [AIMArtifact](#aimartifact)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -468,16 +468,16 @@ _Appears in:_
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  |  |
 
 
-#### AIMModelCacheStatus
+#### AIMArtifactStatus
 
 
 
-AIMModelCacheStatus defines the observed state of AIMModelCache
+AIMArtifactStatus defines the observed state of AIMArtifact
 
 
 
 _Appears in:_
-- [AIMModelCache](#aimmodelcache)
+- [AIMArtifact](#aimartifact)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -734,7 +734,7 @@ _Appears in:_
 | `Unknown` | AIMResolutionScopeUnknown denotes that the scope could not be determined.<br /> |
 
 
-#### AIMResolvedModelCache
+#### AIMResolvedArtifact
 
 
 
@@ -747,8 +747,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `uid` _string_ | UID of the AIMModelCache resource |  |  |
-| `name` _string_ | Name of the AIMModelCache resource |  |  |
+| `uid` _string_ | UID of the AIMArtifact resource |  |  |
+| `name` _string_ | Name of the AIMArtifact resource |  |  |
 | `model` _string_ | Model is the name of the model that is cached |  |  |
 | `status` _[AIMStatus](#aimstatus)_ | Status of the model cache |  |  |
 | `persistentVolumeClaim` _string_ | PersistentVolumeClaim name if available |  |  |
@@ -1002,7 +1002,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `templateCacheRef` _[AIMResolvedReference](#aimresolvedreference)_ | TemplateCacheRef references the TemplateCache being used, if any. |  |  |
-| `retryAttempts` _integer_ | RetryAttempts tracks how many times this service has attempted to retry a failed cache.<br />Each service gets exactly one retry attempt. When a TemplateCache enters Failed state,<br />this counter is incremented from 0 to 1 after deleting failed ModelCaches.<br />If the retry fails (cache enters Failed again with attempts == 1), the service degrades. |  |  |
+| `retryAttempts` _integer_ | RetryAttempts tracks how many times this service has attempted to retry a failed cache.<br />Each service gets exactly one retry attempt. When a TemplateCache enters Failed state,<br />this counter is incremented from 0 to 1 after deleting failed Artifacts.<br />If the retry fails (cache enters Failed again with attempts == 1), the service degrades. |  |  |
 
 
 #### AIMServiceCachingConfig
@@ -1426,7 +1426,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `defaultStorageClassName` _string_ | DefaultStorageClassName specifies the storage class to use for model caches and PVCs<br />when the consuming resource (AIMModelCache, AIMTemplateCache, AIMServiceTemplate) does not<br />specify a storage class. If this field is empty, the cluster's default storage class is used. |  |  |
+| `defaultStorageClassName` _string_ | DefaultStorageClassName specifies the storage class to use for model caches and PVCs<br />when the consuming resource (AIMArtifact, AIMTemplateCache, AIMServiceTemplate) does not<br />specify a storage class. If this field is empty, the cluster's default storage class is used. |  |  |
 | `pvcHeadroomPercent` _integer_ | PVCHeadroomPercent specifies the percentage of extra space to add to PVCs<br />for model storage. This accounts for filesystem overhead and temporary files<br />during model loading. The value represents a percentage (e.g., 10 means 10% extra space).<br />If not specified, defaults to 10%. | 10 | Minimum: 0 <br /> |
 
 
@@ -1509,7 +1509,7 @@ _Appears in:_
 | `resolvedRuntimeConfig` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedRuntimeConfig captures metadata about the runtime config that was resolved. |  |  |
 | `status` _[AIMStatus](#aimstatus)_ | Status represents the current high-level status of the template cache. | Pending | Enum: [Pending Progressing Ready Failed Degraded NotAvailable] <br /> |
 | `resolvedTemplateKind` _string_ | ResolvedTemplateKind indicates whether the template resolved to a namespace-scoped<br />AIMServiceTemplate or cluster-scoped AIMClusterServiceTemplate.<br />Values: "AIMServiceTemplate", "AIMClusterServiceTemplate" |  |  |
-| `modelCaches` _object (keys:string, values:[AIMResolvedModelCache](#aimresolvedmodelcache))_ | ModelCaches maps model names to their resolved AIMModelCache resources. |  |  |
+| `artifacts` _object (keys:string, values:[AIMResolvedArtifact](#aimresolvedartifact))_ | Artifacts maps model names to their resolved AIMArtifact resources. |  |  |
 
 
 #### AIMTemplateCachingConfig
@@ -1561,7 +1561,7 @@ DownloadProgress represents the download progress for a model cache
 
 
 _Appears in:_
-- [AIMModelCacheStatus](#aimmodelcachestatus)
+- [AIMArtifactStatus](#aimartifactstatus)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -1695,7 +1695,7 @@ _Appears in:_
 
 _Appears in:_
 - [AIMClusterServiceTemplateSpec](#aimclusterservicetemplatespec)
-- [AIMModelCacheSpec](#aimmodelcachespec)
+- [AIMArtifactSpec](#aimartifactspec)
 - [AIMModelSpec](#aimmodelspec)
 - [AIMServiceSpec](#aimservicespec)
 - [AIMServiceTemplateSpec](#aimservicetemplatespec)
