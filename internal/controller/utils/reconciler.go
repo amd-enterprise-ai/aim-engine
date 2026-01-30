@@ -35,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -101,6 +102,11 @@ type PlanResult struct {
 
 	// toDelete are objects to delete
 	toDelete []client.Object
+
+	// RequeueAfter signals to the controller that reconciliation should be retried
+	// after the specified duration. Use this when the reconciler cannot proceed
+	// (e.g., blocked by a rate limit) but should retry later.
+	RequeueAfter time.Duration
 }
 
 // Apply adds an object to be applied with an owner reference (default behavior).
@@ -241,14 +247,14 @@ type ReconcileContext[T client.Object] struct {
 // - fetching the object from the API
 // - deletion / finalizers
 // Those remain in the controller's Reconcile.
-func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
+func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	// === Pre-check: Skip reconciliation if paused ===
 	if IsReconciliationPaused(obj) {
 		logger.V(1).Info("Reconciliation paused, skipping",
 			"annotation", constants.AnnotationReconciliationPaused)
-		return nil
+		return ctrl.Result{}, nil
 	}
 
 	// 1) Get current status pointer (will be mutated)
@@ -269,7 +275,7 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	// 2) Deep copy the entire object to capture old status for comparison
 	oldObj, ok := obj.DeepCopyObject().(T)
 	if !ok {
-		return fmt.Errorf("DeepCopyObject returned unexpected type, expected %T", obj)
+		return ctrl.Result{}, fmt.Errorf("DeepCopyObject returned unexpected type, expected %T", obj)
 	}
 	oldStatus := oldObj.GetStatus()
 	oldConditions := append([]metav1.Condition(nil), oldStatus.GetConditions()...)
@@ -295,7 +301,7 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 	decision, stateErr := p.processStateEngine(ctx, obs, cm, status)
 	if stateErr != nil {
 		// State engine itself failed (programming error) - return immediately
-		return fmt.Errorf("state engine failed: %w", stateErr)
+		return ctrl.Result{}, fmt.Errorf("state engine failed: %w", stateErr)
 	}
 
 	// === Phase 5: Delete ===
@@ -375,24 +381,30 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) error {
 			// controller will be requeued automatically due to the watch on the resource.
 			if apierrors.IsConflict(err) {
 				log.FromContext(ctx).V(1).Info("status update conflict, will retry on next reconcile")
-				return nil
+				return ctrl.Result{}, nil
 			}
-			return fmt.Errorf("status update failed: %w", err)
+			return ctrl.Result{}, fmt.Errorf("status update failed: %w", err)
 		}
 	}
 
 	// === Phase 11: Return Decision ===
 	// Return requeue error if infrastructure issues detected (triggers exponential backoff)
 	if decision.ShouldRequeue {
-		return decision.RequeueError
+		return ctrl.Result{}, decision.RequeueError
 	}
 
 	// Return phase errors (delete/apply failures)
 	if phaseErr != nil {
-		return phaseErr
+		return ctrl.Result{}, phaseErr
 	}
 
-	return nil
+	// === Phase 12: Return PlanResult RequeueAfter ===
+	// If the reconciler requested a requeue (e.g., blocked by rate limit), honor it
+	if planResult.RequeueAfter > 0 {
+		return ctrl.Result{RequeueAfter: planResult.RequeueAfter}, nil
+	}
+
+	return ctrl.Result{}, nil
 }
 
 // errorCategories holds the results of error categorization from component health.

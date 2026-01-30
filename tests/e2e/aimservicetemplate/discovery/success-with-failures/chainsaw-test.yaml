@@ -1,0 +1,166 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: servicetemplate-discovery-success-with-failures
+  labels:
+    requires: gpu
+spec:
+  description: |
+    Test that a new template can succeed even when other templates are failing.
+    This verifies that failed templates in backoff don't block new templates
+    from getting discovery jobs (they don't get stuck with failed jobs).
+
+    Test approach:
+    1. Create 15 failing templates (using busybox which fails discovery)
+    2. Wait for them to fail and enter backoff
+    3. Create a single successful template (using aim-dummy)
+    4. Verify the successful template becomes Ready within reasonable time
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create failing model (busybox)
+      try:
+        - apply:
+            file: model-fail.yaml
+
+    - name: Wait for failing model to be ready
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-model-fail
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: Create 15 failing templates
+      try:
+        - apply:
+            file: templates-fail.yaml
+
+    - name: Wait for failing templates to fail and enter backoff
+      description: |
+        Wait for at least some templates to have failed discovery attempts.
+        This ensures the semaphore slots get taken and released with backoff.
+      try:
+        - script:
+            timeout: 90s
+            content: |
+              #!/bin/bash
+              set -e
+
+              # Wait for at least 5 templates to have failed (attempts >= 1)
+              for i in $(seq 1 60); do
+                FAILED=$(kubectl get aimservicetemplates -n $NAMESPACE \
+                  -o jsonpath='{range .items[*]}{.status.discovery.attempts}{"\n"}{end}' 2>/dev/null | \
+                  awk '$1 >= 1 {count++} END {print count+0}')
+
+                echo "Poll $i: $FAILED/15 templates have attempted discovery"
+
+                if [ "$FAILED" -ge 5 ]; then
+                  echo "Enough templates have attempted discovery"
+                  exit 0
+                fi
+
+                sleep 1
+              done
+
+              echo "ERROR: Not enough templates attempted discovery"
+              exit 1
+
+    - name: Create successful model (aim-dummy)
+      try:
+        - apply:
+            file: model-success.yaml
+
+    - name: Wait for successful model to be ready
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-model-success
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: Create a new template that will succeed
+      try:
+        - apply:
+            file: template-success.yaml
+
+    - name: Verify successful template reaches Ready
+      description: |
+        Even with 15 failed templates in backoff, a new template with a working
+        image should be able to get a discovery job and complete successfully.
+        The key test is that it doesn't get stuck waiting for failed templates.
+      try:
+        - script:
+            timeout: 120s
+            content: |
+              #!/bin/bash
+              set -e
+
+              START=$(date +%s)
+
+              for i in $(seq 1 60); do
+                STATUS=$(kubectl get aimservicetemplate -n $NAMESPACE test-template-success \
+                  -o jsonpath='{.status.status}' 2>/dev/null || echo "unknown")
+
+                echo "Poll $i: test-template-success status = $STATUS"
+
+                if [ "$STATUS" = "Ready" ]; then
+                  END=$(date +%s)
+                  DURATION=$((END - START))
+                  echo ""
+                  echo "SUCCESS: test-template-success became Ready in ${DURATION}s"
+
+                  # Verify it has discovered model sources
+                  SOURCES=$(kubectl get aimservicetemplate -n $NAMESPACE test-template-success \
+                    -o jsonpath='{.status.modelSources}' 2>/dev/null)
+                  if [ -n "$SOURCES" ] && [ "$SOURCES" != "null" ]; then
+                    echo "Model sources discovered: $SOURCES"
+                  else
+                    echo "ERROR: No model sources discovered"
+                    exit 1
+                  fi
+
+                  exit 0
+                fi
+
+                sleep 2
+              done
+
+              echo ""
+              echo "ERROR: test-template-success did not become Ready"
+              echo "This likely means it got stuck waiting for failed templates"
+              kubectl get aimservicetemplate -n $NAMESPACE test-template-success -o yaml
+              exit 1
+
+    - name: Verify failing templates are still in failed state
+      description: |
+        Confirm the failing templates didn't magically succeed - they should
+        still be in a failed/progressing state with discovery attempts.
+      try:
+        - script:
+            content: |
+              #!/bin/bash
+              set -e
+
+              # Count only the templates with "fail" in their name
+              READY=$(kubectl get aimservicetemplates -n $NAMESPACE \
+                -o jsonpath='{range .items[*]}{.metadata.name}:{.status.status}{"\n"}{end}' 2>/dev/null | \
+                grep 'fail' | grep -c ":Ready" || true)
+
+              echo "Failing templates in Ready state: $READY"
+
+              # None of the failing templates should be Ready
+              if [ "$READY" -gt 0 ]; then
+                echo "ERROR: Some failing templates became Ready unexpectedly"
+                exit 1
+              fi
+
+              echo "SUCCESS: Failing templates are still not Ready (expected)"
