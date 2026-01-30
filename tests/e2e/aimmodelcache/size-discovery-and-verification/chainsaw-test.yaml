@@ -69,7 +69,7 @@ spec:
               status:
                 status: Ready
                 (discoveredSizeBytes != null): true
-                (allocatedSizeBytes != null): true
+                (allocatedSize != null && allocatedSize != ''): true
                 progress:
                   percentage: 100
 
