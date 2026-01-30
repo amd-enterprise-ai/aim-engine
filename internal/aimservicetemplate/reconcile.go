@@ -24,6 +24,8 @@ package aimservicetemplate
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -47,12 +49,14 @@ import (
 
 // ServiceTemplateReconciler implements the DomainReconciler interface for namespace-scoped templates.
 type ServiceTemplateReconciler struct {
+	Client    client.Client
 	Clientset kubernetes.Interface
 	Scheme    *runtime.Scheme
 }
 
 // ClusterServiceTemplateReconciler implements the DomainReconciler interface for cluster-scoped templates.
 type ClusterServiceTemplateReconciler struct {
+	Client    client.Client
 	Clientset kubernetes.Interface
 	Scheme    *runtime.Scheme
 }
@@ -104,9 +108,8 @@ func (r *ServiceTemplateReconciler) FetchRemoteState(
 		&aimv1alpha1.AIMModel{},
 	)
 
-	// Fetch GPU resources if GPU is required AND no inline model sources
-	// Inline model sources bypass GPU check - GPU is a runtime concern, not a definition concern
-	if TemplateRequiresGPU(template.Spec.AIMServiceTemplateSpecCommon) && len(template.Spec.ModelSources) == 0 {
+	// Fetch GPU resources if GPU is required
+	if TemplateRequiresGPU(template.Spec.AIMServiceTemplateSpecCommon) {
 		result.gpuResources, result.gpuFetchErr = utils.GetClusterGPUResources(ctx, c)
 	}
 
@@ -134,6 +137,7 @@ func (r *ServiceTemplateReconciler) FetchRemoteState(
 				}
 			}
 		}
+
 	}
 
 	// Fetch template caches if caching is enabled
@@ -164,13 +168,10 @@ func (result ServiceTemplateFetchResult) GetComponentHealth(ctx context.Context,
 		}
 	}
 
-	// GPU availability check - skip for inline model sources
-	// GPU is a runtime concern, not a definition concern
-	if len(result.template.Spec.ModelSources) == 0 {
-		gpuHealth := result.getGPUHealth()
-		if gpuHealth.Component != "" {
-			health = append(health, gpuHealth)
-		}
+	// GPU availability check
+	gpuHealth := result.getGPUHealth()
+	if gpuHealth.Component != "" {
+		health = append(health, gpuHealth)
 	}
 
 	return health
@@ -230,9 +231,8 @@ func (r *ClusterServiceTemplateReconciler) FetchRemoteState(
 		&aimv1alpha1.AIMClusterModel{},
 	)
 
-	// Fetch GPU resources if GPU is required AND no inline model sources
-	// Inline model sources bypass GPU check - GPU is a runtime concern, not a definition concern
-	if TemplateRequiresGPU(template.Spec.AIMServiceTemplateSpecCommon) && len(template.Spec.ModelSources) == 0 {
+	// Fetch GPU resources if GPU is required
+	if TemplateRequiresGPU(template.Spec.AIMServiceTemplateSpecCommon) {
 		result.gpuResources, result.gpuFetchErr = utils.GetClusterGPUResources(ctx, c)
 	}
 
@@ -262,6 +262,7 @@ func (r *ClusterServiceTemplateReconciler) FetchRemoteState(
 				}
 			}
 		}
+
 	}
 
 	return result
@@ -285,13 +286,10 @@ func (result ClusterServiceTemplateFetchResult) GetComponentHealth(ctx context.C
 		}
 	}
 
-	// GPU availability check - skip for inline model sources
-	// GPU is a runtime concern, not a definition concern
-	if len(result.template.Spec.ModelSources) == 0 {
-		gpuHealth := result.getGPUHealth()
-		if gpuHealth.Component != "" {
-			health = append(health, gpuHealth)
-		}
+	// GPU availability check
+	gpuHealth := result.getGPUHealth()
+	if gpuHealth.Component != "" {
+		health = append(health, gpuHealth)
 	}
 
 	return health
@@ -412,8 +410,49 @@ func (r *ServiceTemplateReconciler) PlanResources(
 	}
 
 	// Template not ready - check if we need to create discovery job
-	if !HasCompletedDiscoveryJob(obs.discoveryJob) && !HasActiveDiscoveryJob(obs.discoveryJob) {
-		// Check concurrent job limit
+	hasCompletedJob := HasCompletedDiscoveryJob(obs.discoveryJob)
+	hasActiveJob := HasActiveDiscoveryJob(obs.discoveryJob)
+
+	logger.V(1).Info("discovery job state check",
+		"hasCompletedJob", hasCompletedJob,
+		"hasActiveJob", hasActiveJob,
+		"jobExists", obs.discoveryJob.Value != nil)
+
+	if !hasCompletedJob && !hasActiveJob {
+		// Compute spec hash for backoff reset detection
+		specHash := ComputeDiscoverySpecHash(template.Spec.AIMServiceTemplateSpecCommon, template.Spec.ModelName, image)
+
+		// Check backoff timing from previous failed attempts
+		shouldCreate, reason, message := ShouldCreateDiscoveryJob(template.Status.Discovery, specHash, time.Now())
+		if !shouldCreate {
+			logger.V(1).Info("discovery job creation blocked by backoff",
+				"reason", reason,
+				"message", message,
+				"attempts", template.Status.Discovery.Attempts)
+			return planResult
+		}
+
+		// Check concurrent job limit - we're protected by the discovery lock at the controller level
+		// so this count + create is atomic across all reconcilers
+		activeJobs, err := CountActiveDiscoveryJobs(ctx, r.Client)
+		if err != nil {
+			logger.Error(err, "failed to count active discovery jobs")
+			return planResult
+		}
+
+		if activeJobs >= constants.MaxConcurrentDiscoveryJobs {
+			logger.V(1).Info("discovery job creation blocked by concurrent limit",
+				"activeJobs", activeJobs,
+				"limit", constants.MaxConcurrentDiscoveryJobs)
+			// Signal controller to requeue after a delay to try again
+			planResult.RequeueAfter = 5 * time.Second
+			return planResult
+		}
+
+		logger.V(1).Info("creating discovery job",
+			"activeJobs", activeJobs,
+			"limit", constants.MaxConcurrentDiscoveryJobs)
+
 		job := BuildDiscoveryJob(DiscoveryJobSpec{
 			TemplateName:     template.Name,
 			Namespace:        template.Namespace,
@@ -484,8 +523,46 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 	}
 
 	// Template not ready - check if we need to create discovery job
+	hasCompletedJob := HasCompletedDiscoveryJob(obs.discoveryJob)
+	hasActiveJob := HasActiveDiscoveryJob(obs.discoveryJob)
+
 	operatorNamespace := constants.GetOperatorNamespace()
-	if !HasCompletedDiscoveryJob(obs.discoveryJob) && !HasActiveDiscoveryJob(obs.discoveryJob) {
+
+	if !hasCompletedJob && !hasActiveJob {
+		// Compute spec hash for backoff reset detection
+		specHash := ComputeDiscoverySpecHash(template.Spec.AIMServiceTemplateSpecCommon, template.Spec.ModelName, image)
+
+		// Check backoff timing from previous failed attempts
+		shouldCreate, reason, message := ShouldCreateDiscoveryJob(template.Status.Discovery, specHash, time.Now())
+		if !shouldCreate {
+			logger.V(1).Info("discovery job creation blocked by backoff",
+				"reason", reason,
+				"message", message,
+				"attempts", template.Status.Discovery.Attempts)
+			return planResult
+		}
+
+		// Check concurrent job limit - we're protected by the discovery lock at the controller level
+		// so this count + create is atomic across all reconcilers
+		activeJobs, err := CountActiveDiscoveryJobs(ctx, r.Client)
+		if err != nil {
+			logger.Error(err, "failed to count active discovery jobs")
+			return planResult
+		}
+
+		if activeJobs >= constants.MaxConcurrentDiscoveryJobs {
+			logger.V(1).Info("discovery job creation blocked by concurrent limit",
+				"activeJobs", activeJobs,
+				"limit", constants.MaxConcurrentDiscoveryJobs)
+			// Signal controller to requeue after a delay to try again
+			planResult.RequeueAfter = 5 * time.Second
+			return planResult
+		}
+
+		logger.V(1).Info("creating discovery job",
+			"activeJobs", activeJobs,
+			"limit", constants.MaxConcurrentDiscoveryJobs)
+
 		job := BuildDiscoveryJob(DiscoveryJobSpec{
 			TemplateName:     template.Name,
 			Namespace:        operatorNamespace,
@@ -520,7 +597,24 @@ func (r *ServiceTemplateReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ServiceTemplateObservation,
 ) {
-	decorateTemplateStatus(status, cm, obs.template.Spec.ModelSources, obs.discoveryJob, obs.parsedDiscovery, obs.model.Value)
+	// Compute spec hash for failure state tracking
+	var specHash string
+	if obs.model.Value != nil {
+		specHash = ComputeDiscoverySpecHash(obs.template.Spec.AIMServiceTemplateSpecCommon, obs.template.Spec.ModelName, obs.model.Value.Spec.Image)
+	}
+
+	decorateTemplateStatusCommon(
+		status, cm, obs.template.Spec.ModelSources, obs.discoveryJob, obs.parsedDiscovery,
+		obs.template.Status.Discovery, specHash,
+	)
+
+	// Set resolved model reference if available
+	if obs.model.Value != nil {
+		status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
+			Name:      obs.model.Value.Name,
+			Namespace: obs.model.Value.Namespace,
+		}
+	}
 }
 
 // DecorateStatus adds domain-specific status fields for cluster-scoped templates.
@@ -529,31 +623,40 @@ func (r *ClusterServiceTemplateReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ClusterServiceTemplateObservation,
 ) {
-	decorateClusterTemplateStatus(status, cm, obs.template.Spec.ModelSources, obs.discoveryJob, obs.parsedDiscovery, obs.clusterModel.Value)
+	// Compute spec hash for failure state tracking
+	var specHash string
+	if obs.clusterModel.Value != nil {
+		specHash = ComputeDiscoverySpecHash(obs.template.Spec.AIMServiceTemplateSpecCommon, obs.template.Spec.ModelName, obs.clusterModel.Value.Spec.Image)
+	}
+
+	decorateTemplateStatusCommon(
+		status, cm, obs.template.Spec.ModelSources, obs.discoveryJob, obs.parsedDiscovery,
+		obs.template.Status.Discovery, specHash,
+	)
+
+	// Set resolved model reference if available
+	if obs.clusterModel.Value != nil {
+		status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
+			Name: obs.clusterModel.Value.Name,
+		}
+	}
 }
 
-// decorateTemplateStatus handles common status decoration for namespace-scoped templates.
-func decorateTemplateStatus(
+// decorateTemplateStatusCommon handles shared status decoration for both namespace and cluster-scoped templates.
+func decorateTemplateStatusCommon(
 	status *aimv1alpha1.AIMServiceTemplateStatus,
 	cm *controllerutils.ConditionManager,
 	specModelSources []aimv1alpha1.AIMModelSource,
 	discoveryJobResult controllerutils.FetchResult[*batchv1.Job],
 	parsedDiscovery *ParsedDiscovery,
-	model *aimv1alpha1.AIMModel,
+	currentDiscoveryState *aimv1alpha1.DiscoveryState,
+	specHash string,
 ) {
-	// Set resolved model reference if available
-	if model != nil {
-		status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
-			Name:      model.Name,
-			Namespace: model.Namespace,
-		}
-	}
-
 	// Handle inline model sources - copy from spec to status
 	// This takes precedence over discovery results
 	if len(specModelSources) > 0 {
 		status.ModelSources = specModelSources
-		cm.MarkTrue("Discovered", "InlineModelSources", "Model sources provided in-line in spec")
+		cm.MarkTrue(aimv1alpha1.AIMTemplateDiscoveryConditionType, "InlineModelSources", "Model sources provided in-line in spec")
 		return
 	}
 
@@ -564,6 +667,11 @@ func decorateTemplateStatus(
 			Name:      job.Name,
 			Namespace: job.Namespace,
 		}
+
+		// Track discovery state for failed jobs (for backoff)
+		if IsJobFailed(job) {
+			updateDiscoveryStateOnFailure(status, job, specHash)
+		}
 	}
 
 	// Set parsed discovery results if available
@@ -572,49 +680,62 @@ func decorateTemplateStatus(
 		if parsedDiscovery.Profile != nil {
 			status.Profile = parsedDiscovery.Profile
 		}
-		cm.MarkTrue("Discovered", "DiscoveryComplete", "Discovery job completed successfully")
-	}
-}
-
-// decorateClusterTemplateStatus handles common status decoration for cluster-scoped templates.
-func decorateClusterTemplateStatus(
-	status *aimv1alpha1.AIMServiceTemplateStatus,
-	cm *controllerutils.ConditionManager,
-	specModelSources []aimv1alpha1.AIMModelSource,
-	discoveryJobResult controllerutils.FetchResult[*batchv1.Job],
-	parsedDiscovery *ParsedDiscovery,
-	clusterModel *aimv1alpha1.AIMClusterModel,
-) {
-	// Set resolved model reference if available
-	if clusterModel != nil {
-		status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
-			Name: clusterModel.Name,
-		}
-	}
-
-	// Handle inline model sources - copy from spec to status
-	// This takes precedence over discovery results
-	if len(specModelSources) > 0 {
-		status.ModelSources = specModelSources
-		cm.MarkTrue("Discovered", "InlineModelSources", "Model sources provided in-line in spec")
+		// Clear discovery state on success
+		status.Discovery = nil
+		cm.MarkTrue(aimv1alpha1.AIMTemplateDiscoveryConditionType, "DiscoveryComplete", "Discovery job completed successfully")
 		return
 	}
 
-	// Set discovery job reference if available
-	if discoveryJobResult.OK() && discoveryJobResult.Value != nil {
-		job := discoveryJobResult.Value
-		status.DiscoveryJob = &aimv1alpha1.AIMResolvedReference{
-			Name:      job.Name,
-			Namespace: job.Namespace,
+	// Don't regress the Discovered condition if it's already True.
+	// This prevents stale reconciles (that started before the job completed) from
+	// overwriting Discovered=True back to False.
+	existingDiscovered := cm.Get(aimv1alpha1.AIMTemplateDiscoveryConditionType)
+	if existingDiscovered != nil && existingDiscovered.Status == metav1.ConditionTrue {
+		return
+	}
+
+	// Set appropriate status message based on waiting reason
+	if currentDiscoveryState != nil && currentDiscoveryState.Attempts > 0 && currentDiscoveryState.LastAttemptTime != nil {
+		// Check if we're in backoff period
+		backoffDuration := CalculateBackoffDuration(currentDiscoveryState.Attempts)
+		nextAttemptTime := currentDiscoveryState.LastAttemptTime.Add(backoffDuration)
+		now := time.Now()
+
+		if now.Before(nextAttemptTime) {
+			remaining := nextAttemptTime.Sub(now).Round(time.Second)
+			cm.MarkFalse(aimv1alpha1.AIMTemplateDiscoveryConditionType, aimv1alpha1.AIMTemplateReasonAwaitingDiscovery,
+				fmt.Sprintf("Waiting %s before retry (attempt %d failed)", remaining, currentDiscoveryState.Attempts))
+			return
 		}
 	}
 
-	// Set parsed discovery results if available
-	if parsedDiscovery != nil {
-		status.ModelSources = parsedDiscovery.ModelSources
-		if parsedDiscovery.Profile != nil {
-			status.Profile = parsedDiscovery.Profile
-		}
-		cm.MarkTrue("Discovered", "DiscoveryComplete", "Discovery job completed successfully")
+	// Generic awaiting discovery message if no other message was set
+	cm.MarkFalse(aimv1alpha1.AIMTemplateDiscoveryConditionType, aimv1alpha1.AIMTemplateReasonAwaitingDiscovery,
+		"Waiting for discovery to complete")
+}
+
+// updateDiscoveryStateOnFailure updates the discovery tracking state when a job fails.
+// This increments the attempt counter and records the failure time for backoff calculation.
+// The specHash parameter is stored to enable backoff reset when the spec changes.
+func updateDiscoveryStateOnFailure(status *aimv1alpha1.AIMServiceTemplateStatus, job *batchv1.Job, specHash string) {
+	now := metav1.Now()
+
+	// Initialize discovery state if needed
+	if status.Discovery == nil {
+		status.Discovery = &aimv1alpha1.DiscoveryState{}
+	}
+
+	// Check if spec hash changed - if so, reset the attempt counter
+	if status.Discovery.SpecHash != "" && status.Discovery.SpecHash != specHash {
+		status.Discovery.Attempts = 0
+	}
+
+	// Only increment if this is a new failure (job creation time > last attempt time)
+	// This prevents double-counting on subsequent reconciles
+	if status.Discovery.LastAttemptTime == nil || job.CreationTimestamp.After(status.Discovery.LastAttemptTime.Time) {
+		status.Discovery.Attempts++
+		status.Discovery.LastAttemptTime = &now
+		status.Discovery.LastFailureReason = GetJobFailureReason(job)
+		status.Discovery.SpecHash = specHash
 	}
 }
