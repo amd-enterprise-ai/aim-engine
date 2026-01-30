@@ -172,7 +172,7 @@ func (r *ModelCacheReconciler) FetchRemoteState(
 		),
 		roleBinding: controllerutils.Fetch(
 			ctx, c,
-			client.ObjectKey{Name: "aim-modelcache-status-updater", Namespace: mc.Namespace},
+			client.ObjectKey{Name: "aim-engine-modelcache-status-updater", Namespace: mc.Namespace},
 			&rbacv1.RoleBinding{},
 		),
 	}

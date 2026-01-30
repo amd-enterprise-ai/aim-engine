@@ -40,7 +40,7 @@ import (
 func buildRoleBinding(mc *aimv1alpha1.AIMModelCache) *rbacv1.RoleBinding {
 	return &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "aim-modelcache-status-updater", // Fixed name per namespace
+			Name:      "aim-engine-modelcache-status-updater", // Fixed name per namespace
 			Namespace: mc.Namespace,
 			// No OwnerReferences - independent lifecycle
 		},
@@ -52,7 +52,7 @@ func buildRoleBinding(mc *aimv1alpha1.AIMModelCache) *rbacv1.RoleBinding {
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: "rbac.authorization.k8s.io",
 			Kind:     "ClusterRole",
-			Name:     "aim-modelcache-status-updater",
+			Name:     "aim-engine-modelcache-status-updater",
 		},
 	}
 }

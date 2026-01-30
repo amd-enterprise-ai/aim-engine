@@ -122,7 +122,7 @@ rules:
 - apiGroups:
   - rbac.authorization.k8s.io
   resourceNames:
-  - aim-modelcache-status-updater
+  - modelcache-status-updater
   resources:
   - clusterroles
   verbs:
