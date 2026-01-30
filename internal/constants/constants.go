@@ -70,6 +70,16 @@ const (
 	LabelValueCacheTypePersistent = "persistent"
 )
 
+// Discovery circuit breaker configuration
+const (
+	// DiscoveryBaseBackoffSeconds is the base backoff duration in seconds.
+	// Actual backoff = base * 2^(attempts-1), capped at DiscoveryMaxBackoffSeconds.
+	DiscoveryBaseBackoffSeconds = 60 // 1 minute
+
+	// DiscoveryMaxBackoffSeconds is the maximum backoff duration in seconds.
+	DiscoveryMaxBackoffSeconds = 3600 // 1 hour
+)
+
 // Shared condition reasons used across multiple resource types
 const (
 	// Image-related reasons (used by AIMModel, AIMService, AIMServiceTemplate)

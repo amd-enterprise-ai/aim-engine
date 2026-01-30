@@ -144,11 +144,7 @@ func (r *AIMServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	if err := r.pipeline.Run(ctx, &service); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{}, nil
+	return r.pipeline.Run(ctx, &service)
 }
 
 // SetupWithManager sets up the controller with the Manager.
