@@ -43,20 +43,6 @@ const (
 )
 
 // =======================================================
-// DEPRECATED: DEDICATED MODEL CACHE FUNCTIONS
-// =======================================================
-// These functions are deprecated and will be removed in a future release.
-// Model cache creation is now handled by AIMTemplateCache with mode-based ownership.
-// The template cache mode (Dedicated/Shared) determines whether model caches have
-// owner references (Dedicated) or not (Shared).
-
-// GenerateDedicatedModelCacheName creates a deterministic name for a service's dedicated model cache.
-// Deprecated: Use AIMTemplateCache with Mode=Dedicated instead.
-func GenerateDedicatedModelCacheName(serviceName, modelID string) (string, error) {
-	return utils.GenerateDerivedName([]string{serviceName, "dedicated"}, utils.WithHashSource(modelID))
-}
-
-// =======================================================
 // TEMPLATE CACHE (AUTO-GENERATION WHEN CACHING REQUESTED)
 // =======================================================
 
