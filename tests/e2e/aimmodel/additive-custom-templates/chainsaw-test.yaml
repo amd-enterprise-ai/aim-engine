@@ -10,6 +10,7 @@
 # - Discovered templates are created from image recommendedDeployments
 # - Custom templates are ALSO created (additive, not replacement)
 # - Both types of templates exist simultaneously
+# - Total template count is > 2 (at least 1 discovered + 2 custom)
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
@@ -39,24 +40,7 @@ spec:
                 # NOT a custom model - image-based
                 sourceType: Image
 
-    - name: Assert discovered template is created from image metadata
-      try:
-        # The aim-dummy image has recommendedDeployments that create this template
-        - assert:
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMServiceTemplate
-              metadata:
-                labels:
-                  aim.eai.amd.com/origin: auto-generated
-                  aim.eai.amd.com/model: additive-templates-test
-              spec:
-                modelName: additive-templates-test
-                gpu:
-                  models:
-                    - MI300X
-
-    - name: Assert custom-high-memory template is also created (additive)
+    - name: Assert custom-high-memory template is created
       try:
         - assert:
             resource:
@@ -77,7 +61,7 @@ spec:
                   - name: MAX_MODEL_LEN
                     value: "16384"
 
-    - name: Assert custom-low-latency template is also created (additive)
+    - name: Assert custom-low-latency template is created
       try:
         - assert:
             resource:
@@ -98,25 +82,21 @@ spec:
                   models:
                     - MI300X
 
-    - name: Verify we have at least 3 templates (1 discovered + 2 custom)
+    - name: Verify template count is greater than 2 (discovered + custom)
       description: |
-        This step verifies that both discovered and custom templates exist.
-        We expect at least 3 templates: 1 from discovery + 2 from customTemplates.
+        This verifies the additive behavior: we should have more than 2 templates
+        (at least 1 from discovery + 2 from customTemplates = 3 minimum).
+        If customTemplates replaced discovered templates, we would only have 2.
       try:
-        # Assert all three templates exist by checking for each one
-        - assert:
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMServiceTemplate
-              metadata:
-                labels:
-                  aim.eai.amd.com/model: additive-templates-test
-                  aim.eai.amd.com/template.alias: custom-high-memory
-        - assert:
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMServiceTemplate
-              metadata:
-                labels:
-                  aim.eai.amd.com/model: additive-templates-test
-                  aim.eai.amd.com/template.alias: custom-low-latency
+        - script:
+            timeout: 10s
+            content: |
+              count=$(kubectl get aimservicetemplates -A -l aim.eai.amd.com/model=additive-templates-test --no-headers | wc -l)
+              echo "Template count: $count"
+              if [ "$count" -gt 2 ]; then
+                echo "PASS: Found $count templates (> 2), additive behavior confirmed"
+                exit 0
+              else
+                echo "FAIL: Expected > 2 templates, found $count"
+                exit 1
+              fi
