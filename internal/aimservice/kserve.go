@@ -205,20 +205,15 @@ func buildInferenceService(
 		image = obs.modelResult.ClusterModel.Value.Spec.Image
 	}
 
-	// Get GPU count from template status or spec
-	// For image-based models, GPU count comes from discovery (Profile.Metadata.GPUCount)
-	// For custom models, discovery doesn't run, so we fall back to templateSpec.Gpu.Requests
+	// Get GPU count and resource name from template status.resolvedHardware.
+	// The template controller computes resolvedHardware from discovery + spec fallback.
 	gpuCount := int64(0)
-	if templateStatus != nil && templateStatus.Profile != nil && templateStatus.Profile.Metadata.GPUCount > 0 {
-		gpuCount = int64(templateStatus.Profile.Metadata.GPUCount)
-	} else if templateSpec != nil && templateSpec.Gpu != nil && templateSpec.Gpu.Requests > 0 {
-		gpuCount = int64(templateSpec.Gpu.Requests)
-	}
-
-	// GPU resource name from template spec or default
 	gpuResourceName := corev1.ResourceName(constants.DefaultGPUResourceName)
-	if templateSpec != nil && templateSpec.Gpu != nil && templateSpec.Gpu.ResourceName != "" {
-		gpuResourceName = corev1.ResourceName(templateSpec.Gpu.ResourceName)
+	if templateStatus != nil && templateStatus.ResolvedHardware != nil && templateStatus.ResolvedHardware.GPU != nil {
+		gpuCount = int64(templateStatus.ResolvedHardware.GPU.Requests)
+		if templateStatus.ResolvedHardware.GPU.ResourceName != "" {
+			gpuResourceName = corev1.ResourceName(templateStatus.ResolvedHardware.GPU.ResourceName)
+		}
 	}
 
 	// Build resource requirements
@@ -294,14 +289,13 @@ func buildInferenceService(
 	// Configure replicas and autoscaling
 	configureReplicasAndAutoscaling(inferenceService, service)
 
-	// Add GPU node affinity
-	// For image-based models, the GPU model comes from discovery (Profile.Metadata.GPU)
-	// For custom models, discovery doesn't run, so we fall back to templateSpec.Gpu.Models
+	// Add GPU node affinity from template status.resolvedHardware.
+	// The template controller computes resolvedHardware from discovery + spec fallback.
 	gpuModel := ""
-	if templateStatus != nil && templateStatus.Profile != nil && templateStatus.Profile.Metadata.GPU != "" {
-		gpuModel = templateStatus.Profile.Metadata.GPU
-	} else if templateSpec != nil && templateSpec.Gpu != nil && len(templateSpec.Gpu.Models) > 0 {
-		gpuModel = templateSpec.Gpu.Models[0]
+	if templateStatus != nil && templateStatus.ResolvedHardware != nil && templateStatus.ResolvedHardware.GPU != nil {
+		if len(templateStatus.ResolvedHardware.GPU.Models) > 0 {
+			gpuModel = templateStatus.ResolvedHardware.GPU.Models[0]
+		}
 	}
 	if gpuModel != "" {
 		addGPUNodeAffinity(inferenceService, gpuModel)

@@ -1,0 +1,262 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: Custom Model Template Creation
+#
+# This test validates custom model behavior where templates are created
+# directly from customTemplates spec without running discovery jobs.
+#
+# Tested behavior:
+# - Multiple templates created from customTemplates
+# - Hardware inheritance from spec.hardware to templates
+# - Hardware override at template level (GPU count, GPU model)
+# - Profile settings (metric, precision) propagation
+# - Profile types (optimized, preview, unoptimized)
+# - Environment variables per template
+# - Model sources copied to template status
+# - ResolvedHardware populated correctly in status
+# - NotAvailable status for unavailable GPU models
+# - Template alias label for user-provided names
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: custom-model-template-creation
+spec:
+  timeouts:
+    apply: 30s
+    assert: 60s
+  steps:
+    - name: Create custom model with multiple templates
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert model becomes ready
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: custom-model-test
+              status:
+                status: Ready
+                sourceType: Custom
+
+    - name: Assert all 6 templates are created with correct labels
+      try:
+        # Find templates by their alias labels
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: custom-model-test
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/template.alias: default-hardware
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: custom-model-test
+                  aim.eai.amd.com/template.alias: multi-gpu
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: custom-model-test
+                  aim.eai.amd.com/template.alias: different-gpu
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: custom-model-test
+                  aim.eai.amd.com/template.alias: latency-optimized
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: custom-model-test
+                  aim.eai.amd.com/template.alias: throughput-optimized
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: custom-model-test
+                  aim.eai.amd.com/template.alias: minimal
+
+    - name: Assert default-hardware template inherits spec.hardware, model sources, and has default type
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/template.alias: default-hardware
+              spec:
+                modelName: custom-model-test
+                # Default type is unoptimized when not specified
+                type: unoptimized
+                gpu:
+                  requests: 1
+                  models:
+                    - MI300X
+                # Model sources are copied from spec
+                modelSources:
+                  - modelId: sshleifer/tiny-gpt2
+                    sourceUri: hf://sshleifer/tiny-gpt2
+                    size: 100Mi
+              status:
+                status: Ready
+                # ResolvedHardware comes from spec (no discovery for custom models)
+                resolvedHardware:
+                  gpu:
+                    requests: 1
+                    models:
+                      - MI300X
+                # ModelSources copied to status
+                modelSources:
+                  - modelId: sshleifer/tiny-gpt2
+                    sourceUri: hf://sshleifer/tiny-gpt2
+                    size: 100Mi
+
+    - name: Assert multi-gpu template has overridden GPU count (2 GPUs)
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/template.alias: multi-gpu
+              spec:
+                gpu:
+                  requests: 2
+                  models:
+                    - MI300X
+              status:
+                status: Ready
+                resolvedHardware:
+                  gpu:
+                    requests: 2
+                    models:
+                      - MI300X
+
+    - name: Assert different-gpu template is NotAvailable (MI250X not in cluster)
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/template.alias: different-gpu
+              spec:
+                gpu:
+                  requests: 1
+                  models:
+                    - MI250X
+              status:
+                # NotAvailable because MI250X GPU is not present in cluster
+                status: NotAvailable
+                resolvedHardware:
+                  gpu:
+                    requests: 1
+                    models:
+                      - MI250X
+
+    - name: Assert latency-optimized template has profile settings, env vars, and type=optimized
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/template.alias: latency-optimized
+              spec:
+                type: optimized
+                metric: latency
+                precision: fp16
+                gpu:
+                  requests: 1
+                  models:
+                    - MI300X
+                # Env vars from customTemplate
+                env:
+                  - name: VLLM_USE_V1
+                    value: "1"
+                  - name: MAX_MODEL_LEN
+                    value: "8192"
+              status:
+                status: Ready
+                # Profile built from spec for custom models
+                profile:
+                  metadata:
+                    metric: latency
+                    precision: fp16
+                    gpuCount: 1
+                    gpu: MI300X
+                    type: optimized
+
+    - name: Assert throughput-optimized template has type=preview and different profile
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/template.alias: throughput-optimized
+              spec:
+                type: preview
+                metric: throughput
+                precision: fp8
+                # Different env vars than latency-optimized
+                env:
+                  - name: VLLM_USE_V1
+                    value: "0"
+                  - name: MAX_BATCH_SIZE
+                    value: "256"
+              status:
+                status: Ready
+                profile:
+                  metadata:
+                    metric: throughput
+                    precision: fp8
+                    type: preview
+
+    - name: Assert minimal template inherits hardware and has explicit type
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/template.alias: minimal
+              spec:
+                type: unoptimized
+                # Inherits GPU from spec.hardware
+                gpu:
+                  requests: 1
+                  models:
+                    - MI300X
+              status:
+                status: Ready
+                profile:
+                  metadata:
+                    type: unoptimized

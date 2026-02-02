@@ -65,6 +65,10 @@ const (
 	// Value: "true"
 	LabelKeyCustomModel = AimLabelDomain + "/custom-model"
 
+	// LabelKeyTemplateAlias is the user-provided short-hand alias for a custom template.
+	// Used to find templates by their alias before model prefix and hash are added.
+	LabelKeyTemplateAlias = AimLabelDomain + "/template.alias"
+
 	// ==========================================================================
 	// Template configuration labels - queryable metadata for templates
 	// ==========================================================================

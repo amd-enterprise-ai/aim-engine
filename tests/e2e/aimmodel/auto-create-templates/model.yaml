@@ -3,4 +3,4 @@ kind: AIMModel
 metadata:
   name: test-model-auto-templates
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.1.7
+  image: ghcr.io/silogen/aim-dummy:0.1.10
