@@ -411,7 +411,7 @@ Each model source specifies:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `modelId` | Yes | Canonical identifier in `{org}/{name}` format. Determines the cache mount path. |
-| `sourceUri` | Yes | Download location. Schemes: `hf://org/model` (HuggingFace) or `s3://bucket/key` (S3) |
+| `sourceUri` | Yes | Download location. Schemes: `hf://org/model` (HuggingFace) or `s3://bucket/key` (S3). For S3, use the bucket name directly without the service hostname (e.g., `s3://my-bucket/models/llama`). |
 | `size` | Yes | Storage size for PVC provisioning. Must be non-zero. |
 | `env` | No | Per-source credential overrides (e.g., `HF_TOKEN`, `AWS_ACCESS_KEY_ID`) |
 
@@ -431,7 +431,7 @@ spec:
           - MI300X
           - MI250
       cpu:
-        requests: "4"        # Optional: CPU requests
+        requests: "4"        # Required if cpu field is specified: CPU requests
         limits: "8"          # Optional: CPU limits
 ```
 
@@ -455,7 +455,7 @@ spec:
       gpu:
         requests: 1
     templates:
-      - name: high-memory
+      - name: high-memory  # Generated as {modelName}-custom-[{name}][-{precision}][-{gpu}]-{hash}
         hardware:
           gpu:
             requests: 2  # Override
@@ -513,7 +513,7 @@ spec:
 
 | Aspect | Image-Based Models | Custom Models |
 |--------|-------------------|---------------|
-| Model weights | Embedded in container | Downloaded at runtime |
+| Model weights | source URI embedded in image | source URI in spec |
 | Discovery | Runs to extract metadata | Skipped |
 | Hardware | Optional (from discovery) | Required |
 | Templates | Auto-generated from image labels | Auto-generated from spec |
