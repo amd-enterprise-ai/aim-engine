@@ -12,6 +12,7 @@ resources:
 - bases/aim.eai.amd.com_aimservices.yaml
 - bases/aim.eai.amd.com_aimservicetemplates.yaml
 - bases/aim.eai.amd.com_aimtemplatecaches.yaml
+- bases/aim.eai.amd.com_aimkvcaches.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

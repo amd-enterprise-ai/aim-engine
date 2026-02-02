@@ -7,6 +7,20 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
+  - persistentvolumeclaims
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - events
   verbs:
   - create
@@ -27,18 +41,6 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - persistentvolumeclaims
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
   - pods/log
   verbs:
   - get
@@ -49,6 +51,7 @@ rules:
   - aimclustermodelsources
   - aimclusterruntimeconfigs
   - aimclusterservicetemplates
+  - aimkvcaches
   - aimmodelcaches
   - aimmodels
   - aimruntimeconfigs
@@ -70,6 +73,7 @@ rules:
   - aimclustermodelsources/finalizers
   - aimclusterruntimeconfigs/finalizers
   - aimclusterservicetemplates/finalizers
+  - aimkvcaches/finalizers
   - aimmodelcaches/finalizers
   - aimmodels/finalizers
   - aimruntimeconfigs/finalizers
@@ -85,6 +89,7 @@ rules:
   - aimclustermodelsources/status
   - aimclusterruntimeconfigs/status
   - aimclusterservicetemplates/status
+  - aimkvcaches/status
   - aimmodelcaches/status
   - aimmodels/status
   - aimruntimeconfigs/status
@@ -95,6 +100,18 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - batch
   resources:

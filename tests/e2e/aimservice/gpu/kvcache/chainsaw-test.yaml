@@ -1,0 +1,106 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: KVCache Integration (GPU)
+#
+# Tests that two AIMServices can share a KVCache via conflict resolution.
+# Both services reference the same default KVCache name (kvcache-{namespace}).
+# First-to-reconcile creates the KVCache, second finds and uses it.
+#
+
+# Requires: GPU infrastructure
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-gpu-kvcache
+  labels:
+    requires: gpu
+spec:
+  description: Test AIMService with shared KVCache
+  timeouts:
+    assert: 600s
+  steps:
+    - name: Create runtime config with routing
+      try:
+        - apply:
+            file: runtime-config.yaml
+
+    - name: Create both services simultaneously to test conflict resolution
+      try:
+        - apply:
+            file: service-a.yaml
+        - apply:
+            file: service-b.yaml
+
+    - name: Verify shared KVCache reaches Ready status
+      try:
+        - assert:
+            timeout: 3m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMKVCache
+              metadata:
+                name: kvcache-($namespace)
+              status:
+                status: Ready
+
+    - name: Verify service-a reaches Running status with resolved KVCache
+      try:
+        - assert:
+            timeout: 10m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-kvcache-a
+              status:
+                status: Running
+                resolvedKVCache:
+                  name: kvcache-($namespace)
+
+    - name: Verify service-b reaches Running status with same resolved KVCache
+      try:
+        - assert:
+            timeout: 10m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-kvcache-b
+              status:
+                status: Running
+                resolvedKVCache:
+                  name: kvcache-($namespace)
+
+    - name: Make inference request via service-a to populate KVCache
+      try:
+        - script:
+            timeout: 3m
+            env:
+              - name: HTTP_BASE_PATH
+                value: /integration/kvcache/test-kvcache-a/v1
+            content: bash ../../_shared/validate-http.sh
+
+    - name: Verify Redis has KV data
+      try:
+        - script:
+            timeout: 30s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              # Get StatefulSet name from KVCache status (serviceName without -svc suffix)
+              SVC_NAME=$(kubectl get aimkvcache kvcache-${NAMESPACE} -n ${NAMESPACE} -o jsonpath='{.status.serviceName}')
+              STS_NAME="${SVC_NAME%-svc}"  # Remove -svc suffix
+              
+              # Run redis-cli KEYS * to check if keys exist
+              KEYS=$(kubectl exec -n ${NAMESPACE} statefulset/${STS_NAME} -- redis-cli KEYS '*' 2>/dev/null)
+              KEY_COUNT=$(echo "$KEYS" | grep -c . || echo 0)
+              
+              if [[ "$KEY_COUNT" -gt 0 ]]; then
+                echo "✅ Redis has $KEY_COUNT keys:"
+                echo "$KEYS" | head -10
+              else
+                echo "❌ Redis is empty (expected keys after inference)"
+                exit 1
+              fi

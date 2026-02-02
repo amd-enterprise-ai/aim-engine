@@ -30,6 +30,7 @@ import (
 	"regexp"
 	"strings"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -741,4 +742,69 @@ func GetHTTPRouteHealth(route *gatewayapiv1.HTTPRoute) ComponentHealth {
 		Reason:  "HTTPRoutePending",
 		Message: "HTTPRoute is waiting for gateway acceptance",
 	}
+}
+
+// GetStatefulSetHealth inspects a StatefulSet and returns its health status.
+func GetStatefulSetHealth(ss *appsv1.StatefulSet) ComponentHealth {
+	if ss == nil {
+		return ComponentHealth{
+			Errors: []error{
+				NewMissingDownstreamDependencyError("StatefulSetNotFound", "StatefulSet not found", nil),
+			},
+		}
+	}
+
+	// Determine desired replicas (default to 1 if not set)
+	desiredReplicas := int32(1)
+	if ss.Spec.Replicas != nil {
+		desiredReplicas = *ss.Spec.Replicas
+	}
+
+	// Check if all replicas are ready
+	if ss.Status.ReadyReplicas >= desiredReplicas && desiredReplicas > 0 {
+		// All replicas ready - healthy
+		return ComponentHealth{}
+	}
+
+	// Check for update in progress
+	if ss.Status.UpdateRevision != "" && ss.Status.CurrentRevision != ss.Status.UpdateRevision {
+		return ComponentHealth{
+			State:   constants.AIMStatusProgressing,
+			Reason:  "StatefulSetUpdating",
+			Message: fmt.Sprintf("StatefulSet is updating: %d/%d replicas updated", ss.Status.UpdatedReplicas, desiredReplicas),
+		}
+	}
+
+	// Replicas not ready yet - progressing
+	return ComponentHealth{
+		State:   constants.AIMStatusProgressing,
+		Reason:  "StatefulSetProgressing",
+		Message: fmt.Sprintf("StatefulSet has %d/%d replicas ready", ss.Status.ReadyReplicas, desiredReplicas),
+	}
+}
+
+// GetServiceHealth inspects a Service and returns its health status.
+// Services are relatively simple - they're ready once created, unless they have specific issues.
+func GetServiceHealth(svc *corev1.Service) ComponentHealth {
+	if svc == nil {
+		return ComponentHealth{
+			Errors: []error{
+				NewMissingDownstreamDependencyError("ServiceNotFound", "Service not found", nil),
+			},
+		}
+	}
+
+	// For LoadBalancer services, check if external IP is assigned
+	if svc.Spec.Type == corev1.ServiceTypeLoadBalancer {
+		if len(svc.Status.LoadBalancer.Ingress) == 0 {
+			return ComponentHealth{
+				State:   constants.AIMStatusProgressing,
+				Reason:  "LoadBalancerPending",
+				Message: "Waiting for LoadBalancer to be provisioned",
+			}
+		}
+	}
+
+	// Service exists and is ready
+	return ComponentHealth{}
 }

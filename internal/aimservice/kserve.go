@@ -145,6 +145,17 @@ func isReadyForInferenceService(service *aimv1alpha1.AIMService, obs ServiceObse
 		return false
 	}
 
+	// Check KVCache is ready if configured
+	if service.Spec.KVCache != nil {
+		if obs.kvCache.Value == nil || obs.kvCache.Value.Status.Status != constants.AIMStatusReady {
+			return false
+		}
+		// Also need the ConfigMap
+		if obs.kvCacheConfigMap.Value == nil {
+			return false
+		}
+	}
+
 	// Check if we have storage
 	switch cachingMode {
 	case aimv1alpha1.CachingModeAlways:
@@ -314,6 +325,11 @@ func buildInferenceService(
 	// Add storage volumes (cache or PVC)
 	addStorageVolumes(inferenceService, obs)
 
+	// Add LMCache ConfigMap mount if KVCache is configured
+	if obs.kvCacheConfigMap.Value != nil {
+		addLMCacheConfigMapMount(inferenceService, obs.kvCacheConfigMap.Value.Name)
+	}
+
 	return inferenceService
 }
 
@@ -366,6 +382,23 @@ func buildMergedEnvVars(
 			profileEnvVars = append(profileEnvVars, corev1.EnvVar{Name: name, Value: value})
 		}
 		envVars = utils.MergeEnvVars(envVars, profileEnvVars, utils.EnvVarAIMEngineArgs)
+	}
+
+	// Add KVCache env vars if ConfigMap is available
+	if obs.kvCacheConfigMap.Value != nil {
+		kvCacheEnvVars := []corev1.EnvVar{
+			{Name: "LMCACHE_USE_EXPERIMENTAL", Value: "True"},
+			{Name: "LMCACHE_CONFIG_FILE", Value: "/lmcache/lmcache_config.yaml"},
+			{Name: "LMCACHE_LOG_LEVEL", Value: "INFO"},
+			{Name: "PYTHONHASHSEED", Value: "0"},
+		}
+		// AIM_ENGINE_ARGS needs special handling for kv-transfer-config
+		aimEngineArgsKV := corev1.EnvVar{
+			Name:  utils.EnvVarAIMEngineArgs,
+			Value: `{"kv-transfer-config": {"kv_connector":"LMCacheConnectorV1", "kv_role":"kv_both"}}`,
+		}
+		kvCacheEnvVars = append(kvCacheEnvVars, aimEngineArgsKV)
+		envVars = utils.MergeEnvVars(envVars, kvCacheEnvVars, utils.EnvVarAIMEngineArgs)
 	}
 
 	// Merge service-level env vars (highest precedence)
@@ -725,4 +758,31 @@ func addGPUNodeAffinity(isvc *servingv1beta1.InferenceService, gpuModel string) 
 		terms[0].MatchExpressions = append(terms[0].MatchExpressions, requirement)
 	}
 	nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = terms
+}
+
+// addLMCacheConfigMapMount adds the LMCache configuration ConfigMap as a volume mount.
+func addLMCacheConfigMapMount(isvc *servingv1beta1.InferenceService, configMapName string) {
+	if len(isvc.Spec.Predictor.Containers) == 0 {
+		return
+	}
+	container := &isvc.Spec.Predictor.Containers[0]
+
+	// Add volume
+	isvc.Spec.Predictor.Volumes = append(isvc.Spec.Predictor.Volumes, corev1.Volume{
+		Name: "lmcache-config",
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: configMapName,
+				},
+			},
+		},
+	})
+
+	// Add mount
+	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+		Name:      "lmcache-config",
+		MountPath: "/lmcache",
+		ReadOnly:  true,
+	})
 }

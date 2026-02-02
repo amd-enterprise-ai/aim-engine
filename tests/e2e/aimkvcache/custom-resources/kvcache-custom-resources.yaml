@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMKVCache
+metadata:
+  name: custom-resources
+spec:
+  kvCacheType: redis
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "1500m"
+      memory: "1536Mi"
+  storage:
+    size: 5Gi
+

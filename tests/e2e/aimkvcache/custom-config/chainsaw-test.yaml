@@ -1,0 +1,50 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: kvcache-custom-config
+spec:
+  description: |
+    - Custom image, env vars
+  concurrent: true
+  timeouts:
+    assert: 120s
+  steps:
+  - name: Create KVCache with custom image and environment variables
+    try:
+    - apply:
+        file: kvcache-custom-config.yaml
+    
+  - name: Verify custom StatefulSet uses specified image and env vars
+    try:
+    - assert:
+        timeout: 15s
+        resource:
+          apiVersion: apps/v1
+          kind: StatefulSet
+          metadata:
+            labels:
+              aim.eai.amd.com/kvcache: custom-config
+          spec:
+            template:
+              spec:
+                containers:
+                - name: redis
+                  image: redis:7.4.0
+                  env:
+                  - name: REDIS_PASSWORD
+                    value: testpassword
+                  - name: REDIS_MAX_MEMORY
+                    value: 512mb
+
+  - name: Verify custom KVCache becomes Ready
+    try:
+    - assert:
+        timeout: 90s
+        resource:
+          apiVersion: aim.eai.amd.com/v1alpha1
+          kind: AIMKVCache
+          metadata:
+            name: custom-config
+          status:
+            status: Ready

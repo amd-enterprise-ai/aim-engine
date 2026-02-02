@@ -1,0 +1,88 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: kvcache-updates
+spec:
+  description: |
+    - Updates to standalone KVCache
+  concurrent: true
+  timeouts:
+    assert: 120s
+  steps:
+  - name: Create initial standalone KVCache for update testing
+    try:
+    - apply:
+        file: kvcache-updateable-initial.yaml
+
+  - name: Verify initial configuration (500m CPU)
+    try:
+    - assert:
+        timeout: 30s
+        resource:
+          apiVersion: apps/v1
+          kind: StatefulSet
+          metadata:
+            labels:
+              aim.eai.amd.com/kvcache: updateable-kvcache
+          spec:
+            template:
+              spec:
+                containers:
+                - name: redis
+                  resources:
+                    requests:
+                      cpu: "500m"
+                      memory: "512Mi"
+
+  - name: Verify updateable KVCache becomes Ready
+    try:
+    - assert:
+        timeout: 90s
+        resource:
+          apiVersion: aim.eai.amd.com/v1alpha1
+          kind: AIMKVCache
+          metadata:
+            name: updateable-kvcache
+          status:
+            status: Ready
+
+  - name: Update standalone KVCache with new resources
+    try:
+    - apply:
+        file: kvcache-updateable-updated.yaml
+
+  - name: Verify StatefulSet is updated with new resources (1 CPU)
+    try:
+    - assert:
+        timeout: 60s
+        resource:
+          apiVersion: apps/v1
+          kind: StatefulSet
+          metadata:
+            labels:
+              aim.eai.amd.com/kvcache: updateable-kvcache
+          spec:
+            template:
+              spec:
+                containers:
+                - name: redis
+                  resources:
+                    requests:
+                      cpu: "1"
+                      memory: "1Gi"
+                    limits:
+                      cpu: "1"
+                      memory: "1Gi"
+
+  - name: Verify KVCache remains Ready after update
+    try:
+    - assert:
+        timeout: 90s
+        resource:
+          apiVersion: aim.eai.amd.com/v1alpha1
+          kind: AIMKVCache
+          metadata:
+            name: updateable-kvcache
+          status:
+            status: Ready

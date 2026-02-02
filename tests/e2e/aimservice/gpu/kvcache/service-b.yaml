@@ -1,0 +1,15 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-kvcache-b
+spec:
+  template:
+    allowUnoptimized: true
+  runtimeConfigName: test-kvcache
+  model:
+    image: amdenterpriseai/aim-meta-llama-llama-3-1-8b-instruct:0.8.5
+  caching:
+    mode: Never
+  kvCache:
+    type: redis
+  

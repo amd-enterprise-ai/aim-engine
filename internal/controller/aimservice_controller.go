@@ -55,6 +55,11 @@ const (
 	// when an AIMService is deleted. Template caches that are stuck in Failed/Pending states
 	// cannot be re-created while they exist, so we must delete them on service deletion.
 	finalizerTemplateCacheCleanup = "aim.eai.amd.com/template-cache-cleanup"
+
+	// AIMServiceKVCacheIndexKey is a virtual index key for looking up services by their
+	// computed KVCache name (either explicit spec.kvCache.name or default "kvcache-{namespace}").
+	// This enables efficient lookups when an AIMKVCache changes.
+	AIMServiceKVCacheIndexKey = ".spec.kvCache.resolvedName"
 )
 
 // AIMServiceReconciler reconciles a AIMService object
@@ -85,6 +90,8 @@ type AIMServiceReconciler struct {
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimkvcaches,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -206,11 +213,31 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
+	// Index AIMService by resolved KVCache name for efficient lookup when KVCache changes
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMService{}, AIMServiceKVCacheIndexKey, func(obj client.Object) []string {
+		svc, ok := obj.(*aimv1alpha1.AIMService)
+		if !ok || svc.Spec.KVCache == nil {
+			return nil
+		}
+		name := svc.Spec.KVCache.Name
+		if name == "" {
+			name = fmt.Sprintf("kvcache-%s", svc.Namespace)
+		}
+		return []string{name}
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMService{}).
 		Owns(&servingv1beta1.InferenceService{}).
 		Owns(&gatewayapiv1.HTTPRoute{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
+		Owns(&corev1.ConfigMap{}).
+		Watches(
+			&aimv1alpha1.AIMKVCache{},
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForKVCache),
+		).
 		// Watch namespace-scoped templates and enqueue services that reference them
 		Watches(
 			&aimv1alpha1.AIMServiceTemplate{},
@@ -489,6 +516,45 @@ func (r *AIMServiceReconciler) findServicesForTemplateCache(ctx context.Context,
 			},
 		}
 	}
+	return requests
+}
+
+// findServicesForKVCache returns reconcile requests for all AIMServices
+// that reference the given KVCache, either by explicit name or by default naming.
+// Uses the virtual index AIMServiceKVCacheIndexKey which computes the expected
+// KVCache name at index time.
+func (r *AIMServiceReconciler) findServicesForKVCache(ctx context.Context, obj client.Object) []reconcile.Request {
+	kvCache, ok := obj.(*aimv1alpha1.AIMKVCache)
+	if !ok {
+		return nil
+	}
+
+	// Find all services in the same namespace that would use this KVCache
+	var services aimv1alpha1.AIMServiceList
+	if err := r.List(ctx, &services,
+		client.InNamespace(kvCache.Namespace),
+		client.MatchingFields{AIMServiceKVCacheIndexKey: kvCache.Name},
+	); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMServices for KVCache",
+			"kvCache", kvCache.Name, "namespace", kvCache.Namespace)
+		return nil
+	}
+
+	requests := make([]reconcile.Request, len(services.Items))
+	for i, svc := range services.Items {
+		requests[i] = reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      svc.Name,
+				Namespace: svc.Namespace,
+			},
+		}
+	}
+
+	if len(requests) > 0 {
+		log.FromContext(ctx).V(1).Info("enqueuing services for KVCache change",
+			"kvCache", kvCache.Name, "serviceCount", len(requests))
+	}
+
 	return requests
 }
 

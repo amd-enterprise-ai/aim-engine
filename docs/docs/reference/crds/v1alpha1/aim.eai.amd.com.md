@@ -17,6 +17,8 @@ Package v1alpha1 contains API Schema definitions for the aim v1alpha1 API group.
 - [AIMClusterRuntimeConfigList](#aimclusterruntimeconfiglist)
 - [AIMClusterServiceTemplate](#aimclusterservicetemplate)
 - [AIMClusterServiceTemplateList](#aimclusterservicetemplatelist)
+- [AIMKVCache](#aimkvcache)
+- [AIMKVCacheList](#aimkvcachelist)
 - [AIMModel](#aimmodel)
 - [AIMModelCache](#aimmodelcache)
 - [AIMModelCacheList](#aimmodelcachelist)
@@ -362,6 +364,109 @@ _Appears in:_
 | `count` _integer_ | Count is the number of GPU resources requested per replica.<br />Must be at least 1. |  | Minimum: 1 <br /> |
 | `model` _string_ | Model is the GPU model name required for this deployment.<br />Examples: `MI300X`, `MI325X` |  | MinLength: 1 <br /> |
 | `resourceName` _string_ | ResourceName is the Kubernetes resource name for GPU resources.<br />Defaults to "amd.com/gpu" if not specified. | amd.com/gpu |  |
+
+
+#### AIMKVCache
+
+
+
+AIMKVCache is the Schema for the KV caches API
+
+
+
+_Appears in:_
+- [AIMKVCacheList](#aimkvcachelist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha1` | | |
+| `kind` _string_ | `AIMKVCache` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMKVCacheSpec](#aimkvcachespec)_ |  |  |  |
+| `status` _[AIMKVCacheStatus](#aimkvcachestatus)_ |  |  |  |
+
+
+#### AIMKVCacheList
+
+
+
+AIMKVCacheList contains a list of AIMKVCache
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha1` | | |
+| `kind` _string_ | `AIMKVCacheList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMKVCache](#aimkvcache) array_ |  |  |  |
+
+
+#### AIMKVCacheSpec
+
+
+
+AIMKVCacheSpec defines the desired state of AIMKVCache
+
+
+
+_Appears in:_
+- [AIMKVCache](#aimkvcache)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `kvCacheType` _string_ | KVCacheType specifies the type of key-value cache to create | redis | Enum: [redis] <br /> |
+| `image` _string_ | Image specifies the container image to use for the KV cache service.<br />If not specified, defaults to appropriate images based on KVCacheType:<br />- redis: redis:7.2.4 |  |  |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables to set in the KV cache container.<br />If not specified (nil), no additional environment variables are set.<br />If explicitly set to an empty array, no environment variables are added. |  |  |
+| `storage` _[StorageSpec](#storagespec)_ | Storage defines the persistent storage configuration for the KV cache |  |  |
+| `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources defines the resource requirements for the KV cache container.<br />If not specified, defaults to 1 CPU and 1Gi memory for both requests and limits. |  |  |
+
+
+#### AIMKVCacheStatus
+
+
+
+AIMKVCacheStatus defines the observed state of AIMKVCache
+
+
+
+_Appears in:_
+- [AIMKVCache](#aimkvcache)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `observedGeneration` _integer_ |  |  |  |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#condition-v1-meta) array_ | Conditions represent the latest available observations of the KV cache's state |  |  |
+| `status` _[AIMKVCacheStatusEnum](#aimkvcachestatusenum)_ | Status represents the current status of the KV cache | Pending | Enum: [Pending Progressing Ready Failed] <br /> |
+| `statefulSetName` _string_ | StatefulSetName represents the name of the created statefulset |  |  |
+| `serviceName` _string_ | ServiceName represents the name of the created service |  |  |
+| `endpoint` _string_ | Endpoint provides the connection information for accessing the KV cache.<br />Format depends on the backend type (e.g., "redis://service-name:6379" for Redis). |  |  |
+| `replicas` _integer_ | Replicas is the total number of replicas configured for the StatefulSet. |  |  |
+| `readyReplicas` _integer_ | ReadyReplicas is the number of pods that are ready and serving traffic. |  |  |
+| `storageSize` _string_ | StorageSize represents the total storage capacity allocated for the KV cache.<br />This reflects the size specified in the PersistentVolumeClaim. |  |  |
+| `lastError` _string_ | LastError contains details about the most recent error encountered.<br />This field is cleared when the error is resolved. |  |  |
+
+
+#### AIMKVCacheStatusEnum
+
+_Underlying type:_ _string_
+
+
+
+_Validation:_
+- Enum: [Pending Progressing Ready Failed]
+
+_Appears in:_
+- [AIMKVCacheStatus](#aimkvcachestatus)
+
+| Field | Description |
+| --- | --- |
+| `Pending` | AIMKVCacheStatusPending denotes that the KV cache is being created<br /> |
+| `Progressing` | AIMKVCacheStatusProgressing denotes that the KV cache is being deployed<br /> |
+| `Ready` | AIMKVCacheStatusReady denotes that the KV cache is ready to be used<br /> |
+| `Failed` | AIMKVCacheStatusFailed denotes that the KV cache deployment has failed<br /> |
 
 
 #### AIMMetric
@@ -1705,5 +1810,23 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  |  |
+
+
+#### StorageSpec
+
+
+
+StorageSpec defines the persistent storage configuration
+
+
+
+_Appears in:_
+- [AIMKVCacheSpec](#aimkvcachespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Size specifies the storage size for the persistent volume.<br />Minimum recommended size is 1Gi for Redis to function properly.<br />If not specified, defaults to 1Gi.<br />WARNING: This field is immutable after creation due to StatefulSet VolumeClaimTemplate limitations. | 1Gi |  |
+| `storageClassName` _string_ | StorageClassName specifies the storage class to use for the persistent volume.<br />If not specified, the cluster's default storage class will be used.<br />Ensure your cluster has a default storage class configured or specify one explicitly.<br />WARNING: This field is immutable after creation due to StatefulSet VolumeClaimTemplate limitations. |  |  |
+| `accessModes` _[PersistentVolumeAccessMode](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#persistentvolumeaccessmode-v1-core) array_ | AccessModes specifies the access modes for the persistent volume.<br />Defaults to ReadWriteOnce if not specified.<br />WARNING: This field is immutable after creation due to StatefulSet VolumeClaimTemplate limitations. | [ReadWriteOnce] |  |
 
 
