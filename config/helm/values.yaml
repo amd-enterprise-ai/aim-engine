@@ -12,6 +12,11 @@ manager:
     tag: latest
     pullPolicy: IfNotPresent
 
+  # Secrets for pulling the operator image from private registries
+  # imagePullSecrets:
+  #   - name: ghcr-pull-secret
+  imagePullSecrets: []
+
   # Controller arguments
   args:
     - --leader-elect

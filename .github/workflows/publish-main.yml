@@ -11,7 +11,6 @@ on:
       - 'config/**'
       - 'Makefile'
       - 'Dockerfile'
-  pull_request:
 
 permissions:
   contents: write
@@ -28,7 +27,7 @@ jobs:
       - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: feature/helm-chart-publish-main
+          ref: main
           fetch-depth: 0
 
       - name: Set up mise
@@ -100,9 +99,10 @@ jobs:
           cp -r dist/chart/* chart/
           git add chart/
           
-          # Add CRDs as separate file (distributed independently)
-          cp dist/crds.yaml crds.yaml
-          git add crds.yaml
+          # Add the crd directory with crds.yaml as separate file (distributed independently)
+          mkdir -p crd
+          cp dist/crds.yaml crd/crds.yaml
+          git add crd/crds.yaml
           
           # Create a README for the branch
           cat > README.md << 'EOF'
@@ -116,7 +116,7 @@ jobs:
           
           ```bash
           # 1. Install CRDs
-          kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/publish-main/crds.yaml
+          kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/publish-main/crd/crds.yaml
           kubectl wait --for=condition=Established crd --all --timeout=60s
           
           # 2a. Install operator via Helm OCI (recommended)
@@ -134,7 +134,7 @@ jobs:
           git clone -b publish-main https://github.com/${{ github.repository }}.git aim-engine
           cd aim-engine
           
-          kubectl apply -f crds.yaml
+          kubectl apply -f crd/crds.yaml
           kubectl wait --for=condition=Established crd --all --timeout=60s
           helm install aim-engine ./chart --namespace aim-system --create-namespace
           ```
