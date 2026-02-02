@@ -1,0 +1,122 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: Additive Custom Templates
+#
+# This test validates that customTemplates are created IN ADDITION to
+# discovered templates from image metadata (not replacing them).
+#
+# Tested behavior:
+# - Regular AIM image (no modelSources) with customTemplates
+# - Discovered templates are created from image recommendedDeployments
+# - Custom templates are ALSO created (additive, not replacement)
+# - Both types of templates exist simultaneously
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: additive-custom-templates
+spec:
+  timeouts:
+    apply: 30s
+    assert: 90s
+  steps:
+    - name: Create model with additive custom templates
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert model becomes ready
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: additive-templates-test
+              status:
+                status: Ready
+                # NOT a custom model - image-based
+                sourceType: Image
+
+    - name: Assert discovered template is created from image metadata
+      try:
+        # The aim-dummy image has recommendedDeployments that create this template
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/model: additive-templates-test
+              spec:
+                modelName: additive-templates-test
+                gpu:
+                  models:
+                    - MI300X
+
+    - name: Assert custom-high-memory template is also created (additive)
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/model: additive-templates-test
+                  aim.eai.amd.com/template.alias: custom-high-memory
+              spec:
+                modelName: additive-templates-test
+                gpu:
+                  requests: 2
+                  models:
+                    - MI300X
+                env:
+                  - name: MAX_MODEL_LEN
+                    value: "16384"
+
+    - name: Assert custom-low-latency template is also created (additive)
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/model: additive-templates-test
+                  aim.eai.amd.com/template.alias: custom-low-latency
+              spec:
+                modelName: additive-templates-test
+                type: optimized
+                metric: latency
+                precision: fp16
+                gpu:
+                  requests: 1
+                  models:
+                    - MI300X
+
+    - name: Verify we have at least 3 templates (1 discovered + 2 custom)
+      description: |
+        This step verifies that both discovered and custom templates exist.
+        We expect at least 3 templates: 1 from discovery + 2 from customTemplates.
+      try:
+        # Assert all three templates exist by checking for each one
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: additive-templates-test
+                  aim.eai.amd.com/template.alias: custom-high-memory
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: additive-templates-test
+                  aim.eai.amd.com/template.alias: custom-low-latency

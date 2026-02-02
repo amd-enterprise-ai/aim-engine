@@ -317,12 +317,6 @@ func (s *AIMModelSpec) ExpectsTemplates(status *AIMModelStatus) *bool {
 		return &result
 	}
 
-	// If customTemplates are defined, we always expect templates
-	if len(s.CustomTemplates) > 0 {
-		result := true
-		return &result
-	}
-
 	// Custom models (with modelSources) always expect templates to be created
 	// from customTemplates or auto-generated from hardware
 	if len(s.ModelSources) > 0 {
@@ -331,11 +325,16 @@ func (s *AIMModelSpec) ExpectsTemplates(status *AIMModelStatus) *bool {
 	}
 
 	// For image-based models, check metadata for recommended deployments
+	// customTemplates are additive to discovered templates, so we still need metadata
 	metadata := s.GetEffectiveImageMetadata(status)
 	if metadata == nil {
 		return nil // Unknown - still fetching
 	}
 
 	hasDeployments := metadata.Model != nil && len(metadata.Model.RecommendedDeployments) > 0
-	return &hasDeployments
+	hasCustomTemplates := len(s.CustomTemplates) > 0
+
+	// Expect templates if we have discovered deployments OR customTemplates
+	result := hasDeployments || hasCustomTemplates
+	return &result
 }

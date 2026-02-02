@@ -412,8 +412,8 @@ func (r *ClusterModelReconciler) PlanResources(
 		return controllerutils.PlanResult{}
 	}
 
-	// For models with customTemplates or modelSources, build templates directly
-	if len(model.Spec.CustomTemplates) > 0 || IsCustomModel(&model.Spec) {
+	// For custom models (with modelSources), build templates from customTemplates only
+	if IsCustomModel(&model.Spec) {
 		logger.V(1).Info("building custom templates for cluster model")
 		templates := buildCustomClusterServiceTemplates(model)
 		for _, template := range templates {
@@ -422,18 +422,24 @@ func (r *ClusterModelReconciler) PlanResources(
 		return planResult
 	}
 
-	// For image-based models, get metadata to create templates from
+	// For image-based models, build from discovery
 	metadata := model.Spec.GetEffectiveImageMetadata(&model.Status)
-	if metadata == nil || metadata.Model == nil {
-		logger.V(1).Info("no metadata available yet")
-		return controllerutils.PlanResult{}
+	if metadata != nil && metadata.Model != nil {
+		for _, deployment := range metadata.Model.RecommendedDeployments {
+			template := buildClusterServiceTemplate(model, deployment)
+			planResult.Apply(template)
+		}
 	}
 
-	// Build templates from recommended deployments
-	for _, deployment := range metadata.Model.RecommendedDeployments {
-		template := buildClusterServiceTemplate(model, deployment)
-		planResult.Apply(template)
+	// Also build customTemplates if defined (additive to discovered templates)
+	if len(model.Spec.CustomTemplates) > 0 {
+		logger.V(1).Info("building additional custom templates for cluster model")
+		templates := buildCustomClusterServiceTemplates(model)
+		for _, template := range templates {
+			planResult.Apply(template)
+		}
 	}
+
 	return planResult
 }
 
@@ -454,8 +460,8 @@ func (r *ModelReconciler) PlanResources(
 		return controllerutils.PlanResult{}
 	}
 
-	// For models with customTemplates or modelSources, build templates directly
-	if len(model.Spec.CustomTemplates) > 0 || IsCustomModel(&model.Spec) {
+	// For custom models (with modelSources), build templates from customTemplates only
+	if IsCustomModel(&model.Spec) {
 		logger.V(1).Info("building custom templates for model")
 		templates := buildCustomServiceTemplates(model)
 		for _, template := range templates {
@@ -464,17 +470,22 @@ func (r *ModelReconciler) PlanResources(
 		return planResult
 	}
 
-	// For image-based models, get metadata to create templates from
+	// For image-based models, build from discovery
 	metadata := model.Spec.GetEffectiveImageMetadata(&model.Status)
-	if metadata == nil || metadata.Model == nil {
-		logger.V(1).Info("no metadata available yet")
-		return controllerutils.PlanResult{}
+	if metadata != nil && metadata.Model != nil {
+		for _, deployment := range metadata.Model.RecommendedDeployments {
+			template := buildServiceTemplate(model, deployment)
+			planResult.Apply(template)
+		}
 	}
 
-	// Build templates from recommended deployments
-	for _, deployment := range metadata.Model.RecommendedDeployments {
-		template := buildServiceTemplate(model, deployment)
-		planResult.Apply(template)
+	// Also build customTemplates if defined (additive to discovered templates)
+	if len(model.Spec.CustomTemplates) > 0 {
+		logger.V(1).Info("building additional custom templates for model")
+		templates := buildCustomServiceTemplates(model)
+		for _, template := range templates {
+			planResult.Apply(template)
+		}
 	}
 
 	return planResult
