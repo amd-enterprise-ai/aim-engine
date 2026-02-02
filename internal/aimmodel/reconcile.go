@@ -28,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -418,7 +417,6 @@ func (r *ClusterModelReconciler) PlanResources(
 		logger.V(1).Info("building custom templates for cluster model")
 		templates := buildCustomClusterServiceTemplates(model)
 		for _, template := range templates {
-			_ = controllerutil.SetControllerReference(model, template, r.Scheme)
 			planResult.Apply(template)
 		}
 		return planResult
@@ -434,7 +432,6 @@ func (r *ClusterModelReconciler) PlanResources(
 	// Build templates from recommended deployments
 	for _, deployment := range metadata.Model.RecommendedDeployments {
 		template := buildClusterServiceTemplate(model, deployment)
-		_ = controllerutil.SetControllerReference(model, template, r.Scheme)
 		planResult.Apply(template)
 	}
 	return planResult
@@ -462,7 +459,6 @@ func (r *ModelReconciler) PlanResources(
 		logger.V(1).Info("building custom templates for model")
 		templates := buildCustomServiceTemplates(model)
 		for _, template := range templates {
-			_ = controllerutil.SetControllerReference(model, template, r.Scheme)
 			planResult.Apply(template)
 		}
 		return planResult
@@ -478,7 +474,6 @@ func (r *ModelReconciler) PlanResources(
 	// Build templates from recommended deployments
 	for _, deployment := range metadata.Model.RecommendedDeployments {
 		template := buildServiceTemplate(model, deployment)
-		_ = controllerutil.SetControllerReference(model, template, r.Scheme)
 		planResult.Apply(template)
 	}
 
