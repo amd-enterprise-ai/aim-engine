@@ -61,13 +61,107 @@ spec:
           spec:
             description: AIMModelSpec defines the desired state of AIMModel.
             properties:
+              custom:
+                description: |-
+                  Custom contains configuration for custom models (models with inline modelSources).
+                  Only used when modelSources are specified; ignored for image-based models.
+                properties:
+                  hardware:
+                    description: |-
+                      Hardware specifies default hardware requirements for all templates.
+                      Individual templates can override these defaults.
+                      Required when modelSources is set and customTemplates is empty.
+                    properties:
+                      cpu:
+                        description: CPU specifies CPU requirements.
+                        properties:
+                          limits:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: Limits is the maximum number of CPU cores
+                              to allow.
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          requests:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: Requests is the number of CPU cores to request.
+                              Required and must be > 0.
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                        required:
+                        - requests
+                        type: object
+                        x-kubernetes-validations:
+                        - message: requests must be greater than 0
+                          rule: self.requests.isGreaterThan(quantity("0"))
+                      gpu:
+                        description: GPU specifies GPU requirements. If not set, no
+                          GPUs are requested (CPU-only model).
+                        properties:
+                          minVram:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: |-
+                              MinVRAM limits deployment to GPUs having at least this much VRAM.
+                              Used for capacity planning when model size is known.
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          models:
+                            description: |-
+                              Models limits deployment to specific GPU models.
+                              When multiple models are specified, the scheduler picks from any available.
+                              Examples: ["MI300X"], ["MI300X", "MI325X"]
+                            items:
+                              maxLength: 64
+                              minLength: 1
+                              type: string
+                            maxItems: 8
+                            type: array
+                          requests:
+                            description: |-
+                              Requests is the number of GPUs to set as requests/limits.
+                              Set to 0 to target GPU nodes without consuming GPU resources (useful for testing).
+                            format: int32
+                            minimum: 0
+                            type: integer
+                          resourceName:
+                            default: amd.com/gpu
+                            description: |-
+                              ResourceName is the Kubernetes resource name for GPU resources.
+                              Defaults to "amd.com/gpu" if not specified.
+                            type: string
+                        type: object
+                    type: object
+                    x-kubernetes-validations:
+                    - message: at least one of gpu or cpu must be specified
+                      rule: has(self.gpu) || has(self.cpu)
+                  type:
+                    allOf:
+                    - enum:
+                      - optimized
+                      - preview
+                      - unoptimized
+                    - enum:
+                      - optimized
+                      - preview
+                      - unoptimized
+                    description: |-
+                      Type specifies default type for all templates.
+                      Individual templates can override this default.
+                      When nil, templates default to "unoptimized".
+                    type: string
+                type: object
               customTemplates:
                 description: |-
                   CustomTemplates defines explicit template configurations for this model.
-                  When modelSources are specified, these templates are created directly
-                  without running a discovery job.
+                  These templates are created directly without running a discovery job.
+                  Can be used with or without modelSources to define custom deployment configurations.
                   If omitted when modelSources is set, a single template is auto-generated
-                  using the spec-level hardware requirements.
+                  using the custom.hardware requirements.
                 items:
                   description: |-
                     AIMCustomTemplate defines a custom template configuration for a model.
@@ -232,6 +326,7 @@ spec:
                         required:
                         - name
                         type: object
+                      maxItems: 64
                       type: array
                       x-kubernetes-list-map-keys:
                       - name
@@ -258,10 +353,15 @@ spec:
                               - type: integer
                               - type: string
                               description: Requests is the number of CPU cores to
-                                request.
+                                request. Required and must be > 0.
                               pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                               x-kubernetes-int-or-string: true
+                          required:
+                          - requests
                           type: object
+                          x-kubernetes-validations:
+                          - message: requests must be greater than 0
+                            rule: self.requests.isGreaterThan(quantity("0"))
                         gpu:
                           description: GPU specifies GPU requirements. If not set,
                             no GPUs are requested (CPU-only model).
@@ -282,12 +382,10 @@ spec:
                                 Examples: ["MI300X"], ["MI300X", "MI325X"]
                               items:
                                 maxLength: 64
+                                minLength: 1
                                 type: string
                               maxItems: 8
                               type: array
-                              x-kubernetes-validations:
-                              - message: GPU model names cannot be empty or whitespace-only
-                                rule: self.all(m, m.trim() != '')
                             requests:
                               description: |-
                                 Requests is the number of GPUs to set as requests/limits.
@@ -303,9 +401,13 @@ spec:
                               type: string
                           type: object
                       type: object
+                      x-kubernetes-validations:
+                      - message: at least one of gpu or cpu must be specified
+                        rule: has(self.gpu) || has(self.cpu)
                     name:
                       description: Name is the template name. If not provided, auto-generated
                         from model name + profile.
+                      maxLength: 63
                       type: string
                     profile:
                       description: |-
@@ -549,72 +651,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
-              hardware:
-                description: |-
-                  Hardware specifies default hardware requirements for all custom templates.
-                  Individual templates can override these defaults.
-                  Required when modelSources is set and customTemplates is empty.
-                properties:
-                  cpu:
-                    description: CPU specifies CPU requirements.
-                    properties:
-                      limits:
-                        anyOf:
-                        - type: integer
-                        - type: string
-                        description: Limits is the maximum number of CPU cores to
-                          allow.
-                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                        x-kubernetes-int-or-string: true
-                      requests:
-                        anyOf:
-                        - type: integer
-                        - type: string
-                        description: Requests is the number of CPU cores to request.
-                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                        x-kubernetes-int-or-string: true
-                    type: object
-                  gpu:
-                    description: GPU specifies GPU requirements. If not set, no GPUs
-                      are requested (CPU-only model).
-                    properties:
-                      minVram:
-                        anyOf:
-                        - type: integer
-                        - type: string
-                        description: |-
-                          MinVRAM limits deployment to GPUs having at least this much VRAM.
-                          Used for capacity planning when model size is known.
-                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                        x-kubernetes-int-or-string: true
-                      models:
-                        description: |-
-                          Models limits deployment to specific GPU models.
-                          When multiple models are specified, the scheduler picks from any available.
-                          Examples: ["MI300X"], ["MI300X", "MI325X"]
-                        items:
-                          maxLength: 64
-                          type: string
-                        maxItems: 8
-                        type: array
-                        x-kubernetes-validations:
-                        - message: GPU model names cannot be empty or whitespace-only
-                          rule: self.all(m, m.trim() != '')
-                      requests:
-                        description: |-
-                          Requests is the number of GPUs to set as requests/limits.
-                          Set to 0 to target GPU nodes without consuming GPU resources (useful for testing).
-                        format: int32
-                        minimum: 0
-                        type: integer
-                      resourceName:
-                        default: amd.com/gpu
-                        description: |-
-                          ResourceName is the Kubernetes resource name for GPU resources.
-                          Defaults to "amd.com/gpu" if not specified.
-                        type: string
-                    type: object
-                type: object
               image:
                 description: |-
                   Image is the container image URI for this AIM model.
@@ -1087,21 +1123,6 @@ spec:
                   This includes metadata extraction jobs and any other model-related operations.
                   If empty, the default service account for the namespace is used.
                 type: string
-              type:
-                allOf:
-                - enum:
-                  - optimized
-                  - preview
-                  - unoptimized
-                - enum:
-                  - optimized
-                  - preview
-                  - unoptimized
-                description: |-
-                  Type specifies default type for all custom templates.
-                  Individual templates can override this default.
-                  When nil, templates default to "unoptimized".
-                type: string
             required:
             - image
             type: object
@@ -1110,16 +1131,12 @@ spec:
                 does not run to populate it)
               rule: '!has(self.modelSources) || size(self.modelSources) == 0 || self.modelSources.all(s,
                 has(s.size))'
-            - message: customTemplates can only be specified when modelSources is
-                set
-              rule: '!has(self.customTemplates) || size(self.customTemplates) == 0
-                || (has(self.modelSources) && size(self.modelSources) > 0)'
-            - message: 'when using modelSources, hardware must be specified: set spec.hardware
-                (inherited by all templates) or set hardware on each customTemplate
-                individually'
-              rule: '!has(self.modelSources) || size(self.modelSources) == 0 || has(self.hardware)
-                || !has(self.customTemplates) || size(self.customTemplates) == 0 ||
-                self.customTemplates.all(t, has(t.hardware) || has(self.hardware))'
+            - message: 'when using modelSources, hardware must be specified: set custom.hardware
+                (inherited by all templates) or set hardware on each template individually'
+              rule: '!has(self.modelSources) || size(self.modelSources) == 0 || (has(self.custom)
+                && has(self.custom.hardware)) || !has(self.customTemplates) || size(self.customTemplates)
+                == 0 || self.customTemplates.all(t, has(t.hardware) || (has(self.custom)
+                && has(self.custom.hardware)))'
           status:
             description: AIMModelStatus defines the observed state of AIMModel.
             properties:

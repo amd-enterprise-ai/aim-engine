@@ -19,11 +19,12 @@ spec:
       sourceUri: hf://sshleifer/tiny-gpt2
       size: 100Mi
 
-  # Default hardware - inherited by templates that don't override
-  hardware:
-    gpu:
-      requests: 1
-      models: ["MI300X"]
+  # Custom model defaults - hardware inherited by templates that don't override
+  custom:
+    hardware:
+      gpu:
+        requests: 1
+        models: ["MI300X"]
 
   # Multiple custom templates with different configurations
   customTemplates:

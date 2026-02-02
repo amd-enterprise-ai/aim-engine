@@ -444,10 +444,15 @@ spec:
                                 - type: integer
                                 - type: string
                                 description: Requests is the number of CPU cores to
-                                  request.
+                                  request. Required and must be > 0.
                                 pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                                 x-kubernetes-int-or-string: true
+                            required:
+                            - requests
                             type: object
+                            x-kubernetes-validations:
+                            - message: requests must be greater than 0
+                              rule: self.requests.isGreaterThan(quantity("0"))
                           gpu:
                             description: GPU specifies GPU requirements. If not set,
                               no GPUs are requested (CPU-only model).
@@ -468,12 +473,10 @@ spec:
                                   Examples: ["MI300X"], ["MI300X", "MI325X"]
                                 items:
                                   maxLength: 64
+                                  minLength: 1
                                   type: string
                                 maxItems: 8
                                 type: array
-                                x-kubernetes-validations:
-                                - message: GPU model names cannot be empty or whitespace-only
-                                  rule: self.all(m, m.trim() != '')
                               requests:
                                 description: |-
                                   Requests is the number of GPUs to set as requests/limits.
@@ -489,6 +492,9 @@ spec:
                                 type: string
                             type: object
                         type: object
+                        x-kubernetes-validations:
+                        - message: at least one of gpu or cpu must be specified
+                          rule: has(self.gpu) || has(self.cpu)
                       modelSources:
                         description: |-
                           ModelSources specifies the model sources to use.
@@ -758,12 +764,10 @@ spec:
                           Examples: ["MI300X"], ["MI300X", "MI325X"]
                         items:
                           maxLength: 64
+                          minLength: 1
                           type: string
                         maxItems: 8
                         type: array
-                        x-kubernetes-validations:
-                        - message: GPU model names cannot be empty or whitespace-only
-                          rule: self.all(m, m.trim() != '')
                       requests:
                         description: |-
                           Requests is the number of GPUs to set as requests/limits.

@@ -28,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -92,23 +91,6 @@ func (result ClusterModelFetchResult) GetComponentHealth() []controllerutils.Com
 	// RuntimeConfig is optional for models - they can operate without one
 	runtimeConfigHealth := result.mergedRuntimeConfig.ToUpstreamComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth)
 
-	// For custom models, skip image metadata health - we don't need it
-	var imageMetadataHealth controllerutils.ComponentHealth
-	if IsCustomModel(&result.model.Spec) {
-		imageMetadataHealth = controllerutils.ComponentHealth{
-			Component: "ImageMetadata",
-			State:     constants.AIMStatusReady,
-			Reason:    "CustomModelSkipped",
-		}
-	} else {
-		imageMetadataHealth = result.imageMetadata.ToUpstreamComponentHealth("ImageMetadata", func(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
-			return controllerutils.ComponentHealth{
-				State:  constants.AIMStatusReady,
-				Reason: "ImageMetadataFound",
-			}
-		})
-	}
-
 	clusterServiceTemplateHealth := result.clusterServiceTemplates.ToUpstreamComponentHealth("ClusterServiceTemplates", func(list *aimv1alpha1.AIMClusterServiceTemplateList) controllerutils.ComponentHealth {
 		return inspectClusterTemplateStatuses(
 			result.model.Spec.ExpectsTemplates(&result.model.Status),
@@ -116,11 +98,21 @@ func (result ClusterModelFetchResult) GetComponentHealth() []controllerutils.Com
 		)
 	})
 
-	return []controllerutils.ComponentHealth{
-		runtimeConfigHealth,
-		imageMetadataHealth,
-		clusterServiceTemplateHealth,
+	health := []controllerutils.ComponentHealth{runtimeConfigHealth}
+
+	// Only report image metadata health for non-custom models
+	if !IsCustomModel(&result.model.Spec) {
+		imageMetadataHealth := result.imageMetadata.ToUpstreamComponentHealth("ImageMetadata", func(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
+			return controllerutils.ComponentHealth{
+				State:  constants.AIMStatusReady,
+				Reason: "ImageMetadataFound",
+			}
+		})
+		health = append(health, imageMetadataHealth)
 	}
+
+	health = append(health, clusterServiceTemplateHealth)
+	return health
 }
 
 // inspectClusterTemplateStatuses aggregates cluster template statuses into a single ComponentState.
@@ -143,22 +135,17 @@ type ModelFetchResult struct {
 func (result ModelFetchResult) GetComponentHealth() []controllerutils.ComponentHealth {
 	// RuntimeConfig is optional for models - they can operate without one
 	runtimeConfigHealth := result.mergedRuntimeConfig.ToComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth)
+	health := []controllerutils.ComponentHealth{runtimeConfigHealth}
 
-	// For custom models, skip image metadata health - we don't need it
-	var imageMetadataHealth controllerutils.ComponentHealth
-	if IsCustomModel(&result.model.Spec) {
-		imageMetadataHealth = controllerutils.ComponentHealth{
-			Component: "ImageMetadata",
-			State:     constants.AIMStatusReady,
-			Reason:    "CustomModelSkipped",
-		}
-	} else {
-		imageMetadataHealth = result.imageMetadata.ToComponentHealth("ImageMetadata", func(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
+	// Only report image metadata health for non-custom models
+	if !IsCustomModel(&result.model.Spec) {
+		imageMetadataHealth := result.imageMetadata.ToComponentHealth("ImageMetadata", func(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
 			return controllerutils.ComponentHealth{
 				State:  constants.AIMStatusReady,
 				Reason: "ImageMetadataFound",
 			}
 		})
+		health = append(health, imageMetadataHealth)
 	}
 
 	serviceTemplateHealth := result.serviceTemplates.ToComponentHealth("ServiceTemplates", func(list *aimv1alpha1.AIMServiceTemplateList) controllerutils.ComponentHealth {
@@ -168,11 +155,8 @@ func (result ModelFetchResult) GetComponentHealth() []controllerutils.ComponentH
 		)
 	})
 
-	return []controllerutils.ComponentHealth{
-		runtimeConfigHealth,
-		imageMetadataHealth,
-		serviceTemplateHealth,
-	}
+	health = append(health, serviceTemplateHealth)
+	return health
 }
 
 func (r *ModelReconciler) FetchRemoteState(
@@ -321,7 +305,7 @@ func aggregateTemplateStatuses(expectsTemplates *bool, statuses []constants.AIMS
 
 // fetchImageMetadata determines how to obtain image metadata for a model.
 // It handles these cases:
-//  0. Custom model (has modelSources) - skip fetch entirely, templates are built from customTemplates
+//  0. Custom model (has modelSources) - skip fetch entirely, templates are built from CustomTemplates
 //  1. Extraction explicitly disabled - skip fetch entirely
 //  2. Spec-provided metadata (air-gapped environments) - returns the spec value directly
 //  3. Already cached in status - returns empty result (no fetch needed)
@@ -334,7 +318,7 @@ func fetchImageMetadata(
 	secretNamespace string,
 ) controllerutils.FetchResult[*aimv1alpha1.ImageMetadata] {
 	// Case 0: Custom model - skip image metadata extraction entirely
-	// Custom models use spec.customTemplates instead of discovered templates
+	// Custom models use spec.CustomTemplates instead of discovered templates
 	if IsCustomModel(&spec) {
 		log.FromContext(ctx).V(1).Info("custom model detected, skipping image metadata extraction")
 		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{}
@@ -428,30 +412,34 @@ func (r *ClusterModelReconciler) PlanResources(
 		return controllerutils.PlanResult{}
 	}
 
-	// For custom models, build templates from customTemplates
+	// For custom models (with modelSources), build templates from customTemplates only
 	if IsCustomModel(&model.Spec) {
 		logger.V(1).Info("building custom templates for cluster model")
 		templates := buildCustomClusterServiceTemplates(model)
 		for _, template := range templates {
-			_ = controllerutil.SetControllerReference(model, template, r.Scheme)
 			planResult.Apply(template)
 		}
 		return planResult
 	}
 
-	// For image-based models, get metadata to create templates from
+	// For image-based models, build from discovery
 	metadata := model.Spec.GetEffectiveImageMetadata(&model.Status)
-	if metadata == nil || metadata.Model == nil {
-		logger.V(1).Info("no metadata available yet")
-		return controllerutils.PlanResult{}
+	if metadata != nil && metadata.Model != nil {
+		for _, deployment := range metadata.Model.RecommendedDeployments {
+			template := buildClusterServiceTemplate(model, deployment)
+			planResult.Apply(template)
+		}
 	}
 
-	// Build templates from recommended deployments
-	for _, deployment := range metadata.Model.RecommendedDeployments {
-		template := buildClusterServiceTemplate(model, deployment)
-		_ = controllerutil.SetControllerReference(model, template, r.Scheme)
-		planResult.Apply(template)
+	// Also build customTemplates if defined (additive to discovered templates)
+	if len(model.Spec.CustomTemplates) > 0 {
+		logger.V(1).Info("building additional custom templates for cluster model")
+		templates := buildCustomClusterServiceTemplates(model)
+		for _, template := range templates {
+			planResult.Apply(template)
+		}
 	}
+
 	return planResult
 }
 
@@ -472,29 +460,32 @@ func (r *ModelReconciler) PlanResources(
 		return controllerutils.PlanResult{}
 	}
 
-	// For custom models, build templates from customTemplates
+	// For custom models (with modelSources), build templates from customTemplates only
 	if IsCustomModel(&model.Spec) {
 		logger.V(1).Info("building custom templates for model")
 		templates := buildCustomServiceTemplates(model)
 		for _, template := range templates {
-			_ = controllerutil.SetControllerReference(model, template, r.Scheme)
 			planResult.Apply(template)
 		}
 		return planResult
 	}
 
-	// For image-based models, get metadata to create templates from
+	// For image-based models, build from discovery
 	metadata := model.Spec.GetEffectiveImageMetadata(&model.Status)
-	if metadata == nil || metadata.Model == nil {
-		logger.V(1).Info("no metadata available yet")
-		return controllerutils.PlanResult{}
+	if metadata != nil && metadata.Model != nil {
+		for _, deployment := range metadata.Model.RecommendedDeployments {
+			template := buildServiceTemplate(model, deployment)
+			planResult.Apply(template)
+		}
 	}
 
-	// Build templates from recommended deployments
-	for _, deployment := range metadata.Model.RecommendedDeployments {
-		template := buildServiceTemplate(model, deployment)
-		_ = controllerutil.SetControllerReference(model, template, r.Scheme)
-		planResult.Apply(template)
+	// Also build customTemplates if defined (additive to discovered templates)
+	if len(model.Spec.CustomTemplates) > 0 {
+		logger.V(1).Info("building additional custom templates for model")
+		templates := buildCustomServiceTemplates(model)
+		for _, template := range templates {
+			planResult.Apply(template)
+		}
 	}
 
 	return planResult

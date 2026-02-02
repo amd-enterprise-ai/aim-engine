@@ -372,11 +372,12 @@ spec:
     - modelId: meta-llama/Llama-3-8B
       sourceUri: s3://my-bucket/models/llama-3-8b
       size: 16Gi
-  hardware:
-    gpu:
-      requests: 1
-      models:
-        - MI300X
+  custom:
+    hardware:
+      gpu:
+        requests: 1
+        models:
+          - MI300X
 ```
 
 #### 2. Inline Custom Model in AIMService
@@ -410,35 +411,39 @@ Each model source specifies:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `modelId` | Yes | Canonical identifier in `{org}/{name}` format. Determines the cache mount path. |
-| `sourceUri` | Yes | Download location. Schemes: `hf://org/model` (HuggingFace) or `s3://bucket/key` (S3) |
+| `sourceUri` | Yes | Download location. Schemes: `hf://org/model` (HuggingFace) or `s3://bucket/key` (S3). For S3, use the bucket name directly without the service hostname (e.g., `s3://my-bucket/models/llama`). |
 | `size` | Yes | Storage size for PVC provisioning. Must be non-zero. |
 | `env` | No | Per-source credential overrides (e.g., `HF_TOKEN`, `AWS_ACCESS_KEY_ID`) |
 
 ### Hardware Requirements
 
-Custom models require explicit hardware specifications since discovery doesn't run:
+Custom models require explicit hardware specifications since discovery doesn't run.
+These go under `spec.custom.hardware` for AIMModel, or `spec.model.custom.hardware` for inline AIMService:
 
 ```yaml
+# For AIMModel:
 spec:
-  hardware:
-    gpu:
-      requests: 2          # Number of GPUs required
-      models:              # Optional: specific GPU models for node affinity
-        - MI300X
-        - MI250
-    cpu:
-      requests: "4"        # Optional: CPU requests
-      limits: "8"          # Optional: CPU limits
+  custom:
+    hardware:
+      gpu:
+        requests: 2          # Number of GPUs required
+        models:              # Optional: specific GPU models for node affinity
+          - MI300X
+          - MI250
+        minVram: 64Gi        # Optional: minimum VRAM per GPU for capacity planning
+      cpu:
+        requests: "4"        # Required if cpu field is specified: CPU requests
+        limits: "8"          # Optional: CPU limits
 ```
 
-If no `models` are specified, the workload can run on any available GPU.
+If no `models` are specified, the workload can run on any available GPU. The `minVram` field is used for capacity planning when the model size is known.
 
 ### Template Generation
 
 When `modelSources` is specified:
 
-1. **Without customTemplates**: A single template is auto-generated using `spec.hardware`
-2. **With customTemplates**: Templates are created per entry, each inheriting from `spec.hardware` unless overridden
+1. **Without custom.templates**: A single template is auto-generated using `custom.hardware`
+2. **With custom.templates**: Templates are created per entry, each inheriting from `custom.hardware` unless overridden
 
 ```yaml
 spec:
@@ -446,19 +451,20 @@ spec:
     - modelId: meta-llama/Llama-3-8B
       sourceUri: s3://bucket/model
       size: 16Gi
-  hardware:
-    gpu:
-      requests: 1
-  customTemplates:
-    - name: high-memory
-      hardware:
-        gpu:
-          requests: 2  # Override
-      env:
-        - name: VLLM_GPU_MEMORY_UTILIZATION
-          value: "0.95"
-    - name: standard
-      # Inherits hardware from spec.hardware
+  custom:
+    hardware:
+      gpu:
+        requests: 1
+    templates:
+      - name: high-memory  # Generated as {modelName}-custom-[{name}][-{precision}][-{gpu}]-{hash}
+        hardware:
+          gpu:
+            requests: 2  # Override
+        env:
+          - name: VLLM_GPU_MEMORY_UTILIZATION
+            value: "0.95"
+      - name: standard
+        # Inherits hardware from custom.hardware
 ```
 
 ### Authentication
@@ -508,11 +514,11 @@ spec:
 
 | Aspect | Image-Based Models | Custom Models |
 |--------|-------------------|---------------|
-| Model weights | Embedded in container | Downloaded at runtime |
+| Model weights | source URI embedded in image | source URI in spec |
 | Discovery | Runs to extract metadata | Skipped |
 | Hardware | Optional (from discovery) | Required |
 | Templates | Auto-generated from image labels | Auto-generated from spec |
-| Caching | Uses shared template cache | Uses dedicated model caches |
+| Caching | Uses shared template cache | Uses dedicated template cache |
 
 ### Status
 

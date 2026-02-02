@@ -118,10 +118,10 @@ func TestMergeHardware(t *testing.T) {
 			name:        "spec GPU preserved when template only has CPU",
 			specDefault: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{Requests: 2}},
 			templateOverride: &aimv1alpha1.AIMHardwareRequirements{CPU: &aimv1alpha1.AIMCpuRequirements{
-				Requests: resource.NewQuantity(4, resource.DecimalSI),
+				Requests: *resource.NewQuantity(4, resource.DecimalSI),
 			}},
 			expectedGPU: &aimv1alpha1.AIMGpuRequirements{Requests: 2},
-			expectedCPU: &aimv1alpha1.AIMCpuRequirements{Requests: resource.NewQuantity(4, resource.DecimalSI)},
+			expectedCPU: &aimv1alpha1.AIMCpuRequirements{Requests: *resource.NewQuantity(4, resource.DecimalSI)},
 		},
 	}
 
@@ -161,10 +161,8 @@ func TestMergeHardware(t *testing.T) {
 				if result.CPU == nil {
 					t.Fatal("MergeHardware().CPU = nil, expected non-nil")
 				}
-				if tt.expectedCPU.Requests != nil && result.CPU.Requests != nil {
-					if !result.CPU.Requests.Equal(*tt.expectedCPU.Requests) {
-						t.Errorf("MergeHardware().CPU.Requests = %v, expected %v", result.CPU.Requests, tt.expectedCPU.Requests)
-					}
+				if !result.CPU.Requests.Equal(tt.expectedCPU.Requests) {
+					t.Errorf("MergeHardware().CPU.Requests = %v, expected %v", result.CPU.Requests, tt.expectedCPU.Requests)
 				}
 			}
 		})
