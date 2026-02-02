@@ -23,7 +23,7 @@ spec:
     - jsonPath: .status.status
       name: Status
       type: string
-    - jsonPath: .spec.size
+    - jsonPath: .status.displaySize
       name: Model Size
       type: string
     - jsonPath: .status.progress.displayPercentage
@@ -240,11 +240,11 @@ spec:
                   x-kubernetes-map-type: atomic
                 type: array
               modelDownloadImage:
-                default: kserve/storage-initializer:v0.16.0
+                default: ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0
                 description: |-
                   ModelDownloadImage specifies the container image used to download and initialize the model cache.
                   This image runs as a job to download model artifacts from the source URI to the cache volume.
-                  When not specified, defaults to kserve/storage-initializer:v0.16.0.
+                  When not specified, defaults to "ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0".
                 type: string
               runtimeConfigName:
                 description: |-
@@ -278,12 +278,19 @@ spec:
                   When not specified, uses the cluster default storage class.
                 type: string
             required:
-            - size
             - sourceUri
             type: object
           status:
             description: AIMModelCacheStatus defines the observed state of AIMModelCache
             properties:
+              allocatedSize:
+                anyOf:
+                - type: integer
+                - type: string
+                description: AllocatedSize is the actual PVC size requested (including
+                  headroom).
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
               conditions:
                 description: Conditions represent the latest available observations
                   of the model cache's state
@@ -345,6 +352,21 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              discoveredSizeBytes:
+                description: |-
+                  DiscoveredSizeBytes is the model size discovered via check-size job.
+                  Populated when spec.size is not provided.
+                format: int64
+                type: integer
+              displaySize:
+                description: DisplaySize is the human-readable effective size (spec
+                  or discovered)
+                type: string
+              headroomPercent:
+                description: HeadroomPercent is the headroom percentage that was applied
+                  to the PVC size.
+                format: int32
+                type: integer
               lastUsed:
                 description: LastUsed represents the last time a model was deployed
                   that used this cache
