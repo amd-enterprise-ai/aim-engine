@@ -431,12 +431,10 @@ spec:
                       Examples: ["MI300X"], ["MI300X", "MI325X"]
                     items:
                       maxLength: 64
+                      minLength: 1
                       type: string
                     maxItems: 8
                     type: array
-                    x-kubernetes-validations:
-                    - message: GPU model names cannot be empty or whitespace-only
-                      rule: self.all(m, m.trim() != '')
                   requests:
                     description: |-
                       Requests is the number of GPUs to set as requests/limits.
@@ -1266,7 +1264,7 @@ spec:
                     type: object
                     x-kubernetes-validations:
                     - message: requests must be greater than 0
-                      rule: self.requests.sign() == 1
+                      rule: self.requests.isGreaterThan(quantity("0"))
                   gpu:
                     description: GPU specifies GPU requirements. If not set, no GPUs
                       are requested (CPU-only model).
@@ -1287,12 +1285,10 @@ spec:
                           Examples: ["MI300X"], ["MI300X", "MI325X"]
                         items:
                           maxLength: 64
+                          minLength: 1
                           type: string
                         maxItems: 8
                         type: array
-                        x-kubernetes-validations:
-                        - message: GPU model names cannot be empty or whitespace-only
-                          rule: self.all(m, m.trim() != '')
                       requests:
                         description: |-
                           Requests is the number of GPUs to set as requests/limits.

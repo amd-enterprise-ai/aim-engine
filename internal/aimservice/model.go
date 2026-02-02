@@ -442,7 +442,7 @@ func buildModelForCustom(
 		Spec: aimv1alpha1.AIMModelSpec{
 			Image:        custom.BaseImage,
 			ModelSources: custom.ModelSources,
-			Custom: &aimv1alpha1.AIMCustomModelDefaults{
+			Custom: &aimv1alpha1.AIMCustomModelSpec{
 				Hardware: &custom.Hardware,
 			},
 			RuntimeConfigRef:   service.Spec.RuntimeConfigRef,
@@ -451,8 +451,6 @@ func buildModelForCustom(
 			Env:                service.Spec.Env,
 		},
 	}
-
-	// Custom templates will be auto-generated from custom.hardware when AIMModel is reconciled
 
 	return model
 }

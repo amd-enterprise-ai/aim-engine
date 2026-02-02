@@ -305,7 +305,7 @@ func aggregateTemplateStatuses(expectsTemplates *bool, statuses []constants.AIMS
 
 // fetchImageMetadata determines how to obtain image metadata for a model.
 // It handles these cases:
-//  0. Custom model (has modelSources) - skip fetch entirely, templates are built from customTemplates
+//  0. Custom model (has modelSources) - skip fetch entirely, templates are built from CustomTemplates
 //  1. Extraction explicitly disabled - skip fetch entirely
 //  2. Spec-provided metadata (air-gapped environments) - returns the spec value directly
 //  3. Already cached in status - returns empty result (no fetch needed)
@@ -318,7 +318,7 @@ func fetchImageMetadata(
 	secretNamespace string,
 ) controllerutils.FetchResult[*aimv1alpha1.ImageMetadata] {
 	// Case 0: Custom model - skip image metadata extraction entirely
-	// Custom models use spec.customTemplates instead of discovered templates
+	// Custom models use spec.CustomTemplates instead of discovered templates
 	if IsCustomModel(&spec) {
 		log.FromContext(ctx).V(1).Info("custom model detected, skipping image metadata extraction")
 		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{}
@@ -412,8 +412,8 @@ func (r *ClusterModelReconciler) PlanResources(
 		return controllerutils.PlanResult{}
 	}
 
-	// For custom models, build templates from customTemplates
-	if IsCustomModel(&model.Spec) {
+	// For models with customTemplates or modelSources, build templates directly
+	if len(model.Spec.CustomTemplates) > 0 || IsCustomModel(&model.Spec) {
 		logger.V(1).Info("building custom templates for cluster model")
 		templates := buildCustomClusterServiceTemplates(model)
 		for _, template := range templates {
@@ -454,8 +454,8 @@ func (r *ModelReconciler) PlanResources(
 		return controllerutils.PlanResult{}
 	}
 
-	// For custom models, build templates from customTemplates
-	if IsCustomModel(&model.Spec) {
+	// For models with customTemplates or modelSources, build templates directly
+	if len(model.Spec.CustomTemplates) > 0 || IsCustomModel(&model.Spec) {
 		logger.V(1).Info("building custom templates for model")
 		templates := buildCustomServiceTemplates(model)
 		for _, template := range templates {

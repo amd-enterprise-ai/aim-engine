@@ -108,7 +108,7 @@ type AIMGpuRequirements struct {
 	// +optional
 	// +kubebuilder:validation:MaxItems=8
 	// +kubebuilder:validation:items:MaxLength=64
-	// +kubebuilder:validation:XValidation:rule="self.all(m, m.trim() != '')",message="GPU model names cannot be empty or whitespace-only"
+	// +kubebuilder:validation:items:MinLength=1
 	Models []string `json:"models,omitempty"`
 
 	// MinVRAM limits deployment to GPUs having at least this much VRAM.
@@ -124,7 +124,7 @@ type AIMGpuRequirements struct {
 }
 
 // AIMCpuRequirements specifies CPU resource requirements.
-// +kubebuilder:validation:XValidation:rule="self.requests.sign() == 1",message="requests must be greater than 0"
+// +kubebuilder:validation:XValidation:rule="self.requests.isGreaterThan(quantity(\"0\"))",message="requests must be greater than 0"
 type AIMCpuRequirements struct {
 	// Requests is the number of CPU cores to request. Required and must be > 0.
 	// +required

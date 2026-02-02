@@ -14,10 +14,11 @@ spec:
     - modelId: sshleifer/tiny-gpt2
       sourceUri: hf://sshleifer/tiny-gpt2
       size: 100Mi
-  hardware:
-    cpu:
-      requests: 100m
-      limits: 500m
+  custom:
+    hardware:
+      cpu:
+        requests: 100m
+        limits: 500m
 status:
   status: Ready
   sourceType: Custom
