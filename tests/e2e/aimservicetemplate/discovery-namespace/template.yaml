@@ -6,6 +6,5 @@ spec:
   modelName: test-model-discovery-namespace
   gpu:
     requests: 1
-    models:
-      - MI300X
+    model: MI300X
 

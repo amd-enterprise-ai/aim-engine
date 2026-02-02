@@ -793,16 +793,6 @@ func (in *AIMModelSpec) DeepCopyInto(out *AIMModelSpec) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
-	if in.Hardware != nil {
-		in, out := &in.Hardware, &out.Hardware
-		*out = new(AIMHardwareRequirements)
-		(*in).DeepCopyInto(*out)
-	}
-	if in.Type != nil {
-		in, out := &in.Type, &out.Type
-		*out = new(AIMProfileType)
-		**out = **in
-	}
 	out.RuntimeConfigRef = in.RuntimeConfigRef
 	if in.ImagePullSecrets != nil {
 		in, out := &in.ImagePullSecrets, &out.ImagePullSecrets

@@ -8,8 +8,7 @@ metadata:
 spec:
   modelName: test-model
   gpu:
-    models:
-      - MI300X
+    model: MI300X
     requests: 1
 status:
   status: Ready

@@ -263,7 +263,7 @@ func TestTemplateRequiresGPU(t *testing.T) {
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
 					Gpu: &aimv1alpha1.AIMGpuRequirements{
-						Models:   []string{"mi300x"},
+						Model:    "mi300x",
 						Requests: 2,
 					},
 				},
@@ -276,7 +276,7 @@ func TestTemplateRequiresGPU(t *testing.T) {
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
 					Gpu: &aimv1alpha1.AIMGpuRequirements{
-						Models:   []string{"  mi300x  "},
+						Model:    "  mi300x  ",
 						Requests: 1,
 					},
 				},
@@ -289,7 +289,7 @@ func TestTemplateRequiresGPU(t *testing.T) {
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
 					Gpu: &aimv1alpha1.AIMGpuRequirements{
-						Models:   []string{"mi300x"},
+						Model:    "mi300x",
 						Requests: 0,
 					},
 				},
@@ -297,12 +297,12 @@ func TestTemplateRequiresGPU(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "GPU with zero requests and no models",
+			name: "GPU with zero requests and no model",
 			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
 					Gpu: &aimv1alpha1.AIMGpuRequirements{
-						Models:   []string{},
+						Model:    "",
 						Requests: 0,
 					},
 				},

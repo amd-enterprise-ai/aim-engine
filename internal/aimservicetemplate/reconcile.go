@@ -583,8 +583,8 @@ func buildProfileFromSpec(spec *aimv1alpha1.AIMServiceTemplateSpecCommon) *aimv1
 	// Set GPU info from spec
 	if spec.Gpu != nil {
 		profile.Metadata.GPUCount = spec.Gpu.Requests
-		if len(spec.Gpu.Models) > 0 {
-			profile.Metadata.GPU = spec.Gpu.Models[0]
+		if spec.Gpu.Model != "" {
+			profile.Metadata.GPU = spec.Gpu.Model
 		}
 	}
 
@@ -626,9 +626,7 @@ func resolveHardware(discovery *ParsedDiscovery, spec *aimv1alpha1.AIMServiceTem
 		// No discovery (custom models with inline model sources) - use spec values
 		if spec.Gpu != nil {
 			gpuCount = spec.Gpu.Requests
-			if len(spec.Gpu.Models) > 0 {
-				gpuModel = spec.Gpu.Models[0]
-			}
+			gpuModel = spec.Gpu.Model
 		}
 	}
 
@@ -639,7 +637,7 @@ func resolveHardware(discovery *ParsedDiscovery, spec *aimv1alpha1.AIMServiceTem
 			Requests: gpuCount,
 		}
 		if gpuModel != "" {
-			resolved.GPU.Models = []string{gpuModel}
+			resolved.GPU.Model = gpuModel
 		}
 		if resourceName != "" {
 			resolved.GPU.ResourceName = resourceName

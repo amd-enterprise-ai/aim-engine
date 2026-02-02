@@ -74,8 +74,8 @@ func TestBuildTemplateComponents(t *testing.T) {
 	if result.Spec.Gpu == nil {
 		t.Fatal("expected Gpu to be set")
 	}
-	if len(result.Spec.Gpu.Models) != 1 || result.Spec.Gpu.Models[0] != testGPUModel {
-		t.Errorf("expected Gpu.Models=[%s], got %v", testGPUModel, result.Spec.Gpu.Models)
+	if result.Spec.Gpu.Model != testGPUModel {
+		t.Errorf("expected Gpu.Model=%s, got %v", testGPUModel, result.Spec.Gpu.Model)
 	}
 	if result.Spec.Gpu.Requests != 2 {
 		t.Errorf("expected Gpu.Requests=2, got %d", result.Spec.Gpu.Requests)

@@ -293,9 +293,7 @@ func buildInferenceService(
 	// The template controller computes resolvedHardware from discovery + spec fallback.
 	gpuModel := ""
 	if templateStatus != nil && templateStatus.ResolvedHardware != nil && templateStatus.ResolvedHardware.GPU != nil {
-		if len(templateStatus.ResolvedHardware.GPU.Models) > 0 {
-			gpuModel = templateStatus.ResolvedHardware.GPU.Models[0]
-		}
+		gpuModel = templateStatus.ResolvedHardware.GPU.Model
 	}
 	if gpuModel != "" {
 		addGPUNodeAffinity(inferenceService, gpuModel)

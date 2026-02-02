@@ -63,7 +63,7 @@ func buildTemplateComponents(modelName string, modelSpec aimv1alpha1.AIMModelSpe
 	if deployment.GPUModel != "" && deployment.GPUCount > 0 {
 		commonSpec.Gpu = &aimv1alpha1.AIMGpuRequirements{
 			Requests: deployment.GPUCount,
-			Models:   []string{deployment.GPUModel},
+			Model:    deployment.GPUModel,
 		}
 	}
 
@@ -423,8 +423,8 @@ func generateCustomTemplateName(modelName string, customTemplate *aimv1alpha1.AI
 		}
 
 		if customTemplate.Hardware != nil && customTemplate.Hardware.GPU != nil {
-			if len(customTemplate.Hardware.GPU.Models) > 0 {
-				nameParts = append(nameParts, customTemplate.Hardware.GPU.Models[0])
+			if customTemplate.Hardware.GPU.Model != "" {
+				nameParts = append(nameParts, customTemplate.Hardware.GPU.Model)
 			}
 		}
 	}
@@ -437,7 +437,7 @@ func generateCustomTemplateName(modelName string, customTemplate *aimv1alpha1.AI
 			hashInputs = append(hashInputs, customTemplate.Profile.Precision, customTemplate.Profile.Metric)
 		}
 		if customTemplate.Hardware != nil && customTemplate.Hardware.GPU != nil {
-			hashInputs = append(hashInputs, customTemplate.Hardware.GPU.Requests, customTemplate.Hardware.GPU.Models)
+			hashInputs = append(hashInputs, customTemplate.Hardware.GPU.Requests, customTemplate.Hardware.GPU.Model)
 		}
 	}
 

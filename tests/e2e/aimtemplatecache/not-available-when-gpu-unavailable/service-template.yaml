@@ -6,7 +6,6 @@ spec:
   modelName: template-cache-not-available-model
   # Require a GPU that doesn't exist - this causes NotAvailable status
   gpu:
-    models:
-      - "NONEXISTENT-GPU-MODEL-12345"
+    model: NONEXISTENT-GPU-MODEL-12345
     requests: 1
 

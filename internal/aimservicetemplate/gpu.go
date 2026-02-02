@@ -39,33 +39,35 @@ import (
 
 // GetGPUAvailabilityHealth returns GPU availability as component health.
 // This is called from GetComponentHealth to add GPU availability status.
-// The template is Ready if ANY of the specified GPU models is available.
 func GetGPUAvailabilityHealth(ctx context.Context, k8sClient client.Client, spec aimv1alpha1.AIMServiceTemplateSpecCommon) controllerutils.ComponentHealth {
 	// If no GPU required, return empty health (no component to track)
 	if !TemplateRequiresGPU(spec) {
 		return controllerutils.ComponentHealth{}
 	}
 
-	gpuModels := spec.Gpu.Models
+	gpuModel := spec.Gpu.Model
+	normalizedModel := utils.NormalizeGPUModel(gpuModel)
 
-	// Check if any GPU model is available
-	for _, model := range gpuModels {
-		normalizedModel := utils.NormalizeGPUModel(model)
-		available, err := utils.IsGPUAvailable(ctx, k8sClient, model)
-		if err != nil {
-			continue // Try next model
+	available, err := utils.IsGPUAvailable(ctx, k8sClient, gpuModel)
+	if err != nil {
+		return controllerutils.ComponentHealth{
+			Component: "GPU",
+			State:     constants.AIMStatusDegraded,
+			Reason:    "GPUCheckFailed",
+			Message:   fmt.Sprintf("Failed to check GPU availability: %v", err),
+			Errors:    []error{controllerutils.NewInfrastructureError("GPUCheckFailed", "Failed to check GPU availability", err)},
 		}
-		if available {
-			return controllerutils.ComponentHealth{
-				Component: "GPU",
-				State:     constants.AIMStatusReady,
-				Reason:    "GPUAvailable",
-				Message:   fmt.Sprintf("GPU model '%s' is available", normalizedModel),
-			}
+	}
+	if available {
+		return controllerutils.ComponentHealth{
+			Component: "GPU",
+			State:     constants.AIMStatusReady,
+			Reason:    "GPUAvailable",
+			Message:   fmt.Sprintf("GPU model '%s' is available", normalizedModel),
 		}
 	}
 
-	// None of the required GPU models are available
+	// GPU model is not available
 	availableGPUs, err := utils.ListAvailableGPUs(ctx, k8sClient)
 	if err != nil {
 		return controllerutils.ComponentHealth{
@@ -86,12 +88,12 @@ func GetGPUAvailabilityHealth(ctx context.Context, k8sClient client.Client, spec
 		Component: "GPU",
 		State:     constants.AIMStatusNotAvailable,
 		Reason:    "GPUNotAvailable",
-		Message:   fmt.Sprintf("Required GPU models '%s' not available in cluster. Available: %s", strings.Join(gpuModels, ", "), availableStr),
+		Message:   fmt.Sprintf("Required GPU model '%s' not available in cluster. Available: %s", gpuModel, availableStr),
 	}
 }
 
-// CheckGPUAvailability checks whether any GPU model declared by the template exists in the cluster.
-// Returns the normalized GPU model name (first available one) and whether it's available.
+// CheckGPUAvailability checks whether the GPU model declared by the template exists in the cluster.
+// Returns the normalized GPU model name and whether it's available.
 func CheckGPUAvailability(
 	ctx context.Context,
 	k8sClient client.Client,
@@ -101,30 +103,19 @@ func CheckGPUAvailability(
 		return "", true, nil
 	}
 
-	// Check each GPU model - template is ready if ANY model is available
-	for _, model := range spec.Gpu.Models {
-		model = strings.TrimSpace(model)
-		normalizedModel = utils.NormalizeGPUModel(model)
+	model := strings.TrimSpace(spec.Gpu.Model)
+	normalizedModel = utils.NormalizeGPUModel(model)
 
-		available, err = utils.IsGPUAvailable(ctx, k8sClient, model)
-		if err != nil {
-			continue // Try next model
-		}
-		if available {
-			return normalizedModel, true, nil
-		}
+	available, err = utils.IsGPUAvailable(ctx, k8sClient, model)
+	if err != nil {
+		return normalizedModel, false, err
 	}
-
-	// Return the first model's normalized name for error reporting
-	if len(spec.Gpu.Models) > 0 {
-		normalizedModel = utils.NormalizeGPUModel(spec.Gpu.Models[0])
-	}
-	return normalizedModel, false, nil
+	return normalizedModel, available, nil
 }
 
-// IsGPUAvailableForSpec checks if any required GPU is available based on pre-fetched GPU resources.
+// IsGPUAvailableForSpec checks if the required GPU is available based on pre-fetched GPU resources.
 // This is the fast-path check used during reconciliation when GPU resources have already been fetched.
-// Returns true if no GPU is required, or if ANY required GPU is found in the provided resources.
+// Returns true if no GPU is required, or if the required GPU is found in the provided resources.
 func IsGPUAvailableForSpec(spec aimv1alpha1.AIMServiceTemplateSpecCommon, gpuResources map[string]utils.GPUResourceInfo, gpuFetchErr error) bool {
 	if !TemplateRequiresGPU(spec) {
 		return true
@@ -132,20 +123,14 @@ func IsGPUAvailableForSpec(spec aimv1alpha1.AIMServiceTemplateSpecCommon, gpuRes
 	if gpuFetchErr != nil {
 		return false
 	}
-	// Check if ANY of the GPU models is available
-	for _, model := range spec.Gpu.Models {
-		normalizedModel := utils.NormalizeGPUModel(model)
-		if _, available := gpuResources[normalizedModel]; available {
-			return true
-		}
-	}
-	return false
+	normalizedModel := utils.NormalizeGPUModel(spec.Gpu.Model)
+	_, available := gpuResources[normalizedModel]
+	return available
 }
 
 // GetGPUHealthFromResources returns GPU availability as component health based on pre-fetched GPU resources.
 // This is the shared implementation used by both namespace-scoped and cluster-scoped template reconcilers.
 // It avoids re-fetching GPU resources by using the already-fetched gpuResources map.
-// The template is Ready if ANY of the specified GPU models is available.
 func GetGPUHealthFromResources(
 	spec aimv1alpha1.AIMServiceTemplateSpecCommon,
 	gpuResources map[string]utils.GPUResourceInfo,
@@ -167,22 +152,19 @@ func GetGPUHealthFromResources(
 		}
 	}
 
-	gpuModels := spec.Gpu.Models
+	gpuModel := spec.Gpu.Model
+	normalizedModel := utils.NormalizeGPUModel(gpuModel)
 
-	// Check if ANY GPU model is available in the pre-fetched resources
-	for _, model := range gpuModels {
-		normalizedModel := utils.NormalizeGPUModel(model)
-		if _, available := gpuResources[normalizedModel]; available {
-			return controllerutils.ComponentHealth{
-				Component: "GPU",
-				State:     constants.AIMStatusReady,
-				Reason:    "GPUAvailable",
-				Message:   "GPU model '" + normalizedModel + "' is available",
-			}
+	if _, available := gpuResources[normalizedModel]; available {
+		return controllerutils.ComponentHealth{
+			Component: "GPU",
+			State:     constants.AIMStatusReady,
+			Reason:    "GPUAvailable",
+			Message:   "GPU model '" + normalizedModel + "' is available",
 		}
 	}
 
-	// None available - report error
+	// GPU not available - report error
 	availableGPUs := make([]string, 0, len(gpuResources))
 	for model := range gpuResources {
 		availableGPUs = append(availableGPUs, model)
@@ -196,6 +178,6 @@ func GetGPUHealthFromResources(
 		Component: "GPU",
 		State:     constants.AIMStatusNotAvailable,
 		Reason:    "GPUNotAvailable",
-		Message:   "Required GPU models '" + strings.Join(gpuModels, ", ") + "' not available in cluster. Available: " + availableStr,
+		Message:   "Required GPU model '" + gpuModel + "' not available in cluster. Available: " + availableStr,
 	}
 }

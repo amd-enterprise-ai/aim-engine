@@ -106,14 +106,12 @@ func TemplateRequiresGPU(spec aimv1alpha1.AIMServiceTemplateSpecCommon) bool {
 	}
 	// Has GPU requirement if:
 	// 1. Requests > 0 (any GPU is acceptable), OR
-	// 2. Specific GPU models are specified
+	// 2. Specific GPU model is specified
 	if spec.Gpu.Requests > 0 {
 		return true
 	}
-	for _, model := range spec.Gpu.Models {
-		if strings.TrimSpace(model) != "" {
-			return true
-		}
+	if strings.TrimSpace(spec.Gpu.Model) != "" {
+		return true
 	}
 	return false
 }
