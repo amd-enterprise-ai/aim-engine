@@ -92,23 +92,6 @@ func (result ClusterModelFetchResult) GetComponentHealth() []controllerutils.Com
 	// RuntimeConfig is optional for models - they can operate without one
 	runtimeConfigHealth := result.mergedRuntimeConfig.ToUpstreamComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth)
 
-	// For custom models, skip image metadata health - we don't need it
-	var imageMetadataHealth controllerutils.ComponentHealth
-	if IsCustomModel(&result.model.Spec) {
-		imageMetadataHealth = controllerutils.ComponentHealth{
-			Component: "ImageMetadata",
-			State:     constants.AIMStatusReady,
-			Reason:    "CustomModelSkipped",
-		}
-	} else {
-		imageMetadataHealth = result.imageMetadata.ToUpstreamComponentHealth("ImageMetadata", func(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
-			return controllerutils.ComponentHealth{
-				State:  constants.AIMStatusReady,
-				Reason: "ImageMetadataFound",
-			}
-		})
-	}
-
 	clusterServiceTemplateHealth := result.clusterServiceTemplates.ToUpstreamComponentHealth("ClusterServiceTemplates", func(list *aimv1alpha1.AIMClusterServiceTemplateList) controllerutils.ComponentHealth {
 		return inspectClusterTemplateStatuses(
 			result.model.Spec.ExpectsTemplates(&result.model.Status),
@@ -116,11 +99,21 @@ func (result ClusterModelFetchResult) GetComponentHealth() []controllerutils.Com
 		)
 	})
 
-	return []controllerutils.ComponentHealth{
-		runtimeConfigHealth,
-		imageMetadataHealth,
-		clusterServiceTemplateHealth,
+	health := []controllerutils.ComponentHealth{runtimeConfigHealth}
+
+	// Only report image metadata health for non-custom models
+	if !IsCustomModel(&result.model.Spec) {
+		imageMetadataHealth := result.imageMetadata.ToUpstreamComponentHealth("ImageMetadata", func(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
+			return controllerutils.ComponentHealth{
+				State:  constants.AIMStatusReady,
+				Reason: "ImageMetadataFound",
+			}
+		})
+		health = append(health, imageMetadataHealth)
 	}
+
+	health = append(health, clusterServiceTemplateHealth)
+	return health
 }
 
 // inspectClusterTemplateStatuses aggregates cluster template statuses into a single ComponentState.
@@ -143,22 +136,17 @@ type ModelFetchResult struct {
 func (result ModelFetchResult) GetComponentHealth() []controllerutils.ComponentHealth {
 	// RuntimeConfig is optional for models - they can operate without one
 	runtimeConfigHealth := result.mergedRuntimeConfig.ToComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth)
+	health := []controllerutils.ComponentHealth{runtimeConfigHealth}
 
-	// For custom models, skip image metadata health - we don't need it
-	var imageMetadataHealth controllerutils.ComponentHealth
-	if IsCustomModel(&result.model.Spec) {
-		imageMetadataHealth = controllerutils.ComponentHealth{
-			Component: "ImageMetadata",
-			State:     constants.AIMStatusReady,
-			Reason:    "CustomModelSkipped",
-		}
-	} else {
-		imageMetadataHealth = result.imageMetadata.ToComponentHealth("ImageMetadata", func(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
+	// Only report image metadata health for non-custom models
+	if !IsCustomModel(&result.model.Spec) {
+		imageMetadataHealth := result.imageMetadata.ToComponentHealth("ImageMetadata", func(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
 			return controllerutils.ComponentHealth{
 				State:  constants.AIMStatusReady,
 				Reason: "ImageMetadataFound",
 			}
 		})
+		health = append(health, imageMetadataHealth)
 	}
 
 	serviceTemplateHealth := result.serviceTemplates.ToComponentHealth("ServiceTemplates", func(list *aimv1alpha1.AIMServiceTemplateList) controllerutils.ComponentHealth {
@@ -168,11 +156,8 @@ func (result ModelFetchResult) GetComponentHealth() []controllerutils.ComponentH
 		)
 	})
 
-	return []controllerutils.ComponentHealth{
-		runtimeConfigHealth,
-		imageMetadataHealth,
-		serviceTemplateHealth,
-	}
+	health = append(health, serviceTemplateHealth)
+	return health
 }
 
 func (r *ModelReconciler) FetchRemoteState(

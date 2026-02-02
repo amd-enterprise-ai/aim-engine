@@ -517,7 +517,7 @@ spec:
 | Discovery | Runs to extract metadata | Skipped |
 | Hardware | Optional (from discovery) | Required |
 | Templates | Auto-generated from image labels | Auto-generated from spec |
-| Caching | Uses shared template cache | Uses dedicated model caches |
+| Caching | Uses shared template cache | Uses dedicated template cache |
 
 ### Status
 
