@@ -430,12 +430,13 @@ spec:
         models:              # Optional: specific GPU models for node affinity
           - MI300X
           - MI250
+        minVram: 64Gi        # Optional: minimum VRAM per GPU for capacity planning
       cpu:
         requests: "4"        # Required if cpu field is specified: CPU requests
         limits: "8"          # Optional: CPU limits
 ```
 
-If no `models` are specified, the workload can run on any available GPU.
+If no `models` are specified, the workload can run on any available GPU. The `minVram` field is used for capacity planning when the model size is known.
 
 ### Template Generation
 
