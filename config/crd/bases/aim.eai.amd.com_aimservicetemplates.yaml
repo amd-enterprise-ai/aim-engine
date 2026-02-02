@@ -32,7 +32,7 @@ spec:
     - jsonPath: .status.profile.metadata.precision
       name: Precision
       type: string
-    - jsonPath: .spec.gpu.requests
+    - jsonPath: .status.resolvedHardware.gpu.requests
       name: GPUs
       type: integer
     name: v1alpha1
@@ -430,13 +430,19 @@ spec:
                       When multiple models are specified, the scheduler picks from any available.
                       Examples: ["MI300X"], ["MI300X", "MI325X"]
                     items:
+                      maxLength: 64
                       type: string
+                    maxItems: 8
                     type: array
+                    x-kubernetes-validations:
+                    - message: GPU model names cannot be empty or whitespace-only
+                      rule: self.all(m, m.trim() != '')
                   requests:
-                    description: Requests is the number of GPUs to set as requests/limits.
-                      Required when GPU is specified.
+                    description: |-
+                      Requests is the number of GPUs to set as requests/limits.
+                      Set to 0 to target GPU nodes without consuming GPU resources (useful for testing).
                     format: int32
-                    minimum: 1
+                    minimum: 0
                     type: integer
                   resourceName:
                     default: amd.com/gpu
@@ -444,8 +450,6 @@ spec:
                       ResourceName is the Kubernetes resource name for GPU resources.
                       Defaults to "amd.com/gpu" if not specified.
                     type: string
-                required:
-                - requests
                 type: object
                 x-kubernetes-validations:
                 - message: gpu is immutable
@@ -809,6 +813,23 @@ spec:
                   ServiceAccountName specifies the Kubernetes service account to use for workloads related to this template.
                   This includes discovery dry-run jobs and inference services created from this template.
                   If empty, the default service account for the namespace is used.
+                type: string
+              type:
+                allOf:
+                - enum:
+                  - optimized
+                  - preview
+                  - unoptimized
+                - enum:
+                  - optimized
+                  - preview
+                  - unoptimized
+                description: |-
+                  Type indicates the optimization level of this template.
+                  - optimized: Template has been tuned for performance
+                  - preview: Template is experimental/pre-release
+                  - unoptimized: Default, no specific optimizations applied
+                  When nil, the type is determined by discovery. When set, overrides discovery.
                 type: string
             required:
             - modelName
@@ -1214,6 +1235,82 @@ spec:
                       reference, when known.
                     type: string
                 type: object
+              resolvedHardware:
+                description: |-
+                  ResolvedHardware contains the resolved hardware requirements for this template.
+                  These values are computed from discovery results and spec defaults, and represent
+                  what will actually be used when creating InferenceServices.
+                  Resolution order: discovery output > spec values > defaults.
+                properties:
+                  cpu:
+                    description: CPU specifies CPU requirements.
+                    properties:
+                      limits:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: Limits is the maximum number of CPU cores to
+                          allow.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      requests:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: Requests is the number of CPU cores to request.
+                          Required and must be > 0.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                    required:
+                    - requests
+                    type: object
+                    x-kubernetes-validations:
+                    - message: requests must be greater than 0
+                      rule: self.requests.sign() == 1
+                  gpu:
+                    description: GPU specifies GPU requirements. If not set, no GPUs
+                      are requested (CPU-only model).
+                    properties:
+                      minVram:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: |-
+                          MinVRAM limits deployment to GPUs having at least this much VRAM.
+                          Used for capacity planning when model size is known.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      models:
+                        description: |-
+                          Models limits deployment to specific GPU models.
+                          When multiple models are specified, the scheduler picks from any available.
+                          Examples: ["MI300X"], ["MI300X", "MI325X"]
+                        items:
+                          maxLength: 64
+                          type: string
+                        maxItems: 8
+                        type: array
+                        x-kubernetes-validations:
+                        - message: GPU model names cannot be empty or whitespace-only
+                          rule: self.all(m, m.trim() != '')
+                      requests:
+                        description: |-
+                          Requests is the number of GPUs to set as requests/limits.
+                          Set to 0 to target GPU nodes without consuming GPU resources (useful for testing).
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      resourceName:
+                        default: amd.com/gpu
+                        description: |-
+                          ResourceName is the Kubernetes resource name for GPU resources.
+                          Defaults to "amd.com/gpu" if not specified.
+                        type: string
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: at least one of gpu or cpu must be specified
+                  rule: has(self.gpu) || has(self.cpu)
               resolvedModel:
                 description: ResolvedModel captures metadata about the image that
                   was resolved.

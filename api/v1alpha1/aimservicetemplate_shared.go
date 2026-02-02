@@ -76,6 +76,15 @@ type AIMServiceTemplateSpecCommon struct {
 	// When set, the discovery job will be instructed to use this specific profile.
 	// +optional
 	ProfileId string `json:"profileId,omitempty"`
+
+	// Type indicates the optimization level of this template.
+	// - optimized: Template has been tuned for performance
+	// - preview: Template is experimental/pre-release
+	// - unoptimized: Default, no specific optimizations applied
+	// When nil, the type is determined by discovery. When set, overrides discovery.
+	// +optional
+	// +kubebuilder:validation:Enum=optimized;preview;unoptimized
+	Type *AIMProfileType `json:"type,omitempty"`
 }
 
 // AIMTemplateCachingConfig configures model caching behavior for namespace-scoped templates.
@@ -146,6 +155,13 @@ type AIMServiceTemplateStatus struct {
 	// ResolvedCache captures metadata about which cache is used for this template
 	// +optional
 	ResolvedCache *AIMResolvedReference `json:"resolvedCache,omitempty"`
+
+	// ResolvedHardware contains the resolved hardware requirements for this template.
+	// These values are computed from discovery results and spec defaults, and represent
+	// what will actually be used when creating InferenceServices.
+	// Resolution order: discovery output > spec values > defaults.
+	// +optional
+	ResolvedHardware *AIMHardwareRequirements `json:"resolvedHardware,omitempty"`
 
 	// Status represents the current high‑level status of the template lifecycle.
 	// Values: `Pending`, `Progressing`, `Ready`, `Degraded`, `Failed`.

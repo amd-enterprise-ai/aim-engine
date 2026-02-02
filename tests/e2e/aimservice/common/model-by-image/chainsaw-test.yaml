@@ -6,7 +6,7 @@
 # instead of by name. The controller should find or create an AIMModel
 # with the specified image, and auto-select a template from discovery.
 #
-# Uses: ghcr.io/silogen/aim-dummy:0.1.8 (lightweight test image)
+# Uses: ghcr.io/silogen/aim-dummy:0.1.10 (lightweight test image)
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test

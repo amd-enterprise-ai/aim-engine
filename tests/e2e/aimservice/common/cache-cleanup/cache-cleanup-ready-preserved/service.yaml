@@ -6,6 +6,6 @@ metadata:
   name: cache-cleanup-ready-service
 spec:
   model:
-    image: ghcr.io/silogen/aim-dummy:0.1.8
+    image: ghcr.io/silogen/aim-dummy:0.1.10
   caching:
     mode: Always

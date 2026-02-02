@@ -36,6 +36,22 @@ const (
 	TemplateCacheTemplateScopeIndexKey = ".spec.templateScope"
 )
 
+// AIMTemplateCacheMode controls the ownership behavior of model caches created by a template cache.
+// +kubebuilder:validation:Enum=Dedicated;Shared
+type AIMTemplateCacheMode string
+
+const (
+	// TemplateCacheModeDedicated means model caches have owner references to the template cache.
+	// When the template cache is deleted, all its model caches are garbage collected.
+	// Use this mode for service-specific caches that should be cleaned up with the service.
+	TemplateCacheModeDedicated AIMTemplateCacheMode = "Dedicated"
+
+	// TemplateCacheModeShared means model caches have no owner references.
+	// Model caches persist independently of template cache lifecycle and can be shared.
+	// This is the default mode for long-lived, reusable caches.
+	TemplateCacheModeShared AIMTemplateCacheMode = "Shared"
+)
+
 // AIMTemplateCacheSpec defines the desired state of AIMTemplateCache
 type AIMTemplateCacheSpec struct {
 	// TemplateName is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to cache.
@@ -78,6 +94,15 @@ type AIMTemplateCacheSpec struct {
 
 	// RuntimeConfigRef contains the runtime config reference for this template cache.
 	RuntimeConfigRef `json:",inline"`
+
+	// Mode controls the ownership behavior of model caches created by this template cache.
+	// - Dedicated: Model caches are owned by this template cache and garbage collected when it's deleted.
+	// - Shared (default): Model caches have no owner references and persist independently.
+	// When a Shared template cache encounters model caches with owner references, it promotes them
+	// to shared by removing the owner references, ensuring they persist for long-term use.
+	// +kubebuilder:default=Shared
+	// +optional
+	Mode AIMTemplateCacheMode `json:"mode,omitempty"`
 }
 
 // AIMTemplateCacheStatus defines the observed state of AIMTemplateCache
@@ -173,6 +198,7 @@ const (
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=aimtc,categories=aim;all
 // +kubebuilder:printcolumn:name="Template",type=string,JSONPath=`.spec.templateName`
+// +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.spec.mode`
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 // +kubebuilder:printcolumn:name="Kind",type=string,JSONPath=`.status.resolvedTemplateKind`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

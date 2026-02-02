@@ -271,7 +271,7 @@ func TestTemplateRequiresGPU(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "GPU with model and whitespace",
+			name: "GPU with model and whitespace padding",
 			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
@@ -284,26 +284,26 @@ func TestTemplateRequiresGPU(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "GPU with empty model",
+			name: "GPU with zero requests but valid model",
 			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
 					Gpu: &aimv1alpha1.AIMGpuRequirements{
-						Models:   []string{""},
-						Requests: 2,
+						Models:   []string{"mi300x"},
+						Requests: 0,
 					},
 				},
 			},
-			expected: false,
+			expected: true,
 		},
 		{
-			name: "GPU with whitespace-only model",
+			name: "GPU with zero requests and no models",
 			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
 					Gpu: &aimv1alpha1.AIMGpuRequirements{
-						Models:   []string{"   "},
-						Requests: 2,
+						Models:   []string{},
+						Requests: 0,
 					},
 				},
 			},

@@ -74,12 +74,8 @@ type ServiceFetchResult struct {
 	httpRoute              controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
 	templateCache          controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]
 
-	// Model caches (for template cache - shared mode)
+	// Model caches (for template cache health visibility)
 	modelCaches controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]
-
-	// Dedicated model caches (for unified downloads in non-cached mode)
-	// These are owned by the service and deleted when the service is deleted
-	dedicatedModelCaches controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]
 }
 
 // FetchRemoteState fetches all resources needed for AIMService reconciliation.
@@ -126,24 +122,12 @@ func (r *ServiceReconciler) FetchRemoteState(
 	// 3. Fetch TemplateCache (always fetch - cascades health from ModelCache/PVC)
 	result.templateCache = fetchTemplateCache(ctx, c, service)
 
-	// 4. Fetch ModelCaches if template cache exists
+	// 4. Fetch ModelCaches if template cache exists (for health visibility)
 	if result.templateCache.OK() && result.templateCache.Value != nil {
 		result.modelCaches = fetchModelCaches(ctx, c, service.Namespace)
 	}
 
-	// 5. Fetch dedicated model caches for non-cached modes (unified download architecture):
-	// - When caching is Never: always use dedicated model caches for downloads
-	// - When caching is Auto: use dedicated caches if template cache is not available/ready
-	// - When caching is Always: don't need dedicated caches (use shared template cache)
-	cachingMode := service.Spec.GetCachingMode()
-	needsDedicatedCaches := cachingMode == aimv1alpha1.CachingModeNever ||
-		(cachingMode == aimv1alpha1.CachingModeAuto && (result.templateCache.Value == nil || result.templateCache.Value.Status.Status != constants.AIMStatusReady))
-
-	if needsDedicatedCaches {
-		result.dedicatedModelCaches = fetchDedicatedModelCaches(ctx, c, service)
-	}
-
-	// 6. Only fetch Model and Template if InferenceService needs to be (re)created.
+	// 5. Only fetch Model and Template if InferenceService needs to be (re)created.
 	// Once the ISVC exists, the config is baked in and we don't need these upstream resources.
 	// Use IsNotFound() rather than !OK() to avoid re-resolving when there's a transient error
 	// fetching an existing ISVC (which could cause SSA to update an existing resource).
@@ -547,8 +531,6 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 		DependencyType: controllerutils.DependencyTypeDownstream,
 	}
 
-	cachingMode := obs.service.Spec.GetCachingMode()
-
 	// Check for storage size calculation errors (invalid template configuration)
 	if obs.storageSizeError != nil {
 		health.State = constants.AIMStatusFailed
@@ -558,13 +540,13 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 		return health
 	}
 
-	// Check template cache first (used for Always mode and Auto with available cache)
+	// All caching now goes through template cache (both Shared and Dedicated modes)
 	if obs.templateCache.Value != nil {
 		switch obs.templateCache.Value.Status.Status {
 		case constants.AIMStatusReady:
 			health.State = constants.AIMStatusReady
 			health.Reason = aimv1alpha1.AIMServiceReasonCacheReady
-			health.Message = "Template cache is available"
+			health.Message = "Template cache is ready"
 		case constants.AIMStatusProgressing:
 			health.State = constants.AIMStatusProgressing
 			health.Reason = aimv1alpha1.AIMServiceReasonCacheNotReady
@@ -581,67 +563,10 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 		return health
 	}
 
-	// No template cache - check dedicated model caches (unified download architecture)
-	// This applies to both Never mode and Auto mode without existing shared cache
-	if obs.dedicatedModelCaches.Value != nil && len(obs.dedicatedModelCaches.Value.Items) > 0 {
-		// Check if any cache failed first
-		for _, cache := range obs.dedicatedModelCaches.Value.Items {
-			if cache.Status.Status == constants.AIMStatusFailed {
-				health.State = constants.AIMStatusFailed
-				health.Reason = aimv1alpha1.AIMServiceReasonCacheFailed
-				health.Message = "Dedicated model cache failed: " + cache.Name
-				return health
-			}
-		}
-
-		// Check if all caches are ready
-		allReady := true
-		for _, cache := range obs.dedicatedModelCaches.Value.Items {
-			if cache.Status.Status != constants.AIMStatusReady {
-				allReady = false
-				break
-			}
-		}
-
-		if allReady {
-			// All dedicated caches are Ready - consider cache ready
-			// Note: We skip cross-checking with model sources here because:
-			// 1. When ISVC exists, templates are not fetched (optimization)
-			// 2. The caches were created based on model sources during initial setup
-			// 3. If all created caches are Ready, we have what we need
-			health.State = constants.AIMStatusReady
-			health.Reason = aimv1alpha1.AIMServiceReasonCacheReady
-			health.Message = "Dedicated model caches are ready"
-			return health
-		}
-
-		// Caches exist but not all ready - progressing
-		health.State = constants.AIMStatusProgressing
-		health.Reason = aimv1alpha1.AIMServiceReasonCacheNotReady
-		health.Message = "Dedicated model caches are downloading"
-		return health
-	}
-
-	// For Auto mode without any cache, it's acceptable - will create dedicated caches
-	if cachingMode == aimv1alpha1.CachingModeAuto {
-		health.State = constants.AIMStatusProgressing
-		health.Reason = aimv1alpha1.AIMServiceReasonCacheCreating
-		health.Message = "Creating dedicated model caches for download"
-		return health
-	}
-
-	// For Never mode without caches, still progressing (unified downloads require caches)
-	if cachingMode == aimv1alpha1.CachingModeNever {
-		health.State = constants.AIMStatusProgressing
-		health.Reason = aimv1alpha1.AIMServiceReasonCacheCreating
-		health.Message = "Creating dedicated model caches for download"
-		return health
-	}
-
-	// For Always mode, cache is required
+	// Template cache doesn't exist yet - being created
 	health.State = constants.AIMStatusProgressing
 	health.Reason = aimv1alpha1.AIMServiceReasonCacheCreating
-	health.Message = "Waiting for cache to be created"
+	health.Message = "Creating template cache"
 	return health
 }
 
@@ -734,11 +659,6 @@ func (r *ServiceReconciler) validateStorageSize(fetch ServiceFetchResult) error 
 		return nil
 	}
 
-	// Dedicated model caches already exist for all sources - no need to calculate
-	if fetch.dedicatedModelCaches.Value != nil && areDedicatedCachesReady(fetch.dedicatedModelCaches.Value, templateStatus.ModelSources) {
-		return nil
-	}
-
 	// Try to calculate storage size
 	headroomPercent := resolvePVCHeadroomPercent(fetch.service, ServiceObservation{ServiceFetchResult: fetch})
 	_, err := calculateRequiredStorageSize(templateStatus.ModelSources, headroomPercent)
@@ -798,19 +718,22 @@ func (r *ServiceReconciler) PlanResources(
 		}
 	}
 
-	// 3. Plan template cache if caching is enabled
-	// Use ApplyWithoutOwnerRef so caches can be shared across services and outlive the creating service
+	// 3. Plan template cache for all caching modes
+	// Ownership depends on caching mode:
+	// - Always (Shared mode): no owner reference, cache persists independently
+	// - Never/Auto (Dedicated mode): owned by service, garbage collected with it
 	if templateCache := planTemplateCache(service, templateName, templateNsSpec, templateStatus, obs); templateCache != nil {
-		planResult.ApplyWithoutOwnerRef(templateCache)
+		cachingMode := service.Spec.GetCachingMode()
+		if cachingMode == aimv1alpha1.CachingModeAlways {
+			// Shared mode: cache persists independently
+			planResult.ApplyWithoutOwnerRef(templateCache)
+		} else {
+			// Dedicated mode: cache is owned by service
+			planResult.Apply(templateCache)
+		}
 	}
 
-	// 4. Plan dedicated model caches for non-cached modes (unified download architecture)
-	// These caches are owned by the service and deleted when the service is deleted
-	for _, cache := range planDedicatedModelCaches(service, templateStatus, obs) {
-		planResult.Apply(cache)
-	}
-
-	// 5. Plan InferenceService
+	// 4. Plan InferenceService
 	if isvc := planInferenceService(ctx, service, templateName, templateNsSpec, templateStatus, obs); isvc != nil {
 		planResult.Apply(isvc)
 	}

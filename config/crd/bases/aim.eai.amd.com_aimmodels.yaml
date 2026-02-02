@@ -116,13 +116,19 @@ spec:
                               When multiple models are specified, the scheduler picks from any available.
                               Examples: ["MI300X"], ["MI300X", "MI325X"]
                             items:
+                              maxLength: 64
                               type: string
+                            maxItems: 8
                             type: array
+                            x-kubernetes-validations:
+                            - message: GPU model names cannot be empty or whitespace-only
+                              rule: self.all(m, m.trim() != '')
                           requests:
-                            description: Requests is the number of GPUs to set as
-                              requests/limits. Required when GPU is specified.
+                            description: |-
+                              Requests is the number of GPUs to set as requests/limits.
+                              Set to 0 to target GPU nodes without consuming GPU resources (useful for testing).
                             format: int32
-                            minimum: 1
+                            minimum: 0
                             type: integer
                           resourceName:
                             default: amd.com/gpu
@@ -130,8 +136,6 @@ spec:
                               ResourceName is the Kubernetes resource name for GPU resources.
                               Defaults to "amd.com/gpu" if not specified.
                             type: string
-                        required:
-                        - requests
                         type: object
                     type: object
                     x-kubernetes-validations:
@@ -362,13 +366,19 @@ spec:
                                     When multiple models are specified, the scheduler picks from any available.
                                     Examples: ["MI300X"], ["MI300X", "MI325X"]
                                   items:
+                                    maxLength: 64
                                     type: string
+                                  maxItems: 8
                                   type: array
+                                  x-kubernetes-validations:
+                                  - message: GPU model names cannot be empty or whitespace-only
+                                    rule: self.all(m, m.trim() != '')
                                 requests:
-                                  description: Requests is the number of GPUs to set
-                                    as requests/limits. Required when GPU is specified.
+                                  description: |-
+                                    Requests is the number of GPUs to set as requests/limits.
+                                    Set to 0 to target GPU nodes without consuming GPU resources (useful for testing).
                                   format: int32
-                                  minimum: 1
+                                  minimum: 0
                                   type: integer
                                 resourceName:
                                   default: amd.com/gpu
@@ -376,8 +386,6 @@ spec:
                                     ResourceName is the Kubernetes resource name for GPU resources.
                                     Defaults to "amd.com/gpu" if not specified.
                                   type: string
-                              required:
-                              - requests
                               type: object
                           type: object
                           x-kubernetes-validations:

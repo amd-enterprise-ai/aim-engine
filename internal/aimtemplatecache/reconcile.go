@@ -178,6 +178,11 @@ type TemplateCacheObservation struct {
 	AllCachesAvailable bool
 	MissingCaches      []aimv1alpha1.AIMModelSource
 	BestModelCaches    map[string]aimv1alpha1.AIMModelCache
+
+	// CachesToPromote contains model caches that need to be promoted from Dedicated to Shared.
+	// This happens when a Shared template cache encounters existing model caches with owner references.
+	// Promotion removes the owner references so the caches persist independently.
+	CachesToPromote []aimv1alpha1.AIMModelCache
 }
 
 // GetComponentHealth overrides the embedded FetchResult's method to include model cache health.
@@ -279,6 +284,16 @@ func (r *TemplateCacheReconciler) ComposeState(
 				"bestCacheName", bestStatusModelCache.Name,
 				"bestCacheStatus", bestStatusModelCache.Status.Status)
 			obs.BestModelCaches[model.ModelID] = bestStatusModelCache
+
+			// Check if promotion is needed: Shared mode but cache has owner references
+			// This promotes Dedicated caches to Shared by removing owner references
+			if tc.Spec.Mode == aimv1alpha1.TemplateCacheModeShared &&
+				len(bestStatusModelCache.GetOwnerReferences()) > 0 {
+				logger.Info("ComposeState: cache needs promotion to Shared",
+					"cacheName", bestStatusModelCache.Name,
+					"ownerCount", len(bestStatusModelCache.GetOwnerReferences()))
+				obs.CachesToPromote = append(obs.CachesToPromote, bestStatusModelCache)
+			}
 		} else {
 			logger.Info("ComposeState: model source missing cache", "modelID", model.ModelID)
 			obs.MissingCaches = append(obs.MissingCaches, model)
@@ -338,10 +353,26 @@ func (r *TemplateCacheReconciler) PlanResources(
 				RuntimeConfigRef: tc.Spec.RuntimeConfigRef,
 			},
 		}
-		// Use ApplyWithoutOwnerRef so model caches can be shared across template caches
-		// and outlive the creating template cache (if Ready)
-		result.ApplyWithoutOwnerRef(mc)
+
+		// Apply based on template cache mode:
+		// - Dedicated: model caches are owned by this template cache (garbage collected with it)
+		// - Shared: model caches have no owner references (persist independently)
+		if tc.Spec.Mode == aimv1alpha1.TemplateCacheModeDedicated {
+			result.Apply(mc)
+		} else {
+			result.ApplyWithoutOwnerRef(mc)
+		}
 	}
+
+	// Handle promotion of Dedicated caches to Shared
+	// When a Shared template cache encounters model caches with owner references,
+	// we remove the owner references so they persist independently
+	for _, cacheToPromote := range obs.CachesToPromote {
+		promotedCache := cacheToPromote.DeepCopy()
+		promotedCache.SetOwnerReferences(nil) // Clear all owner references
+		result.ApplyWithoutOwnerRef(promotedCache)
+	}
+
 	return result
 }
 

@@ -130,9 +130,7 @@ func planInferenceService(
 }
 
 // isReadyForInferenceService checks if all prerequisites are met to create the InferenceService.
-func isReadyForInferenceService(service *aimv1alpha1.AIMService, obs ServiceObservation) bool {
-	cachingMode := service.Spec.GetCachingMode()
-
+func isReadyForInferenceService(_ *aimv1alpha1.AIMService, obs ServiceObservation) bool {
 	// Check model is ready
 	modelReady := false
 	if obs.modelResult.Model.Value != nil {
@@ -144,43 +142,13 @@ func isReadyForInferenceService(service *aimv1alpha1.AIMService, obs ServiceObse
 		return false
 	}
 
-	// Check if we have storage ready
-	// Unified download architecture: all modes use caches (shared or dedicated)
-	switch cachingMode {
-	case aimv1alpha1.CachingModeAlways:
-		// Require shared template cache to be ready
-		if obs.templateCache.Value == nil ||
-			obs.templateCache.Value.Status.Status != constants.AIMStatusReady {
-			return false
-		}
-	case aimv1alpha1.CachingModeAuto:
-		// Either shared template cache or dedicated model caches
-		hasSharedCache := obs.templateCache.Value != nil &&
-			obs.templateCache.Value.Status.Status == constants.AIMStatusReady
-		hasDedicatedCaches := areDedicatedModelCachesReady(obs)
-		if !hasSharedCache && !hasDedicatedCaches {
-			return false
-		}
-	case aimv1alpha1.CachingModeNever:
-		// Dedicated model caches (unified downloads, no shared cache)
-		if !areDedicatedModelCachesReady(obs) {
-			return false
-		}
-	}
-
-	return true
-}
-
-// areDedicatedModelCachesReady checks if all dedicated model caches are ready.
-func areDedicatedModelCachesReady(obs ServiceObservation) bool {
-	if obs.dedicatedModelCaches.Value == nil || len(obs.dedicatedModelCaches.Value.Items) == 0 {
+	// All caching modes now use template cache (both Dedicated and Shared modes)
+	// Template cache must be ready before creating InferenceService
+	if obs.templateCache.Value == nil ||
+		obs.templateCache.Value.Status.Status != constants.AIMStatusReady {
 		return false
 	}
-	for _, cache := range obs.dedicatedModelCaches.Value.Items {
-		if cache.Status.Status != constants.AIMStatusReady {
-			return false
-		}
-	}
+
 	return true
 }
 
@@ -237,20 +205,15 @@ func buildInferenceService(
 		image = obs.modelResult.ClusterModel.Value.Spec.Image
 	}
 
-	// Get GPU count from template status or spec
-	// For image-based models, GPU count comes from discovery (Profile.Metadata.GPUCount)
-	// For custom models, discovery doesn't run, so we fall back to templateSpec.Gpu.Requests
+	// Get GPU count and resource name from template status.resolvedHardware.
+	// The template controller computes resolvedHardware from discovery + spec fallback.
 	gpuCount := int64(0)
-	if templateStatus != nil && templateStatus.Profile != nil && templateStatus.Profile.Metadata.GPUCount > 0 {
-		gpuCount = int64(templateStatus.Profile.Metadata.GPUCount)
-	} else if templateSpec != nil && templateSpec.Gpu != nil && templateSpec.Gpu.Requests > 0 {
-		gpuCount = int64(templateSpec.Gpu.Requests)
-	}
-
-	// GPU resource name from template spec or default
 	gpuResourceName := corev1.ResourceName(constants.DefaultGPUResourceName)
-	if templateSpec != nil && templateSpec.Gpu != nil && templateSpec.Gpu.ResourceName != "" {
-		gpuResourceName = corev1.ResourceName(templateSpec.Gpu.ResourceName)
+	if templateStatus != nil && templateStatus.ResolvedHardware != nil && templateStatus.ResolvedHardware.GPU != nil {
+		gpuCount = int64(templateStatus.ResolvedHardware.GPU.Requests)
+		if templateStatus.ResolvedHardware.GPU.ResourceName != "" {
+			gpuResourceName = corev1.ResourceName(templateStatus.ResolvedHardware.GPU.ResourceName)
+		}
 	}
 
 	// Build resource requirements
@@ -326,14 +289,13 @@ func buildInferenceService(
 	// Configure replicas and autoscaling
 	configureReplicasAndAutoscaling(inferenceService, service)
 
-	// Add GPU node affinity
-	// For image-based models, the GPU model comes from discovery (Profile.Metadata.GPU)
-	// For custom models, discovery doesn't run, so we fall back to templateSpec.Gpu.Models
+	// Add GPU node affinity from template status.resolvedHardware.
+	// The template controller computes resolvedHardware from discovery + spec fallback.
 	gpuModel := ""
-	if templateStatus != nil && templateStatus.Profile != nil && templateStatus.Profile.Metadata.GPU != "" {
-		gpuModel = templateStatus.Profile.Metadata.GPU
-	} else if templateSpec != nil && templateSpec.Gpu != nil && len(templateSpec.Gpu.Models) > 0 {
-		gpuModel = templateSpec.Gpu.Models[0]
+	if templateStatus != nil && templateStatus.ResolvedHardware != nil && templateStatus.ResolvedHardware.GPU != nil {
+		if len(templateStatus.ResolvedHardware.GPU.Models) > 0 {
+			gpuModel = templateStatus.ResolvedHardware.GPU.Models[0]
+		}
 	}
 	if gpuModel != "" {
 		addGPUNodeAffinity(inferenceService, gpuModel)
@@ -629,19 +591,19 @@ func convertToKServeAutoScaling(aimAutoScaling *aimv1alpha1.AIMServiceAutoScalin
 }
 
 // addStorageVolumes adds cache volumes to the InferenceService.
-// Uses shared template cache (model caches) or dedicated model caches.
+// All model caches are now managed through template cache (both Dedicated and Shared modes).
 func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObservation) {
 	if len(isvc.Spec.Predictor.Containers) == 0 {
 		return
 	}
 	container := &isvc.Spec.Predictor.Containers[0]
 
-	// Check if we have shared template cache with model caches
+	// All caching now flows through template cache
 	if obs.templateCache.Value != nil &&
 		obs.templateCache.Value.Status.Status == constants.AIMStatusReady &&
 		obs.modelCaches.Value != nil {
 
-		// Mount shared model cache PVCs
+		// Mount model cache PVCs from template cache
 		for _, modelCache := range obs.modelCaches.Value.Items {
 			if modelCache.Status.Status != constants.AIMStatusReady {
 				continue
@@ -651,19 +613,6 @@ func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObserva
 			}
 
 			// Find the model name from the model cache spec
-			modelName := modelCache.Spec.SourceURI
-			addModelCacheMount(isvc, container, &modelCache, modelName)
-		}
-	} else if obs.dedicatedModelCaches.Value != nil && len(obs.dedicatedModelCaches.Value.Items) > 0 {
-		// Mount dedicated model cache PVCs (unified download architecture)
-		for _, modelCache := range obs.dedicatedModelCaches.Value.Items {
-			if modelCache.Status.Status != constants.AIMStatusReady {
-				continue
-			}
-			if modelCache.Status.PersistentVolumeClaim == "" {
-				continue
-			}
-
 			modelName := modelCache.Spec.SourceURI
 			addModelCacheMount(isvc, container, &modelCache, modelName)
 		}
