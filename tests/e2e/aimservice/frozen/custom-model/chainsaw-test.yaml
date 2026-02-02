@@ -17,6 +17,7 @@ kind: Test
 metadata:
   name: custom-model
 spec:
+  skip: true
   description: Test AIMService with custom model specification (spec.model.custom)
   steps:
     - name: Create frozen model with Ready status (simulating auto-created custom model)

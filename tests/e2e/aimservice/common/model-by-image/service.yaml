@@ -7,5 +7,5 @@ metadata:
   name: test-image-service
 spec:
   model:
-    image: ghcr.io/silogen/aim-dummy:0.1.8
+    image: ghcr.io/silogen/aim-dummy:0.1.10
   replicas: 1

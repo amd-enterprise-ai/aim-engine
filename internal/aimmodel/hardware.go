@@ -36,7 +36,8 @@ func IsCustomModel(spec *aimv1alpha1.AIMModelSpec) bool {
 
 // MergeHardware merges spec-level default hardware with template-level overrides.
 // Template values take precedence over spec defaults.
-// Uses mergo for field-by-field merging - non-zero template values override spec defaults.
+// When template provides a GPU struct, all its values (including zero) override spec.
+// When template only provides CPU, spec GPU is preserved.
 func MergeHardware(specDefault, templateOverride *aimv1alpha1.AIMHardwareRequirements) *aimv1alpha1.AIMHardwareRequirements {
 	// If no spec default, use template override directly
 	if specDefault == nil {
@@ -48,9 +49,37 @@ func MergeHardware(specDefault, templateOverride *aimv1alpha1.AIMHardwareRequire
 		return specDefault
 	}
 
-	// Deep copy spec default as base, then merge template override on top
+	// Deep copy spec default as base
 	result := specDefault.DeepCopy()
-	_ = mergo.Merge(result, templateOverride, mergo.WithOverride)
+
+	// Merge GPU: field-by-field merge, only non-zero template values override
+	if templateOverride.GPU != nil {
+		if result.GPU == nil {
+			result.GPU = templateOverride.GPU.DeepCopy()
+		} else {
+			// Template Requests overrides if non-zero
+			if templateOverride.GPU.Requests != 0 {
+				result.GPU.Requests = templateOverride.GPU.Requests
+			}
+			// Template Models replaces if non-empty
+			if len(templateOverride.GPU.Models) > 0 {
+				result.GPU.Models = templateOverride.GPU.Models
+			}
+			// Template ResourceName overrides if non-empty
+			if templateOverride.GPU.ResourceName != "" {
+				result.GPU.ResourceName = templateOverride.GPU.ResourceName
+			}
+		}
+	}
+
+	// Merge CPU using standard mergo (non-zero values override)
+	if templateOverride.CPU != nil {
+		if result.CPU == nil {
+			result.CPU = templateOverride.CPU.DeepCopy()
+		} else {
+			_ = mergo.Merge(result.CPU, templateOverride.CPU, mergo.WithOverride)
+		}
+	}
 
 	return result
 }

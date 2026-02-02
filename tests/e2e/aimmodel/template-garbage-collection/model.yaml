@@ -4,4 +4,4 @@ metadata:
   name: test-gc-model
 spec:
   # Use real image to extract metadata with recommendedDeployments
-  image: ghcr.io/silogen/aim-dummy:0.1.7
+  image: ghcr.io/silogen/aim-dummy:0.1.10

@@ -315,6 +315,7 @@ _Appears in:_
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources defines the default container resource requirements applied to services derived from this template.<br />Service-specific values override the template defaults. |  |  |
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources required to run this template.<br />When provided, the discovery dry-run will be skipped and these sources will be used directly.<br />This allows users to explicitly declare model dependencies without requiring a discovery job.<br />If omitted, a discovery job will be run to automatically determine the required model sources. |  |  |
 | `profileId` _string_ | ProfileId is the specific AIM profile ID that this template should use.<br />When set, the discovery job will be instructed to use this specific profile. |  |  |
+| `type` _[AIMProfileType](#aimprofiletype)_ | Type indicates the optimization level of this template.<br />- optimized: Template has been tuned for performance<br />- preview: Template is experimental/pre-release<br />- unoptimized: Default, no specific optimizations applied<br />When nil, the type is determined by discovery. When set, overrides discovery. |  | Enum: [optimized preview unoptimized] <br /> |
 
 
 #### AIMCpuRequirements
@@ -398,8 +399,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `requests` _integer_ | Requests is the number of GPUs to set as requests/limits. Required when GPU is specified. |  | Minimum: 1 <br /> |
-| `models` _string array_ | Models limits deployment to specific GPU models.<br />When multiple models are specified, the scheduler picks from any available.<br />Examples: ["MI300X"], ["MI300X", "MI325X"] |  |  |
+| `requests` _integer_ | Requests is the number of GPUs to set as requests/limits.<br />Set to 0 to target GPU nodes without consuming GPU resources (useful for testing). |  | Minimum: 0 <br /> |
+| `models` _string array_ | Models limits deployment to specific GPU models.<br />When multiple models are specified, the scheduler picks from any available.<br />Examples: ["MI300X"], ["MI300X", "MI325X"] |  | MaxItems: 8 <br />items:MaxLength: 64 <br /> |
 | `minVram` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | MinVRAM limits deployment to GPUs having at least this much VRAM.<br />Used for capacity planning when model size is known. |  |  |
 | `resourceName` _string_ | ResourceName is the Kubernetes resource name for GPU resources.<br />Defaults to "amd.com/gpu" if not specified. | amd.com/gpu |  |
 
@@ -417,6 +418,7 @@ _Appears in:_
 - [AIMCustomTemplate](#aimcustomtemplate)
 - [AIMModelSpec](#aimmodelspec)
 - [AIMServiceModelCustom](#aimservicemodelcustom)
+- [AIMServiceTemplateStatus](#aimservicetemplatestatus)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -507,6 +509,24 @@ AIMModelCacheList contains a list of AIMModelCache
 | `items` _[AIMModelCache](#aimmodelcache) array_ |  |  |  |
 
 
+#### AIMModelCacheMode
+
+_Underlying type:_ _string_
+
+AIMModelCacheMode indicates the ownership mode of a model cache, derived from owner references.
+
+_Validation:_
+- Enum: [Dedicated Shared]
+
+_Appears in:_
+- [AIMModelCacheStatus](#aimmodelcachestatus)
+
+| Field | Description |
+| --- | --- |
+| `Dedicated` | ModelCacheModeDedicated indicates the cache has owner references and will be<br />garbage collected when its owners are deleted.<br /> |
+| `Shared` | ModelCacheModeShared indicates the cache has no owner references and persists<br />independently, available for sharing across services.<br /> |
+
+
 #### AIMModelCacheSpec
 
 
@@ -549,6 +569,7 @@ _Appears in:_
 | `progress` _[DownloadProgress](#downloadprogress)_ | Progress represents the download progress when Status is Progressing |  |  |
 | `lastUsed` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#time-v1-meta)_ | LastUsed represents the last time a model was deployed that used this cache |  |  |
 | `persistentVolumeClaim` _string_ | PersistentVolumeClaim represents the name of the created PVC |  |  |
+| `mode` _[AIMModelCacheMode](#aimmodelcachemode)_ | Mode indicates the ownership mode of this model cache, derived from owner references.<br />- Dedicated: Has owner references, will be garbage collected when owners are deleted.<br />- Shared: No owner references, persists independently and can be shared. |  | Enum: [Dedicated Shared] <br /> |
 
 
 #### AIMModelConfig
@@ -668,7 +689,7 @@ _Appears in:_
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources to use for this model.<br />When specified, these sources are used instead of auto-discovery from the container image.<br />This enables pre-creating custom models with explicit model sources.<br />For custom models, modelSources[].size is required (discovery does not run).<br />AIM runtime currently supports only one model source. |  | MaxItems: 1 <br /> |
 | `hardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | Hardware specifies default hardware requirements for all custom templates.<br />Individual templates can override these defaults.<br />Required when modelSources is set and customTemplates is empty. |  |  |
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type specifies default type for all custom templates.<br />Individual templates can override this default.<br />When nil, templates default to "unoptimized". |  | Enum: [optimized preview unoptimized] <br /> |
-| `customTemplates` _[AIMCustomTemplate](#aimcustomtemplate) array_ | CustomTemplates defines explicit template configurations for this model.<br />When modelSources are specified, these templates are created directly<br />without running a discovery job.<br />If omitted when modelSources is set, a single template is auto-generated<br />using the spec-level hardware requirements. |  |  |
+| `customTemplates` _[AIMCustomTemplate](#aimcustomtemplate) array_ | CustomTemplates defines explicit template configurations for this model.<br />When modelSources are specified, these templates are created directly<br />without running a discovery job.<br />If omitted when modelSources is set, a single template is auto-generated<br />using the spec-level hardware requirements. |  | MaxItems: 16 <br /> |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  |  |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets lists secrets containing credentials for pulling the model container image.<br />These secrets are used for:<br />- OCI registry metadata extraction during discovery<br />- Pulling the image for inference services<br />The secrets are merged with any runtime config defaults.<br />For namespace-scoped models, secrets must exist in the same namespace.<br />For cluster-scoped models, secrets must exist in the operator namespace. |  |  |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for authentication during model discovery and metadata extraction.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  |  |
@@ -790,10 +811,13 @@ _Validation:_
 - Enum: [optimized preview unoptimized]
 
 _Appears in:_
+- [AIMClusterServiceTemplateSpec](#aimclusterservicetemplatespec)
 - [AIMCustomTemplate](#aimcustomtemplate)
 - [AIMDiscoveryProfileMetadata](#aimdiscoveryprofilemetadata)
 - [AIMModelSpec](#aimmodelspec)
 - [AIMProfileMetadata](#aimprofilemetadata)
+- [AIMServiceTemplateSpec](#aimservicetemplatespec)
+- [AIMServiceTemplateSpecCommon](#aimservicetemplatespeccommon)
 
 | Field | Description |
 | --- | --- |
@@ -1459,6 +1483,7 @@ _Appears in:_
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources defines the default container resource requirements applied to services derived from this template.<br />Service-specific values override the template defaults. |  |  |
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources required to run this template.<br />When provided, the discovery dry-run will be skipped and these sources will be used directly.<br />This allows users to explicitly declare model dependencies without requiring a discovery job.<br />If omitted, a discovery job will be run to automatically determine the required model sources. |  |  |
 | `profileId` _string_ | ProfileId is the specific AIM profile ID that this template should use.<br />When set, the discovery job will be instructed to use this specific profile. |  |  |
+| `type` _[AIMProfileType](#aimprofiletype)_ | Type indicates the optimization level of this template.<br />- optimized: Template has been tuned for performance<br />- preview: Template is experimental/pre-release<br />- unoptimized: Default, no specific optimizations applied<br />When nil, the type is determined by discovery. When set, overrides discovery. |  | Enum: [optimized preview unoptimized] <br /> |
 | `caching` _[AIMTemplateCachingConfig](#aimtemplatecachingconfig)_ | Caching configures model caching behavior for this namespace-scoped template.<br />When enabled, models will be cached using the specified environment variables<br />during download. |  |  |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables to use for authentication when downloading models.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  |  |
 
@@ -1487,6 +1512,7 @@ _Appears in:_
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources defines the default container resource requirements applied to services derived from this template.<br />Service-specific values override the template defaults. |  |  |
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources required to run this template.<br />When provided, the discovery dry-run will be skipped and these sources will be used directly.<br />This allows users to explicitly declare model dependencies without requiring a discovery job.<br />If omitted, a discovery job will be run to automatically determine the required model sources. |  |  |
 | `profileId` _string_ | ProfileId is the specific AIM profile ID that this template should use.<br />When set, the discovery job will be instructed to use this specific profile. |  |  |
+| `type` _[AIMProfileType](#aimprofiletype)_ | Type indicates the optimization level of this template.<br />- optimized: Template has been tuned for performance<br />- preview: Template is experimental/pre-release<br />- unoptimized: Default, no specific optimizations applied<br />When nil, the type is determined by discovery. When set, overrides discovery. |  | Enum: [optimized preview unoptimized] <br /> |
 
 
 #### AIMServiceTemplateStatus
@@ -1508,6 +1534,7 @@ _Appears in:_
 | `resolvedRuntimeConfig` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedRuntimeConfig captures metadata about the runtime config that was resolved. |  |  |
 | `resolvedModel` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedModel captures metadata about the image that was resolved. |  |  |
 | `resolvedCache` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedCache captures metadata about which cache is used for this template |  |  |
+| `resolvedHardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | ResolvedHardware contains the resolved hardware requirements for this template.<br />These values are computed from discovery results and spec defaults, and represent<br />what will actually be used when creating InferenceServices.<br />Resolution order: discovery output > spec values > defaults. |  |  |
 | `status` _[AIMStatus](#aimstatus)_ | Status represents the current high‑level status of the template lifecycle.<br />Values: `Pending`, `Progressing`, `Ready`, `Degraded`, `Failed`. | Pending | Enum: [Pending Progressing Ready Degraded Failed NotAvailable] <br /> |
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources list the models that this template requires to run. These are the models that will be<br />cached, if this template is cached. |  |  |
 | `profile` _[AIMProfile](#aimprofile)_ | Profile contains the full discovery result profile as a free-form JSON object.<br />This includes metadata, engine args, environment variables, and model details. |  |  |
@@ -1573,6 +1600,24 @@ AIMTemplateCacheList contains a list of AIMTemplateCache.
 | `items` _[AIMTemplateCache](#aimtemplatecache) array_ |  |  |  |
 
 
+#### AIMTemplateCacheMode
+
+_Underlying type:_ _string_
+
+AIMTemplateCacheMode controls the ownership behavior of model caches created by a template cache.
+
+_Validation:_
+- Enum: [Dedicated Shared]
+
+_Appears in:_
+- [AIMTemplateCacheSpec](#aimtemplatecachespec)
+
+| Field | Description |
+| --- | --- |
+| `Dedicated` | TemplateCacheModeDedicated means model caches have owner references to the template cache.<br />When the template cache is deleted, all its model caches are garbage collected.<br />Use this mode for service-specific caches that should be cleaned up with the service.<br /> |
+| `Shared` | TemplateCacheModeShared means model caches have no owner references.<br />Model caches persist independently of template cache lifecycle and can be shared.<br />This is the default mode for long-lived, reusable caches.<br /> |
+
+
 #### AIMTemplateCacheSpec
 
 
@@ -1594,6 +1639,7 @@ _Appears in:_
 | `downloadImage` _string_ | DownloadImage specifies the container image used to download and initialize model caches.<br />When not specified, the controller uses the default model download image. |  |  |
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources to cache for this template.<br />These sources are typically copied from the resolved template's model sources. |  |  |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  |  |
+| `mode` _[AIMTemplateCacheMode](#aimtemplatecachemode)_ | Mode controls the ownership behavior of model caches created by this template cache.<br />- Dedicated: Model caches are owned by this template cache and garbage collected when it's deleted.<br />- Shared (default): Model caches have no owner references and persist independently.<br />When a Shared template cache encounters model caches with owner references, it promotes them<br />to shared by removing the owner references, ensuring they persist for long-term use. | Shared | Enum: [Dedicated Shared] <br /> |
 
 
 #### AIMTemplateCacheStatus

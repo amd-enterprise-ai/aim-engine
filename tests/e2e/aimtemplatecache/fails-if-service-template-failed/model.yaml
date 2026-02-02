@@ -3,4 +3,4 @@ kind: AIMModel
 metadata:
   name: template-cache-fails-if-service-template-failed
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.1.8
+  image: ghcr.io/silogen/aim-dummy:0.1.10

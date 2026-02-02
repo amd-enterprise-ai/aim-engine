@@ -40,7 +40,7 @@ const (
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 // +kubebuilder:printcolumn:name="Metric",type=string,JSONPath=`.status.profile.metadata.metric`
 // +kubebuilder:printcolumn:name="Precision",type=string,JSONPath=`.status.profile.metadata.precision`
-// +kubebuilder:printcolumn:name="GPUs",type=integer,JSONPath=`.spec.gpu.requests`
+// +kubebuilder:printcolumn:name="GPUs",type=integer,JSONPath=`.status.resolvedHardware.gpu.requests`
 type AIMServiceTemplate struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

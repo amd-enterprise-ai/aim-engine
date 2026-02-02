@@ -104,9 +104,8 @@ func (r *ServiceTemplateReconciler) FetchRemoteState(
 		&aimv1alpha1.AIMModel{},
 	)
 
-	// Fetch GPU resources if GPU is required AND no inline model sources
-	// Inline model sources bypass GPU check - GPU is a runtime concern, not a definition concern
-	if TemplateRequiresGPU(template.Spec.AIMServiceTemplateSpecCommon) && len(template.Spec.ModelSources) == 0 {
+	// Fetch GPU resources if GPU is required
+	if TemplateRequiresGPU(template.Spec.AIMServiceTemplateSpecCommon) {
 		result.gpuResources, result.gpuFetchErr = utils.GetClusterGPUResources(ctx, c)
 	}
 
@@ -164,13 +163,10 @@ func (result ServiceTemplateFetchResult) GetComponentHealth(ctx context.Context,
 		}
 	}
 
-	// GPU availability check - skip for inline model sources
-	// GPU is a runtime concern, not a definition concern
-	if len(result.template.Spec.ModelSources) == 0 {
-		gpuHealth := result.getGPUHealth()
-		if gpuHealth.Component != "" {
-			health = append(health, gpuHealth)
-		}
+	// GPU availability check
+	gpuHealth := result.getGPUHealth()
+	if gpuHealth.Component != "" {
+		health = append(health, gpuHealth)
 	}
 
 	return health
@@ -230,9 +226,8 @@ func (r *ClusterServiceTemplateReconciler) FetchRemoteState(
 		&aimv1alpha1.AIMClusterModel{},
 	)
 
-	// Fetch GPU resources if GPU is required AND no inline model sources
-	// Inline model sources bypass GPU check - GPU is a runtime concern, not a definition concern
-	if TemplateRequiresGPU(template.Spec.AIMServiceTemplateSpecCommon) && len(template.Spec.ModelSources) == 0 {
+	// Fetch GPU resources if GPU is required
+	if TemplateRequiresGPU(template.Spec.AIMServiceTemplateSpecCommon) {
 		result.gpuResources, result.gpuFetchErr = utils.GetClusterGPUResources(ctx, c)
 	}
 
@@ -285,13 +280,10 @@ func (result ClusterServiceTemplateFetchResult) GetComponentHealth(ctx context.C
 		}
 	}
 
-	// GPU availability check - skip for inline model sources
-	// GPU is a runtime concern, not a definition concern
-	if len(result.template.Spec.ModelSources) == 0 {
-		gpuHealth := result.getGPUHealth()
-		if gpuHealth.Component != "" {
-			health = append(health, gpuHealth)
-		}
+	// GPU availability check
+	gpuHealth := result.getGPUHealth()
+	if gpuHealth.Component != "" {
+		health = append(health, gpuHealth)
 	}
 
 	return health
@@ -377,8 +369,13 @@ func (r *ServiceTemplateReconciler) PlanResources(
 		return planResult
 	}
 
-	// Check if inline model sources are provided - template is immediately ready
-	// NOTE: Inline model sources bypass GPU availability check - GPU is a runtime concern, not a definition concern
+	// Check GPU availability first - required for both custom and discovery-based models
+	if !obs.isGPUAvailable() {
+		logger.V(1).Info("required GPU not available, skipping resource planning")
+		return planResult
+	}
+
+	// Check if inline model sources are provided - template is immediately ready (no discovery needed)
 	if len(template.Spec.ModelSources) > 0 {
 		logger.V(1).Info("template has inline model sources, skipping discovery")
 
@@ -390,12 +387,6 @@ func (r *ServiceTemplateReconciler) PlanResources(
 			}
 		}
 
-		return planResult
-	}
-
-	// Check GPU availability - only required for discovery flow (not inline model sources)
-	if !obs.isGPUAvailable() {
-		logger.V(1).Info("required GPU not available, skipping resource planning")
 		return planResult
 	}
 
@@ -465,16 +456,15 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 		return planResult
 	}
 
-	// Check if inline model sources are provided - template is immediately ready
-	// NOTE: Inline model sources bypass GPU availability check - GPU is a runtime concern, not a definition concern
-	if len(template.Spec.ModelSources) > 0 {
-		logger.V(1).Info("template has inline model sources, skipping discovery")
+	// Check GPU availability first - required for both custom and discovery-based models
+	if !obs.isGPUAvailable() {
+		logger.V(1).Info("required GPU not available, skipping resource planning")
 		return planResult
 	}
 
-	// Check GPU availability - only required for discovery flow (not inline model sources)
-	if !obs.isGPUAvailable() {
-		logger.V(1).Info("required GPU not available, skipping resource planning")
+	// Check if inline model sources are provided - template is immediately ready (no discovery needed)
+	if len(template.Spec.ModelSources) > 0 {
+		logger.V(1).Info("template has inline model sources, skipping discovery")
 		return planResult
 	}
 
@@ -520,7 +510,7 @@ func (r *ServiceTemplateReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ServiceTemplateObservation,
 ) {
-	decorateTemplateStatus(status, cm, obs.template.Spec.ModelSources, obs.discoveryJob, obs.parsedDiscovery, obs.model.Value)
+	decorateTemplateStatus(status, cm, &obs.template.Spec.AIMServiceTemplateSpecCommon, obs.discoveryJob, obs.parsedDiscovery, obs.model.Value)
 }
 
 // DecorateStatus adds domain-specific status fields for cluster-scoped templates.
@@ -529,14 +519,14 @@ func (r *ClusterServiceTemplateReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ClusterServiceTemplateObservation,
 ) {
-	decorateClusterTemplateStatus(status, cm, obs.template.Spec.ModelSources, obs.discoveryJob, obs.parsedDiscovery, obs.clusterModel.Value)
+	decorateClusterTemplateStatus(status, cm, &obs.template.Spec.AIMServiceTemplateSpecCommon, obs.discoveryJob, obs.parsedDiscovery, obs.clusterModel.Value)
 }
 
 // decorateTemplateStatus handles common status decoration for namespace-scoped templates.
 func decorateTemplateStatus(
 	status *aimv1alpha1.AIMServiceTemplateStatus,
 	cm *controllerutils.ConditionManager,
-	specModelSources []aimv1alpha1.AIMModelSource,
+	spec *aimv1alpha1.AIMServiceTemplateSpecCommon,
 	discoveryJobResult controllerutils.FetchResult[*batchv1.Job],
 	parsedDiscovery *ParsedDiscovery,
 	model *aimv1alpha1.AIMModel,
@@ -551,8 +541,12 @@ func decorateTemplateStatus(
 
 	// Handle inline model sources - copy from spec to status
 	// This takes precedence over discovery results
-	if len(specModelSources) > 0 {
-		status.ModelSources = specModelSources
+	if len(spec.ModelSources) > 0 {
+		status.ModelSources = spec.ModelSources
+		// Build profile from spec for custom models (no discovery runs)
+		status.Profile = buildProfileFromSpec(spec)
+		// Resolve hardware from spec (no discovery)
+		status.ResolvedHardware = resolveHardware(nil, spec)
 		cm.MarkTrue("Discovered", "InlineModelSources", "Model sources provided in-line in spec")
 		return
 	}
@@ -572,15 +566,94 @@ func decorateTemplateStatus(
 		if parsedDiscovery.Profile != nil {
 			status.Profile = parsedDiscovery.Profile
 		}
+		// Resolve hardware from discovery + spec fallback
+		status.ResolvedHardware = resolveHardware(parsedDiscovery, spec)
 		cm.MarkTrue("Discovered", "DiscoveryComplete", "Discovery job completed successfully")
 	}
+}
+
+// buildProfileFromSpec creates an AIMProfile from template spec for custom models.
+// This is used when discovery doesn't run (inline model sources) to populate
+// the status.Profile with GPU count and other metadata from the spec.
+func buildProfileFromSpec(spec *aimv1alpha1.AIMServiceTemplateSpecCommon) *aimv1alpha1.AIMProfile {
+	profile := &aimv1alpha1.AIMProfile{
+		Metadata: aimv1alpha1.AIMProfileMetadata{},
+	}
+
+	// Set GPU info from spec
+	if spec.Gpu != nil {
+		profile.Metadata.GPUCount = spec.Gpu.Requests
+		if len(spec.Gpu.Models) > 0 {
+			profile.Metadata.GPU = spec.Gpu.Models[0]
+		}
+	}
+
+	// Set metric and precision from spec
+	if spec.Metric != nil {
+		profile.Metadata.Metric = *spec.Metric
+	}
+	if spec.Precision != nil {
+		profile.Metadata.Precision = *spec.Precision
+	}
+
+	// Set type from spec if explicitly set
+	if spec.Type != nil {
+		profile.Metadata.Type = *spec.Type
+	}
+
+	return profile
+}
+
+// resolveHardware computes the final hardware requirements from discovery and spec.
+// If discovery ran, use discovery values (even if 0). Otherwise use spec values.
+func resolveHardware(discovery *ParsedDiscovery, spec *aimv1alpha1.AIMServiceTemplateSpecCommon) *aimv1alpha1.AIMHardwareRequirements {
+	resolved := &aimv1alpha1.AIMHardwareRequirements{}
+
+	var gpuCount int32
+	var gpuModel string
+	var resourceName string
+
+	// Resource name always comes from spec (discovery doesn't provide this)
+	if spec.Gpu != nil {
+		resourceName = spec.Gpu.ResourceName
+	}
+
+	if discovery != nil && discovery.Profile != nil {
+		// Discovery ran - use discovery values (even if 0)
+		gpuCount = discovery.Profile.Metadata.GPUCount
+		gpuModel = discovery.Profile.Metadata.GPU
+	} else {
+		// No discovery (custom models with inline model sources) - use spec values
+		if spec.Gpu != nil {
+			gpuCount = spec.Gpu.Requests
+			if len(spec.Gpu.Models) > 0 {
+				gpuModel = spec.Gpu.Models[0]
+			}
+		}
+	}
+
+	// Build the resolved GPU requirements
+	// Always set GPU if we have any values (even gpuCount=0 with a model is valid)
+	if gpuCount > 0 || gpuModel != "" || resourceName != "" {
+		resolved.GPU = &aimv1alpha1.AIMGpuRequirements{
+			Requests: gpuCount,
+		}
+		if gpuModel != "" {
+			resolved.GPU.Models = []string{gpuModel}
+		}
+		if resourceName != "" {
+			resolved.GPU.ResourceName = resourceName
+		}
+	}
+
+	return resolved
 }
 
 // decorateClusterTemplateStatus handles common status decoration for cluster-scoped templates.
 func decorateClusterTemplateStatus(
 	status *aimv1alpha1.AIMServiceTemplateStatus,
 	cm *controllerutils.ConditionManager,
-	specModelSources []aimv1alpha1.AIMModelSource,
+	spec *aimv1alpha1.AIMServiceTemplateSpecCommon,
 	discoveryJobResult controllerutils.FetchResult[*batchv1.Job],
 	parsedDiscovery *ParsedDiscovery,
 	clusterModel *aimv1alpha1.AIMClusterModel,
@@ -594,8 +667,12 @@ func decorateClusterTemplateStatus(
 
 	// Handle inline model sources - copy from spec to status
 	// This takes precedence over discovery results
-	if len(specModelSources) > 0 {
-		status.ModelSources = specModelSources
+	if len(spec.ModelSources) > 0 {
+		status.ModelSources = spec.ModelSources
+		// Build profile from spec for custom models (no discovery runs)
+		status.Profile = buildProfileFromSpec(spec)
+		// Resolve hardware from spec (no discovery)
+		status.ResolvedHardware = resolveHardware(nil, spec)
 		cm.MarkTrue("Discovered", "InlineModelSources", "Model sources provided in-line in spec")
 		return
 	}
@@ -615,6 +692,8 @@ func decorateClusterTemplateStatus(
 		if parsedDiscovery.Profile != nil {
 			status.Profile = parsedDiscovery.Profile
 		}
+		// Resolve hardware from discovery + spec fallback
+		status.ResolvedHardware = resolveHardware(parsedDiscovery, spec)
 		cm.MarkTrue("Discovered", "DiscoveryComplete", "Discovery job completed successfully")
 	}
 }

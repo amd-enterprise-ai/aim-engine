@@ -3,7 +3,7 @@ kind: AIMModel
 metadata:
   name: test-invalid-secret
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.1.7
+  image: ghcr.io/silogen/aim-dummy:0.1.10
   # Reference a secret that doesn't exist
   imagePullSecrets:
     - name: this-secret-does-not-exist

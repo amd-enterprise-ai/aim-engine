@@ -5,7 +5,7 @@
 # This test validates that spec.replicas propagates correctly
 # to the InferenceService minReplicas field.
 #
-# Uses: ghcr.io/silogen/aim-dummy:0.1.8 (lightweight test image)
+# Uses: ghcr.io/silogen/aim-dummy:0.1.10 (lightweight test image)
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
