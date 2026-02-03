@@ -1196,6 +1196,26 @@ _Appears in:_
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for inference containers.<br />When set on AIMService, these take highest precedence in the merge hierarchy.<br />When set on RuntimeConfig, these provide namespace/cluster-level defaults.<br />Merge order (highest to lowest): Service.Env > RuntimeConfig.Env > Template.Env > Profile.Env |  |  |
 
 
+#### AIMServiceRuntimeStatus
+
+
+
+AIMServiceRuntimeStatus captures runtime status including replica counts from HPA.
+
+
+
+_Appears in:_
+- [AIMServiceStatus](#aimservicestatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `currentReplicas` _integer_ | CurrentReplicas is the current number of replicas as reported by the HPA. |  |  |
+| `desiredReplicas` _integer_ | DesiredReplicas is the desired number of replicas as determined by the HPA. |  |  |
+| `minReplicas` _integer_ | MinReplicas is the minimum number of replicas configured for autoscaling. |  |  |
+| `maxReplicas` _integer_ | MaxReplicas is the maximum number of replicas configured for autoscaling. |  |  |
+| `replicas` _string_ | Replicas is a formatted display string for kubectl output.<br />Shows "current" for fixed replicas or "current/desired (min-max)" for autoscaling. |  |  |
+
+
 #### AIMServiceSpec
 
 
@@ -1253,6 +1273,7 @@ _Appears in:_
 | `routing` _[AIMServiceRoutingStatus](#aimserviceroutingstatus)_ | Routing surfaces information about the configured HTTP routing, when enabled. |  |  |
 | `resolvedTemplate` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedTemplate captures metadata about the template that satisfied the reference. |  |  |
 | `cache` _[AIMServiceCacheStatus](#aimservicecachestatus)_ | Cache captures cache-related status for this service. |  |  |
+| `runtime` _[AIMServiceRuntimeStatus](#aimserviceruntimestatus)_ | Runtime captures runtime status including replica counts. |  |  |
 
 
 
@@ -1408,6 +1429,7 @@ _Appears in:_
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources list the models that this template requires to run. These are the models that will be<br />cached, if this template is cached. |  |  |
 | `profile` _[AIMProfile](#aimprofile)_ | Profile contains the full discovery result profile as a free-form JSON object.<br />This includes metadata, engine args, environment variables, and model details. |  |  |
 | `discoveryJob` _[AIMResolvedReference](#aimresolvedreference)_ | DiscoveryJob is a reference to the job that was run for discovery |  |  |
+| `discovery` _[DiscoveryState](#discoverystate)_ | Discovery contains state tracking for the discovery process, including<br />retry attempts and backoff timing for the circuit breaker pattern. |  |  |
 
 
 #### AIMStorageConfig
@@ -1530,6 +1552,27 @@ _Appears in:_
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables to use when downloading the model for caching.<br />These variables are available to the model download process and can be used<br />to configure download behavior, authentication, proxies, etc.<br />If not set, falls back to the template's top-level Env field. |  |  |
 
 
+
+
+#### DiscoveryState
+
+
+
+DiscoveryState tracks the discovery process state for circuit breaker logic.
+This enables exponential backoff and prevents infinite retry loops when
+discovery jobs fail persistently.
+
+
+
+_Appears in:_
+- [AIMServiceTemplateStatus](#aimservicetemplatestatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `attempts` _integer_ | Attempts is the number of discovery job attempts that have been made.<br />This counter increments each time a new discovery job is created after a failure. |  |  |
+| `lastAttemptTime` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#time-v1-meta)_ | LastAttemptTime is the timestamp of the most recent discovery job creation.<br />Used to calculate exponential backoff before the next retry. |  |  |
+| `lastFailureReason` _string_ | LastFailureReason captures the reason for the most recent discovery failure.<br />Used to classify failures as terminal vs transient. |  |  |
+| `specHash` _string_ | SpecHash is a hash of the template spec fields that affect discovery.<br />When the spec changes, the circuit breaker resets to allow fresh attempts. |  |  |
 
 
 #### DownloadProgress

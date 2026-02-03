@@ -79,11 +79,7 @@ func (r *AIMModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, err
 	}
 
-	if err := r.pipeline.Run(ctx, &model); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{}, nil
+	return r.pipeline.Run(ctx, &model)
 }
 
 func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {

@@ -21,14 +21,14 @@ spec:
               kind: Job
               metadata:
                 labels:
-                  aim.eai.amd.com/model-cache.name: basic-lifecycle-hf
+                  aim.eai.amd.com/cache.name: basic-lifecycle-hf
         - assert:
             resource:
               apiVersion: v1
               kind: PersistentVolumeClaim
               metadata:
                 labels:
-                  aim.eai.amd.com/model-cache.name: basic-lifecycle-hf
+                  aim.eai.amd.com/cache.name: basic-lifecycle-hf
               status:
                 phase: Bound
 

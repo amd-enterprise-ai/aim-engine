@@ -1,0 +1,98 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Default Replicas (Kind)
+#
+# This test validates that when no replica configuration is specified,
+# the service defaults to 1 replica and status.runtime reflects this.
+#
+# Uses: ghcr.io/silogen/aim-dummy:0.1.8 (lightweight test image)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-replicas-default
+spec:
+  description: Test AIMService defaults to 1 replica when not specified
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create model
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for model to be ready (discovery complete)
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-replicas-default-model
+              status:
+                status: Ready
+
+    - name: Create service with no replica config
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify service starts
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-replicas-default-service
+              status:
+                status: Starting
+
+    - name: Verify InferenceService has default replica count of 1
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-replicas-default-service
+              spec:
+                predictor:
+                  minReplicas: 1
+
+    - name: Verify InferenceService has HPA disabled (default replicas mode)
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-replicas-default-service
+                annotations:
+                  serving.kserve.io/autoscalerClass: "none"
+
+    - name: Verify service reaches Running status with correct runtime status
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-replicas-default-service
+              status:
+                status: Running
+                runtime:
+                  # Default replicas: min=max=current=desired=1
+                  currentReplicas: 1
+                  desiredReplicas: 1
+                  minReplicas: 1
+                  maxReplicas: 1
+                  # Display format for fixed replicas is just the number
+                  replicas: "1"

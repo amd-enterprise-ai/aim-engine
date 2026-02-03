@@ -1,0 +1,18 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModelCache
+metadata:
+  name: test-s3
+spec:
+  sourceUri: s3://models/tiny-gpt2
+  # size intentionally omitted - triggers size discovery
+  env:
+    - name: AWS_ACCESS_KEY_ID
+      value: minioadmin
+    - name: AWS_SECRET_ACCESS_KEY
+      value: minioadmin
+    - name: AWS_ENDPOINT_URL
+      value: http://minio:9000
+    - name: S3_ENDPOINT
+      value: minio:9000
+    - name: S3_NO_SSL
+      value: "true"

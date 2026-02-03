@@ -83,10 +83,17 @@ func (r *AIMClusterModelSourceReconciler) Reconcile(ctx context.Context, req ctr
 		return ctrl.Result{}, err
 	}
 
-	if err := r.pipeline.Run(ctx, &source); err != nil {
+	result, err := r.pipeline.Run(ctx, &source)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 
+	// If pipeline requests a requeue, honor it
+	if result.RequeueAfter > 0 {
+		return result, nil
+	}
+
+	// Otherwise, requeue after sync interval
 	syncInterval := source.Spec.SyncInterval.Duration
 	if syncInterval == 0 {
 		syncInterval = aimv1alpha1.DefaultSyncInterval

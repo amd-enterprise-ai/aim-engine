@@ -256,6 +256,10 @@ type AIMServiceStatus struct {
 	// Cache captures cache-related status for this service.
 	// +optional
 	Cache *AIMServiceCacheStatus `json:"cache,omitempty"`
+
+	// Runtime captures runtime status including replica counts.
+	// +optional
+	Runtime *AIMServiceRuntimeStatus `json:"runtime,omitempty"`
 }
 
 // AIMServiceCacheStatus captures cache-related status for an AIMService.
@@ -270,6 +274,30 @@ type AIMServiceCacheStatus struct {
 	// If the retry fails (cache enters Failed again with attempts == 1), the service degrades.
 	// +optional
 	RetryAttempts int `json:"retryAttempts,omitempty"`
+}
+
+// AIMServiceRuntimeStatus captures runtime status including replica counts from HPA.
+type AIMServiceRuntimeStatus struct {
+	// CurrentReplicas is the current number of replicas as reported by the HPA.
+	// +optional
+	CurrentReplicas int32 `json:"currentReplicas,omitempty"`
+
+	// DesiredReplicas is the desired number of replicas as determined by the HPA.
+	// +optional
+	DesiredReplicas int32 `json:"desiredReplicas,omitempty"`
+
+	// MinReplicas is the minimum number of replicas configured for autoscaling.
+	// +optional
+	MinReplicas int32 `json:"minReplicas,omitempty"`
+
+	// MaxReplicas is the maximum number of replicas configured for autoscaling.
+	// +optional
+	MaxReplicas int32 `json:"maxReplicas,omitempty"`
+
+	// Replicas is a formatted display string for kubectl output.
+	// Shows "current" for fixed replicas or "current/desired (min-max)" for autoscaling.
+	// +optional
+	Replicas string `json:"replicas,omitempty"`
 }
 
 func (s *AIMService) GetRuntimeConfigRef() RuntimeConfigRef {
@@ -347,7 +375,7 @@ const (
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 // +kubebuilder:printcolumn:name="Model",type=string,JSONPath=`.status.resolvedModel.name`
 // +kubebuilder:printcolumn:name="Template",type=string,JSONPath=`.status.resolvedTemplate.name`
-// +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
+// +kubebuilder:printcolumn:name="Replicas",type=string,JSONPath=`.status.runtime.replicas`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // Note: KServe uses {name}-{namespace} format which must not exceed 63 characters.
 // This constraint is validated at runtime since CEL cannot access metadata.namespace.

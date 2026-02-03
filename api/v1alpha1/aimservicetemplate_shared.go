@@ -164,6 +164,36 @@ type AIMServiceTemplateStatus struct {
 
 	// DiscoveryJob is a reference to the job that was run for discovery
 	DiscoveryJob *AIMResolvedReference `json:"discoveryJob,omitempty"`
+
+	// Discovery contains state tracking for the discovery process, including
+	// retry attempts and backoff timing for the circuit breaker pattern.
+	// +optional
+	Discovery *DiscoveryState `json:"discovery,omitempty"`
+}
+
+// DiscoveryState tracks the discovery process state for circuit breaker logic.
+// This enables exponential backoff and prevents infinite retry loops when
+// discovery jobs fail persistently.
+type DiscoveryState struct {
+	// Attempts is the number of discovery job attempts that have been made.
+	// This counter increments each time a new discovery job is created after a failure.
+	// +optional
+	Attempts int32 `json:"attempts,omitempty"`
+
+	// LastAttemptTime is the timestamp of the most recent discovery job creation.
+	// Used to calculate exponential backoff before the next retry.
+	// +optional
+	LastAttemptTime *metav1.Time `json:"lastAttemptTime,omitempty"`
+
+	// LastFailureReason captures the reason for the most recent discovery failure.
+	// Used to classify failures as terminal vs transient.
+	// +optional
+	LastFailureReason string `json:"lastFailureReason,omitempty"`
+
+	// SpecHash is a hash of the template spec fields that affect discovery.
+	// When the spec changes, the circuit breaker resets to allow fresh attempts.
+	// +optional
+	SpecHash string `json:"specHash,omitempty"`
 }
 
 func (s *AIMServiceTemplateStatus) GetConditions() []metav1.Condition {
