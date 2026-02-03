@@ -16,7 +16,7 @@ AIM Engine is a Kubernetes operator for running and managing AMD Inference Micro
 - **Smart template selection** - Automatically selects the optimal runtime configuration based on GPU availability, precision requirements, and optimization goals (latency vs throughput)
 
 ### Production-Ready Infrastructure
-- **Model caching** - Hierarchical cache system pre-downloads model artifacts to shared PVCs, eliminating cold-start delays
+- **Model caching** - Cache system that pre-downloads model artifacts to shared PVCs, saving space and reducing load time
 - **Autoscaling** - KEDA integration with OpenTelemetry metrics for demand-based scaling
 - **HTTP routing** - Gateway API integration with templated path configuration
 
@@ -30,10 +30,10 @@ AIM Engine is a Kubernetes operator for running and managing AMD Inference Micro
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
-  name: llama-chat
+  name: qwen3-chat
 spec:
   model:
-    image: ghcr.io/amd/aim-meta-llama-llama-3-1-8b-instruct:latest
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
 ```
 
 ## Deployment
