@@ -44,7 +44,6 @@ spec:
 | Kubernetes | 1.28+ |
 | KServe | 0.16+ |
 | Gateway API | 1.3+ |
-| AMD ROCm | 6.0+ |
 
 ### Using Helm
 
