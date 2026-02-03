@@ -24,8 +24,7 @@ spec:
       hardware:
         gpu:
           requests: 1
-          # models:
-          #   - MI300X
+          # model: MI300X
   caching:
     mode: Never
   replicas: 1

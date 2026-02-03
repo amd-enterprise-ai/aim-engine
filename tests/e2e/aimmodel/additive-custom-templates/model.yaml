@@ -19,7 +19,7 @@ spec:
       hardware:
         gpu:
           requests: 2
-          models: ["MI300X"]
+          model: MI300X
       env:
         - name: MAX_MODEL_LEN
           value: "16384"
@@ -32,4 +32,4 @@ spec:
       hardware:
         gpu:
           requests: 1
-          models: ["MI300X"]
+          model: MI300X
