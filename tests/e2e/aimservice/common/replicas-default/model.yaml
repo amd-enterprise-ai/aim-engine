@@ -1,9 +1,9 @@
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMModel
 metadata:
-  name: test-autoscaling-model
+  name: test-replicas-default-model
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.1.9
+  image: ghcr.io/silogen/aim-dummy:0.1.8
   resources:
     limits:
       memory: 1Gi

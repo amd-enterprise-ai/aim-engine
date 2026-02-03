@@ -29,9 +29,9 @@ spec:
     - jsonPath: .status.resolvedTemplate.name
       name: Template
       type: string
-    - jsonPath: .spec.replicas
+    - jsonPath: .status.runtime.replicas
       name: Replicas
-      type: integer
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -1032,6 +1032,35 @@ spec:
                     description: |-
                       Path is the HTTP path prefix used when routing is enabled.
                       Example: `/tenant/svc-uuid`
+                    type: string
+                type: object
+              runtime:
+                description: Runtime captures runtime status including replica counts.
+                properties:
+                  currentReplicas:
+                    description: CurrentReplicas is the current number of replicas
+                      as reported by the HPA.
+                    format: int32
+                    type: integer
+                  desiredReplicas:
+                    description: DesiredReplicas is the desired number of replicas
+                      as determined by the HPA.
+                    format: int32
+                    type: integer
+                  maxReplicas:
+                    description: MaxReplicas is the maximum number of replicas configured
+                      for autoscaling.
+                    format: int32
+                    type: integer
+                  minReplicas:
+                    description: MinReplicas is the minimum number of replicas configured
+                      for autoscaling.
+                    format: int32
+                    type: integer
+                  replicas:
+                    description: |-
+                      Replicas is a formatted display string for kubectl output.
+                      Shows "current" for fixed replicas or "current/desired (min-max)" for autoscaling.
                     type: string
                 type: object
               status:
