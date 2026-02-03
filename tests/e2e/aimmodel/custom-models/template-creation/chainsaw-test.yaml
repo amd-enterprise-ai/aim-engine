@@ -110,9 +110,10 @@ spec:
                 modelName: custom-model-test
                 # Default type is unoptimized when not specified
                 type: unoptimized
-                gpu:
-                  requests: 1
-                  model: MI300X
+                hardware:
+                  gpu:
+                    requests: 1
+                    model: MI300X
                 # Model sources are copied from spec
                 modelSources:
                   - modelId: sshleifer/tiny-gpt2
@@ -125,6 +126,8 @@ spec:
                   gpu:
                     requests: 1
                     model: MI300X
+                # HardwareSummary for display (1 x MI300X)
+                hardwareSummary: 1 x MI300X
                 # ModelSources copied to status
                 modelSources:
                   - modelId: sshleifer/tiny-gpt2
@@ -141,15 +144,17 @@ spec:
                 labels:
                   aim.eai.amd.com/template.alias: multi-gpu
               spec:
-                gpu:
-                  requests: 2
-                  model: MI300X
+                hardware:
+                  gpu:
+                    requests: 2
+                    model: MI300X
               status:
                 status: Ready
                 resolvedHardware:
                   gpu:
                     requests: 2
                     model: MI300X
+                hardwareSummary: 2 x MI300X
 
     - name: Assert different-gpu template is NotAvailable (MI250X not in cluster)
       try:
@@ -161,9 +166,10 @@ spec:
                 labels:
                   aim.eai.amd.com/template.alias: different-gpu
               spec:
-                gpu:
-                  requests: 1
-                  model: MI250X
+                hardware:
+                  gpu:
+                    requests: 1
+                    model: MI250X
               status:
                 # NotAvailable because MI250X GPU is not present in cluster
                 status: NotAvailable
@@ -171,6 +177,7 @@ spec:
                   gpu:
                     requests: 1
                     model: MI250X
+                hardwareSummary: 1 x MI250X
 
     - name: Assert latency-optimized template has profile settings, env vars, and type=optimized
       try:
@@ -185,9 +192,10 @@ spec:
                 type: optimized
                 metric: latency
                 precision: fp16
-                gpu:
-                  requests: 1
-                  model: MI300X
+                hardware:
+                  gpu:
+                    requests: 1
+                    model: MI300X
                 # Env vars from customTemplate
                 env:
                   - name: VLLM_USE_V1
@@ -244,9 +252,10 @@ spec:
               spec:
                 type: unoptimized
                 # Inherits GPU from spec.hardware
-                gpu:
-                  requests: 1
-                  model: MI300X
+                hardware:
+                  gpu:
+                    requests: 1
+                    model: MI300X
               status:
                 status: Ready
                 profile:

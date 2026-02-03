@@ -442,15 +442,15 @@ func filterTemplatesByOverrides(candidates []TemplateCandidate, overrides *aimv1
 		if overrides.Precision != nil && !strings.EqualFold(templatePrecision, string(*overrides.Precision)) {
 			continue
 		}
-		if overrides.Gpu != nil {
+		if overrides.Hardware != nil && overrides.Hardware.GPU != nil {
 			// Check if the override GPU model matches any template GPU model
-			if overrides.Gpu.Model != "" && len(templateGPUModels) > 0 {
-				if !gpuModelsOverlap([]string{overrides.Gpu.Model}, templateGPUModels) {
+			if overrides.Hardware.GPU.Model != "" && len(templateGPUModels) > 0 {
+				if !gpuModelsOverlap([]string{overrides.Hardware.GPU.Model}, templateGPUModels) {
 					continue
 				}
 			}
 			// Filter by GPU count if specified
-			if overrides.Gpu.Requests > 0 && templateGPUCount > 0 && templateGPUCount != overrides.Gpu.Requests {
+			if overrides.Hardware.GPU.Requests > 0 && templateGPUCount > 0 && templateGPUCount != overrides.Hardware.GPU.Requests {
 				continue
 			}
 		}
@@ -614,9 +614,9 @@ func candidatePrecision(c TemplateCandidate) string {
 }
 
 func candidateGPUModel(c TemplateCandidate) string {
-	// Check Gpu.Model from spec
-	if c.Spec.Gpu != nil && c.Spec.Gpu.Model != "" {
-		return strings.TrimSpace(c.Spec.Gpu.Model)
+	// Check Hardware.GPU.Model from spec
+	if c.Spec.Hardware != nil && c.Spec.Hardware.GPU != nil && c.Spec.Hardware.GPU.Model != "" {
+		return strings.TrimSpace(c.Spec.Hardware.GPU.Model)
 	}
 	if c.Status.Profile != nil {
 		if gpu := strings.TrimSpace(c.Status.Profile.Metadata.GPU); gpu != "" {
@@ -629,8 +629,8 @@ func candidateGPUModel(c TemplateCandidate) string {
 // candidateGPUModels returns GPU model from the candidate spec as a slice.
 // Used for GPU availability filtering where any model match is acceptable.
 func candidateGPUModels(c TemplateCandidate) []string {
-	if c.Spec.Gpu != nil && c.Spec.Gpu.Model != "" {
-		return []string{c.Spec.Gpu.Model}
+	if c.Spec.Hardware != nil && c.Spec.Hardware.GPU != nil && c.Spec.Hardware.GPU.Model != "" {
+		return []string{c.Spec.Hardware.GPU.Model}
 	}
 	// Fallback to status profile
 	if c.Status.Profile != nil {
@@ -642,8 +642,8 @@ func candidateGPUModels(c TemplateCandidate) []string {
 }
 
 func candidateGPUCount(c TemplateCandidate) int32 {
-	if c.Spec.Gpu != nil && c.Spec.Gpu.Requests > 0 {
-		return c.Spec.Gpu.Requests
+	if c.Spec.Hardware != nil && c.Spec.Hardware.GPU != nil && c.Spec.Hardware.GPU.Requests > 0 {
+		return c.Spec.Hardware.GPU.Requests
 	}
 	if c.Status.Profile != nil && c.Status.Profile.Metadata.GPUCount > 0 {
 		return c.Status.Profile.Metadata.GPUCount

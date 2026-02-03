@@ -163,6 +163,12 @@ type AIMServiceTemplateStatus struct {
 	// +optional
 	ResolvedHardware *AIMHardwareRequirements `json:"resolvedHardware,omitempty"`
 
+	// HardwareSummary is a human-readable display string for the hardware requirements.
+	// Format: "{count} x {model}" for GPU (e.g., "2 x MI300X") or "CPU" for CPU-only.
+	// This is a computed field for display purposes only.
+	// +optional
+	HardwareSummary string `json:"hardwareSummary,omitempty"`
+
 	// Status represents the current high‑level status of the template lifecycle.
 	// Values: `Pending`, `Progressing`, `Ready`, `Degraded`, `Failed`.
 	// +kubebuilder:default=Pending

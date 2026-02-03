@@ -101,9 +101,6 @@ spec:
                         required:
                         - requests
                         type: object
-                        x-kubernetes-validations:
-                        - message: requests must be greater than 0
-                          rule: self.requests.isGreaterThan(quantity("0"))
                       gpu:
                         description: GPU specifies GPU requirements. If not set, no
                           GPUs are requested (CPU-only model).
@@ -361,9 +358,6 @@ spec:
                           required:
                           - requests
                           type: object
-                          x-kubernetes-validations:
-                          - message: requests must be greater than 0
-                            rule: self.requests.isGreaterThan(quantity("0"))
                         gpu:
                           description: GPU specifies GPU requirements. If not set,
                             no GPUs are requested (CPU-only model).

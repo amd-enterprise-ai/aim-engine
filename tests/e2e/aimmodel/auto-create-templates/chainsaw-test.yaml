@@ -45,8 +45,9 @@ spec:
                   aim.eai.amd.com/model: test-model-auto-templates
               spec:
                 modelName: test-model-auto-templates
-                gpu:
-                  model: MI300X
+                hardware:
+                  gpu:
+                    model: MI300X
 
 # TODO uncomment once the service template controller is migrated
 #    - name: Assert model status reflects templates

@@ -53,9 +53,10 @@ spec:
                   aim.eai.amd.com/template.alias: custom-high-memory
               spec:
                 modelName: additive-templates-test
-                gpu:
-                  requests: 2
-                  model: MI300X
+                hardware:
+                  gpu:
+                    requests: 2
+                    model: MI300X
                 env:
                   - name: MAX_MODEL_LEN
                     value: "16384"
@@ -76,9 +77,10 @@ spec:
                 type: optimized
                 metric: latency
                 precision: fp16
-                gpu:
-                  requests: 1
-                  model: MI300X
+                hardware:
+                  gpu:
+                    requests: 1
+                    model: MI300X
 
     - name: Verify template count is greater than 2 (discovered + custom)
       description: |

@@ -1,0 +1,21 @@
+# CPU-only custom model - no GPU requirements
+# Tests that templates can be created with only CPU hardware
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: cpu-only-model-test
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.10
+
+  # Model sources - required for custom models
+  modelSources:
+    - modelId: sshleifer/tiny-gpt2
+      sourceUri: hf://sshleifer/tiny-gpt2
+      size: 100Mi
+
+  # CPU-only custom model configuration (no GPU)
+  custom:
+    hardware:
+      cpu:
+        requests: 500m
+        limits: 2000m

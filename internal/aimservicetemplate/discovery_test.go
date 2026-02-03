@@ -759,9 +759,11 @@ func TestBuildDiscoveryJob(t *testing.T) {
 				TemplateSpec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 					ModelName: "test-model",
 					AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-						Gpu: &aimv1alpha1.AIMGpuRequirements{
-							Model:    "MI300X",
-							Requests: 2,
+						Hardware: &aimv1alpha1.AIMHardwareRequirements{
+							GPU: &aimv1alpha1.AIMGpuRequirements{
+								Model:    "MI300X",
+								Requests: 2,
+							},
 						},
 					},
 				},

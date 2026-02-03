@@ -103,9 +103,9 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 	if spec.TemplateSpec.Precision != nil {
 		hashInput += string(*spec.TemplateSpec.Precision)
 	}
-	if spec.TemplateSpec.Gpu != nil {
-		hashInput += spec.TemplateSpec.Gpu.Model
-		hashInput += strconv.Itoa(int(spec.TemplateSpec.Gpu.Requests))
+	if spec.TemplateSpec.Hardware != nil && spec.TemplateSpec.Hardware.GPU != nil {
+		hashInput += spec.TemplateSpec.Hardware.GPU.Model
+		hashInput += strconv.Itoa(int(spec.TemplateSpec.Hardware.GPU.Requests))
 	}
 	if spec.TemplateSpec.ProfileId != "" {
 		hashInput += spec.TemplateSpec.ProfileId
@@ -152,17 +152,17 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 		})
 	}
 
-	if spec.TemplateSpec.Gpu != nil {
-		if spec.TemplateSpec.Gpu.Model != "" {
+	if spec.TemplateSpec.Hardware != nil && spec.TemplateSpec.Hardware.GPU != nil {
+		if spec.TemplateSpec.Hardware.GPU.Model != "" {
 			env = append(env, corev1.EnvVar{
 				Name:  "AIM_GPU_MODEL",
-				Value: spec.TemplateSpec.Gpu.Model,
+				Value: spec.TemplateSpec.Hardware.GPU.Model,
 			})
 		}
-		if spec.TemplateSpec.Gpu.Requests > 0 {
+		if spec.TemplateSpec.Hardware.GPU.Requests > 0 {
 			env = append(env, corev1.EnvVar{
 				Name:  "AIM_GPU_COUNT",
-				Value: strconv.Itoa(int(spec.TemplateSpec.Gpu.Requests)),
+				Value: strconv.Itoa(int(spec.TemplateSpec.Hardware.GPU.Requests)),
 			})
 		}
 	}
