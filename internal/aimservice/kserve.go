@@ -30,6 +30,7 @@ import (
 	"strings"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimmodelcache"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -106,6 +108,22 @@ func fetchInferenceServiceEvents(
 	}
 
 	return result
+}
+
+// fetchHPA fetches the HorizontalPodAutoscaler for the InferenceService.
+// KEDA creates HPAs with the naming pattern: keda-hpa-{isvc-name}-predictor
+func fetchHPA(
+	ctx context.Context,
+	c client.Client,
+	isvc *servingv1beta1.InferenceService,
+) controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler] {
+	// KEDA HPA naming pattern: keda-hpa-{isvc-name}-predictor
+	hpaName := "keda-hpa-" + isvc.Name + constants.PredictorServiceSuffix
+
+	return controllerutils.Fetch(ctx, c, client.ObjectKey{
+		Namespace: isvc.Namespace,
+		Name:      hpaName,
+	}, &autoscalingv2.HorizontalPodAutoscaler{})
 }
 
 // planInferenceService creates the KServe InferenceService.
@@ -627,7 +645,7 @@ func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1
 		Name: volumeName,
 		VolumeSource: corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: modelCache.Status.PersistentVolumeClaim,
+				ClaimName: aimmodelcache.GenerateCachePvcName(modelCache),
 			},
 		},
 	})

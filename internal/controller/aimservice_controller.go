@@ -27,6 +27,7 @@ import (
 	"fmt"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,10 +35,13 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -85,6 +89,7 @@ type AIMServiceReconciler struct {
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch
+// +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -139,11 +144,7 @@ func (r *AIMServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	if err := r.pipeline.Run(ctx, &service); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{}, nil
+	return r.pipeline.Run(ctx, &service)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -264,6 +265,13 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&corev1.Pod{},
 			handler.EnqueueRequestsFromMapFunc(r.findServicesForInferenceServicePod),
+		).
+		// Watch HPAs to update replica status when KEDA creates/updates them
+		// Use predicate to only trigger on replica changes, not every metrics update
+		Watches(
+			&autoscalingv2.HorizontalPodAutoscaler{},
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForHPA),
+			builder.WithPredicates(hpaReplicaChangePredicate()),
 		).
 		Named(serviceName).
 		Complete(r)
@@ -612,6 +620,80 @@ func (r *AIMServiceReconciler) findServicesForInferenceServiceEvent(ctx context.
 	}
 
 	return nil
+}
+
+// hpaReplicaChangePredicate returns a predicate that only triggers on HPA create/delete
+// or when replica counts change. This avoids triggering on frequent metrics updates.
+func hpaReplicaChangePredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return true // Always reconcile on HPA creation
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return true // Always reconcile on HPA deletion
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldHPA, ok := e.ObjectOld.(*autoscalingv2.HorizontalPodAutoscaler)
+			if !ok {
+				return false
+			}
+			newHPA, ok := e.ObjectNew.(*autoscalingv2.HorizontalPodAutoscaler)
+			if !ok {
+				return false
+			}
+
+			// Only trigger if replica counts changed
+			if oldHPA.Status.CurrentReplicas != newHPA.Status.CurrentReplicas {
+				return true
+			}
+			if oldHPA.Status.DesiredReplicas != newHPA.Status.DesiredReplicas {
+				return true
+			}
+
+			// Also trigger if spec changed (min/max replicas)
+			oldMin := int32(1)
+			newMin := int32(1)
+			if oldHPA.Spec.MinReplicas != nil {
+				oldMin = *oldHPA.Spec.MinReplicas
+			}
+			if newHPA.Spec.MinReplicas != nil {
+				newMin = *newHPA.Spec.MinReplicas
+			}
+			if oldMin != newMin || oldHPA.Spec.MaxReplicas != newHPA.Spec.MaxReplicas {
+				return true
+			}
+
+			return false
+		},
+		GenericFunc: func(e event.GenericEvent) bool {
+			return false
+		},
+	}
+}
+
+// findServicesForHPA returns reconcile requests for AIMServices
+// when an HPA is created or updated by KEDA for autoscaling.
+// This enables updating replica status when the HPA is first created or scaled.
+func (r *AIMServiceReconciler) findServicesForHPA(ctx context.Context, obj client.Object) []reconcile.Request {
+	hpa, ok := obj.(*autoscalingv2.HorizontalPodAutoscaler)
+	if !ok {
+		return nil
+	}
+
+	// Check if this HPA has our service label
+	serviceName, hasLabel := hpa.Labels[constants.LabelService]
+	if !hasLabel {
+		return nil
+	}
+
+	return []reconcile.Request{
+		{
+			NamespacedName: types.NamespacedName{
+				Name:      serviceName,
+				Namespace: hpa.Namespace,
+			},
+		},
+	}
 }
 
 // cleanupTemplateCaches deletes AIMTemplateCaches created by this service that are not Available.

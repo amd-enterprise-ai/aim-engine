@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: node-gpu-test-model
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.8
+  discovery:
+    extractMetadata: false
+    createServiceTemplates: false

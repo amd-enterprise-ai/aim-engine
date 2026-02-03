@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-success
+spec:
+  modelName: test-model-success
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X

@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-setup
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: mc
+        image: minio/mc:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          #!/bin/sh
+          set -e
+          echo "Waiting for Minio to be ready..."
+          until mc alias set myminio http://minio:9000 minioadmin minioadmin; do
+            echo "Waiting for Minio..."
+            sleep 2
+          done
+          echo "Creating bucket 'models'..."
+          mc mb myminio/models || true
+          echo "Bucket setup complete"

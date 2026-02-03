@@ -82,7 +82,7 @@ spec:
                   minReplicas: 1
                   maxReplicas: 3
 
-    - name: Verify service reaches Running status
+    - name: Verify service reaches Running status with correct runtime status
       try:
         - assert:
             timeout: 180s
@@ -93,3 +93,9 @@ spec:
                 name: test-autoscaling-service
               status:
                 status: Running
+                runtime:
+                  # Autoscaling: min and max differ
+                  minReplicas: 1
+                  maxReplicas: 3
+                  # Note: currentReplicas and desiredReplicas depend on HPA
+                  # In test env without KEDA, these fall back to minReplicas

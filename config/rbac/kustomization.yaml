@@ -49,4 +49,5 @@ resources:
 - aimclustermodel_admin_role.yaml
 - aimclustermodel_editor_role.yaml
 - aimclustermodel_viewer_role.yaml
+- aimmodelcache_status_updater_role.yaml
 

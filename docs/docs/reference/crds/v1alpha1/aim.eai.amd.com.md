@@ -561,9 +561,9 @@ _Appears in:_
 | `sourceUri` _string_ | SourceURI specifies the source location of the model to download.<br />Supported protocols: hf:// (HuggingFace) and s3:// (S3-compatible storage).<br />This field uniquely identifies the model cache and is immutable after creation.<br />Example: hf://meta-llama/Llama-3-8B |  | MinLength: 1 <br />Pattern: `^(hf\|s3)://[^ \t\r\n]+$` <br /> |
 | `modelId` _string_ | ModelID is the canonical identifier in \{org\}/\{name\} format.<br />Determines the cache download path: /workspace/model-cache/\{modelId\}<br />For HuggingFace sources, this is typically derived from the URI (e.g., "meta-llama/Llama-3-8B").<br />For S3 sources, this must be explicitly provided (e.g., "my-team/fine-tuned-llama").<br />When not specified, derived from SourceURI for HuggingFace sources. |  | Pattern: `^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$` <br />Optional: \{\} <br /> |
 | `storageClassName` _string_ | StorageClassName specifies the storage class for the cache volume.<br />When not specified, uses the cluster default storage class. |  | Optional: \{\} <br /> |
-| `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Size specifies the size of the cache volume |  |  |
+| `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Size specifies the size of the cache volume |  | Optional: \{\} <br /> |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env lists the environment variables to use for authentication when downloading models.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  | Optional: \{\} <br /> |
-| `modelDownloadImage` _string_ | ModelDownloadImage specifies the container image used to download and initialize the model cache.<br />This image runs as a job to download model artifacts from the source URI to the cache volume.<br />When not specified, defaults to kserve/storage-initializer:v0.16.0. | kserve/storage-initializer:v0.16.0 | Optional: \{\} <br /> |
+| `modelDownloadImage` _string_ | ModelDownloadImage specifies the container image used to download and initialize the model cache.<br />This image runs as a job to download model artifacts from the source URI to the cache volume.<br />When not specified, defaults to "ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0". | ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0 | Optional: \{\} <br /> |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets references secrets for pulling AIM container images. |  | Optional: \{\} <br /> |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  | Optional: \{\} <br /> |
 
@@ -585,9 +585,13 @@ _Appears in:_
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#condition-v1-meta) array_ | Conditions represent the latest available observations of the model cache's state |  |  |
 | `status` _[AIMStatus](#aimstatus)_ | Status represents the current status of the model cache | Pending | Enum: [Pending Progressing Ready Degraded Failed NotAvailable] <br /> |
 | `progress` _[DownloadProgress](#downloadprogress)_ | Progress represents the download progress when Status is Progressing |  | Optional: \{\} <br /> |
+| `displaySize` _string_ | DisplaySize is the human-readable effective size (spec or discovered) |  | Optional: \{\} <br /> |
 | `lastUsed` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#time-v1-meta)_ | LastUsed represents the last time a model was deployed that used this cache |  |  |
 | `persistentVolumeClaim` _string_ | PersistentVolumeClaim represents the name of the created PVC |  |  |
 | `mode` _[AIMModelCacheMode](#aimmodelcachemode)_ | Mode indicates the ownership mode of this model cache, derived from owner references.<br />- Dedicated: Has owner references, will be garbage collected when owners are deleted.<br />- Shared: No owner references, persists independently and can be shared. |  | Enum: [Dedicated Shared] <br />Optional: \{\} <br /> |
+| `discoveredSizeBytes` _integer_ | DiscoveredSizeBytes is the model size discovered via check-size job.<br />Populated when spec.size is not provided. |  | Optional: \{\} <br /> |
+| `allocatedSize` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | AllocatedSize is the actual PVC size requested (including headroom). |  | Optional: \{\} <br /> |
+| `headroomPercent` _integer_ | HeadroomPercent is the headroom percentage that was applied to the PVC size. |  | Optional: \{\} <br /> |
 
 
 #### AIMModelConfig
@@ -1342,6 +1346,26 @@ _Appears in:_
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for inference containers.<br />When set on AIMService, these take highest precedence in the merge hierarchy.<br />When set on RuntimeConfig, these provide namespace/cluster-level defaults.<br />Merge order (highest to lowest): Service.Env > RuntimeConfig.Env > Template.Env > Profile.Env |  | Optional: \{\} <br /> |
 
 
+#### AIMServiceRuntimeStatus
+
+
+
+AIMServiceRuntimeStatus captures runtime status including replica counts from HPA.
+
+
+
+_Appears in:_
+- [AIMServiceStatus](#aimservicestatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `currentReplicas` _integer_ | CurrentReplicas is the current number of replicas as reported by the HPA. |  | Optional: \{\} <br /> |
+| `desiredReplicas` _integer_ | DesiredReplicas is the desired number of replicas as determined by the HPA. |  | Optional: \{\} <br /> |
+| `minReplicas` _integer_ | MinReplicas is the minimum number of replicas configured for autoscaling. |  | Optional: \{\} <br /> |
+| `maxReplicas` _integer_ | MaxReplicas is the maximum number of replicas configured for autoscaling. |  | Optional: \{\} <br /> |
+| `replicas` _string_ | Replicas is a formatted display string for kubectl output.<br />Shows "current" for fixed replicas or "current/desired (min-max)" for autoscaling. |  | Optional: \{\} <br /> |
+
+
 #### AIMServiceSpec
 
 
@@ -1399,6 +1423,7 @@ _Appears in:_
 | `routing` _[AIMServiceRoutingStatus](#aimserviceroutingstatus)_ | Routing surfaces information about the configured HTTP routing, when enabled. |  | Optional: \{\} <br /> |
 | `resolvedTemplate` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedTemplate captures metadata about the template that satisfied the reference. |  |  |
 | `cache` _[AIMServiceCacheStatus](#aimservicecachestatus)_ | Cache captures cache-related status for this service. |  | Optional: \{\} <br /> |
+| `runtime` _[AIMServiceRuntimeStatus](#aimserviceruntimestatus)_ | Runtime captures runtime status including replica counts. |  | Optional: \{\} <br /> |
 
 
 
@@ -1557,6 +1582,7 @@ _Appears in:_
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources list the models that this template requires to run. These are the models that will be<br />cached, if this template is cached. |  |  |
 | `profile` _[AIMProfile](#aimprofile)_ | Profile contains the full discovery result profile as a free-form JSON object.<br />This includes metadata, engine args, environment variables, and model details. |  |  |
 | `discoveryJob` _[AIMResolvedReference](#aimresolvedreference)_ | DiscoveryJob is a reference to the job that was run for discovery |  |  |
+| `discovery` _[DiscoveryState](#discoverystate)_ | Discovery contains state tracking for the discovery process, including<br />retry attempts and backoff timing for the circuit breaker pattern. |  | Optional: \{\} <br /> |
 
 
 #### AIMStorageConfig
@@ -1716,6 +1742,27 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `metric` _[AIMMetric](#aimmetric)_ | Metric specifies the optimization target (e.g., latency, throughput). |  | Enum: [latency throughput] <br />Optional: \{\} <br /> |
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision specifies the numerical precision (e.g., fp8, fp16, bf16). |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br />Optional: \{\} <br /> |
+
+
+#### DiscoveryState
+
+
+
+DiscoveryState tracks the discovery process state for circuit breaker logic.
+This enables exponential backoff and prevents infinite retry loops when
+discovery jobs fail persistently.
+
+
+
+_Appears in:_
+- [AIMServiceTemplateStatus](#aimservicetemplatestatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `attempts` _integer_ | Attempts is the number of discovery job attempts that have been made.<br />This counter increments each time a new discovery job is created after a failure. |  | Optional: \{\} <br /> |
+| `lastAttemptTime` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#time-v1-meta)_ | LastAttemptTime is the timestamp of the most recent discovery job creation.<br />Used to calculate exponential backoff before the next retry. |  | Optional: \{\} <br /> |
+| `lastFailureReason` _string_ | LastFailureReason captures the reason for the most recent discovery failure.<br />Used to classify failures as terminal vs transient. |  | Optional: \{\} <br /> |
+| `specHash` _string_ | SpecHash is a hash of the template spec fields that affect discovery.<br />When the spec changes, the circuit breaker resets to allow fresh attempts. |  | Optional: \{\} <br /> |
 
 
 #### DownloadProgress

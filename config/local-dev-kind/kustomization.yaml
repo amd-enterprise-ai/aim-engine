@@ -1,0 +1,4 @@
+namespace: aim-system
+namePrefix: aim-engine-
+resources:
+- ../rbac

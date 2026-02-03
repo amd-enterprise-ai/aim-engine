@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -71,6 +72,7 @@ type ServiceFetchResult struct {
 	inferenceService       controllerutils.FetchResult[*servingv1beta1.InferenceService]
 	inferenceServiceEvents controllerutils.FetchResult[*corev1.EventList]
 	inferenceServicePods   *controllerutils.FetchResult[*corev1.PodList]
+	hpa                    controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]
 	httpRoute              controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
 	templateCache          controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]
 
@@ -114,6 +116,9 @@ func (r *ServiceReconciler) FetchRemoteState(
 			client.MatchingLabels{constants.LabelKServeInferenceService: isvc.Name},
 		)
 		result.inferenceServicePods = &podsFetchResult
+
+		// Fetch HPA to get replica status (KEDA creates HPA with name: keda-hpa-{isvc-name}-predictor)
+		result.hpa = fetchHPA(ctx, c, isvc)
 	}
 
 	// 2. Fetch HTTPRoute if routing might be enabled (we own this, always check)
@@ -192,6 +197,9 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 
 	// HTTPRoute health (if routing is enabled)
 	health = append(health, obs.getHTTPRouteHealth())
+
+	// HPA health (if autoscaling is configured)
+	health = append(health, obs.getHPAHealth())
 
 	return health
 }
@@ -525,6 +533,120 @@ func (obs ServiceObservation) getHTTPRouteHealth() controllerutils.ComponentHeal
 	return obs.httpRoute.ToComponentHealth("HTTPRoute", controllerutils.GetHTTPRouteHealth)
 }
 
+func (obs ServiceObservation) getHPAHealth() controllerutils.ComponentHealth {
+	health := controllerutils.ComponentHealth{
+		Component:      "HPA",
+		DependencyType: controllerutils.DependencyTypeDownstream,
+	}
+
+	service := obs.service
+
+	// Check if autoscaling is configured (HPA is expected)
+	hasAutoscaling := service.Spec.AutoScaling != nil ||
+		service.Spec.MinReplicas != nil ||
+		service.Spec.MaxReplicas != nil
+
+	// If autoscaling is not configured, no health check needed
+	if !hasAutoscaling {
+		return controllerutils.ComponentHealth{}
+	}
+
+	// Autoscaling is configured - check if HPA exists
+	if obs.hpa.Error != nil {
+		if obs.hpa.IsNotFound() {
+			// HPA doesn't exist yet - KEDA may still be creating it
+			// This is expected during initial deployment, don't fail
+			health.State = constants.AIMStatusProgressing
+			health.Reason = "HPANotFound"
+			health.Message = "Waiting for KEDA to create HorizontalPodAutoscaler"
+			return health
+		}
+		// Other fetch error
+		health.State = constants.AIMStatusFailed
+		health.Reason = "HPAFetchError"
+		health.Message = obs.hpa.Error.Error()
+		health.Errors = []error{obs.hpa.Error}
+		return health
+	}
+
+	// HPA not found (no error but nil value)
+	if obs.hpa.Value == nil {
+		health.State = constants.AIMStatusProgressing
+		health.Reason = "HPANotFound"
+		health.Message = "Waiting for KEDA to create HorizontalPodAutoscaler"
+		return health
+	}
+
+	// HPA exists - check its conditions for operational status
+	hpa := obs.hpa.Value
+
+	// Check if InferenceService is ready (used to contextualize HPA condition failures)
+	isvcReady := obs.isInferenceServiceReady()
+
+	// Get HPA conditions
+	ableToScale := getHPACondition(hpa, autoscalingv2.AbleToScale)
+	scalingActive := getHPACondition(hpa, autoscalingv2.ScalingActive)
+
+	// Check ScalingActive condition - indicates if HPA can get metrics and calculate replicas
+	if scalingActive == nil || scalingActive.Status != corev1.ConditionTrue {
+		if !isvcReady {
+			// Expected during startup - ISVC pods not ready yet, so metrics aren't available
+			health.State = constants.AIMStatusProgressing
+			health.Reason = "WaitingForMetrics"
+			health.Message = "Waiting for InferenceService to be ready before metrics are available"
+			return health
+		}
+		// ISVC is ready but metrics still failing - this indicates a problem
+		health.State = constants.AIMStatusFailed
+		health.Reason = "MetricsFailed"
+		if scalingActive != nil {
+			health.Message = fmt.Sprintf("HPA cannot get metrics: %s", scalingActive.Message)
+		} else {
+			health.Message = "HPA ScalingActive condition not found"
+		}
+		return health
+	}
+
+	// ScalingActive is True - check AbleToScale condition
+	if ableToScale != nil && ableToScale.Status != corev1.ConditionTrue {
+		// HPA can get metrics but cannot update the scale target
+		health.State = constants.AIMStatusProgressing
+		health.Reason = "ScaleTargetNotReady"
+		health.Message = fmt.Sprintf("HPA cannot update scale target: %s", ableToScale.Message)
+		return health
+	}
+
+	// Both conditions are healthy (or AbleToScale not present, which is fine)
+	health.State = constants.AIMStatusReady
+	health.Reason = "HPAOperational"
+	health.Message = "HorizontalPodAutoscaler is actively scaling"
+	return health
+}
+
+// isInferenceServiceReady checks if the InferenceService has Ready=True condition.
+func (obs ServiceObservation) isInferenceServiceReady() bool {
+	if obs.inferenceService.Error != nil || obs.inferenceService.Value == nil {
+		return false
+	}
+	isvc := obs.inferenceService.Value
+	for _, cond := range isvc.Status.Conditions {
+		if cond.Type == "Ready" && cond.Status == "True" {
+			return true
+		}
+	}
+	return false
+}
+
+// getHPACondition finds a condition by type in the HPA status.
+func getHPACondition(hpa *autoscalingv2.HorizontalPodAutoscaler, condType autoscalingv2.HorizontalPodAutoscalerConditionType) *autoscalingv2.HorizontalPodAutoscalerCondition {
+	for i := range hpa.Status.Conditions {
+		if hpa.Status.Conditions[i].Type == condType {
+			return &hpa.Status.Conditions[i]
+		}
+	}
+	return nil
+}
+
 func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 	health := controllerutils.ComponentHealth{
 		Component:      "Cache",
@@ -588,6 +710,10 @@ type ServiceObservation struct {
 	// storageSizeError is set when storage size calculation fails due to missing model source sizes.
 	// This indicates the template hasn't fully resolved its model sources yet.
 	storageSizeError error
+
+	// runtimeStatus captures the computed runtime status including replica counts and resource usage.
+	// Derived in ComposeState from the InferenceService and pods.
+	runtimeStatus *aimv1alpha1.AIMServiceRuntimeStatus
 }
 
 // ComposeState creates the observation from fetched data, deriving semantic state.
@@ -635,6 +761,9 @@ func (r *ServiceReconciler) ComposeState(
 	// This catches configuration issues early (model sources without sizes)
 	obs.storageSizeError = r.validateStorageSize(fetch)
 
+	// Compute runtime status from InferenceService and pods
+	obs.runtimeStatus = r.computeRuntimeStatus(fetch)
+
 	return obs
 }
 
@@ -663,6 +792,51 @@ func (r *ServiceReconciler) validateStorageSize(fetch ServiceFetchResult) error 
 	headroomPercent := resolvePVCHeadroomPercent(fetch.service, ServiceObservation{ServiceFetchResult: fetch})
 	_, err := calculateRequiredStorageSize(templateStatus.ModelSources, headroomPercent)
 	return err
+}
+
+// computeRuntimeStatus extracts replica counts from HPA or falls back to spec defaults.
+func (r *ServiceReconciler) computeRuntimeStatus(fetch ServiceFetchResult) *aimv1alpha1.AIMServiceRuntimeStatus {
+	status := &aimv1alpha1.AIMServiceRuntimeStatus{}
+	service := fetch.service
+
+	if fetch.hpa.OK() && fetch.hpa.Value != nil {
+		// HPA exists - use its spec and status for replica information
+		hpa := fetch.hpa.Value
+
+		if hpa.Spec.MinReplicas != nil {
+			status.MinReplicas = *hpa.Spec.MinReplicas
+		}
+		status.MaxReplicas = hpa.Spec.MaxReplicas
+		status.CurrentReplicas = hpa.Status.CurrentReplicas
+		status.DesiredReplicas = hpa.Status.DesiredReplicas
+	} else {
+		// No HPA - fixed replica count from spec
+		// Precedence: MinReplicas > Replicas > default (1)
+		var replicas int32 = 1
+		if service.Spec.MinReplicas != nil {
+			replicas = *service.Spec.MinReplicas
+		} else if service.Spec.Replicas != nil {
+			replicas = *service.Spec.Replicas
+		}
+
+		status.MinReplicas = replicas
+		status.MaxReplicas = replicas
+		status.CurrentReplicas = replicas
+		status.DesiredReplicas = replicas
+	}
+
+	// Compute display string for kubectl output
+	if status.MinReplicas == status.MaxReplicas {
+		// Fixed replicas - just show current
+		status.Replicas = fmt.Sprintf("%d", status.CurrentReplicas)
+	} else {
+		// Autoscaling - show "current/desired (min-max)"
+		status.Replicas = fmt.Sprintf("%d/%d (%d-%d)",
+			status.CurrentReplicas, status.DesiredReplicas,
+			status.MinReplicas, status.MaxReplicas)
+	}
+
+	return status
 }
 
 // ============================================================================
@@ -832,5 +1006,10 @@ func (r *ServiceReconciler) DecorateStatus(
 	if obs.httpRoute.Value != nil {
 		// TODO: Extract path from HTTPRoute
 		status.Routing = &aimv1alpha1.AIMServiceRoutingStatus{}
+	}
+
+	// Set runtime status (replica counts and resource usage)
+	if obs.runtimeStatus != nil {
+		status.Runtime = obs.runtimeStatus
 	}
 }

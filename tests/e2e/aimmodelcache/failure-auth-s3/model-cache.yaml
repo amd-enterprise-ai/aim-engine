@@ -14,7 +14,7 @@ spec:
       value: http://minio:9000
     - name: S3_ENDPOINT
       value: minio:9000
-    - name: S3_USE_HTTPS
-      value: "0"
+    - name: S3_NO_SSL
+      value: "true"
 #    - name: AWS_DEFAULT_REGION
 #      value: us-east-1
