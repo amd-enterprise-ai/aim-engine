@@ -61,9 +61,9 @@ func MergeHardware(specDefault, templateOverride *aimv1alpha1.AIMHardwareRequire
 			if templateOverride.GPU.Requests != 0 {
 				result.GPU.Requests = templateOverride.GPU.Requests
 			}
-			// Template Models replaces if non-empty
-			if len(templateOverride.GPU.Models) > 0 {
-				result.GPU.Models = templateOverride.GPU.Models
+			// Template Model overrides if non-empty
+			if templateOverride.GPU.Model != "" {
+				result.GPU.Model = templateOverride.GPU.Model
 			}
 			// Template ResourceName overrides if non-empty
 			if templateOverride.GPU.ResourceName != "" {

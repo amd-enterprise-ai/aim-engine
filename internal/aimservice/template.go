@@ -366,11 +366,11 @@ func buildOverrideNameParts(overrides *aimv1alpha1.AIMServiceOverrides) (namePar
 		return nil, nil
 	}
 
-	// GPU models (use first for name, all for hash)
-	if overrides.Gpu != nil && len(overrides.Gpu.Models) > 0 {
-		gpuLower := strings.ToLower(overrides.Gpu.Models[0])
+	// GPU model
+	if overrides.Gpu != nil && overrides.Gpu.Model != "" {
+		gpuLower := strings.ToLower(overrides.Gpu.Model)
 		nameParts = append(nameParts, gpuLower)
-		hashInputs = append(hashInputs, "gpu", overrides.Gpu.Models)
+		hashInputs = append(hashInputs, "gpu", overrides.Gpu.Model)
 	}
 
 	// GPU count (e.g., "4gpu")

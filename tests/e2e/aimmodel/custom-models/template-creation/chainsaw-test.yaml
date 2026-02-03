@@ -112,8 +112,7 @@ spec:
                 type: unoptimized
                 gpu:
                   requests: 1
-                  models:
-                    - MI300X
+                  model: MI300X
                 # Model sources are copied from spec
                 modelSources:
                   - modelId: sshleifer/tiny-gpt2
@@ -125,8 +124,7 @@ spec:
                 resolvedHardware:
                   gpu:
                     requests: 1
-                    models:
-                      - MI300X
+                    model: MI300X
                 # ModelSources copied to status
                 modelSources:
                   - modelId: sshleifer/tiny-gpt2
@@ -145,15 +143,13 @@ spec:
               spec:
                 gpu:
                   requests: 2
-                  models:
-                    - MI300X
+                  model: MI300X
               status:
                 status: Ready
                 resolvedHardware:
                   gpu:
                     requests: 2
-                    models:
-                      - MI300X
+                    model: MI300X
 
     - name: Assert different-gpu template is NotAvailable (MI250X not in cluster)
       try:
@@ -167,16 +163,14 @@ spec:
               spec:
                 gpu:
                   requests: 1
-                  models:
-                    - MI250X
+                  model: MI250X
               status:
                 # NotAvailable because MI250X GPU is not present in cluster
                 status: NotAvailable
                 resolvedHardware:
                   gpu:
                     requests: 1
-                    models:
-                      - MI250X
+                    model: MI250X
 
     - name: Assert latency-optimized template has profile settings, env vars, and type=optimized
       try:
@@ -193,8 +187,7 @@ spec:
                 precision: fp16
                 gpu:
                   requests: 1
-                  models:
-                    - MI300X
+                  model: MI300X
                 # Env vars from customTemplate
                 env:
                   - name: VLLM_USE_V1
@@ -253,8 +246,7 @@ spec:
                 # Inherits GPU from spec.hardware
                 gpu:
                   requests: 1
-                  models:
-                    - MI300X
+                  model: MI300X
               status:
                 status: Ready
                 profile:

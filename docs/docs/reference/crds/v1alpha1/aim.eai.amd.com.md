@@ -404,7 +404,6 @@ _Appears in:_
 
 
 AIMGpuRequirements specifies GPU resource requirements.
-Supports multiple GPU models and VRAM constraints.
 
 
 
@@ -419,7 +418,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `requests` _integer_ | Requests is the number of GPUs to set as requests/limits.<br />Set to 0 to target GPU nodes without consuming GPU resources (useful for testing). |  | Minimum: 0 <br /> |
-| `models` _string array_ | Models limits deployment to specific GPU models.<br />When multiple models are specified, the scheduler picks from any available.<br />Examples: ["MI300X"], ["MI300X", "MI325X"] |  | MaxItems: 8 <br />items:MaxLength: 64 <br />items:MinLength: 1 <br /> |
+| `model` _string_ | Model limits deployment to a specific GPU model.<br />Example: "MI300X" |  | MaxLength: 64 <br /> |
 | `minVram` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | MinVRAM limits deployment to GPUs having at least this much VRAM.<br />Used for capacity planning when model size is known. |  |  |
 | `resourceName` _string_ | ResourceName is the Kubernetes resource name for GPU resources.<br />Defaults to "amd.com/gpu" if not specified. | amd.com/gpu |  |
 

@@ -443,9 +443,9 @@ func filterTemplatesByOverrides(candidates []TemplateCandidate, overrides *aimv1
 			continue
 		}
 		if overrides.Gpu != nil {
-			// Check if any of the override GPU models match any template GPU models
-			if len(overrides.Gpu.Models) > 0 && len(templateGPUModels) > 0 {
-				if !gpuModelsOverlap(overrides.Gpu.Models, templateGPUModels) {
+			// Check if the override GPU model matches any template GPU model
+			if overrides.Gpu.Model != "" && len(templateGPUModels) > 0 {
+				if !gpuModelsOverlap([]string{overrides.Gpu.Model}, templateGPUModels) {
 					continue
 				}
 			}
@@ -614,12 +614,9 @@ func candidatePrecision(c TemplateCandidate) string {
 }
 
 func candidateGPUModel(c TemplateCandidate) string {
-	// Check Gpu.Models from spec (new field)
-	if c.Spec.Gpu != nil && len(c.Spec.Gpu.Models) > 0 {
-		model := strings.TrimSpace(c.Spec.Gpu.Models[0])
-		if model != "" {
-			return model
-		}
+	// Check Gpu.Model from spec
+	if c.Spec.Gpu != nil && c.Spec.Gpu.Model != "" {
+		return strings.TrimSpace(c.Spec.Gpu.Model)
 	}
 	if c.Status.Profile != nil {
 		if gpu := strings.TrimSpace(c.Status.Profile.Metadata.GPU); gpu != "" {
@@ -629,11 +626,11 @@ func candidateGPUModel(c TemplateCandidate) string {
 	return ""
 }
 
-// candidateGPUModels returns all GPU models from the candidate spec.
+// candidateGPUModels returns GPU model from the candidate spec as a slice.
 // Used for GPU availability filtering where any model match is acceptable.
 func candidateGPUModels(c TemplateCandidate) []string {
-	if c.Spec.Gpu != nil && len(c.Spec.Gpu.Models) > 0 {
-		return c.Spec.Gpu.Models
+	if c.Spec.Gpu != nil && c.Spec.Gpu.Model != "" {
+		return []string{c.Spec.Gpu.Model}
 	}
 	// Fallback to status profile
 	if c.Status.Profile != nil {

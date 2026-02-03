@@ -6,8 +6,7 @@ spec:
   modelName: test-model-inline
   gpu:
     requests: 1
-    models:
-      - MI300X
+    model: MI300X
   modelSources:
     - modelId: amd/Llama-3.1-8B-Instruct-FP8-KV
       sourceUri: hf://amd/Llama-3.1-8B-Instruct-FP8-KV

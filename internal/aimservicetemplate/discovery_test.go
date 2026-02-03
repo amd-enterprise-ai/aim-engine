@@ -760,7 +760,7 @@ func TestBuildDiscoveryJob(t *testing.T) {
 					ModelName: "test-model",
 					AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
 						Gpu: &aimv1alpha1.AIMGpuRequirements{
-							Models:   []string{"MI300X"},
+							Model:    "MI300X",
 							Requests: 2,
 						},
 					},

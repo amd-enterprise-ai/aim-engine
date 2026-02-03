@@ -19,12 +19,12 @@ spec:
       sourceUri: hf://sshleifer/tiny-gpt2
       size: 100Mi
 
-  # Custom model defaults - hardware inherited by templates that don't override
+  # Custom model configuration with default hardware
   custom:
     hardware:
       gpu:
         requests: 1
-        models: ["MI300X"]
+        model: MI300X
 
   # Multiple custom templates with different configurations
   customTemplates:
@@ -36,14 +36,14 @@ spec:
       hardware:
         gpu:
           requests: 2
-          models: ["MI300X"]
+          model: MI300X
 
     # Template 3: Different GPU model (will be NotAvailable - MI250X not in cluster)
     - name: different-gpu
       hardware:
         gpu:
           requests: 1
-          models: ["MI250X"]
+          model: MI250X
 
     # Template 4: With profile settings and env vars (latency optimized) - type: optimized
     - name: latency-optimized

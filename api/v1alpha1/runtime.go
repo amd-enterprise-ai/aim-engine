@@ -94,7 +94,6 @@ type AIMHardwareRequirements struct {
 }
 
 // AIMGpuRequirements specifies GPU resource requirements.
-// Supports multiple GPU models and VRAM constraints.
 type AIMGpuRequirements struct {
 	// Requests is the number of GPUs to set as requests/limits.
 	// Set to 0 to target GPU nodes without consuming GPU resources (useful for testing).
@@ -102,14 +101,11 @@ type AIMGpuRequirements struct {
 	// +kubebuilder:validation:Minimum=0
 	Requests int32 `json:"requests,omitempty"`
 
-	// Models limits deployment to specific GPU models.
-	// When multiple models are specified, the scheduler picks from any available.
-	// Examples: ["MI300X"], ["MI300X", "MI325X"]
+	// Model limits deployment to a specific GPU model.
+	// Example: "MI300X"
 	// +optional
-	// +kubebuilder:validation:MaxItems=8
-	// +kubebuilder:validation:items:MaxLength=64
-	// +kubebuilder:validation:items:MinLength=1
-	Models []string `json:"models,omitempty"`
+	// +kubebuilder:validation:MaxLength=64
+	Model string `json:"model,omitempty"`
 
 	// MinVRAM limits deployment to GPUs having at least this much VRAM.
 	// Used for capacity planning when model size is known.

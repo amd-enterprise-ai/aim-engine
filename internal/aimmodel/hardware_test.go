@@ -106,12 +106,12 @@ func TestMergeHardware(t *testing.T) {
 			expectedCPU: nil,
 		},
 		{
-			name:        "template GPU models replace spec models",
-			specDefault: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{Requests: 1, Models: []string{"mi300x"}}},
+			name:        "template GPU model replaces spec model",
+			specDefault: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{Requests: 1, Model: "mi300x"}},
 			templateOverride: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
-				Models: []string{"a100"},
+				Model: "a100",
 			}},
-			expectedGPU: &aimv1alpha1.AIMGpuRequirements{Requests: 1, Models: []string{"a100"}},
+			expectedGPU: &aimv1alpha1.AIMGpuRequirements{Requests: 1, Model: "a100"},
 			expectedCPU: nil,
 		},
 		{
@@ -149,9 +149,9 @@ func TestMergeHardware(t *testing.T) {
 				if result.GPU.Requests != tt.expectedGPU.Requests {
 					t.Errorf("MergeHardware().GPU.Requests = %d, expected %d", result.GPU.Requests, tt.expectedGPU.Requests)
 				}
-				if len(tt.expectedGPU.Models) > 0 {
-					if len(result.GPU.Models) != len(tt.expectedGPU.Models) {
-						t.Errorf("MergeHardware().GPU.Models = %v, expected %v", result.GPU.Models, tt.expectedGPU.Models)
+				if tt.expectedGPU.Model != "" {
+					if result.GPU.Model != tt.expectedGPU.Model {
+						t.Errorf("MergeHardware().GPU.Model = %v, expected %v", result.GPU.Model, tt.expectedGPU.Model)
 					}
 				}
 			}
