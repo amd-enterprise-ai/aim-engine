@@ -256,7 +256,7 @@ run-debug: manifests generate fmt vet ## Run a controller with debug logging ena
 	go run ./cmd/main.go --zap-log-level=debug
 
 .PHONY: watch
-watch: manifests generate install ## Run controller with live reload on file changes.
+watch: build install ## Run controller with live reload on file changes.
 	air
 
 .PHONY: wait-ready
