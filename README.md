@@ -23,7 +23,6 @@ AIM Engine is a Kubernetes operator for running and managing AMD Inference Micro
 ### Multi-Tenant Design
 - Namespace-scoped and cluster-scoped resources for flexible access control
 - Runtime configurations for team-specific credentials and routing policies
-- Label propagation for cost tracking and compliance
 
 ## Example AIMService Deployment
 ```yaml
@@ -36,26 +35,6 @@ spec:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
 ```
 
-## Deployment
-## Requirements
-
-| Component | Version |
-|-----------|---------|
-| Kubernetes | 1.28+ |
-| KServe | 0.16+ |
-| Gateway API | 1.3+ |
-
-### Using Helm
-
-```bash
-# Install CRDs into kubernetes-cluster
-helm install aim-engine-crds amd-eai/aim-engine-crds --namespace aim-system --create-namespace
-
-# Install the cluster-scoped operator
-helm install aim-engine amd-eai/aim-engine \
-  --namespace aim-system \
-  --values custom-values.yaml
-```
 
 ## Development Quickstart
 
