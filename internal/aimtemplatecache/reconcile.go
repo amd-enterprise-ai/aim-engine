@@ -118,11 +118,22 @@ func (r *TemplateCacheReconciler) FetchRemoteState(
 		mergedRuntimeConfig: reconcileCtx.MergedRuntimeConfig,
 	}
 
-	result.serviceTemplate = controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Spec.TemplateName, Namespace: templateCache.Namespace}, &aimv1alpha1.AIMServiceTemplate{})
-
-	if result.serviceTemplate.IsNotFound() {
+	// Fetch template based on the specified scope
+	switch templateCache.Spec.TemplateScope {
+	case aimv1alpha1.AIMServiceTemplateScopeCluster:
+		// Only look for cluster-scoped template
 		clusterServiceTemplate := controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Spec.TemplateName}, &aimv1alpha1.AIMClusterServiceTemplate{})
 		result.clusterServiceTemplate = &clusterServiceTemplate
+	case aimv1alpha1.AIMServiceTemplateScopeNamespace:
+		// Only look for namespace-scoped template
+		result.serviceTemplate = controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Spec.TemplateName, Namespace: templateCache.Namespace}, &aimv1alpha1.AIMServiceTemplate{})
+	default:
+		// For unknown or unset scope, try namespace first then cluster (backwards compatible behavior)
+		result.serviceTemplate = controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Spec.TemplateName, Namespace: templateCache.Namespace}, &aimv1alpha1.AIMServiceTemplate{})
+		if result.serviceTemplate.IsNotFound() {
+			clusterServiceTemplate := controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Spec.TemplateName}, &aimv1alpha1.AIMClusterServiceTemplate{})
+			result.clusterServiceTemplate = &clusterServiceTemplate
+		}
 	}
 
 	// Fetch all model caches in the namespace
@@ -138,16 +149,17 @@ func (result TemplateCacheFetchResult) GetComponentHealth() []controllerutils.Co
 		result.mergedRuntimeConfig.ToUpstreamComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth),
 	}
 
-	// Add service template health
+	// Add service template health based on which template was fetched
 	// Templates are upstream dependencies - this controller depends on them
-	// If namespace-scoped template was resolved or had a non-NotFound error, use it
-	// Otherwise check cluster-scoped template
-	if result.serviceTemplate.OK() || (result.serviceTemplate.Error != nil && !result.serviceTemplate.IsNotFound()) {
-		health = append(health, result.serviceTemplate.ToUpstreamComponentHealth("ServiceTemplate", func(template *aimv1alpha1.AIMServiceTemplate) controllerutils.ComponentHealth {
+	// Only one of serviceTemplate or clusterServiceTemplate will be set based on the scope
+	if result.clusterServiceTemplate != nil {
+		// Cluster scope was requested - check cluster template
+		health = append(health, result.clusterServiceTemplate.ToUpstreamComponentHealth("ServiceTemplate", func(template *aimv1alpha1.AIMClusterServiceTemplate) controllerutils.ComponentHealth {
 			return getComponentHealthFromStatus(&template.Status, template.Status.Status)
 		}))
-	} else if result.clusterServiceTemplate != nil {
-		health = append(health, result.clusterServiceTemplate.ToUpstreamComponentHealth("ServiceTemplate", func(template *aimv1alpha1.AIMClusterServiceTemplate) controllerutils.ComponentHealth {
+	} else if result.serviceTemplate.Value != nil || result.serviceTemplate.Error != nil {
+		// Namespace scope was requested (or default fallback) - check namespace template
+		health = append(health, result.serviceTemplate.ToUpstreamComponentHealth("ServiceTemplate", func(template *aimv1alpha1.AIMServiceTemplate) controllerutils.ComponentHealth {
 			return getComponentHealthFromStatus(&template.Status, template.Status.Status)
 		}))
 	}
@@ -232,9 +244,11 @@ func (r *TemplateCacheReconciler) ComposeState(
 	tc := reconcileCtx.Object
 
 	// Read model sources from Status (populated by discovery), not Spec
-	if fetch.serviceTemplate.OK() {
+	// Check Value != nil because when templateScope is Cluster, serviceTemplate is not fetched
+	// and has zero value (Error=nil, Value=nil), so OK() returns true but Value is nil
+	if fetch.serviceTemplate.OK() && fetch.serviceTemplate.Value != nil {
 		templateModelSources = fetch.serviceTemplate.Value.Status.ModelSources
-	} else if fetch.clusterServiceTemplate.OK() {
+	} else if fetch.clusterServiceTemplate != nil && fetch.clusterServiceTemplate.OK() && fetch.clusterServiceTemplate.Value != nil {
 		templateModelSources = fetch.clusterServiceTemplate.Value.Status.ModelSources
 	} else {
 		return obs
