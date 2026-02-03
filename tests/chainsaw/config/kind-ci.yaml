@@ -1,0 +1,18 @@
+# Chainsaw configuration for KIND in CI environment
+# Longer timeouts for slower CI runners
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Configuration
+metadata:
+  name: kind-ci
+spec:
+  timeouts:
+    apply: 10s
+    assert: 60s
+    cleanup: 90s
+    delete: 30s
+    error: 60s
+    exec: 10s
+  parallel: 4
+  failFast: false
+  skipDelete: false
+  template: true
