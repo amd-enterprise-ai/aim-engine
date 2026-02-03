@@ -1095,9 +1095,9 @@ func (in *AIMRuntimeParameters) DeepCopyInto(out *AIMRuntimeParameters) {
 		*out = new(AIMPrecision)
 		**out = **in
 	}
-	if in.Gpu != nil {
-		in, out := &in.Gpu, &out.Gpu
-		*out = new(AIMGpuRequirements)
+	if in.Hardware != nil {
+		in, out := &in.Hardware, &out.Hardware
+		*out = new(AIMHardwareRequirements)
 		(*in).DeepCopyInto(*out)
 	}
 }

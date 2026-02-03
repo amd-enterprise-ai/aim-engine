@@ -24,6 +24,7 @@ package aimservicetemplate
 
 import (
 	"context"
+	"fmt"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -547,6 +548,7 @@ func decorateTemplateStatus(
 		status.Profile = buildProfileFromSpec(spec)
 		// Resolve hardware from spec (no discovery)
 		status.ResolvedHardware = resolveHardware(nil, spec)
+		status.HardwareSummary = formatHardwareSummary(status.ResolvedHardware)
 		cm.MarkTrue("Discovered", "InlineModelSources", "Model sources provided in-line in spec")
 		return
 	}
@@ -568,6 +570,7 @@ func decorateTemplateStatus(
 		}
 		// Resolve hardware from discovery + spec fallback
 		status.ResolvedHardware = resolveHardware(parsedDiscovery, spec)
+		status.HardwareSummary = formatHardwareSummary(status.ResolvedHardware)
 		cm.MarkTrue("Discovered", "DiscoveryComplete", "Discovery job completed successfully")
 	}
 }
@@ -581,10 +584,10 @@ func buildProfileFromSpec(spec *aimv1alpha1.AIMServiceTemplateSpecCommon) *aimv1
 	}
 
 	// Set GPU info from spec
-	if spec.Gpu != nil {
-		profile.Metadata.GPUCount = spec.Gpu.Requests
-		if spec.Gpu.Model != "" {
-			profile.Metadata.GPU = spec.Gpu.Model
+	if spec.Hardware != nil && spec.Hardware.GPU != nil {
+		profile.Metadata.GPUCount = spec.Hardware.GPU.Requests
+		if spec.Hardware.GPU.Model != "" {
+			profile.Metadata.GPU = spec.Hardware.GPU.Model
 		}
 	}
 
@@ -606,16 +609,15 @@ func buildProfileFromSpec(spec *aimv1alpha1.AIMServiceTemplateSpecCommon) *aimv1
 
 // resolveHardware computes the final hardware requirements from discovery and spec.
 // If discovery ran, use discovery values (even if 0). Otherwise use spec values.
+// Returns nil if no hardware requirements can be resolved (to avoid CEL validation errors).
 func resolveHardware(discovery *ParsedDiscovery, spec *aimv1alpha1.AIMServiceTemplateSpecCommon) *aimv1alpha1.AIMHardwareRequirements {
-	resolved := &aimv1alpha1.AIMHardwareRequirements{}
-
 	var gpuCount int32
 	var gpuModel string
 	var resourceName string
 
 	// Resource name always comes from spec (discovery doesn't provide this)
-	if spec.Gpu != nil {
-		resourceName = spec.Gpu.ResourceName
+	if spec.Hardware != nil && spec.Hardware.GPU != nil {
+		resourceName = spec.Hardware.GPU.ResourceName
 	}
 
 	if discovery != nil && discovery.Profile != nil {
@@ -624,14 +626,18 @@ func resolveHardware(discovery *ParsedDiscovery, spec *aimv1alpha1.AIMServiceTem
 		gpuModel = discovery.Profile.Metadata.GPU
 	} else {
 		// No discovery (custom models with inline model sources) - use spec values
-		if spec.Gpu != nil {
-			gpuCount = spec.Gpu.Requests
-			gpuModel = spec.Gpu.Model
+		if spec.Hardware != nil && spec.Hardware.GPU != nil {
+			gpuCount = spec.Hardware.GPU.Requests
+			gpuModel = spec.Hardware.GPU.Model
 		}
 	}
 
-	// Build the resolved GPU requirements
-	// Always set GPU if we have any values (even gpuCount=0 with a model is valid)
+	// Build the resolved hardware requirements
+	// CEL validation requires at least gpu or cpu to be specified
+	resolved := &aimv1alpha1.AIMHardwareRequirements{}
+	hasHardware := false
+
+	// Add GPU if we have any GPU values
 	if gpuCount > 0 || gpuModel != "" || resourceName != "" {
 		resolved.GPU = &aimv1alpha1.AIMGpuRequirements{
 			Requests: gpuCount,
@@ -642,9 +648,45 @@ func resolveHardware(discovery *ParsedDiscovery, spec *aimv1alpha1.AIMServiceTem
 		if resourceName != "" {
 			resolved.GPU.ResourceName = resourceName
 		}
+		hasHardware = true
+	}
+
+	// Add CPU if spec has CPU requirements (CPU-only templates)
+	if spec.Hardware != nil && spec.Hardware.CPU != nil {
+		resolved.CPU = spec.Hardware.CPU.DeepCopy()
+		hasHardware = true
+	}
+
+	// Return nil if no hardware to avoid CEL validation error
+	if !hasHardware {
+		return nil
 	}
 
 	return resolved
+}
+
+// formatHardwareSummary creates a human-readable string describing the hardware requirements.
+// Returns "{count} x {model}" for GPU (e.g., "2 x MI300X") or "CPU" for CPU-only.
+func formatHardwareSummary(hw *aimv1alpha1.AIMHardwareRequirements) string {
+	if hw == nil {
+		return ""
+	}
+
+	// Check for GPU configuration
+	if hw.GPU != nil && (hw.GPU.Requests > 0 || hw.GPU.Model != "") {
+		model := hw.GPU.Model
+		if model == "" {
+			model = "GPU"
+		}
+		if hw.GPU.Requests > 0 {
+			return fmt.Sprintf("%d x %s", hw.GPU.Requests, model)
+		}
+		// requests=0 but model specified (testing scenario)
+		return model
+	}
+
+	// No GPU means CPU-only
+	return "CPU"
 }
 
 // decorateClusterTemplateStatus handles common status decoration for cluster-scoped templates.
@@ -671,6 +713,7 @@ func decorateClusterTemplateStatus(
 		status.Profile = buildProfileFromSpec(spec)
 		// Resolve hardware from spec (no discovery)
 		status.ResolvedHardware = resolveHardware(nil, spec)
+		status.HardwareSummary = formatHardwareSummary(status.ResolvedHardware)
 		cm.MarkTrue("Discovered", "InlineModelSources", "Model sources provided in-line in spec")
 		return
 	}
@@ -692,6 +735,7 @@ func decorateClusterTemplateStatus(
 		}
 		// Resolve hardware from discovery + spec fallback
 		status.ResolvedHardware = resolveHardware(parsedDiscovery, spec)
+		status.HardwareSummary = formatHardwareSummary(status.ResolvedHardware)
 		cm.MarkTrue("Discovered", "DiscoveryComplete", "Discovery job completed successfully")
 	}
 }

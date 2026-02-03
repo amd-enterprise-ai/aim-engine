@@ -262,10 +262,10 @@ func TestTemplateRequiresGPU(t *testing.T) {
 			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu: &aimv1alpha1.AIMGpuRequirements{
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
 						Model:    "mi300x",
 						Requests: 2,
-					},
+					}},
 				},
 			},
 			expected: true,
@@ -275,10 +275,10 @@ func TestTemplateRequiresGPU(t *testing.T) {
 			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu: &aimv1alpha1.AIMGpuRequirements{
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
 						Model:    "  mi300x  ",
 						Requests: 1,
-					},
+					}},
 				},
 			},
 			expected: true,
@@ -288,10 +288,10 @@ func TestTemplateRequiresGPU(t *testing.T) {
 			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu: &aimv1alpha1.AIMGpuRequirements{
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
 						Model:    "mi300x",
 						Requests: 0,
-					},
+					}},
 				},
 			},
 			expected: true,
@@ -301,10 +301,10 @@ func TestTemplateRequiresGPU(t *testing.T) {
 			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu: &aimv1alpha1.AIMGpuRequirements{
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
 						Model:    "",
 						Requests: 0,
-					},
+					}},
 				},
 			},
 			expected: false,
@@ -314,7 +314,7 @@ func TestTemplateRequiresGPU(t *testing.T) {
 			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu: nil,
+					Hardware: nil,
 				},
 			},
 			expected: false,

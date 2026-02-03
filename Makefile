@@ -145,9 +145,10 @@ cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
 # Chainsaw test configuration
-# Selector is applied automatically based on ENV
+# Config and selector are applied automatically based on ENV
 CHAINSAW_TEST_DIR := tests/e2e
 CHAINSAW_REPORT_DIR := .tmp/chainsaw-reports
+CHAINSAW_CONFIG_DIR := tests/chainsaw/config
 
 # Kind environment: exclude tests requiring GPU, longhorn storage, or external network
 CHAINSAW_SELECTOR_KIND := requires notin (gpu,longhorn,external-network)
@@ -155,18 +156,24 @@ CHAINSAW_SELECTOR_KIND := requires notin (gpu,longhorn,external-network)
 # GPU environment: exclude tests that only work on Kind (mocked node labels)
 CHAINSAW_SELECTOR_GPU := requires notin (kind,external-network)
 
-# Select appropriate selector and parallelism based on ENV
+# Select appropriate config based on ENV and CI detection
+# CI is detected via CI env var (set by GitHub Actions, GitLab CI, etc.)
+CHAINSAW_CONFIG_KIND := $(if $(CI),$(CHAINSAW_CONFIG_DIR)/kind-ci.yaml,$(CHAINSAW_CONFIG_DIR)/kind.yaml)
+CHAINSAW_CONFIG_GPU := $(CHAINSAW_CONFIG_DIR)/gpu.yaml
+CHAINSAW_ENV_CONFIG := $(if $(filter gpu,$(ENV)),$(CHAINSAW_CONFIG_GPU),$(CHAINSAW_CONFIG_KIND))
+
+# Select appropriate selector based on ENV
 CHAINSAW_ENV_SELECTOR := $(if $(filter gpu,$(ENV)),--selector '$(CHAINSAW_SELECTOR_GPU)',$(if $(filter kind,$(ENV)),--selector '$(CHAINSAW_SELECTOR_KIND)',))
-CHAINSAW_ENV_PARALLEL := $(if $(filter kind,$(ENV)),--parallel 4,)
 
 .PHONY: test-chainsaw
 test-chainsaw: ## Run chainsaw e2e tests (selector based on ENV). Pass CHAINSAW_ARGS for additional options.
 	@echo "Environment: $(ENV) (context: $(CURRENT_CONTEXT))"
+	@echo "Config: $(CHAINSAW_ENV_CONFIG)"
 	@echo "Selector: $(if $(filter gpu,$(ENV)),$(CHAINSAW_SELECTOR_GPU),$(CHAINSAW_SELECTOR_KIND))"
 	@mkdir -p $(CHAINSAW_REPORT_DIR)
 	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test --test-dir $(CHAINSAW_TEST_DIR) \
+		--config $(CHAINSAW_ENV_CONFIG) \
 		$(CHAINSAW_ENV_SELECTOR) \
-		$(CHAINSAW_ENV_PARALLEL) \
 		--report-format JSON --report-name chainsaw-report --report-path $(CHAINSAW_REPORT_DIR) \
 		$(CHAINSAW_ARGS)
 

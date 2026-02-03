@@ -1,0 +1,19 @@
+# Chainsaw configuration for GPU cluster environment
+# Longer assert timeout for real inference, no parallelism due to resource constraints
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Configuration
+metadata:
+  name: gpu
+spec:
+  timeouts:
+    apply: 10s
+    assert: 120s
+    cleanup: 60s
+    delete: 30s
+    error: 60s
+    exec: 30s
+  # No parallelism - GPU resources are limited
+  parallel: 1
+  failFast: false
+  skipDelete: false
+  template: true

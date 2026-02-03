@@ -6,9 +6,10 @@ metadata:
     aim.eai.amd.com/reconciliation-paused: "true"
 spec:
   modelName: test-model
-  gpu:
-    model: MI300X
-    requests: 1
+  hardware:
+    gpu:
+      model: MI300X
+      requests: 1
 status:
   status: Ready
   profile:

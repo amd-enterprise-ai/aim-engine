@@ -45,7 +45,7 @@ func GetGPUAvailabilityHealth(ctx context.Context, k8sClient client.Client, spec
 		return controllerutils.ComponentHealth{}
 	}
 
-	gpuModel := spec.Gpu.Model
+	gpuModel := spec.Hardware.GPU.Model
 	normalizedModel := utils.NormalizeGPUModel(gpuModel)
 
 	available, err := utils.IsGPUAvailable(ctx, k8sClient, gpuModel)
@@ -103,7 +103,7 @@ func CheckGPUAvailability(
 		return "", true, nil
 	}
 
-	model := strings.TrimSpace(spec.Gpu.Model)
+	model := strings.TrimSpace(spec.Hardware.GPU.Model)
 	normalizedModel = utils.NormalizeGPUModel(model)
 
 	available, err = utils.IsGPUAvailable(ctx, k8sClient, model)
@@ -123,7 +123,7 @@ func IsGPUAvailableForSpec(spec aimv1alpha1.AIMServiceTemplateSpecCommon, gpuRes
 	if gpuFetchErr != nil {
 		return false
 	}
-	normalizedModel := utils.NormalizeGPUModel(spec.Gpu.Model)
+	normalizedModel := utils.NormalizeGPUModel(spec.Hardware.GPU.Model)
 	_, available := gpuResources[normalizedModel]
 	return available
 }
@@ -152,7 +152,7 @@ func GetGPUHealthFromResources(
 		}
 	}
 
-	gpuModel := spec.Gpu.Model
+	gpuModel := spec.Hardware.GPU.Model
 	normalizedModel := utils.NormalizeGPUModel(gpuModel)
 
 	if _, available := gpuResources[normalizedModel]; available {

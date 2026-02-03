@@ -127,9 +127,11 @@ func (b *ServiceBuilder) WithOverrideGPU(model string, count int32) *ServiceBuil
 	if b.service.Spec.Overrides == nil {
 		b.service.Spec.Overrides = &aimv1alpha1.AIMServiceOverrides{}
 	}
-	b.service.Spec.Overrides.Gpu = &aimv1alpha1.AIMGpuRequirements{
-		Model:    model,
-		Requests: count,
+	b.service.Spec.Overrides.Hardware = &aimv1alpha1.AIMHardwareRequirements{
+		GPU: &aimv1alpha1.AIMGpuRequirements{
+			Model:    model,
+			Requests: count,
+		},
 	}
 	return b
 }

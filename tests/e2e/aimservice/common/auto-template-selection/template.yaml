@@ -4,6 +4,7 @@ metadata:
   name: test-auto-select-template
 spec:
   modelName: test-auto-select-model
-  gpu:
-    requests: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X

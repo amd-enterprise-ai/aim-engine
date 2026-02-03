@@ -227,7 +227,7 @@ func TestFilterTemplatesByOverrides(t *testing.T) {
 			},
 			overrides: &aimv1alpha1.AIMServiceOverrides{
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu: &aimv1alpha1.AIMGpuRequirements{Model: "MI300X"}, // Only model, no count
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{Model: "MI300X"}}, // Only model, no count
 				},
 			},
 			expectedNames: []string{"mi300x"},
@@ -240,7 +240,7 @@ func TestFilterTemplatesByOverrides(t *testing.T) {
 			},
 			overrides: &aimv1alpha1.AIMServiceOverrides{
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu: &aimv1alpha1.AIMGpuRequirements{Requests: 4},
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{Requests: 4}},
 				},
 			},
 			expectedNames: []string{"4gpu"},
@@ -254,7 +254,7 @@ func TestFilterTemplatesByOverrides(t *testing.T) {
 			},
 			overrides: &aimv1alpha1.AIMServiceOverrides{
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu:       &aimv1alpha1.AIMGpuRequirements{Model: "MI300X", Requests: 4},
+					Hardware:  &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{Model: "MI300X", Requests: 4}},
 					Precision: &fp16,
 					Metric:    &latency,
 				},

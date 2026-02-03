@@ -69,7 +69,7 @@ func TestGenerateDerivedTemplateName(t *testing.T) {
 			baseName: "base",
 			overrides: &aimv1alpha1.AIMServiceOverrides{
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu: &aimv1alpha1.AIMGpuRequirements{Model: "MI300X"},
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{Model: "MI300X"}},
 				},
 			},
 			expectPrefix:   "base-ovr-mi300x-",
@@ -80,7 +80,7 @@ func TestGenerateDerivedTemplateName(t *testing.T) {
 			baseName: "base",
 			overrides: &aimv1alpha1.AIMServiceOverrides{
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu: &aimv1alpha1.AIMGpuRequirements{Requests: 4},
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{Requests: 4}},
 				},
 			},
 			expectPrefix:   "base-ovr-4gpu-",
@@ -91,7 +91,7 @@ func TestGenerateDerivedTemplateName(t *testing.T) {
 			baseName: "base",
 			overrides: &aimv1alpha1.AIMServiceOverrides{
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu: &aimv1alpha1.AIMGpuRequirements{Model: "MI325X", Requests: 8},
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{Model: "MI325X", Requests: 8}},
 				},
 			},
 			expectPrefix:   "base-ovr-mi325x-8gpu-",
@@ -124,7 +124,7 @@ func TestGenerateDerivedTemplateName(t *testing.T) {
 			baseName: "my-template",
 			overrides: &aimv1alpha1.AIMServiceOverrides{
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu:       &aimv1alpha1.AIMGpuRequirements{Model: "MI300X", Requests: 4},
+					Hardware:  &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{Model: "MI300X", Requests: 4}},
 					Precision: &fp8,
 					Metric:    &throughput,
 				},
@@ -137,7 +137,7 @@ func TestGenerateDerivedTemplateName(t *testing.T) {
 			baseName: "template",
 			overrides: &aimv1alpha1.AIMServiceOverrides{
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu:       &aimv1alpha1.AIMGpuRequirements{Model: "MI300X"},
+					Hardware:  &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{Model: "MI300X"}},
 					Precision: &fp16,
 				},
 			},
@@ -168,7 +168,7 @@ func TestGenerateDerivedTemplateName_Deterministic(t *testing.T) {
 	fp16 := aimv1alpha1.AIMPrecisionFP16
 	overrides := &aimv1alpha1.AIMServiceOverrides{
 		AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-			Gpu:       &aimv1alpha1.AIMGpuRequirements{Model: "MI300X", Requests: 4},
+			Hardware:  &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{Model: "MI300X", Requests: 4}},
 			Precision: &fp16,
 		},
 	}
@@ -238,7 +238,7 @@ func TestBuildOverrideNameParts(t *testing.T) {
 			name: "GPU model",
 			overrides: &aimv1alpha1.AIMServiceOverrides{
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu: &aimv1alpha1.AIMGpuRequirements{Model: "MI300X"},
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{Model: "MI300X"}},
 				},
 			},
 			expectedParts:     []string{"mi300x"},
@@ -248,7 +248,7 @@ func TestBuildOverrideNameParts(t *testing.T) {
 			name: "GPU count",
 			overrides: &aimv1alpha1.AIMServiceOverrides{
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu: &aimv1alpha1.AIMGpuRequirements{Requests: 4},
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{Requests: 4}},
 				},
 			},
 			expectedParts:     []string{"4gpu"},
@@ -278,7 +278,7 @@ func TestBuildOverrideNameParts(t *testing.T) {
 			name: "all fields - order is gpu, count, precision, metric",
 			overrides: &aimv1alpha1.AIMServiceOverrides{
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					Gpu:       &aimv1alpha1.AIMGpuRequirements{Model: "MI325X", Requests: 8},
+					Hardware:  &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{Model: "MI325X", Requests: 8}},
 					Precision: &fp16,
 					Metric:    &latency,
 				},
@@ -426,12 +426,12 @@ func TestBuildDerivedTemplate(t *testing.T) {
 			}
 
 			if tt.expectedGPU != nil {
-				if result.Spec.Gpu == nil {
+				if result.Spec.Hardware == nil || result.Spec.Hardware.GPU == nil {
 					t.Error("expected GPU requirements, got nil")
-				} else if result.Spec.Gpu.Requests != tt.expectedGPU.Requests {
-					t.Errorf("expected GPU Requests %d, got %d", tt.expectedGPU.Requests, result.Spec.Gpu.Requests)
-				} else if result.Spec.Gpu.Model != tt.expectedGPU.Model {
-					t.Errorf("expected GPU Model %v, got %v", tt.expectedGPU.Model, result.Spec.Gpu.Model)
+				} else if result.Spec.Hardware.GPU.Requests != tt.expectedGPU.Requests {
+					t.Errorf("expected GPU Requests %d, got %d", tt.expectedGPU.Requests, result.Spec.Hardware.GPU.Requests)
+				} else if result.Spec.Hardware.GPU.Model != tt.expectedGPU.Model {
+					t.Errorf("expected GPU Model %v, got %v", tt.expectedGPU.Model, result.Spec.Hardware.GPU.Model)
 				}
 			}
 		})

@@ -46,14 +46,13 @@ type AIMRuntimeParameters struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="precision is immutable"
 	Precision *AIMPrecision `json:"precision,omitempty"`
 
-	// Gpu specifies GPU requirements for each replica.
-	// Defines the GPU count and model types required for deployment.
-	// When multiple models are specified, the template is ready if any are available,
-	// and node affinity ensures pods land on nodes with matching GPUs.
+	// Hardware specifies GPU and CPU requirements for each replica.
+	// For GPU models, defines the GPU count and model types required for deployment.
+	// For CPU-only models, defines CPU resource requirements.
 	// This field is immutable after creation.
 	// +optional
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="gpu is immutable"
-	Gpu *AIMGpuRequirements `json:"gpu,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="hardware is immutable"
+	Hardware *AIMHardwareRequirements `json:"hardware,omitempty"`
 }
 
 // AIMMetric enumerates the targeted service characteristic
@@ -120,7 +119,6 @@ type AIMGpuRequirements struct {
 }
 
 // AIMCpuRequirements specifies CPU resource requirements.
-// +kubebuilder:validation:XValidation:rule="self.requests.isGreaterThan(quantity(\"0\"))",message="requests must be greater than 0"
 type AIMCpuRequirements struct {
 	// Requests is the number of CPU cores to request. Required and must be > 0.
 	// +required
