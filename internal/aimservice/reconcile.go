@@ -75,9 +75,6 @@ type ServiceFetchResult struct {
 	hpa                    controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]
 	httpRoute              controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
 	templateCache          controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]
-
-	// Model caches (for template cache health visibility)
-	modelCaches controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]
 }
 
 // FetchRemoteState fetches all resources needed for AIMService reconciliation.
@@ -125,14 +122,10 @@ func (r *ServiceReconciler) FetchRemoteState(
 	result.httpRoute = fetchHTTPRoute(ctx, c, service, reconcileCtx.MergedRuntimeConfig.Value)
 
 	// 3. Fetch TemplateCache (always fetch - cascades health from ModelCache/PVC)
+	// Model cache status is resolved through TemplateCache.Status.ModelCaches
 	result.templateCache = fetchTemplateCache(ctx, c, service)
 
-	// 4. Fetch ModelCaches if template cache exists (for health visibility)
-	if result.templateCache.OK() && result.templateCache.Value != nil {
-		result.modelCaches = fetchModelCaches(ctx, c, service.Namespace)
-	}
-
-	// 5. Only fetch Model and Template if InferenceService needs to be (re)created.
+	// 4. Only fetch Model and Template if InferenceService needs to be (re)created.
 	// Once the ISVC exists, the config is baked in and we don't need these upstream resources.
 	// Use IsNotFound() rather than !OK() to avoid re-resolving when there's a transient error
 	// fetching an existing ISVC (which could cause SSA to update an existing resource).

@@ -234,15 +234,6 @@ func searchTemplateCaches(
 	return controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{Value: best}
 }
 
-// fetchModelCaches lists all AIMModelCache resources in the namespace.
-func fetchModelCaches(
-	ctx context.Context,
-	c client.Client,
-	namespace string,
-) controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList] {
-	return controllerutils.FetchList(ctx, c, &aimv1alpha1.AIMModelCacheList{}, client.InNamespace(namespace))
-}
-
 // resolveStorageClassName determines the storage class to use.
 func resolveStorageClassName(service *aimv1alpha1.AIMService, obs ServiceObservation) string {
 	// Service-level storage config takes precedence

@@ -38,11 +38,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/amd-enterprise-ai/aim-engine/internal/aimmodelcache"
-	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
-
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
@@ -613,7 +611,8 @@ func convertToKServeAutoScaling(aimAutoScaling *aimv1alpha1.AIMServiceAutoScalin
 }
 
 // addStorageVolumes adds cache volumes to the InferenceService.
-// All model caches are now managed through template cache (both Dedicated and Shared modes).
+// Model caches are resolved through the template cache status, which contains
+// the list of ready model caches with their PVC names and mount points.
 func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObservation) {
 	if len(isvc.Spec.Predictor.Containers) == 0 {
 		return
@@ -621,48 +620,50 @@ func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObserva
 	container := &isvc.Spec.Predictor.Containers[0]
 
 	// All caching now flows through template cache
-	if obs.templateCache.Value != nil &&
-		obs.templateCache.Value.Status.Status == constants.AIMStatusReady &&
-		obs.modelCaches.Value != nil {
+	if obs.templateCache.Value == nil ||
+		obs.templateCache.Value.Status.Status != constants.AIMStatusReady {
+		return
+	}
 
-		// Mount model cache PVCs from template cache
-		for _, modelCache := range obs.modelCaches.Value.Items {
-			if modelCache.Status.Status != constants.AIMStatusReady {
-				continue
-			}
-			if modelCache.Status.PersistentVolumeClaim == "" {
-				continue
-			}
-
-			// Find the model name from the model cache spec
-			modelName := modelCache.Spec.SourceURI
-			addModelCacheMount(isvc, container, &modelCache, modelName)
+	// Use resolved model caches from template cache status
+	// This avoids fetching model caches separately and keeps the CRD relationships explicit
+	for _, resolvedCache := range obs.templateCache.Value.Status.ModelCaches {
+		if resolvedCache.Status != constants.AIMStatusReady {
+			continue
 		}
+		if resolvedCache.PersistentVolumeClaim == "" {
+			continue
+		}
+
+		addResolvedCacheMount(isvc, container, resolvedCache)
 	}
 }
 
-// addModelCacheMount adds a model cache PVC volume mount.
-func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1.Container, modelCache *aimv1alpha1.AIMModelCache, modelName string) {
-	// Sanitize volume name
-	volumeName := utils.MakeRFC1123Compliant(modelCache.Name)
+// addResolvedCacheMount adds a resolved model cache PVC volume mount.
+func addResolvedCacheMount(isvc *servingv1beta1.InferenceService, container *corev1.Container, cache aimv1alpha1.AIMResolvedModelCache) {
+	// Sanitize volume name from the model cache name
+	volumeName := utils.MakeRFC1123Compliant(cache.Name)
 	volumeName = strings.ReplaceAll(volumeName, ".", "-")
 
 	isvc.Spec.Predictor.Volumes = append(isvc.Spec.Predictor.Volumes, corev1.Volume{
 		Name: volumeName,
 		VolumeSource: corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: aimmodelcache.GenerateCachePvcName(modelCache),
+				ClaimName: cache.PersistentVolumeClaim,
 			},
 		},
 	})
 
-	// Sanitize model name to prevent path traversal (remove ".." and other unsafe sequences)
-	// and ensure it's a valid path component
-	safeModelName := filepath.Base(strings.ReplaceAll(modelName, "..", ""))
-	if safeModelName == "" || safeModelName == "." {
-		safeModelName = volumeName // Fall back to volume name if model name is invalid
+	// Use mount point from resolved cache if available, otherwise derive from model name
+	mountPath := cache.MountPoint
+	if mountPath == "" {
+		// Sanitize model name to prevent path traversal
+		safeModelName := filepath.Base(strings.ReplaceAll(cache.Model, "..", ""))
+		if safeModelName == "" || safeModelName == "." {
+			safeModelName = volumeName // Fall back to volume name if model name is invalid
+		}
+		mountPath = filepath.Join(constants.AIMCacheBasePath, safeModelName)
 	}
-	mountPath := filepath.Join(constants.AIMCacheBasePath, safeModelName)
 
 	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 		Name:      volumeName,
