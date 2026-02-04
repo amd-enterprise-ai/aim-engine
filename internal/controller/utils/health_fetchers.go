@@ -48,6 +48,7 @@ const (
 	errorCategoryAuth
 	errorCategoryStorageFull
 	errorCategoryResourceNotFound
+	errorCategoryInfrastructure
 )
 
 const (
@@ -56,6 +57,15 @@ const (
 
 // Common error patterns for categorization
 var (
+
+	// Infrastructure errors (RBAC, Kubernetes API errors) - check these FIRST
+	infraErrorPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)RBAC:.*not found`),
+		regexp.MustCompile(`(?i)clusterrole.*not found`),
+		regexp.MustCompile(`(?i)forbidden.*cannot.*resource`),
+		regexp.MustCompile(`(?i)serviceaccount.*cannot`),
+	}
+
 	// Authentication/authorization errors (S3, HuggingFace, etc.)
 	authPatterns = []*regexp.Regexp{
 		// S3/AWS auth errors
@@ -136,6 +146,15 @@ func categorizeErrorFromLogs(logs string) (errorCategory, string) {
 	}
 
 	lines := strings.Split(logs, "\n")
+
+	// Check for infrastructure errors (RBAC, Kubernetes API errors)
+	for _, pattern := range infraErrorPatterns {
+		for _, line := range lines {
+			if pattern.MatchString(line) {
+				return errorCategoryInfrastructure, strings.TrimSpace(line)
+			}
+		}
+	}
 
 	// Check for resource not found errors FIRST (404, Repository Not Found)
 	// This must come before auth checks because HuggingFace returns 401 for non-existent repos

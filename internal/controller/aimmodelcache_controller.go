@@ -28,6 +28,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -76,6 +77,8 @@ type AIMModelCacheReconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=create;get;list;watch;patch;update
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,resourceNames=modelcache-status-updater,verbs=bind
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -99,8 +102,14 @@ func (r *AIMModelCacheReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	if err := r.pipeline.Run(ctx, &model); err != nil {
+	result, err := r.pipeline.Run(ctx, &model)
+	if err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// If pipeline requests a requeue, honor it
+	if result.RequeueAfter > 0 {
+		return result, nil
 	}
 
 	// Requeue periodically while download is in progress to update progress status
@@ -168,6 +177,47 @@ func downloadJobPodPredicate() predicate.Predicate {
 			return true
 		},
 	}
+}
+
+// findModelCachesForRoleBinding maps a RoleBinding to all AIMModelCaches in the same namespace.
+// This is used to reconcile model caches when the status-updater RoleBinding is created/deleted.
+func (r *AIMModelCacheReconciler) findModelCachesForRoleBinding(ctx context.Context, obj client.Object) []ctrl.Request {
+	rb, ok := obj.(*rbacv1.RoleBinding)
+	if !ok {
+		return nil
+	}
+
+	// Only care about our specific RoleBinding
+	if rb.Name != "aim-engine-modelcache-status-updater" {
+		return nil
+	}
+
+	// Find all AIMModelCaches in the same namespace
+	var caches aimv1alpha1.AIMModelCacheList
+	if err := r.List(ctx, &caches, client.InNamespace(rb.Namespace)); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMModelCaches for RoleBinding",
+			"rolebinding", rb.Name, "namespace", rb.Namespace)
+		return nil
+	}
+
+	requests := make([]ctrl.Request, len(caches.Items))
+	for i := range caches.Items {
+		requests[i] = ctrl.Request{
+			NamespacedName: client.ObjectKey{
+				Namespace: caches.Items[i].Namespace,
+				Name:      caches.Items[i].Name,
+			},
+		}
+	}
+
+	return requests
+}
+
+// roleBindingPredicate filters RoleBinding events to only the status-updater RoleBinding.
+func roleBindingPredicate() predicate.Predicate {
+	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
+		return obj.GetName() == "aim-engine-modelcache-status-updater"
+	})
 }
 
 // hasSignificantPodIssue checks if a pod has any issues that should trigger reconciliation
@@ -274,6 +324,11 @@ func (r *AIMModelCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&corev1.Pod{},
 			handler.EnqueueRequestsFromMapFunc(r.findModelCacheForPod),
 			builder.WithPredicates(downloadJobPodPredicate()),
+		).
+		Watches(
+			&rbacv1.RoleBinding{},
+			handler.EnqueueRequestsFromMapFunc(r.findModelCachesForRoleBinding),
+			builder.WithPredicates(roleBindingPredicate()),
 		).
 		Named(modelCacheName).
 		Complete(r)

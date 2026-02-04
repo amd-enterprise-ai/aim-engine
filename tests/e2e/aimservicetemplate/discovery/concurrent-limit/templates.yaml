@@ -1,0 +1,329 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-01
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-02
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-03
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-04
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-05
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-06
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-07
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-08
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-09
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-10
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-11
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-12
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-13
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-14
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-15
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-16
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-17
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-18
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-19
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-20
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-21
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-22
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-23
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-24
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-25
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-26
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-27
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-28
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-29
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template-concurrent-30
+spec:
+  modelName: test-model-concurrent
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X

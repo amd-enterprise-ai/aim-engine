@@ -1,0 +1,87 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: service-template-node-gpu-label-changes
+spec:
+  description: |
+    Tests that AIMServiceTemplate and AIMModel react to node GPU label changes.
+    When a required GPU becomes available (label added), template and model become Ready.
+    When the GPU is removed (label removed), template and model become NotAvailable.
+  steps:
+    - name: Create model and service template requiring MI355X
+      try:
+        - apply:
+            file: model.yaml
+        - apply:
+            file: service-template.yaml
+
+    - name: Ensure template and model are NotAvailable (no MI355X GPU)
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: node-gpu-test
+              status:
+                status: NotAvailable
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: node-gpu-test-model
+              status:
+                status: NotAvailable
+
+    - name: Add MI355X GPU label and verify template and model become Ready
+      try:
+        - script:
+            content: |
+              # Sort by name for deterministic selection across runs
+              NODE=$(kubectl get nodes --sort-by=.metadata.name -o jsonpath='{.items[0].metadata.name}')
+              kubectl label node "$NODE" amd.com/gpu.device-id=75a3 --overwrite
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: node-gpu-test
+              status:
+                status: Ready
+                (conditions[?type == 'Discovered']):
+                  - status: "True"
+                    reason: InlineModelSources
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: node-gpu-test-model
+              status:
+                status: Ready
+      finally:
+        - script:
+            content: |
+              # Sort by name for deterministic selection across runs
+              NODE=$(kubectl get nodes --sort-by=.metadata.name -o jsonpath='{.items[0].metadata.name}')
+              kubectl label node "$NODE" amd.com/gpu.device-id- 2>/dev/null || true
+
+    - name: Ensure template and model become NotAvailable after label removal
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: node-gpu-test
+              status:
+                status: NotAvailable
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: node-gpu-test-model
+              status:
+                status: NotAvailable

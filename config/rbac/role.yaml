@@ -96,9 +96,29 @@ rules:
   - patch
   - update
 - apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - batch
   resources:
   - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
   verbs:
   - create
   - delete
@@ -114,6 +134,25 @@ rules:
   verbs:
   - create
   - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resourceNames:
+  - modelcache-status-updater
+  resources:
+  - clusterroles
+  verbs:
+  - bind
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  verbs:
+  - create
   - get
   - list
   - patch

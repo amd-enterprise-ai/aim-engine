@@ -119,10 +119,15 @@ kind-create: manifests ## Create kind cluster with all dependencies for local de
 	@# Install CRDs
 	@echo "Installing CRDs..."
 	@$(MAKE) install
+	@echo "Installing RBAC..."
+	@kustomize build config/local-dev-kind | kubectl apply -f - --server-side
 	@# Pre-load test images for faster e2e tests
 	@echo "Pre-loading test images..."
 	@docker pull ghcr.io/silogen/aim-dummy:0.1.8 2>/dev/null || true
 	@kind load docker-image ghcr.io/silogen/aim-dummy:0.1.8 --name aim-engine 2>/dev/null || true
+	@echo "Pre-loading artifact-downloader image..."
+	@docker build -t ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0 images/artifact-downloader
+	@kind load docker-image ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0 --name aim-engine 2>/dev/null || true
 	@# Set ENV to kind
 	@mkdir -p $(dir $(ENV_FILE))
 	@echo "kind" > $(ENV_FILE)
@@ -251,7 +256,7 @@ run-debug: manifests generate fmt vet ## Run a controller with debug logging ena
 	go run ./cmd/main.go --zap-log-level=debug
 
 .PHONY: watch
-watch: manifests generate install ## Run controller with live reload on file changes.
+watch: build install ## Run controller with live reload on file changes.
 	air
 
 .PHONY: wait-ready

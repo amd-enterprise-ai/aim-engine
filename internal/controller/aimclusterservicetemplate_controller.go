@@ -24,6 +24,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -104,11 +105,34 @@ func (r *AIMClusterServiceTemplateReconciler) Reconcile(ctx context.Context, req
 		return ctrl.Result{}, err
 	}
 
-	if err := r.pipeline.Run(ctx, &template); err != nil {
-		return ctrl.Result{}, err
+	// Check if this template might need to create a discovery job.
+	// If so, we need to acquire a distributed lock to ensure atomicity
+	// of the "count active jobs + create job" operation.
+	needsLock := aimservicetemplate.NeedsDiscoveryLock(
+		template.Status.Status,
+		len(template.Spec.ModelSources) > 0,
+	)
+
+	if needsLock {
+		// Run pipeline under the discovery lock
+		var result ctrl.Result
+		lockErr := aimservicetemplate.WithDiscoveryLock(ctx, r.Client, 30*time.Second, func() error {
+			var err error
+			result, err = r.pipeline.Run(ctx, &template)
+			return err
+		})
+
+		if lockErr != nil {
+			// Could not acquire lock - requeue to try later
+			logger.V(1).Info("could not acquire discovery lock, requeuing",
+				"template", template.Name)
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
+		return result, nil
 	}
 
-	return ctrl.Result{}, nil
+	// No lock needed - just run pipeline directly
+	return r.pipeline.Run(ctx, &template)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -117,6 +141,7 @@ func (r *AIMClusterServiceTemplateReconciler) SetupWithManager(mgr ctrl.Manager)
 
 	// Initialize the domain reconciler
 	r.reconciler = &aimservicetemplate.ClusterServiceTemplateReconciler{
+		Client:    mgr.GetClient(),
 		Clientset: r.Clientset,
 		Scheme:    r.Scheme,
 	}

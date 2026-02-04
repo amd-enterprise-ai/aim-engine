@@ -738,7 +738,7 @@ func TestPipeline_Run_Success(t *testing.T) {
 		Scheme:         scheme,
 	}
 
-	err := pipeline.Run(context.Background(), obj)
+	_, err := pipeline.Run(context.Background(), obj)
 
 	// Note: We expect a status update error because fake client doesn't fully support SubResource updates
 	// The important thing is that our state engine logic ran and set the status fields in memory
@@ -832,7 +832,7 @@ func TestPipeline_Run_WithInfrastructureError(t *testing.T) {
 		Scheme:         scheme,
 	}
 
-	err := pipeline.Run(context.Background(), obj)
+	_, err := pipeline.Run(context.Background(), obj)
 
 	// Should return error for requeue
 	if err == nil {
@@ -925,7 +925,7 @@ func TestPipeline_Run_StatusConflict(t *testing.T) {
 		Scheme:         scheme,
 	}
 
-	err := pipeline.Run(context.Background(), obj)
+	_, err := pipeline.Run(context.Background(), obj)
 	// Conflict errors should be swallowed - no error returned
 	if err != nil {
 		t.Errorf("Expected nil error for status conflict, got: %v", err)
@@ -995,7 +995,7 @@ func TestPipeline_GracePeriod_WithinThreshold(t *testing.T) {
 		Scheme:         scheme,
 	}
 
-	err := pipeline.Run(context.Background(), obj)
+	_, err := pipeline.Run(context.Background(), obj)
 
 	// Should return error for requeue
 	if err == nil {
@@ -1106,7 +1106,7 @@ func TestPipeline_GracePeriod_AfterThreshold(t *testing.T) {
 		Scheme:         scheme,
 	}
 
-	err := pipeline.Run(context.Background(), obj)
+	_, err := pipeline.Run(context.Background(), obj)
 
 	// Should return error for requeue
 	if err == nil {
@@ -1192,7 +1192,7 @@ func TestPipeline_GracePeriod_Recovery(t *testing.T) {
 		Scheme:         scheme,
 	}
 
-	err := pipeline.Run(context.Background(), obj)
+	_, err := pipeline.Run(context.Background(), obj)
 
 	// May have status update error from fake client, but that's OK
 	if err != nil && !strings.Contains(err.Error(), "status update failed") {
@@ -1292,7 +1292,7 @@ func TestPipeline_ErrorRecovery_AuthValid(t *testing.T) {
 		Scheme:         scheme,
 	}
 
-	err := pipeline.Run(context.Background(), obj)
+	_, err := pipeline.Run(context.Background(), obj)
 
 	// May have status update error from fake client
 	if err != nil && !strings.Contains(err.Error(), "status update failed") {
@@ -1369,7 +1369,7 @@ func TestPipeline_ErrorRecovery_ConfigValid(t *testing.T) {
 		Scheme:         scheme,
 	}
 
-	err := pipeline.Run(context.Background(), obj)
+	_, err := pipeline.Run(context.Background(), obj)
 
 	if err != nil && !strings.Contains(err.Error(), "status update failed") {
 		t.Fatalf("Unexpected error: %v", err)
@@ -1452,7 +1452,7 @@ func TestPipeline_ErrorRecovery_ComponentAuthError(t *testing.T) {
 		Scheme:         scheme,
 	}
 
-	err := pipeline.Run(context.Background(), obj)
+	_, err := pipeline.Run(context.Background(), obj)
 
 	if err != nil && !strings.Contains(err.Error(), "status update failed") {
 		t.Fatalf("Unexpected error: %v", err)
@@ -1782,7 +1782,7 @@ func TestPipeline_Run_ApplyError_SetsDependenciesReachable(t *testing.T) {
 		ControllerName: "test",
 	}
 
-	err := p.Run(context.Background(), obj)
+	_, err := p.Run(context.Background(), obj)
 
 	// Should return InfrastructureError
 	if err == nil {
@@ -1862,7 +1862,7 @@ func TestPipeline_Run_DeleteError_SetsDependenciesReachable(t *testing.T) {
 		ControllerName: "test",
 	}
 
-	err := p.Run(context.Background(), obj)
+	_, err := p.Run(context.Background(), obj)
 
 	// Should return InfrastructureError
 	if err == nil {
@@ -2364,7 +2364,7 @@ func TestPipeline_Run_SkipsWhenPaused(t *testing.T) {
 		Scheme:         scheme,
 	}
 
-	err := pipeline.Run(context.Background(), obj)
+	_, err := pipeline.Run(context.Background(), obj)
 	// Should return nil (no error, reconciliation skipped)
 	if err != nil {
 		t.Fatalf("Run() should return nil when paused, got: %v", err)
