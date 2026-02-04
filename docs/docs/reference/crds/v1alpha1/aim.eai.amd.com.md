@@ -413,8 +413,8 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `requests` _integer_ | Requests is the number of GPUs to set as requests/limits.<br />Set to 0 to target GPU nodes without consuming GPU resources (useful for testing). |  | Minimum: 0 <br />Optional: \{\} <br /> |
-| `model` _string_ | Model limits deployment to a specific GPU model.<br />Example: "MI300X" |  | MaxLength: 64 <br />Optional: \{\} <br /> |
-| `minVram` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | MinVRAM limits deployment to GPUs having at least this much VRAM.<br />Used for capacity planning when model size is known. |  | Optional: \{\} <br /> |
+| `model` _string_ | Model limits deployment to a specific GPU model.<br />Example: "MI300X"<br />Cannot be combined with minVram. |  | MaxLength: 64 <br />Optional: \{\} <br /> |
+| `minVram` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | MinVRAM limits deployment to GPUs having at least this much VRAM.<br />Used for capacity planning when the model size is known but any GPU with<br />sufficient VRAM is acceptable.<br />Cannot be combined with model. |  | Optional: \{\} <br /> |
 | `resourceName` _string_ | ResourceName is the Kubernetes resource name for GPU resources.<br />Defaults to "amd.com/gpu" if not specified. | amd.com/gpu | Optional: \{\} <br /> |
 
 
@@ -1577,6 +1577,7 @@ _Appears in:_
 | `resolvedModel` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedModel captures metadata about the image that was resolved. |  | Optional: \{\} <br /> |
 | `resolvedCache` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedCache captures metadata about which cache is used for this template |  | Optional: \{\} <br /> |
 | `resolvedHardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | ResolvedHardware contains the resolved hardware requirements for this template.<br />These values are computed from discovery results and spec defaults, and represent<br />what will actually be used when creating InferenceServices.<br />Resolution order: discovery output > spec values > defaults. |  | Optional: \{\} <br /> |
+| `resolvedNodeAffinity` _[NodeAffinity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#nodeaffinity-v1-core)_ | ResolvedNodeAffinity contains the computed node affinity rules for GPU scheduling.<br />This is derived from GPU model and minVRAM requirements, merged with any user-specified<br />affinity from the spec. The service controller uses this directly when creating InferenceServices. |  | Optional: \{\} <br /> |
 | `hardwareSummary` _string_ | HardwareSummary is a human-readable display string for the hardware requirements.<br />Format: "\{count\} x \{model\}" for GPU (e.g., "2 x MI300X") or "CPU" for CPU-only.<br />This is a computed field for display purposes only. |  | Optional: \{\} <br /> |
 | `status` _[AIMStatus](#aimstatus)_ | Status represents the current high‑level status of the template lifecycle.<br />Values: `Pending`, `Progressing`, `Ready`, `Degraded`, `Failed`. | Pending | Enum: [Pending Progressing Ready Degraded Failed NotAvailable] <br /> |
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources list the models that this template requires to run. These are the models that will be<br />cached, if this template is cached. |  |  |

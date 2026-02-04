@@ -603,7 +603,7 @@ func (r *ServiceTemplateReconciler) DecorateStatus(
 
 	decorateTemplateStatusCommon(
 		status, cm, &obs.template.Spec.AIMServiceTemplateSpecCommon, obs.discoveryJob, obs.parsedDiscovery,
-		obs.template.Status.Discovery, specHash,
+		obs.template.Status.Discovery, specHash, obs.gpuResources,
 	)
 
 	// Set resolved model reference if available
@@ -629,7 +629,7 @@ func (r *ClusterServiceTemplateReconciler) DecorateStatus(
 
 	decorateTemplateStatusCommon(
 		status, cm, &obs.template.Spec.AIMServiceTemplateSpecCommon, obs.discoveryJob, obs.parsedDiscovery,
-		obs.template.Status.Discovery, specHash,
+		obs.template.Status.Discovery, specHash, obs.gpuResources,
 	)
 
 	// Set resolved model reference if available
@@ -649,6 +649,7 @@ func decorateTemplateStatusCommon(
 	parsedDiscovery *ParsedDiscovery,
 	currentDiscoveryState *aimv1alpha1.DiscoveryState,
 	specHash string,
+	gpuResources map[string]utils.GPUResourceInfo,
 ) {
 	// Handle inline model sources - copy from spec to status
 	// This takes precedence over discovery results
@@ -659,6 +660,8 @@ func decorateTemplateStatusCommon(
 		// Resolve hardware from spec (no discovery)
 		status.ResolvedHardware = resolveHardware(nil, spec)
 		status.HardwareSummary = formatHardwareSummary(status.ResolvedHardware)
+		// Compute node affinity from GPU requirements and cluster resources
+		status.ResolvedNodeAffinity = BuildNodeAffinityFromGPURequirements(*spec, gpuResources)
 		status.Discovery = nil // Clear stale discovery state
 		cm.MarkTrue(aimv1alpha1.AIMTemplateDiscoveryConditionType, "InlineModelSources", "Model sources provided in-line in spec")
 		return
@@ -707,9 +710,11 @@ func decorateTemplateStatusCommon(
 		if parsedDiscovery.Profile != nil {
 			status.Profile = parsedDiscovery.Profile
 		}
-		// Resolve hardware from discovery + spec fallback // current
+		// Resolve hardware from discovery + spec fallback
 		status.ResolvedHardware = resolveHardware(parsedDiscovery, spec)
 		status.HardwareSummary = formatHardwareSummary(status.ResolvedHardware)
+		// Compute node affinity from GPU requirements and cluster resources
+		status.ResolvedNodeAffinity = BuildNodeAffinityFromGPURequirements(*spec, gpuResources)
 		cm.MarkTrue("Discovered", "DiscoveryComplete", "Discovery job completed successfully")
 	}
 

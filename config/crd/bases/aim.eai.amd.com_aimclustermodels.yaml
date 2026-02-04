@@ -111,13 +111,16 @@ spec:
                             - type: string
                             description: |-
                               MinVRAM limits deployment to GPUs having at least this much VRAM.
-                              Used for capacity planning when model size is known.
+                              Used for capacity planning when the model size is known but any GPU with
+                              sufficient VRAM is acceptable.
+                              Cannot be combined with model.
                             pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                             x-kubernetes-int-or-string: true
                           model:
                             description: |-
                               Model limits deployment to a specific GPU model.
                               Example: "MI300X"
+                              Cannot be combined with minVram.
                             maxLength: 64
                             type: string
                           requests:
@@ -134,6 +137,11 @@ spec:
                               Defaults to "amd.com/gpu" if not specified.
                             type: string
                         type: object
+                        x-kubernetes-validations:
+                        - message: model and minVram are mutually exclusive; specify
+                            either a specific GPU model OR a minimum VRAM requirement,
+                            not both
+                          rule: '!(has(self.model) && self.model != ” && has(self.minVram))'
                     type: object
                     x-kubernetes-validations:
                     - message: at least one of gpu or cpu must be specified
@@ -368,13 +376,16 @@ spec:
                               - type: string
                               description: |-
                                 MinVRAM limits deployment to GPUs having at least this much VRAM.
-                                Used for capacity planning when model size is known.
+                                Used for capacity planning when the model size is known but any GPU with
+                                sufficient VRAM is acceptable.
+                                Cannot be combined with model.
                               pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                               x-kubernetes-int-or-string: true
                             model:
                               description: |-
                                 Model limits deployment to a specific GPU model.
                                 Example: "MI300X"
+                                Cannot be combined with minVram.
                               maxLength: 64
                               type: string
                             requests:
@@ -391,6 +402,11 @@ spec:
                                 Defaults to "amd.com/gpu" if not specified.
                               type: string
                           type: object
+                          x-kubernetes-validations:
+                          - message: model and minVram are mutually exclusive; specify
+                              either a specific GPU model OR a minimum VRAM requirement,
+                              not both
+                            rule: '!(has(self.model) && self.model != ” && has(self.minVram))'
                       type: object
                       x-kubernetes-validations:
                       - message: at least one of gpu or cpu must be specified

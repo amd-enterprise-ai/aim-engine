@@ -163,6 +163,12 @@ type AIMServiceTemplateStatus struct {
 	// +optional
 	ResolvedHardware *AIMHardwareRequirements `json:"resolvedHardware,omitempty"`
 
+	// ResolvedNodeAffinity contains the computed node affinity rules for GPU scheduling.
+	// This is derived from GPU model and minVRAM requirements, merged with any user-specified
+	// affinity from the spec. The service controller uses this directly when creating InferenceServices.
+	// +optional
+	ResolvedNodeAffinity *corev1.NodeAffinity `json:"resolvedNodeAffinity,omitempty"`
+
 	// HardwareSummary is a human-readable display string for the hardware requirements.
 	// Format: "{count} x {model}" for GPU (e.g., "2 x MI300X") or "CPU" for CPU-only.
 	// This is a computed field for display purposes only.

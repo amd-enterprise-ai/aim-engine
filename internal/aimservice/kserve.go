@@ -305,16 +305,11 @@ func buildInferenceService(
 	// Configure replicas and autoscaling
 	configureReplicasAndAutoscaling(inferenceService, service)
 
-	// Add GPU node affinity from template status.resolvedHardware.
-	// The template controller computes resolvedHardware from discovery + spec fallback.
-	var gpuModel string
-	var minVRAM *resource.Quantity
-	if templateStatus != nil && templateStatus.ResolvedHardware != nil && templateStatus.ResolvedHardware.GPU != nil {
-		gpuModel = templateStatus.ResolvedHardware.GPU.Model
-		minVRAM = templateStatus.ResolvedHardware.GPU.MinVRAM
-	}
-	if gpuModel != "" || minVRAM != nil {
-		addGPUNodeAffinity(inferenceService, gpuModel, minVRAM)
+	// Apply GPU node affinity from template status.
+	// The template controller computes resolvedNodeAffinity from GPU requirements
+	// and actual cluster GPU resources (including VRAM from node labels).
+	if templateStatus != nil && templateStatus.ResolvedNodeAffinity != nil {
+		applyNodeAffinity(inferenceService, templateStatus.ResolvedNodeAffinity)
 	}
 
 	// Add storage volumes (cache or PVC)
@@ -678,66 +673,20 @@ func addResolvedCacheMount(isvc *servingv1beta1.InferenceService, container *cor
 	})
 }
 
-// addGPUNodeAffinity adds node affinity rules for GPU selection to the InferenceService.
-// Uses device ID-based matching via the amd.com/gpu.device-id node label.
-//
-// When minVRAM is specified, filters GPU models by VRAM requirement using KnownGPUVRAM,
-// then gets device IDs for the filtered models.
-//
-// Logic:
-//   - If minVRAM specified: Get device IDs for GPUs meeting VRAM requirement (optionally filtered by model)
-//   - If only gpuModel specified: Get device IDs for that model
-//   - Uses a single device ID affinity that covers both requirements
-func addGPUNodeAffinity(isvc *servingv1beta1.InferenceService, gpuModel string, minVRAM *resource.Quantity) {
-	var deviceIDs []string
-
-	if minVRAM != nil && !minVRAM.IsZero() {
-		// VRAM requirement specified - get device IDs for GPUs meeting the requirement
-		// If gpuModel is also specified, only include that model if it meets VRAM requirement
-		minVRAMBytes := minVRAM.Value()
-		deviceIDs = utils.GetAMDDeviceIDsForMinVRAM(minVRAMBytes, gpuModel)
-	} else if gpuModel != "" {
-		// Only GPU model specified (no VRAM requirement) - get device IDs for that model
-		deviceIDs = utils.GetAMDDeviceIDsForModel(gpuModel)
-	}
-
-	// If no device IDs to filter by, nothing to add
-	if len(deviceIDs) == 0 {
+// applyNodeAffinity applies the pre-computed node affinity from the template status to the InferenceService.
+// The template controller computes resolvedNodeAffinity from GPU requirements and actual cluster
+// GPU resources (including VRAM from node labels), so this function simply applies it.
+func applyNodeAffinity(isvc *servingv1beta1.InferenceService, nodeAffinity *corev1.NodeAffinity) {
+	if nodeAffinity == nil {
 		return
-	}
-
-	// Create the node selector requirement using device ID label
-	requirement := corev1.NodeSelectorRequirement{
-		Key:      utils.LabelAMDGPUDeviceID,
-		Operator: corev1.NodeSelectorOpIn,
-		Values:   deviceIDs,
 	}
 
 	// Ensure Affinity exists
 	if isvc.Spec.Predictor.Affinity == nil {
 		isvc.Spec.Predictor.Affinity = &corev1.Affinity{}
 	}
-	if isvc.Spec.Predictor.Affinity.NodeAffinity == nil {
-		isvc.Spec.Predictor.Affinity.NodeAffinity = &corev1.NodeAffinity{}
-	}
 
-	// Add required node selector terms
-	nodeAffinity := isvc.Spec.Predictor.Affinity.NodeAffinity
-	if nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
-		nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = &corev1.NodeSelector{
-			NodeSelectorTerms: []corev1.NodeSelectorTerm{},
-		}
-	}
-
-	// Add or update the node selector term
-	terms := nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
-	if len(terms) == 0 {
-		terms = append(terms, corev1.NodeSelectorTerm{
-			MatchExpressions: []corev1.NodeSelectorRequirement{requirement},
-		})
-	} else {
-		// Add to existing term
-		terms[0].MatchExpressions = append(terms[0].MatchExpressions, requirement)
-	}
-	nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = terms
+	// Apply the node affinity directly
+	// TODO: In the future, merge with any existing service-level affinity if needed
+	isvc.Spec.Predictor.Affinity.NodeAffinity = nodeAffinity.DeepCopy()
 }

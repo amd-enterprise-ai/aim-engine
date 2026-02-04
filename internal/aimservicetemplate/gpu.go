@@ -28,6 +28,8 @@ import (
 	"fmt"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
@@ -203,4 +205,93 @@ func formatVRAMBytes(bytes int64) string {
 	}
 	gi := bytes / (1024 * 1024 * 1024)
 	return fmt.Sprintf("%dGi", gi)
+}
+
+// BuildNodeAffinityFromGPURequirements builds a NodeAffinity for GPU scheduling based on
+// the template's hardware requirements and actual GPU resources available in the cluster.
+//
+// The function computes device IDs from gpuResources (which contains VRAM from node labels)
+// rather than using static mappings. This ensures scheduling decisions are based on actual
+// cluster state.
+//
+// Note: model and minVram are mutually exclusive (enforced by CEL validation).
+//   - If model specified: Include device IDs for that specific model
+//   - If minVRAM specified: Include device IDs for all GPUs meeting VRAM requirement
+//   - Returns nil if no GPU requirements or no matching GPUs found
+func BuildNodeAffinityFromGPURequirements(
+	spec aimv1alpha1.AIMServiceTemplateSpecCommon,
+	gpuResources map[string]utils.GPUResourceInfo,
+) *corev1.NodeAffinity {
+	// No GPU requirements means no node affinity needed
+	if !TemplateRequiresGPU(spec) {
+		return nil
+	}
+
+	if spec.Hardware == nil || spec.Hardware.GPU == nil {
+		return nil
+	}
+
+	gpuModel := spec.Hardware.GPU.Model
+	minVRAM := spec.Hardware.GPU.MinVRAM
+
+	// If no specific constraints, no affinity needed
+	if gpuModel == "" && (minVRAM == nil || minVRAM.IsZero()) {
+		return nil
+	}
+
+	var deviceIDs []string
+
+	// model and minVram are mutually exclusive (CEL validation ensures this)
+	if gpuModel != "" {
+		// Specific GPU model - get device IDs for that model
+		deviceIDs = utils.GetAMDDeviceIDsForModel(gpuModel)
+	} else if minVRAM != nil && !minVRAM.IsZero() {
+		// VRAM requirement - find all GPUs meeting the requirement from cluster resources
+		deviceIDs = getDeviceIDsForMinVRAM(minVRAM.Value(), gpuResources)
+	}
+
+	// No matching device IDs found
+	if len(deviceIDs) == 0 {
+		return nil
+	}
+
+	// Build the NodeAffinity structure
+	return &corev1.NodeAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{
+				{
+					MatchExpressions: []corev1.NodeSelectorRequirement{
+						{
+							Key:      utils.LabelAMDGPUDeviceID,
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   deviceIDs,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// getDeviceIDsForMinVRAM returns device IDs for all GPUs meeting the VRAM requirement.
+// Uses actual VRAM values from gpuResources (populated from node labels) rather than static mappings.
+func getDeviceIDsForMinVRAM(minVRAMBytes int64, gpuResources map[string]utils.GPUResourceInfo) []string {
+	var matchingModels []string
+
+	// Find all models meeting VRAM requirement from cluster resources
+	for model, info := range gpuResources {
+		vramBytes := utils.ParseVRAMToBytes(info.VRAM)
+		if vramBytes >= minVRAMBytes {
+			matchingModels = append(matchingModels, model)
+		}
+	}
+
+	// Collect device IDs for matching models
+	var allDeviceIDs []string
+	for _, model := range matchingModels {
+		deviceIDs := utils.GetAMDDeviceIDsForModel(model)
+		allDeviceIDs = append(allDeviceIDs, deviceIDs...)
+	}
+
+	return allDeviceIDs
 }

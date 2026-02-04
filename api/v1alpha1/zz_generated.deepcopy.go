@@ -1784,6 +1784,11 @@ func (in *AIMServiceTemplateStatus) DeepCopyInto(out *AIMServiceTemplateStatus) 
 		*out = new(AIMHardwareRequirements)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.ResolvedNodeAffinity != nil {
+		in, out := &in.ResolvedNodeAffinity, &out.ResolvedNodeAffinity
+		*out = new(v1.NodeAffinity)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.ModelSources != nil {
 		in, out := &in.ModelSources, &out.ModelSources
 		*out = make([]AIMModelSource, len(*in))

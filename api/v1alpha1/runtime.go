@@ -93,6 +93,7 @@ type AIMHardwareRequirements struct {
 }
 
 // AIMGpuRequirements specifies GPU resource requirements.
+// +kubebuilder:validation:XValidation:rule="!(has(self.model) && self.model != ” && has(self.minVram))",message="model and minVram are mutually exclusive; specify either a specific GPU model OR a minimum VRAM requirement, not both"
 type AIMGpuRequirements struct {
 	// Requests is the number of GPUs to set as requests/limits.
 	// Set to 0 to target GPU nodes without consuming GPU resources (useful for testing).
@@ -102,12 +103,15 @@ type AIMGpuRequirements struct {
 
 	// Model limits deployment to a specific GPU model.
 	// Example: "MI300X"
+	// Cannot be combined with minVram.
 	// +optional
 	// +kubebuilder:validation:MaxLength=64
 	Model string `json:"model,omitempty"`
 
 	// MinVRAM limits deployment to GPUs having at least this much VRAM.
-	// Used for capacity planning when model size is known.
+	// Used for capacity planning when the model size is known but any GPU with
+	// sufficient VRAM is acceptable.
+	// Cannot be combined with model.
 	// +optional
 	MinVRAM *resource.Quantity `json:"minVram,omitempty"`
 
