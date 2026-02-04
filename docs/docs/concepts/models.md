@@ -404,7 +404,7 @@ spec:
     allowUnoptimized: true  # Required - custom models default to unoptimized
 ```
 
-The service automatically creates a namespace-scoped AIMModel owned by the service. When the service is deleted, the model is garbage collected.
+The service automatically creates a namespace-scoped AIMModel. Custom models are shared resources that persist independently of the service, allowing them to be reused by other services or manually managed.
 
 ### Model Sources
 

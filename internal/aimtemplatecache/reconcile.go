@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -361,7 +362,7 @@ func (r *TemplateCacheReconciler) PlanResources(
 				StorageClassName: tc.Spec.StorageClassName,
 				SourceURI:        cache.SourceURI,
 				ModelID:          cache.ModelID,
-				Size:             *cache.Size,
+				Size:             getSizeOrZero(cache.Size),
 				// Merge base-level env with per-source env (source takes precedence)
 				Env:              utils.MergeEnvVars(tc.Spec.Env, cache.Env),
 				RuntimeConfigRef: tc.Spec.RuntimeConfigRef,
@@ -462,4 +463,14 @@ func (r *TemplateCacheReconciler) DecorateStatus(
 	} else {
 		status.ModelCaches = nil
 	}
+}
+
+// getSizeOrZero returns the size value or zero quantity if nil.
+// This allows creating model caches without a known size - the model cache
+// controller will run a check-size job to discover the size.
+func getSizeOrZero(size *resource.Quantity) resource.Quantity {
+	if size == nil {
+		return resource.Quantity{}
+	}
+	return *size
 }

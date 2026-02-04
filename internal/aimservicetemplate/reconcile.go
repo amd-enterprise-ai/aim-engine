@@ -791,6 +791,11 @@ func resolveHardware(discovery *ParsedDiscovery, spec *aimv1alpha1.AIMServiceTem
 		if resourceName != "" {
 			resolved.GPU.ResourceName = resourceName
 		}
+		// Copy minVram from spec (not provided by discovery)
+		if spec.Hardware != nil && spec.Hardware.GPU != nil && spec.Hardware.GPU.MinVRAM != nil {
+			minVRAMCopy := spec.Hardware.GPU.MinVRAM.DeepCopy()
+			resolved.GPU.MinVRAM = &minVRAMCopy
+		}
 		hasHardware = true
 	}
 

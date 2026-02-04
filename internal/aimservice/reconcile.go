@@ -646,15 +646,6 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 		DependencyType: controllerutils.DependencyTypeDownstream,
 	}
 
-	// Check for storage size calculation errors (invalid template configuration)
-	if obs.storageSizeError != nil {
-		health.State = constants.AIMStatusFailed
-		health.Reason = aimv1alpha1.AIMServiceReasonStorageSizeError
-		health.Message = obs.storageSizeError.Error()
-		health.Errors = []error{obs.storageSizeError}
-		return health
-	}
-
 	// All caching now goes through template cache (both Shared and Dedicated modes)
 	if obs.templateCache.Value != nil {
 		switch obs.templateCache.Value.Status.Status {
@@ -699,10 +690,6 @@ type ServiceObservation struct {
 
 	// pendingModelName is the validated model name to create (set when needsModelCreation is true).
 	pendingModelName string
-
-	// storageSizeError is set when storage size calculation fails due to missing model source sizes.
-	// This indicates the template hasn't fully resolved its model sources yet.
-	storageSizeError error
 
 	// runtimeStatus captures the computed runtime status including replica counts and resource usage.
 	// Derived in ComposeState from the InferenceService and pods.
@@ -750,41 +737,10 @@ func (r *ServiceReconciler) ComposeState(
 		obs.pendingModelName = modelName
 	}
 
-	// Validate storage size can be calculated when template has model sources
-	// This catches configuration issues early (model sources without sizes)
-	obs.storageSizeError = r.validateStorageSize(fetch)
-
 	// Compute runtime status from InferenceService and pods
 	obs.runtimeStatus = r.computeRuntimeStatus(fetch)
 
 	return obs
-}
-
-// validateStorageSize checks if storage size can be calculated for the template's model sources.
-// Returns an error if model sources exist but have invalid/missing sizes.
-func (r *ServiceReconciler) validateStorageSize(fetch ServiceFetchResult) error {
-	// Get template status with model sources
-	var templateStatus *aimv1alpha1.AIMServiceTemplateStatus
-	if fetch.template.Value != nil {
-		templateStatus = &fetch.template.Value.Status
-	} else if fetch.clusterTemplate.Value != nil {
-		templateStatus = &fetch.clusterTemplate.Value.Status
-	}
-
-	// No template or no model sources - nothing to validate
-	if templateStatus == nil || len(templateStatus.ModelSources) == 0 {
-		return nil
-	}
-
-	// Template cache already exists and is ready - no need to calculate
-	if fetch.templateCache.Value != nil && fetch.templateCache.Value.Status.Status == constants.AIMStatusReady {
-		return nil
-	}
-
-	// Try to calculate storage size
-	headroomPercent := resolvePVCHeadroomPercent(fetch.service, ServiceObservation{ServiceFetchResult: fetch})
-	_, err := calculateRequiredStorageSize(templateStatus.ModelSources, headroomPercent)
-	return err
 }
 
 // computeRuntimeStatus extracts replica counts from HPA or falls back to spec defaults.
@@ -848,14 +804,10 @@ func (r *ServiceReconciler) PlanResources(
 	planResult := controllerutils.PlanResult{}
 
 	// 0. Plan model creation if needed (before template check - model can be created independently)
+	// Both custom and image-based models are shared (no owner reference)
+	// Custom models use service label for reconciliation tracking
 	if model := planModel(service, obs); model != nil {
-		// Custom models are owned by the service (deleted when service is deleted)
-		// Image-based models are shared (no owner reference)
-		if obs.modelResult.CustomSpec != nil {
-			planResult.Apply(model)
-		} else {
-			planResult.ApplyWithoutOwnerRef(model)
-		}
+		planResult.ApplyWithoutOwnerRef(model)
 	}
 
 	// 1. Plan HTTPRoute if routing is enabled (independent of template resolution)

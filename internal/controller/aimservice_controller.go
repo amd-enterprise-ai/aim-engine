@@ -333,21 +333,33 @@ func (r *AIMServiceReconciler) findServicesForClusterTemplate(ctx context.Contex
 }
 
 // findServicesForModel returns reconcile requests for all AIMServices
-// that reference the given model by name or by image.
+// that reference the given model by name, by image, or that own the model (custom models).
 func (r *AIMServiceReconciler) findServicesForModel(ctx context.Context, obj client.Object) []reconcile.Request {
 	model, ok := obj.(*aimv1alpha1.AIMModel)
 	if !ok {
 		return nil
 	}
 
-	// Find services in the same namespace that might use this model
+	var requests []reconcile.Request
+
+	// Check if this model has a service label (custom model case)
+	if serviceName, ok := model.Labels[constants.LabelKeyService]; ok && serviceName != "" {
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      serviceName,
+				Namespace: model.Namespace,
+			},
+		})
+		return requests
+	}
+
+	// Find services in the same namespace that might use this model by name/image
 	var services aimv1alpha1.AIMServiceList
 	if err := r.List(ctx, &services, client.InNamespace(model.Namespace)); err != nil {
 		log.FromContext(ctx).Error(err, "failed to list AIMServices for model", "model", model.Name)
 		return nil
 	}
 
-	var requests []reconcile.Request
 	for _, svc := range services.Items {
 		// Check if service references this model by name
 		if svc.Spec.Model.Name != nil && *svc.Spec.Model.Name == model.Name {

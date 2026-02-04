@@ -24,7 +24,6 @@ package aimservice
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -138,118 +137,6 @@ func TestComposeState_NeedsModelCreation(t *testing.T) {
 			if tt.expectError {
 				if obs.modelResult.Model.Error == nil {
 					t.Error("expected model error to be set")
-				}
-			}
-		})
-	}
-}
-
-func TestComposeState_ValidatesStorageSize(t *testing.T) {
-	r := &ServiceReconciler{}
-
-	tests := []struct {
-		name                   string
-		fetch                  ServiceFetchResult
-		expectStorageSizeError bool
-	}{
-		{
-			name: "no template - no error",
-			fetch: ServiceFetchResult{
-				service: NewService("svc").Build(),
-			},
-			expectStorageSizeError: false,
-		},
-		{
-			name: "template with valid model sources - no error",
-			fetch: ServiceFetchResult{
-				service: NewService("svc").Build(),
-				template: controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]{
-					Value: func() *aimv1alpha1.AIMServiceTemplate {
-						t := NewTemplate("t").Build()
-						t.Status.ModelSources = []aimv1alpha1.AIMModelSource{
-							NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
-						}
-						return t
-					}(),
-				},
-			},
-			expectStorageSizeError: false,
-		},
-		{
-			name: "template with model sources missing size - error",
-			fetch: ServiceFetchResult{
-				service: NewService("svc").Build(),
-				template: controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]{
-					Value: func() *aimv1alpha1.AIMServiceTemplate {
-						t := NewTemplate("t").Build()
-						t.Status.ModelSources = []aimv1alpha1.AIMModelSource{
-							NewModelSourceWithoutSize("hf://model/file.safetensors"),
-						}
-						return t
-					}(),
-				},
-			},
-			expectStorageSizeError: true,
-		},
-		{
-			name: "template cache ready - no error (skip validation)",
-			fetch: ServiceFetchResult{
-				service: NewService("svc").Build(),
-				template: controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]{
-					Value: func() *aimv1alpha1.AIMServiceTemplate {
-						t := NewTemplate("t").Build()
-						t.Status.ModelSources = []aimv1alpha1.AIMModelSource{
-							NewModelSourceWithoutSize("hf://model/file.safetensors"),
-						}
-						return t
-					}(),
-				},
-				templateCache: controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{
-					Value: &aimv1alpha1.AIMTemplateCache{
-						Status: aimv1alpha1.AIMTemplateCacheStatus{
-							Status: constants.AIMStatusReady,
-						},
-					},
-				},
-			},
-			expectStorageSizeError: false,
-		},
-		{
-			name: "template cache ready - no error (skip validation)",
-			fetch: ServiceFetchResult{
-				service: NewService("svc").Build(),
-				template: controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]{
-					Value: func() *aimv1alpha1.AIMServiceTemplate {
-						t := NewTemplate("t").Build()
-						t.Status.ModelSources = []aimv1alpha1.AIMModelSource{
-							NewModelSourceWithoutSize("hf://model/file.safetensors"),
-						}
-						return t
-					}(),
-				},
-				templateCache: controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{
-					Value: &aimv1alpha1.AIMTemplateCache{
-						Status: aimv1alpha1.AIMTemplateCacheStatus{
-							Status: constants.AIMStatusReady,
-						},
-					},
-				},
-			},
-			expectStorageSizeError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			obs := r.ComposeState(testContext(), controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{}, tt.fetch)
-
-			if tt.expectStorageSizeError {
-				if obs.storageSizeError == nil {
-					t.Error("expected storageSizeError to be set")
-				}
-			} else {
-				if obs.storageSizeError != nil {
-					t.Errorf("unexpected storageSizeError: %v", obs.storageSizeError)
 				}
 			}
 		})
@@ -419,17 +306,6 @@ func TestGetComponentHealth_CacheHealth(t *testing.T) {
 			},
 			expectState:  constants.AIMStatusReady,
 			expectReason: aimv1alpha1.AIMServiceReasonCacheReady,
-		},
-		{
-			name: "storage size error",
-			obs: ServiceObservation{
-				ServiceFetchResult: ServiceFetchResult{
-					service: NewService("svc").Build(),
-				},
-				storageSizeError: errStorageSizeTest,
-			},
-			expectState:  constants.AIMStatusFailed,
-			expectReason: aimv1alpha1.AIMServiceReasonStorageSizeError,
 		},
 		{
 			name: "template cache ready",
@@ -933,9 +809,3 @@ func TestGetResolvedTemplate(t *testing.T) {
 		})
 	}
 }
-
-// ============================================================================
-// HELPER ERROR VARIABLE
-// ============================================================================
-
-var errStorageSizeTest = errors.New("test storage size error")

@@ -593,12 +593,14 @@ func ParseDiscoveryLogs(ctx context.Context, c client.Client, clientset kubernet
 
 // ShouldCheckDiscoveryJob returns true if we should check for discovery jobs.
 // We skip checking if the template is already ready or has inline model sources.
+// For inline model sources, size discovery happens via the ModelCache check-size job.
 func ShouldCheckDiscoveryJob(template *aimv1alpha1.AIMServiceTemplate) bool {
 	// Don't check for discovery job if template is already ready
 	if template.Status.Status == constants.AIMStatusReady {
 		return false
 	}
-	// Don't check if inline model sources are provided
+	// Don't check if inline model sources are provided - size discovery happens
+	// via the ModelCache controller's check-size job, not the template discovery job
 	if len(template.Spec.ModelSources) > 0 {
 		return false
 	}
@@ -615,6 +617,8 @@ func ShouldCheckClusterTemplateDiscoveryJob(template *aimv1alpha1.AIMClusterServ
 	if template.Status.Status == constants.AIMStatusReady {
 		return false
 	}
+	// Don't check if inline model sources are provided - size discovery happens
+	// via the ModelCache controller's check-size job, not the template discovery job
 	if len(template.Spec.ModelSources) > 0 {
 		return false
 	}

@@ -46,6 +46,12 @@ const (
 
 	// LabelAMDGPUFamilyBeta is the beta version of the family label.
 	LabelAMDGPUFamilyBeta = "beta.amd.com/gpu.family"
+
+	// LabelAMDGPUVRAM is the label for AMD GPU VRAM capacity (e.g., "192G").
+	LabelAMDGPUVRAM = "amd.com/gpu.vram"
+
+	// LabelAMDGPUVRAMBeta is the beta version of the VRAM label.
+	LabelAMDGPUVRAMBeta = "beta.amd.com/gpu.vram"
 )
 
 // GPU node label keys for NVIDIA GPUs.
@@ -70,6 +76,13 @@ const (
 
 	// ResourcePrefixNVIDIA is the resource name prefix for NVIDIA GPUs.
 	ResourcePrefixNVIDIA = "nvidia.com/"
+)
+
+// VRAM source values for GetGPUVRAM function.
+const (
+	VRAMSourceLabel   = "label"
+	VRAMSourceStatic  = "static"
+	VRAMSourceUnknown = "unknown"
 )
 
 // KnownAmdDevices maps AMD GPU device IDs (PCI device IDs) to their commercial model names.
@@ -124,10 +137,60 @@ var KnownAmdDevices = map[string]string{
 	"73bf": "RX6800", // RX 6800 / 6800 XT / 6900 XT
 }
 
+// KnownGPUVRAM provides fallback VRAM values when node labels are unavailable.
+// Values are per-GPU VRAM capacity in the format used by AMD device plugin labels (e.g., "192G").
+// This mapping is used when amd.com/gpu.vram or beta.amd.com/gpu.vram labels are not present.
+var KnownGPUVRAM = map[string]string{
+	// AMD Instinct (AI/HPC accelerators)
+	"MI355X": "288G",
+	"MI350X": "288G",
+	"MI325X": "256G",
+	"MI308X": "128G",
+	"MI300X": "192G",
+	"MI300A": "128G",
+	"MI250X": "128G", // 64G per die × 2
+	"MI210":  "64G",
+	"MI100":  "32G",
+	// AMD Radeon Pro (workstation)
+	"V710":   "32G",
+	"W7900":  "48G",
+	"W7800":  "32G",
+	"W6900X": "32G",
+	"W6800":  "32G",
+	"W6800X": "32G",
+	"V620":   "32G",
+	// AMD Radeon (consumer)
+	"RX9070": "16G",
+	"RX7900": "24G",
+	"RX6900": "16G",
+	"RX6800": "16G",
+	// NVIDIA (for future support)
+	"H200":      "141G",
+	"H100":      "80G",
+	"A100":      "80G",
+	"A100-40GB": "40G",
+	"L40S":      "48G",
+	"L4":        "24G",
+}
+
+// KnownVRAMTiers is a sorted list of all known VRAM capacity values.
+// Used for filtering GPUs by minimum VRAM requirement.
+var KnownVRAMTiers = []string{
+	"16G", "24G", "32G", "40G", "48G", "64G", "80G", "128G", "141G", "192G", "256G", "288G",
+}
+
 // GPUResourceInfo contains GPU resource information for a specific GPU model.
 type GPUResourceInfo struct {
 	// ResourceName is the full Kubernetes resource name (e.g., "amd.com/gpu").
 	ResourceName string
+
+	// VRAM is the GPU VRAM capacity in the format used by device plugin labels (e.g., "192G").
+	// Empty string if VRAM information is not available.
+	VRAM string
+
+	// VRAMSource indicates how the VRAM value was determined:
+	// "label" = from node label, "static" = from KnownGPUVRAM, "unknown" = not available.
+	VRAMSource string
 }
 
 // GetClusterGPUResources returns an aggregated view of all GPU resources in the cluster.
@@ -338,8 +401,13 @@ func filterGPULabelResources(node *corev1.Node, aggregate map[string]GPUResource
 
 		// Add to the aggregate if not already present
 		if _, exists := aggregate[gpuModel]; !exists {
+			// Extract VRAM from node labels or fall back to static mapping
+			vram, vramSource := GetGPUVRAM(gpuModel, node.Labels)
+
 			aggregate[gpuModel] = GPUResourceInfo{
 				ResourceName: resourcePrefix + "gpu",
+				VRAM:         vram,
+				VRAMSource:   vramSource,
 			}
 		}
 	}
@@ -406,4 +474,144 @@ func ListAvailableGPUs(ctx context.Context, k8sClient client.Client) ([]string, 
 	// Sort for consistent ordering across reconciliations
 	sort.Strings(gpuTypes)
 	return gpuTypes, nil
+}
+
+// GetGPUVRAM returns the VRAM capacity for a GPU, checking node labels first, then static mapping.
+// Returns the VRAM value (e.g., "192G") and the source (VRAMSourceLabel, VRAMSourceStatic, or VRAMSourceUnknown).
+func GetGPUVRAM(gpuModel string, nodeLabels map[string]string) (vram string, source string) {
+	// 1. Try node labels first (most accurate, runtime-detected)
+	if v, ok := nodeLabels[LabelAMDGPUVRAM]; ok && v != "" {
+		return v, VRAMSourceLabel
+	}
+	if v, ok := nodeLabels[LabelAMDGPUVRAMBeta]; ok && v != "" {
+		return v, VRAMSourceLabel
+	}
+
+	// 2. Fall back to static mapping based on GPU model
+	normalized := NormalizeGPUModel(gpuModel)
+	if v, ok := KnownGPUVRAM[normalized]; ok {
+		return v, VRAMSourceStatic
+	}
+
+	// 3. Unknown - return empty (caller decides behavior)
+	return "", VRAMSourceUnknown
+}
+
+// ParseVRAMToBytes parses a VRAM string (e.g., "192G") to bytes.
+// Supports G (gigabytes) and T (terabytes) suffixes.
+// Returns 0 if the format is not recognized.
+func ParseVRAMToBytes(vram string) int64 {
+	if vram == "" {
+		return 0
+	}
+
+	vram = strings.TrimSpace(strings.ToUpper(vram))
+
+	var multiplier int64
+	var numStr string
+
+	if strings.HasSuffix(vram, "G") {
+		multiplier = 1024 * 1024 * 1024 // 1 GB in bytes
+		numStr = strings.TrimSuffix(vram, "G")
+	} else if strings.HasSuffix(vram, "T") {
+		multiplier = 1024 * 1024 * 1024 * 1024 // 1 TB in bytes
+		numStr = strings.TrimSuffix(vram, "T")
+	} else {
+		// Assume bytes if no suffix
+		multiplier = 1
+		numStr = vram
+	}
+
+	// Parse the numeric part
+	var value int64
+	for _, c := range numStr {
+		if c >= '0' && c <= '9' {
+			value = value*10 + int64(c-'0')
+		} else {
+			return 0 // Invalid character
+		}
+	}
+
+	return value * multiplier
+}
+
+// GetVRAMTiersAboveThreshold returns all known VRAM tier values that meet or exceed the threshold.
+// The threshold should be a VRAM string (e.g., "64G") or a resource.Quantity string.
+// Returns values in the format used by device plugin labels (e.g., ["64G", "80G", "128G", "192G"]).
+func GetVRAMTiersAboveThreshold(minVRAMBytes int64) []string {
+	if minVRAMBytes <= 0 {
+		return KnownVRAMTiers
+	}
+
+	var result []string
+	for _, tier := range KnownVRAMTiers {
+		tierBytes := ParseVRAMToBytes(tier)
+		if tierBytes >= minVRAMBytes {
+			result = append(result, tier)
+		}
+	}
+	return result
+}
+
+// GetGPUModelsWithMinVRAM returns all GPU model names that have VRAM >= minVRAMBytes.
+// Uses the static KnownGPUVRAM mapping to determine which models meet the requirement.
+// Returns a list of normalized model names (e.g., ["MI300X", "MI325X", "MI355X"]).
+func GetGPUModelsWithMinVRAM(minVRAMBytes int64) []string {
+	if minVRAMBytes <= 0 {
+		// Return all known models
+		models := make([]string, 0, len(KnownGPUVRAM))
+		for model := range KnownGPUVRAM {
+			models = append(models, model)
+		}
+		sort.Strings(models)
+		return models
+	}
+
+	var models []string
+	for model, vram := range KnownGPUVRAM {
+		vramBytes := ParseVRAMToBytes(vram)
+		if vramBytes >= minVRAMBytes {
+			models = append(models, model)
+		}
+	}
+	sort.Strings(models)
+	return models
+}
+
+// GetAMDDeviceIDsForMinVRAM returns all AMD device IDs for GPUs that have VRAM >= minVRAMBytes.
+//
+// If gpuModel is specified (non-empty), only returns device IDs for that specific model
+// if it meets the VRAM requirement. Returns empty slice if the model doesn't meet the requirement.
+//
+// If gpuModel is empty, returns device IDs for ALL GPU models meeting the VRAM requirement.
+func GetAMDDeviceIDsForMinVRAM(minVRAMBytes int64, gpuModel string) []string {
+	// If a specific GPU model is requested, check if it meets VRAM requirement
+	if gpuModel != "" {
+		normalized := NormalizeGPUModel(gpuModel)
+		vram, ok := KnownGPUVRAM[normalized]
+		if !ok {
+			// Unknown model - return its device IDs anyway (permissive for unknown models)
+			return GetAMDDeviceIDsForModel(normalized)
+		}
+		vramBytes := ParseVRAMToBytes(vram)
+		if vramBytes < minVRAMBytes {
+			// Model doesn't meet VRAM requirement - return empty
+			return nil
+		}
+		// Model meets VRAM requirement - return its device IDs
+		return GetAMDDeviceIDsForModel(normalized)
+	}
+
+	// No specific model - get device IDs for ALL models meeting VRAM requirement
+	models := GetGPUModelsWithMinVRAM(minVRAMBytes)
+
+	var allDeviceIDs []string
+	for _, model := range models {
+		deviceIDs := GetAMDDeviceIDsForModel(model)
+		allDeviceIDs = append(allDeviceIDs, deviceIDs...)
+	}
+
+	// Sort for consistent ordering
+	sort.Strings(allDeviceIDs)
+	return allDeviceIDs
 }

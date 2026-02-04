@@ -26,6 +26,8 @@ import (
 	"errors"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/resource"
+
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
@@ -260,5 +262,179 @@ func TestTemplateRequiresGPU_RequestsWithoutModel(t *testing.T) {
 	result := TemplateRequiresGPU(spec)
 	if !result {
 		t.Errorf("TemplateRequiresGPU() = false, want true for requests > 0 with empty model")
+	}
+}
+
+// ============================================================================
+// VRAM AVAILABILITY CHECKS
+// ============================================================================
+
+func TestCheckVRAMAvailability(t *testing.T) {
+	tests := []struct {
+		name           string
+		spec           aimv1alpha1.AIMServiceTemplateSpecCommon
+		gpuResources   map[string]utils.GPUResourceInfo
+		expectedState  constants.AIMStatus
+		expectedReason string
+	}{
+		{
+			name: "minVram satisfied - GPU has sufficient VRAM",
+			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+				ModelName: "test-model",
+				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
+						Requests: 1,
+						MinVRAM:  resource.NewQuantity(64*1024*1024*1024, resource.BinarySI), // 64Gi
+					}},
+				},
+			},
+			gpuResources: map[string]utils.GPUResourceInfo{
+				"MI300X": {ResourceName: "amd.com/gpu", VRAM: "192G", VRAMSource: "label"},
+			},
+			expectedState:  constants.AIMStatusReady,
+			expectedReason: "VRAMAvailable",
+		},
+		{
+			name: "minVram NOT satisfied - all GPUs have insufficient VRAM",
+			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+				ModelName: "test-model",
+				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
+						Requests: 1,
+						MinVRAM:  resource.NewQuantity(256*1024*1024*1024, resource.BinarySI), // 256Gi
+					}},
+				},
+			},
+			gpuResources: map[string]utils.GPUResourceInfo{
+				"MI300X": {ResourceName: "amd.com/gpu", VRAM: "192G", VRAMSource: "label"},
+				"MI210":  {ResourceName: "amd.com/gpu", VRAM: "64G", VRAMSource: "static"},
+			},
+			expectedState:  constants.AIMStatusNotAvailable,
+			expectedReason: "VRAMNotAvailable",
+		},
+		{
+			name: "minVram exceeds all known GPUs",
+			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+				ModelName: "test-model",
+				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
+						Requests: 1,
+						MinVRAM:  resource.NewQuantity(1024*1024*1024*1024, resource.BinarySI), // 1Ti
+					}},
+				},
+			},
+			gpuResources: map[string]utils.GPUResourceInfo{
+				"MI300X": {ResourceName: "amd.com/gpu", VRAM: "192G", VRAMSource: "label"},
+			},
+			expectedState:  constants.AIMStatusNotAvailable,
+			expectedReason: "VRAMNotAvailable",
+		},
+		{
+			name: "no minVram specified - should be Ready",
+			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+				ModelName: "test-model",
+				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
+						Requests: 1,
+						// No MinVRAM
+					}},
+				},
+			},
+			gpuResources: map[string]utils.GPUResourceInfo{
+				"MI300X": {ResourceName: "amd.com/gpu", VRAM: "192G", VRAMSource: "label"},
+			},
+			expectedState:  constants.AIMStatusReady,
+			expectedReason: "",
+		},
+		{
+			name: "minVram with multiple GPUs - some satisfy, some don't",
+			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+				ModelName: "test-model",
+				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
+						Requests: 1,
+						MinVRAM:  resource.NewQuantity(128*1024*1024*1024, resource.BinarySI), // 128Gi
+					}},
+				},
+			},
+			gpuResources: map[string]utils.GPUResourceInfo{
+				"MI300X": {ResourceName: "amd.com/gpu", VRAM: "192G", VRAMSource: "label"},
+				"MI210":  {ResourceName: "amd.com/gpu", VRAM: "64G", VRAMSource: "static"},
+				"MI100":  {ResourceName: "amd.com/gpu", VRAM: "32G", VRAMSource: "static"},
+			},
+			expectedState:  constants.AIMStatusReady,
+			expectedReason: "VRAMAvailable",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := checkVRAMAvailability(tt.spec, tt.gpuResources)
+			if result.State != tt.expectedState {
+				t.Errorf("checkVRAMAvailability() state = %v, want %v", result.State, tt.expectedState)
+			}
+			if tt.expectedReason != "" && result.Reason != tt.expectedReason {
+				t.Errorf("checkVRAMAvailability() reason = %v, want %v", result.Reason, tt.expectedReason)
+			}
+		})
+	}
+}
+
+func TestGetGPUHealthFromResources_WithMinVRAM(t *testing.T) {
+	tests := []struct {
+		name           string
+		spec           aimv1alpha1.AIMServiceTemplateSpecCommon
+		gpuResources   map[string]utils.GPUResourceInfo
+		expectedState  constants.AIMStatus
+		expectedReason string
+	}{
+		{
+			name: "GPU model available but VRAM insufficient - should fail",
+			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+				ModelName: "test-model",
+				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
+						Requests: 1,
+						Model:    "MI300X",
+						MinVRAM:  resource.NewQuantity(512*1024*1024*1024, resource.BinarySI), // 512Gi (too high)
+					}},
+				},
+			},
+			gpuResources: map[string]utils.GPUResourceInfo{
+				"MI300X": {ResourceName: "amd.com/gpu", VRAM: "192G", VRAMSource: "label"},
+			},
+			expectedState:  constants.AIMStatusNotAvailable,
+			expectedReason: "VRAMNotAvailable",
+		},
+		{
+			name: "GPU model available and VRAM sufficient - should succeed",
+			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+				ModelName: "test-model",
+				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
+						Requests: 1,
+						Model:    "MI300X",
+						MinVRAM:  resource.NewQuantity(128*1024*1024*1024, resource.BinarySI), // 128Gi
+					}},
+				},
+			},
+			gpuResources: map[string]utils.GPUResourceInfo{
+				"MI300X": {ResourceName: "amd.com/gpu", VRAM: "192G", VRAMSource: "label"},
+			},
+			expectedState:  constants.AIMStatusReady,
+			expectedReason: "GPUAvailable",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := GetGPUHealthFromResources(tt.spec, tt.gpuResources, nil)
+			if result.State != tt.expectedState {
+				t.Errorf("GetGPUHealthFromResources() state = %v, want %v", result.State, tt.expectedState)
+			}
+			if tt.expectedReason != "" && result.Reason != tt.expectedReason {
+				t.Errorf("GetGPUHealthFromResources() reason = %v, want %v", result.Reason, tt.expectedReason)
+			}
+		})
 	}
 }

@@ -25,6 +25,7 @@
 package aimservicetemplate
 
 import (
+	"fmt"
 	"strings"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -56,6 +57,7 @@ func IsGPUAvailableForSpec(spec aimv1alpha1.AIMServiceTemplateSpecCommon, gpuRes
 // GetGPUHealthFromResources returns GPU availability as component health based on pre-fetched GPU resources.
 // This is the shared implementation used by both namespace-scoped and cluster-scoped template reconcilers.
 // It avoids re-fetching GPU resources by using the already-fetched gpuResources map.
+// It checks both GPU model availability and minVRAM requirements.
 func GetGPUHealthFromResources(
 	spec aimv1alpha1.AIMServiceTemplateSpecCommon,
 	gpuResources map[string]utils.GPUResourceInfo,
@@ -79,6 +81,14 @@ func GetGPUHealthFromResources(
 
 	gpuModel := spec.Hardware.GPU.Model
 	normalizedModel := utils.NormalizeGPUModel(gpuModel)
+
+	// Check minVRAM requirement first (if specified)
+	if spec.Hardware.GPU.MinVRAM != nil && !spec.Hardware.GPU.MinVRAM.IsZero() {
+		vramHealth := checkVRAMAvailability(spec, gpuResources)
+		if vramHealth.State == constants.AIMStatusNotAvailable {
+			return vramHealth
+		}
+	}
 
 	// If no specific GPU model is required (just gpu.requests > 0), accept any available GPU
 	if normalizedModel == "" {
@@ -129,4 +139,68 @@ func GetGPUHealthFromResources(
 		Reason:    "GPUNotAvailable",
 		Message:   "Required GPU model '" + gpuModel + "' not available in cluster. Available: " + availableStr,
 	}
+}
+
+// checkVRAMAvailability checks if any GPUs meet the minVRAM requirement.
+// Returns NotAvailable health if no GPUs have sufficient VRAM.
+func checkVRAMAvailability(
+	spec aimv1alpha1.AIMServiceTemplateSpecCommon,
+	gpuResources map[string]utils.GPUResourceInfo,
+) controllerutils.ComponentHealth {
+	minVRAM := spec.Hardware.GPU.MinVRAM
+	if minVRAM == nil || minVRAM.IsZero() {
+		return controllerutils.ComponentHealth{
+			Component: "GPU",
+			State:     constants.AIMStatusReady,
+		}
+	}
+
+	minVRAMBytes := minVRAM.Value()
+
+	// Check if any GPU in the cluster meets the VRAM requirement
+	var gpusWithSufficientVRAM []string
+	var highestVRAM int64
+	var highestVRAMModel string
+
+	for model, info := range gpuResources {
+		vramBytes := utils.ParseVRAMToBytes(info.VRAM)
+		if vramBytes > highestVRAM {
+			highestVRAM = vramBytes
+			highestVRAMModel = model
+		}
+		if vramBytes >= minVRAMBytes {
+			gpusWithSufficientVRAM = append(gpusWithSufficientVRAM, model+" ("+info.VRAM+")")
+		}
+	}
+
+	if len(gpusWithSufficientVRAM) > 0 {
+		return controllerutils.ComponentHealth{
+			Component: "GPU",
+			State:     constants.AIMStatusReady,
+			Reason:    "VRAMAvailable",
+			Message:   "GPUs meeting VRAM requirement: " + strings.Join(gpusWithSufficientVRAM, ", "),
+		}
+	}
+
+	// No GPUs meet the VRAM requirement
+	highestAvailableStr := "none detected"
+	if highestVRAMModel != "" {
+		highestAvailableStr = highestVRAMModel + " (" + formatVRAMBytes(highestVRAM) + ")"
+	}
+
+	return controllerutils.ComponentHealth{
+		Component: "GPU",
+		State:     constants.AIMStatusNotAvailable,
+		Reason:    "VRAMNotAvailable",
+		Message:   "Required minimum VRAM (" + formatVRAMBytes(minVRAMBytes) + ") exceeds available GPUs. Highest available: " + highestAvailableStr,
+	}
+}
+
+// formatVRAMBytes formats bytes as a human-readable VRAM string (e.g., "192Gi").
+func formatVRAMBytes(bytes int64) string {
+	if bytes == 0 {
+		return "0"
+	}
+	gi := bytes / (1024 * 1024 * 1024)
+	return fmt.Sprintf("%dGi", gi)
 }

@@ -307,12 +307,14 @@ func buildInferenceService(
 
 	// Add GPU node affinity from template status.resolvedHardware.
 	// The template controller computes resolvedHardware from discovery + spec fallback.
-	gpuModel := ""
+	var gpuModel string
+	var minVRAM *resource.Quantity
 	if templateStatus != nil && templateStatus.ResolvedHardware != nil && templateStatus.ResolvedHardware.GPU != nil {
 		gpuModel = templateStatus.ResolvedHardware.GPU.Model
+		minVRAM = templateStatus.ResolvedHardware.GPU.MinVRAM
 	}
-	if gpuModel != "" {
-		addGPUNodeAffinity(inferenceService, gpuModel)
+	if gpuModel != "" || minVRAM != nil {
+		addGPUNodeAffinity(inferenceService, gpuModel, minVRAM)
 	}
 
 	// Add storage volumes (cache or PVC)
@@ -672,16 +674,30 @@ func addResolvedCacheMount(isvc *servingv1beta1.InferenceService, container *cor
 }
 
 // addGPUNodeAffinity adds node affinity rules for GPU selection to the InferenceService.
-// Uses device ID-based matching which is more reliable than product name labels.
-func addGPUNodeAffinity(isvc *servingv1beta1.InferenceService, gpuModel string) {
-	if gpuModel == "" {
-		return
+// Uses device ID-based matching via the amd.com/gpu.device-id node label.
+//
+// When minVRAM is specified, filters GPU models by VRAM requirement using KnownGPUVRAM,
+// then gets device IDs for the filtered models.
+//
+// Logic:
+//   - If minVRAM specified: Get device IDs for GPUs meeting VRAM requirement (optionally filtered by model)
+//   - If only gpuModel specified: Get device IDs for that model
+//   - Uses a single device ID affinity that covers both requirements
+func addGPUNodeAffinity(isvc *servingv1beta1.InferenceService, gpuModel string, minVRAM *resource.Quantity) {
+	var deviceIDs []string
+
+	if minVRAM != nil && !minVRAM.IsZero() {
+		// VRAM requirement specified - get device IDs for GPUs meeting the requirement
+		// If gpuModel is also specified, only include that model if it meets VRAM requirement
+		minVRAMBytes := minVRAM.Value()
+		deviceIDs = utils.GetAMDDeviceIDsForMinVRAM(minVRAMBytes, gpuModel)
+	} else if gpuModel != "" {
+		// Only GPU model specified (no VRAM requirement) - get device IDs for that model
+		deviceIDs = utils.GetAMDDeviceIDsForModel(gpuModel)
 	}
 
-	// Normalize and get all device IDs for this GPU model
-	deviceIDs := utils.GetAMDDeviceIDsForModel(gpuModel)
+	// If no device IDs to filter by, nothing to add
 	if len(deviceIDs) == 0 {
-		// Unknown GPU model, skip affinity (will schedule on any GPU node)
 		return
 	}
 
