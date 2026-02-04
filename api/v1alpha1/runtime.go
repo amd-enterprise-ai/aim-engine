@@ -93,7 +93,7 @@ type AIMHardwareRequirements struct {
 }
 
 // AIMGpuRequirements specifies GPU resource requirements.
-// +kubebuilder:validation:XValidation:rule="!(has(self.model) && self.model != ” && has(self.minVram))",message="model and minVram are mutually exclusive; specify either a specific GPU model OR a minimum VRAM requirement, not both"
+// +kubebuilder:validation:XValidation:rule="!(has(self.model) && size(self.model) > 0 && has(self.minVram))",message="model and minVram are mutually exclusive; specify either a specific GPU model OR a minimum VRAM requirement, not both"
 type AIMGpuRequirements struct {
 	// Requests is the number of GPUs to set as requests/limits.
 	// Set to 0 to target GPU nodes without consuming GPU resources (useful for testing).

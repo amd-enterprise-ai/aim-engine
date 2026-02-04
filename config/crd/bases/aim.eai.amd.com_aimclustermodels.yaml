@@ -141,7 +141,7 @@ spec:
                         - message: model and minVram are mutually exclusive; specify
                             either a specific GPU model OR a minimum VRAM requirement,
                             not both
-                          rule: '!(has(self.model) && self.model != ” && has(self.minVram))'
+                          rule: '!(has(self.model) && size(self.model) > 0 && has(self.minVram))'
                     type: object
                     x-kubernetes-validations:
                     - message: at least one of gpu or cpu must be specified
@@ -406,7 +406,7 @@ spec:
                           - message: model and minVram are mutually exclusive; specify
                               either a specific GPU model OR a minimum VRAM requirement,
                               not both
-                            rule: '!(has(self.model) && self.model != ” && has(self.minVram))'
+                            rule: '!(has(self.model) && size(self.model) > 0 && has(self.minVram))'
                       type: object
                       x-kubernetes-validations:
                       - message: at least one of gpu or cpu must be specified
