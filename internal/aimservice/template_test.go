@@ -324,7 +324,7 @@ func TestBuildDerivedTemplate(t *testing.T) {
 		service           *aimv1alpha1.AIMService
 		templateName      string
 		modelName         string
-		baseSpec          *aimv1alpha1.AIMServiceTemplateSpec
+		baseSpec          *aimv1alpha1.AIMServiceTemplateSpecCommon
 		expectedModelName string
 		expectedMetric    *aimv1alpha1.AIMMetric
 		expectedPrecision *aimv1alpha1.AIMPrecision
@@ -350,10 +350,8 @@ func TestBuildDerivedTemplate(t *testing.T) {
 				Build(),
 			templateName: "derived",
 			modelName:    "resolved-model",
-			baseSpec: &aimv1alpha1.AIMServiceTemplateSpec{
-				AIMServiceTemplateSpecCommon: aimv1alpha1.AIMServiceTemplateSpecCommon{
-					ModelName: "base-model",
-				},
+			baseSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				ModelName: "base-model",
 			},
 			expectedModelName: "base-model", // Base spec takes precedence if already set
 			expectedMetric:    &latency,
@@ -443,16 +441,14 @@ func TestBuildDerivedTemplate_InheritsBaseSpec(t *testing.T) {
 		WithOverrideMetric(latency).
 		Build()
 
-	baseSpec := &aimv1alpha1.AIMServiceTemplateSpec{
-		AIMServiceTemplateSpecCommon: aimv1alpha1.AIMServiceTemplateSpecCommon{
-			ModelName: "",
-			ImagePullSecrets: []corev1.LocalObjectReference{
-				{Name: "base-secret"},
-			},
-			Resources: &corev1.ResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceMemory: resource.MustParse("16Gi"),
-				},
+	baseSpec := &aimv1alpha1.AIMServiceTemplateSpecCommon{
+		ModelName: "",
+		ImagePullSecrets: []corev1.LocalObjectReference{
+			{Name: "base-secret"},
+		},
+		Resources: &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("16Gi"),
 			},
 		},
 		Env: []corev1.EnvVar{
@@ -493,15 +489,13 @@ func TestBuildDerivedTemplate_ServiceOverridesBaseSpec(t *testing.T) {
 		},
 	}
 
-	baseSpec := &aimv1alpha1.AIMServiceTemplateSpec{
-		AIMServiceTemplateSpecCommon: aimv1alpha1.AIMServiceTemplateSpecCommon{
-			ImagePullSecrets: []corev1.LocalObjectReference{
-				{Name: "base-secret"},
-			},
-			Resources: &corev1.ResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceMemory: resource.MustParse("16Gi"),
-				},
+	baseSpec := &aimv1alpha1.AIMServiceTemplateSpecCommon{
+		ImagePullSecrets: []corev1.LocalObjectReference{
+			{Name: "base-secret"},
+		},
+		Resources: &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("16Gi"),
 			},
 		},
 	}

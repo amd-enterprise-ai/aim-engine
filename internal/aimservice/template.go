@@ -207,7 +207,7 @@ func tryFetchResolvedTemplate(
 func planDerivedTemplate(
 	service *aimv1alpha1.AIMService,
 	templateName string,
-	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
+	templateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon,
 	obs ServiceObservation,
 ) client.Object {
 	// Only create derived template if service has overrides
@@ -243,11 +243,11 @@ func buildDerivedTemplate(
 	service *aimv1alpha1.AIMService,
 	templateName string,
 	resolvedModelName string,
-	baseSpec *aimv1alpha1.AIMServiceTemplateSpec,
+	baseSpec *aimv1alpha1.AIMServiceTemplateSpecCommon,
 ) *aimv1alpha1.AIMServiceTemplate {
 	spec := aimv1alpha1.AIMServiceTemplateSpec{}
 	if baseSpec != nil {
-		spec = *baseSpec.DeepCopy()
+		spec.AIMServiceTemplateSpecCommon = *baseSpec.DeepCopy()
 	}
 
 	specCommon := spec.AIMServiceTemplateSpecCommon

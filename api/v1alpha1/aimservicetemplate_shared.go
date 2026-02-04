@@ -76,6 +76,14 @@ type AIMServiceTemplateSpecCommon struct {
 	// When set, the discovery job will be instructed to use this specific profile.
 	// +optional
 	ProfileId string `json:"profileId,omitempty"`
+
+	// Env specifies environment variables for inference containers.
+	// These variables are passed to the inference runtime and can be used
+	// to configure runtime behavior, authentication, or other settings.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Env []corev1.EnvVar `json:"env,omitempty"`
 }
 
 // AIMTemplateCachingConfig configures model caching behavior for namespace-scoped templates.
@@ -109,13 +117,6 @@ type AIMServiceTemplateSpec struct {
 	// during download.
 	// +optional
 	Caching *AIMTemplateCachingConfig `json:"caching,omitempty"`
-
-	// Env specifies environment variables to use for authentication when downloading models.
-	// These variables are used for authentication with model registries (e.g., HuggingFace tokens).
-	// +optional
-	// +listType=map
-	// +listMapKey=name
-	Env []corev1.EnvVar `json:"env,omitempty"`
 }
 
 // AIMClusterServiceTemplateSpec defines the desired state of AIMClusterServiceTemplate (cluster-scoped).

@@ -902,6 +902,98 @@ func TestBuildDiscoveryJob_DifferentForDifferentSpecs(t *testing.T) {
 	}
 }
 
+func TestBuildDiscoveryJob_TemplateEnvVars(t *testing.T) {
+	// Test that template env vars are included in the discovery job
+	spec := DiscoveryJobSpec{
+		TemplateName: "my-template",
+		Namespace:    "default",
+		ModelID:      "test-model",
+		Image:        "ghcr.io/test/image:latest",
+		Env: []corev1.EnvVar{
+			{Name: "CUSTOM_AUTH_TOKEN", Value: "secret-token"},
+			{Name: "HF_TOKEN", Value: "hf-token-value"},
+		},
+		TemplateSpec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+			ModelName: "test-model",
+			Env: []corev1.EnvVar{
+				{Name: "TEMPLATE_VAR", Value: "template-value"},
+				{Name: "AIM_GPU_MODEL", Value: "MI300X"}, // Simulates cloned template env
+			},
+		},
+	}
+
+	job := BuildDiscoveryJob(spec)
+
+	if job == nil {
+		t.Fatal("job is nil")
+	}
+
+	if len(job.Spec.Template.Spec.Containers) == 0 {
+		t.Fatal("no containers in job spec")
+	}
+
+	container := job.Spec.Template.Spec.Containers[0]
+	envMap := make(map[string]string)
+	for _, env := range container.Env {
+		envMap[env.Name] = env.Value
+	}
+
+	// Check that Env from DiscoveryJobSpec is included
+	expectedEnvVars := map[string]string{
+		"CUSTOM_AUTH_TOKEN": "secret-token",
+		"HF_TOKEN":          "hf-token-value",
+	}
+
+	for name, expectedValue := range expectedEnvVars {
+		if actualValue, ok := envMap[name]; !ok {
+			t.Errorf("expected env var %q not found in discovery job", name)
+		} else if actualValue != expectedValue {
+			t.Errorf("env var %q = %q, want %q", name, actualValue, expectedValue)
+		}
+	}
+
+	// Verify system env vars are also present
+	systemEnvVars := []string{"AIM_LOG_LEVEL_ROOT", "AIM_LOG_LEVEL"}
+	for _, name := range systemEnvVars {
+		if _, ok := envMap[name]; !ok {
+			t.Errorf("expected system env var %q not found", name)
+		}
+	}
+}
+
+func TestBuildDiscoveryJob_EnvVarsAffectJobHash(t *testing.T) {
+	// Test that different env vars produce different job names (hash changes)
+	baseSpec := DiscoveryJobSpec{
+		TemplateName: "my-template",
+		Namespace:    "default",
+		ModelID:      "test-model",
+		Image:        "ghcr.io/test/image:latest",
+		TemplateSpec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+			ModelName: "test-model",
+		},
+	}
+
+	specWithEnv := DiscoveryJobSpec{
+		TemplateName: "my-template",
+		Namespace:    "default",
+		ModelID:      "test-model",
+		Image:        "ghcr.io/test/image:latest",
+		Env: []corev1.EnvVar{
+			{Name: "CUSTOM_VAR", Value: "custom-value"},
+		},
+		TemplateSpec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+			ModelName: "test-model",
+		},
+	}
+
+	job1 := BuildDiscoveryJob(baseSpec)
+	job2 := BuildDiscoveryJob(specWithEnv)
+
+	if job1.Name == job2.Name {
+		t.Error("expected different job names when env vars differ")
+	}
+}
+
 // Helper function for creating pointers
 func ptrTo[T any](v T) *T {
 	return &v

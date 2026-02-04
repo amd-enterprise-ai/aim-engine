@@ -228,7 +228,7 @@ func TestResolveResources(t *testing.T) {
 	tests := []struct {
 		name           string
 		service        *aimv1alpha1.AIMService
-		templateSpec   *aimv1alpha1.AIMServiceTemplateSpec
+		templateSpec   *aimv1alpha1.AIMServiceTemplateSpecCommon
 		gpuCount       int64 // Template profile GPU count
 		expectGPU      bool
 		expectGPUCount int64 // Expected final GPU count (defaults to gpuCount if 0)
@@ -287,12 +287,10 @@ func TestResolveResources(t *testing.T) {
 		{
 			name:    "template spec resources",
 			service: NewService("svc").Build(),
-			templateSpec: &aimv1alpha1.AIMServiceTemplateSpec{
-				AIMServiceTemplateSpecCommon: aimv1alpha1.AIMServiceTemplateSpecCommon{
-					Resources: &corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceMemory: resource.MustParse("256Gi"),
-						},
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				Resources: &corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceMemory: resource.MustParse("256Gi"),
 					},
 				},
 			},
@@ -489,7 +487,7 @@ func TestBuildMergedEnvVars(t *testing.T) {
 	tests := []struct {
 		name             string
 		service          *aimv1alpha1.AIMService
-		templateSpec     *aimv1alpha1.AIMServiceTemplateSpec
+		templateSpec     *aimv1alpha1.AIMServiceTemplateSpecCommon
 		templateStatus   *aimv1alpha1.AIMServiceTemplateStatus
 		obs              ServiceObservation
 		expectContains   []string
@@ -506,7 +504,7 @@ func TestBuildMergedEnvVars(t *testing.T) {
 		{
 			name:    "template spec env vars",
 			service: &aimv1alpha1.AIMService{},
-			templateSpec: &aimv1alpha1.AIMServiceTemplateSpec{
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
 				Env: []corev1.EnvVar{
 					{Name: "CUSTOM_VAR", Value: "custom-value"},
 				},
@@ -518,15 +516,13 @@ func TestBuildMergedEnvVars(t *testing.T) {
 		{
 			name:    "template spec metric and precision",
 			service: &aimv1alpha1.AIMService{},
-			templateSpec: func() *aimv1alpha1.AIMServiceTemplateSpec {
+			templateSpec: func() *aimv1alpha1.AIMServiceTemplateSpecCommon {
 				latency := aimv1alpha1.AIMMetricLatency
 				fp16 := aimv1alpha1.AIMPrecisionFP16
-				return &aimv1alpha1.AIMServiceTemplateSpec{
-					AIMServiceTemplateSpecCommon: aimv1alpha1.AIMServiceTemplateSpecCommon{
-						AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-							Metric:    &latency,
-							Precision: &fp16,
-						},
+				return &aimv1alpha1.AIMServiceTemplateSpecCommon{
+					AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+						Metric:    &latency,
+						Precision: &fp16,
 					},
 				}
 			}(),
@@ -560,7 +556,7 @@ func TestBuildMergedEnvVars(t *testing.T) {
 					},
 				},
 			},
-			templateSpec: &aimv1alpha1.AIMServiceTemplateSpec{
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
 				Env: []corev1.EnvVar{
 					{Name: "SHARED_VAR", Value: "from-template"},
 				},
@@ -597,7 +593,7 @@ func TestBuildMergedEnvVars(t *testing.T) {
 
 func TestBuildMergedEnvVars_IsSorted(t *testing.T) {
 	service := &aimv1alpha1.AIMService{}
-	templateSpec := &aimv1alpha1.AIMServiceTemplateSpec{
+	templateSpec := &aimv1alpha1.AIMServiceTemplateSpecCommon{
 		Env: []corev1.EnvVar{
 			{Name: "ZEBRA", Value: "z"},
 			{Name: "APPLE", Value: "a"},
@@ -625,7 +621,7 @@ func TestBuildMergedEnvVars_ServiceOverridesAll(t *testing.T) {
 			},
 		},
 	}
-	templateSpec := &aimv1alpha1.AIMServiceTemplateSpec{
+	templateSpec := &aimv1alpha1.AIMServiceTemplateSpecCommon{
 		Env: []corev1.EnvVar{
 			{Name: "SHARED_VAR", Value: "from-template"},
 		},
@@ -661,5 +657,228 @@ func TestBuildMergedEnvVars_ServiceOverridesAll(t *testing.T) {
 	// Service should win
 	if envMap["SHARED_VAR"] != "from-service" {
 		t.Errorf("expected SHARED_VAR='from-service', got '%s'", envMap["SHARED_VAR"])
+	}
+}
+
+// TestBuildMergedEnvVars_PrecedenceChain verifies the complete precedence hierarchy:
+// 1. Service.Spec.Env (highest)
+// 2. Profile EnvVars
+// 3. Template.Spec.Env
+// 4. RuntimeConfig.Env
+// 5. System defaults (lowest)
+func TestBuildMergedEnvVars_PrecedenceChain(t *testing.T) {
+	tests := []struct {
+		name           string
+		service        *aimv1alpha1.AIMService
+		templateSpec   *aimv1alpha1.AIMServiceTemplateSpecCommon
+		templateStatus *aimv1alpha1.AIMServiceTemplateStatus
+		obs            ServiceObservation
+		expectValues   map[string]string
+	}{
+		{
+			name:    "runtime config overrides system defaults",
+			service: &aimv1alpha1.AIMService{},
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					mergedRuntimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{
+						Value: &aimv1alpha1.AIMRuntimeConfigCommon{
+							AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+								Env: []corev1.EnvVar{
+									{Name: "RC_VAR", Value: "from-rc"},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectValues: map[string]string{
+				"RC_VAR":                       "from-rc",
+				constants.EnvAIMCachePath:      constants.AIMCacheBasePath, // system default still present
+				constants.EnvVLLMEnableMetrics: "true",                     // system default still present
+			},
+		},
+		{
+			name:    "runtime config overrides profile",
+			service: &aimv1alpha1.AIMService{},
+			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
+				Profile: &aimv1alpha1.AIMProfile{
+					EnvVars: map[string]string{
+						"SHARED":       "from-profile",
+						"PROFILE_ONLY": "profile-value",
+					},
+				},
+			},
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					mergedRuntimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{
+						Value: &aimv1alpha1.AIMRuntimeConfigCommon{
+							AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+								Env: []corev1.EnvVar{
+									{Name: "SHARED", Value: "from-rc"},
+									{Name: "RC_ONLY", Value: "rc-value"},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectValues: map[string]string{
+				"SHARED":       "from-rc", // runtime config wins over profile
+				"PROFILE_ONLY": "profile-value",
+				"RC_ONLY":      "rc-value",
+			},
+		},
+		{
+			name:    "template overrides runtime config",
+			service: &aimv1alpha1.AIMService{},
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				Env: []corev1.EnvVar{
+					{Name: "SHARED", Value: "from-template"},
+					{Name: "TEMPLATE_ONLY", Value: "template-value"},
+				},
+			},
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					mergedRuntimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{
+						Value: &aimv1alpha1.AIMRuntimeConfigCommon{
+							AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+								Env: []corev1.EnvVar{
+									{Name: "SHARED", Value: "from-rc"},
+									{Name: "RC_ONLY", Value: "rc-value"},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectValues: map[string]string{
+				"SHARED":        "from-template", // template wins over runtime config
+				"TEMPLATE_ONLY": "template-value",
+				"RC_ONLY":       "rc-value",
+			},
+		},
+		{
+			name: "service overrides template",
+			service: &aimv1alpha1.AIMService{
+				Spec: aimv1alpha1.AIMServiceSpec{
+					AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+						Env: []corev1.EnvVar{
+							{Name: "SHARED", Value: "from-service"},
+							{Name: "SERVICE_ONLY", Value: "service-value"},
+						},
+					},
+				},
+			},
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				Env: []corev1.EnvVar{
+					{Name: "SHARED", Value: "from-template"},
+				},
+			},
+			obs: ServiceObservation{},
+			expectValues: map[string]string{
+				"SHARED":       "from-service", // service wins over template
+				"SERVICE_ONLY": "service-value",
+			},
+		},
+		{
+			// Precedence (highest to lowest): Service > Template > RuntimeConfig > Profile > System
+			name: "full precedence chain - all sources",
+			service: &aimv1alpha1.AIMService{
+				Spec: aimv1alpha1.AIMServiceSpec{
+					AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+						Env: []corev1.EnvVar{
+							{Name: "ALL_LEVELS", Value: "from-service"},
+							{Name: "SERVICE_ONLY", Value: "service"},
+						},
+					},
+				},
+			},
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				Env: []corev1.EnvVar{
+					{Name: "ALL_LEVELS", Value: "from-template"},
+					{Name: "TEMPLATE_AND_BELOW", Value: "from-template"},
+					{Name: "TEMPLATE_ONLY", Value: "template"},
+				},
+			},
+			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
+				Profile: &aimv1alpha1.AIMProfile{
+					EnvVars: map[string]string{
+						"ALL_LEVELS":         "from-profile",
+						"TEMPLATE_AND_BELOW": "from-profile",
+						"RC_AND_BELOW":       "from-profile",
+						"PROFILE_ONLY":       "profile",
+					},
+				},
+			},
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					mergedRuntimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{
+						Value: &aimv1alpha1.AIMRuntimeConfigCommon{
+							AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+								Env: []corev1.EnvVar{
+									{Name: "ALL_LEVELS", Value: "from-rc"},
+									{Name: "TEMPLATE_AND_BELOW", Value: "from-rc"},
+									{Name: "RC_AND_BELOW", Value: "from-rc"},
+									{Name: "RC_ONLY", Value: "rc"},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectValues: map[string]string{
+				"ALL_LEVELS":         "from-service",  // service wins over all
+				"SERVICE_ONLY":       "service",       // only in service
+				"TEMPLATE_AND_BELOW": "from-template", // template wins over rc and profile
+				"TEMPLATE_ONLY":      "template",      // only in template
+				"RC_AND_BELOW":       "from-rc",       // rc wins over profile
+				"RC_ONLY":            "rc",            // only in runtime config
+				"PROFILE_ONLY":       "profile",       // only in profile (lowest user-configurable)
+			},
+		},
+		{
+			name: "cluster template env vars propagate (simulated via common spec)",
+			service: &aimv1alpha1.AIMService{
+				Spec: aimv1alpha1.AIMServiceSpec{
+					AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+						Env: []corev1.EnvVar{
+							{Name: "SERVICE_VAR", Value: "service"},
+						},
+					},
+				},
+			},
+			// This simulates a cluster template's env vars via the common spec
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				Env: []corev1.EnvVar{
+					{Name: "AIM_GPU_MODEL", Value: "MI300X"}, // Added by clone script
+					{Name: "CLUSTER_TEMPLATE_VAR", Value: "cluster-template"},
+				},
+			},
+			obs: ServiceObservation{},
+			expectValues: map[string]string{
+				"SERVICE_VAR":          "service",
+				"AIM_GPU_MODEL":        "MI300X",
+				"CLUSTER_TEMPLATE_VAR": "cluster-template",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildMergedEnvVars(tt.service, tt.templateSpec, tt.templateStatus, tt.obs)
+
+			envMap := make(map[string]string)
+			for _, env := range result {
+				envMap[env.Name] = env.Value
+			}
+
+			for key, expectedValue := range tt.expectValues {
+				if actualValue, ok := envMap[key]; !ok {
+					t.Errorf("expected env var %s not found", key)
+				} else if actualValue != expectedValue {
+					t.Errorf("env var %s: expected '%s', got '%s'", key, expectedValue, actualValue)
+				}
+			}
+		})
 	}
 }
