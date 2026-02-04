@@ -1,14 +1,40 @@
 # AIM Engine
 
-AIM Engine is a Kubernetes operator for managing AMD Inference Microservices (AIM). AIM provides optimized inference containers for running AI models on AMD hardware. This operator handles the lifecycle of AIM deployments, including model management, scaling, and configuration.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+
+AIM Engine is a Kubernetes operator for running and managing AMD Inference Microservices (AIM). AIM provides optimized inference containers for running AI models on AMD hardware. This operator handles the lifecycle of AIM deployments, including model management, scaling, and configuration.
 
 ## Features
 
-TODO
+### Declarative Model Deployment
+- Deploy models with a single `AIMService` resource - from container image to inference endpoint
+- Automatic model discovery from AIM container images
+- Support for Hugging Face Hub and S3 model sources
 
-## Deployment
+### Intelligent Resource Management  
+- **Smart template selection** - Automatically selects the optimal runtime configuration based on GPU availability, precision requirements, and optimization goals (latency vs throughput)
 
-TODO
+### Production-Ready Infrastructure
+- **Model caching** - Cache system that pre-downloads model artifacts to shared PVCs, saving space and reducing load time
+- **Autoscaling** - KEDA integration with OpenTelemetry metrics for demand-based scaling
+- **HTTP routing** - Gateway API integration with templated path configuration
+
+### Multi-Tenant Design
+- Namespace-scoped and cluster-scoped resources for flexible access control
+- Runtime configurations for team-specific credentials and routing policies
+
+## Example AIMService Deployment
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: qwen3-chat
+spec:
+  model:
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+```
+
 
 ## Development Quickstart
 
@@ -37,14 +63,33 @@ make lint       # run linter
 make test       # run unit tests
 ```
 
+Create local cluster for test (adds entry to kubeconfig)
+```bash
+make kind-create
+```
+
+Run controller
+```bash
+make install # Install crds
+make run     # start controller via access from kubeconfig
+```
+
+## Documentation
+
+- [Concepts](./docs/docs/concepts/) - Core concepts and architecture
+- [Usage Guide](./docs/docs/usage/) - Practical deployment examples  
+- [API Reference](./docs/docs/reference/) - CRD specifications
+- [Administration](./docs/docs/admin/) - Platform configuration
+
+## Related Projects
+
+AIM Engine is part of the [AMD Enterprise AI](https://github.com/amd-enterprise-ai) ecosystem:
+
+- [amd-eai-suite](https://github.com/amd-enterprise-ai/amd-eai-suite) - Complete AMD Enterprise AI suite
+- [aim-build](https://github.com/amd-enterprise-ai/aim-build) - Build optimized AIM container images
+- [aim-deploy](https://github.com/amd-enterprise-ai/aim-deploy) - Deployment utilities and scripts
+- [solution-blueprints](https://github.com/amd-enterprise-ai/solution-blueprints) - Reference architectures with AIMs
+
 ## License
 
-MIT License
-
-Copyright (c) 2025 Advanced Micro Devices, Inc.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+[MIT License](./LICENSE) - Copyright (c) 2025 Advanced Micro Devices, Inc.
