@@ -400,6 +400,8 @@ spec:
       hardware:
         gpu:
           requests: 1
+  template:
+    allowUnoptimized: true  # Required - custom models default to unoptimized
 ```
 
 The service automatically creates a namespace-scoped AIMModel owned by the service. When the service is deleted, the model is garbage collected.
@@ -445,13 +447,15 @@ When `modelSources` is specified:
 1. **Without custom.templates**: A single template is auto-generated using `custom.hardware`
 2. **With custom.templates**: Templates are created per entry, each inheriting from `custom.hardware` unless overridden
 
+Templates also inherit the `type` field from `spec.custom.type`, which defaults to `unoptimized`. This can be overridden per-template via `customTemplates[].type`.
+
 ```yaml
 spec:
   modelSources:
     - modelId: meta-llama/Llama-3-8B
       sourceUri: s3://bucket/model
-      size: 16Gi
   custom:
+    type: unoptimized  # Default - can be omitted
     hardware:
       gpu:
         requests: 1
@@ -464,8 +468,40 @@ spec:
           - name: VLLM_GPU_MEMORY_UTILIZATION
             value: "0.95"
       - name: standard
-        # Inherits hardware from custom.hardware
+        # Inherits hardware and type from custom.*
 ```
+
+#### Unoptimized Templates and allowUnoptimized
+
+Custom models generate templates with `type: unoptimized` by default because no discovery job runs to validate performance characteristics. This has an important implication:
+
+**Services will not auto-select unoptimized templates unless explicitly allowed.**
+
+When creating an AIMService that uses a custom model, you must either:
+
+1. **Set `allowUnoptimized: true`** on the service's template selector:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: my-service
+spec:
+  model:
+    name: my-custom-model
+  template:
+    allowUnoptimized: true  # Required for custom model templates
+```
+
+2. **Explicitly specify the template name** to bypass auto-selection:
+
+```yaml
+spec:
+  template:
+    name: my-custom-model-custom-abc123  # Explicit template name
+```
+
+This safety mechanism prevents accidentally deploying unoptimized configurations in production. See [Template Selection](service.md#template-selection) for more details on how templates are selected and the role of optimization levels.
 
 ### Authentication
 
@@ -558,7 +594,7 @@ spec:
       modelSources:
         - modelId: meta-llama/Llama-3.1-8B-Instruct
           sourceUri: hf://meta-llama/Llama-3.1-8B-Instruct
-          size: 16Gi
+          # size is optional - auto-discovered by download job
           env:
             - name: HF_TOKEN
               valueFrom:
@@ -570,6 +606,8 @@ spec:
           requests: 1
           models:
             - MI300X
+  template:
+    allowUnoptimized: true  # Required - custom models default to unoptimized
   replicas: 1
 ```
 
