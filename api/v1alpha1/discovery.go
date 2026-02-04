@@ -141,8 +141,8 @@ type AIMModelSource struct {
 
 	// Size is the expected storage space required for this model artifact.
 	// Used for PVC sizing and capacity planning during cache creation.
-	// Required for custom models (discovery does not run for inline sources).
-	// For image-based models, this is populated by the discovery job.
+	// Optional - if not specified, the download job will discover the size automatically.
+	// Can be set explicitly to pre-allocate storage or override auto-discovery.
 	// +optional
 	Size *resource.Quantity `json:"size,omitempty"`
 

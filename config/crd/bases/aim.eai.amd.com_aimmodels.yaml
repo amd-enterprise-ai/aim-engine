@@ -829,7 +829,7 @@ spec:
                   ModelSources specifies the model sources to use for this model.
                   When specified, these sources are used instead of auto-discovery from the container image.
                   This enables pre-creating custom models with explicit model sources.
-                  For custom models, modelSources[].size is required (discovery does not run).
+                  The size field is optional - if not specified, it will be discovered by the download job.
                   AIM runtime currently supports only one model source.
                 items:
                   description: |-
@@ -1015,8 +1015,8 @@ spec:
                       description: |-
                         Size is the expected storage space required for this model artifact.
                         Used for PVC sizing and capacity planning during cache creation.
-                        Required for custom models (discovery does not run for inline sources).
-                        For image-based models, this is populated by the discovery job.
+                        Optional - if not specified, the download job will discover the size automatically.
+                        Can be set explicitly to pre-allocate storage or override auto-discovery.
                       pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                       x-kubernetes-int-or-string: true
                     sourceUri:
@@ -1111,10 +1111,6 @@ spec:
             - image
             type: object
             x-kubernetes-validations:
-            - message: modelSources[].size is required for custom models (discovery
-                does not run to populate it)
-              rule: '!has(self.modelSources) || size(self.modelSources) == 0 || self.modelSources.all(s,
-                has(s.size))'
             - message: 'when using modelSources, hardware must be specified: set custom.hardware
                 (inherited by all templates) or set hardware on each template individually'
               rule: '!has(self.modelSources) || size(self.modelSources) == 0 || (has(self.custom)

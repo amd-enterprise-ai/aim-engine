@@ -117,7 +117,7 @@ type AIMServiceModelCustom struct {
 
 	// ModelSources specifies the model sources to use.
 	// The controller will search for or create an AIMModel with these sources.
-	// For custom models, modelSources[].size should be specified (discovery does not run).
+	// The size field is optional - if not specified, it will be discovered by the download job.
 	// AIM runtime currently supports only one model source.
 	// +required
 	// +kubebuilder:validation:MinItems=1

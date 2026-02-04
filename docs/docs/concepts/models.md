@@ -371,7 +371,7 @@ spec:
   modelSources:
     - modelId: meta-llama/Llama-3-8B
       sourceUri: s3://my-bucket/models/llama-3-8b
-      size: 16Gi
+      # size: 16Gi  # Optional - auto-discovered by download job if omitted
   custom:
     hardware:
       gpu:
@@ -396,7 +396,7 @@ spec:
       modelSources:
         - modelId: meta-llama/Llama-3-8B
           sourceUri: hf://meta-llama/Llama-3-8B
-          size: 16Gi
+          # size is optional - auto-discovered by download job
       hardware:
         gpu:
           requests: 1
@@ -412,7 +412,7 @@ Each model source specifies:
 |-------|----------|-------------|
 | `modelId` | Yes | Canonical identifier in `{org}/{name}` format. Determines the cache mount path. |
 | `sourceUri` | Yes | Download location. Schemes: `hf://org/model` (HuggingFace) or `s3://bucket/key` (S3). For S3, use the bucket name directly without the service hostname (e.g., `s3://my-bucket/models/llama`). |
-| `size` | Yes | Storage size for PVC provisioning. Must be non-zero. |
+| `size` | No | Storage size for PVC provisioning. If omitted, the download job automatically discovers the size. Can be set explicitly to pre-allocate storage. |
 | `env` | No | Per-source credential overrides (e.g., `HF_TOKEN`, `AWS_ACCESS_KEY_ID`) |
 
 ### Hardware Requirements

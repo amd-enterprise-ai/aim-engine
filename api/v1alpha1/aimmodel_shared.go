@@ -139,7 +139,6 @@ type AIMCustomModelSpec struct {
 }
 
 // AIMModelSpec defines the desired state of AIMModel.
-// +kubebuilder:validation:XValidation:rule="!has(self.modelSources) || size(self.modelSources) == 0 || self.modelSources.all(s, has(s.size))",message="modelSources[].size is required for custom models (discovery does not run to populate it)"
 // +kubebuilder:validation:XValidation:rule="!has(self.modelSources) || size(self.modelSources) == 0 || (has(self.custom) && has(self.custom.hardware)) || !has(self.customTemplates) || size(self.customTemplates) == 0 || self.customTemplates.all(t, has(t.hardware) || (has(self.custom) && has(self.custom.hardware)))",message="when using modelSources, hardware must be specified: set custom.hardware (inherited by all templates) or set hardware on each template individually"
 type AIMModelSpec struct {
 	// Image is the container image URI for this AIM model.
@@ -176,7 +175,7 @@ type AIMModelSpec struct {
 	// ModelSources specifies the model sources to use for this model.
 	// When specified, these sources are used instead of auto-discovery from the container image.
 	// This enables pre-creating custom models with explicit model sources.
-	// For custom models, modelSources[].size is required (discovery does not run).
+	// The size field is optional - if not specified, it will be discovered by the download job.
 	// AIM runtime currently supports only one model source.
 	// +optional
 	// +kubebuilder:validation:MaxItems=1

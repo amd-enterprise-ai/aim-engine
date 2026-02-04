@@ -491,7 +491,7 @@ spec:
                         description: |-
                           ModelSources specifies the model sources to use.
                           The controller will search for or create an AIMModel with these sources.
-                          For custom models, modelSources[].size should be specified (discovery does not run).
+                          The size field is optional - if not specified, it will be discovered by the download job.
                           AIM runtime currently supports only one model source.
                         items:
                           description: |-
@@ -680,8 +680,8 @@ spec:
                               description: |-
                                 Size is the expected storage space required for this model artifact.
                                 Used for PVC sizing and capacity planning during cache creation.
-                                Required for custom models (discovery does not run for inline sources).
-                                For image-based models, this is populated by the discovery job.
+                                Optional - if not specified, the download job will discover the size automatically.
+                                Can be set explicitly to pre-allocate storage or override auto-discovery.
                               pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                               x-kubernetes-int-or-string: true
                             sourceUri:
