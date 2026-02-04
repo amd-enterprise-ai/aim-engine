@@ -89,11 +89,6 @@ jobs:
       - name: Load image into Kind
         run: kind load docker-image aim-engine:test --name aim-engine
 
-      - name: Build and load artifact-downloader image
-        run: |
-          docker build -t ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0 images/artifact-downloader
-          kind load docker-image ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0 --name aim-engine
-
       - name: Generate Helm chart
         run: make helm
 
