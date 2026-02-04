@@ -2059,10 +2059,10 @@ func TestPipeline_DownstreamDependency_StatusProgressing(t *testing.T) {
 	obs := testObservationCustomHealth{
 		health: []ComponentHealth{
 			{
-				Component:      "ModelCaches",
+				Component:      "Artifacts",
 				State:          constants.AIMStatusProgressing,
 				Reason:         "CreatingCaches",
-				Message:        "Waiting for model caches to be created",
+				Message:        "Waiting for artifacts to be created",
 				DependencyType: DependencyTypeDownstream, // ← Downstream = Progressing
 			},
 		},
@@ -2084,13 +2084,13 @@ func TestPipeline_DownstreamDependency_StatusProgressing(t *testing.T) {
 		t.Errorf("Status should be Progressing for not-ready downstream dependency, got %s", status.Status)
 	}
 
-	// Verify ModelCachesReady condition is False
-	cachesReady := cm.Get("ModelCachesReady")
+	// Verify ArtifactsReady condition is False
+	cachesReady := cm.Get("ArtifactsReady")
 	if cachesReady == nil {
-		t.Fatal("ModelCachesReady condition should be set")
+		t.Fatal("ArtifactsReady condition should be set")
 	}
 	if cachesReady.Status != metav1.ConditionFalse {
-		t.Errorf("ModelCachesReady should be False, got %v", cachesReady.Status)
+		t.Errorf("ArtifactsReady should be False, got %v", cachesReady.Status)
 	}
 
 	// Verify Ready condition is False
@@ -2116,7 +2116,7 @@ func TestPipeline_MixedDependencies_UpstreamTakesPrecedence(t *testing.T) {
 				DependencyType: DependencyTypeUpstream,
 			},
 			{
-				Component:      "ModelCaches",
+				Component:      "Artifacts",
 				State:          constants.AIMStatusProgressing,
 				Reason:         "CreatingCaches",
 				Message:        "Creating caches",

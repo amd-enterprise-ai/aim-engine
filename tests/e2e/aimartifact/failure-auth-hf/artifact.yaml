@@ -1,0 +1,7 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: failure-auth-hf
+spec:
+  sourceUri: hf://meta-llama/Llama-3.2-1B-Instruct
+  size: 5Gi

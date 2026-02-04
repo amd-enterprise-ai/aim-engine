@@ -38,7 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/amd-enterprise-ai/aim-engine/internal/aimmodelcache"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimartifact"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -624,23 +624,23 @@ func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObserva
 	}
 	container := &isvc.Spec.Predictor.Containers[0]
 
-	// Check if we have template cache with model caches
+	// Check if we have template cache with artifacts
 	if obs.templateCache.Value != nil &&
 		obs.templateCache.Value.Status.Status == constants.AIMStatusReady &&
-		obs.modelCaches.Value != nil {
+		obs.artifacts.Value != nil {
 
-		// Mount model cache PVCs
-		for _, modelCache := range obs.modelCaches.Value.Items {
-			if modelCache.Status.Status != constants.AIMStatusReady {
+		// Mount artifact PVCs
+		for _, artifact := range obs.artifacts.Value.Items {
+			if artifact.Status.Status != constants.AIMStatusReady {
 				continue
 			}
-			if modelCache.Status.PersistentVolumeClaim == "" {
+			if artifact.Status.PersistentVolumeClaim == "" {
 				continue
 			}
 
-			// Find the model name from the model cache spec
-			modelName := modelCache.Spec.SourceURI
-			addModelCacheMount(isvc, container, &modelCache, modelName)
+			// Find the model name from the artifact spec
+			modelName := artifact.Spec.SourceURI
+			addArtifactMount(isvc, container, &artifact, modelName)
 		}
 	} else if obs.pvc.Value != nil {
 		// Mount service PVC for downloads
@@ -665,17 +665,17 @@ func addServicePVCMount(isvc *servingv1beta1.InferenceService, container *corev1
 	})
 }
 
-// addModelCacheMount adds a model cache PVC volume mount.
-func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1.Container, modelCache *aimv1alpha1.AIMModelCache, modelName string) {
+// addArtifactMount adds an artifact PVC volume mount.
+func addArtifactMount(isvc *servingv1beta1.InferenceService, container *corev1.Container, artifact *aimv1alpha1.AIMArtifact, modelName string) {
 	// Sanitize volume name
-	volumeName := utils.MakeRFC1123Compliant(modelCache.Name)
+	volumeName := utils.MakeRFC1123Compliant(artifact.Name)
 	volumeName = strings.ReplaceAll(volumeName, ".", "-")
 
 	isvc.Spec.Predictor.Volumes = append(isvc.Spec.Predictor.Volumes, corev1.Volume{
 		Name: volumeName,
 		VolumeSource: corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: aimmodelcache.GenerateCachePvcName(modelCache),
+				ClaimName: aimartifact.GenerateCachePvcName(artifact),
 			},
 		},
 	})

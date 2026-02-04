@@ -314,13 +314,13 @@ func searchTemplateCaches(
 	return controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{Value: best}
 }
 
-// fetchModelCaches lists all AIMModelCache resources in the namespace.
-func fetchModelCaches(
+// fetchArtifacts lists all AIMArtifact resources in the namespace.
+func fetchArtifacts(
 	ctx context.Context,
 	c client.Client,
 	namespace string,
-) controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList] {
-	return controllerutils.FetchList(ctx, c, &aimv1alpha1.AIMModelCacheList{}, client.InNamespace(namespace))
+) controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList] {
+	return controllerutils.FetchList(ctx, c, &aimv1alpha1.AIMArtifactList{}, client.InNamespace(namespace))
 }
 
 // fetchServicePVC fetches the service's temporary PVC for model downloads.

@@ -40,7 +40,7 @@ grep -E '"level":"error"' "$(ls -t .tmp/logs/air-*.log | head -1)"
 grep "my-resource-name" .tmp/logs/air-*.log
 
 # Search for reconciliation activity for a CRD
-grep '"controller":"model-cache"' "$(ls -t .tmp/logs/air-*.log | head -1)"
+grep '"controller":"artifact"' "$(ls -t .tmp/logs/air-*.log | head -1)"
 
 # Find all error messages with context
 grep -B2 -A2 '"level":"error"' "$(ls -t .tmp/logs/air-*.log | head -1)"
@@ -48,7 +48,7 @@ grep -B2 -A2 '"level":"error"' "$(ls -t .tmp/logs/air-*.log | head -1)"
 
 Log entries are JSON formatted. Key fields:
 - `level`: info, error, debug
-- `controller`: which controller (model-cache, service, model, etc.)
+- `controller`: which controller (artifact, service, model, etc.)
 - `namespace`, `name`: the resource being reconciled
 - `condition`, `status`, `reason`: status updates
 
@@ -150,7 +150,7 @@ grep -E '(error|failed|Error|Failed)' "$LOG"
 - **AIMModel/AIMClusterModel**: Model definitions (namespace/cluster scoped)
 - **AIMServiceTemplate/AIMClusterServiceTemplate**: Template mappings (model→runtime)
 - **AIMRuntimeConfig/AIMClusterRuntimeConfig**: Runtime profiles (GPU, precision)
-- **AIMModelCache**: Model pre-caching (S3/PVC downloads)
+- **AIMArtifact**: Model pre-caching (S3/PVC downloads)
 - **AIMClusterModelSource**: Registry discovery for cluster models
 
 ### Controller Pattern

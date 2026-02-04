@@ -1,5 +1,5 @@
 #!/bin/sh
-# Progress monitor - updates AIMModelCache status with download progress
+# Progress monitor - updates AIMArtifact status with download progress
 
 terminated=false
 trap 'terminated=true' TERM
@@ -33,10 +33,10 @@ last_size=0
 last_change_time=$(date +%s)
 
 update_progress() {
-    [ -z "${CACHE_NAME:-}" ] && echo "WARN: CACHE_NAME not set" >&2 && return
-    [ -z "${CACHE_NAMESPACE:-}" ] && echo "WARN: CACHE_NAMESPACE not set" >&2 && return
+    [ -z "${ARTIFACT_NAME:-}" ] && echo "WARN: ARTIFACT_NAME not set" >&2 && return
+    [ -z "${ARTIFACT_NAMESPACE:-}" ] && echo "WARN: ARTIFACT_NAMESPACE not set" >&2 && return
     
-    if ! kubectl patch aimmodelcache "$CACHE_NAME" -n "$CACHE_NAMESPACE" \
+    if ! kubectl patch aimartifact "$ARTIFACT_NAME" -n "$ARTIFACT_NAMESPACE" \
         --type=merge --subresource=status \
         -p "{\"status\":{\"progress\":{\"percentage\":$1,\"displayPercentage\":\"$1 %\",\"downloadedBytes\":$2,\"totalBytes\":$3}}}"; then
         echo "WARN: Failed to update progress: $1% ($2/$3 bytes)" >&2

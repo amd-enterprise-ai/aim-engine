@@ -484,7 +484,7 @@ spec:
 When `cacheModel: true`:
 
 1. An `AIMTemplateCache` is created for the service's template, if it doesn't already exist
-2. The AIMTemplate will create `AIMModelCache` resources that download model artifacts to PVCs
+2. The AIMTemplate will create `AIMArtifact` resources that download model artifacts to PVCs
 3. The service waits for caches to become Available before starting
 4. Cached models are mounted directly into the inference container
 

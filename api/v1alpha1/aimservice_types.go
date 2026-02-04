@@ -270,7 +270,7 @@ type AIMServiceCacheStatus struct {
 
 	// RetryAttempts tracks how many times this service has attempted to retry a failed cache.
 	// Each service gets exactly one retry attempt. When a TemplateCache enters Failed state,
-	// this counter is incremented from 0 to 1 after deleting failed ModelCaches.
+	// this counter is incremented from 0 to 1 after deleting failed Artifacts.
 	// If the retry fails (cache enters Failed again with attempts == 1), the service degrades.
 	// +optional
 	RetryAttempts int `json:"retryAttempts,omitempty"`

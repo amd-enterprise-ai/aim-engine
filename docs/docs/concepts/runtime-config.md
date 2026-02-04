@@ -260,8 +260,8 @@ spec:
 When enabled, labels matching the specified patterns are automatically copied from parent resources to child resources:
 
 - **AIMService** → InferenceService, HTTPRoute, PVCs, auto-created AIMModel
-- **AIMTemplateCache** → AIMModelCache resources
-- **AIMModelCache** → PVCs, download Jobs
+- **AIMTemplateCache** → AIMArtifact resources
+- **AIMArtifact** → PVCs, download Jobs
 - **AIMModel/AIMClusterModel** → auto-created AIMServiceTemplates
 - **AIMServiceTemplate** → AIMTemplateCache
 - **AIMClusterModelSource** → auto-created AIMClusterModel resources

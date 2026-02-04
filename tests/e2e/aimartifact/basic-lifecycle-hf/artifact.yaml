@@ -1,0 +1,7 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: basic-lifecycle-hf
+spec:
+  sourceUri: hf://sshleifer/tiny-gpt2
+  size: 100Mi

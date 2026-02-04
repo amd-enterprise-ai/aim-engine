@@ -37,9 +37,9 @@ resources:
 - aimmodel_admin_role.yaml
 - aimmodel_editor_role.yaml
 - aimmodel_viewer_role.yaml
-- aimmodelcache_admin_role.yaml
-- aimmodelcache_editor_role.yaml
-- aimmodelcache_viewer_role.yaml
+- aimartifact_admin_role.yaml
+- aimartifact_editor_role.yaml
+- aimartifact_viewer_role.yaml
 - aimclusterservicetemplate_admin_role.yaml
 - aimclusterservicetemplate_editor_role.yaml
 - aimclusterservicetemplate_viewer_role.yaml
@@ -49,5 +49,5 @@ resources:
 - aimclustermodel_admin_role.yaml
 - aimclustermodel_editor_role.yaml
 - aimclustermodel_viewer_role.yaml
-- aimmodelcache_status_updater_role.yaml
+- aimartifact_status_updater_role.yaml
 

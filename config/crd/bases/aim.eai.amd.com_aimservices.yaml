@@ -788,8 +788,8 @@ spec:
                 properties:
                   defaultStorageClassName:
                     description: |-
-                      DefaultStorageClassName specifies the storage class to use for model caches and PVCs
-                      when the consuming resource (AIMModelCache, AIMTemplateCache, AIMServiceTemplate) does not
+                      DefaultStorageClassName specifies the storage class to use for artifacts and PVCs
+                      when the consuming resource (AIMArtifact, AIMTemplateCache, AIMServiceTemplate) does not
                       specify a storage class. If this field is empty, the cluster's default storage class is used.
                     type: string
                   pvcHeadroomPercent:
@@ -833,7 +833,7 @@ spec:
                     description: |-
                       RetryAttempts tracks how many times this service has attempted to retry a failed cache.
                       Each service gets exactly one retry attempt. When a TemplateCache enters Failed state,
-                      this counter is incremented from 0 to 1 after deleting failed ModelCaches.
+                      this counter is incremented from 0 to 1 after deleting failed Artifacts.
                       If the retry fails (cache enters Failed again with attempts == 1), the service degrades.
                     type: integer
                   templateCacheRef:
