@@ -26,6 +26,7 @@ import (
 	"context"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -107,6 +108,17 @@ func planTemplateCache(
 
 	serviceLabelValue, _ := utils.SanitizeLabelValue(service.Name)
 
+	// Build env vars for caching: merge template's caching env with service env
+	// Service.Env takes precedence (higher priority in merge hierarchy)
+	// Note: Only namespace-scoped templates support Caching config
+	var cacheEnv []corev1.EnvVar
+	if obs.template.Value != nil && obs.template.Value.Spec.Caching != nil {
+		cacheEnv = utils.CopyEnvVars(obs.template.Value.Spec.Caching.Env)
+	}
+	if len(service.Spec.Env) > 0 {
+		cacheEnv = utils.MergeEnvVars(cacheEnv, service.Spec.Env)
+	}
+
 	cache := &aimv1alpha1.AIMTemplateCache{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: aimv1alpha1.GroupVersion.String(),
@@ -125,6 +137,7 @@ func planTemplateCache(
 			StorageClassName: storageClassName,
 			RuntimeConfigRef: service.Spec.RuntimeConfigRef,
 			Mode:             cacheMode,
+			Env:              cacheEnv,
 		},
 	}
 

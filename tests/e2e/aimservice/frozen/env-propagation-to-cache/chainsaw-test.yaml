@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Env Propagation to Template Cache
+#
+# This test validates that environment variables from AIMService.spec.env
+# are correctly propagated to the AIMTemplateCache when caching.mode: Always.
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMModel (Ready), AIMServiceTemplate (Ready with modelSources)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: env-propagation-to-cache
+spec:
+  steps:
+    - name: Create frozen model with Ready status
+      try:
+        - apply:
+            file: model.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh model.yaml --status-only -n $NAMESPACE
+
+    - name: Create frozen template with Ready status and modelSources
+      try:
+        - apply:
+            file: template.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh template.yaml --status-only -n $NAMESPACE
+
+    - name: Create service with env vars and caching mode Always
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert AIMTemplateCache is created with merged env vars
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: test-env-propagation
+              spec:
+                templateName: test-template
+                templateScope: Namespace
+                # Env should be merged: service env overrides template caching env
+                # - HF_TOKEN: service value overrides template value
+                # - HTTP_PROXY: from template (not overridden)
+                # - HTTPS_PROXY: from service (new var)
+                env:
+                  - name: HF_TOKEN
+                    value: service-token-value
+                  - name: HTTP_PROXY
+                    value: http://template-proxy:8080
+                  - name: HTTPS_PROXY
+                    value: https://proxy.example.com:8080

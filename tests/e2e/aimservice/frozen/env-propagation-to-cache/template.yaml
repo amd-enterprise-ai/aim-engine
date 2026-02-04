@@ -1,0 +1,31 @@
+# Frozen Template: Ready status with modelSources for cache creation
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-template
+  annotations:
+    aim.eai.amd.com/reconciliation-paused: "true"
+spec:
+  modelName: test-model
+  gpuSelector:
+    model: MI300X
+    count: 1
+  # Template-level caching env (will be overridden by service env)
+  caching:
+    enabled: false
+    env:
+      - name: HF_TOKEN
+        value: template-token-value
+      - name: HTTP_PROXY
+        value: http://template-proxy:8080
+status:
+  status: Ready
+  profile:
+    metadata:
+      type: optimized
+      gpu: MI300X
+      gpuCount: 1
+  # modelSources are required for template cache creation
+  modelSources:
+    - sourceUri: hf://test-org/test-model
+      size: 5Gi

@@ -1,0 +1,21 @@
+# AIMService with env vars and caching mode Always
+# Tests that service.spec.env is propagated to AIMTemplateCache
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-env-propagation
+spec:
+  model:
+    name: test-model
+  template:
+    name: test-template
+  replicas: 1
+  caching:
+    mode: Always
+  # These env vars should be propagated to the AIMTemplateCache
+  # and should override any matching vars from template.spec.caching.env
+  env:
+    - name: HF_TOKEN
+      value: service-token-value
+    - name: HTTPS_PROXY
+      value: https://proxy.example.com:8080

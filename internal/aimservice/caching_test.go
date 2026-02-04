@@ -525,6 +525,102 @@ func TestPlanTemplateCache_Spec(t *testing.T) {
 	}
 }
 
+func TestPlanTemplateCache_EnvVars(t *testing.T) {
+	templateStatus := &aimv1alpha1.AIMServiceTemplateStatus{
+		ModelSources: []aimv1alpha1.AIMModelSource{
+			NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
+		},
+	}
+
+	tests := []struct {
+		name        string
+		serviceEnv  []corev1.EnvVar
+		templateEnv []corev1.EnvVar
+		wantEnv     map[string]string
+	}{
+		{
+			name:        "service env vars copied to cache",
+			serviceEnv:  []corev1.EnvVar{{Name: "HF_TOKEN", Value: "secret-token"}},
+			templateEnv: nil,
+			wantEnv:     map[string]string{"HF_TOKEN": "secret-token"},
+		},
+		{
+			name:       "template caching env vars copied to cache",
+			serviceEnv: nil,
+			templateEnv: []corev1.EnvVar{
+				{Name: "HTTP_PROXY", Value: "http://proxy:8080"},
+			},
+			wantEnv: map[string]string{"HTTP_PROXY": "http://proxy:8080"},
+		},
+		{
+			name:       "service env overrides template caching env",
+			serviceEnv: []corev1.EnvVar{{Name: "HF_TOKEN", Value: "service-token"}},
+			templateEnv: []corev1.EnvVar{
+				{Name: "HF_TOKEN", Value: "template-token"},
+				{Name: "HTTP_PROXY", Value: "http://proxy:8080"},
+			},
+			wantEnv: map[string]string{
+				"HF_TOKEN":   "service-token", // Service takes precedence
+				"HTTP_PROXY": "http://proxy:8080",
+			},
+		},
+		{
+			name:        "no env vars",
+			serviceEnv:  nil,
+			templateEnv: nil,
+			wantEnv:     map[string]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := NewService("my-svc").WithCachingMode(aimv1alpha1.CachingModeAlways).Build()
+			service.Spec.Env = tt.serviceEnv
+
+			// Build observation with template that has caching env
+			obs := ServiceObservation{}
+			if tt.templateEnv != nil {
+				obs.template = controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]{
+					Value: &aimv1alpha1.AIMServiceTemplate{
+						Spec: aimv1alpha1.AIMServiceTemplateSpec{
+							Caching: &aimv1alpha1.AIMTemplateCachingConfig{
+								Env: tt.templateEnv,
+							},
+						},
+					},
+				}
+			}
+
+			result := planTemplateCache(service, "my-template", templateStatus, obs)
+			if result == nil {
+				t.Fatal("expected cache, got nil")
+			}
+
+			cache, ok := result.(*aimv1alpha1.AIMTemplateCache)
+			if !ok {
+				t.Fatalf("expected *AIMTemplateCache, got %T", result)
+			}
+
+			// Check env vars
+			gotEnv := make(map[string]string)
+			for _, env := range cache.Spec.Env {
+				gotEnv[env.Name] = env.Value
+			}
+
+			if len(gotEnv) != len(tt.wantEnv) {
+				t.Errorf("expected %d env vars, got %d: %v", len(tt.wantEnv), len(gotEnv), gotEnv)
+			}
+			for name, wantVal := range tt.wantEnv {
+				if gotVal, ok := gotEnv[name]; !ok {
+					t.Errorf("missing env var %s", name)
+				} else if gotVal != wantVal {
+					t.Errorf("env var %s: expected %q, got %q", name, wantVal, gotVal)
+				}
+			}
+		})
+	}
+}
+
 // ============================================================================
 // HELPERS
 // ============================================================================
