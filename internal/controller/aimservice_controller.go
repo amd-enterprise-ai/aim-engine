@@ -247,14 +247,10 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.findServicesForClusterRuntimeConfig),
 		).
 		// Watch template caches and enqueue services that use them
+		// Model cache status is resolved through TemplateCache.Status.ModelCaches
 		Watches(
 			&aimv1alpha1.AIMTemplateCache{},
 			handler.EnqueueRequestsFromMapFunc(r.findServicesForTemplateCache),
-		).
-		// Watch model caches and enqueue services that own them (dedicated caches)
-		Watches(
-			&aimv1alpha1.AIMModelCache{},
-			handler.EnqueueRequestsFromMapFunc(r.findServicesForModelCache),
 		).
 		// Watch events for InferenceServices to detect configuration errors like ServerlessModeRejected
 		Watches(
@@ -507,33 +503,6 @@ func (r *AIMServiceReconciler) findServicesForTemplateCache(ctx context.Context,
 		}
 	}
 	return requests
-}
-
-// findServicesForModelCache returns reconcile requests for AIMServices
-// that own the given model cache (dedicated caches).
-// Dedicated model caches are labeled with the service name that created them.
-func (r *AIMServiceReconciler) findServicesForModelCache(ctx context.Context, obj client.Object) []reconcile.Request {
-	cache, ok := obj.(*aimv1alpha1.AIMModelCache)
-	if !ok {
-		return nil
-	}
-
-	// Check if this is a dedicated cache (has service label and cache type label)
-	serviceName := cache.Labels[constants.LabelService]
-	cacheType := cache.Labels[constants.LabelCacheType]
-	if serviceName == "" || cacheType != constants.LabelValueCacheTypeDedicated {
-		return nil
-	}
-
-	// Return reconcile request for the owning service
-	return []reconcile.Request{
-		{
-			NamespacedName: types.NamespacedName{
-				Name:      serviceName,
-				Namespace: cache.Namespace,
-			},
-		},
-	}
 }
 
 // findServicesForInferenceServicePod returns reconcile requests for AIMServices
