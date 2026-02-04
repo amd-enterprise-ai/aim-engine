@@ -364,6 +364,12 @@ func buildMergedEnvVars(
 		envVars = utils.MergeEnvVars(envVars, templateSpec.Env, utils.EnvVarAIMEngineArgs)
 	}
 
+	// Add AIM_MODEL_ID env var if model sources are specified on template spec (custom models)
+	if templateSpec != nil && len(templateSpec.ModelSources) > 0 {
+		modelIDEnvVar := corev1.EnvVar{Name: constants.EnvAIMModelID, Value: templateSpec.ModelSources[0].ModelID}
+		envVars = append(envVars, modelIDEnvVar)
+	}
+
 	// Merge profile env vars
 	// AIM_ENGINE_ARGS is deep-merged as JSON to preserve contributions from all sources
 	if templateStatus != nil && templateStatus.Profile != nil && len(templateStatus.Profile.EnvVars) > 0 {

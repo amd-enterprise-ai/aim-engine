@@ -239,6 +239,9 @@ const (
 	EnvAIMPrecision = "AIM_PRECISION"
 	// EnvVLLMEnableMetrics enables vLLM metrics
 	EnvVLLMEnableMetrics = "VLLM_ENABLE_METRICS"
+
+	EnvAIMModelID = "AIM_MODEL_ID"
+	// EnvAIMModelID is the environment variable for the model ID
 )
 
 // KServe annotation and label keys

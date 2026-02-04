@@ -8,8 +8,8 @@ metadata:
 spec:
   runtimeConfigName: test-gpu-custom-model
   # Pull secret for ghcr.io/silogen images
-  # imagePullSecrets:
-  #   - name: ghcr-regcred
+  imagePullSecrets:
+    - name: ghcr-regcred
   model:
     custom:
       # AIM base image (not a pre-built model image)
@@ -26,12 +26,12 @@ spec:
           requests: 1
           # model: MI300X
   caching:
-    mode: Never
+    mode: Always
   replicas: 1
   # Environment variables for the inference container
-  env:
-    - name: AIM_MODEL_ID
-      value: Qwen/Qwen2-0.5B
+  # env:
+  #   - name: AIM_MODEL_ID
+  #     value: Qwen/Qwen2-0.5B
   # Allow unoptimized templates since custom models generate unoptimized profiles
   # (no discovery job runs to determine optimization level)
   template:
