@@ -550,6 +550,18 @@ func TestBuildMergedEnvVars(t *testing.T) {
 			expectContains: []string{constants.EnvAIMMetric, constants.EnvAIMPrecision},
 		},
 		{
+			name:    "template spec profile id",
+			service: &aimv1alpha1.AIMService{},
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpec{
+				AIMServiceTemplateSpecCommon: aimv1alpha1.AIMServiceTemplateSpecCommon{
+					ProfileId: "my-profile-123",
+				},
+			},
+			templateStatus: nil,
+			obs:            ServiceObservation{},
+			expectContains: []string{constants.EnvAIMProfileID},
+		},
+		{
 			name:         "profile env vars",
 			service:      &aimv1alpha1.AIMService{},
 			templateSpec: nil,

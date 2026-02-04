@@ -348,6 +348,11 @@ func buildMergedEnvVars(
 		envVars = utils.MergeEnvVars(envVars, obs.mergedRuntimeConfig.Value.Env, utils.EnvVarAIMEngineArgs)
 	}
 
+	// Add profile ID if set on template
+	if templateSpec != nil && templateSpec.ProfileId != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: constants.EnvAIMProfileID, Value: templateSpec.ProfileId})
+	}
+
 	// Add metric if set on template
 	if templateSpec != nil && templateSpec.Metric != nil {
 		envVars = append(envVars, corev1.EnvVar{Name: constants.EnvAIMMetric, Value: string(*templateSpec.Metric)})

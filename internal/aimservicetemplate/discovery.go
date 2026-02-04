@@ -174,7 +174,7 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 	// If a profile ID is set, propagate it to the discovery job
 	if profileId := spec.TemplateSpec.ProfileId; profileId != "" {
 		env = append(env, corev1.EnvVar{
-			Name:  "AIM_PROFILE_ID",
+			Name:  constants.EnvAIMProfileID,
 			Value: profileId,
 		})
 	}

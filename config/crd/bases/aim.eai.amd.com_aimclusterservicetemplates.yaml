@@ -403,9 +403,13 @@ spec:
               precision:
                 allOf:
                 - enum:
-                  - bf16
-                  - fp16
+                  - auto
+                  - fp4
                   - fp8
+                  - fp16
+                  - fp32
+                  - bf16
+                  - int4
                   - int8
                 - enum:
                   - auto
@@ -904,9 +908,13 @@ spec:
                         description: Precision specifies the numeric precision used
                           in this profile (e.g., "fp16", "fp8").
                         enum:
-                        - bf16
-                        - fp16
+                        - auto
+                        - fp4
                         - fp8
+                        - fp16
+                        - fp32
+                        - bf16
+                        - int4
                         - int8
                         type: string
                       type:

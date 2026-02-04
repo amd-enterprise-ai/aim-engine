@@ -65,7 +65,7 @@ const (
 )
 
 // AIMPrecision enumerates supported numeric precisions
-// +kubebuilder:validation:Enum=bf16;fp16;fp8;int8
+// +kubebuilder:validation:Enum=auto;fp4;fp8;fp16;fp32;bf16;int4;int8
 type AIMPrecision string
 
 const (

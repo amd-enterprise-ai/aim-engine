@@ -395,7 +395,7 @@ _Appears in:_
 | `gpu` _string_ | GPU specifies the GPU model this profile is optimized for (e.g., "MI300X", "MI325X"). |  | Optional: \{\} <br /> |
 | `gpu_count` _integer_ | GPUCount indicates how many GPUs are required per replica for this profile. |  | Optional: \{\} <br /> |
 | `metric` _[AIMMetric](#aimmetric)_ | Metric indicates the optimization goal for this profile ("latency" or "throughput"). |  | Enum: [latency throughput] <br />Optional: \{\} <br /> |
-| `precision` _[AIMPrecision](#aimprecision)_ | Precision specifies the numeric precision used in this profile (e.g., "fp16", "fp8"). |  | Enum: [bf16 fp16 fp8 int8] <br />Optional: \{\} <br /> |
+| `precision` _[AIMPrecision](#aimprecision)_ | Precision specifies the numeric precision used in this profile (e.g., "fp16", "fp8"). |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br />Optional: \{\} <br /> |
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type specifies the optimization level of this profile (optimized, unoptimized, preview). |  | Enum: [optimized preview unoptimized] <br />Optional: \{\} <br /> |
 
 
@@ -748,7 +748,7 @@ _Underlying type:_ _string_
 AIMPrecision enumerates supported numeric precisions
 
 _Validation:_
-- Enum: [bf16 fp16 fp8 int8]
+- Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8]
 
 _Appears in:_
 - [AIMClusterServiceTemplateSpec](#aimclusterservicetemplatespec)
@@ -818,7 +818,7 @@ _Appears in:_
 | `gpu` _string_ | GPU specifies the GPU model this profile is optimized for (e.g., "MI300X", "MI325X"). |  | Optional: \{\} <br /> |
 | `gpuCount` _integer_ | GPUCount indicates how many GPUs are required per replica for this profile. |  | Optional: \{\} <br /> |
 | `metric` _[AIMMetric](#aimmetric)_ | Metric indicates the optimization goal for this profile ("latency" or "throughput"). |  | Enum: [latency throughput] <br />Optional: \{\} <br /> |
-| `precision` _[AIMPrecision](#aimprecision)_ | Precision specifies the numeric precision used in this profile (e.g., "fp16", "fp8"). |  | Enum: [bf16 fp16 fp8 int8] <br />Optional: \{\} <br /> |
+| `precision` _[AIMPrecision](#aimprecision)_ | Precision specifies the numeric precision used in this profile (e.g., "fp16", "fp8"). |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br />Optional: \{\} <br /> |
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type indicates the optimization level of this profile (optimized, preview, unoptimized). |  | Enum: [optimized preview unoptimized] <br />Optional: \{\} <br /> |
 
 
