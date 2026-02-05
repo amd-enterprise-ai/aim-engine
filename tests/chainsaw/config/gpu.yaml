@@ -12,7 +12,7 @@ spec:
     delete: 30s
     error: 60s
     exec: 30s
-  parallel: 8
+  parallel: 3
   failFast: false
   skipDelete: false
   template: true

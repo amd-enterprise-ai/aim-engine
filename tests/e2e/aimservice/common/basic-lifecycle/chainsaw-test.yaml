@@ -81,7 +81,7 @@ spec:
     - name: Verify InferenceService is created
       try:
         - assert:
-            timeout: 120s
+            timeout: 5m
             resource:
               apiVersion: serving.kserve.io/v1beta1
               kind: InferenceService

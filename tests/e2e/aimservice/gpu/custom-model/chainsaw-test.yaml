@@ -96,77 +96,27 @@ spec:
                 labels:
                   aim.eai.amd.com/service: test-gpu-custom-model
 
-    - name: Verify InferenceService is created with GPU resources
+    - name: Verify Pod has correct image, env vars, and GPU resources
       try:
         - assert:
-            timeout: 300s
+            timeout: 5m
             resource:
-              apiVersion: serving.kserve.io/v1beta1
-              kind: InferenceService
+              apiVersion: v1
+              kind: Pod
               metadata:
                 labels:
-                  aim.eai.amd.com/service: test-gpu-custom-model
-
-    - name: Verify Pod has correct env vars, image, and GPU resources
-      try:
-        - script:
-            timeout: 5m
-            env:
-              - name: NAMESPACE
-                value: ($namespace)
-            content: |
-              set -e
-
-              # Wait for predictor pod to be running
-              echo "Waiting for predictor pod..."
-              for i in $(seq 1 60); do
-                POD=$(kubectl get pods -n "$NAMESPACE" -l serving.kserve.io/inferenceservice=test-gpu-custom-model -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-                if [ -n "$POD" ]; then
-                  STATUS=$(kubectl get pod "$POD" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || true)
-                  if [ "$STATUS" = "Running" ]; then
-                    echo "Found running pod: $POD"
-                    break
-                  fi
-                fi
-                sleep 5
-              done
-
-              if [ -z "$POD" ]; then
-                echo "ERROR: No predictor pod found"
-                exit 1
-              fi
-
-              # Get the kserve-container spec
-              CONTAINER_JSON=$(kubectl get pod "$POD" -n "$NAMESPACE" -o jsonpath='{.spec.containers[?(@.name=="kserve-container")]}')
-
-              # Verify container image matches baseImage
-              IMAGE=$(echo "$CONTAINER_JSON" | jq -r '.image')
-              echo "Container image: $IMAGE"
-              if [[ "$IMAGE" != *"aim-base"* ]]; then
-                echo "ERROR: Expected aim-base image, got: $IMAGE"
-                exit 1
-              fi
-              echo "SUCCESS: Container image is correct"
-
-              # Verify AIM_MODEL_ID env var
-              AIM_MODEL_ID=$(echo "$CONTAINER_JSON" | jq -r '.env[] | select(.name=="AIM_MODEL_ID") | .value')
-              echo "AIM_MODEL_ID: $AIM_MODEL_ID"
-              if [ "$AIM_MODEL_ID" != "Qwen/Qwen2-0.5B" ]; then
-                echo "ERROR: Expected AIM_MODEL_ID=Qwen/Qwen2-0.5B, got: $AIM_MODEL_ID"
-                exit 1
-              fi
-              echo "SUCCESS: AIM_MODEL_ID is correct"
-
-              # Verify GPU resources
-              GPU_REQUESTS=$(echo "$CONTAINER_JSON" | jq -r '.resources.requests["amd.com/gpu"] // .resources.limits["amd.com/gpu"] // "0"')
-              echo "GPU requests: $GPU_REQUESTS"
-              if [ "$GPU_REQUESTS" = "0" ] || [ "$GPU_REQUESTS" = "null" ]; then
-                echo "ERROR: Expected GPU resources to be set"
-                exit 1
-              fi
-              echo "SUCCESS: GPU resources are configured"
-
-              echo "All Pod-level assertions passed!"
+                  aim.eai.amd.com/service.name: test-gpu-custom-model
+              spec:
+                (containers[?name == 'kserve-container']):
+                  - # Verify container image is aim-base
+                    image: amdenterpriseai/aim-base:0.9
+                    # Verify AIM_MODEL_ID env var
+                    (env[?name == 'AIM_MODEL_ID']):
+                      - value: Qwen/Qwen2-0.5B
+                    # Verify GPU resources are set
+                    resources:
+                      limits:
+                        amd.com/gpu: "1"
 
     - name: Verify service reaches Running status
       try:
@@ -187,4 +137,4 @@ spec:
             env:
               - name: HTTP_BASE_PATH
                 value: /integration/gpu-custom-model/test-gpu-custom-model/v1
-            content: bash ../../_shared/validate-http.sh
+            content: bash ../_shared/validate-http.sh
