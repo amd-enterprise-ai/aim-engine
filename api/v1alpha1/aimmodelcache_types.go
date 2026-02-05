@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	DefaultDownloadImage = "ghcr.io/silogen/aim-artifact-downloader:0.1.0"
+	DefaultDownloadImage = "ghcr.io/silogen/aim-artifact-downloader:0.1.1"
 
 	// ModelCacheSourceURIIndexKey is the field index key for AIMModelCache.Spec.SourceURI
 	ModelCacheSourceURIIndexKey = ".spec.sourceUri"
@@ -89,9 +89,9 @@ type AIMModelCacheSpec struct {
 
 	// ModelDownloadImage specifies the container image used to download and initialize the model cache.
 	// This image runs as a job to download model artifacts from the source URI to the cache volume.
-	// When not specified, defaults to "ghcr.io/silogen/aim-artifact-downloader:0.1.0".
+	// When not specified, defaults to "ghcr.io/silogen/aim-artifact-downloader:0.1.1".
 	// +optional
-	// +kubebuilder:default="ghcr.io/silogen/aim-artifact-downloader:0.1.0"
+	// +kubebuilder:default="ghcr.io/silogen/aim-artifact-downloader:0.1.1"
 	ModelDownloadImage string `json:"modelDownloadImage,omitempty"`
 
 	// ImagePullSecrets references secrets for pulling AIM container images.

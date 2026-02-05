@@ -1,0 +1,33 @@
+# Custom model with customTemplates containing env vars and profile settings
+# Uses aim-dummy image for fast startup - we're testing env propagation, not LLM inference
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: test-env-propagation-model
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.10
+
+  modelSources:
+    - modelId: test/env-propagation
+      sourceUri: hf://sshleifer/tiny-gpt2
+      size: 10Mi
+
+  custom:
+    hardware:
+      gpu:
+        requests: 1
+
+  customTemplates:
+    - name: env-test
+      type: optimized
+      profile:
+        metric: latency
+        precision: fp16
+      env:
+        - name: MAX_MODEL_LEN
+          value: "2048"
+        - name: CUSTOM_TEST_VAR
+          value: "custom-value-123"
+      hardware:
+        gpu:
+          requests: 1

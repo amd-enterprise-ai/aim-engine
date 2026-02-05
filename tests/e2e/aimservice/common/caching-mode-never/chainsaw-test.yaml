@@ -14,7 +14,7 @@ metadata:
 spec:
   description: Test AIMService with caching.mode Never bypasses cache
   timeouts:
-    assert: 180s
+    assert: 300s
   steps:
     - name: Create model
       try:

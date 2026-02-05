@@ -1,0 +1,19 @@
+# AIMService with inline CPU-only custom model
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-cpu-only-inline
+spec:
+  model:
+    custom:
+      baseImage: ghcr.io/silogen/aim-dummy:0.1.10
+      modelSources:
+        - modelId: cpu/inline-model
+          sourceUri: hf://sshleifer/tiny-gpt2
+      # CPU-only hardware (no GPU)
+      hardware:
+        cpu:
+          requests: 500m
+  template:
+    allowUnoptimized: true
+  replicas: 1

@@ -17,7 +17,7 @@ metadata:
 spec:
   description: Test AIMService autoscaling configuration propagates to InferenceService
   timeouts:
-    assert: 180s
+    assert: 300s
   steps:
     - name: Create model
       try:

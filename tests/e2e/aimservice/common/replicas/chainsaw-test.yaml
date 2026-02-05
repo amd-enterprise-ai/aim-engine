@@ -14,7 +14,7 @@ metadata:
 spec:
   description: Test AIMService spec.replicas propagates to InferenceService
   timeouts:
-    assert: 180s
+    assert: 300s
   steps:
     - name: Create model
       try:

@@ -1,0 +1,25 @@
+# Custom model with S3 source and environment variables for authentication
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: model-source-env-test
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.10
+
+  # Model sources with env vars for S3 authentication
+  modelSources:
+    - modelId: test/s3-model
+      sourceUri: s3://test-bucket/model
+      size: 100Mi
+      # Environment variables for S3 download authentication
+      env:
+        - name: AWS_ENDPOINT_URL
+          value: https://minio.example.com
+        - name: AWS_DEFAULT_REGION
+          value: us-east-1
+
+  # Hardware requirements
+  custom:
+    hardware:
+      gpu:
+        requests: 1

@@ -50,6 +50,7 @@ spec:
               spec:
                 modelName: cpu-only-model-test
                 # CPU-only hardware (no GPU)
+                # Note: 2000m is normalized to "2" by Kubernetes quantity handling
                 hardware:
                   cpu:
                     requests: 500m

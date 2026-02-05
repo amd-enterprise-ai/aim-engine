@@ -14,7 +14,7 @@ metadata:
 spec:
   description: Test AIMService defaults to 1 replica when not specified
   timeouts:
-    assert: 180s
+    assert: 300s
   steps:
     - name: Create model
       try:

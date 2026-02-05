@@ -4,7 +4,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     s3cmd kubectl \
     procps \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir -U huggingface_hub
+    && pip install --no-cache-dir -U huggingface_hub hf_transfer
+
+# Disable XET (Content-Addressable Storage) downloads due to corporate network issues
+# Enable hf_transfer for faster downloads
+ENV HF_HUB_DISABLE_XET=1
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
 
 
 COPY entrypoint.sh /entrypoint.sh

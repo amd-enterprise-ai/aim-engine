@@ -1,0 +1,78 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Custom Model Test: ModelSource Env Propagation
+#
+# This test validates that environment variables defined in modelSources[].env
+# are correctly propagated to the AIMServiceTemplate spec and status.
+# These env vars are used for download authentication (e.g., S3 credentials).
+#
+# Tested behavior:
+# - modelSources[].env on AIMModel propagates to template spec
+# - modelSources[].env appears in template status.modelSources
+# - Multiple env vars are preserved
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: custom-model-source-env
+spec:
+  description: Test that modelSources[].env propagates to template
+  timeouts:
+    apply: 30s
+    assert: 60s
+  steps:
+    - name: Create custom model with modelSources env
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert model becomes ready
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: model-source-env-test
+              status:
+                status: Ready
+                sourceType: Custom
+
+    - name: Assert template has modelSources with env in spec
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: model-source-env-test
+              spec:
+                modelSources:
+                  - modelId: test/s3-model
+                    sourceUri: s3://test-bucket/model
+                    env:
+                      - name: AWS_ENDPOINT_URL
+                        value: https://minio.example.com
+                      - name: AWS_DEFAULT_REGION
+                        value: us-east-1
+
+    - name: Assert template has modelSources with env in status
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: model-source-env-test
+              status:
+                modelSources:
+                  - modelId: test/s3-model
+                    sourceUri: s3://test-bucket/model
+                    env:
+                      - name: AWS_ENDPOINT_URL
+                        value: https://minio.example.com
+                      - name: AWS_DEFAULT_REGION
+                        value: us-east-1

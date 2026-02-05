@@ -1,15 +1,21 @@
 # Service requesting more GPUs than available to test pending state detection
+# Uses custom model with small HF model for fast download, but requests 20 GPUs
+# which will trigger FailedScheduling
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: test-pending-resources
 spec:
   model:
-    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+    custom:
+      baseImage: amdenterpriseai/aim-base:0.9
+      modelSources:
+        - modelId: Qwen/Qwen2.5-0.5B-Instruct
+          sourceUri: hf://Qwen/Qwen2.5-0.5B-Instruct
+      hardware:
+        gpu:
+          requests: 20
   caching:
     mode: Never
-  resources:
-    requests:
-      amd.com/gpu: "20"
-    limits:
-      amd.com/gpu: "20"
+  template:
+    allowUnoptimized: true

@@ -1,0 +1,18 @@
+# First service with custom model
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-dedup-service-1
+spec:
+  model:
+    custom:
+      baseImage: ghcr.io/silogen/aim-dummy:0.1.10
+      modelSources:
+        - modelId: shared/dedup-model
+          sourceUri: hf://sshleifer/tiny-gpt2
+      hardware:
+        gpu:
+          requests: 1
+  template:
+    allowUnoptimized: true
+  replicas: 1

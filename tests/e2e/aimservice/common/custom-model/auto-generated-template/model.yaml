@@ -1,0 +1,23 @@
+# Custom model with hardware but NO customTemplates
+# This should trigger auto-generation of a single template
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: auto-gen-template-test
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.10
+
+  # Model sources - triggers custom model path
+  modelSources:
+    - modelId: test/auto-gen-model
+      sourceUri: hf://sshleifer/tiny-gpt2
+      size: 100Mi
+
+  # Hardware spec - should be used for auto-generated template
+  custom:
+    hardware:
+      gpu:
+        requests: 1
+        model: MI300X
+
+  # No customTemplates - template should be auto-generated

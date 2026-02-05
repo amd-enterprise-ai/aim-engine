@@ -656,11 +656,13 @@ func addResolvedCacheMount(isvc *servingv1beta1.InferenceService, container *cor
 		},
 	})
 
-	// Use mount point from resolved cache if available, otherwise derive from model name
+	// TODO: Consider removing MountPoint field if it's never used
+	// Use mount point from resolved cache if available, otherwise derive from model ID
 	mountPath := cache.MountPoint
 	if mountPath == "" {
-		// Sanitize model name to prevent path traversal
-		safeModelName := filepath.Base(strings.ReplaceAll(cache.Model, "..", ""))
+		// Use full model ID (e.g., "Qwen/Qwen2-0.5B") as mount path
+		// Sanitize to prevent path traversal (remove ".." sequences)
+		safeModelName := strings.ReplaceAll(cache.Model, "..", "")
 		if safeModelName == "" || safeModelName == "." {
 			safeModelName = volumeName // Fall back to volume name if model name is invalid
 		}

@@ -1,0 +1,100 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Custom Model Test: CPU-Only Inline Custom Model
+#
+# This test validates that an AIMService with spec.model.custom can specify
+# CPU-only hardware (no GPU) and the resources are correctly propagated.
+#
+# Tested behavior:
+# - AIMService with custom.hardware.cpu creates AIMModel
+# - Auto-created model has CPU-only hardware
+# - Template has hardwareSummary: "CPU"
+# - No GPU node affinity is applied
+# - Service progresses normally
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: custom-model-cpu-only-inline
+spec:
+  description: Test AIMService with inline CPU-only custom model
+  timeouts:
+    apply: 30s
+    assert: 120s
+  steps:
+    - name: Create service with CPU-only custom model
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert AIMModel is created with CPU hardware
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/custom-model: "true"
+              spec:
+                image: ghcr.io/silogen/aim-dummy:0.1.10
+                modelSources:
+                  - modelId: cpu/inline-model
+                    sourceUri: hf://sshleifer/tiny-gpt2
+                custom:
+                  hardware:
+                    cpu:
+                      requests: 500m
+              status:
+                status: Ready
+                sourceType: Custom
+
+    - name: Assert template has CPU hardware and summary
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+              spec:
+                hardware:
+                  cpu:
+                    requests: 500m
+              status:
+                status: Ready
+                resolvedHardware:
+                  cpu:
+                    requests: 500m
+                hardwareSummary: CPU
+
+    - name: Assert service resolves and starts
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cpu-only-inline
+              status:
+                status: Starting
+                (conditions[?type == 'ModelReady']):
+                  - status: "True"
+                (conditions[?type == 'TemplateReady']):
+                  - status: "True"
+
+    - name: Verify InferenceService has no GPU resources
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-cpu-only-inline

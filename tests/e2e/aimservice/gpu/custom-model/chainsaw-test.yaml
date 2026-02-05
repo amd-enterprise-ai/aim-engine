@@ -11,10 +11,13 @@
 # 2. AIMServiceTemplate is auto-created from hardware requirements
 # 3. Dedicated model caches are created for model download
 # 4. InferenceService is created with correct GPU configuration
-# 5. Service reaches Running status
-# 6. Chat completions endpoint works correctly
+# 5. Pod has correct AIM_MODEL_ID env var from modelSources
+# 6. Pod has correct container image from baseImage
+# 7. Pod has correct GPU resources
+# 8. Service reaches Running status
+# 9. Chat completions endpoint works correctly
 #
-# Uses: amdenterpriseai/aim-base:0.8.5 + HuggingFace model
+# Uses: amdenterpriseai/aim-base:0.9 + HuggingFace model
 # Requires: GPU infrastructure
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
@@ -59,7 +62,8 @@ spec:
               kind: AIMModel
               metadata:
                 labels:
-                  aim.eai.amd.com/managed-by: aim-engine
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/custom-model: "true"
               spec:
                 modelSources:
                   - modelId: Qwen/Qwen2-0.5B
@@ -77,11 +81,11 @@ spec:
               kind: AIMServiceTemplate
               metadata:
                 labels:
-                  aim.eai.amd.com/managed-by: aim-engine
+                  aim.eai.amd.com/origin: auto-generated
               status:
                 status: Ready
 
-    - name: Verify dedicated model cache is created
+    - name: Verify model cache is created via template cache
       try:
         - assert:
             timeout: 120s
@@ -91,7 +95,6 @@ spec:
               metadata:
                 labels:
                   aim.eai.amd.com/service: test-gpu-custom-model
-                  aim.eai.amd.com/cache-type: dedicated
 
     - name: Verify InferenceService is created with GPU resources
       try:
@@ -103,6 +106,67 @@ spec:
               metadata:
                 labels:
                   aim.eai.amd.com/service: test-gpu-custom-model
+
+    - name: Verify Pod has correct env vars, image, and GPU resources
+      try:
+        - script:
+            timeout: 5m
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -e
+
+              # Wait for predictor pod to be running
+              echo "Waiting for predictor pod..."
+              for i in $(seq 1 60); do
+                POD=$(kubectl get pods -n "$NAMESPACE" -l serving.kserve.io/inferenceservice=test-gpu-custom-model -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                if [ -n "$POD" ]; then
+                  STATUS=$(kubectl get pod "$POD" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+                  if [ "$STATUS" = "Running" ]; then
+                    echo "Found running pod: $POD"
+                    break
+                  fi
+                fi
+                sleep 5
+              done
+
+              if [ -z "$POD" ]; then
+                echo "ERROR: No predictor pod found"
+                exit 1
+              fi
+
+              # Get the kserve-container spec
+              CONTAINER_JSON=$(kubectl get pod "$POD" -n "$NAMESPACE" -o jsonpath='{.spec.containers[?(@.name=="kserve-container")]}')
+
+              # Verify container image matches baseImage
+              IMAGE=$(echo "$CONTAINER_JSON" | jq -r '.image')
+              echo "Container image: $IMAGE"
+              if [[ "$IMAGE" != *"aim-base"* ]]; then
+                echo "ERROR: Expected aim-base image, got: $IMAGE"
+                exit 1
+              fi
+              echo "SUCCESS: Container image is correct"
+
+              # Verify AIM_MODEL_ID env var
+              AIM_MODEL_ID=$(echo "$CONTAINER_JSON" | jq -r '.env[] | select(.name=="AIM_MODEL_ID") | .value')
+              echo "AIM_MODEL_ID: $AIM_MODEL_ID"
+              if [ "$AIM_MODEL_ID" != "Qwen/Qwen2-0.5B" ]; then
+                echo "ERROR: Expected AIM_MODEL_ID=Qwen/Qwen2-0.5B, got: $AIM_MODEL_ID"
+                exit 1
+              fi
+              echo "SUCCESS: AIM_MODEL_ID is correct"
+
+              # Verify GPU resources
+              GPU_REQUESTS=$(echo "$CONTAINER_JSON" | jq -r '.resources.requests["amd.com/gpu"] // .resources.limits["amd.com/gpu"] // "0"')
+              echo "GPU requests: $GPU_REQUESTS"
+              if [ "$GPU_REQUESTS" = "0" ] || [ "$GPU_REQUESTS" = "null" ]; then
+                echo "ERROR: Expected GPU resources to be set"
+                exit 1
+              fi
+              echo "SUCCESS: GPU resources are configured"
+
+              echo "All Pod-level assertions passed!"
 
     - name: Verify service reaches Running status
       try:
