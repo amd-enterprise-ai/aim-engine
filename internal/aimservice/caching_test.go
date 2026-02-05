@@ -26,6 +26,8 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
@@ -591,7 +593,7 @@ func TestPlanTemplateCache_EnvVars(t *testing.T) {
 				}
 			}
 
-			result := planTemplateCache(service, "my-template", templateStatus, obs)
+			result := planTemplateCache(service, "my-template", nil, templateStatus, obs)
 			if result == nil {
 				t.Fatal("expected cache, got nil")
 			}

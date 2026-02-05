@@ -7,9 +7,10 @@ metadata:
     aim.eai.amd.com/reconciliation-paused: "true"
 spec:
   modelName: test-model
-  gpuSelector:
-    model: MI300X
-    count: 1
+  hardware:
+    gpu:
+      model: MI300X
+      requests: 1
   # Template-level caching env (will be overridden by service env)
   caching:
     enabled: false
@@ -27,5 +28,6 @@ status:
       gpuCount: 1
   # modelSources are required for template cache creation
   modelSources:
-    - sourceUri: hf://test-org/test-model
+    - modelId: test-org/test-model
+      sourceUri: hf://test-org/test-model
       size: 5Gi
