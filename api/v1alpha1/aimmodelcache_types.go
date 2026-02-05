@@ -31,10 +31,24 @@ import (
 )
 
 const (
-	DefaultDownloadImage = "ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0"
+	DefaultDownloadImage = "ghcr.io/silogen/aim-artifact-downloader:0.1.1"
 
 	// ModelCacheSourceURIIndexKey is the field index key for AIMModelCache.Spec.SourceURI
 	ModelCacheSourceURIIndexKey = ".spec.sourceUri"
+)
+
+// AIMModelCacheMode indicates the ownership mode of a model cache, derived from owner references.
+// +kubebuilder:validation:Enum=Dedicated;Shared
+type AIMModelCacheMode string
+
+const (
+	// ModelCacheModeDedicated indicates the cache has owner references and will be
+	// garbage collected when its owners are deleted.
+	ModelCacheModeDedicated AIMModelCacheMode = "Dedicated"
+
+	// ModelCacheModeShared indicates the cache has no owner references and persists
+	// independently, available for sharing across services.
+	ModelCacheModeShared AIMModelCacheMode = "Shared"
 )
 
 // AIMModelCacheSpec defines the desired state of AIMModelCache
@@ -47,6 +61,15 @@ type AIMModelCacheSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="sourceUri is immutable"
 	// +kubebuilder:validation:Pattern=`^(hf|s3)://[^ \t\r\n]+$`
 	SourceURI string `json:"sourceUri"`
+
+	// ModelID is the canonical identifier in {org}/{name} format.
+	// Determines the cache download path: /workspace/model-cache/{modelId}
+	// For HuggingFace sources, this is typically derived from the URI (e.g., "meta-llama/Llama-3-8B").
+	// For S3 sources, this must be explicitly provided (e.g., "my-team/fine-tuned-llama").
+	// When not specified, derived from SourceURI for HuggingFace sources.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$`
+	ModelID string `json:"modelId,omitempty"`
 
 	// StorageClassName specifies the storage class for the cache volume.
 	// When not specified, uses the cluster default storage class.
@@ -66,9 +89,9 @@ type AIMModelCacheSpec struct {
 
 	// ModelDownloadImage specifies the container image used to download and initialize the model cache.
 	// This image runs as a job to download model artifacts from the source URI to the cache volume.
-	// When not specified, defaults to "ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0".
+	// When not specified, defaults to "ghcr.io/silogen/aim-artifact-downloader:0.1.1".
 	// +optional
-	// +kubebuilder:default="ghcr.io/silogen/aim-engine/artifact-downloader:0.1.0"
+	// +kubebuilder:default="ghcr.io/silogen/aim-artifact-downloader:0.1.1"
 	ModelDownloadImage string `json:"modelDownloadImage,omitempty"`
 
 	// ImagePullSecrets references secrets for pulling AIM container images.
@@ -129,6 +152,11 @@ type AIMModelCacheStatus struct {
 	// PersistentVolumeClaim represents the name of the created PVC
 	PersistentVolumeClaim string `json:"persistentVolumeClaim,omitempty"`
 
+	// Mode indicates the ownership mode of this model cache, derived from owner references.
+	// - Dedicated: Has owner references, will be garbage collected when owners are deleted.
+	// - Shared: No owner references, persists independently and can be shared.
+	// +optional
+	Mode AIMModelCacheMode `json:"mode,omitempty"`
 	// DiscoveredSizeBytes is the model size discovered via check-size job.
 	// Populated when spec.size is not provided.
 	// +optional
@@ -171,6 +199,7 @@ func (s *AIMModelCacheStatus) GetAIMStatus() constants.AIMStatus {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=aimmc,categories=aim;all
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
+// +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.status.mode`
 // +kubebuilder:printcolumn:name="Model Size",type=string,JSONPath=`.status.displaySize`
 // +kubebuilder:printcolumn:name="Progress",type=string,JSONPath=`.status.progress.displayPercentage`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

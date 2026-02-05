@@ -389,12 +389,21 @@ func (r *ModelCacheReconciler) PlanResources(
 	return result
 }
 
-// DecorateStatus implements StatusDecorator to update download status
+// DecorateStatus implements StatusDecorator to update download status and add ModelCacheMode to the status
 func (r *ModelCacheReconciler) DecorateStatus(
 	status *aimv1alpha1.AIMModelCacheStatus,
 	cm *controllerutils.ConditionManager,
 	obs ModelCacheObservation,
 ) {
+	// Set Mode based on owner references
+	// Dedicated: has owner references, will be garbage collected with owners
+	// Shared: no owner references, persists independently
+	if len(obs.modelCache.GetOwnerReferences()) > 0 {
+		status.Mode = aimv1alpha1.ModelCacheModeDedicated
+	} else {
+		status.Mode = aimv1alpha1.ModelCacheModeShared
+	}
+
 	mc := obs.modelCache
 	runtimeConfig := obs.mergedRuntimeConfig.Value
 

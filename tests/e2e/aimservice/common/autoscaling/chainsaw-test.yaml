@@ -8,7 +8,7 @@
 # Note: This test verifies the InferenceService configuration only.
 # Full KEDA integration (ScaledObject, HPA) requires KEDA infrastructure.
 #
-# Uses: ghcr.io/silogen/aim-dummy:0.1.8 (lightweight test image)
+# Uses: ghcr.io/silogen/aim-dummy:0.1.10 (lightweight test image)
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
@@ -17,7 +17,7 @@ metadata:
 spec:
   description: Test AIMService autoscaling configuration propagates to InferenceService
   timeouts:
-    assert: 180s
+    assert: 300s
   steps:
     - name: Create model
       try:

@@ -58,7 +58,88 @@ const (
 	AIMModelReasonMetadataMissingRecommendedDeployments = "MetadataMissingRecommendedDeployments"
 )
 
+// AIMModelSourceType indicates how a model's artifacts are sourced.
+// +kubebuilder:validation:Enum=Image;Custom
+type AIMModelSourceType string
+
+const (
+	// AIMModelSourceTypeImage indicates the model is discovered from container image labels.
+	AIMModelSourceTypeImage AIMModelSourceType = "Image"
+	// AIMModelSourceTypeCustom indicates the model uses explicit spec.modelSources.
+	AIMModelSourceTypeCustom AIMModelSourceType = "Custom"
+)
+
+// AIMCustomTemplate defines a custom template configuration for a model.
+// When modelSources are specified directly on AIMModel, customTemplates allow
+// defining explicit hardware requirements and profiles, skipping the discovery job.
+type AIMCustomTemplate struct {
+	// Name is the template name. If not provided, auto-generated from model name + profile.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name,omitempty"`
+
+	// Type indicates the optimization status of this template.
+	// - optimized: Template has been tuned for performance
+	// - preview: Template is experimental/pre-release
+	// - unoptimized: Default, no specific optimizations applied
+	// +optional
+	// +kubebuilder:validation:Enum=optimized;preview;unoptimized
+	// +kubebuilder:default=unoptimized
+	Type AIMProfileType `json:"type,omitempty"`
+
+	// Env specifies environment variable overrides when this template is selected.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=64
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// Hardware specifies GPU and CPU requirements for this template.
+	// Optional when spec.hardware is set (inherits from spec).
+	// When both are set, values are merged field-by-field with template taking precedence.
+	// +optional
+	Hardware *AIMHardwareRequirements `json:"hardware,omitempty"`
+
+	// Profile declares runtime profile variables for template selection.
+	// Used when multiple templates exist to select based on metric/precision.
+	// +optional
+	Profile *AIMTemplateProfile `json:"profile,omitempty"`
+}
+
+// AIMTemplateProfile declares profile variables for template selection.
+// Used in AIMCustomTemplate to specify optimization targets.
+type AIMTemplateProfile struct {
+	// Metric specifies the optimization target (e.g., latency, throughput).
+	// +optional
+	// +kubebuilder:validation:Enum=latency;throughput
+	Metric AIMMetric `json:"metric,omitempty"`
+
+	// Precision specifies the numerical precision (e.g., fp8, fp16, bf16).
+	// +optional
+	// +kubebuilder:validation:Enum=auto;fp4;fp8;fp16;fp32;bf16;int4;int8
+	Precision AIMPrecision `json:"precision,omitempty"`
+}
+
+// AIMCustomModelSpec contains configuration for custom models.
+// These fields are only used when modelSources is specified (custom models).
+// For image-based models, these settings come from discovery.
+type AIMCustomModelSpec struct {
+	// Hardware specifies default hardware requirements for all templates.
+	// Individual templates can override these defaults.
+	// Required when modelSources is set and customTemplates is empty.
+	// +optional
+	Hardware *AIMHardwareRequirements `json:"hardware,omitempty"`
+
+	// Type specifies default type for all templates.
+	// Individual templates can override this default.
+	// When nil, templates default to "unoptimized".
+	// +optional
+	// +kubebuilder:validation:Enum=optimized;preview;unoptimized
+	Type *AIMProfileType `json:"type,omitempty"`
+}
+
 // AIMModelSpec defines the desired state of AIMModel.
+// +kubebuilder:validation:XValidation:rule="!has(self.modelSources) || size(self.modelSources) == 0 || (has(self.custom) && has(self.custom.hardware)) || !has(self.customTemplates) || size(self.customTemplates) == 0 || self.customTemplates.all(t, has(t.hardware) || (has(self.custom) && has(self.custom.hardware)))",message="when using modelSources, hardware must be specified: set custom.hardware (inherited by all templates) or set hardware on each template individually"
 type AIMModelSpec struct {
 	// Image is the container image URI for this AIM model.
 	// This image is inspected by the operator to select runtime profiles used by templates.
@@ -77,10 +158,24 @@ type AIMModelSpec struct {
 	// +optional
 	DefaultServiceTemplate string `json:"defaultServiceTemplate,omitempty"`
 
+	// Custom contains configuration for custom models (models with inline modelSources).
+	// Only used when modelSources are specified; ignored for image-based models.
+	// +optional
+	Custom *AIMCustomModelSpec `json:"custom,omitempty"`
+
+	// CustomTemplates defines explicit template configurations for this model.
+	// These templates are created directly without running a discovery job.
+	// Can be used with or without modelSources to define custom deployment configurations.
+	// If omitted when modelSources is set, a single template is auto-generated
+	// using the custom.hardware requirements.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	CustomTemplates []AIMCustomTemplate `json:"customTemplates,omitempty"`
+
 	// ModelSources specifies the model sources to use for this model.
 	// When specified, these sources are used instead of auto-discovery from the container image.
 	// This enables pre-creating custom models with explicit model sources.
-	// The discovery job will validate and enrich these sources with size information.
+	// The size field is optional - if not specified, it will be discovered by the download job.
 	// AIM runtime currently supports only one model source.
 	// +optional
 	// +kubebuilder:validation:MaxItems=1
@@ -163,6 +258,13 @@ type AIMModelStatus struct {
 	// ImageMetadata is the metadata extracted from an AIM image
 	// +optional
 	ImageMetadata *ImageMetadata `json:"imageMetadata,omitempty"`
+
+	// SourceType indicates how this model's artifacts are sourced.
+	// - "Image": Model discovered from container image labels
+	// - "Custom": Model uses explicit spec.modelSources
+	// Set by the controller based on whether spec.modelSources is populated.
+	// +optional
+	SourceType AIMModelSourceType `json:"sourceType,omitempty"`
 }
 
 func (s *AIMModelStatus) GetConditions() []metav1.Condition {
@@ -204,9 +306,9 @@ func (s *AIMModelSpec) ShouldCreateTemplates() bool {
 
 // ExpectsTemplates returns whether this model should have auto-created templates.
 // Returns:
-//   - ptr to true: templates expected (has recommendedDeployments and creation enabled)
+//   - ptr to true: templates expected (has recommendedDeployments, creation enabled, customTemplates, or is custom model)
 //   - ptr to false: no templates expected (no recommendedDeployments or creation disabled)
-//   - nil: unknown (metadata not yet available)
+//   - nil: unknown (metadata not yet available for image-based models)
 func (s *AIMModelSpec) ExpectsTemplates(status *AIMModelStatus) *bool {
 	// Check if template creation is disabled
 	if !s.ShouldCreateTemplates() {
@@ -214,11 +316,24 @@ func (s *AIMModelSpec) ExpectsTemplates(status *AIMModelStatus) *bool {
 		return &result
 	}
 
+	// Custom models (with modelSources) always expect templates to be created
+	// from customTemplates or auto-generated from hardware
+	if len(s.ModelSources) > 0 {
+		result := true
+		return &result
+	}
+
+	// For image-based models, check metadata for recommended deployments
+	// customTemplates are additive to discovered templates, so we still need metadata
 	metadata := s.GetEffectiveImageMetadata(status)
 	if metadata == nil {
 		return nil // Unknown - still fetching
 	}
 
 	hasDeployments := metadata.Model != nil && len(metadata.Model.RecommendedDeployments) > 0
-	return &hasDeployments
+	hasCustomTemplates := len(s.CustomTemplates) > 0
+
+	// Expect templates if we have discovered deployments OR customTemplates
+	result := hasDeployments || hasCustomTemplates
+	return &result
 }

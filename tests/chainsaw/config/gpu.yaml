@@ -1,0 +1,18 @@
+# Chainsaw configuration for GPU cluster environment
+# Longer assert timeout for real inference
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Configuration
+metadata:
+  name: gpu
+spec:
+  timeouts:
+    apply: 10s
+    assert: 120s
+    cleanup: 60s
+    delete: 30s
+    error: 60s
+    exec: 30s
+  parallel: 3
+  failFast: false
+  skipDelete: false
+  template: true

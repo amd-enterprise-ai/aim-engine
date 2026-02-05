@@ -1,0 +1,66 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: CPU-Only Custom Model
+#
+# This test validates custom model behavior for CPU-only deployments (no GPU).
+#
+# Tested behavior:
+# - Model with only CPU hardware requirements (no GPU)
+# - Template created with CPU hardware in spec and resolvedHardware
+# - HardwareSummary shows "CPU" for CPU-only templates
+# - Template becomes Ready (no GPU availability check needed)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: cpu-only-custom-model
+spec:
+  timeouts:
+    apply: 30s
+    assert: 60s
+  steps:
+    - name: Create CPU-only custom model
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert model becomes ready
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: cpu-only-model-test
+              status:
+                status: Ready
+                sourceType: Custom
+
+    - name: Assert template is created with CPU hardware
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: cpu-only-model-test
+                  aim.eai.amd.com/origin: auto-generated
+              spec:
+                modelName: cpu-only-model-test
+                # CPU-only hardware (no GPU)
+                # Note: 2000m is normalized to "2" by Kubernetes quantity handling
+                hardware:
+                  cpu:
+                    requests: 500m
+                    limits: "2"
+              status:
+                status: Ready
+                # ResolvedHardware should have CPU
+                resolvedHardware:
+                  cpu:
+                    requests: 500m
+                    limits: "2"
+                # HardwareSummary should show "CPU" for CPU-only templates
+                hardwareSummary: CPU

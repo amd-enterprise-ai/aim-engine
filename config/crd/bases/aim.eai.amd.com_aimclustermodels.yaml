@@ -23,6 +23,9 @@ spec:
     - jsonPath: .status.status
       name: Status
       type: string
+    - jsonPath: .status.sourceType
+      name: Source
+      type: string
     - jsonPath: .spec.image
       name: Image
       type: string
@@ -65,6 +68,414 @@ spec:
           spec:
             description: AIMModelSpec defines the desired state of AIMModel.
             properties:
+              custom:
+                description: |-
+                  Custom contains configuration for custom models (models with inline modelSources).
+                  Only used when modelSources are specified; ignored for image-based models.
+                properties:
+                  hardware:
+                    description: |-
+                      Hardware specifies default hardware requirements for all templates.
+                      Individual templates can override these defaults.
+                      Required when modelSources is set and customTemplates is empty.
+                    properties:
+                      cpu:
+                        description: CPU specifies CPU requirements.
+                        properties:
+                          limits:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: Limits is the maximum number of CPU cores
+                              to allow.
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          requests:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: Requests is the number of CPU cores to request.
+                              Required and must be > 0.
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                        required:
+                        - requests
+                        type: object
+                      gpu:
+                        description: GPU specifies GPU requirements. If not set, no
+                          GPUs are requested (CPU-only model).
+                        properties:
+                          minVram:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: |-
+                              MinVRAM limits deployment to GPUs having at least this much VRAM.
+                              Used for capacity planning when the model size is known but any GPU with
+                              sufficient VRAM is acceptable.
+                              Cannot be combined with model.
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          model:
+                            description: |-
+                              Model limits deployment to a specific GPU model.
+                              Example: "MI300X"
+                              Cannot be combined with minVram.
+                            maxLength: 64
+                            type: string
+                          requests:
+                            description: |-
+                              Requests is the number of GPUs to set as requests/limits.
+                              Set to 0 to target GPU nodes without consuming GPU resources (useful for testing).
+                            format: int32
+                            minimum: 0
+                            type: integer
+                          resourceName:
+                            default: amd.com/gpu
+                            description: |-
+                              ResourceName is the Kubernetes resource name for GPU resources.
+                              Defaults to "amd.com/gpu" if not specified.
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: model and minVram are mutually exclusive; specify
+                            either a specific GPU model OR a minimum VRAM requirement,
+                            not both
+                          rule: '!(has(self.model) && size(self.model) > 0 && has(self.minVram))'
+                    type: object
+                    x-kubernetes-validations:
+                    - message: at least one of gpu or cpu must be specified
+                      rule: has(self.gpu) || has(self.cpu)
+                  type:
+                    allOf:
+                    - enum:
+                      - optimized
+                      - preview
+                      - unoptimized
+                    - enum:
+                      - optimized
+                      - preview
+                      - unoptimized
+                    description: |-
+                      Type specifies default type for all templates.
+                      Individual templates can override this default.
+                      When nil, templates default to "unoptimized".
+                    type: string
+                type: object
+              customTemplates:
+                description: |-
+                  CustomTemplates defines explicit template configurations for this model.
+                  These templates are created directly without running a discovery job.
+                  Can be used with or without modelSources to define custom deployment configurations.
+                  If omitted when modelSources is set, a single template is auto-generated
+                  using the custom.hardware requirements.
+                items:
+                  description: |-
+                    AIMCustomTemplate defines a custom template configuration for a model.
+                    When modelSources are specified directly on AIMModel, customTemplates allow
+                    defining explicit hardware requirements and profiles, skipping the discovery job.
+                  properties:
+                    env:
+                      description: Env specifies environment variable overrides when
+                        this template is selected.
+                      items:
+                        description: EnvVar represents an environment variable present
+                          in a Container.
+                        properties:
+                          name:
+                            description: |-
+                              Name of the environment variable.
+                              May consist of any printable ASCII characters except '='.
+                            type: string
+                          value:
+                            description: |-
+                              Variable references $(VAR_NAME) are expanded
+                              using the previously defined environment variables in the container and
+                              any service environment variables. If a variable cannot be resolved,
+                              the reference in the input string will be unchanged. Double $$ are reduced
+                              to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                              "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                              Escaped references will never be expanded, regardless of whether the variable
+                              exists or not.
+                              Defaults to "".
+                            type: string
+                          valueFrom:
+                            description: Source for the environment variable's value.
+                              Cannot be used if value is not empty.
+                            properties:
+                              configMapKeyRef:
+                                description: Selects a key of a ConfigMap.
+                                properties:
+                                  key:
+                                    description: The key to select.
+                                    type: string
+                                  name:
+                                    default: ""
+                                    description: |-
+                                      Name of the referent.
+                                      This field is effectively required, but due to backwards compatibility is
+                                      allowed to be empty. Instances of this type with an empty value here are
+                                      almost certainly wrong.
+                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    type: string
+                                  optional:
+                                    description: Specify whether the ConfigMap or
+                                      its key must be defined
+                                    type: boolean
+                                required:
+                                - key
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              fieldRef:
+                                description: |-
+                                  Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                                  spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                                properties:
+                                  apiVersion:
+                                    description: Version of the schema the FieldPath
+                                      is written in terms of, defaults to "v1".
+                                    type: string
+                                  fieldPath:
+                                    description: Path of the field to select in the
+                                      specified API version.
+                                    type: string
+                                required:
+                                - fieldPath
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              fileKeyRef:
+                                description: |-
+                                  FileKeyRef selects a key of the env file.
+                                  Requires the EnvFiles feature gate to be enabled.
+                                properties:
+                                  key:
+                                    description: |-
+                                      The key within the env file. An invalid key will prevent the pod from starting.
+                                      The keys defined within a source may consist of any printable ASCII characters except '='.
+                                      During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
+                                    type: string
+                                  optional:
+                                    default: false
+                                    description: |-
+                                      Specify whether the file or its key must be defined. If the file or key
+                                      does not exist, then the env var is not published.
+                                      If optional is set to true and the specified key does not exist,
+                                      the environment variable will not be set in the Pod's containers.
+
+                                      If optional is set to false and the specified key does not exist,
+                                      an error will be returned during Pod creation.
+                                    type: boolean
+                                  path:
+                                    description: |-
+                                      The path within the volume from which to select the file.
+                                      Must be relative and may not contain the '..' path or start with '..'.
+                                    type: string
+                                  volumeName:
+                                    description: The name of the volume mount containing
+                                      the env file.
+                                    type: string
+                                required:
+                                - key
+                                - path
+                                - volumeName
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              resourceFieldRef:
+                                description: |-
+                                  Selects a resource of the container: only resources limits and requests
+                                  (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                                properties:
+                                  containerName:
+                                    description: 'Container name: required for volumes,
+                                      optional for env vars'
+                                    type: string
+                                  divisor:
+                                    anyOf:
+                                    - type: integer
+                                    - type: string
+                                    description: Specifies the output format of the
+                                      exposed resources, defaults to "1"
+                                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                    x-kubernetes-int-or-string: true
+                                  resource:
+                                    description: 'Required: resource to select'
+                                    type: string
+                                required:
+                                - resource
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              secretKeyRef:
+                                description: Selects a key of a secret in the pod's
+                                  namespace
+                                properties:
+                                  key:
+                                    description: The key of the secret to select from.  Must
+                                      be a valid secret key.
+                                    type: string
+                                  name:
+                                    default: ""
+                                    description: |-
+                                      Name of the referent.
+                                      This field is effectively required, but due to backwards compatibility is
+                                      allowed to be empty. Instances of this type with an empty value here are
+                                      almost certainly wrong.
+                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    type: string
+                                  optional:
+                                    description: Specify whether the Secret or its
+                                      key must be defined
+                                    type: boolean
+                                required:
+                                - key
+                                type: object
+                                x-kubernetes-map-type: atomic
+                            type: object
+                        required:
+                        - name
+                        type: object
+                      maxItems: 64
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - name
+                      x-kubernetes-list-type: map
+                    hardware:
+                      description: |-
+                        Hardware specifies GPU and CPU requirements for this template.
+                        Optional when spec.hardware is set (inherits from spec).
+                        When both are set, values are merged field-by-field with template taking precedence.
+                      properties:
+                        cpu:
+                          description: CPU specifies CPU requirements.
+                          properties:
+                            limits:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: Limits is the maximum number of CPU cores
+                                to allow.
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            requests:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: Requests is the number of CPU cores to
+                                request. Required and must be > 0.
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                          required:
+                          - requests
+                          type: object
+                        gpu:
+                          description: GPU specifies GPU requirements. If not set,
+                            no GPUs are requested (CPU-only model).
+                          properties:
+                            minVram:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: |-
+                                MinVRAM limits deployment to GPUs having at least this much VRAM.
+                                Used for capacity planning when the model size is known but any GPU with
+                                sufficient VRAM is acceptable.
+                                Cannot be combined with model.
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            model:
+                              description: |-
+                                Model limits deployment to a specific GPU model.
+                                Example: "MI300X"
+                                Cannot be combined with minVram.
+                              maxLength: 64
+                              type: string
+                            requests:
+                              description: |-
+                                Requests is the number of GPUs to set as requests/limits.
+                                Set to 0 to target GPU nodes without consuming GPU resources (useful for testing).
+                              format: int32
+                              minimum: 0
+                              type: integer
+                            resourceName:
+                              default: amd.com/gpu
+                              description: |-
+                                ResourceName is the Kubernetes resource name for GPU resources.
+                                Defaults to "amd.com/gpu" if not specified.
+                              type: string
+                          type: object
+                          x-kubernetes-validations:
+                          - message: model and minVram are mutually exclusive; specify
+                              either a specific GPU model OR a minimum VRAM requirement,
+                              not both
+                            rule: '!(has(self.model) && size(self.model) > 0 && has(self.minVram))'
+                      type: object
+                      x-kubernetes-validations:
+                      - message: at least one of gpu or cpu must be specified
+                        rule: has(self.gpu) || has(self.cpu)
+                    name:
+                      description: Name is the template name. If not provided, auto-generated
+                        from model name + profile.
+                      maxLength: 63
+                      type: string
+                    profile:
+                      description: |-
+                        Profile declares runtime profile variables for template selection.
+                        Used when multiple templates exist to select based on metric/precision.
+                      properties:
+                        metric:
+                          allOf:
+                          - enum:
+                            - latency
+                            - throughput
+                          - enum:
+                            - latency
+                            - throughput
+                          description: Metric specifies the optimization target (e.g.,
+                            latency, throughput).
+                          type: string
+                        precision:
+                          allOf:
+                          - enum:
+                            - auto
+                            - fp4
+                            - fp8
+                            - fp16
+                            - fp32
+                            - bf16
+                            - int4
+                            - int8
+                          - enum:
+                            - auto
+                            - fp4
+                            - fp8
+                            - fp16
+                            - fp32
+                            - bf16
+                            - int4
+                            - int8
+                          description: Precision specifies the numerical precision
+                            (e.g., fp8, fp16, bf16).
+                          type: string
+                      type: object
+                    type:
+                      allOf:
+                      - enum:
+                        - optimized
+                        - preview
+                        - unoptimized
+                      - enum:
+                        - optimized
+                        - preview
+                        - unoptimized
+                      default: unoptimized
+                      description: |-
+                        Type indicates the optimization status of this template.
+                        - optimized: Template has been tuned for performance
+                        - preview: Template is experimental/pre-release
+                        - unoptimized: Default, no specific optimizations applied
+                      type: string
+                  type: object
+                maxItems: 16
+                type: array
               defaultServiceTemplate:
                 description: |-
                   DefaultServiceTemplate specifies the default AIMServiceTemplate to use when creating services for this model.
@@ -445,17 +856,184 @@ spec:
                   ModelSources specifies the model sources to use for this model.
                   When specified, these sources are used instead of auto-discovery from the container image.
                   This enables pre-creating custom models with explicit model sources.
-                  The discovery job will validate and enrich these sources with size information.
+                  The size field is optional - if not specified, it will be discovered by the download job.
                   AIM runtime currently supports only one model source.
                 items:
                   description: |-
                     AIMModelSource describes a model artifact that must be downloaded for inference.
                     Discovery extracts these from the container's configuration to enable caching and validation.
                   properties:
-                    name:
+                    env:
                       description: |-
-                        Name is a human-readable identifier for this model artifact.
-                        May be empty if the source represents the primary model.
+                        Env specifies per-source credential overrides.
+                        These variables are used for authentication when downloading this specific source.
+                        Takes precedence over base-level env for the same variable name.
+                      items:
+                        description: EnvVar represents an environment variable present
+                          in a Container.
+                        properties:
+                          name:
+                            description: |-
+                              Name of the environment variable.
+                              May consist of any printable ASCII characters except '='.
+                            type: string
+                          value:
+                            description: |-
+                              Variable references $(VAR_NAME) are expanded
+                              using the previously defined environment variables in the container and
+                              any service environment variables. If a variable cannot be resolved,
+                              the reference in the input string will be unchanged. Double $$ are reduced
+                              to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                              "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                              Escaped references will never be expanded, regardless of whether the variable
+                              exists or not.
+                              Defaults to "".
+                            type: string
+                          valueFrom:
+                            description: Source for the environment variable's value.
+                              Cannot be used if value is not empty.
+                            properties:
+                              configMapKeyRef:
+                                description: Selects a key of a ConfigMap.
+                                properties:
+                                  key:
+                                    description: The key to select.
+                                    type: string
+                                  name:
+                                    default: ""
+                                    description: |-
+                                      Name of the referent.
+                                      This field is effectively required, but due to backwards compatibility is
+                                      allowed to be empty. Instances of this type with an empty value here are
+                                      almost certainly wrong.
+                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    type: string
+                                  optional:
+                                    description: Specify whether the ConfigMap or
+                                      its key must be defined
+                                    type: boolean
+                                required:
+                                - key
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              fieldRef:
+                                description: |-
+                                  Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                                  spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                                properties:
+                                  apiVersion:
+                                    description: Version of the schema the FieldPath
+                                      is written in terms of, defaults to "v1".
+                                    type: string
+                                  fieldPath:
+                                    description: Path of the field to select in the
+                                      specified API version.
+                                    type: string
+                                required:
+                                - fieldPath
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              fileKeyRef:
+                                description: |-
+                                  FileKeyRef selects a key of the env file.
+                                  Requires the EnvFiles feature gate to be enabled.
+                                properties:
+                                  key:
+                                    description: |-
+                                      The key within the env file. An invalid key will prevent the pod from starting.
+                                      The keys defined within a source may consist of any printable ASCII characters except '='.
+                                      During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
+                                    type: string
+                                  optional:
+                                    default: false
+                                    description: |-
+                                      Specify whether the file or its key must be defined. If the file or key
+                                      does not exist, then the env var is not published.
+                                      If optional is set to true and the specified key does not exist,
+                                      the environment variable will not be set in the Pod's containers.
+
+                                      If optional is set to false and the specified key does not exist,
+                                      an error will be returned during Pod creation.
+                                    type: boolean
+                                  path:
+                                    description: |-
+                                      The path within the volume from which to select the file.
+                                      Must be relative and may not contain the '..' path or start with '..'.
+                                    type: string
+                                  volumeName:
+                                    description: The name of the volume mount containing
+                                      the env file.
+                                    type: string
+                                required:
+                                - key
+                                - path
+                                - volumeName
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              resourceFieldRef:
+                                description: |-
+                                  Selects a resource of the container: only resources limits and requests
+                                  (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                                properties:
+                                  containerName:
+                                    description: 'Container name: required for volumes,
+                                      optional for env vars'
+                                    type: string
+                                  divisor:
+                                    anyOf:
+                                    - type: integer
+                                    - type: string
+                                    description: Specifies the output format of the
+                                      exposed resources, defaults to "1"
+                                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                    x-kubernetes-int-or-string: true
+                                  resource:
+                                    description: 'Required: resource to select'
+                                    type: string
+                                required:
+                                - resource
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              secretKeyRef:
+                                description: Selects a key of a secret in the pod's
+                                  namespace
+                                properties:
+                                  key:
+                                    description: The key of the secret to select from.  Must
+                                      be a valid secret key.
+                                    type: string
+                                  name:
+                                    default: ""
+                                    description: |-
+                                      Name of the referent.
+                                      This field is effectively required, but due to backwards compatibility is
+                                      allowed to be empty. Instances of this type with an empty value here are
+                                      almost certainly wrong.
+                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    type: string
+                                  optional:
+                                    description: Specify whether the Secret or its
+                                      key must be defined
+                                    type: boolean
+                                required:
+                                - key
+                                type: object
+                                x-kubernetes-map-type: atomic
+                            type: object
+                        required:
+                        - name
+                        type: object
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - name
+                      x-kubernetes-list-type: map
+                    modelId:
+                      description: |-
+                        ModelID is the canonical identifier in {org}/{name} format.
+                        Determines the cache mount path: /workspace/model-cache/{modelId}
+                        For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
+                        For S3 sources, users define their own organizational structure.
+                      pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                       type: string
                     size:
                       anyOf:
@@ -464,7 +1042,8 @@ spec:
                       description: |-
                         Size is the expected storage space required for this model artifact.
                         Used for PVC sizing and capacity planning during cache creation.
-                        Optional for custom models (will be populated by discovery job).
+                        Optional - if not specified, the download job will discover the size automatically.
+                        Can be set explicitly to pre-allocate storage or override auto-discovery.
                       pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                       x-kubernetes-int-or-string: true
                     sourceUri:
@@ -476,6 +1055,7 @@ spec:
                       pattern: ^(hf|s3)://[^ \t\r\n]+$
                       type: string
                   required:
+                  - modelId
                   - sourceUri
                   type: object
                 maxItems: 1
@@ -557,6 +1137,13 @@ spec:
             required:
             - image
             type: object
+            x-kubernetes-validations:
+            - message: 'when using modelSources, hardware must be specified: set custom.hardware
+                (inherited by all templates) or set hardware on each template individually'
+              rule: '!has(self.modelSources) || size(self.modelSources) == 0 || (has(self.custom)
+                && has(self.custom.hardware)) || !has(self.customTemplates) || size(self.customTemplates)
+                == 0 || self.customTemplates.all(t, has(t.hardware) || (has(self.custom)
+                && has(self.custom.hardware)))'
           status:
             description: AIMModelStatus defines the observed state of AIMModel.
             properties:
@@ -806,6 +1393,16 @@ spec:
                       reference, when known.
                     type: string
                 type: object
+              sourceType:
+                description: |-
+                  SourceType indicates how this model's artifacts are sourced.
+                  - "Image": Model discovered from container image labels
+                  - "Custom": Model uses explicit spec.modelSources
+                  Set by the controller based on whether spec.modelSources is populated.
+                enum:
+                - Image
+                - Custom
+                type: string
               status:
                 default: Pending
                 description: Status represents the overall status of the image based

@@ -515,8 +515,8 @@ func TestConvertToAIMModelSources(t *testing.T) {
 				return
 			}
 
-			if tt.wantName != "" && result[0].Name != tt.wantName {
-				t.Errorf("name = %q, want %q", result[0].Name, tt.wantName)
+			if tt.wantName != "" && result[0].ModelID != tt.wantName {
+				t.Errorf("modelID = %q, want %q", result[0].ModelID, tt.wantName)
 			}
 
 			if tt.wantSource != "" && result[0].SourceURI != tt.wantSource {
@@ -759,9 +759,11 @@ func TestBuildDiscoveryJob(t *testing.T) {
 				TemplateSpec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 					ModelName: "test-model",
 					AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-						GpuSelector: &aimv1alpha1.AIMGpuSelector{
-							Model: "MI300X",
-							Count: 2,
+						Hardware: &aimv1alpha1.AIMHardwareRequirements{
+							GPU: &aimv1alpha1.AIMGpuRequirements{
+								Model:    "MI300X",
+								Requests: 2,
+							},
 						},
 					},
 				},

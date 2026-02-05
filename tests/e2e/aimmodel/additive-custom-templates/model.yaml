@@ -1,0 +1,35 @@
+# Regular AIM image with additive customTemplates
+# Tests that customTemplates are created IN ADDITION to discovered templates
+# (not replacing them like custom models with modelSources)
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: additive-templates-test
+spec:
+  # Regular AIM image with recommended deployments in labels
+  # This will create discovered templates via image metadata extraction
+  image: ghcr.io/silogen/aim-dummy:0.1.10
+
+  # NO modelSources - this is NOT a custom model
+  # customTemplates should be ADDITIVE to discovered templates
+
+  # Additional custom templates (should be created alongside discovered templates)
+  customTemplates:
+    - name: custom-high-memory
+      hardware:
+        gpu:
+          requests: 2
+          model: MI300X
+      env:
+        - name: MAX_MODEL_LEN
+          value: "16384"
+
+    - name: custom-low-latency
+      type: optimized
+      profile:
+        metric: latency
+        precision: fp16
+      hardware:
+        gpu:
+          requests: 1
+          model: MI300X

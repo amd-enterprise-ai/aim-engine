@@ -38,11 +38,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/amd-enterprise-ai/aim-engine/internal/aimmodelcache"
-	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
-
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
@@ -148,9 +146,7 @@ func planInferenceService(
 }
 
 // isReadyForInferenceService checks if all prerequisites are met to create the InferenceService.
-func isReadyForInferenceService(service *aimv1alpha1.AIMService, obs ServiceObservation) bool {
-	cachingMode := service.Spec.GetCachingMode()
-
+func isReadyForInferenceService(_ *aimv1alpha1.AIMService, obs ServiceObservation) bool {
 	// Check model is ready
 	modelReady := false
 	if obs.modelResult.Model.Value != nil {
@@ -162,27 +158,11 @@ func isReadyForInferenceService(service *aimv1alpha1.AIMService, obs ServiceObse
 		return false
 	}
 
-	// Check if we have storage
-	switch cachingMode {
-	case aimv1alpha1.CachingModeAlways:
-		// Require template cache to be ready
-		if obs.templateCache.Value == nil ||
-			obs.templateCache.Value.Status.Status != constants.AIMStatusReady {
-			return false
-		}
-	case aimv1alpha1.CachingModeAuto:
-		// Either cache or PVC is fine
-		hasCache := obs.templateCache.Value != nil &&
-			obs.templateCache.Value.Status.Status == constants.AIMStatusReady
-		hasPVC := obs.pvc.Value != nil
-		if !hasCache && !hasPVC {
-			return false
-		}
-	case aimv1alpha1.CachingModeNever:
-		// No cache required, but need PVC for download
-		if obs.pvc.Value == nil {
-			return false
-		}
+	// All caching modes now use template cache (both Dedicated and Shared modes)
+	// Template cache must be ready before creating InferenceService
+	if obs.templateCache.Value == nil ||
+		obs.templateCache.Value.Status.Status != constants.AIMStatusReady {
+		return false
 	}
 
 	return true
@@ -241,14 +221,16 @@ func buildInferenceService(
 		image = obs.modelResult.ClusterModel.Value.Spec.Image
 	}
 
-	// Get GPU count from template status
+	// Get GPU count and resource name from template status.resolvedHardware.
+	// The template controller computes resolvedHardware from discovery + spec fallback.
 	gpuCount := int64(0)
-	if templateStatus != nil && templateStatus.Profile != nil {
-		gpuCount = int64(templateStatus.Profile.Metadata.GPUCount)
-	}
-
-	// GPU resource name is always the default AMD GPU resource
 	gpuResourceName := corev1.ResourceName(constants.DefaultGPUResourceName)
+	if templateStatus != nil && templateStatus.ResolvedHardware != nil && templateStatus.ResolvedHardware.GPU != nil {
+		gpuCount = int64(templateStatus.ResolvedHardware.GPU.Requests)
+		if templateStatus.ResolvedHardware.GPU.ResourceName != "" {
+			gpuResourceName = corev1.ResourceName(templateStatus.ResolvedHardware.GPU.ResourceName)
+		}
+	}
 
 	// Build resource requirements
 	resources := resolveResources(service, templateSpec, gpuCount, gpuResourceName)
@@ -323,9 +305,11 @@ func buildInferenceService(
 	// Configure replicas and autoscaling
 	configureReplicasAndAutoscaling(inferenceService, service)
 
-	// Add GPU node affinity
-	if templateStatus != nil && templateStatus.Profile != nil && templateStatus.Profile.Metadata.GPU != "" {
-		addGPUNodeAffinity(inferenceService, templateStatus.Profile.Metadata.GPU)
+	// Apply GPU node affinity from template status.
+	// The template controller computes resolvedNodeAffinity from GPU requirements
+	// and actual cluster GPU resources (including VRAM from node labels).
+	if templateStatus != nil && templateStatus.ResolvedNodeAffinity != nil {
+		applyNodeAffinity(inferenceService, templateStatus.ResolvedNodeAffinity)
 	}
 
 	// Add storage volumes (cache or PVC)
@@ -359,6 +343,11 @@ func buildMergedEnvVars(
 		envVars = utils.MergeEnvVars(envVars, obs.mergedRuntimeConfig.Value.Env, utils.EnvVarAIMEngineArgs)
 	}
 
+	// Add profile ID if set on template
+	if templateSpec != nil && templateSpec.ProfileId != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: constants.EnvAIMProfileID, Value: templateSpec.ProfileId})
+	}
+
 	// Add metric if set on template
 	if templateSpec != nil && templateSpec.Metric != nil {
 		envVars = append(envVars, corev1.EnvVar{Name: constants.EnvAIMMetric, Value: string(*templateSpec.Metric)})
@@ -373,6 +362,12 @@ func buildMergedEnvVars(
 	// AIM_ENGINE_ARGS is deep-merged as JSON to preserve contributions from all sources
 	if templateSpec != nil && len(templateSpec.Env) > 0 {
 		envVars = utils.MergeEnvVars(envVars, templateSpec.Env, utils.EnvVarAIMEngineArgs)
+	}
+
+	// Add AIM_MODEL_ID env var if model sources are specified on template spec (custom models)
+	if templateSpec != nil && len(templateSpec.ModelSources) > 0 {
+		modelIDEnvVar := corev1.EnvVar{Name: constants.EnvAIMModelID, Value: templateSpec.ModelSources[0].ModelID}
+		envVars = append(envVars, modelIDEnvVar)
 	}
 
 	// Merge profile env vars
@@ -617,76 +612,62 @@ func convertToKServeAutoScaling(aimAutoScaling *aimv1alpha1.AIMServiceAutoScalin
 	return kserveAutoScaling
 }
 
-// addStorageVolumes adds cache or PVC volumes to the InferenceService.
+// addStorageVolumes adds cache volumes to the InferenceService.
+// Model caches are resolved through the template cache status, which contains
+// the list of ready model caches with their PVC names and mount points.
 func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObservation) {
 	if len(isvc.Spec.Predictor.Containers) == 0 {
 		return
 	}
 	container := &isvc.Spec.Predictor.Containers[0]
 
-	// Check if we have template cache with model caches
-	if obs.templateCache.Value != nil &&
-		obs.templateCache.Value.Status.Status == constants.AIMStatusReady &&
-		obs.modelCaches.Value != nil {
+	// All caching now flows through template cache
+	if obs.templateCache.Value == nil ||
+		obs.templateCache.Value.Status.Status != constants.AIMStatusReady {
+		return
+	}
 
-		// Mount model cache PVCs
-		for _, modelCache := range obs.modelCaches.Value.Items {
-			if modelCache.Status.Status != constants.AIMStatusReady {
-				continue
-			}
-			if modelCache.Status.PersistentVolumeClaim == "" {
-				continue
-			}
-
-			// Find the model name from the model cache spec
-			modelName := modelCache.Spec.SourceURI
-			addModelCacheMount(isvc, container, &modelCache, modelName)
+	// Use resolved model caches from template cache status
+	// This avoids fetching model caches separately and keeps the CRD relationships explicit
+	for _, resolvedCache := range obs.templateCache.Value.Status.ModelCaches {
+		if resolvedCache.Status != constants.AIMStatusReady {
+			continue
 		}
-	} else if obs.pvc.Value != nil {
-		// Mount service PVC for downloads
-		addServicePVCMount(isvc, container, obs.pvc.Value.Name)
+		if resolvedCache.PersistentVolumeClaim == "" {
+			continue
+		}
+
+		addResolvedCacheMount(isvc, container, resolvedCache)
 	}
 }
 
-// addServicePVCMount adds a service PVC volume mount.
-func addServicePVCMount(isvc *servingv1beta1.InferenceService, container *corev1.Container, pvcName string) {
-	isvc.Spec.Predictor.Volumes = append(isvc.Spec.Predictor.Volumes, corev1.Volume{
-		Name: constants.VolumeModelStorage,
-		VolumeSource: corev1.VolumeSource{
-			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: pvcName,
-			},
-		},
-	})
-
-	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
-		Name:      constants.VolumeModelStorage,
-		MountPath: constants.AIMCacheBasePath,
-	})
-}
-
-// addModelCacheMount adds a model cache PVC volume mount.
-func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1.Container, modelCache *aimv1alpha1.AIMModelCache, modelName string) {
-	// Sanitize volume name
-	volumeName := utils.MakeRFC1123Compliant(modelCache.Name)
+// addResolvedCacheMount adds a resolved model cache PVC volume mount.
+func addResolvedCacheMount(isvc *servingv1beta1.InferenceService, container *corev1.Container, cache aimv1alpha1.AIMResolvedModelCache) {
+	// Sanitize volume name from the model cache name
+	volumeName := utils.MakeRFC1123Compliant(cache.Name)
 	volumeName = strings.ReplaceAll(volumeName, ".", "-")
 
 	isvc.Spec.Predictor.Volumes = append(isvc.Spec.Predictor.Volumes, corev1.Volume{
 		Name: volumeName,
 		VolumeSource: corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: aimmodelcache.GenerateCachePvcName(modelCache),
+				ClaimName: cache.PersistentVolumeClaim,
 			},
 		},
 	})
 
-	// Sanitize model name to prevent path traversal (remove ".." and other unsafe sequences)
-	// and ensure it's a valid path component
-	safeModelName := filepath.Base(strings.ReplaceAll(modelName, "..", ""))
-	if safeModelName == "" || safeModelName == "." {
-		safeModelName = volumeName // Fall back to volume name if model name is invalid
+	// TODO: Consider removing MountPoint field if it's never used
+	// Use mount point from resolved cache if available, otherwise derive from model ID
+	mountPath := cache.MountPoint
+	if mountPath == "" {
+		// Use full model ID (e.g., "Qwen/Qwen2-0.5B") as mount path
+		// Sanitize to prevent path traversal (remove ".." sequences)
+		safeModelName := strings.ReplaceAll(cache.Model, "..", "")
+		if safeModelName == "" || safeModelName == "." {
+			safeModelName = volumeName // Fall back to volume name if model name is invalid
+		}
+		mountPath = filepath.Join(constants.AIMCacheBasePath, safeModelName)
 	}
-	mountPath := filepath.Join(constants.AIMCacheBasePath, safeModelName)
 
 	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 		Name:      volumeName,
@@ -694,52 +675,20 @@ func addModelCacheMount(isvc *servingv1beta1.InferenceService, container *corev1
 	})
 }
 
-// addGPUNodeAffinity adds node affinity rules for GPU selection to the InferenceService.
-// Uses device ID-based matching which is more reliable than product name labels.
-func addGPUNodeAffinity(isvc *servingv1beta1.InferenceService, gpuModel string) {
-	if gpuModel == "" {
+// applyNodeAffinity applies the pre-computed node affinity from the template status to the InferenceService.
+// The template controller computes resolvedNodeAffinity from GPU requirements and actual cluster
+// GPU resources (including VRAM from node labels), so this function simply applies it.
+func applyNodeAffinity(isvc *servingv1beta1.InferenceService, nodeAffinity *corev1.NodeAffinity) {
+	if nodeAffinity == nil {
 		return
-	}
-
-	// Normalize and get all device IDs for this GPU model
-	deviceIDs := utils.GetAMDDeviceIDsForModel(gpuModel)
-	if len(deviceIDs) == 0 {
-		// Unknown GPU model, skip affinity (will schedule on any GPU node)
-		return
-	}
-
-	// Create the node selector requirement using device ID label
-	requirement := corev1.NodeSelectorRequirement{
-		Key:      utils.LabelAMDGPUDeviceID,
-		Operator: corev1.NodeSelectorOpIn,
-		Values:   deviceIDs,
 	}
 
 	// Ensure Affinity exists
 	if isvc.Spec.Predictor.Affinity == nil {
 		isvc.Spec.Predictor.Affinity = &corev1.Affinity{}
 	}
-	if isvc.Spec.Predictor.Affinity.NodeAffinity == nil {
-		isvc.Spec.Predictor.Affinity.NodeAffinity = &corev1.NodeAffinity{}
-	}
 
-	// Add required node selector terms
-	nodeAffinity := isvc.Spec.Predictor.Affinity.NodeAffinity
-	if nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
-		nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = &corev1.NodeSelector{
-			NodeSelectorTerms: []corev1.NodeSelectorTerm{},
-		}
-	}
-
-	// Add or update the node selector term
-	terms := nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
-	if len(terms) == 0 {
-		terms = append(terms, corev1.NodeSelectorTerm{
-			MatchExpressions: []corev1.NodeSelectorRequirement{requirement},
-		})
-	} else {
-		// Add to existing term
-		terms[0].MatchExpressions = append(terms[0].MatchExpressions, requirement)
-	}
-	nodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = terms
+	// Apply the node affinity directly
+	// TODO: In the future, merge with any existing service-level affinity if needed
+	isvc.Spec.Predictor.Affinity.NodeAffinity = nodeAffinity.DeepCopy()
 }

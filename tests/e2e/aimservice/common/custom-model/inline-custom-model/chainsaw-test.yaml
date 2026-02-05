@@ -1,0 +1,120 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Custom Model Test: Inline Custom Model (AIMService.spec.model.custom)
+#
+# This test validates that an AIMService with spec.model.custom automatically
+# creates the required AIMModel and AIMServiceTemplate resources.
+#
+# Tested behavior:
+# - AIMService with spec.model.custom auto-creates AIMModel
+# - Auto-created AIMModel has correct image, modelSources, and hardware
+# - Auto-created AIMModel has managed-by label
+# - AIMServiceTemplate is auto-generated from model
+# - Service resolves to the auto-created model
+# - Service progresses to Starting status
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: custom-model-inline
+spec:
+  description: Test AIMService with inline custom model (spec.model.custom) auto-creates resources
+  timeouts:
+    apply: 30s
+    assert: 120s
+  steps:
+    - name: Create service with inline custom model
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert AIMModel is auto-created with correct spec
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/custom-model: "true"
+              spec:
+                # Image from custom.baseImage
+                image: ghcr.io/silogen/aim-dummy:0.1.10
+                # ModelSources from custom.modelSources
+                modelSources:
+                  - modelId: inline/test-model
+                    sourceUri: hf://sshleifer/tiny-gpt2
+                # Hardware from custom.hardware
+                custom:
+                  hardware:
+                    gpu:
+                      requests: 1
+              status:
+                status: Ready
+                sourceType: Custom
+
+    - name: Assert AIMServiceTemplate is auto-created
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+              spec:
+                hardware:
+                  gpu:
+                    requests: 1
+                modelSources:
+                  - modelId: inline/test-model
+                    sourceUri: hf://sshleifer/tiny-gpt2
+
+    - name: Assert service resolves model and template
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-inline-custom-model
+              status:
+                # Service should resolve the auto-created model
+                resolvedModel:
+                  (name != ''):  true
+                # Service should resolve the auto-created template
+                resolvedTemplate:
+                  (name != ''): true
+                (conditions[?type == 'ModelReady']):
+                  - status: "True"
+                    reason: ModelResolved
+                (conditions[?type == 'TemplateReady']):
+                  - status: "True"
+                    reason: Resolved
+
+    - name: Assert service progresses to Starting
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-inline-custom-model
+              status:
+                status: Starting
+
+    - name: Verify InferenceService is created
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-inline-custom-model

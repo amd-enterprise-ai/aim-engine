@@ -4,5 +4,5 @@ metadata:
   name: template-cache-not-available-model
 spec:
   # Use a valid image - the GPU selector will cause NotAvailable, not the image
-  image: ghcr.io/silogen/aim-dummy:0.1.8
+  image: ghcr.io/silogen/aim-dummy:0.1.10
 

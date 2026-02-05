@@ -26,10 +26,7 @@ import (
 	"strings"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
-
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
@@ -40,59 +37,6 @@ const (
 // ============================================================================
 // NAME GENERATION TESTS
 // ============================================================================
-
-func TestGenerateServicePVCName(t *testing.T) {
-	tests := []struct {
-		name         string
-		serviceName  string
-		namespace    string
-		wantContains []string
-	}{
-		{
-			name:         "simple service",
-			serviceName:  "my-service",
-			namespace:    "my-namespace",
-			wantContains: []string{"my-service", "temp-cache"},
-		},
-		{
-			name:         "long service name",
-			serviceName:  "very-long-service-name-that-might-exceed-limits",
-			namespace:    "default",
-			wantContains: []string{"temp-cache"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := GenerateServicePVCName(tt.serviceName, tt.namespace)
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-				return
-			}
-
-			for _, want := range tt.wantContains {
-				if !strings.Contains(result, want) {
-					t.Errorf("expected result to contain %q, got %q", want, result)
-				}
-			}
-
-			// Verify k8s name constraints (max 63 chars, lowercase)
-			if len(result) > 63 {
-				t.Errorf("name too long: %d chars", len(result))
-			}
-		})
-	}
-}
-
-func TestGenerateServicePVCName_Deterministic(t *testing.T) {
-	result1, _ := GenerateServicePVCName("svc", "ns")
-	result2, _ := GenerateServicePVCName("svc", "ns")
-	result3, _ := GenerateServicePVCName("svc", "ns")
-
-	if result1 != result2 || result2 != result3 {
-		t.Errorf("expected deterministic output, got %q, %q, %q", result1, result2, result3)
-	}
-}
 
 func TestGenerateTemplateCacheName(t *testing.T) {
 	tests := []struct {
@@ -438,148 +382,6 @@ func TestResolvePVCHeadroomPercent(t *testing.T) {
 }
 
 // ============================================================================
-// PLAN SERVICE PVC TESTS
-// ============================================================================
-
-func TestPlanServicePVC(t *testing.T) {
-	tests := []struct {
-		name           string
-		service        *aimv1alpha1.AIMService
-		templateName   string
-		templateStatus *aimv1alpha1.AIMServiceTemplateStatus
-		obs            ServiceObservation
-		expectPVC      bool
-	}{
-		{
-			name:           "no template status",
-			service:        NewService("svc").Build(),
-			templateName:   "template",
-			templateStatus: nil,
-			obs:            ServiceObservation{},
-			expectPVC:      false,
-		},
-		{
-			name:         "caching mode always - no PVC",
-			service:      NewService("svc").WithCachingMode(aimv1alpha1.CachingModeAlways).Build(),
-			templateName: "template",
-			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
-				ModelSources: []aimv1alpha1.AIMModelSource{
-					NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
-				},
-			},
-			obs:       ServiceObservation{},
-			expectPVC: false,
-		},
-		{
-			name:         "template cache ready - no PVC",
-			service:      NewService("svc").Build(),
-			templateName: "template",
-			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
-				ModelSources: []aimv1alpha1.AIMModelSource{
-					NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
-				},
-			},
-			obs: ServiceObservation{
-				ServiceFetchResult: ServiceFetchResult{
-					templateCache: controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{
-						Value: &aimv1alpha1.AIMTemplateCache{
-							Status: aimv1alpha1.AIMTemplateCacheStatus{
-								Status: constants.AIMStatusReady,
-							},
-						},
-					},
-				},
-			},
-			expectPVC: false,
-		},
-		{
-			name:         "PVC already exists - no new PVC",
-			service:      NewService("svc").Build(),
-			templateName: "template",
-			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
-				ModelSources: []aimv1alpha1.AIMModelSource{
-					NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
-				},
-			},
-			obs: ServiceObservation{
-				ServiceFetchResult: ServiceFetchResult{
-					pvc: controllerutils.FetchResult[*corev1.PersistentVolumeClaim]{
-						Value: &corev1.PersistentVolumeClaim{},
-					},
-				},
-			},
-			expectPVC: false,
-		},
-		{
-			name:         "no model sources - no PVC",
-			service:      NewService("svc").Build(),
-			templateName: "template",
-			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
-				ModelSources: []aimv1alpha1.AIMModelSource{},
-			},
-			obs:       ServiceObservation{},
-			expectPVC: false,
-		},
-		{
-			name:         "creates PVC when conditions met",
-			service:      NewService("svc").Build(),
-			templateName: "template",
-			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
-				ModelSources: []aimv1alpha1.AIMModelSource{
-					NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
-				},
-			},
-			obs:       ServiceObservation{},
-			expectPVC: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := planServicePVC(tt.service, tt.templateName, tt.templateStatus, tt.obs)
-
-			if tt.expectPVC {
-				if result == nil {
-					t.Error("expected PVC to be created, got nil")
-				}
-			} else {
-				if result != nil {
-					t.Errorf("expected no PVC, got %T", result)
-				}
-			}
-		})
-	}
-}
-
-func TestPlanServicePVC_Labels(t *testing.T) {
-	service := NewService("my-svc").Build()
-	templateStatus := &aimv1alpha1.AIMServiceTemplateStatus{
-		ModelSources: []aimv1alpha1.AIMModelSource{
-			NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
-		},
-	}
-
-	result := planServicePVC(service, "my-template", templateStatus, ServiceObservation{})
-
-	if result == nil {
-		t.Fatal("expected PVC, got nil")
-	}
-
-	pvc, ok := result.(*corev1.PersistentVolumeClaim)
-	if !ok {
-		t.Fatalf("expected *PersistentVolumeClaim, got %T", result)
-	}
-
-	// Check labels
-	if pvc.Labels[constants.LabelK8sManagedBy] != constants.LabelValueManagedBy {
-		t.Errorf("expected managed-by label")
-	}
-	if pvc.Labels[constants.LabelCacheType] != constants.LabelValueCacheTypeTemp {
-		t.Errorf("expected cache-type=temp label")
-	}
-}
-
-// ============================================================================
 // PLAN TEMPLATE CACHE TESTS
 // ============================================================================
 
@@ -591,14 +393,28 @@ func TestPlanTemplateCache(t *testing.T) {
 		templateStatus *aimv1alpha1.AIMServiceTemplateStatus
 		obs            ServiceObservation
 		expectCache    bool
+		expectMode     aimv1alpha1.AIMTemplateCacheMode
 	}{
 		{
-			name:           "caching mode never - no cache",
+			name:           "never mode no model sources - no cache",
 			service:        NewService("svc").WithCachingMode(aimv1alpha1.CachingModeNever).Build(),
 			templateName:   "template",
 			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{},
 			obs:            ServiceObservation{},
 			expectCache:    false,
+		},
+		{
+			name:         "never mode creates dedicated cache",
+			service:      NewService("svc").WithCachingMode(aimv1alpha1.CachingModeNever).Build(),
+			templateName: "template",
+			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
+				ModelSources: []aimv1alpha1.AIMModelSource{
+					NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
+				},
+			},
+			obs:         ServiceObservation{},
+			expectCache: true,
+			expectMode:  aimv1alpha1.TemplateCacheModeDedicated,
 		},
 		{
 			name:         "cache already exists - no new cache",
@@ -627,7 +443,7 @@ func TestPlanTemplateCache(t *testing.T) {
 			expectCache:    false,
 		},
 		{
-			name:         "auto mode does not create cache (uses existing only)",
+			name:         "auto mode creates dedicated cache when no shared exists",
 			service:      NewService("svc").Build(), // Default is Auto
 			templateName: "template",
 			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
@@ -636,10 +452,11 @@ func TestPlanTemplateCache(t *testing.T) {
 				},
 			},
 			obs:         ServiceObservation{},
-			expectCache: false, // Auto mode uses existing caches but doesn't create new ones
+			expectCache: true,
+			expectMode:  aimv1alpha1.TemplateCacheModeDedicated,
 		},
 		{
-			name:         "creates cache when conditions met (always mode)",
+			name:         "always mode creates shared cache",
 			service:      NewService("svc").WithCachingMode(aimv1alpha1.CachingModeAlways).Build(),
 			templateName: "template",
 			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
@@ -649,16 +466,22 @@ func TestPlanTemplateCache(t *testing.T) {
 			},
 			obs:         ServiceObservation{},
 			expectCache: true,
+			expectMode:  aimv1alpha1.TemplateCacheModeShared,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := planTemplateCache(tt.service, tt.templateName, tt.templateStatus, tt.obs)
+			result := planTemplateCache(tt.service, tt.templateName, nil, tt.templateStatus, tt.obs)
 
 			if tt.expectCache {
 				if result == nil {
 					t.Error("expected template cache to be created, got nil")
+				} else {
+					cache := result.(*aimv1alpha1.AIMTemplateCache)
+					if cache.Spec.Mode != tt.expectMode {
+						t.Errorf("expected mode %s, got %s", tt.expectMode, cache.Spec.Mode)
+					}
 				}
 			} else {
 				if result != nil {
@@ -682,7 +505,7 @@ func TestPlanTemplateCache_Spec(t *testing.T) {
 		},
 	}
 
-	result := planTemplateCache(service, "my-template", templateStatus, ServiceObservation{})
+	result := planTemplateCache(service, "my-template", nil, templateStatus, ServiceObservation{})
 
 	if result == nil {
 		t.Fatal("expected cache, got nil")

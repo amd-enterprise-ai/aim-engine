@@ -6,9 +6,10 @@ metadata:
   name: test-template-fail-01
 spec:
   modelName: test-model-fail
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
@@ -16,9 +17,10 @@ metadata:
   name: test-template-fail-02
 spec:
   modelName: test-model-fail
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
@@ -26,9 +28,10 @@ metadata:
   name: test-template-fail-03
 spec:
   modelName: test-model-fail
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
@@ -36,9 +39,10 @@ metadata:
   name: test-template-fail-04
 spec:
   modelName: test-model-fail
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
@@ -46,9 +50,10 @@ metadata:
   name: test-template-fail-05
 spec:
   modelName: test-model-fail
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
@@ -56,9 +61,10 @@ metadata:
   name: test-template-fail-06
 spec:
   modelName: test-model-fail
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
@@ -66,9 +72,10 @@ metadata:
   name: test-template-fail-07
 spec:
   modelName: test-model-fail
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
@@ -76,9 +83,10 @@ metadata:
   name: test-template-fail-08
 spec:
   modelName: test-model-fail
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
@@ -86,9 +94,10 @@ metadata:
   name: test-template-fail-09
 spec:
   modelName: test-model-fail
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
@@ -96,9 +105,10 @@ metadata:
   name: test-template-fail-10
 spec:
   modelName: test-model-fail
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
@@ -106,9 +116,10 @@ metadata:
   name: test-template-fail-11
 spec:
   modelName: test-model-fail
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
@@ -116,9 +127,10 @@ metadata:
   name: test-template-fail-12
 spec:
   modelName: test-model-fail
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
@@ -126,9 +138,10 @@ metadata:
   name: test-template-fail-13
 spec:
   modelName: test-model-fail
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
@@ -136,9 +149,10 @@ metadata:
   name: test-template-fail-14
 spec:
   modelName: test-model-fail
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
@@ -146,6 +160,7 @@ metadata:
   name: test-template-fail-15
 spec:
   modelName: test-model-fail
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X

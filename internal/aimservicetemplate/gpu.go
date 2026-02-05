@@ -25,11 +25,10 @@
 package aimservicetemplate
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	corev1 "k8s.io/api/core/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -37,77 +36,10 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
-// GetGPUAvailabilityHealth returns GPU availability as component health.
-// This is called from GetComponentHealth to add GPU availability status.
-func GetGPUAvailabilityHealth(ctx context.Context, k8sClient client.Client, spec aimv1alpha1.AIMServiceTemplateSpecCommon) controllerutils.ComponentHealth {
-	// If no GPU required, return empty health (no component to track)
-	if !TemplateRequiresGPU(spec) {
-		return controllerutils.ComponentHealth{}
-	}
-
-	gpuModel := spec.GpuSelector.Model
-	normalizedModel := utils.NormalizeGPUModel(gpuModel)
-
-	// Check if GPU is available
-	available, err := utils.IsGPUAvailable(ctx, k8sClient, gpuModel)
-	if err != nil {
-		return controllerutils.ComponentHealth{
-			Component: "GPU",
-			State:     constants.AIMStatusDegraded,
-			Reason:    "GPUCheckFailed",
-			Message:   fmt.Sprintf("Failed to check GPU availability: %v", err),
-			Errors:    []error{controllerutils.NewInfrastructureError("GPUCheckFailed", "Failed to check GPU availability", err)},
-		}
-	}
-
-	if !available {
-		availableGPUs, _ := utils.ListAvailableGPUs(ctx, k8sClient)
-		availableStr := "none"
-		if len(availableGPUs) > 0 {
-			availableStr = strings.Join(availableGPUs, ", ")
-		}
-
-		return controllerutils.ComponentHealth{
-			Component: "GPU",
-			State:     constants.AIMStatusNotAvailable,
-			Reason:    "GPUNotAvailable",
-			Message:   fmt.Sprintf("Required GPU model '%s' not available in cluster. Available: %s", normalizedModel, availableStr),
-		}
-	}
-
-	return controllerutils.ComponentHealth{
-		Component: "GPU",
-		State:     constants.AIMStatusReady,
-		Reason:    "GPUAvailable",
-		Message:   fmt.Sprintf("GPU model '%s' is available", normalizedModel),
-	}
-}
-
-// CheckGPUAvailability checks whether the GPU model declared by the template exists in the cluster.
-// Returns the normalized GPU model name and whether it's available.
-func CheckGPUAvailability(
-	ctx context.Context,
-	k8sClient client.Client,
-	spec aimv1alpha1.AIMServiceTemplateSpecCommon,
-) (normalizedModel string, available bool, err error) {
-	if !TemplateRequiresGPU(spec) {
-		return "", true, nil
-	}
-
-	model := strings.TrimSpace(spec.GpuSelector.Model)
-	normalizedModel = utils.NormalizeGPUModel(model)
-
-	available, err = utils.IsGPUAvailable(ctx, k8sClient, model)
-	if err != nil {
-		return normalizedModel, false, err
-	}
-
-	return normalizedModel, available, nil
-}
-
 // IsGPUAvailableForSpec checks if the required GPU is available based on pre-fetched GPU resources.
 // This is the fast-path check used during reconciliation when GPU resources have already been fetched.
 // Returns true if no GPU is required, or if the required GPU is found in the provided resources.
+// When gpu.requests > 0 but gpu.model is empty, any available GPU satisfies the requirement.
 func IsGPUAvailableForSpec(spec aimv1alpha1.AIMServiceTemplateSpecCommon, gpuResources map[string]utils.GPUResourceInfo, gpuFetchErr error) bool {
 	if !TemplateRequiresGPU(spec) {
 		return true
@@ -115,7 +47,11 @@ func IsGPUAvailableForSpec(spec aimv1alpha1.AIMServiceTemplateSpecCommon, gpuRes
 	if gpuFetchErr != nil {
 		return false
 	}
-	normalizedModel := utils.NormalizeGPUModel(spec.GpuSelector.Model)
+	normalizedModel := utils.NormalizeGPUModel(spec.Hardware.GPU.Model)
+	// If no specific GPU model is required (just gpu.requests > 0), accept any available GPU
+	if normalizedModel == "" {
+		return len(gpuResources) > 0
+	}
 	_, available := gpuResources[normalizedModel]
 	return available
 }
@@ -123,6 +59,7 @@ func IsGPUAvailableForSpec(spec aimv1alpha1.AIMServiceTemplateSpecCommon, gpuRes
 // GetGPUHealthFromResources returns GPU availability as component health based on pre-fetched GPU resources.
 // This is the shared implementation used by both namespace-scoped and cluster-scoped template reconcilers.
 // It avoids re-fetching GPU resources by using the already-fetched gpuResources map.
+// It checks both GPU model availability and minVRAM requirements.
 func GetGPUHealthFromResources(
 	spec aimv1alpha1.AIMServiceTemplateSpecCommon,
 	gpuResources map[string]utils.GPUResourceInfo,
@@ -132,9 +69,6 @@ func GetGPUHealthFromResources(
 	if !TemplateRequiresGPU(spec) {
 		return controllerutils.ComponentHealth{}
 	}
-
-	gpuModel := spec.GpuSelector.Model
-	normalizedModel := utils.NormalizeGPUModel(gpuModel)
 
 	// Check for fetch error
 	if gpuFetchErr != nil {
@@ -147,30 +81,217 @@ func GetGPUHealthFromResources(
 		}
 	}
 
-	// Check if GPU is available in the pre-fetched resources
-	_, available := gpuResources[normalizedModel]
-	if !available {
-		availableGPUs := make([]string, 0, len(gpuResources))
-		for model := range gpuResources {
-			availableGPUs = append(availableGPUs, model)
-		}
-		availableStr := "none"
-		if len(availableGPUs) > 0 {
-			availableStr = strings.Join(availableGPUs, ", ")
-		}
+	gpuModel := spec.Hardware.GPU.Model
+	normalizedModel := utils.NormalizeGPUModel(gpuModel)
 
+	// Check minVRAM requirement first (if specified)
+	if spec.Hardware.GPU.MinVRAM != nil && !spec.Hardware.GPU.MinVRAM.IsZero() {
+		vramHealth := checkVRAMAvailability(spec, gpuResources)
+		if vramHealth.State == constants.AIMStatusNotAvailable {
+			return vramHealth
+		}
+	}
+
+	// If no specific GPU model is required (just gpu.requests > 0), accept any available GPU
+	if normalizedModel == "" {
+		if len(gpuResources) > 0 {
+			// Any GPU is acceptable - pick one for the message
+			availableGPUs := make([]string, 0, len(gpuResources))
+			for model := range gpuResources {
+				availableGPUs = append(availableGPUs, model)
+			}
+			return controllerutils.ComponentHealth{
+				Component: "GPU",
+				State:     constants.AIMStatusReady,
+				Reason:    "GPUAvailable",
+				Message:   "GPU available (any model accepted): " + strings.Join(availableGPUs, ", "),
+			}
+		}
+		// No GPUs available at all
 		return controllerutils.ComponentHealth{
 			Component: "GPU",
 			State:     constants.AIMStatusNotAvailable,
 			Reason:    "GPUNotAvailable",
-			Message:   "Required GPU model '" + normalizedModel + "' not available in cluster. Available: " + availableStr,
+			Message:   "No GPUs available in cluster",
 		}
+	}
+
+	if _, available := gpuResources[normalizedModel]; available {
+		return controllerutils.ComponentHealth{
+			Component: "GPU",
+			State:     constants.AIMStatusReady,
+			Reason:    "GPUAvailable",
+			Message:   "GPU model '" + normalizedModel + "' is available",
+		}
+	}
+
+	// GPU not available - report error
+	availableGPUs := make([]string, 0, len(gpuResources))
+	for model := range gpuResources {
+		availableGPUs = append(availableGPUs, model)
+	}
+	availableStr := "none"
+	if len(availableGPUs) > 0 {
+		availableStr = strings.Join(availableGPUs, ", ")
 	}
 
 	return controllerutils.ComponentHealth{
 		Component: "GPU",
-		State:     constants.AIMStatusReady,
-		Reason:    "GPUAvailable",
-		Message:   "GPU model '" + normalizedModel + "' is available",
+		State:     constants.AIMStatusNotAvailable,
+		Reason:    "GPUNotAvailable",
+		Message:   "Required GPU model '" + gpuModel + "' not available in cluster. Available: " + availableStr,
 	}
+}
+
+// checkVRAMAvailability checks if any GPUs meet the minVRAM requirement.
+// Returns NotAvailable health if no GPUs have sufficient VRAM.
+func checkVRAMAvailability(
+	spec aimv1alpha1.AIMServiceTemplateSpecCommon,
+	gpuResources map[string]utils.GPUResourceInfo,
+) controllerutils.ComponentHealth {
+	minVRAM := spec.Hardware.GPU.MinVRAM
+	if minVRAM == nil || minVRAM.IsZero() {
+		return controllerutils.ComponentHealth{
+			Component: "GPU",
+			State:     constants.AIMStatusReady,
+		}
+	}
+
+	minVRAMBytes := minVRAM.Value()
+
+	// Check if any GPU in the cluster meets the VRAM requirement
+	var gpusWithSufficientVRAM []string
+	var highestVRAM int64
+	var highestVRAMModel string
+
+	for model, info := range gpuResources {
+		vramBytes := utils.ParseVRAMToBytes(info.VRAM)
+		if vramBytes > highestVRAM {
+			highestVRAM = vramBytes
+			highestVRAMModel = model
+		}
+		if vramBytes >= minVRAMBytes {
+			gpusWithSufficientVRAM = append(gpusWithSufficientVRAM, model+" ("+info.VRAM+")")
+		}
+	}
+
+	if len(gpusWithSufficientVRAM) > 0 {
+		return controllerutils.ComponentHealth{
+			Component: "GPU",
+			State:     constants.AIMStatusReady,
+			Reason:    "VRAMAvailable",
+			Message:   "GPUs meeting VRAM requirement: " + strings.Join(gpusWithSufficientVRAM, ", "),
+		}
+	}
+
+	// No GPUs meet the VRAM requirement
+	highestAvailableStr := "none detected"
+	if highestVRAMModel != "" {
+		highestAvailableStr = highestVRAMModel + " (" + formatVRAMBytes(highestVRAM) + ")"
+	}
+
+	return controllerutils.ComponentHealth{
+		Component: "GPU",
+		State:     constants.AIMStatusNotAvailable,
+		Reason:    "VRAMNotAvailable",
+		Message:   "Required minimum VRAM (" + formatVRAMBytes(minVRAMBytes) + ") exceeds available GPUs. Highest available: " + highestAvailableStr,
+	}
+}
+
+// formatVRAMBytes formats bytes as a human-readable VRAM string (e.g., "192Gi").
+func formatVRAMBytes(bytes int64) string {
+	if bytes == 0 {
+		return "0"
+	}
+	gi := bytes / (1024 * 1024 * 1024)
+	return fmt.Sprintf("%dGi", gi)
+}
+
+// BuildNodeAffinityFromGPURequirements builds a NodeAffinity for GPU scheduling based on
+// the template's hardware requirements and actual GPU resources available in the cluster.
+//
+// The function computes device IDs from gpuResources (which contains VRAM from node labels)
+// rather than using static mappings. This ensures scheduling decisions are based on actual
+// cluster state.
+//
+// Note: model and minVram are mutually exclusive (enforced by CEL validation).
+//   - If model specified: Include device IDs for that specific model
+//   - If minVRAM specified: Include device IDs for all GPUs meeting VRAM requirement
+//   - Returns nil if no GPU requirements or no matching GPUs found
+func BuildNodeAffinityFromGPURequirements(
+	spec aimv1alpha1.AIMServiceTemplateSpecCommon,
+	gpuResources map[string]utils.GPUResourceInfo,
+) *corev1.NodeAffinity {
+	// No GPU requirements means no node affinity needed
+	if !TemplateRequiresGPU(spec) {
+		return nil
+	}
+
+	if spec.Hardware == nil || spec.Hardware.GPU == nil {
+		return nil
+	}
+
+	gpuModel := spec.Hardware.GPU.Model
+	minVRAM := spec.Hardware.GPU.MinVRAM
+
+	// If no specific constraints, no affinity needed
+	if gpuModel == "" && (minVRAM == nil || minVRAM.IsZero()) {
+		return nil
+	}
+
+	var deviceIDs []string
+
+	// model and minVram are mutually exclusive (CEL validation ensures this)
+	if gpuModel != "" {
+		// Specific GPU model - get device IDs for that model
+		deviceIDs = utils.GetAMDDeviceIDsForModel(gpuModel)
+	} else if minVRAM != nil && !minVRAM.IsZero() {
+		// VRAM requirement - find all GPUs meeting the requirement from cluster resources
+		deviceIDs = getDeviceIDsForMinVRAM(minVRAM.Value(), gpuResources)
+	}
+
+	// No matching device IDs found
+	if len(deviceIDs) == 0 {
+		return nil
+	}
+
+	// Build the NodeAffinity structure
+	return &corev1.NodeAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{
+				{
+					MatchExpressions: []corev1.NodeSelectorRequirement{
+						{
+							Key:      utils.LabelAMDGPUDeviceID,
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   deviceIDs,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// getDeviceIDsForMinVRAM returns device IDs for all GPUs meeting the VRAM requirement.
+// Uses actual VRAM values from gpuResources (populated from node labels) rather than static mappings.
+func getDeviceIDsForMinVRAM(minVRAMBytes int64, gpuResources map[string]utils.GPUResourceInfo) []string {
+	var matchingModels []string
+
+	// Find all models meeting VRAM requirement from cluster resources
+	for model, info := range gpuResources {
+		vramBytes := utils.ParseVRAMToBytes(info.VRAM)
+		if vramBytes >= minVRAMBytes {
+			matchingModels = append(matchingModels, model)
+		}
+	}
+
+	// Collect device IDs for matching models
+	var allDeviceIDs []string
+	for _, model := range matchingModels {
+		deviceIDs := utils.GetAMDDeviceIDsForModel(model)
+		allDeviceIDs = append(allDeviceIDs, deviceIDs...)
+	}
+
+	return allDeviceIDs
 }

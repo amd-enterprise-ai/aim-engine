@@ -22,6 +22,10 @@
 
 package v1alpha1
 
+import (
+	"k8s.io/apimachinery/pkg/api/resource"
+)
+
 // AIMRuntimeParameters contains the runtime configuration parameters shared
 // across templates and services. Fields use pointers to allow optional usage
 // in different contexts (required in templates, optional in service overrides).
@@ -42,12 +46,13 @@ type AIMRuntimeParameters struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="precision is immutable"
 	Precision *AIMPrecision `json:"precision,omitempty"`
 
-	// GpuSelector specifies GPU requirements for each replica.
-	// Defines the GPU count and model type required for deployment.
+	// Hardware specifies GPU and CPU requirements for each replica.
+	// For GPU models, defines the GPU count and model types required for deployment.
+	// For CPU-only models, defines CPU resource requirements.
 	// This field is immutable after creation.
 	// +optional
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="gpuSelector is immutable"
-	GpuSelector *AIMGpuSelector `json:"gpuSelector,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="hardware is immutable"
+	Hardware *AIMHardwareRequirements `json:"hardware,omitempty"`
 }
 
 // AIMMetric enumerates the targeted service characteristic
@@ -60,7 +65,7 @@ const (
 )
 
 // AIMPrecision enumerates supported numeric precisions
-// +kubebuilder:validation:Enum=bf16;fp16;fp8;int8
+// +kubebuilder:validation:Enum=auto;fp4;fp8;fp16;fp32;bf16;int4;int8
 type AIMPrecision string
 
 const (
@@ -74,22 +79,56 @@ const (
 	AIMPrecisionInt8 AIMPrecision = "int8"
 )
 
-// AIMGpuSelector specifies GPU requirements for a deployment.
-// It defines the number and type of GPUs needed for each replica.
-type AIMGpuSelector struct {
-	// Count is the number of GPU resources requested per replica.
-	// Must be at least 1.
-	// +kubebuilder:validation:Minimum=1
-	Count int32 `json:"count"`
+// AIMHardwareRequirements specifies compute resource requirements for custom models.
+// Used in AIMModelSpec and AIMCustomTemplate to define GPU and CPU needs.
+// +kubebuilder:validation:XValidation:rule="has(self.gpu) || has(self.cpu)",message="at least one of gpu or cpu must be specified"
+type AIMHardwareRequirements struct {
+	// GPU specifies GPU requirements. If not set, no GPUs are requested (CPU-only model).
+	// +optional
+	GPU *AIMGpuRequirements `json:"gpu,omitempty"`
 
-	// Model is the GPU model name required for this deployment.
-	// Examples: `MI300X`, `MI325X`
-	// +kubebuilder:validation:MinLength=1
-	Model string `json:"model"`
+	// CPU specifies CPU requirements.
+	// +optional
+	CPU *AIMCpuRequirements `json:"cpu,omitempty"`
+}
+
+// AIMGpuRequirements specifies GPU resource requirements.
+// +kubebuilder:validation:XValidation:rule="!(has(self.model) && size(self.model) > 0 && has(self.minVram))",message="model and minVram are mutually exclusive; specify either a specific GPU model OR a minimum VRAM requirement, not both"
+type AIMGpuRequirements struct {
+	// Requests is the number of GPUs to set as requests/limits.
+	// Set to 0 to target GPU nodes without consuming GPU resources (useful for testing).
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	Requests int32 `json:"requests,omitempty"`
+
+	// Model limits deployment to a specific GPU model.
+	// Example: "MI300X"
+	// Cannot be combined with minVram.
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	Model string `json:"model,omitempty"`
+
+	// MinVRAM limits deployment to GPUs having at least this much VRAM.
+	// Used for capacity planning when the model size is known but any GPU with
+	// sufficient VRAM is acceptable.
+	// Cannot be combined with model.
+	// +optional
+	MinVRAM *resource.Quantity `json:"minVram,omitempty"`
 
 	// ResourceName is the Kubernetes resource name for GPU resources.
 	// Defaults to "amd.com/gpu" if not specified.
 	// +optional
 	// +kubebuilder:default="amd.com/gpu"
 	ResourceName string `json:"resourceName,omitempty"`
+}
+
+// AIMCpuRequirements specifies CPU resource requirements.
+type AIMCpuRequirements struct {
+	// Requests is the number of CPU cores to request. Required and must be > 0.
+	// +required
+	Requests resource.Quantity `json:"requests"`
+
+	// Limits is the maximum number of CPU cores to allow.
+	// +optional
+	Limits *resource.Quantity `json:"limits,omitempty"`
 }

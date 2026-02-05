@@ -3,7 +3,7 @@ kind: AIMModel
 metadata:
   name: test-error-recovery
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.1.7
+  image: ghcr.io/silogen/aim-dummy:0.1.10
   # Reference a config that will be created later
   runtimeConfigName: recovery-test-config
   discovery:

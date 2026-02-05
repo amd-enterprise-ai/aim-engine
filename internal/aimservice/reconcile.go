@@ -75,10 +75,6 @@ type ServiceFetchResult struct {
 	hpa                    controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]
 	httpRoute              controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
 	templateCache          controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]
-	pvc                    controllerutils.FetchResult[*corev1.PersistentVolumeClaim]
-
-	// Model caches (for template cache)
-	modelCaches controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]
 }
 
 // FetchRemoteState fetches all resources needed for AIMService reconciliation.
@@ -126,26 +122,10 @@ func (r *ServiceReconciler) FetchRemoteState(
 	result.httpRoute = fetchHTTPRoute(ctx, c, service, reconcileCtx.MergedRuntimeConfig.Value)
 
 	// 3. Fetch TemplateCache (always fetch - cascades health from ModelCache/PVC)
+	// Model cache status is resolved through TemplateCache.Status.ModelCaches
 	result.templateCache = fetchTemplateCache(ctx, c, service)
 
-	// 4. Fetch ModelCaches if template cache exists
-	if result.templateCache.OK() && result.templateCache.Value != nil {
-		result.modelCaches = fetchModelCaches(ctx, c, service.Namespace)
-	}
-
-	// 5. Fetch service PVC when needed:
-	// - When caching is Never: always need the service's temp PVC for downloads
-	// - When caching is Auto: need PVC as fallback if template cache is not ready
-	// - When caching is Always: don't need service PVC (use template cache)
-	cachingMode := service.Spec.GetCachingMode()
-	needsServicePVC := cachingMode == aimv1alpha1.CachingModeNever ||
-		(cachingMode == aimv1alpha1.CachingModeAuto && (result.templateCache.Value == nil || result.templateCache.Value.Status.Status != constants.AIMStatusReady))
-
-	if needsServicePVC {
-		result.pvc = fetchServicePVC(ctx, c, service)
-	}
-
-	// 6. Only fetch Model and Template if InferenceService needs to be (re)created.
+	// 4. Only fetch Model and Template if InferenceService needs to be (re)created.
 	// Once the ISVC exists, the config is baked in and we don't need these upstream resources.
 	// Use IsNotFound() rather than !OK() to avoid re-resolving when there's a transient error
 	// fetching an existing ISVC (which could cause SSA to update an existing resource).
@@ -222,11 +202,17 @@ func (obs ServiceObservation) getModelHealth() controllerutils.ComponentHealth {
 
 	// Check if model needs to be created (downstream dependency - pending state)
 	if obs.needsModelCreation {
+		message := "Model will be created"
+		if mr.ImageURI != "" {
+			message = "Model will be created for image " + mr.ImageURI
+		} else if mr.CustomSpec != nil && len(mr.CustomSpec.ModelSources) > 0 {
+			message = "Custom model will be created for " + mr.CustomSpec.ModelSources[0].ModelID
+		}
 		return controllerutils.ComponentHealth{
 			Component:      "Model",
 			State:          constants.AIMStatusPending,
 			Reason:         aimv1alpha1.AIMServiceReasonCreatingModel,
-			Message:        "Model will be created for image " + mr.ImageURI,
+			Message:        message,
 			DependencyType: controllerutils.DependencyTypeDownstream,
 		}
 	}
@@ -660,32 +646,13 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 		DependencyType: controllerutils.DependencyTypeDownstream,
 	}
 
-	cachingMode := obs.service.Spec.GetCachingMode()
-
-	// If caching is disabled, cache is always ready
-	if cachingMode == aimv1alpha1.CachingModeNever {
-		health.State = constants.AIMStatusReady
-		health.Reason = aimv1alpha1.AIMServiceReasonCacheReady
-		health.Message = "Caching disabled"
-		return health
-	}
-
-	// Check for storage size calculation errors (invalid template configuration)
-	if obs.storageSizeError != nil {
-		health.State = constants.AIMStatusFailed
-		health.Reason = aimv1alpha1.AIMServiceReasonStorageSizeError
-		health.Message = obs.storageSizeError.Error()
-		health.Errors = []error{obs.storageSizeError}
-		return health
-	}
-
-	// Check template cache
+	// All caching now goes through template cache (both Shared and Dedicated modes)
 	if obs.templateCache.Value != nil {
 		switch obs.templateCache.Value.Status.Status {
 		case constants.AIMStatusReady:
 			health.State = constants.AIMStatusReady
 			health.Reason = aimv1alpha1.AIMServiceReasonCacheReady
-			health.Message = "Template cache is available"
+			health.Message = "Template cache is ready"
 		case constants.AIMStatusProgressing:
 			health.State = constants.AIMStatusProgressing
 			health.Reason = aimv1alpha1.AIMServiceReasonCacheNotReady
@@ -702,32 +669,10 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 		return health
 	}
 
-	// No template cache - check PVC for fallback storage
-	if obs.pvc.Value != nil {
-		if obs.pvc.Value.Status.Phase == corev1.ClaimBound {
-			health.State = constants.AIMStatusReady
-			health.Reason = aimv1alpha1.AIMServiceReasonStorageReady
-			health.Message = "Service PVC is bound"
-		} else {
-			health.State = constants.AIMStatusProgressing
-			health.Reason = aimv1alpha1.AIMServiceReasonPVCNotBound
-			health.Message = "Service PVC is not bound yet"
-		}
-		return health
-	}
-
-	// For Auto mode, cache is optional
-	if cachingMode == aimv1alpha1.CachingModeAuto {
-		health.State = constants.AIMStatusReady
-		health.Reason = aimv1alpha1.AIMServiceReasonCacheReady
-		health.Message = "No cache available, using download mode"
-		return health
-	}
-
-	// For Always mode, cache is required
+	// Template cache doesn't exist yet - being created
 	health.State = constants.AIMStatusProgressing
 	health.Reason = aimv1alpha1.AIMServiceReasonCacheCreating
-	health.Message = "Waiting for cache to be created"
+	health.Message = "Creating template cache"
 	return health
 }
 
@@ -746,10 +691,6 @@ type ServiceObservation struct {
 	// pendingModelName is the validated model name to create (set when needsModelCreation is true).
 	pendingModelName string
 
-	// storageSizeError is set when storage size calculation fails due to missing model source sizes.
-	// This indicates the template hasn't fully resolved its model sources yet.
-	storageSizeError error
-
 	// runtimeStatus captures the computed runtime status including replica counts and resource usage.
 	// Derived in ComposeState from the InferenceService and pods.
 	runtimeStatus *aimv1alpha1.AIMServiceRuntimeStatus
@@ -763,11 +704,13 @@ func (r *ServiceReconciler) ComposeState(
 ) ServiceObservation {
 	obs := ServiceObservation{ServiceFetchResult: fetch}
 
-	// Derive needsModelCreation: When a service specifies Model.Image (image URI) instead of
-	// Model.Name (reference), we search for existing models with that image. If no model is found
-	// AND no error occurred during search, then we need to create a new AIMModel for this image.
-	// The model is created without owner references so it can be shared across services.
 	mr := fetch.modelResult
+
+	// Derive needsModelCreation for Image-based models:
+	// When a service specifies Model.Image (image URI) instead of Model.Name (reference),
+	// we search for existing models with that image. If no model is found AND no error occurred
+	// during search, then we need to create a new AIMModel for this image.
+	// The model is created without owner references so it can be shared across services.
 	if mr.ImageURI != "" && mr.Model.Value == nil && mr.ClusterModel.Value == nil && mr.Model.Error == nil && mr.ClusterModel.Error == nil {
 		// Validate the image URI can generate a valid model name
 		modelName, err := GenerateModelName(mr.ImageURI)
@@ -784,46 +727,20 @@ func (r *ServiceReconciler) ComposeState(
 		}
 	}
 
-	// Validate storage size can be calculated when template has model sources
-	// This catches configuration issues early (model sources without sizes)
-	obs.storageSizeError = r.validateStorageSize(fetch)
+	// Derive needsModelCreation for Custom models:
+	// When a service specifies Model.Custom, we search for existing models matching the spec.
+	// If no model is found AND no error occurred during search, create a new AIMModel.
+	// Custom models are created with owner references to the AIMService.
+	if mr.CustomSpec != nil && mr.Model.Value == nil && mr.ClusterModel.Value == nil && mr.Model.Error == nil && mr.ClusterModel.Error == nil {
+		modelName := GenerateCustomModelName(mr.CustomSpec)
+		obs.needsModelCreation = true
+		obs.pendingModelName = modelName
+	}
 
 	// Compute runtime status from InferenceService and pods
 	obs.runtimeStatus = r.computeRuntimeStatus(fetch)
 
 	return obs
-}
-
-// validateStorageSize checks if storage size can be calculated for the template's model sources.
-// Returns an error if model sources exist but have invalid/missing sizes.
-func (r *ServiceReconciler) validateStorageSize(fetch ServiceFetchResult) error {
-	// Get template status with model sources
-	var templateStatus *aimv1alpha1.AIMServiceTemplateStatus
-	if fetch.template.Value != nil {
-		templateStatus = &fetch.template.Value.Status
-	} else if fetch.clusterTemplate.Value != nil {
-		templateStatus = &fetch.clusterTemplate.Value.Status
-	}
-
-	// No template or no model sources - nothing to validate
-	if templateStatus == nil || len(templateStatus.ModelSources) == 0 {
-		return nil
-	}
-
-	// Template cache already exists and is ready - no need to calculate
-	if fetch.templateCache.Value != nil && fetch.templateCache.Value.Status.Status == constants.AIMStatusReady {
-		return nil
-	}
-
-	// PVC already exists - no need to calculate
-	if fetch.pvc.Value != nil {
-		return nil
-	}
-
-	// Try to calculate storage size
-	headroomPercent := resolvePVCHeadroomPercent(fetch.service, ServiceObservation{ServiceFetchResult: fetch})
-	_, err := calculateRequiredStorageSize(templateStatus.ModelSources, headroomPercent)
-	return err
 }
 
 // computeRuntimeStatus extracts replica counts from HPA or falls back to spec defaults.
@@ -887,6 +804,8 @@ func (r *ServiceReconciler) PlanResources(
 	planResult := controllerutils.PlanResult{}
 
 	// 0. Plan model creation if needed (before template check - model can be created independently)
+	// Both custom and image-based models are shared (no owner reference)
+	// Custom models use service label for reconciliation tracking
 	if model := planModel(service, obs); model != nil {
 		planResult.ApplyWithoutOwnerRef(model)
 	}
@@ -918,18 +837,22 @@ func (r *ServiceReconciler) PlanResources(
 		}
 	}
 
-	// 3. Plan template cache if caching is enabled
-	// Use ApplyWithoutOwnerRef so caches can be shared across services and outlive the creating service
-	if templateCache := planTemplateCache(service, templateName, templateStatus, obs); templateCache != nil {
-		planResult.ApplyWithoutOwnerRef(templateCache)
+	// 3. Plan template cache for all caching modes
+	// Ownership depends on caching mode:
+	// - Always (Shared mode): no owner reference, cache persists independently
+	// - Never/Auto (Dedicated mode): owned by service, garbage collected with it
+	if templateCache := planTemplateCache(service, templateName, templateNsSpec, templateStatus, obs); templateCache != nil {
+		cachingMode := service.Spec.GetCachingMode()
+		if cachingMode == aimv1alpha1.CachingModeAlways {
+			// Shared mode: cache persists independently
+			planResult.ApplyWithoutOwnerRef(templateCache)
+		} else {
+			// Dedicated mode: cache is owned by service
+			planResult.Apply(templateCache)
+		}
 	}
 
-	// 4. Plan PVC if no template cache available
-	if pvc := planServicePVC(service, templateName, templateStatus, obs); pvc != nil {
-		planResult.Apply(pvc)
-	}
-
-	// 5. Plan InferenceService
+	// 4. Plan InferenceService
 	if isvc := planInferenceService(ctx, service, templateName, templateNsSpec, templateStatus, obs); isvc != nil {
 		planResult.Apply(isvc)
 	}

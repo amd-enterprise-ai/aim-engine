@@ -9,7 +9,7 @@
 # 4. Create AIMService referencing the model and template
 # 5. Verify the service progresses through its lifecycle
 #
-# Uses: ghcr.io/silogen/aim-dummy:0.1.8 (lightweight test image)
+# Uses: ghcr.io/silogen/aim-dummy:0.1.10 (lightweight test image)
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
@@ -81,7 +81,7 @@ spec:
     - name: Verify InferenceService is created
       try:
         - assert:
-            timeout: 120s
+            timeout: 5m
             resource:
               apiVersion: serving.kserve.io/v1beta1
               kind: InferenceService

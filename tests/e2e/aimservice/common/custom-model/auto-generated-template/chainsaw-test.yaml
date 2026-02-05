@@ -1,0 +1,86 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Custom Model Test: Auto-Generated Template
+#
+# This test validates that when an AIMModel has modelSources and custom.hardware
+# but NO customTemplates, a single template is auto-generated from the hardware spec.
+#
+# Tested behavior:
+# - Single template auto-generated when customTemplates is empty
+# - Template inherits hardware from custom.hardware
+# - Template inherits modelSources from model spec
+# - Model status.sourceType is Custom
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: custom-model-auto-generated-template
+spec:
+  description: Test that custom model without customTemplates auto-generates a single template
+  timeouts:
+    apply: 30s
+    assert: 60s
+  steps:
+    - name: Create custom model with hardware but no customTemplates
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert model becomes ready with Custom sourceType
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: auto-gen-template-test
+              status:
+                status: Ready
+                sourceType: Custom
+
+    - name: Assert exactly one template is auto-generated
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: auto-gen-template-test
+                  aim.eai.amd.com/origin: auto-generated
+              spec:
+                modelName: auto-gen-template-test
+                # Hardware inherited from custom.hardware
+                hardware:
+                  gpu:
+                    requests: 1
+                    model: MI300X
+                # ModelSources copied from model spec
+                modelSources:
+                  - modelId: test/auto-gen-model
+                    sourceUri: hf://sshleifer/tiny-gpt2
+              status:
+                # Template becomes Ready (or NotAvailable if GPU not present)
+                resolvedHardware:
+                  gpu:
+                    requests: 1
+                    model: MI300X
+                hardwareSummary: 1 x MI300X
+                modelSources:
+                  - modelId: test/auto-gen-model
+                    sourceUri: hf://sshleifer/tiny-gpt2
+
+    - name: Verify only one template exists for this model
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              count=$(kubectl get aimservicetemplates -n "$NAMESPACE" -l aim.eai.amd.com/model=auto-gen-template-test -o json | jq '.items | length')
+              if [ "$count" -ne 1 ]; then
+                echo "Expected exactly 1 template, found $count"
+                exit 1
+              fi
+              echo "Found exactly 1 template as expected"

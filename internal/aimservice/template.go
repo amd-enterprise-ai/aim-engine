@@ -274,9 +274,9 @@ func buildDerivedTemplate(
 			precision := *service.Spec.Overrides.Precision
 			specCommon.Precision = &precision
 		}
-		if service.Spec.Overrides.GpuSelector != nil {
-			selector := *service.Spec.Overrides.GpuSelector
-			specCommon.GpuSelector = &selector
+		if service.Spec.Overrides.Hardware != nil {
+			hardware := service.Spec.Overrides.Hardware.DeepCopy()
+			specCommon.Hardware = hardware
 		}
 	}
 
@@ -366,17 +366,17 @@ func buildOverrideNameParts(overrides *aimv1alpha1.AIMServiceOverrides) (namePar
 		return nil, nil
 	}
 
-	// GPU model (e.g., "mi325x")
-	if overrides.GpuSelector != nil && overrides.GpuSelector.Model != "" {
-		gpuLower := strings.ToLower(overrides.GpuSelector.Model)
+	// GPU model
+	if overrides.Hardware != nil && overrides.Hardware.GPU != nil && overrides.Hardware.GPU.Model != "" {
+		gpuLower := strings.ToLower(overrides.Hardware.GPU.Model)
 		nameParts = append(nameParts, gpuLower)
-		hashInputs = append(hashInputs, "gpu", overrides.GpuSelector.Model)
+		hashInputs = append(hashInputs, "gpu", overrides.Hardware.GPU.Model)
 	}
 
 	// GPU count (e.g., "4gpu")
-	if overrides.GpuSelector != nil && overrides.GpuSelector.Count > 0 {
-		nameParts = append(nameParts, fmt.Sprintf("%dgpu", overrides.GpuSelector.Count))
-		hashInputs = append(hashInputs, "count", overrides.GpuSelector.Count)
+	if overrides.Hardware != nil && overrides.Hardware.GPU != nil && overrides.Hardware.GPU.Requests > 0 {
+		nameParts = append(nameParts, fmt.Sprintf("%dgpu", overrides.Hardware.GPU.Requests))
+		hashInputs = append(hashInputs, "count", overrides.Hardware.GPU.Requests)
 	}
 
 	// Precision (e.g., "fp16")

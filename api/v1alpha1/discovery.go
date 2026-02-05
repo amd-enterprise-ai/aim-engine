@@ -23,6 +23,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -123,10 +124,13 @@ type AIMDiscoveryProfileMetadata struct {
 // AIMModelSource describes a model artifact that must be downloaded for inference.
 // Discovery extracts these from the container's configuration to enable caching and validation.
 type AIMModelSource struct {
-	// Name is a human-readable identifier for this model artifact.
-	// May be empty if the source represents the primary model.
-	// +optional
-	Name string `json:"name,omitempty"`
+	// ModelID is the canonical identifier in {org}/{name} format.
+	// Determines the cache mount path: /workspace/model-cache/{modelId}
+	// For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
+	// For S3 sources, users define their own organizational structure.
+	// +required
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$`
+	ModelID string `json:"modelId"`
 
 	// SourceURI is the location from which the model should be downloaded.
 	// Supported schemes:
@@ -137,7 +141,16 @@ type AIMModelSource struct {
 
 	// Size is the expected storage space required for this model artifact.
 	// Used for PVC sizing and capacity planning during cache creation.
-	// Optional for custom models (will be populated by discovery job).
+	// Optional - if not specified, the download job will discover the size automatically.
+	// Can be set explicitly to pre-allocate storage or override auto-discovery.
 	// +optional
 	Size *resource.Quantity `json:"size,omitempty"`
+
+	// Env specifies per-source credential overrides.
+	// These variables are used for authentication when downloading this specific source.
+	// Takes precedence over base-level env for the same variable name.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Env []corev1.EnvVar `json:"env,omitempty"`
 }

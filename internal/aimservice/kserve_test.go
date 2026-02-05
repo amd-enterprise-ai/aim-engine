@@ -157,7 +157,7 @@ func TestIsReadyForInferenceService(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:    "caching mode Auto - ready with PVC",
+			name:    "caching mode Auto - ready with template cache",
 			service: NewService("svc").Build(), // Auto is default
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
@@ -166,15 +166,19 @@ func TestIsReadyForInferenceService(t *testing.T) {
 							Value: NewModel("m").WithStatus(constants.AIMStatusReady).Build(),
 						},
 					},
-					pvc: controllerutils.FetchResult[*corev1.PersistentVolumeClaim]{
-						Value: &corev1.PersistentVolumeClaim{},
+					templateCache: controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{
+						Value: &aimv1alpha1.AIMTemplateCache{
+							Status: aimv1alpha1.AIMTemplateCacheStatus{
+								Status: constants.AIMStatusReady,
+							},
+						},
 					},
 				},
 			},
 			expected: true,
 		},
 		{
-			name:    "caching mode Never - ready with PVC",
+			name:    "caching mode Never - ready with template cache",
 			service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeNever).Build(),
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
@@ -183,15 +187,22 @@ func TestIsReadyForInferenceService(t *testing.T) {
 							Value: NewModel("m").WithStatus(constants.AIMStatusReady).Build(),
 						},
 					},
-					pvc: controllerutils.FetchResult[*corev1.PersistentVolumeClaim]{
-						Value: &corev1.PersistentVolumeClaim{},
+					templateCache: controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{
+						Value: &aimv1alpha1.AIMTemplateCache{
+							Spec: aimv1alpha1.AIMTemplateCacheSpec{
+								Mode: aimv1alpha1.TemplateCacheModeDedicated,
+							},
+							Status: aimv1alpha1.AIMTemplateCacheStatus{
+								Status: constants.AIMStatusReady,
+							},
+						},
 					},
 				},
 			},
 			expected: true,
 		},
 		{
-			name:    "cluster model ready",
+			name:    "cluster model ready with template cache",
 			service: NewService("svc").Build(),
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
@@ -200,8 +211,12 @@ func TestIsReadyForInferenceService(t *testing.T) {
 							Value: NewClusterModel("cm").WithStatus(constants.AIMStatusReady).Build(),
 						},
 					},
-					pvc: controllerutils.FetchResult[*corev1.PersistentVolumeClaim]{
-						Value: &corev1.PersistentVolumeClaim{},
+					templateCache: controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{
+						Value: &aimv1alpha1.AIMTemplateCache{
+							Status: aimv1alpha1.AIMTemplateCacheStatus{
+								Status: constants.AIMStatusReady,
+							},
+						},
 					},
 				},
 			},
@@ -533,6 +548,18 @@ func TestBuildMergedEnvVars(t *testing.T) {
 			templateStatus: nil,
 			obs:            ServiceObservation{},
 			expectContains: []string{constants.EnvAIMMetric, constants.EnvAIMPrecision},
+		},
+		{
+			name:    "template spec profile id",
+			service: &aimv1alpha1.AIMService{},
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpec{
+				AIMServiceTemplateSpecCommon: aimv1alpha1.AIMServiceTemplateSpecCommon{
+					ProfileId: "my-profile-123",
+				},
+			},
+			templateStatus: nil,
+			obs:            ServiceObservation{},
+			expectContains: []string{constants.EnvAIMProfileID},
 		},
 		{
 			name:         "profile env vars",

@@ -4,6 +4,7 @@ metadata:
   name: test-template-success
 spec:
   modelName: test-model-success
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X

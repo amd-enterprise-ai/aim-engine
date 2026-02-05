@@ -28,9 +28,10 @@ metadata:
   name: test-template-concurrent-${i}
 spec:
   modelName: test-model-concurrent
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 EOF
 done
 

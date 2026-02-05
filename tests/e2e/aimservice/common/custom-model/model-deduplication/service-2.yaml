@@ -1,0 +1,20 @@
+# Second service with IDENTICAL custom model spec
+# Should reuse the AIMModel created by first service
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-dedup-service-2
+spec:
+  model:
+    # Identical custom spec - should find and reuse existing model
+    custom:
+      baseImage: ghcr.io/silogen/aim-dummy:0.1.10
+      modelSources:
+        - modelId: shared/dedup-model
+          sourceUri: hf://sshleifer/tiny-gpt2
+      hardware:
+        gpu:
+          requests: 1
+  template:
+    allowUnoptimized: true
+  replicas: 1

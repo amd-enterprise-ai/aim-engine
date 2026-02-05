@@ -68,6 +68,9 @@ const (
 	LabelValueCacheTypeTemp = "temp"
 	// LabelValueCacheTypePersistent indicates a persistent cache
 	LabelValueCacheTypePersistent = "persistent"
+	// LabelValueCacheTypeDedicated indicates a dedicated cache owned by an AIMService.
+	// These caches are created for non-cached modes (Never/Auto) to enable unified downloads.
+	LabelValueCacheTypeDedicated = "dedicated"
 )
 
 // Discovery circuit breaker configuration
@@ -234,8 +237,13 @@ const (
 	EnvAIMMetric = "AIM_METRIC"
 	// EnvAIMPrecision is the environment variable for the numeric precision
 	EnvAIMPrecision = "AIM_PRECISION"
+	// EnvAIMProfileID is the environment variable for the profile ID
+	EnvAIMProfileID = "AIM_PROFILE_ID"
 	// EnvVLLMEnableMetrics enables vLLM metrics
 	EnvVLLMEnableMetrics = "VLLM_ENABLE_METRICS"
+
+	EnvAIMModelID = "AIM_MODEL_ID"
+	// EnvAIMModelID is the environment variable for the model ID
 )
 
 // KServe annotation and label keys

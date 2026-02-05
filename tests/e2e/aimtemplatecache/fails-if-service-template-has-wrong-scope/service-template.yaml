@@ -5,7 +5,9 @@ metadata:
 spec:
   modelName: test-model
   modelSources:
-    - sourceUri: hf://hello/world
+    - modelId: hello/world
+      sourceUri: hf://hello/world
       size: 2Gi
-    - sourceUri: s3://hello2/world2
+    - modelId: hello2/world2
+      sourceUri: s3://hello2/world2
       size: 4Gi

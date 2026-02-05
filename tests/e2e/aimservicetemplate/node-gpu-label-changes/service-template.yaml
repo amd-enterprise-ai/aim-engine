@@ -4,10 +4,11 @@ metadata:
   name: node-gpu-test
 spec:
   modelName: node-gpu-test-model
-  gpuSelector:
-    model: MI355X
-    count: 1
+  hardware:
+    gpu:
+      requests: 1
+      model: MI355X
   modelSources:
-    - name: test-model
+    - modelId: test/model
       sourceUri: hf://test/model
       size: "1Gi"

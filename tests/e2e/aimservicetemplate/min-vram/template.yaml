@@ -1,0 +1,15 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-min-vram-template
+spec:
+  modelName: test-min-vram-model
+  hardware:
+    gpu:
+      requests: 1
+      # Require at least 64GB VRAM - matches MI210, MI250X, MI300X, MI325X, MI355X
+      minVram: 64Gi
+  modelSources:
+    - modelId: test/model
+      sourceUri: hf://test/model
+      size: "1Gi"

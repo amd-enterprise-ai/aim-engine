@@ -9,7 +9,11 @@ nodes:
     labels:
       # AMD Instinct MI300X (device ID without 0x prefix, matching k8s-device-plugin format)
       amd.com/gpu.device-id: "74a1"
+      # VRAM capacity for MI300X
+      amd.com/gpu.vram: "192G"
   - role: worker
     labels:
       # AMD Instinct MI350X (device ID without 0x prefix, matching k8s-device-plugin format)
       amd.com/gpu.device-id: "75a0"
+      # VRAM capacity for MI350X
+      amd.com/gpu.vram: "288G"

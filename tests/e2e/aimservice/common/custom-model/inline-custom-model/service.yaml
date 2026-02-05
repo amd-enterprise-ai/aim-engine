@@ -1,0 +1,21 @@
+# AIMService with inline custom model specification
+# Controller should auto-create AIMModel and AIMServiceTemplate
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-inline-custom-model
+spec:
+  model:
+    # Inline custom model - controller will auto-create AIMModel
+    custom:
+      baseImage: ghcr.io/silogen/aim-dummy:0.1.10
+      modelSources:
+        - modelId: inline/test-model
+          sourceUri: hf://sshleifer/tiny-gpt2
+      hardware:
+        gpu:
+          requests: 1
+  # Allow unoptimized templates since custom models create unoptimized templates
+  template:
+    allowUnoptimized: true
+  replicas: 1

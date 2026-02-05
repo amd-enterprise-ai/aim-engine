@@ -258,63 +258,63 @@ func TestTemplateRequiresGPU(t *testing.T) {
 		expected bool
 	}{
 		{
-			name: "GPU selector with model",
+			name: "GPU with model",
 			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					GpuSelector: &aimv1alpha1.AIMGpuSelector{
-						Model: "mi300x",
-						Count: 2,
-					},
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
+						Model:    "mi300x",
+						Requests: 2,
+					}},
 				},
 			},
 			expected: true,
 		},
 		{
-			name: "GPU selector with model and whitespace",
+			name: "GPU with model and whitespace padding",
 			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					GpuSelector: &aimv1alpha1.AIMGpuSelector{
-						Model: "  mi300x  ",
-						Count: 1,
-					},
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
+						Model:    "  mi300x  ",
+						Requests: 1,
+					}},
 				},
 			},
 			expected: true,
 		},
 		{
-			name: "GPU selector with empty model",
+			name: "GPU with zero requests but valid model",
 			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					GpuSelector: &aimv1alpha1.AIMGpuSelector{
-						Model: "",
-						Count: 2,
-					},
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
+						Model:    "mi300x",
+						Requests: 0,
+					}},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "GPU with zero requests and no model",
+			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+				ModelName: "test-model",
+				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
+						Model:    "",
+						Requests: 0,
+					}},
 				},
 			},
 			expected: false,
 		},
 		{
-			name: "GPU selector with whitespace-only model",
+			name: "no GPU",
 			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 				ModelName: "test-model",
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					GpuSelector: &aimv1alpha1.AIMGpuSelector{
-						Model: "   ",
-						Count: 2,
-					},
-				},
-			},
-			expected: false,
-		},
-		{
-			name: "no GPU selector",
-			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
-				ModelName: "test-model",
-				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-					GpuSelector: nil,
+					Hardware: nil,
 				},
 			},
 			expected: false,

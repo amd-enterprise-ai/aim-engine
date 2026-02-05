@@ -339,11 +339,284 @@ spec:
     autoCreateTemplates: true
 ```
 
+## Custom Models
+
+Custom models allow you to deploy models from external sources (S3, HuggingFace) without requiring a pre-built AIM container image. The AIM operator uses a generic base container that downloads model weights at runtime.
+
+### Overview
+
+Unlike image-based models where model weights are embedded in the container image, custom models:
+
+- Download weights from external sources (S3 or HuggingFace)
+- Use the `amdenterpriseai/aim-base` container for inference
+- Skip discovery (no image metadata extraction needed)
+- Require explicit hardware specifications
+
+### Creating Custom Models
+
+There are two ways to create custom models:
+
+#### 1. Direct AIMModel with modelSources
+
+Create an AIMModel or AIMClusterModel with `modelSources` instead of relying on image discovery:
+
+```yaml
+apiVersion: aim.silogen.ai/v1alpha1
+kind: AIMModel
+metadata:
+  name: my-custom-llama
+  namespace: ml-team
+spec:
+  image: amdenterpriseai/aim-base:latest
+  modelSources:
+    - modelId: meta-llama/Llama-3-8B
+      sourceUri: s3://my-bucket/models/llama-3-8b
+      # size: 16Gi  # Optional - auto-discovered by download job if omitted
+  custom:
+    hardware:
+      gpu:
+        requests: 1
+        models:
+          - MI300X
+```
+
+#### 2. Inline Custom Model in AIMService
+
+Create an AIMService with `spec.model.custom` to auto-create a custom model:
+
+```yaml
+apiVersion: aim.silogen.ai/v1alpha1
+kind: AIMService
+metadata:
+  name: my-llama-service
+  namespace: ml-team
+spec:
+  model:
+    custom:
+      modelSources:
+        - modelId: meta-llama/Llama-3-8B
+          sourceUri: hf://meta-llama/Llama-3-8B
+          # size is optional - auto-discovered by download job
+      hardware:
+        gpu:
+          requests: 1
+  template:
+    allowUnoptimized: true  # Required - custom models default to unoptimized
+```
+
+The service automatically creates a namespace-scoped AIMModel. Custom models are shared resources that persist independently of the service, allowing them to be reused by other services or manually managed.
+
+### Model Sources
+
+Each model source specifies:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `modelId` | Yes | Canonical identifier in `{org}/{name}` format. Determines the cache mount path. |
+| `sourceUri` | Yes | Download location. Schemes: `hf://org/model` (HuggingFace) or `s3://bucket/key` (S3). For S3, use the bucket name directly without the service hostname (e.g., `s3://my-bucket/models/llama`). |
+| `size` | No | Storage size for PVC provisioning. If omitted, the download job automatically discovers the size. Can be set explicitly to pre-allocate storage. |
+| `env` | No | Per-source credential overrides (e.g., `HF_TOKEN`, `AWS_ACCESS_KEY_ID`) |
+
+### Hardware Requirements
+
+Custom models require explicit hardware specifications since discovery doesn't run.
+These go under `spec.custom.hardware` for AIMModel, or `spec.model.custom.hardware` for inline AIMService:
+
+```yaml
+# For AIMModel:
+spec:
+  custom:
+    hardware:
+      gpu:
+        requests: 2          # Number of GPUs required
+        models:              # Optional: specific GPU models for node affinity
+          - MI300X
+          - MI250
+        minVram: 64Gi        # Optional: minimum VRAM per GPU for capacity planning
+      cpu:
+        requests: "4"        # Required if cpu field is specified: CPU requests
+        limits: "8"          # Optional: CPU limits
+```
+
+If no `models` are specified, the workload can run on any available GPU. The `minVram` field is used for capacity planning when the model size is known.
+
+### Template Generation
+
+When `modelSources` is specified:
+
+1. **Without custom.templates**: A single template is auto-generated using `custom.hardware`
+2. **With custom.templates**: Templates are created per entry, each inheriting from `custom.hardware` unless overridden
+
+Templates also inherit the `type` field from `spec.custom.type`, which defaults to `unoptimized`. This can be overridden per-template via `customTemplates[].type`.
+
+```yaml
+spec:
+  modelSources:
+    - modelId: meta-llama/Llama-3-8B
+      sourceUri: s3://bucket/model
+  custom:
+    type: unoptimized  # Default - can be omitted
+    hardware:
+      gpu:
+        requests: 1
+    templates:
+      - name: high-memory  # Generated as {modelName}-custom-[{name}][-{precision}][-{gpu}]-{hash}
+        hardware:
+          gpu:
+            requests: 2  # Override
+        env:
+          - name: VLLM_GPU_MEMORY_UTILIZATION
+            value: "0.95"
+      - name: standard
+        # Inherits hardware and type from custom.*
+```
+
+#### Unoptimized Templates and allowUnoptimized
+
+Custom models generate templates with `type: unoptimized` by default because no discovery job runs to validate performance characteristics. This has an important implication:
+
+**Services will not auto-select unoptimized templates unless explicitly allowed.**
+
+When creating an AIMService that uses a custom model, you must either:
+
+1. **Set `allowUnoptimized: true`** on the service's template selector:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: my-service
+spec:
+  model:
+    name: my-custom-model
+  template:
+    allowUnoptimized: true  # Required for custom model templates
+```
+
+2. **Explicitly specify the template name** to bypass auto-selection:
+
+```yaml
+spec:
+  template:
+    name: my-custom-model-custom-abc123  # Explicit template name
+```
+
+This safety mechanism prevents accidentally deploying unoptimized configurations in production. See [Template Selection](service.md#template-selection) for more details on how templates are selected and the role of optimization levels.
+
+### Authentication
+
+Configure credentials for private sources:
+
+#### HuggingFace
+
+```yaml
+spec:
+  modelSources:
+    - modelId: meta-llama/Llama-3-8B
+      sourceUri: hf://meta-llama/Llama-3-8B
+      size: 16Gi
+      env:
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-credentials
+              key: token
+```
+
+#### S3-Compatible Storage
+
+```yaml
+spec:
+  modelSources:
+    - modelId: my-org/custom-model
+      sourceUri: s3://my-bucket/models/custom
+      size: 32Gi
+      env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: s3-credentials
+              key: access-key
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: s3-credentials
+              key: secret-key
+        - name: AWS_ENDPOINT_URL
+          value: "https://s3.my-provider.com"
+```
+
+### Lifecycle Differences
+
+| Aspect | Image-Based Models | Custom Models |
+|--------|-------------------|---------------|
+| Model weights | source URI embedded in image | source URI in spec |
+| Discovery | Runs to extract metadata | Skipped |
+| Hardware | Optional (from discovery) | Required |
+| Templates | Auto-generated from image labels | Auto-generated from spec |
+| Caching | Uses shared template cache | Uses dedicated template cache |
+
+### Status
+
+Custom models report `sourceType: Custom` in their status:
+
+```yaml
+status:
+  status: Ready
+  sourceType: Custom
+  conditions:
+    - type: Ready
+      status: "True"
+```
+
+### Example: Full Custom Model Deployment
+
+```yaml
+# Secret for HuggingFace access
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hf-token
+  namespace: ml-team
+type: Opaque
+stringData:
+  token: hf_xxxxxxxxxxxxx
+---
+# Custom model service
+apiVersion: aim.silogen.ai/v1alpha1
+kind: AIMService
+metadata:
+  name: llama-custom
+  namespace: ml-team
+spec:
+  model:
+    custom:
+      modelSources:
+        - modelId: meta-llama/Llama-3.1-8B-Instruct
+          sourceUri: hf://meta-llama/Llama-3.1-8B-Instruct
+          # size is optional - auto-discovered by download job
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+      hardware:
+        gpu:
+          requests: 1
+          models:
+            - MI300X
+  template:
+    allowUnoptimized: true  # Required - custom models default to unoptimized
+  replicas: 1
+```
+
 ## Related Documentation
 
 - [Templates](templates.md) - Understanding ServiceTemplates and discovery
 - [Runtime Config Concepts](runtime-config.md) - Resolution details including model creation
 - [Services Usage](../usage/services.md) - Deploying services
+- [Caching](caching.md) - Model caching and download architecture
 
 ## Note on Terminology
 

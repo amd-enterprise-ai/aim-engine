@@ -5,7 +5,7 @@
 # This test validates that AIMService can automatically select a template
 # when none is explicitly specified, using the model's defaultServiceTemplate.
 #
-# Uses: ghcr.io/silogen/aim-dummy:0.1.8 (lightweight test image)
+# Uses: ghcr.io/silogen/aim-dummy:0.1.10 (lightweight test image)
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test

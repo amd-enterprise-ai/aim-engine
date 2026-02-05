@@ -26,10 +26,8 @@ import (
 	"context"
 	"fmt"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -45,110 +43,6 @@ const (
 )
 
 // =======================================================
-// TEMPORARY SERVICE PVC WHEN CACHING IS NOT USED
-// =======================================================
-
-// GenerateServicePVCName creates a deterministic name for the service's temporary PVC.
-func GenerateServicePVCName(serviceName, namespace string) (string, error) {
-	return utils.GenerateDerivedName([]string{serviceName, "temp-cache"}, utils.WithHashSource(namespace))
-}
-
-// planServicePVC creates a PVC for the service if no template cache is available.
-// Returns nil if PVC creation is not needed or prerequisites are not met.
-func planServicePVC(
-	service *aimv1alpha1.AIMService,
-	templateName string,
-	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
-	obs ServiceObservation,
-) client.Object {
-	cachingMode := service.Spec.GetCachingMode()
-
-	// If caching is required (Always mode), don't create a temp PVC
-	if cachingMode == aimv1alpha1.CachingModeAlways {
-		return nil
-	}
-
-	// If template cache exists and is ready, don't need PVC
-	if obs.templateCache.Value != nil &&
-		obs.templateCache.Value.Status.Status == constants.AIMStatusReady {
-		return nil
-	}
-
-	// If PVC already exists, don't create again
-	if obs.pvc.Value != nil {
-		return nil
-	}
-
-	// Need model sources to calculate size - waiting for template to be ready
-	if templateStatus == nil || len(templateStatus.ModelSources) == 0 {
-		return nil
-	}
-
-	// Calculate required size - if this fails, model sources don't have sizes yet,
-	// which means template is still resolving. Return nil to wait for next reconcile.
-	headroomPercent := resolvePVCHeadroomPercent(service, obs)
-	size, err := calculateRequiredStorageSize(templateStatus.ModelSources, headroomPercent)
-	if err != nil {
-		// Model sources exist but don't have sizes - template is still resolving
-		return nil
-	}
-
-	pvcName, err := GenerateServicePVCName(service.Name, service.Namespace)
-	if err != nil {
-		// Name generation failed - this would be a programming error
-		return nil
-	}
-
-	storageClassName := resolveStorageClassName(service, obs)
-	var sc *string
-	if storageClassName != "" {
-		sc = &storageClassName
-	}
-
-	serviceLabelValue, _ := utils.SanitizeLabelValue(service.Name)
-	templateLabelValue, _ := utils.SanitizeLabelValue(templateName)
-
-	pvc := &corev1.PersistentVolumeClaim{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "PersistentVolumeClaim",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      pvcName,
-			Namespace: service.Namespace,
-			Labels: map[string]string{
-				constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
-				constants.LabelK8sComponent: constants.ComponentModelStorage,
-				constants.LabelService:      serviceLabelValue,
-				constants.LabelCacheType:    constants.LabelValueCacheTypeTemp,
-				constants.LabelTemplate:     templateLabelValue,
-			},
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion:         service.APIVersion,
-					Kind:               service.Kind,
-					Name:               service.Name,
-					UID:                service.UID,
-					Controller:         ptr.To(true),
-					BlockOwnerDeletion: ptr.To(true),
-				},
-			},
-		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
-			Resources: corev1.VolumeResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: size,
-				},
-			},
-			StorageClassName: sc,
-		},
-	}
-
-	return pvc
-}
-
-// =======================================================
 // TEMPLATE CACHE (AUTO-GENERATION WHEN CACHING REQUESTED)
 // =======================================================
 
@@ -157,22 +51,29 @@ func GenerateTemplateCacheName(templateName, namespace string) (string, error) {
 	return utils.GenerateDerivedName([]string{templateName}, utils.WithHashSource(namespace))
 }
 
-// planTemplateCache creates a template cache if caching mode is Always and one doesn't exist.
-// Auto mode uses existing caches but doesn't create new ones.
+// planTemplateCache creates a template cache for all caching modes.
+// The cache mode is determined by the service's caching mode:
+// - Always: creates Shared cache (no owner reference, persists independently)
+// - Never: creates Dedicated cache (owned by service, garbage collected with it)
+// - Auto: uses existing Shared cache if available, otherwise creates Dedicated cache
 func planTemplateCache(
 	service *aimv1alpha1.AIMService,
 	templateName string,
+	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
 	obs ServiceObservation,
 ) client.Object {
 	cachingMode := service.Spec.GetCachingMode()
 
-	// Only create cache for Always mode - Auto uses existing but doesn't create
-	if cachingMode != aimv1alpha1.CachingModeAlways {
-		return nil
+	// For Auto mode, if a Shared cache already exists and is usable, don't create a new one
+	if cachingMode == aimv1alpha1.CachingModeAuto && obs.templateCache.Value != nil {
+		// Only skip if the existing cache is Shared mode (we want to use it)
+		if obs.templateCache.Value.Spec.Mode == aimv1alpha1.TemplateCacheModeShared {
+			return nil
+		}
 	}
 
-	// Don't create if template cache already exists
+	// Don't create if template cache already exists (for any mode)
 	if obs.templateCache.Value != nil {
 		return nil
 	}
@@ -180,6 +81,19 @@ func planTemplateCache(
 	// Need model sources in template status to determine what to cache
 	if templateStatus == nil || len(templateStatus.ModelSources) == 0 {
 		return nil
+	}
+
+	// Determine template cache mode based on service caching mode
+	var cacheMode aimv1alpha1.AIMTemplateCacheMode
+	switch cachingMode {
+	case aimv1alpha1.CachingModeAlways:
+		// Always mode: shared caches that persist independently
+		cacheMode = aimv1alpha1.TemplateCacheModeShared
+	case aimv1alpha1.CachingModeNever, aimv1alpha1.CachingModeAuto:
+		// Never/Auto mode: dedicated caches owned by service
+		cacheMode = aimv1alpha1.TemplateCacheModeDedicated
+	default:
+		cacheMode = aimv1alpha1.TemplateCacheModeShared
 	}
 
 	// Resolve storage class
@@ -210,7 +124,13 @@ func planTemplateCache(
 			TemplateScope:    aimv1alpha1.AIMServiceTemplateScopeNamespace, // Default to namespace scope
 			StorageClassName: storageClassName,
 			RuntimeConfigRef: service.Spec.RuntimeConfigRef,
+			Mode:             cacheMode,
 		},
+	}
+
+	// Copy env from template spec (used for download authentication)
+	if templateSpec != nil && len(templateSpec.Env) > 0 {
+		cache.Spec.Env = utils.CopyEnvVars(templateSpec.Env)
 	}
 
 	return cache
@@ -314,32 +234,6 @@ func searchTemplateCaches(
 	return controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{Value: best}
 }
 
-// fetchModelCaches lists all AIMModelCache resources in the namespace.
-func fetchModelCaches(
-	ctx context.Context,
-	c client.Client,
-	namespace string,
-) controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList] {
-	return controllerutils.FetchList(ctx, c, &aimv1alpha1.AIMModelCacheList{}, client.InNamespace(namespace))
-}
-
-// fetchServicePVC fetches the service's temporary PVC for model downloads.
-func fetchServicePVC(
-	ctx context.Context,
-	c client.Client,
-	service *aimv1alpha1.AIMService,
-) controllerutils.FetchResult[*corev1.PersistentVolumeClaim] {
-	pvcName, err := GenerateServicePVCName(service.Name, service.Namespace)
-	if err != nil {
-		return controllerutils.FetchResult[*corev1.PersistentVolumeClaim]{Error: err}
-	}
-
-	return controllerutils.Fetch(ctx, c, client.ObjectKey{
-		Namespace: service.Namespace,
-		Name:      pvcName,
-	}, &corev1.PersistentVolumeClaim{})
-}
-
 // resolveStorageClassName determines the storage class to use.
 func resolveStorageClassName(service *aimv1alpha1.AIMService, obs ServiceObservation) string {
 	// Service-level storage config takes precedence
@@ -383,7 +277,7 @@ func calculateRequiredStorageSize(modelSources []aimv1alpha1.AIMModelSource, hea
 	var totalBytes int64
 	for _, source := range modelSources {
 		if source.Size == nil || source.Size.IsZero() {
-			return resource.Quantity{}, fmt.Errorf("model source %q has no size specified", source.Name)
+			return resource.Quantity{}, fmt.Errorf("model source %q has no size specified", source.ModelID)
 		}
 		totalBytes += source.Size.Value()
 	}

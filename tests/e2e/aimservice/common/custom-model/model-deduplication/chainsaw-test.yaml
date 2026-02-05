@@ -1,0 +1,108 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Custom Model Test: Model Deduplication
+#
+# This test validates that when multiple AIMServices use the same spec.model.custom
+# configuration, only one AIMModel is created and shared between them.
+#
+# Tested behavior:
+# - First service creates an AIMModel
+# - Second service with identical custom spec reuses the existing AIMModel
+# - Both services resolve to the same model name
+# - Only one AIMModel exists in the namespace
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: custom-model-deduplication
+spec:
+  description: Test that identical custom model specs reuse a single AIMModel
+  timeouts:
+    apply: 30s
+    assert: 120s
+  steps:
+    - name: Create first service with custom model
+      try:
+        - apply:
+            file: service-1.yaml
+
+    - name: Wait for first service to create model
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-dedup-service-1
+              status:
+                resolvedModel:
+                  (name != ''): true
+                (conditions[?type == 'ModelReady']):
+                  - status: "True"
+
+    - name: Get the model name created by first service
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              MODEL_NAME=$(kubectl get aimservice test-dedup-service-1 -n "$NAMESPACE" -o jsonpath='{.status.resolvedModel.name}')
+              echo "First service resolved to model: $MODEL_NAME"
+              # Store for later comparison
+              echo "$MODEL_NAME" > /tmp/first-model-name
+
+    - name: Create second service with identical custom model spec
+      try:
+        - apply:
+            file: service-2.yaml
+
+    - name: Wait for second service to resolve model
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-dedup-service-2
+              status:
+                resolvedModel:
+                  (name != ''): true
+                (conditions[?type == 'ModelReady']):
+                  - status: "True"
+
+    - name: Verify both services use the same model
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              FIRST_MODEL=$(cat /tmp/first-model-name)
+              SECOND_MODEL=$(kubectl get aimservice test-dedup-service-2 -n "$NAMESPACE" -o jsonpath='{.status.resolvedModel.name}')
+              echo "First service model: $FIRST_MODEL"
+              echo "Second service model: $SECOND_MODEL"
+              if [ "$FIRST_MODEL" != "$SECOND_MODEL" ]; then
+                echo "ERROR: Services resolved to different models!"
+                exit 1
+              fi
+              echo "SUCCESS: Both services share the same model"
+
+    - name: Verify only one AIMModel exists with managed-by label
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              # Count models with the managed-by label (auto-created for custom models)
+              count=$(kubectl get aimmodels -n "$NAMESPACE" -l aim.eai.amd.com/custom-model=true -o json | jq '.items | length')
+              echo "Found $count auto-created AIMModel(s)"
+              if [ "$count" -ne 1 ]; then
+                echo "ERROR: Expected exactly 1 auto-created model, found $count"
+                kubectl get aimmodels -n "$NAMESPACE" -l aim.eai.amd.com/custom-model=true
+                exit 1
+              fi
+              echo "SUCCESS: Only 1 AIMModel was created for both services"

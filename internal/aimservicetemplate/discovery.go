@@ -107,8 +107,9 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 	if spec.TemplateSpec.Precision != nil {
 		hashInput += string(*spec.TemplateSpec.Precision)
 	}
-	if spec.TemplateSpec.GpuSelector != nil {
-		hashInput += spec.TemplateSpec.GpuSelector.Model + strconv.Itoa(int(spec.TemplateSpec.GpuSelector.Count))
+	if spec.TemplateSpec.Hardware != nil && spec.TemplateSpec.Hardware.GPU != nil {
+		hashInput += spec.TemplateSpec.Hardware.GPU.Model
+		hashInput += strconv.Itoa(int(spec.TemplateSpec.Hardware.GPU.Requests))
 	}
 	if spec.TemplateSpec.ProfileId != "" {
 		hashInput += spec.TemplateSpec.ProfileId
@@ -155,17 +156,17 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 		})
 	}
 
-	if spec.TemplateSpec.GpuSelector != nil {
-		if spec.TemplateSpec.GpuSelector.Model != "" {
+	if spec.TemplateSpec.Hardware != nil && spec.TemplateSpec.Hardware.GPU != nil {
+		if spec.TemplateSpec.Hardware.GPU.Model != "" {
 			env = append(env, corev1.EnvVar{
 				Name:  "AIM_GPU_MODEL",
-				Value: spec.TemplateSpec.GpuSelector.Model,
+				Value: spec.TemplateSpec.Hardware.GPU.Model,
 			})
 		}
-		if spec.TemplateSpec.GpuSelector.Count > 0 {
+		if spec.TemplateSpec.Hardware.GPU.Requests > 0 {
 			env = append(env, corev1.EnvVar{
 				Name:  "AIM_GPU_COUNT",
-				Value: strconv.Itoa(int(spec.TemplateSpec.GpuSelector.Count)),
+				Value: strconv.Itoa(int(spec.TemplateSpec.Hardware.GPU.Requests)),
 			})
 		}
 	}
@@ -173,7 +174,7 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 	// If a profile ID is set, propagate it to the discovery job
 	if profileId := spec.TemplateSpec.ProfileId; profileId != "" {
 		env = append(env, corev1.EnvVar{
-			Name:  "AIM_PROFILE_ID",
+			Name:  constants.EnvAIMProfileID,
 			Value: profileId,
 		})
 	}
@@ -422,7 +423,7 @@ func convertToAIMModelSources(models []discoveryModelResult) []aimv1alpha1.AIMMo
 		size := resource.NewQuantity(sizeBytes, resource.BinarySI)
 
 		modelSources = append(modelSources, aimv1alpha1.AIMModelSource{
-			Name:      model.Name,
+			ModelID:   model.Name,
 			SourceURI: model.Source,
 			Size:      size,
 		})
@@ -592,12 +593,14 @@ func ParseDiscoveryLogs(ctx context.Context, c client.Client, clientset kubernet
 
 // ShouldCheckDiscoveryJob returns true if we should check for discovery jobs.
 // We skip checking if the template is already ready or has inline model sources.
+// For inline model sources, size discovery happens via the ModelCache check-size job.
 func ShouldCheckDiscoveryJob(template *aimv1alpha1.AIMServiceTemplate) bool {
 	// Don't check for discovery job if template is already ready
 	if template.Status.Status == constants.AIMStatusReady {
 		return false
 	}
-	// Don't check if inline model sources are provided
+	// Don't check if inline model sources are provided - size discovery happens
+	// via the ModelCache controller's check-size job, not the template discovery job
 	if len(template.Spec.ModelSources) > 0 {
 		return false
 	}
@@ -614,6 +617,8 @@ func ShouldCheckClusterTemplateDiscoveryJob(template *aimv1alpha1.AIMClusterServ
 	if template.Status.Status == constants.AIMStatusReady {
 		return false
 	}
+	// Don't check if inline model sources are provided - size discovery happens
+	// via the ModelCache controller's check-size job, not the template discovery job
 	if len(template.Spec.ModelSources) > 0 {
 		return false
 	}
@@ -724,8 +729,8 @@ func ComputeDiscoverySpecHash(spec aimv1alpha1.AIMServiceTemplateSpecCommon, mod
 	if spec.Precision != nil {
 		hashInput += string(*spec.Precision)
 	}
-	if spec.GpuSelector != nil {
-		hashInput += spec.GpuSelector.Model + strconv.Itoa(int(spec.GpuSelector.Count))
+	if spec.Hardware != nil && spec.Hardware.GPU != nil {
+		hashInput += spec.Hardware.GPU.Model + strconv.Itoa(int(spec.Hardware.GPU.Requests))
 	}
 	if spec.ProfileId != "" {
 		hashInput += spec.ProfileId

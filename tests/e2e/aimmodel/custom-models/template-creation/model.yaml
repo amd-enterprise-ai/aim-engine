@@ -1,0 +1,74 @@
+# Custom model with multiple templates testing:
+# - Hardware propagation (model-level defaults, template-level overrides)
+# - Multiple custom templates with different configurations
+# - Different GPU counts per template
+# - Profile settings (metric, precision)
+# - Profile types (optimized, preview, unoptimized)
+# - Environment variables per template
+# - Model sources propagation
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: custom-model-test
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.10
+
+  # Model sources - required for custom models
+  modelSources:
+    - modelId: sshleifer/tiny-gpt2
+      sourceUri: hf://sshleifer/tiny-gpt2
+      size: 100Mi
+
+  # Custom model configuration with default hardware
+  custom:
+    hardware:
+      gpu:
+        requests: 1
+        model: MI300X
+
+  # Multiple custom templates with different configurations
+  customTemplates:
+    # Template 1: Inherits all defaults from spec.hardware
+    - name: default-hardware
+
+    # Template 2: Overrides GPU count
+    - name: multi-gpu
+      hardware:
+        gpu:
+          requests: 2
+          model: MI300X
+
+    # Template 3: Different GPU model (will be NotAvailable - MI250X not in cluster)
+    - name: different-gpu
+      hardware:
+        gpu:
+          requests: 1
+          model: MI250X
+
+    # Template 4: With profile settings and env vars (latency optimized) - type: optimized
+    - name: latency-optimized
+      type: optimized
+      profile:
+        metric: latency
+        precision: fp16
+      env:
+        - name: VLLM_USE_V1
+          value: "1"
+        - name: MAX_MODEL_LEN
+          value: "8192"
+
+    # Template 5: With different profile and env vars (throughput optimized) - type: preview
+    - name: throughput-optimized
+      type: preview
+      profile:
+        metric: throughput
+        precision: fp8
+      env:
+        - name: VLLM_USE_V1
+          value: "0"
+        - name: MAX_BATCH_SIZE
+          value: "256"
+
+    # Template 6: Minimal config with explicit type
+    - name: minimal
+      type: unoptimized

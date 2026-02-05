@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: test-min-vram-model
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.10
+  discovery:
+    extractMetadata: false
+    createServiceTemplates: false

@@ -1,0 +1,15 @@
+# AIMService using the custom model with env vars
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-env-propagation
+spec:
+  runtimeConfigName: test-gpu-custom-model-env
+  imagePullSecrets:
+    - name: ghcr-regcred
+  model:
+    name: test-env-propagation-model
+  # Template auto-selected (only one optimized template exists for this model)
+  caching:
+    mode: Always
+  replicas: 1

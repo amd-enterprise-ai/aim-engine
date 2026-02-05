@@ -3,6 +3,9 @@ kind: Test
 metadata:
   name: service-template-node-gpu-label-changes
 spec:
+  # Skip: This test modifies node labels which is not safe for real clusters.
+  # The core NotAvailable behavior is covered by not-available-when-gpu-unavailable test.
+  skip: true
   description: |
     Tests that AIMServiceTemplate and AIMModel react to node GPU label changes.
     When a required GPU becomes available (label added), template and model become Ready.

@@ -1,0 +1,102 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: Additive Custom Templates
+#
+# This test validates that customTemplates are created IN ADDITION to
+# discovered templates from image metadata (not replacing them).
+#
+# Tested behavior:
+# - Regular AIM image (no modelSources) with customTemplates
+# - Discovered templates are created from image recommendedDeployments
+# - Custom templates are ALSO created (additive, not replacement)
+# - Both types of templates exist simultaneously
+# - Total template count is > 2 (at least 1 discovered + 2 custom)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: additive-custom-templates
+spec:
+  timeouts:
+    apply: 30s
+    assert: 90s
+  steps:
+    - name: Create model with additive custom templates
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert model becomes ready
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: additive-templates-test
+              status:
+                status: Ready
+                # NOT a custom model - image-based
+                sourceType: Image
+
+    - name: Assert custom-high-memory template is created
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/model: additive-templates-test
+                  aim.eai.amd.com/template.alias: custom-high-memory
+              spec:
+                modelName: additive-templates-test
+                hardware:
+                  gpu:
+                    requests: 2
+                    model: MI300X
+                env:
+                  - name: MAX_MODEL_LEN
+                    value: "16384"
+
+    - name: Assert custom-low-latency template is created
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/model: additive-templates-test
+                  aim.eai.amd.com/template.alias: custom-low-latency
+              spec:
+                modelName: additive-templates-test
+                type: optimized
+                metric: latency
+                precision: fp16
+                hardware:
+                  gpu:
+                    requests: 1
+                    model: MI300X
+
+    - name: Verify template count is greater than 2 (discovered + custom)
+      description: |
+        This verifies the additive behavior: we should have more than 2 templates
+        (at least 1 from discovery + 2 from customTemplates = 3 minimum).
+        If customTemplates replaced discovered templates, we would only have 2.
+      try:
+        - script:
+            timeout: 10s
+            content: |
+              count=$(kubectl get aimservicetemplates -A -l aim.eai.amd.com/model=additive-templates-test --no-headers | wc -l)
+              echo "Template count: $count"
+              if [ "$count" -gt 2 ]; then
+                echo "PASS: Found $count templates (> 2), additive behavior confirmed"
+                exit 0
+              else
+                echo "FAIL: Expected > 2 templates, found $count"
+                exit 1
+              fi

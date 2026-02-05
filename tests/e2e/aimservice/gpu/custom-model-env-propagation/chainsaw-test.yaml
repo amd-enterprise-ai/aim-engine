@@ -1,0 +1,133 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Custom Model Env Propagation (GPU)
+#
+# This test validates that environment variables and profile settings defined
+# in customTemplates flow correctly to the running Pod.
+#
+# This test validates:
+# 1. Template env vars (MAX_MODEL_LEN, CUSTOM_TEST_VAR) appear in InferenceService
+# 2. Profile metric/precision flow to AIM_METRIC/AIM_PRECISION env vars
+# 3. Template status.profile.metadata has correct values
+# 4. Service runs successfully with custom env vars
+#
+# Uses: ghcr.io/silogen/aim-dummy:0.1.10 (lightweight, fast startup)
+# Requires: GPU infrastructure
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-gpu-custom-model-env
+  labels:
+    requires: gpu
+spec:
+  description: Test custom model env vars and profile settings propagate to Pod
+  timeouts:
+    assert: 600s
+  steps:
+    - name: Create runtime config with routing
+      try:
+        - apply:
+            file: runtime-config.yaml
+
+    - name: Create model with customTemplates containing env and profile
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for model to be ready
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-env-propagation-model
+              status:
+                status: Ready
+                sourceType: Custom
+
+    - name: Verify template has correct profile metadata
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: test-env-propagation-model
+                  aim.eai.amd.com/template.alias: env-test
+              spec:
+                type: optimized
+                metric: latency
+                precision: fp16
+                env:
+                  - name: MAX_MODEL_LEN
+                    value: "2048"
+                  - name: CUSTOM_TEST_VAR
+                    value: "custom-value-123"
+              status:
+                status: Ready
+                profile:
+                  metadata:
+                    metric: latency
+                    precision: fp16
+                    type: optimized
+
+    - name: Create service using the template
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify service starts
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-env-propagation
+              status:
+                status: Starting
+
+    - name: Verify InferenceService has expected env vars
+      try:
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-env-propagation
+              spec:
+                predictor:
+                  containers:
+                    - name: kserve-container
+                      # Use JMESPath filtering to check individual env vars
+                      (env[?name == 'MAX_MODEL_LEN']):
+                        - value: "2048"
+                      (env[?name == 'CUSTOM_TEST_VAR']):
+                        - value: "custom-value-123"
+                      (env[?name == 'AIM_METRIC']):
+                        - value: latency
+                      (env[?name == 'AIM_PRECISION']):
+                        - value: fp16
+                      (env[?name == 'AIM_MODEL_ID']):
+                        - value: test/env-propagation
+
+    - name: Verify service reaches Running status
+      try:
+        - assert:
+            timeout: 10m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-env-propagation
+              status:
+                status: Running
+

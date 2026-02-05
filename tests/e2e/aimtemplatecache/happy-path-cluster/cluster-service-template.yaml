@@ -7,9 +7,11 @@ metadata:
 spec:
   modelName: test-model
   modelSources:
-    - sourceUri: hf://sshleifer/tiny-gpt2
+    - modelId: sshleifer/tiny-gpt2
+      sourceUri: hf://sshleifer/tiny-gpt2
       size: 2Gi
-    - sourceUri: hf://HuggingFaceTB/SmolLM-135M
+    - modelId: HuggingFaceTB/SmolLM-135M
+      sourceUri: hf://HuggingFaceTB/SmolLM-135M
       size: 4Gi
 status:
   status: Ready
@@ -20,7 +22,9 @@ status:
       message: All components are ready
       lastTransitionTime: "2024-01-01T00:00:00Z"
   modelSources:
-    - sourceUri: hf://sshleifer/tiny-gpt2
+    - modelId: sshleifer/tiny-gpt2
+      sourceUri: hf://sshleifer/tiny-gpt2
       size: 2Gi
-    - sourceUri: hf://HuggingFaceTB/SmolLM-135M
+    - modelId: HuggingFaceTB/SmolLM-135M
+      sourceUri: hf://HuggingFaceTB/SmolLM-135M
       size: 4Gi

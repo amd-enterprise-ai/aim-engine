@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -118,11 +119,22 @@ func (r *TemplateCacheReconciler) FetchRemoteState(
 		mergedRuntimeConfig: reconcileCtx.MergedRuntimeConfig,
 	}
 
-	result.serviceTemplate = controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Spec.TemplateName, Namespace: templateCache.Namespace}, &aimv1alpha1.AIMServiceTemplate{})
-
-	if result.serviceTemplate.IsNotFound() {
+	// Fetch template based on the specified scope
+	switch templateCache.Spec.TemplateScope {
+	case aimv1alpha1.AIMServiceTemplateScopeCluster:
+		// Only look for cluster-scoped template
 		clusterServiceTemplate := controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Spec.TemplateName}, &aimv1alpha1.AIMClusterServiceTemplate{})
 		result.clusterServiceTemplate = &clusterServiceTemplate
+	case aimv1alpha1.AIMServiceTemplateScopeNamespace:
+		// Only look for namespace-scoped template
+		result.serviceTemplate = controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Spec.TemplateName, Namespace: templateCache.Namespace}, &aimv1alpha1.AIMServiceTemplate{})
+	default:
+		// For unknown or unset scope, try namespace first then cluster (backwards compatible behavior)
+		result.serviceTemplate = controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Spec.TemplateName, Namespace: templateCache.Namespace}, &aimv1alpha1.AIMServiceTemplate{})
+		if result.serviceTemplate.IsNotFound() {
+			clusterServiceTemplate := controllerutils.Fetch(ctx, c, client.ObjectKey{Name: templateCache.Spec.TemplateName}, &aimv1alpha1.AIMClusterServiceTemplate{})
+			result.clusterServiceTemplate = &clusterServiceTemplate
+		}
 	}
 
 	// Fetch all model caches in the namespace
@@ -138,16 +150,17 @@ func (result TemplateCacheFetchResult) GetComponentHealth() []controllerutils.Co
 		result.mergedRuntimeConfig.ToUpstreamComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth),
 	}
 
-	// Add service template health
+	// Add service template health based on which template was fetched
 	// Templates are upstream dependencies - this controller depends on them
-	// If namespace-scoped template was resolved or had a non-NotFound error, use it
-	// Otherwise check cluster-scoped template
-	if result.serviceTemplate.OK() || (result.serviceTemplate.Error != nil && !result.serviceTemplate.IsNotFound()) {
-		health = append(health, result.serviceTemplate.ToUpstreamComponentHealth("ServiceTemplate", func(template *aimv1alpha1.AIMServiceTemplate) controllerutils.ComponentHealth {
+	// Only one of serviceTemplate or clusterServiceTemplate will be set based on the scope
+	if result.clusterServiceTemplate != nil {
+		// Cluster scope was requested - check cluster template
+		health = append(health, result.clusterServiceTemplate.ToUpstreamComponentHealth("ServiceTemplate", func(template *aimv1alpha1.AIMClusterServiceTemplate) controllerutils.ComponentHealth {
 			return getComponentHealthFromStatus(&template.Status, template.Status.Status)
 		}))
-	} else if result.clusterServiceTemplate != nil {
-		health = append(health, result.clusterServiceTemplate.ToUpstreamComponentHealth("ServiceTemplate", func(template *aimv1alpha1.AIMClusterServiceTemplate) controllerutils.ComponentHealth {
+	} else if result.serviceTemplate.Value != nil || result.serviceTemplate.Error != nil {
+		// Namespace scope was requested (or default fallback) - check namespace template
+		health = append(health, result.serviceTemplate.ToUpstreamComponentHealth("ServiceTemplate", func(template *aimv1alpha1.AIMServiceTemplate) controllerutils.ComponentHealth {
 			return getComponentHealthFromStatus(&template.Status, template.Status.Status)
 		}))
 	}
@@ -178,6 +191,11 @@ type TemplateCacheObservation struct {
 	AllCachesAvailable bool
 	MissingCaches      []aimv1alpha1.AIMModelSource
 	BestModelCaches    map[string]aimv1alpha1.AIMModelCache
+
+	// CachesToPromote contains model caches that need to be promoted from Dedicated to Shared.
+	// This happens when a Shared template cache encounters existing model caches with owner references.
+	// Promotion removes the owner references so the caches persist independently.
+	CachesToPromote []aimv1alpha1.AIMModelCache
 }
 
 // GetComponentHealth overrides the embedded FetchResult's method to include model cache health.
@@ -227,9 +245,11 @@ func (r *TemplateCacheReconciler) ComposeState(
 	tc := reconcileCtx.Object
 
 	// Read model sources from Status (populated by discovery), not Spec
-	if fetch.serviceTemplate.OK() {
+	// Check Value != nil because when templateScope is Cluster, serviceTemplate is not fetched
+	// and has zero value (Error=nil, Value=nil), so OK() returns true but Value is nil
+	if fetch.serviceTemplate.OK() && fetch.serviceTemplate.Value != nil {
 		templateModelSources = fetch.serviceTemplate.Value.Status.ModelSources
-	} else if fetch.clusterServiceTemplate.OK() {
+	} else if fetch.clusterServiceTemplate != nil && fetch.clusterServiceTemplate.OK() && fetch.clusterServiceTemplate.Value != nil {
 		templateModelSources = fetch.clusterServiceTemplate.Value.Status.ModelSources
 	} else {
 		return obs
@@ -275,12 +295,22 @@ func (r *TemplateCacheReconciler) ComposeState(
 		}
 		if found {
 			logger.Info("ComposeState: model source matched",
-				"modelName", model.Name,
+				"modelID", model.ModelID,
 				"bestCacheName", bestStatusModelCache.Name,
 				"bestCacheStatus", bestStatusModelCache.Status.Status)
-			obs.BestModelCaches[model.Name] = bestStatusModelCache
+			obs.BestModelCaches[model.ModelID] = bestStatusModelCache
+
+			// Check if promotion is needed: Shared mode but cache has owner references
+			// This promotes Dedicated caches to Shared by removing owner references
+			if tc.Spec.Mode == aimv1alpha1.TemplateCacheModeShared &&
+				len(bestStatusModelCache.GetOwnerReferences()) > 0 {
+				logger.Info("ComposeState: cache needs promotion to Shared",
+					"cacheName", bestStatusModelCache.Name,
+					"ownerCount", len(bestStatusModelCache.GetOwnerReferences()))
+				obs.CachesToPromote = append(obs.CachesToPromote, bestStatusModelCache)
+			}
 		} else {
-			logger.Info("ComposeState: model source missing cache", "modelName", model.Name)
+			logger.Info("ComposeState: model source missing cache", "modelID", model.ModelID)
 			obs.MissingCaches = append(obs.MissingCaches, model)
 		}
 	}
@@ -331,15 +361,33 @@ func (r *TemplateCacheReconciler) PlanResources(
 			Spec: aimv1alpha1.AIMModelCacheSpec{
 				StorageClassName: tc.Spec.StorageClassName,
 				SourceURI:        cache.SourceURI,
-				Size:             *cache.Size,
-				Env:              tc.Spec.Env,
+				ModelID:          cache.ModelID,
+				Size:             getSizeOrZero(cache.Size),
+				// Merge base-level env with per-source env (source takes precedence)
+				Env:              utils.MergeEnvVars(tc.Spec.Env, cache.Env),
 				RuntimeConfigRef: tc.Spec.RuntimeConfigRef,
 			},
 		}
-		// Use ApplyWithoutOwnerRef so model caches can be shared across template caches
-		// and outlive the creating template cache (if Ready)
-		result.ApplyWithoutOwnerRef(mc)
+
+		// Apply based on template cache mode:
+		// - Dedicated: model caches are owned by this template cache (garbage collected with it)
+		// - Shared: model caches have no owner references (persist independently)
+		if tc.Spec.Mode == aimv1alpha1.TemplateCacheModeDedicated {
+			result.Apply(mc)
+		} else {
+			result.ApplyWithoutOwnerRef(mc)
+		}
 	}
+
+	// Handle promotion of Dedicated caches to Shared
+	// When a Shared template cache encounters model caches with owner references,
+	// we remove the owner references so they persist independently
+	for _, cacheToPromote := range obs.CachesToPromote {
+		promotedCache := cacheToPromote.DeepCopy()
+		promotedCache.SetOwnerReferences(nil) // Clear all owner references
+		result.ApplyWithoutOwnerRef(promotedCache)
+	}
+
 	return result
 }
 
@@ -415,4 +463,14 @@ func (r *TemplateCacheReconciler) DecorateStatus(
 	} else {
 		status.ModelCaches = nil
 	}
+}
+
+// getSizeOrZero returns the size value or zero quantity if nil.
+// This allows creating model caches without a known size - the model cache
+// controller will run a check-size job to discover the size.
+func getSizeOrZero(size *resource.Quantity) resource.Quantity {
+	if size == nil {
+		return resource.Quantity{}
+	}
+	return *size
 }

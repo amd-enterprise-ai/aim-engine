@@ -1,0 +1,38 @@
+# AIMService with custom model specification on GPU
+# Uses spec.model.custom to define the model configuration inline
+# Controller will auto-create AIMModel and AIMServiceTemplate
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-gpu-custom-model
+spec:
+  runtimeConfigName: test-gpu-custom-model
+  # Pull secret for ghcr.io/silogen images
+  imagePullSecrets:
+    - name: ghcr-regcred
+  model:
+    custom:
+      # AIM base image (not a pre-built model image)
+      baseImage: amdenterpriseai/aim-base:0.9
+      # Model to download from HuggingFace
+      # Using Qwen2-0.5B (small public model, no auth needed) for faster testing
+      # Size is optional - auto-discovered by the download job
+      modelSources:
+        - modelId: Qwen/Qwen2-0.5B
+          sourceUri: hf://Qwen/Qwen2-0.5B
+      # Hardware requirements for this model
+      hardware:
+        gpu:
+          requests: 1
+          # model: MI300X
+  caching:
+    mode: Always
+  replicas: 1
+  # Environment variables for the inference container
+  # env:
+  #   - name: AIM_MODEL_ID
+  #     value: Qwen/Qwen2-0.5B
+  # Allow unoptimized templates since custom models generate unoptimized profiles
+  # (no discovery job runs to determine optimization level)
+  template:
+    allowUnoptimized: true
