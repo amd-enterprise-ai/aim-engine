@@ -9,7 +9,7 @@
 # This test validates:
 # 1. AIMModel is auto-created with correct modelSources and hardware
 # 2. AIMServiceTemplate is auto-created from hardware requirements
-# 3. Dedicated model caches are created for model download
+# 3. Dedicated artifacts are created for model download
 # 4. InferenceService is created with correct GPU configuration
 # 5. Pod has correct AIM_MODEL_ID env var from modelSources
 # 6. Pod has correct container image from baseImage
@@ -85,13 +85,13 @@ spec:
               status:
                 status: Ready
 
-    - name: Verify model cache is created via template cache
+    - name: Verify artifact is created via template cache
       try:
         - assert:
             timeout: 120s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMModelCache
+              kind: AIMArtifact
               metadata:
                 labels:
                   aim.eai.amd.com/service: test-gpu-custom-model

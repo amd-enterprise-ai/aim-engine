@@ -18,8 +18,8 @@ Package v1alpha1 contains API Schema definitions for the aim v1alpha1 API group.
 - [AIMClusterServiceTemplate](#aimclusterservicetemplate)
 - [AIMClusterServiceTemplateList](#aimclusterservicetemplatelist)
 - [AIMModel](#aimmodel)
-- [AIMModelCache](#aimmodelcache)
-- [AIMModelCacheList](#aimmodelcachelist)
+- [AIMArtifact](#aimartifact)
+- [AIMArtifactList](#aimartifactlist)
 - [AIMModelList](#aimmodellist)
 - [AIMRuntimeConfig](#aimruntimeconfig)
 - [AIMRuntimeConfigList](#aimruntimeconfiglist)
@@ -316,6 +316,7 @@ _Appears in:_
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources required to run this template.<br />When provided, the discovery dry-run will be skipped and these sources will be used directly.<br />This allows users to explicitly declare model dependencies without requiring a discovery job.<br />If omitted, a discovery job will be run to automatically determine the required model sources. |  | Optional: \{\} <br /> |
 | `profileId` _string_ | ProfileId is the specific AIM profile ID that this template should use.<br />When set, the discovery job will be instructed to use this specific profile. |  | Optional: \{\} <br /> |
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type indicates the optimization level of this template.<br />- optimized: Template has been tuned for performance<br />- preview: Template is experimental/pre-release<br />- unoptimized: Default, no specific optimizations applied<br />When nil, the type is determined by discovery. When set, overrides discovery. |  | Enum: [optimized preview unoptimized] <br />Optional: \{\} <br /> |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for inference containers.<br />These variables are passed to the inference runtime and can be used<br />to configure runtime behavior, authentication, or other settings. |  | Optional: \{\} <br /> |
 
 
 #### AIMCpuRequirements
@@ -489,31 +490,31 @@ _Appears in:_
 | `status` _[AIMModelStatus](#aimmodelstatus)_ |  |  |  |
 
 
-#### AIMModelCache
+#### AIMArtifact
 
 
 
-AIMModelCache is the Schema for the modelcaches API
+AIMArtifact is the Schema for the artifacts API
 
 
 
 _Appears in:_
-- [AIMModelCacheList](#aimmodelcachelist)
+- [AIMArtifactList](#aimartifactlist)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `apiVersion` _string_ | `aim.eai.amd.com/v1alpha1` | | |
-| `kind` _string_ | `AIMModelCache` | | |
+| `kind` _string_ | `AIMArtifact` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
-| `spec` _[AIMModelCacheSpec](#aimmodelcachespec)_ |  |  |  |
-| `status` _[AIMModelCacheStatus](#aimmodelcachestatus)_ |  |  |  |
+| `spec` _[AIMArtifactSpec](#aimartifactspec)_ |  |  |  |
+| `status` _[AIMArtifactStatus](#aimartifactstatus)_ |  |  |  |
 
 
-#### AIMModelCacheList
+#### AIMArtifactList
 
 
 
-AIMModelCacheList contains a list of AIMModelCache
+AIMArtifactList contains a list of AIMArtifact
 
 
 
@@ -522,73 +523,73 @@ AIMModelCacheList contains a list of AIMModelCache
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `apiVersion` _string_ | `aim.eai.amd.com/v1alpha1` | | |
-| `kind` _string_ | `AIMModelCacheList` | | |
+| `kind` _string_ | `AIMArtifactList` | | |
 | `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
-| `items` _[AIMModelCache](#aimmodelcache) array_ |  |  |  |
+| `items` _[AIMArtifact](#aimartifact) array_ |  |  |  |
 
 
-#### AIMModelCacheMode
+#### AIMArtifactMode
 
 _Underlying type:_ _string_
 
-AIMModelCacheMode indicates the ownership mode of a model cache, derived from owner references.
+AIMArtifactMode indicates the ownership mode of a artifact, derived from owner references.
 
 _Validation:_
 - Enum: [Dedicated Shared]
 
 _Appears in:_
-- [AIMModelCacheStatus](#aimmodelcachestatus)
+- [AIMArtifactStatus](#aimartifactstatus)
 
 | Field | Description |
 | --- | --- |
-| `Dedicated` | ModelCacheModeDedicated indicates the cache has owner references and will be<br />garbage collected when its owners are deleted.<br /> |
-| `Shared` | ModelCacheModeShared indicates the cache has no owner references and persists<br />independently, available for sharing across services.<br /> |
+| `Dedicated` | ArtifactModeDedicated indicates the cache has owner references and will be<br />garbage collected when its owners are deleted.<br /> |
+| `Shared` | ArtifactModeShared indicates the cache has no owner references and persists<br />independently, available for sharing across services.<br /> |
 
 
-#### AIMModelCacheSpec
+#### AIMArtifactSpec
 
 
 
-AIMModelCacheSpec defines the desired state of AIMModelCache
+AIMArtifactSpec defines the desired state of AIMArtifact
 
 
 
 _Appears in:_
-- [AIMModelCache](#aimmodelcache)
+- [AIMArtifact](#aimartifact)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `sourceUri` _string_ | SourceURI specifies the source location of the model to download.<br />Supported protocols: hf:// (HuggingFace) and s3:// (S3-compatible storage).<br />This field uniquely identifies the model cache and is immutable after creation.<br />Example: hf://meta-llama/Llama-3-8B |  | MinLength: 1 <br />Pattern: `^(hf\|s3)://[^ \t\r\n]+$` <br /> |
-| `modelId` _string_ | ModelID is the canonical identifier in \{org\}/\{name\} format.<br />Determines the cache download path: /workspace/model-cache/\{modelId\}<br />For HuggingFace sources, this is typically derived from the URI (e.g., "meta-llama/Llama-3-8B").<br />For S3 sources, this must be explicitly provided (e.g., "my-team/fine-tuned-llama").<br />When not specified, derived from SourceURI for HuggingFace sources. |  | Pattern: `^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$` <br />Optional: \{\} <br /> |
+| `sourceUri` _string_ | SourceURI specifies the source location of the model to download.<br />Supported protocols: hf:// (HuggingFace) and s3:// (S3-compatible storage).<br />This field uniquely identifies the artifact and is immutable after creation.<br />Example: hf://meta-llama/Llama-3-8B |  | MinLength: 1 <br />Pattern: `^(hf\|s3)://[^ \t\r\n]+$` <br /> |
+| `modelId` _string_ | ModelID is the canonical identifier in \{org\}/\{name\} format.<br />Determines the cache download path: /workspace/artifact/\{modelId\}<br />For HuggingFace sources, this is typically derived from the URI (e.g., "meta-llama/Llama-3-8B").<br />For S3 sources, this must be explicitly provided (e.g., "my-team/fine-tuned-llama").<br />When not specified, derived from SourceURI for HuggingFace sources. |  | Pattern: `^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$` <br />Optional: \{\} <br /> |
 | `storageClassName` _string_ | StorageClassName specifies the storage class for the cache volume.<br />When not specified, uses the cluster default storage class. |  | Optional: \{\} <br /> |
 | `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Size specifies the size of the cache volume |  | Optional: \{\} <br /> |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env lists the environment variables to use for authentication when downloading models.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  | Optional: \{\} <br /> |
-| `modelDownloadImage` _string_ | ModelDownloadImage specifies the container image used to download and initialize the model cache.<br />This image runs as a job to download model artifacts from the source URI to the cache volume.<br />When not specified, defaults to "ghcr.io/silogen/aim-artifact-downloader:0.1.1". | ghcr.io/silogen/aim-artifact-downloader:0.1.1 | Optional: \{\} <br /> |
+| `modelDownloadImage` _string_ | ModelDownloadImage specifies the container image used to download and initialize the artifact.<br />This image runs as a job to download model artifacts from the source URI to the cache volume.<br />When not specified, defaults to "ghcr.io/silogen/aim-artifact-downloader:0.1.1". | ghcr.io/silogen/aim-artifact-downloader:0.1.1 | Optional: \{\} <br /> |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets references secrets for pulling AIM container images. |  | Optional: \{\} <br /> |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  | Optional: \{\} <br /> |
 
 
-#### AIMModelCacheStatus
+#### AIMArtifactStatus
 
 
 
-AIMModelCacheStatus defines the observed state of AIMModelCache
+AIMArtifactStatus defines the observed state of AIMArtifact
 
 
 
 _Appears in:_
-- [AIMModelCache](#aimmodelcache)
+- [AIMArtifact](#aimartifact)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `observedGeneration` _integer_ |  |  |  |
-| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#condition-v1-meta) array_ | Conditions represent the latest available observations of the model cache's state |  |  |
-| `status` _[AIMStatus](#aimstatus)_ | Status represents the current status of the model cache | Pending | Enum: [Pending Progressing Ready Degraded Failed NotAvailable] <br /> |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#condition-v1-meta) array_ | Conditions represent the latest available observations of the artifact's state |  |  |
+| `status` _[AIMStatus](#aimstatus)_ | Status represents the current status of the artifact | Pending | Enum: [Pending Progressing Ready Degraded Failed NotAvailable] <br /> |
 | `progress` _[DownloadProgress](#downloadprogress)_ | Progress represents the download progress when Status is Progressing |  | Optional: \{\} <br /> |
 | `displaySize` _string_ | DisplaySize is the human-readable effective size (spec or discovered) |  | Optional: \{\} <br /> |
 | `lastUsed` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#time-v1-meta)_ | LastUsed represents the last time a model was deployed that used this cache |  |  |
 | `persistentVolumeClaim` _string_ | PersistentVolumeClaim represents the name of the created PVC |  |  |
-| `mode` _[AIMModelCacheMode](#aimmodelcachemode)_ | Mode indicates the ownership mode of this model cache, derived from owner references.<br />- Dedicated: Has owner references, will be garbage collected when owners are deleted.<br />- Shared: No owner references, persists independently and can be shared. |  | Enum: [Dedicated Shared] <br />Optional: \{\} <br /> |
+| `mode` _[AIMArtifactMode](#aimartifactmode)_ | Mode indicates the ownership mode of this artifact, derived from owner references.<br />- Dedicated: Has owner references, will be garbage collected when owners are deleted.<br />- Shared: No owner references, persists independently and can be shared. |  | Enum: [Dedicated Shared] <br />Optional: \{\} <br /> |
 | `discoveredSizeBytes` _integer_ | DiscoveredSizeBytes is the model size discovered via check-size job.<br />Populated when spec.size is not provided. |  | Optional: \{\} <br /> |
 | `allocatedSize` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | AllocatedSize is the actual PVC size requested (including headroom). |  | Optional: \{\} <br /> |
 | `headroomPercent` _integer_ | HeadroomPercent is the headroom percentage that was applied to the PVC size. |  | Optional: \{\} <br /> |
@@ -667,7 +668,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `modelId` _string_ | ModelID is the canonical identifier in \{org\}/\{name\} format.<br />Determines the cache mount path: /workspace/model-cache/\{modelId\}<br />For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).<br />For S3 sources, users define their own organizational structure. |  | Pattern: `^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$` <br />Required: \{\} <br /> |
+| `modelId` _string_ | ModelID is the canonical identifier in \{org\}/\{name\} format.<br />Determines the cache mount path: /workspace/artifact/\{modelId\}<br />For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).<br />For S3 sources, users define their own organizational structure. |  | Pattern: `^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$` <br />Required: \{\} <br /> |
 | `sourceUri` _string_ | SourceURI is the location from which the model should be downloaded.<br />Supported schemes:<br />- hf://org/model - Hugging Face Hub model<br />- s3://bucket/key - S3-compatible storage |  | Pattern: `^(hf\|s3)://[^ \t\r\n]+$` <br /> |
 | `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Size is the expected storage space required for this model artifact.<br />Used for PVC sizing and capacity planning during cache creation.<br />Optional - if not specified, the download job will discover the size automatically.<br />Can be set explicitly to pre-allocate storage or override auto-discovery. |  | Optional: \{\} <br /> |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies per-source credential overrides.<br />These variables are used for authentication when downloading this specific source.<br />Takes precedence over base-level env for the same variable name. |  | Optional: \{\} <br /> |
@@ -867,7 +868,7 @@ _Appears in:_
 | `Unknown` | AIMResolutionScopeUnknown denotes that the scope could not be determined.<br /> |
 
 
-#### AIMResolvedModelCache
+#### AIMResolvedArtifact
 
 
 
@@ -880,12 +881,12 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `uid` _string_ | UID of the AIMModelCache resource |  |  |
-| `name` _string_ | Name of the AIMModelCache resource |  |  |
+| `uid` _string_ | UID of the AIMArtifact resource |  |  |
+| `name` _string_ | Name of the AIMArtifact resource |  |  |
 | `model` _string_ | Model is the name of the model that is cached |  |  |
-| `status` _[AIMStatus](#aimstatus)_ | Status of the model cache |  |  |
+| `status` _[AIMStatus](#aimstatus)_ | Status of the artifact |  |  |
 | `persistentVolumeClaim` _string_ | PersistentVolumeClaim name if available |  |  |
-| `mountPoint` _string_ | MountPoint is the mount point for the model cache |  |  |
+| `mountPoint` _string_ | MountPoint is the mount point for the artifact |  |  |
 
 
 #### AIMResolvedReference
@@ -1135,7 +1136,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `templateCacheRef` _[AIMResolvedReference](#aimresolvedreference)_ | TemplateCacheRef references the TemplateCache being used, if any. |  | Optional: \{\} <br /> |
-| `retryAttempts` _integer_ | RetryAttempts tracks how many times this service has attempted to retry a failed cache.<br />Each service gets exactly one retry attempt. When a TemplateCache enters Failed state,<br />this counter is incremented from 0 to 1 after deleting failed ModelCaches.<br />If the retry fails (cache enters Failed again with attempts == 1), the service degrades. |  | Optional: \{\} <br /> |
+| `retryAttempts` _integer_ | RetryAttempts tracks how many times this service has attempted to retry a failed cache.<br />Each service gets exactly one retry attempt. When a TemplateCache enters Failed state,<br />this counter is incremented from 0 to 1 after deleting failed Artifacts.<br />If the retry fails (cache enters Failed again with attempts == 1), the service degrades. |  | Optional: \{\} <br /> |
 
 
 #### AIMServiceCachingConfig
@@ -1526,8 +1527,8 @@ _Appears in:_
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources required to run this template.<br />When provided, the discovery dry-run will be skipped and these sources will be used directly.<br />This allows users to explicitly declare model dependencies without requiring a discovery job.<br />If omitted, a discovery job will be run to automatically determine the required model sources. |  | Optional: \{\} <br /> |
 | `profileId` _string_ | ProfileId is the specific AIM profile ID that this template should use.<br />When set, the discovery job will be instructed to use this specific profile. |  | Optional: \{\} <br /> |
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type indicates the optimization level of this template.<br />- optimized: Template has been tuned for performance<br />- preview: Template is experimental/pre-release<br />- unoptimized: Default, no specific optimizations applied<br />When nil, the type is determined by discovery. When set, overrides discovery. |  | Enum: [optimized preview unoptimized] <br />Optional: \{\} <br /> |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for inference containers.<br />These variables are passed to the inference runtime and can be used<br />to configure runtime behavior, authentication, or other settings. |  | Optional: \{\} <br /> |
 | `caching` _[AIMTemplateCachingConfig](#aimtemplatecachingconfig)_ | Caching configures model caching behavior for this namespace-scoped template.<br />When enabled, models will be cached using the specified environment variables<br />during download. |  | Optional: \{\} <br /> |
-| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables to use for authentication when downloading models.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  | Optional: \{\} <br /> |
 
 
 #### AIMServiceTemplateSpecCommon
@@ -1555,6 +1556,7 @@ _Appears in:_
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources required to run this template.<br />When provided, the discovery dry-run will be skipped and these sources will be used directly.<br />This allows users to explicitly declare model dependencies without requiring a discovery job.<br />If omitted, a discovery job will be run to automatically determine the required model sources. |  | Optional: \{\} <br /> |
 | `profileId` _string_ | ProfileId is the specific AIM profile ID that this template should use.<br />When set, the discovery job will be instructed to use this specific profile. |  | Optional: \{\} <br /> |
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type indicates the optimization level of this template.<br />- optimized: Template has been tuned for performance<br />- preview: Template is experimental/pre-release<br />- unoptimized: Default, no specific optimizations applied<br />When nil, the type is determined by discovery. When set, overrides discovery. |  | Enum: [optimized preview unoptimized] <br />Optional: \{\} <br /> |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for inference containers.<br />These variables are passed to the inference runtime and can be used<br />to configure runtime behavior, authentication, or other settings. |  | Optional: \{\} <br /> |
 
 
 #### AIMServiceTemplateStatus
@@ -1590,7 +1592,7 @@ _Appears in:_
 
 
 
-AIMStorageConfig configures storage defaults for model caches and PVCs.
+AIMStorageConfig configures storage defaults for artifacts and PVCs.
 
 
 
@@ -1603,7 +1605,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `defaultStorageClassName` _string_ | DefaultStorageClassName specifies the storage class to use for model caches and PVCs<br />when the consuming resource (AIMModelCache, AIMTemplateCache, AIMServiceTemplate) does not<br />specify a storage class. If this field is empty, the cluster's default storage class is used. |  | Optional: \{\} <br /> |
+| `defaultStorageClassName` _string_ | DefaultStorageClassName specifies the storage class to use for artifacts and PVCs<br />when the consuming resource (AIMArtifact, AIMTemplateCache, AIMServiceTemplate) does not<br />specify a storage class. If this field is empty, the cluster's default storage class is used. |  | Optional: \{\} <br /> |
 | `pvcHeadroomPercent` _integer_ | PVCHeadroomPercent specifies the percentage of extra space to add to PVCs<br />for model storage. This accounts for filesystem overhead and temporary files<br />during model loading. The value represents a percentage (e.g., 10 means 10% extra space).<br />If not specified, defaults to 10%. | 10 | Minimum: 0 <br />Optional: \{\} <br /> |
 
 
@@ -1611,7 +1613,7 @@ _Appears in:_
 
 
 
-AIMTemplateCache pre-warms model caches for a specified template.
+AIMTemplateCache pre-warms artifacts for a specified template.
 
 
 
@@ -1649,7 +1651,7 @@ AIMTemplateCacheList contains a list of AIMTemplateCache.
 
 _Underlying type:_ _string_
 
-AIMTemplateCacheMode controls the ownership behavior of model caches created by a template cache.
+AIMTemplateCacheMode controls the ownership behavior of artifacts created by a template cache.
 
 _Validation:_
 - Enum: [Dedicated Shared]
@@ -1659,8 +1661,8 @@ _Appears in:_
 
 | Field | Description |
 | --- | --- |
-| `Dedicated` | TemplateCacheModeDedicated means model caches have owner references to the template cache.<br />When the template cache is deleted, all its model caches are garbage collected.<br />Use this mode for service-specific caches that should be cleaned up with the service.<br /> |
-| `Shared` | TemplateCacheModeShared means model caches have no owner references.<br />Model caches persist independently of template cache lifecycle and can be shared.<br />This is the default mode for long-lived, reusable caches.<br /> |
+| `Dedicated` | TemplateCacheModeDedicated means artifacts have owner references to the template cache.<br />When the template cache is deleted, all its artifacts are garbage collected.<br />Use this mode for service-specific caches that should be cleaned up with the service.<br /> |
+| `Shared` | TemplateCacheModeShared means artifacts have no owner references.<br />artifacts persist independently of template cache lifecycle and can be shared.<br />This is the default mode for long-lived, reusable caches.<br /> |
 
 
 #### AIMTemplateCacheSpec
@@ -1681,10 +1683,10 @@ _Appears in:_
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables to use for authentication when downloading models.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  | Optional: \{\} <br /> |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets references secrets for pulling AIM container images. |  | Optional: \{\} <br /> |
 | `storageClassName` _string_ | StorageClassName specifies the storage class for cache volumes.<br />When not specified, uses the cluster default storage class. |  | Optional: \{\} <br /> |
-| `downloadImage` _string_ | DownloadImage specifies the container image used to download and initialize model caches.<br />When not specified, the controller uses the default model download image. |  | Optional: \{\} <br /> |
+| `downloadImage` _string_ | DownloadImage specifies the container image used to download and initialize artifacts.<br />When not specified, the controller uses the default model download image. |  | Optional: \{\} <br /> |
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources to cache for this template.<br />These sources are typically copied from the resolved template's model sources. |  | Optional: \{\} <br /> |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  | Optional: \{\} <br /> |
-| `mode` _[AIMTemplateCacheMode](#aimtemplatecachemode)_ | Mode controls the ownership behavior of model caches created by this template cache.<br />- Dedicated: Model caches are owned by this template cache and garbage collected when it's deleted.<br />- Shared (default): Model caches have no owner references and persist independently.<br />When a Shared template cache encounters model caches with owner references, it promotes them<br />to shared by removing the owner references, ensuring they persist for long-term use. | Shared | Enum: [Dedicated Shared] <br />Optional: \{\} <br /> |
+| `mode` _[AIMTemplateCacheMode](#aimtemplatecachemode)_ | Mode controls the ownership behavior of artifacts created by this template cache.<br />- Dedicated: artifacts are owned by this template cache and garbage collected when it's deleted.<br />- Shared (default): artifacts have no owner references and persist independently.<br />When a Shared template cache encounters artifacts with owner references, it promotes them<br />to shared by removing the owner references, ensuring they persist for long-term use. | Shared | Enum: [Dedicated Shared] <br />Optional: \{\} <br /> |
 
 
 #### AIMTemplateCacheStatus
@@ -1705,7 +1707,7 @@ _Appears in:_
 | `resolvedRuntimeConfig` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedRuntimeConfig captures metadata about the runtime config that was resolved. |  | Optional: \{\} <br /> |
 | `status` _[AIMStatus](#aimstatus)_ | Status represents the current high-level status of the template cache. | Pending | Enum: [Pending Progressing Ready Failed Degraded NotAvailable] <br /> |
 | `resolvedTemplateKind` _string_ | ResolvedTemplateKind indicates whether the template resolved to a namespace-scoped<br />AIMServiceTemplate or cluster-scoped AIMClusterServiceTemplate.<br />Values: "AIMServiceTemplate", "AIMClusterServiceTemplate" |  |  |
-| `modelCaches` _object (keys:string, values:[AIMResolvedModelCache](#aimresolvedmodelcache))_ | ModelCaches maps model names to their resolved AIMModelCache resources. |  | Optional: \{\} <br /> |
+| `artifacts` _object (keys:string, values:[AIMResolvedArtifact](#aimresolvedartifact))_ | Artifacts maps model names to their resolved AIMArtifact resources. |  | Optional: \{\} <br /> |
 
 
 #### AIMTemplateCachingConfig
@@ -1770,12 +1772,12 @@ _Appears in:_
 
 
 
-DownloadProgress represents the download progress for a model cache
+DownloadProgress represents the download progress for a artifact
 
 
 
 _Appears in:_
-- [AIMModelCacheStatus](#aimmodelcachestatus)
+- [AIMArtifactStatus](#aimartifactstatus)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -1909,7 +1911,7 @@ _Appears in:_
 
 _Appears in:_
 - [AIMClusterServiceTemplateSpec](#aimclusterservicetemplatespec)
-- [AIMModelCacheSpec](#aimmodelcachespec)
+- [AIMArtifactSpec](#aimartifactspec)
 - [AIMModelSpec](#aimmodelspec)
 - [AIMServiceSpec](#aimservicespec)
 - [AIMServiceTemplateSpec](#aimservicetemplatespec)

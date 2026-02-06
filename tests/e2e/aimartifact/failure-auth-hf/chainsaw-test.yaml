@@ -1,0 +1,37 @@
+
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: failure-auth-hf
+  labels:
+    # This test requires reliable network access to HuggingFace which may be slow in Kind
+    requires: external-network
+spec:
+  steps:
+    - name: Create artifact
+      try:
+        - apply:
+            file: artifact.yaml
+
+    - name: Assert the cache failure is set correctly
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: failure-auth-hf
+              status:
+                status: "Failed"
+                progress:
+                  displayPercentage: "N/A"
+                (conditions[?type == 'Ready']):
+                  - status: "False"
+                    reason: "AuthError"
+                (conditions[?type == 'DownloadJobPodsReady']):
+                  - status: "False"
+                    reason: "AuthError"
+                (conditions[?type == 'AuthValid']):
+                  - status: "False"
+                    reason: "AuthError"

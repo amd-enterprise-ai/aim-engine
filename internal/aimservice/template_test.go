@@ -456,9 +456,9 @@ func TestBuildDerivedTemplate_InheritsBaseSpec(t *testing.T) {
 					corev1.ResourceMemory: resource.MustParse("16Gi"),
 				},
 			},
-		},
-		Env: []corev1.EnvVar{
-			{Name: "BASE_VAR", Value: "base-value"},
+			Env: []corev1.EnvVar{
+				{Name: "BASE_VAR", Value: "base-value"},
+			},
 		},
 	}
 

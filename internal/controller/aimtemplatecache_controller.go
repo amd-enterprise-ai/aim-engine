@@ -49,10 +49,10 @@ import (
 const (
 	templateCacheName = "template-cache"
 
-	// finalizerModelCacheCleanup is the finalizer for cleaning up non-Available model caches
-	// when an AIMTemplateCache is deleted. Model caches that are stuck in Failed/Pending states
+	// finalizerArtifactCleanup is the finalizer for cleaning up non-Available artifacts
+	// when an AIMTemplateCache is deleted. artifacts that are stuck in Failed/Pending states
 	// cannot be re-created while they exist, so we must delete them on template cache deletion.
-	finalizerModelCacheCleanup = "aim.eai.amd.com/model-cache-cleanup"
+	finalizerArtifactCleanup = "aim.eai.amd.com/artifactcleanup"
 )
 
 // AIMTemplateCacheReconciler reconciles a AIMTemplateCache object
@@ -81,7 +81,7 @@ type AIMTemplateCacheReconciler struct {
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimtemplatecaches/finalizers,verbs=update
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimservicetemplates,verbs=get;list;watch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterservicetemplates,verbs=get;list;watch
-// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimmodelcaches,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimartifacts,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -98,18 +98,18 @@ func (r *AIMTemplateCacheReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	// Handle finalizer for model cache cleanup
+	// Handle finalizer for artifact cleanup
 	if templateCache.DeletionTimestamp != nil {
 		// Template cache is being deleted
-		if controllerutil.ContainsFinalizer(&templateCache, finalizerModelCacheCleanup) {
+		if controllerutil.ContainsFinalizer(&templateCache, finalizerArtifactCleanup) {
 			// Run cleanup logic
-			if err := r.cleanupModelCaches(ctx, &templateCache); err != nil {
-				logger.Error(err, "Failed to cleanup model caches")
+			if err := r.cleanupArtifacts(ctx, &templateCache); err != nil {
+				logger.Error(err, "Failed to cleanup artifacts")
 				return ctrl.Result{}, err
 			}
 
 			// Remove the finalizer
-			controllerutil.RemoveFinalizer(&templateCache, finalizerModelCacheCleanup)
+			controllerutil.RemoveFinalizer(&templateCache, finalizerArtifactCleanup)
 			if err := r.Update(ctx, &templateCache); err != nil {
 				if apierrors.IsConflict(err) {
 					// Conflict, retry on next reconcile
@@ -123,8 +123,8 @@ func (r *AIMTemplateCacheReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// Ensure finalizer is present
-	if !controllerutil.ContainsFinalizer(&templateCache, finalizerModelCacheCleanup) {
-		controllerutil.AddFinalizer(&templateCache, finalizerModelCacheCleanup)
+	if !controllerutil.ContainsFinalizer(&templateCache, finalizerArtifactCleanup) {
+		controllerutil.AddFinalizer(&templateCache, finalizerArtifactCleanup)
 		if err := r.Update(ctx, &templateCache); err != nil {
 			if apierrors.IsConflict(err) {
 				// Conflict, retry on next reconcile
@@ -221,11 +221,11 @@ func (r *AIMTemplateCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMTemplateCache{}).
-		// Watch model caches and enqueue template caches that created them (via label)
-		// Model caches are shared resources without owner references
+		// Watch artifacts and enqueue template caches that created them (via label)
+		// artifacts are shared resources without owner references
 		Watches(
-			&aimv1alpha1.AIMModelCache{},
-			handler.EnqueueRequestsFromMapFunc(r.findTemplateCachesForModelCache),
+			&aimv1alpha1.AIMArtifact{},
+			handler.EnqueueRequestsFromMapFunc(r.findTemplateCachesForArtifact),
 		).
 		Watches(
 			&aimv1alpha1.AIMServiceTemplate{},
@@ -305,15 +305,15 @@ func (r *AIMTemplateCacheReconciler) findTemplateCachesForClusterServiceTemplate
 	return requests
 }
 
-// findTemplateCachesForModelCache finds all template caches that created a model cache (via label).
-// Model caches are shared resources without owner references, so we use a label-based lookup.
-func (r *AIMTemplateCacheReconciler) findTemplateCachesForModelCache(ctx context.Context, obj client.Object) []ctrl.Request {
-	modelCache := obj.(*aimv1alpha1.AIMModelCache)
+// findTemplateCachesForArtifact finds all template caches that created a artifact (via label).
+// artifacts are shared resources without owner references, so we use a label-based lookup.
+func (r *AIMTemplateCacheReconciler) findTemplateCachesForArtifact(ctx context.Context, obj client.Object) []ctrl.Request {
+	artifact := obj.(*aimv1alpha1.AIMArtifact)
 
 	// Get the template cache name from the label
-	templateCacheName := modelCache.Labels[constants.LabelTemplateCacheName]
+	templateCacheName := artifact.Labels[constants.LabelTemplateCacheName]
 	if templateCacheName == "" {
-		// Model cache was not created by a template cache (or is a legacy cache)
+		// artifact was not created by a template cache (or is a legacy cache)
 		return nil
 	}
 
@@ -322,7 +322,7 @@ func (r *AIMTemplateCacheReconciler) findTemplateCachesForModelCache(ctx context
 		{
 			NamespacedName: client.ObjectKey{
 				Name:      templateCacheName,
-				Namespace: modelCache.Namespace,
+				Namespace: artifact.Namespace,
 			},
 		},
 	}
@@ -340,11 +340,11 @@ func getTemplateStatus(obj client.Object) constants.AIMStatus {
 	}
 }
 
-// cleanupModelCaches deletes AIMModelCaches created by this template cache that are not Available.
-// Model caches that are stuck in Failed/Pending states cannot be re-created while they exist,
+// cleanupArtifacts deletes AIMArtifacts created by this template cache that are not Available.
+// artifacts that are stuck in Failed/Pending states cannot be re-created while they exist,
 // blocking any future template cache that would use the same template. Deleting non-Available caches
 // on template cache deletion ensures a clean slate for recreation.
-func (r *AIMTemplateCacheReconciler) cleanupModelCaches(ctx context.Context, templateCache *aimv1alpha1.AIMTemplateCache) error {
+func (r *AIMTemplateCacheReconciler) cleanupArtifacts(ctx context.Context, templateCache *aimv1alpha1.AIMTemplateCache) error {
 	logger := log.FromContext(ctx)
 
 	// Sanitize template cache name for label matching
@@ -353,9 +353,9 @@ func (r *AIMTemplateCacheReconciler) cleanupModelCaches(ctx context.Context, tem
 		return fmt.Errorf("failed to sanitize template cache name for label: %w", err)
 	}
 
-	// List all AIMModelCaches created by this template cache (via label)
-	var modelCaches aimv1alpha1.AIMModelCacheList
-	if err := r.List(ctx, &modelCaches,
+	// List all AIMArtifacts created by this template cache (via label)
+	var artifacts aimv1alpha1.AIMArtifactList
+	if err := r.List(ctx, &artifacts,
 		client.InNamespace(templateCache.Namespace),
 		client.MatchingLabels{
 			constants.LabelTemplateCacheName: templateCacheLabelValue,
@@ -366,23 +366,23 @@ func (r *AIMTemplateCacheReconciler) cleanupModelCaches(ctx context.Context, tem
 			logger.Info("Skipping cleanup, namespace may be terminating", "templateCache", templateCache.Name)
 			return nil
 		}
-		return fmt.Errorf("failed to list model caches for cleanup: %w", err)
+		return fmt.Errorf("failed to list artifacts for cleanup: %w", err)
 	}
 
 	// Delete only the ones that are not in Ready state
 	var errs []error
-	for i := range modelCaches.Items {
-		mc := &modelCaches.Items[i]
+	for i := range artifacts.Items {
+		mc := &artifacts.Items[i]
 		if mc.Status.Status != constants.AIMStatusReady {
 			if deleteErr := r.Delete(ctx, mc); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
 				// If namespace is terminating, continue
 				if apierrors.IsForbidden(deleteErr) {
 					continue
 				}
-				errs = append(errs, fmt.Errorf("failed to delete model cache %s: %w", mc.Name, deleteErr))
+				errs = append(errs, fmt.Errorf("failed to delete artifact %s: %w", mc.Name, deleteErr))
 			} else {
-				logger.Info("Deleted non-available model cache during template cache cleanup",
-					"modelCache", mc.Name,
+				logger.Info("Deleted non-available artifact during template cache cleanup",
+					"artifact", mc.Name,
 					"templateCache", templateCache.Name,
 					"cacheStatus", mc.Status.Status)
 			}

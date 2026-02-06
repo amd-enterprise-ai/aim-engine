@@ -516,4 +516,4 @@ func (r *Reconciler) FetchRemoteState(ctx, c, reconcileCtx) FetchResult {
 This optimization:
 - Avoids false errors when upstream resources are deleted after successful creation
 - Reduces API calls for running services
-- Still catches cache health issues proactively (TemplateCache → ModelCache → PVC chain)
+- Still catches cache health issues proactively (TemplateCache → Artifact → PVC chain)

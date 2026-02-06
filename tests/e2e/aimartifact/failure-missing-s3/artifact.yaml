@@ -1,0 +1,20 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: failure-missing-s3
+spec:
+  sourceUri: s3://meta-llama-definitely-doesnt-exist/Llama-3.2-1B-Instruct
+  size: 5Gi
+  env:
+    - name: AWS_ACCESS_KEY_ID
+      value: minioadmin
+    - name: AWS_SECRET_ACCESS_KEY
+      value: minioadmin
+    - name: AWS_ENDPOINT_URL
+      value: http://minio:9000
+    - name: S3_ENDPOINT
+      value: minio:9000
+    - name: S3_USE_HTTPS
+      value: "0"
+    - name: AWS_DEFAULT_REGION
+      value: us-east-1

@@ -129,7 +129,7 @@ func planInferenceService(
 	ctx context.Context,
 	service *aimv1alpha1.AIMService,
 	templateName string,
-	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
+	templateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
 	obs ServiceObservation,
 ) client.Object {
@@ -174,7 +174,7 @@ func isReadyForInferenceService(_ *aimv1alpha1.AIMService, obs ServiceObservatio
 func buildInferenceService(
 	service *aimv1alpha1.AIMService,
 	templateName string,
-	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
+	templateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
 	obs ServiceObservation,
 ) *servingv1beta1.InferenceService {
@@ -327,7 +327,7 @@ func buildInferenceService(
 // 5. System defaults
 func buildMergedEnvVars(
 	service *aimv1alpha1.AIMService,
-	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
+	templateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
 	obs ServiceObservation,
 ) []corev1.EnvVar {
@@ -402,7 +402,7 @@ func buildMergedEnvVars(
 // 4. Default CPU/memory based on GPU count
 func resolveResources(
 	service *aimv1alpha1.AIMService,
-	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
+	templateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon,
 	gpuCount int64,
 	gpuResourceName corev1.ResourceName,
 ) corev1.ResourceRequirements {
@@ -613,8 +613,8 @@ func convertToKServeAutoScaling(aimAutoScaling *aimv1alpha1.AIMServiceAutoScalin
 }
 
 // addStorageVolumes adds cache volumes to the InferenceService.
-// Model caches are resolved through the template cache status, which contains
-// the list of ready model caches with their PVC names and mount points.
+// artifacts are resolved through the template cache status, which contains
+// the list of ready artifacts with their PVC names and mount points.
 func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObservation) {
 	if len(isvc.Spec.Predictor.Containers) == 0 {
 		return
@@ -627,9 +627,9 @@ func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObserva
 		return
 	}
 
-	// Use resolved model caches from template cache status
-	// This avoids fetching model caches separately and keeps the CRD relationships explicit
-	for _, resolvedCache := range obs.templateCache.Value.Status.ModelCaches {
+	// Use resolved artifacts from template cache status
+	// This avoids fetching artifacts separately and keeps the CRD relationships explicit
+	for _, resolvedCache := range obs.templateCache.Value.Status.Artifacts {
 		if resolvedCache.Status != constants.AIMStatusReady {
 			continue
 		}
@@ -641,9 +641,9 @@ func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObserva
 	}
 }
 
-// addResolvedCacheMount adds a resolved model cache PVC volume mount.
-func addResolvedCacheMount(isvc *servingv1beta1.InferenceService, container *corev1.Container, cache aimv1alpha1.AIMResolvedModelCache) {
-	// Sanitize volume name from the model cache name
+// addResolvedCacheMount adds a resolved artifact PVC volume mount.
+func addResolvedCacheMount(isvc *servingv1beta1.InferenceService, container *corev1.Container, cache aimv1alpha1.AIMResolvedArtifact) {
+	// Sanitize volume name from the artifact name
 	volumeName := utils.MakeRFC1123Compliant(cache.Name)
 	volumeName = strings.ReplaceAll(volumeName, ".", "-")
 

@@ -759,7 +759,7 @@ func TestGetResolvedTemplate(t *testing.T) {
 			},
 			expectName:      "cluster-template",
 			expectNamespace: "",
-			expectNsSpec:    false,
+			expectNsSpec:    true, // Now returns common spec for cluster templates too
 			expectStatus:    true,
 		},
 		{

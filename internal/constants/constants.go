@@ -56,7 +56,7 @@ const (
 	LabelPrecision = AimLabelDomain + "/precision"
 	// LabelCacheType indicates the type of cache (temp or persistent)
 	LabelCacheType = AimLabelDomain + "/cache-type"
-	// LabelTemplateCacheName is the label key for the template cache name (used on model caches)
+	// LabelTemplateCacheName is the label key for the template cache name (used on artifacts)
 	LabelTemplateCacheName = AimLabelDomain + "/template-cache.name"
 )
 
@@ -96,7 +96,7 @@ const (
 	ReasonCreating = "Creating"
 	ReasonResolved = "Resolved"
 
-	// Storage/PVC reasons (used by AIMModelCache, AIMService)
+	// Storage/PVC reasons (used by AIMArtifact, AIMService)
 	ReasonPVCProvisioning = "PVCProvisioning"
 	ReasonPVCBound        = "PVCBound"
 	ReasonPVCNotBound     = "PVCNotBound"
@@ -216,7 +216,7 @@ const (
 	// DefaultGPUResourceName is the default resource name for AMD GPUs
 	DefaultGPUResourceName = "amd.com/gpu"
 	// AIMCacheBasePath is the base directory for cached models
-	AIMCacheBasePath = "/workspace/model-cache"
+	AIMCacheBasePath = "/workspace/artifact"
 )
 
 // Component values for resource labels
@@ -232,7 +232,7 @@ const (
 // Environment variable names
 const (
 	// EnvAIMCachePath is the environment variable for the cache path
-	EnvAIMCachePath = "AIM_CACHE_PATH"
+	EnvAIMCachePath = "AIM_ARTIFACT_PATH"
 	// EnvAIMMetric is the environment variable for the optimization metric
 	EnvAIMMetric = "AIM_METRIC"
 	// EnvAIMPrecision is the environment variable for the numeric precision

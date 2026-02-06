@@ -38,7 +38,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: AIMTemplateCache pre-warms model caches for a specified template.
+        description: AIMTemplateCache pre-warms artifacts for a specified template.
         properties:
           apiVersion:
             description: |-
@@ -62,7 +62,7 @@ spec:
             properties:
               downloadImage:
                 description: |-
-                  DownloadImage specifies the container image used to download and initialize model caches.
+                  DownloadImage specifies the container image used to download and initialize artifacts.
                   When not specified, the controller uses the default model download image.
                 type: string
               env:
@@ -250,10 +250,10 @@ spec:
               mode:
                 default: Shared
                 description: |-
-                  Mode controls the ownership behavior of model caches created by this template cache.
-                  - Dedicated: Model caches are owned by this template cache and garbage collected when it's deleted.
-                  - Shared (default): Model caches have no owner references and persist independently.
-                  When a Shared template cache encounters model caches with owner references, it promotes them
+                  Mode controls the ownership behavior of artifacts created by this template cache.
+                  - Dedicated: artifacts are owned by this template cache and garbage collected when it's deleted.
+                  - Shared (default): artifacts have no owner references and persist independently.
+                  When a Shared template cache encounters artifacts with owner references, it promotes them
                   to shared by removing the owner references, ensuring they persist for long-term use.
                 enum:
                 - Dedicated
@@ -435,7 +435,7 @@ spec:
                     modelId:
                       description: |-
                         ModelID is the canonical identifier in {org}/{name} format.
-                        Determines the cache mount path: /workspace/model-cache/{modelId}
+                        Determines the cache mount path: /workspace/artifact/{modelId}
                         For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
                         For S3 sources, users define their own organizational structure.
                       pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
@@ -500,6 +500,36 @@ spec:
           status:
             description: AIMTemplateCacheStatus defines the observed state of AIMTemplateCache
             properties:
+              artifacts:
+                additionalProperties:
+                  properties:
+                    model:
+                      description: Model is the name of the model that is cached
+                      type: string
+                    mountPoint:
+                      description: MountPoint is the mount point for the artifact
+                      type: string
+                    name:
+                      description: Name of the AIMArtifact resource
+                      type: string
+                    persistentVolumeClaim:
+                      description: PersistentVolumeClaim name if available
+                      type: string
+                    status:
+                      description: Status of the artifact
+                      type: string
+                    uid:
+                      description: UID of the AIMArtifact resource
+                      type: string
+                  required:
+                  - model
+                  - name
+                  - status
+                  - uid
+                  type: object
+                description: Artifacts maps model names to their resolved AIMArtifact
+                  resources.
+                type: object
               conditions:
                 description: Conditions represent the latest observations of the template
                   cache state.
@@ -561,36 +591,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              modelCaches:
-                additionalProperties:
-                  properties:
-                    model:
-                      description: Model is the name of the model that is cached
-                      type: string
-                    mountPoint:
-                      description: MountPoint is the mount point for the model cache
-                      type: string
-                    name:
-                      description: Name of the AIMModelCache resource
-                      type: string
-                    persistentVolumeClaim:
-                      description: PersistentVolumeClaim name if available
-                      type: string
-                    status:
-                      description: Status of the model cache
-                      type: string
-                    uid:
-                      description: UID of the AIMModelCache resource
-                      type: string
-                  required:
-                  - model
-                  - name
-                  - status
-                  - uid
-                  type: object
-                description: ModelCaches maps model names to their resolved AIMModelCache
-                  resources.
-                type: object
               observedGeneration:
                 description: ObservedGeneration is the most recent generation observed
                   by the controller.

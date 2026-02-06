@@ -280,7 +280,7 @@ func TestFetchModel_ByImage_MultipleModels(t *testing.T) {
 }
 
 // ============================================================================
-// FETCH MODEL - RESOLVED MODEL CACHE TESTS
+// FETCH MODEL - RESOLVED ARTIFACT TESTS
 // ============================================================================
 
 func TestFetchModel_UsesResolvedModel_WhenReady(t *testing.T) {

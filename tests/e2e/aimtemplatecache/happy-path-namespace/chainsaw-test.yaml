@@ -20,12 +20,12 @@ spec:
         - apply:
             file: template-cache.yaml
 
-    - name: Ensure the model caches are created
+    - name: Ensure the artifacts are created
       try:
         - assert:
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMModelCache
+              kind: AIMArtifact
               metadata:
                 labels:
                   aim.eai.amd.com/template-cache.name: happy-path-namespace
@@ -40,7 +40,7 @@ spec:
         - assert:
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMModelCache
+              kind: AIMArtifact
               metadata:
                 labels:
                   aim.eai.amd.com/template-cache.name: happy-path-namespace
@@ -50,4 +50,4 @@ spec:
                 sourceUri: hf://HuggingFaceTB/SmolLM-135M
                 size: 4Gi
 
-    # TODO add an assert to check the template cache becomes ready (once the model cache is merged)
+    # TODO add an assert to check the template cache becomes ready (once the artifact is merged)

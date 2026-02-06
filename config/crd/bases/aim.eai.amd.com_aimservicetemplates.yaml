@@ -247,8 +247,9 @@ spec:
                 type: object
               env:
                 description: |-
-                  Env specifies environment variables to use for authentication when downloading models.
-                  These variables are used for authentication with model registries (e.g., HuggingFace tokens).
+                  Env specifies environment variables for inference containers.
+                  These variables are passed to the inference runtime and can be used
+                  to configure runtime behavior, authentication, or other settings.
                 items:
                   description: EnvVar represents an environment variable present in
                     a Container.
@@ -713,7 +714,7 @@ spec:
                     modelId:
                       description: |-
                         ModelID is the canonical identifier in {org}/{name} format.
-                        Determines the cache mount path: /workspace/model-cache/{modelId}
+                        Determines the cache mount path: /workspace/artifact/{modelId}
                         For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
                         For S3 sources, users define their own organizational structure.
                       pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
@@ -1170,7 +1171,7 @@ spec:
                     modelId:
                       description: |-
                         ModelID is the canonical identifier in {org}/{name} format.
-                        Determines the cache mount path: /workspace/model-cache/{modelId}
+                        Determines the cache mount path: /workspace/artifact/{modelId}
                         For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
                         For S3 sources, users define their own organizational structure.
                       pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$

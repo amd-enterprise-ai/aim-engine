@@ -181,7 +181,7 @@ test-chainsaw: ## Run chainsaw e2e tests (selector based on ENV). Pass CHAINSAW_
 	@echo "Config: $(CHAINSAW_ENV_CONFIG)"
 	@echo "Selector: $(if $(filter gpu,$(ENV)),$(CHAINSAW_SELECTOR_GPU),$(CHAINSAW_SELECTOR_KIND))"
 	@mkdir -p $(CHAINSAW_REPORT_DIR)
-	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test --test-dir $(CHAINSAW_TEST_DIR) \
+	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test --full-name --test-dir $(CHAINSAW_TEST_DIR) \
 		--config $(CHAINSAW_ENV_CONFIG) \
 		$(CHAINSAW_ENV_SELECTOR) \
 		--report-format JSON --report-name chainsaw-report --report-path $(CHAINSAW_REPORT_DIR) \

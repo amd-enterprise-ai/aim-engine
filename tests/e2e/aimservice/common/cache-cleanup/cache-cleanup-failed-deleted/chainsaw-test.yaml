@@ -3,14 +3,14 @@
 # AIMService E2E Test: Cache Cleanup - Failed Caches Deleted
 #
 # This test validates that when an AIMService is deleted, Failed template caches
-# and model caches ARE deleted (to allow clean recreation).
+# and artifacts ARE deleted (to allow clean recreation).
 #
 # Test flow:
 # 1. Create AIMRuntimeConfig with AIM_DEBUG_CAUSE_FAILURE env (causes download to fail)
 # 2. Create AIMService with model.image and caching.mode: Always
-# 3. Wait for the model cache to fail
+# 3. Wait for the artifact to fail
 # 4. Delete the AIMService
-# 5. Verify the template cache and model cache are deleted (cleaned up because Failed)
+# 5. Verify the template cache and artifact are deleted (cleaned up because Failed)
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
@@ -42,13 +42,13 @@ spec:
                 labels:
                   aim.eai.amd.com/service.name: cache-cleanup-fail-service
 
-    - name: Verify AIMModelCache is created and reaches Failed status
+    - name: Verify AIMArtifact is created and reaches Failed status
       try:
         - assert:
             timeout: 120s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMModelCache
+              kind: AIMArtifact
               metadata:
                 labels:
                   aim.eai.amd.com/service.name: cache-cleanup-fail-service
@@ -87,13 +87,13 @@ spec:
                 labels:
                   aim.eai.amd.com/service.name: cache-cleanup-fail-service
 
-    - name: Verify AIMModelCache is deleted (cascade from template cache finalizer)
+    - name: Verify AIMArtifact is deleted (cascade from template cache finalizer)
       try:
         - error:
             timeout: 60s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMModelCache
+              kind: AIMArtifact
               metadata:
                 labels:
                   aim.eai.amd.com/service.name: cache-cleanup-fail-service

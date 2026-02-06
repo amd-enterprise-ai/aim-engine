@@ -43,9 +43,9 @@ import (
 )
 
 const (
-	templateCacheFinalizer        = constants.AimLabelDomain + "/template-cache.cleanup"
-	modelCachesComponentName      = "ModelCaches"
-	modelCachesReadyConditionType = modelCachesComponentName + "Ready"
+	templateCacheFinalizer      = constants.AimLabelDomain + "/template-cache.cleanup"
+	artifactsComponentName      = "Artifacts"
+	artifactsReadyConditionType = artifactsComponentName + "Ready"
 )
 
 type TemplateCacheReconciler struct {
@@ -104,7 +104,7 @@ type TemplateCacheFetchResult struct {
 	mergedRuntimeConfig    controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
 	serviceTemplate        controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]
 	clusterServiceTemplate *controllerutils.FetchResult[*aimv1alpha1.AIMClusterServiceTemplate]
-	modelCaches            controllerutils.FetchResult[*aimv1alpha1.AIMModelCacheList]
+	artifacts              controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]
 }
 
 func (r *TemplateCacheReconciler) FetchRemoteState(
@@ -137,8 +137,8 @@ func (r *TemplateCacheReconciler) FetchRemoteState(
 		}
 	}
 
-	// Fetch all model caches in the namespace
-	result.modelCaches = controllerutils.FetchList(ctx, c, &aimv1alpha1.AIMModelCacheList{}, client.InNamespace(templateCache.Namespace))
+	// Fetch all artifacts in the namespace
+	result.artifacts = controllerutils.FetchList(ctx, c, &aimv1alpha1.AIMArtifactList{}, client.InNamespace(templateCache.Namespace))
 
 	return result
 }
@@ -165,7 +165,7 @@ func (result TemplateCacheFetchResult) GetComponentHealth() []controllerutils.Co
 		}))
 	}
 
-	// NOTE: We only report fetch errors here. The actual ModelCachesReady condition
+	// NOTE: We only report fetch errors here. The actual ArtifactsReady condition
 	// is set in DecorateStatus because determining cache health requires:
 	// 1. Matching caches to template ModelSources by SourceURI and StorageClass
 	// 2. Finding the "best" cache for each model source
@@ -173,8 +173,8 @@ func (result TemplateCacheFetchResult) GetComponentHealth() []controllerutils.Co
 	//
 	// This matching logic is computed in ComposeState, which runs AFTER GetComponentHealth.
 	// Therefore, DecorateStatus (which runs after ComposeState) handles the success case.
-	if !result.modelCaches.OK() {
-		health = append(health, result.modelCaches.ToDownstreamComponentHealth(modelCachesComponentName, func(list *aimv1alpha1.AIMModelCacheList) controllerutils.ComponentHealth {
+	if !result.artifacts.OK() {
+		health = append(health, result.artifacts.ToDownstreamComponentHealth(artifactsComponentName, func(list *aimv1alpha1.AIMArtifactList) controllerutils.ComponentHealth {
 			// This should not get called, as there was an error
 			return controllerutils.ComponentHealth{}
 		}))
@@ -190,39 +190,39 @@ type TemplateCacheObservation struct {
 
 	AllCachesAvailable bool
 	MissingCaches      []aimv1alpha1.AIMModelSource
-	BestModelCaches    map[string]aimv1alpha1.AIMModelCache
+	BestArtifacts      map[string]aimv1alpha1.AIMArtifact
 
-	// CachesToPromote contains model caches that need to be promoted from Dedicated to Shared.
-	// This happens when a Shared template cache encounters existing model caches with owner references.
+	// CachesToPromote contains artifacts that need to be promoted from Dedicated to Shared.
+	// This happens when a Shared template cache encounters existing artifacts with owner references.
 	// Promotion removes the owner references so the caches persist independently.
-	CachesToPromote []aimv1alpha1.AIMModelCache
+	CachesToPromote []aimv1alpha1.AIMArtifact
 }
 
-// GetComponentHealth overrides the embedded FetchResult's method to include model cache health.
+// GetComponentHealth overrides the embedded FetchResult's method to include artifact health.
 // This is necessary because cache matching happens in ComposeState, which runs after FetchRemoteState.
 func (obs TemplateCacheObservation) GetComponentHealth() []controllerutils.ComponentHealth {
 	// Start with the base health from the embedded FetchResult
 	health := obs.TemplateCacheFetchResult.GetComponentHealth()
 
-	// Report model cache health if we have matched caches (computed in ComposeState)
-	if len(obs.BestModelCaches) > 0 {
+	// Report artifact health if we have matched caches (computed in ComposeState)
+	if len(obs.BestArtifacts) > 0 {
 		// Find the worst status among all caches
 		worstStatus := constants.AIMStatusReady
-		for _, mc := range obs.BestModelCaches {
+		for _, mc := range obs.BestArtifacts {
 			if constants.CompareAIMStatus(mc.Status.Status, worstStatus) < 0 {
 				worstStatus = mc.Status.Status
 			}
 		}
 
 		health = append(health, controllerutils.ComponentHealth{
-			Component:      modelCachesComponentName,
+			Component:      artifactsComponentName,
 			State:          worstStatus,
 			DependencyType: controllerutils.DependencyTypeDownstream,
 		})
 	} else if len(obs.MissingCaches) > 0 {
 		// Caches are being created
 		health = append(health, controllerutils.ComponentHealth{
-			Component:      modelCachesComponentName,
+			Component:      artifactsComponentName,
 			State:          constants.AIMStatusProgressing,
 			DependencyType: controllerutils.DependencyTypeDownstream,
 		})
@@ -255,19 +255,19 @@ func (r *TemplateCacheReconciler) ComposeState(
 		return obs
 	}
 
-	obs.BestModelCaches = map[string]aimv1alpha1.AIMModelCache{}
+	obs.BestArtifacts = map[string]aimv1alpha1.AIMArtifact{}
 
-	logger.Info("ComposeState: checking model caches",
+	logger.Info("ComposeState: checking artifacts",
 		"templateCache", tc.Name,
 		"templateModelSources", len(templateModelSources),
-		"fetchedModelCaches", len(fetch.modelCaches.Value.Items))
+		"fetchedArtifacts", len(fetch.artifacts.Value.Items))
 
 	// Loop through model sources from the template and check with what's available in our namespace
 	for _, model := range templateModelSources {
 		found := false
-		bestStatusModelCache := aimv1alpha1.AIMModelCache{}
-		for _, cached := range fetch.modelCaches.Value.Items {
-			logger.Info("ComposeState: evaluating model cache",
+		bestStatusArtifact := aimv1alpha1.AIMArtifact{}
+		for _, cached := range fetch.artifacts.Value.Items {
+			logger.Info("ComposeState: evaluating artifact",
 				"cacheName", cached.Name,
 				"cacheStatus", cached.Status.Status,
 				"cacheSourceURI", cached.Spec.SourceURI,
@@ -277,37 +277,37 @@ func (r *TemplateCacheReconciler) ComposeState(
 				logger.Info("ComposeState: skipping cache with empty status", "cacheName", cached.Name)
 				continue
 			}
-			// ModelCache is a match if it has the same SourceURI and a StorageClass matching our config
+			// Artifact is a match if it has the same SourceURI and a StorageClass matching our config
 			if cached.Spec.SourceURI == model.SourceURI &&
 				(tc.Spec.StorageClassName == "" || tc.Spec.StorageClassName == cached.Spec.StorageClassName) {
 				// Select the first matching cache, or replace with a better one
 				// Note: !found is needed because CompareAIMStatus("", "Failed") returns 0 (equal),
 				// since empty string gets priority 0 from the map (same as Failed)
-				if !found || constants.CompareAIMStatus(bestStatusModelCache.Status.Status, cached.Status.Status) < 0 {
+				if !found || constants.CompareAIMStatus(bestStatusArtifact.Status.Status, cached.Status.Status) < 0 {
 					logger.Info("ComposeState: selected cache as best match",
 						"cacheName", cached.Name,
 						"cacheStatus", cached.Status.Status,
-						"previousBestStatus", bestStatusModelCache.Status.Status)
+						"previousBestStatus", bestStatusArtifact.Status.Status)
 					found = true
-					bestStatusModelCache = cached
+					bestStatusArtifact = cached
 				}
 			}
 		}
 		if found {
 			logger.Info("ComposeState: model source matched",
 				"modelID", model.ModelID,
-				"bestCacheName", bestStatusModelCache.Name,
-				"bestCacheStatus", bestStatusModelCache.Status.Status)
-			obs.BestModelCaches[model.ModelID] = bestStatusModelCache
+				"bestCacheName", bestStatusArtifact.Name,
+				"bestCacheStatus", bestStatusArtifact.Status.Status)
+			obs.BestArtifacts[model.ModelID] = bestStatusArtifact
 
 			// Check if promotion is needed: Shared mode but cache has owner references
 			// This promotes Dedicated caches to Shared by removing owner references
 			if tc.Spec.Mode == aimv1alpha1.TemplateCacheModeShared &&
-				len(bestStatusModelCache.GetOwnerReferences()) > 0 {
+				len(bestStatusArtifact.GetOwnerReferences()) > 0 {
 				logger.Info("ComposeState: cache needs promotion to Shared",
-					"cacheName", bestStatusModelCache.Name,
-					"ownerCount", len(bestStatusModelCache.GetOwnerReferences()))
-				obs.CachesToPromote = append(obs.CachesToPromote, bestStatusModelCache)
+					"cacheName", bestStatusArtifact.Name,
+					"ownerCount", len(bestStatusArtifact.GetOwnerReferences()))
+				obs.CachesToPromote = append(obs.CachesToPromote, bestStatusArtifact)
 			}
 		} else {
 			logger.Info("ComposeState: model source missing cache", "modelID", model.ModelID)
@@ -332,8 +332,8 @@ func (r *TemplateCacheReconciler) PlanResources(
 		// Replace dots with dashes first to ensure DNS-compliant names (dots cause warnings in Pod names)
 		nameWithoutDots := strings.ReplaceAll(cache.SourceURI, ".", "-")
 
-		modelCacheName, _ := utils.GenerateDerivedName([]string{nameWithoutDots},
-			// Include all the fields that can impact the model cache uniqueness
+		artifactName, _ := utils.GenerateDerivedName([]string{nameWithoutDots},
+			// Include all the fields that can impact the artifact uniqueness
 			// TODO verify for any side effects
 			utils.WithHashSource(cache.SourceURI, tc.Spec.Env, tc.Spec.StorageClassName),
 		)
@@ -342,13 +342,13 @@ func (r *TemplateCacheReconciler) PlanResources(
 		// Sanitize template cache name for label value
 		templateCacheLabelValue, _ := utils.SanitizeLabelValue(tc.Name)
 
-		mc := &aimv1alpha1.AIMModelCache{
+		mc := &aimv1alpha1.AIMArtifact{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "aimv1alpha1",
-				Kind:       "AIMModelCache",
+				Kind:       "AIMArtifact",
 			},
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      modelCacheName,
+				Name:      artifactName,
 				Namespace: tc.Namespace,
 				Labels: map[string]string{
 					"template-created":                           "true", // Backward compatibility  TODO is this still needed?
@@ -358,7 +358,7 @@ func (r *TemplateCacheReconciler) PlanResources(
 					constants.LabelTemplateCacheName:             templateCacheLabelValue,
 				},
 			},
-			Spec: aimv1alpha1.AIMModelCacheSpec{
+			Spec: aimv1alpha1.AIMArtifactSpec{
 				StorageClassName: tc.Spec.StorageClassName,
 				SourceURI:        cache.SourceURI,
 				ModelID:          cache.ModelID,
@@ -370,8 +370,8 @@ func (r *TemplateCacheReconciler) PlanResources(
 		}
 
 		// Apply based on template cache mode:
-		// - Dedicated: model caches are owned by this template cache (garbage collected with it)
-		// - Shared: model caches have no owner references (persist independently)
+		// - Dedicated: artifacts are owned by this template cache (garbage collected with it)
+		// - Shared: artifacts have no owner references (persist independently)
 		if tc.Spec.Mode == aimv1alpha1.TemplateCacheModeDedicated {
 			result.Apply(mc)
 		} else {
@@ -380,7 +380,7 @@ func (r *TemplateCacheReconciler) PlanResources(
 	}
 
 	// Handle promotion of Dedicated caches to Shared
-	// When a Shared template cache encounters model caches with owner references,
+	// When a Shared template cache encounters artifacts with owner references,
 	// we remove the owner references so they persist independently
 	for _, cacheToPromote := range obs.CachesToPromote {
 		promotedCache := cacheToPromote.DeepCopy()
@@ -394,7 +394,7 @@ func (r *TemplateCacheReconciler) PlanResources(
 // DecorateStatus implements StatusDecorator to populate status fields and set domain-specific conditions.
 // The framework will set the overall Ready condition after this runs, based on all conditions.
 //
-// NOTE: This method sets the ModelCachesReady condition (rather than GetComponentHealth) because
+// NOTE: This method sets the ArtifactsReady condition (rather than GetComponentHealth) because
 // cache health depends on matching logic computed in ComposeState - specifically which caches
 // match the template's ModelSources. See GetComponentHealth for more context.
 func (r *TemplateCacheReconciler) DecorateStatus(
@@ -404,23 +404,23 @@ func (r *TemplateCacheReconciler) DecorateStatus(
 ) {
 	// If we have any missing caches, mark the condition and return
 	if len(obs.MissingCaches) > 0 {
-		cm.MarkFalse(modelCachesReadyConditionType, "CreatingCaches", "Waiting for the AIM model caches to be created")
+		cm.MarkFalse(artifactsReadyConditionType, "CreatingCaches", "Waiting for the AIM artifacts to be created")
 		return
 	}
-	if len(obs.BestModelCaches) > 0 {
+	if len(obs.BestArtifacts) > 0 {
 		// Find the worst status among all caches
 		var statusValues []constants.AIMStatus
-		for _, mc := range obs.BestModelCaches {
+		for _, mc := range obs.BestArtifacts {
 			statusValues = append(statusValues, mc.Status.Status)
 		}
 		worstCacheStatus := slices.MinFunc(statusValues, constants.CompareAIMStatus)
 
 		if worstCacheStatus == constants.AIMStatusReady {
-			cm.MarkTrue(modelCachesReadyConditionType, "AllCachesReady", "All caches are ready")
+			cm.MarkTrue(artifactsReadyConditionType, "AllCachesReady", "All caches are ready")
 		} else {
 			// Find the cache with the worst status and propagate its Ready condition
-			var worstCache *aimv1alpha1.AIMModelCache
-			for _, mc := range obs.BestModelCaches {
+			var worstCache *aimv1alpha1.AIMArtifact
+			for _, mc := range obs.BestArtifacts {
 				if mc.Status.Status == worstCacheStatus {
 					mcCopy := mc
 					worstCache = &mcCopy
@@ -432,27 +432,27 @@ func (r *TemplateCacheReconciler) DecorateStatus(
 				// Extract the Ready condition from the worst cache
 				for _, cond := range worstCache.Status.Conditions {
 					if cond.Type == controllerutils.ConditionTypeReady {
-						cm.MarkFalse(modelCachesReadyConditionType, cond.Reason, "One or more caches are not ready: "+cond.Message)
+						cm.MarkFalse(artifactsReadyConditionType, cond.Reason, "One or more caches are not ready: "+cond.Message)
 						break
 					}
 				}
 			}
 
 			// Fallback if no Ready condition found
-			if cm.Get(modelCachesReadyConditionType) == nil {
-				cm.MarkFalse(modelCachesReadyConditionType, "CachesNotReady", "One or more caches are not ready")
+			if cm.Get(artifactsReadyConditionType) == nil {
+				cm.MarkFalse(artifactsReadyConditionType, "CachesNotReady", "One or more caches are not ready")
 			}
 		}
 	} else {
 		// Shouldn't reach this, but just in case
-		cm.MarkFalse(modelCachesReadyConditionType, "NoCaches", "No model caches to track", controllerutils.AsError())
+		cm.MarkFalse(artifactsReadyConditionType, "NoCaches", "No artifacts to track", controllerutils.AsError())
 	}
 
-	// Populate the ModelCaches status field with details about resolved caches
-	if len(obs.BestModelCaches) > 0 {
-		status.ModelCaches = make(map[string]aimv1alpha1.AIMResolvedModelCache, len(obs.BestModelCaches))
-		for modelName, mc := range obs.BestModelCaches {
-			status.ModelCaches[mc.Name] = aimv1alpha1.AIMResolvedModelCache{
+	// Populate the Artifacts status field with details about resolved caches
+	if len(obs.BestArtifacts) > 0 {
+		status.Artifacts = make(map[string]aimv1alpha1.AIMResolvedArtifact, len(obs.BestArtifacts))
+		for modelName, mc := range obs.BestArtifacts {
+			status.Artifacts[mc.Name] = aimv1alpha1.AIMResolvedArtifact{
 				UID:                   string(mc.UID),
 				Name:                  mc.Name,
 				Model:                 modelName,
@@ -461,12 +461,12 @@ func (r *TemplateCacheReconciler) DecorateStatus(
 			}
 		}
 	} else {
-		status.ModelCaches = nil
+		status.Artifacts = nil
 	}
 }
 
 // getSizeOrZero returns the size value or zero quantity if nil.
-// This allows creating model caches without a known size - the model cache
+// This allows creating artifacts without a known size - the artifact
 // controller will run a check-size job to discover the size.
 func getSizeOrZero(size *resource.Quantity) resource.Quantity {
 	if size == nil {

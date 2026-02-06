@@ -127,4 +127,4 @@ jobs:
           echo "=== Operator Logs (full) ==="
           kubectl logs -n aim-system -l control-plane=controller-manager --tail=200 || true
           echo "=== All AIM resources ==="
-          kubectl get aimservice,aimmodel,aimtemplatecache,aimmodelcache -A || true
+          kubectl get aimservice,aimmodel,aimtemplatecache,aimartifact -A || true

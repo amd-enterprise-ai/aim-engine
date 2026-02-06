@@ -229,22 +229,22 @@ func WithServiceStatus(status constants.AIMStatus) ServiceOption {
 	}
 }
 
-// ModelCache fixtures
+// Artifact fixtures
 
-type ModelCacheOption func(*aimv1alpha1.AIMModelCache)
+type ArtifactOption func(*aimv1alpha1.AIMArtifact)
 
-func NewModelCache(opts ...ModelCacheOption) *aimv1alpha1.AIMModelCache {
-	mc := &aimv1alpha1.AIMModelCache{
+func NewArtifact(opts ...ArtifactOption) *aimv1alpha1.AIMArtifact {
+	mc := &aimv1alpha1.AIMArtifact{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cache",
 			Namespace: "default",
 		},
-		Spec: aimv1alpha1.AIMModelCacheSpec{
+		Spec: aimv1alpha1.AIMArtifactSpec{
 			SourceURI:          "hf://test/model",
 			Size:               resource.MustParse("10Gi"),
 			ModelDownloadImage: "kserve/storage-initializer:v0.16.0-rc0",
 		},
-		Status: aimv1alpha1.AIMModelCacheStatus{
+		Status: aimv1alpha1.AIMArtifactStatus{
 			Status: constants.AIMStatusPending,
 		},
 	}
@@ -254,26 +254,26 @@ func NewModelCache(opts ...ModelCacheOption) *aimv1alpha1.AIMModelCache {
 	return mc
 }
 
-func WithModelCacheName(name string) ModelCacheOption {
-	return func(mc *aimv1alpha1.AIMModelCache) {
+func WithArtifactName(name string) ArtifactOption {
+	return func(mc *aimv1alpha1.AIMArtifact) {
 		mc.Name = name
 	}
 }
 
-func WithModelCacheNamespace(namespace string) ModelCacheOption {
-	return func(mc *aimv1alpha1.AIMModelCache) {
+func WithArtifactNamespace(namespace string) ArtifactOption {
+	return func(mc *aimv1alpha1.AIMArtifact) {
 		mc.Namespace = namespace
 	}
 }
 
-func WithModelCacheSourceURI(uri string) ModelCacheOption {
-	return func(mc *aimv1alpha1.AIMModelCache) {
+func WithArtifactSourceURI(uri string) ArtifactOption {
+	return func(mc *aimv1alpha1.AIMArtifact) {
 		mc.Spec.SourceURI = uri
 	}
 }
 
-func WithModelCacheStatus(status constants.AIMStatus) ModelCacheOption {
-	return func(mc *aimv1alpha1.AIMModelCache) {
+func WithArtifactStatus(status constants.AIMStatus) ArtifactOption {
+	return func(mc *aimv1alpha1.AIMArtifact) {
 		mc.Status.Status = status
 	}
 }

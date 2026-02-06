@@ -60,7 +60,7 @@ func GenerateTemplateCacheName(templateName, namespace string) (string, error) {
 func planTemplateCache(
 	service *aimv1alpha1.AIMService,
 	templateName string,
-	templateSpec *aimv1alpha1.AIMServiceTemplateSpec,
+	templateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon,
 	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
 	obs ServiceObservation,
 ) client.Object {
@@ -108,13 +108,27 @@ func planTemplateCache(
 
 	serviceLabelValue, _ := utils.SanitizeLabelValue(service.Name)
 
-	// Build env vars for caching: merge template's caching env with service env
-	// Service.Env takes precedence (higher priority in merge hierarchy)
-	// Note: Only namespace-scoped templates support Caching config
-	var cacheEnv []corev1.EnvVar
-	if obs.template.Value != nil && obs.template.Value.Spec.Caching != nil {
-		cacheEnv = utils.CopyEnvVars(obs.template.Value.Spec.Caching.Env)
+	// Determine template scope
+	templateScope := aimv1alpha1.AIMServiceTemplateScopeNamespace
+	if obs.clusterTemplate.Value != nil {
+		templateScope = aimv1alpha1.AIMServiceTemplateScopeCluster
 	}
+
+	// Build env vars for caching: merge template env with caching-specific env and service env
+	// Priority (lowest to highest): template.Env < caching.Env < service.Env
+	var cacheEnv []corev1.EnvVar
+
+	// Start with template spec env (works for both namespace and cluster templates)
+	if templateSpec != nil && len(templateSpec.Env) > 0 {
+		cacheEnv = utils.CopyEnvVars(templateSpec.Env)
+	}
+
+	// Override with caching-specific env (only namespace-scoped templates support Caching config)
+	if obs.template.Value != nil && obs.template.Value.Spec.Caching != nil && len(obs.template.Value.Spec.Caching.Env) > 0 {
+		cacheEnv = utils.MergeEnvVars(cacheEnv, obs.template.Value.Spec.Caching.Env)
+	}
+
+	// Override with service env (highest priority)
 	if len(service.Spec.Env) > 0 {
 		cacheEnv = utils.MergeEnvVars(cacheEnv, service.Spec.Env)
 	}
@@ -133,17 +147,12 @@ func planTemplateCache(
 		},
 		Spec: aimv1alpha1.AIMTemplateCacheSpec{
 			TemplateName:     templateName,
-			TemplateScope:    aimv1alpha1.AIMServiceTemplateScopeNamespace, // Default to namespace scope
+			TemplateScope:    templateScope,
 			StorageClassName: storageClassName,
 			RuntimeConfigRef: service.Spec.RuntimeConfigRef,
 			Mode:             cacheMode,
 			Env:              cacheEnv,
 		},
-	}
-
-	// Copy env from template spec (used for download authentication)
-	if templateSpec != nil && len(templateSpec.Env) > 0 {
-		cache.Spec.Env = utils.CopyEnvVars(templateSpec.Env)
 	}
 
 	return cache

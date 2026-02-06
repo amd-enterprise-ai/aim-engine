@@ -45,12 +45,12 @@ spec:
                   team-alpha: "frontend"
                   cost-center: "cc-12345"
 
-    - name: Verify AIMModelCache has propagated labels
+    - name: Verify AIMArtifact has propagated labels
       try:
         - assert:
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMModelCache
+              kind: AIMArtifact
               metadata:
                 labels:
                   team-alpha: "frontend"
@@ -115,13 +115,13 @@ spec:
                   team-alpha: "frontend"
                   cost-center: "cc-12345"
 
-    - name: Verify non-matching labels are NOT propagated to AIMModelCache
+    - name: Verify non-matching labels are NOT propagated to AIMArtifact
       try:
         - error:
             timeout: 5s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMModelCache
+              kind: AIMArtifact
               metadata:
                 labels:
                   env: "test"

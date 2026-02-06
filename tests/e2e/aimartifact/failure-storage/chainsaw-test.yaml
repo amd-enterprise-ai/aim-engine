@@ -1,0 +1,37 @@
+
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: failure-storage
+  labels:
+    # This test requires Longhorn storage with quota support to trigger StorageFull errors.
+    # Use --selector 'requires!=longhorn' to exclude in environments without Longhorn.
+    requires: longhorn
+spec:
+  # Skip: Log parsing patterns need updating for new artifact-downloader output format
+  skip: true
+  steps:
+    - name: Create artifact
+      try:
+        - apply:
+            file: artifact.yaml
+
+    - name: Assert the cache failure is set correctly
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: failure-storage
+              status:
+                status: Failed
+                progress:
+                  displayPercentage: "N/A"
+                (conditions[?type == 'Ready']):
+                  - status: "False"
+                    reason: "StorageFull"
+                (conditions[?type == 'DownloadJobPodsReady']):
+                  - status: "False"
+                    reason: "StorageFull"

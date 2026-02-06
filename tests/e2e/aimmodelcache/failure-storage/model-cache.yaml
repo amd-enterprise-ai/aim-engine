@@ -1,7 +1,0 @@
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMModelCache
-metadata:
-  name: failure-storage
-spec:
-  sourceUri: hf://HuggingFaceTB/SmolLM-135M
-  size: 1.2Gi

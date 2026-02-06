@@ -1,0 +1,61 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: failure-stall-detection
+spec:
+  description: Test that download stall detection kills hung downloads
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Create runtime config
+      try:
+        - apply:
+            file: runtime.yaml
+
+    - name: Create artifact with forced hang
+      try:
+        - apply:
+            file: artifact.yaml
+
+    - name: Verify download job starts progressing
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: stall-detection
+              status:
+                status: Progressing
+
+    - name: Verify stall detection triggered (Job has at least 1 failed pod)
+      try:
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                namespace: ($namespace)
+                labels:
+                  aim.eai.amd.com/cache.name: stall-detection
+              (status.failed >= `1`): true
+
+    - name: Assert final failure state after backoff exhausted
+      try:
+        - assert:
+            timeout: 240s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: stall-detection
+              status:
+                status: "Failed"
+                progress:
+                  displayPercentage: "N/A"
+                (conditions[?type == 'Ready']):
+                  - status: "False"
+                (conditions[?type == 'DownloadJobPodsReady']):
+                  - status: "False"

@@ -1,0 +1,6 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: test-hf
+spec:
+  sourceUri: hf://sshleifer/tiny-gpt2

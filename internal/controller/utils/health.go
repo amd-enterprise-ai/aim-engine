@@ -36,7 +36,7 @@ const (
 	DependencyTypeUpstream DependencyType = "Upstream"
 
 	// DependencyTypeDownstream indicates this component is a downstream resource that this controller creates.
-	// Examples: model caches, pods, jobs, child resources.
+	// Examples: artifacts, pods, jobs, child resources.
 	// When downstream dependencies are not ready (being created), the resource should be Progressing.
 	DependencyTypeDownstream DependencyType = "Downstream"
 

@@ -121,8 +121,8 @@ func (r *ServiceReconciler) FetchRemoteState(
 	// 2. Fetch HTTPRoute if routing might be enabled (we own this, always check)
 	result.httpRoute = fetchHTTPRoute(ctx, c, service, reconcileCtx.MergedRuntimeConfig.Value)
 
-	// 3. Fetch TemplateCache (always fetch - cascades health from ModelCache/PVC)
-	// Model cache status is resolved through TemplateCache.Status.ModelCaches
+	// 3. Fetch TemplateCache (always fetch - cascades health from Artifact/PVC)
+	// artifact status is resolved through TemplateCache.Status.Artifacts
 	result.templateCache = fetchTemplateCache(ctx, c, service)
 
 	// 4. Only fetch Model and Template if InferenceService needs to be (re)created.
@@ -817,7 +817,7 @@ func (r *ServiceReconciler) PlanResources(
 	}
 
 	// Get resolved template info
-	templateName, templateNamespace, templateNsSpec, templateStatus := obs.getResolvedTemplate()
+	templateName, templateNamespace, templateSpec, templateStatus := obs.getResolvedTemplate()
 	_ = templateNamespace // Used for future enhancements
 	if templateName == "" {
 		logger.V(1).Info("no template resolved, skipping template-dependent resource planning")
@@ -831,8 +831,8 @@ func (r *ServiceReconciler) PlanResources(
 	}
 
 	// 2. Plan derived template if service has overrides (only for namespace-scoped templates)
-	if templateNsSpec != nil {
-		if derivedTemplate := planDerivedTemplate(service, templateName, templateNsSpec, obs); derivedTemplate != nil {
+	if obs.template.Value != nil {
+		if derivedTemplate := planDerivedTemplate(service, templateName, &obs.template.Value.Spec, obs); derivedTemplate != nil {
 			planResult.Apply(derivedTemplate)
 		}
 	}
@@ -841,7 +841,7 @@ func (r *ServiceReconciler) PlanResources(
 	// Ownership depends on caching mode:
 	// - Always (Shared mode): no owner reference, cache persists independently
 	// - Never/Auto (Dedicated mode): owned by service, garbage collected with it
-	if templateCache := planTemplateCache(service, templateName, templateNsSpec, templateStatus, obs); templateCache != nil {
+	if templateCache := planTemplateCache(service, templateName, templateSpec, templateStatus, obs); templateCache != nil {
 		cachingMode := service.Spec.GetCachingMode()
 		if cachingMode == aimv1alpha1.CachingModeAlways {
 			// Shared mode: cache persists independently
@@ -853,7 +853,7 @@ func (r *ServiceReconciler) PlanResources(
 	}
 
 	// 4. Plan InferenceService
-	if isvc := planInferenceService(ctx, service, templateName, templateNsSpec, templateStatus, obs); isvc != nil {
+	if isvc := planInferenceService(ctx, service, templateName, templateSpec, templateStatus, obs); isvc != nil {
 		planResult.Apply(isvc)
 	}
 
@@ -862,15 +862,15 @@ func (r *ServiceReconciler) PlanResources(
 
 // getResolvedTemplate returns the resolved template info from the observation.
 // Returns the template name, namespace (empty for cluster templates),
-// namespace-scoped spec (nil for cluster templates), and status.
-func (obs ServiceObservation) getResolvedTemplate() (name, namespace string, nsSpec *aimv1alpha1.AIMServiceTemplateSpec, status *aimv1alpha1.AIMServiceTemplateStatus) {
+// common spec (works for both namespace and cluster templates), and status.
+func (obs ServiceObservation) getResolvedTemplate() (name, namespace string, spec *aimv1alpha1.AIMServiceTemplateSpecCommon, status *aimv1alpha1.AIMServiceTemplateStatus) {
 	if obs.template.Value != nil {
 		t := obs.template.Value
-		return t.Name, t.Namespace, &t.Spec, &t.Status
+		return t.Name, t.Namespace, &t.Spec.AIMServiceTemplateSpecCommon, &t.Status
 	}
 	if obs.clusterTemplate.Value != nil {
 		t := obs.clusterTemplate.Value
-		return t.Name, "", nil, &t.Status
+		return t.Name, "", &t.Spec.AIMServiceTemplateSpecCommon, &t.Status
 	}
 	return "", "", nil, nil
 }

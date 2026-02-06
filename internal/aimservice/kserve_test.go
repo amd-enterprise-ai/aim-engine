@@ -243,7 +243,7 @@ func TestResolveResources(t *testing.T) {
 	tests := []struct {
 		name           string
 		service        *aimv1alpha1.AIMService
-		templateSpec   *aimv1alpha1.AIMServiceTemplateSpec
+		templateSpec   *aimv1alpha1.AIMServiceTemplateSpecCommon
 		gpuCount       int64 // Template profile GPU count
 		expectGPU      bool
 		expectGPUCount int64 // Expected final GPU count (defaults to gpuCount if 0)
@@ -302,12 +302,10 @@ func TestResolveResources(t *testing.T) {
 		{
 			name:    "template spec resources",
 			service: NewService("svc").Build(),
-			templateSpec: &aimv1alpha1.AIMServiceTemplateSpec{
-				AIMServiceTemplateSpecCommon: aimv1alpha1.AIMServiceTemplateSpecCommon{
-					Resources: &corev1.ResourceRequirements{
-						Requests: corev1.ResourceList{
-							corev1.ResourceMemory: resource.MustParse("256Gi"),
-						},
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				Resources: &corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceMemory: resource.MustParse("256Gi"),
 					},
 				},
 			},
@@ -504,7 +502,7 @@ func TestBuildMergedEnvVars(t *testing.T) {
 	tests := []struct {
 		name             string
 		service          *aimv1alpha1.AIMService
-		templateSpec     *aimv1alpha1.AIMServiceTemplateSpec
+		templateSpec     *aimv1alpha1.AIMServiceTemplateSpecCommon
 		templateStatus   *aimv1alpha1.AIMServiceTemplateStatus
 		obs              ServiceObservation
 		expectContains   []string
@@ -521,7 +519,7 @@ func TestBuildMergedEnvVars(t *testing.T) {
 		{
 			name:    "template spec env vars",
 			service: &aimv1alpha1.AIMService{},
-			templateSpec: &aimv1alpha1.AIMServiceTemplateSpec{
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
 				Env: []corev1.EnvVar{
 					{Name: "CUSTOM_VAR", Value: "custom-value"},
 				},
@@ -533,15 +531,13 @@ func TestBuildMergedEnvVars(t *testing.T) {
 		{
 			name:    "template spec metric and precision",
 			service: &aimv1alpha1.AIMService{},
-			templateSpec: func() *aimv1alpha1.AIMServiceTemplateSpec {
+			templateSpec: func() *aimv1alpha1.AIMServiceTemplateSpecCommon {
 				latency := aimv1alpha1.AIMMetricLatency
 				fp16 := aimv1alpha1.AIMPrecisionFP16
-				return &aimv1alpha1.AIMServiceTemplateSpec{
-					AIMServiceTemplateSpecCommon: aimv1alpha1.AIMServiceTemplateSpecCommon{
-						AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
-							Metric:    &latency,
-							Precision: &fp16,
-						},
+				return &aimv1alpha1.AIMServiceTemplateSpecCommon{
+					AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+						Metric:    &latency,
+						Precision: &fp16,
 					},
 				}
 			}(),
@@ -552,10 +548,8 @@ func TestBuildMergedEnvVars(t *testing.T) {
 		{
 			name:    "template spec profile id",
 			service: &aimv1alpha1.AIMService{},
-			templateSpec: &aimv1alpha1.AIMServiceTemplateSpec{
-				AIMServiceTemplateSpecCommon: aimv1alpha1.AIMServiceTemplateSpecCommon{
-					ProfileId: "my-profile-123",
-				},
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				ProfileId: "my-profile-123",
 			},
 			templateStatus: nil,
 			obs:            ServiceObservation{},
@@ -587,7 +581,7 @@ func TestBuildMergedEnvVars(t *testing.T) {
 					},
 				},
 			},
-			templateSpec: &aimv1alpha1.AIMServiceTemplateSpec{
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
 				Env: []corev1.EnvVar{
 					{Name: "SHARED_VAR", Value: "from-template"},
 				},
@@ -624,7 +618,7 @@ func TestBuildMergedEnvVars(t *testing.T) {
 
 func TestBuildMergedEnvVars_IsSorted(t *testing.T) {
 	service := &aimv1alpha1.AIMService{}
-	templateSpec := &aimv1alpha1.AIMServiceTemplateSpec{
+	templateSpec := &aimv1alpha1.AIMServiceTemplateSpecCommon{
 		Env: []corev1.EnvVar{
 			{Name: "ZEBRA", Value: "z"},
 			{Name: "APPLE", Value: "a"},
@@ -652,7 +646,7 @@ func TestBuildMergedEnvVars_ServiceOverridesAll(t *testing.T) {
 			},
 		},
 	}
-	templateSpec := &aimv1alpha1.AIMServiceTemplateSpec{
+	templateSpec := &aimv1alpha1.AIMServiceTemplateSpecCommon{
 		Env: []corev1.EnvVar{
 			{Name: "SHARED_VAR", Value: "from-template"},
 		},
@@ -688,5 +682,38 @@ func TestBuildMergedEnvVars_ServiceOverridesAll(t *testing.T) {
 	// Service should win
 	if envMap["SHARED_VAR"] != "from-service" {
 		t.Errorf("expected SHARED_VAR='from-service', got '%s'", envMap["SHARED_VAR"])
+	}
+}
+
+func TestBuildMergedEnvVars_ClusterTemplateEnv(t *testing.T) {
+	// Test that env vars from cluster template spec (via common spec) propagate to inference service
+	service := &aimv1alpha1.AIMService{}
+
+	// Simulate a cluster template spec (same as namespace, just common spec)
+	templateSpec := &aimv1alpha1.AIMServiceTemplateSpecCommon{
+		Env: []corev1.EnvVar{
+			{Name: "CLUSTER_TOKEN", Value: "my-cluster-token"},
+			{Name: "SHARED_VAR", Value: "from-cluster-template"},
+		},
+	}
+
+	result := buildMergedEnvVars(service, templateSpec, nil, ServiceObservation{})
+
+	envMap := make(map[string]string)
+	for _, env := range result {
+		envMap[env.Name] = env.Value
+	}
+
+	// Check cluster template env vars are present
+	if val, ok := envMap["CLUSTER_TOKEN"]; !ok {
+		t.Error("missing env var CLUSTER_TOKEN")
+	} else if val != "my-cluster-token" {
+		t.Errorf("expected CLUSTER_TOKEN='my-cluster-token', got '%s'", val)
+	}
+
+	if val, ok := envMap["SHARED_VAR"]; !ok {
+		t.Error("missing env var SHARED_VAR")
+	} else if val != "from-cluster-template" {
+		t.Errorf("expected SHARED_VAR='from-cluster-template', got '%s'", val)
 	}
 }

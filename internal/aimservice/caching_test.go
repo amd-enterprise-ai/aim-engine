@@ -623,6 +623,110 @@ func TestPlanTemplateCache_EnvVars(t *testing.T) {
 	}
 }
 
+func TestPlanTemplateCache_ClusterTemplateEnvVars(t *testing.T) {
+	// Test that env vars from cluster template spec propagate to the cache
+	templateStatus := &aimv1alpha1.AIMServiceTemplateStatus{
+		ModelSources: []aimv1alpha1.AIMModelSource{
+			NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
+		},
+	}
+
+	tests := []struct {
+		name            string
+		templateSpec    *aimv1alpha1.AIMServiceTemplateSpecCommon
+		serviceEnv      []corev1.EnvVar
+		clusterTplInObs bool // If true, set clusterTemplate in observation
+		wantEnv         map[string]string
+		wantScope       aimv1alpha1.AIMServiceTemplateScope
+	}{
+		{
+			name: "cluster template env vars propagate to cache",
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				Env: []corev1.EnvVar{
+					{Name: "HF_TOKEN", Value: "cluster-token"},
+				},
+			},
+			clusterTplInObs: true,
+			wantEnv:         map[string]string{"HF_TOKEN": "cluster-token"},
+			wantScope:       aimv1alpha1.AIMServiceTemplateScopeCluster,
+		},
+		{
+			name: "namespace template env vars propagate to cache",
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				Env: []corev1.EnvVar{
+					{Name: "HF_TOKEN", Value: "namespace-token"},
+				},
+			},
+			clusterTplInObs: false,
+			wantEnv:         map[string]string{"HF_TOKEN": "namespace-token"},
+			wantScope:       aimv1alpha1.AIMServiceTemplateScopeNamespace,
+		},
+		{
+			name: "service env overrides cluster template env",
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				Env: []corev1.EnvVar{
+					{Name: "HF_TOKEN", Value: "cluster-token"},
+					{Name: "CLUSTER_VAR", Value: "cluster-value"},
+				},
+			},
+			serviceEnv:      []corev1.EnvVar{{Name: "HF_TOKEN", Value: "service-token"}},
+			clusterTplInObs: true,
+			wantEnv: map[string]string{
+				"HF_TOKEN":    "service-token", // Service takes precedence
+				"CLUSTER_VAR": "cluster-value",
+			},
+			wantScope: aimv1alpha1.AIMServiceTemplateScopeCluster,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := NewService("my-svc").WithCachingMode(aimv1alpha1.CachingModeAlways).Build()
+			service.Spec.Env = tt.serviceEnv
+
+			// Build observation with cluster or namespace template
+			obs := ServiceObservation{}
+			if tt.clusterTplInObs {
+				obs.clusterTemplate = controllerutils.FetchResult[*aimv1alpha1.AIMClusterServiceTemplate]{
+					Value: &aimv1alpha1.AIMClusterServiceTemplate{},
+				}
+			}
+
+			result := planTemplateCache(service, "my-template", tt.templateSpec, templateStatus, obs)
+			if result == nil {
+				t.Fatal("expected cache, got nil")
+			}
+
+			cache, ok := result.(*aimv1alpha1.AIMTemplateCache)
+			if !ok {
+				t.Fatalf("expected *AIMTemplateCache, got %T", result)
+			}
+
+			// Check template scope
+			if cache.Spec.TemplateScope != tt.wantScope {
+				t.Errorf("expected scope %s, got %s", tt.wantScope, cache.Spec.TemplateScope)
+			}
+
+			// Check env vars
+			gotEnv := make(map[string]string)
+			for _, env := range cache.Spec.Env {
+				gotEnv[env.Name] = env.Value
+			}
+
+			if len(gotEnv) != len(tt.wantEnv) {
+				t.Errorf("expected %d env vars, got %d: %v", len(tt.wantEnv), len(gotEnv), gotEnv)
+			}
+			for name, wantVal := range tt.wantEnv {
+				if gotVal, ok := gotEnv[name]; !ok {
+					t.Errorf("missing env var %s", name)
+				} else if gotVal != wantVal {
+					t.Errorf("env var %s: expected %q, got %q", name, wantVal, gotVal)
+				}
+			}
+		})
+	}
+}
+
 // ============================================================================
 // HELPERS
 // ============================================================================

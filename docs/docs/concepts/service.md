@@ -8,7 +8,7 @@ When you create an AIMService, the operator:
 
 1. Resolves the model (by name reference or image URI), creating an AIMModel if needed
 2. Resolves the template (explicit reference or auto-selection), creating derived templates if overrides are specified
-3. Configures caching if enabled (creates AIMTemplateCache and AIMModelCache resources)
+3. Configures caching if enabled (creates AIMTemplateCache and AIMArtifact resources)
 4. Creates a KServe InferenceService with the appropriate configuration
 5. Optionally configures routing via Gateway API
 
@@ -208,10 +208,10 @@ spec:
 ### How Caching Works
 
 1. **Template Cache**: An `AIMTemplateCache` pre-downloads all model sources for a template to a shared PVC
-2. **Model Caches**: Individual `AIMModelCache` resources manage per-model downloads
+2. **Model Caches**: Individual `AIMArtifact` resources manage per-model downloads
 3. **Service PVC**: When no template cache exists, a temporary PVC is created for the service
 
-With `caching: Auto`, services can start immediately while model caches populate in the background.
+With `caching: Auto`, services can start immediately while artifacts populate in the background.
 
 ## Overrides
 
@@ -350,8 +350,8 @@ Resolution:
 # Check template cache status
 kubectl get aimtemplatecache -l aim.eai.amd.com/service=<name>
 
-# Check model cache status
-kubectl get aimmodelcache -l aim.eai.amd.com/template=<template-name>
+# Check artifact status
+kubectl get aimartifact -l aim.eai.amd.com/template=<template-name>
 ```
 
 If cache is failing:
