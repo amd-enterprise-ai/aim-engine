@@ -1,0 +1,48 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: clone-templates-for-gpu
+spec:
+  concurrent: false
+
+  steps:
+    - name: Create cluster model with dummy image
+      try:
+        - apply:
+            file: cluster-model.yaml
+
+    - name: Wait for cluster model to be ready
+      try:
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModel
+              metadata:
+                name: clone-templates-gpu-model
+              status:
+                status: Ready
+
+    - name: Clone templates to MI308X
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              bash ../../../../hack/clone-templates-for-gpu.sh MI300X MI308X | kubectl apply -f -
+
+    - name: Verify cloned MI308X templates exist
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/model: clone-templates-gpu-model
+              spec:
+                modelName: clone-templates-gpu-model
+                hardware:
+                  gpu:
+                    model: MI308X
