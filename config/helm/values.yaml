@@ -115,7 +115,7 @@ clusterModelSource:
   # Spec fields for the AIMClusterModelSource
   spec:
     # Container registry to sync from (e.g., docker.io, ghcr.io, gcr.io)
-    registry: ghcr.io
+    registry: docker.io
 
     # Secrets for authenticating to private registries (must exist in operator namespace)
     # imagePullSecrets:
@@ -124,12 +124,12 @@ clusterModelSource:
     # Filters define which images to discover and sync
     # Each filter specifies an image pattern with optional version constraints
     filters:
-      - image: "amd-enterprise-ai/aim-*"
+      - image: "amdenterpriseai/aim-*"
         # exclude:
-        #   - "amd-enterprise-ai/aim-base"
-        #   - "amd-enterprise-ai/aim-experimental"
+        #   - "amdenterpriseai/aim-base"
+        #   - "amdenterpriseai/aim-experimental"
         versions:
-          - ">=0.10.0"
+          - ">=0.8.4"
 
     # How often to sync with the registry (minimum recommended: 15m)
     syncInterval: 1h
@@ -140,4 +140,4 @@ clusterModelSource:
     #   - "<2.0.0"
 
     # Maximum number of AIMClusterModel resources to create (prevents runaway creation)
-    maxModels: 100
+    maxModels: 500
