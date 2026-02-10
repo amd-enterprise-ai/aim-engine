@@ -4,6 +4,8 @@ metadata:
   name: test-service-template
 spec:
   modelName: test-service-model
+  metric: latency
+  precision: fp16
   hardware:
     gpu:
       requests: 1

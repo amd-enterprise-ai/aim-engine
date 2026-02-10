@@ -9,6 +9,8 @@
 Package v1alpha1 contains API Schema definitions for the aim v1alpha1 API group.
 
 ### Resource Types
+- [AIMArtifact](#aimartifact)
+- [AIMArtifactList](#aimartifactlist)
 - [AIMClusterModel](#aimclustermodel)
 - [AIMClusterModelList](#aimclustermodellist)
 - [AIMClusterModelSource](#aimclustermodelsource)
@@ -18,8 +20,6 @@ Package v1alpha1 contains API Schema definitions for the aim v1alpha1 API group.
 - [AIMClusterServiceTemplate](#aimclusterservicetemplate)
 - [AIMClusterServiceTemplateList](#aimclusterservicetemplatelist)
 - [AIMModel](#aimmodel)
-- [AIMArtifact](#aimartifact)
-- [AIMArtifactList](#aimartifactlist)
 - [AIMModelList](#aimmodellist)
 - [AIMRuntimeConfig](#aimruntimeconfig)
 - [AIMRuntimeConfigList](#aimruntimeconfiglist)
@@ -30,6 +30,111 @@ Package v1alpha1 contains API Schema definitions for the aim v1alpha1 API group.
 - [AIMTemplateCache](#aimtemplatecache)
 - [AIMTemplateCacheList](#aimtemplatecachelist)
 
+
+
+#### AIMArtifact
+
+
+
+AIMArtifact is the Schema for the artifacts API
+
+
+
+_Appears in:_
+- [AIMArtifactList](#aimartifactlist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha1` | | |
+| `kind` _string_ | `AIMArtifact` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMArtifactSpec](#aimartifactspec)_ |  |  |  |
+| `status` _[AIMArtifactStatus](#aimartifactstatus)_ |  |  |  |
+
+
+#### AIMArtifactList
+
+
+
+AIMArtifactList contains a list of AIMArtifact
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha1` | | |
+| `kind` _string_ | `AIMArtifactList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMArtifact](#aimartifact) array_ |  |  |  |
+
+
+#### AIMArtifactMode
+
+_Underlying type:_ _string_
+
+AIMArtifactMode indicates the ownership mode of a artifact, derived from owner references.
+
+_Validation:_
+- Enum: [Dedicated Shared]
+
+_Appears in:_
+- [AIMArtifactStatus](#aimartifactstatus)
+
+| Field | Description |
+| --- | --- |
+| `Dedicated` | ArtifactModeDedicated indicates the cache has owner references and will be<br />garbage collected when its owners are deleted.<br /> |
+| `Shared` | ArtifactModeShared indicates the cache has no owner references and persists<br />independently, available for sharing across services.<br /> |
+
+
+#### AIMArtifactSpec
+
+
+
+AIMArtifactSpec defines the desired state of AIMArtifact
+
+
+
+_Appears in:_
+- [AIMArtifact](#aimartifact)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `sourceUri` _string_ | SourceURI specifies the source location of the model to download.<br />Supported protocols: hf:// (HuggingFace) and s3:// (S3-compatible storage).<br />This field uniquely identifies the artifact and is immutable after creation.<br />Example: hf://meta-llama/Llama-3-8B |  | MinLength: 1 <br />Pattern: `^(hf\|s3)://[^ \t\r\n]+$` <br /> |
+| `modelId` _string_ | ModelID is the canonical identifier in \{org\}/\{name\} format.<br />Determines the cache download path: /workspace/artifact/\{modelId\}<br />For HuggingFace sources, this is typically derived from the URI (e.g., "meta-llama/Llama-3-8B").<br />For S3 sources, this must be explicitly provided (e.g., "my-team/fine-tuned-llama").<br />When not specified, derived from SourceURI for HuggingFace sources. |  | Pattern: `^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$` <br />Optional: \{\} <br /> |
+| `storageClassName` _string_ | StorageClassName specifies the storage class for the cache volume.<br />When not specified, uses the cluster default storage class. |  | Optional: \{\} <br /> |
+| `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Size specifies the size of the cache volume |  | Optional: \{\} <br /> |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env lists the environment variables to use for authentication when downloading models.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  | Optional: \{\} <br /> |
+| `modelDownloadImage` _string_ | ModelDownloadImage specifies the container image used to download and initialize the artifact.<br />This image runs as a job to download model artifacts from the source URI to the cache volume.<br />When not specified, defaults to "ghcr.io/silogen/aim-artifact-downloader:0.1.1". | ghcr.io/silogen/aim-artifact-downloader:0.1.1 | Optional: \{\} <br /> |
+| `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets references secrets for pulling AIM container images. |  | Optional: \{\} <br /> |
+| `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  | Optional: \{\} <br /> |
+
+
+#### AIMArtifactStatus
+
+
+
+AIMArtifactStatus defines the observed state of AIMArtifact
+
+
+
+_Appears in:_
+- [AIMArtifact](#aimartifact)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `observedGeneration` _integer_ |  |  |  |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#condition-v1-meta) array_ | Conditions represent the latest available observations of the artifact's state |  |  |
+| `status` _[AIMStatus](#aimstatus)_ | Status represents the current status of the artifact | Pending | Enum: [Pending Progressing Ready Degraded Failed NotAvailable] <br /> |
+| `progress` _[DownloadProgress](#downloadprogress)_ | Progress represents the download progress when Status is Progressing |  | Optional: \{\} <br /> |
+| `displaySize` _string_ | DisplaySize is the human-readable effective size (spec or discovered) |  | Optional: \{\} <br /> |
+| `lastUsed` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#time-v1-meta)_ | LastUsed represents the last time a model was deployed that used this cache |  |  |
+| `persistentVolumeClaim` _string_ | PersistentVolumeClaim represents the name of the created PVC |  |  |
+| `mode` _[AIMArtifactMode](#aimartifactmode)_ | Mode indicates the ownership mode of this artifact, derived from owner references.<br />- Dedicated: Has owner references, will be garbage collected when owners are deleted.<br />- Shared: No owner references, persists independently and can be shared. |  | Enum: [Dedicated Shared] <br />Optional: \{\} <br /> |
+| `discoveredSizeBytes` _integer_ | DiscoveredSizeBytes is the model size discovered via check-size job.<br />Populated when spec.size is not provided. |  | Optional: \{\} <br /> |
+| `allocatedSize` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | AllocatedSize is the actual PVC size requested (including headroom). |  | Optional: \{\} <br /> |
+| `headroomPercent` _integer_ | HeadroomPercent is the headroom percentage that was applied to the PVC size. |  | Optional: \{\} <br /> |
 
 
 #### AIMCachingMode
@@ -488,111 +593,6 @@ _Appears in:_
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `spec` _[AIMModelSpec](#aimmodelspec)_ |  |  |  |
 | `status` _[AIMModelStatus](#aimmodelstatus)_ |  |  |  |
-
-
-#### AIMArtifact
-
-
-
-AIMArtifact is the Schema for the artifacts API
-
-
-
-_Appears in:_
-- [AIMArtifactList](#aimartifactlist)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha1` | | |
-| `kind` _string_ | `AIMArtifact` | | |
-| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
-| `spec` _[AIMArtifactSpec](#aimartifactspec)_ |  |  |  |
-| `status` _[AIMArtifactStatus](#aimartifactstatus)_ |  |  |  |
-
-
-#### AIMArtifactList
-
-
-
-AIMArtifactList contains a list of AIMArtifact
-
-
-
-
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha1` | | |
-| `kind` _string_ | `AIMArtifactList` | | |
-| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
-| `items` _[AIMArtifact](#aimartifact) array_ |  |  |  |
-
-
-#### AIMArtifactMode
-
-_Underlying type:_ _string_
-
-AIMArtifactMode indicates the ownership mode of a artifact, derived from owner references.
-
-_Validation:_
-- Enum: [Dedicated Shared]
-
-_Appears in:_
-- [AIMArtifactStatus](#aimartifactstatus)
-
-| Field | Description |
-| --- | --- |
-| `Dedicated` | ArtifactModeDedicated indicates the cache has owner references and will be<br />garbage collected when its owners are deleted.<br /> |
-| `Shared` | ArtifactModeShared indicates the cache has no owner references and persists<br />independently, available for sharing across services.<br /> |
-
-
-#### AIMArtifactSpec
-
-
-
-AIMArtifactSpec defines the desired state of AIMArtifact
-
-
-
-_Appears in:_
-- [AIMArtifact](#aimartifact)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `sourceUri` _string_ | SourceURI specifies the source location of the model to download.<br />Supported protocols: hf:// (HuggingFace) and s3:// (S3-compatible storage).<br />This field uniquely identifies the artifact and is immutable after creation.<br />Example: hf://meta-llama/Llama-3-8B |  | MinLength: 1 <br />Pattern: `^(hf\|s3)://[^ \t\r\n]+$` <br /> |
-| `modelId` _string_ | ModelID is the canonical identifier in \{org\}/\{name\} format.<br />Determines the cache download path: /workspace/artifact/\{modelId\}<br />For HuggingFace sources, this is typically derived from the URI (e.g., "meta-llama/Llama-3-8B").<br />For S3 sources, this must be explicitly provided (e.g., "my-team/fine-tuned-llama").<br />When not specified, derived from SourceURI for HuggingFace sources. |  | Pattern: `^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$` <br />Optional: \{\} <br /> |
-| `storageClassName` _string_ | StorageClassName specifies the storage class for the cache volume.<br />When not specified, uses the cluster default storage class. |  | Optional: \{\} <br /> |
-| `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Size specifies the size of the cache volume |  | Optional: \{\} <br /> |
-| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env lists the environment variables to use for authentication when downloading models.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  | Optional: \{\} <br /> |
-| `modelDownloadImage` _string_ | ModelDownloadImage specifies the container image used to download and initialize the artifact.<br />This image runs as a job to download model artifacts from the source URI to the cache volume.<br />When not specified, defaults to "ghcr.io/silogen/aim-artifact-downloader:0.1.1". | ghcr.io/silogen/aim-artifact-downloader:0.1.1 | Optional: \{\} <br /> |
-| `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets references secrets for pulling AIM container images. |  | Optional: \{\} <br /> |
-| `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  | Optional: \{\} <br /> |
-
-
-#### AIMArtifactStatus
-
-
-
-AIMArtifactStatus defines the observed state of AIMArtifact
-
-
-
-_Appears in:_
-- [AIMArtifact](#aimartifact)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `observedGeneration` _integer_ |  |  |  |
-| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#condition-v1-meta) array_ | Conditions represent the latest available observations of the artifact's state |  |  |
-| `status` _[AIMStatus](#aimstatus)_ | Status represents the current status of the artifact | Pending | Enum: [Pending Progressing Ready Degraded Failed NotAvailable] <br /> |
-| `progress` _[DownloadProgress](#downloadprogress)_ | Progress represents the download progress when Status is Progressing |  | Optional: \{\} <br /> |
-| `displaySize` _string_ | DisplaySize is the human-readable effective size (spec or discovered) |  | Optional: \{\} <br /> |
-| `lastUsed` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#time-v1-meta)_ | LastUsed represents the last time a model was deployed that used this cache |  |  |
-| `persistentVolumeClaim` _string_ | PersistentVolumeClaim represents the name of the created PVC |  |  |
-| `mode` _[AIMArtifactMode](#aimartifactmode)_ | Mode indicates the ownership mode of this artifact, derived from owner references.<br />- Dedicated: Has owner references, will be garbage collected when owners are deleted.<br />- Shared: No owner references, persists independently and can be shared. |  | Enum: [Dedicated Shared] <br />Optional: \{\} <br /> |
-| `discoveredSizeBytes` _integer_ | DiscoveredSizeBytes is the model size discovered via check-size job.<br />Populated when spec.size is not provided. |  | Optional: \{\} <br /> |
-| `allocatedSize` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | AllocatedSize is the actual PVC size requested (including headroom). |  | Optional: \{\} <br /> |
-| `headroomPercent` _integer_ | HeadroomPercent is the headroom percentage that was applied to the PVC size. |  | Optional: \{\} <br /> |
 
 
 #### AIMModelConfig
@@ -1910,8 +1910,8 @@ _Appears in:_
 
 
 _Appears in:_
-- [AIMClusterServiceTemplateSpec](#aimclusterservicetemplatespec)
 - [AIMArtifactSpec](#aimartifactspec)
+- [AIMClusterServiceTemplateSpec](#aimclusterservicetemplatespec)
 - [AIMModelSpec](#aimmodelspec)
 - [AIMServiceSpec](#aimservicespec)
 - [AIMServiceTemplateSpec](#aimservicetemplatespec)

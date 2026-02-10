@@ -78,7 +78,7 @@ spec:
               status:
                 status: Starting
 
-    - name: Verify InferenceService is created
+    - name: Verify InferenceService is created with correct env vars
       try:
         - assert:
             timeout: 5m
@@ -88,6 +88,14 @@ spec:
               metadata:
                 labels:
                   aim.eai.amd.com/service: test-service
+              spec:
+                predictor:
+                  containers:
+                    - name: kserve-container
+                      (env[?name == 'AIM_METRIC']):
+                        - value: latency
+                      (env[?name == 'AIM_PRECISION']):
+                        - value: fp16
 
     - name: Verify service reaches Running status
       try:
