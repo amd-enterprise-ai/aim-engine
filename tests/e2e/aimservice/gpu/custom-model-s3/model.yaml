@@ -1,0 +1,28 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: test-gpu-s3-model
+spec:
+  image: amdenterpriseai/aim-base:0.9
+  imagePullSecrets:
+    - name: ghcr-regcred
+  modelSources:
+    - modelId: Qwen/Qwen2-0.5B
+      sourceUri: s3://models/Qwen2-0.5B
+      env:
+        - name: AWS_ACCESS_KEY_ID
+          value: minioadmin
+        - name: AWS_SECRET_ACCESS_KEY
+          value: minioadmin
+        - name: AWS_ENDPOINT_URL
+          value: http://minio:9000
+        - name: S3_ENDPOINT
+          value: minio:9000
+        - name: S3_USE_HTTPS
+          value: "0"
+        - name: AWS_DEFAULT_REGION
+          value: us-east-1
+  custom:
+    hardware:
+      gpu:
+        requests: 1

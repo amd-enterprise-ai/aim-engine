@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: model-upload
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: downloader
+          image: ghcr.io/silogen/aim-artifact-downloader:0.1.1
+          env:
+            - name: TARGET_DIR
+              value: /mnt/models
+            - name: HF_HOME
+              value: /tmp/hf-home
+            - name: HF_HUB_CACHE
+              value: /tmp/hf-home/hub
+          args:
+            - "hf://Qwen/Qwen2-0.5B"
+            - "/mnt/models"
+          volumeMounts:
+            - name: model-storage
+              mountPath: /mnt/models
+      containers:
+        - name: uploader
+          image: minio/mc:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              mc alias set myminio http://minio:9000 minioadmin minioadmin
+              mc cp --recursive /mnt/models/ myminio/models/Qwen2-0.5B/
+          volumeMounts:
+            - name: model-storage
+              mountPath: /mnt/models
+      volumes:
+        - name: model-storage
+          emptyDir: {}

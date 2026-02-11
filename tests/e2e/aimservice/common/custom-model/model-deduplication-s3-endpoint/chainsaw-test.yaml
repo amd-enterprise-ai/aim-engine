@@ -1,0 +1,102 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Custom Model Test: No Dedup Across Different AWS_ENDPOINT_URL
+#
+# This test validates custom model matching semantics:
+# two services with identical baseImage/modelId/sourceUri but different
+# modelSources[].env[AWS_ENDPOINT_URL] must create two distinct AIMModels.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: custom-model-dedup-s3-endpoint
+spec:
+  description: Test custom model dedup differentiates AWS_ENDPOINT_URL
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Create first service with S3 endpoint A
+      try:
+        - apply:
+            file: service-1.yaml
+
+    - name: Wait for first service to resolve model
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-dedup-endpoint-service-1
+              status:
+                resolvedModel:
+                  (name != ''): true
+                (conditions[?type == 'ModelReady']):
+                  - status: "True"
+                    reason: ModelResolved
+
+    - name: Create second service with S3 endpoint B
+      try:
+        - apply:
+            file: service-2.yaml
+
+    - name: Wait for second service to resolve model
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-dedup-endpoint-service-2
+              status:
+                resolvedModel:
+                  (name != ''): true
+                (conditions[?type == 'ModelReady']):
+                  - status: "True"
+                    reason: ModelResolved
+
+    - name: Verify custom model for service-1 preserves endpoint A
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/custom-model: "true"
+                  aim.eai.amd.com/service: test-dedup-endpoint-service-1
+              spec:
+                modelSources:
+                  - modelId: shared/s3-endpoint-model
+                    sourceUri: s3://test-bucket/model
+                    env:
+                      - name: AWS_ENDPOINT_URL
+                        value: https://minio-a.example.com
+              status:
+                status: Ready
+                sourceType: Custom
+
+    - name: Verify custom model for service-2 preserves endpoint B
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/custom-model: "true"
+                  aim.eai.amd.com/service: test-dedup-endpoint-service-2
+              spec:
+                modelSources:
+                  - modelId: shared/s3-endpoint-model
+                    sourceUri: s3://test-bucket/model
+                    env:
+                      - name: AWS_ENDPOINT_URL
+                        value: https://minio-b.example.com
+              status:
+                status: Ready
+                sourceType: Custom

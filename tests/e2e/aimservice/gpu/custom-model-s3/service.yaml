@@ -1,0 +1,15 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-gpu-s3-service
+spec:
+  runtimeConfigName: test-gpu-s3-config
+  imagePullSecrets:
+    - name: ghcr-regcred
+  model:
+    name: test-gpu-s3-model
+  template:
+    allowUnoptimized: true
+  caching:
+    mode: Always
+  replicas: 1

@@ -1,0 +1,147 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: GPU Model From S3
+#
+# This test validates an end-to-end GPU flow using an S3-backed model source:
+# 1) Download model from HuggingFace
+# 2) Upload model to MinIO (S3-compatible)
+# 3) Create AIMModel referencing s3:// source
+# 4) Create AIMService referencing the model by name
+# 5) Verify runtime uses GPU container successfully
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-gpu-custom-model-s3
+  labels:
+    requires: gpu
+spec:
+  description: Test GPU AIMService with S3-backed model source
+  timeouts:
+    assert: 900s
+  steps:
+    - name: Create runtime config with routing
+      try:
+        - apply:
+            file: runtime-config.yaml
+
+    - name: Deploy MinIO
+      try:
+        - apply:
+            file: minio-service.yaml
+        - apply:
+            file: minio-deployment.yaml
+
+    - name: Wait for MinIO to be ready
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: minio
+              status:
+                availableReplicas: 1
+
+    - name: Create MinIO bucket
+      try:
+        - apply:
+            file: minio-setup-job.yaml
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                name: minio-setup
+              status:
+                succeeded: 1
+
+    - name: Download from HF and upload to MinIO
+      try:
+        - apply:
+            file: model-upload-job.yaml
+        - assert:
+            timeout: 10m
+            resource:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                name: model-upload
+              status:
+                succeeded: 1
+
+    - name: Create AIMModel with S3 modelSource
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Verify AIMModel is ready
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-gpu-s3-model
+              status:
+                status: Ready
+                sourceType: Custom
+
+    - name: Create AIMService referencing model by name
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify artifact is created for service
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-gpu-s3-service
+
+    - name: Verify runtime pod image env and GPU resources
+      try:
+        - assert:
+            timeout: 10m
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: test-gpu-s3-service
+              spec:
+                (containers[?name == 'kserve-container']):
+                  - image: amdenterpriseai/aim-base:0.9
+                    (env[?name == 'AIM_MODEL_ID']):
+                      - value: Qwen/Qwen2-0.5B
+                    resources:
+                      limits:
+                        amd.com/gpu: "1"
+
+    - name: Verify service reaches Running status
+      try:
+        - assert:
+            timeout: 10m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-gpu-s3-service
+              status:
+                status: Running
+
+    - name: Verify chat completions endpoint works
+      try:
+        - script:
+            timeout: 3m
+            env:
+              - name: HTTP_BASE_PATH
+                value: /integration/gpu-custom-model-s3/test-gpu-s3-service/v1
+            content: bash ../_shared/validate-http.sh

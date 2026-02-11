@@ -1,0 +1,12 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: test-gpu-s3-config
+spec:
+  routing:
+    enabled: true
+    gatewayRef:
+      name: kserve-ingress-gateway
+      namespace: kgateway-system
+    pathTemplate: "/integration/gpu-custom-model-s3/{.metadata.name}"
+    requestTimeout: "180s"
