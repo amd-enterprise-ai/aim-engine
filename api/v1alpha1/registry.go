@@ -40,6 +40,12 @@ type RecommendedDeployment struct {
 	// +optional
 	Metric string `json:"metric,omitempty"`
 
+	// ProfileId is the unique identifier of the AIM profile for this deployment.
+	// When set, templates created from this deployment will use this profile ID
+	// to deterministically select the correct runtime profile in the AIM container.
+	// +optional
+	ProfileId string `json:"profileId,omitempty"`
+
 	// Description provides additional context about this deployment configuration
 	// +optional
 	Description string `json:"description,omitempty"`

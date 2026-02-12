@@ -717,6 +717,12 @@ spec:
                               description: Precision is the recommended precision
                                 (e.g., fp8, fp16, bf16)
                               type: string
+                            profileId:
+                              description: |-
+                                ProfileId is the unique identifier of the AIM profile for this deployment.
+                                When set, templates created from this deployment will use this profile ID
+                                to deterministically select the correct runtime profile in the AIM container.
+                              type: string
                           type: object
                         type: array
                       releaseNotes:
@@ -1249,6 +1255,12 @@ spec:
                             precision:
                               description: Precision is the recommended precision
                                 (e.g., fp8, fp16, bf16)
+                              type: string
+                            profileId:
+                              description: |-
+                                ProfileId is the unique identifier of the AIM profile for this deployment.
+                                When set, templates created from this deployment will use this profile ID
+                                to deterministically select the correct runtime profile in the AIM container.
                               type: string
                           type: object
                         type: array

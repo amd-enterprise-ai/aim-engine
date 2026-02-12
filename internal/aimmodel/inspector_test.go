@@ -225,6 +225,20 @@ func TestParseRecommendedDeployments(t *testing.T) {
 			},
 			expectError: false,
 		},
+		{
+			name:  "deployment with profileId",
+			input: `[{"gpuModel": "MI300X", "gpuCount": 1, "metric": "latency", "precision": "fp16", "profileId": "vllm-mi300x-fp16-tp1-latency"}]`,
+			expected: []aimv1alpha1.RecommendedDeployment{
+				{
+					GPUModel:  "MI300X",
+					GPUCount:  1,
+					Metric:    "latency",
+					Precision: "fp16",
+					ProfileId: "vllm-mi300x-fp16-tp1-latency",
+				},
+			},
+			expectError: false,
+		},
 	}
 
 	for _, tt := range tests {

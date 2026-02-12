@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Profile ID Propagation (Kind)
+#
+# Validates that profileId from a model's recommendedDeployments OCI labels
+# is propagated through the template spec to the InferenceService container env.
+#
+# The aim-dummy:0.1.10 image has profileId: mi300x-fp16-latency-unopt on the
+# MI300X/fp16/latency recommendedDeployment. This test verifies AIM_PROFILE_ID
+# appears on the InferenceService container with the correct value.
+#
+# Uses: ghcr.io/silogen/aim-dummy:0.1.10 (lightweight test image)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-profile-id-propagation
+spec:
+  description: Test that profileId from recommendedDeployments propagates to InferenceService
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create service targeting fp16 latency profile
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify AIM_PROFILE_ID is set on InferenceService container
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-profile-id
+              spec:
+                predictor:
+                  (containers[?name == 'kserve-container']):
+                    - (env[?name == 'AIM_PROFILE_ID']):
+                        - name: AIM_PROFILE_ID
+                          value: mi300x-fp16-latency-unopt

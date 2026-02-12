@@ -1,0 +1,13 @@
+# Runtime config with routing enabled for integration testing
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: test-gpu-profile-id
+spec:
+  routing:
+    enabled: true
+    gatewayRef:
+      name: kserve-ingress-gateway
+      namespace: kgateway-system
+    pathTemplate: "/integration/gpu-profile-id/{.metadata.name}"
+    requestTimeout: "180s"

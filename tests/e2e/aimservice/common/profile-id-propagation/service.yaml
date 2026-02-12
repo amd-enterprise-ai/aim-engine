@@ -1,0 +1,16 @@
+# Service using aim-dummy image to verify profileId propagation.
+# The fp16/latency recommendedDeployment includes profileId: mi300x-fp16-latency-unopt.
+# Overrides ensure the operator selects that specific template.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-profile-id
+spec:
+  model:
+    image: ghcr.io/silogen/aim-dummy:0.1.10
+  overrides:
+    metric: latency
+    precision: fp16
+  replicas: 1
+  template:
+    allowUnoptimized: true

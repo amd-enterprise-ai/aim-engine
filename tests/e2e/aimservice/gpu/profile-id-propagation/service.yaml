@@ -1,0 +1,24 @@
+# Service using Llama-3.2-1B-Instruct on MI300X with metric=latency.
+# The MI300X latency recommendedDeployment includes profileId in the OCI labels,
+# so AIM_PROFILE_ID should be propagated to the inference container.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-gpu-profile-id
+spec:
+  runtimeConfigName: test-gpu-profile-id
+  model:
+    image: amdenterpriseai/aim-meta-llama-llama-3-2-1b-instruct:0.8.5
+  overrides:
+    metric: latency
+  env:
+    - name: HF_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: hf-token
+          key: hf-token
+  caching:
+    mode: Never
+  replicas: 1
+  template:
+    allowUnoptimized: true

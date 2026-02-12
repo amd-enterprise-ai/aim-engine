@@ -51,6 +51,7 @@ func TestBuildTemplateComponents(t *testing.T) {
 		Precision: "fp16",
 		GPUModel:  testGPUModel,
 		GPUCount:  2,
+		ProfileId: "vllm-mi300x-fp16-tp2-throughput",
 	}
 
 	result := buildTemplateComponents(testModelName, modelSpec, deployment)
@@ -69,6 +70,10 @@ func TestBuildTemplateComponents(t *testing.T) {
 
 	if result.Spec.Precision == nil || string(*result.Spec.Precision) != "fp16" {
 		t.Error("expected Precision=fp16")
+	}
+
+	if result.Spec.ProfileId != "vllm-mi300x-fp16-tp2-throughput" {
+		t.Errorf("expected ProfileId=vllm-mi300x-fp16-tp2-throughput, got %s", result.Spec.ProfileId)
 	}
 
 	if result.Spec.Hardware == nil || result.Spec.Hardware.GPU == nil {
@@ -105,6 +110,9 @@ func TestBuildTemplateComponents_MinimalDeployment(t *testing.T) {
 	}
 	if result.Spec.Hardware != nil {
 		t.Error("expected Hardware=nil for empty deployment")
+	}
+	if result.Spec.ProfileId != "" {
+		t.Error("expected ProfileId to be empty for empty deployment")
 	}
 }
 

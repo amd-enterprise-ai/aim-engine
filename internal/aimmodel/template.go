@@ -60,6 +60,9 @@ func buildTemplateComponents(modelName string, modelSpec aimv1alpha1.AIMModelSpe
 		precision := aimv1alpha1.AIMPrecision(deployment.Precision)
 		commonSpec.Precision = &precision
 	}
+	if deployment.ProfileId != "" {
+		commonSpec.ProfileId = deployment.ProfileId
+	}
 	if deployment.GPUModel != "" && deployment.GPUCount > 0 {
 		commonSpec.Hardware = &aimv1alpha1.AIMHardwareRequirements{
 			GPU: &aimv1alpha1.AIMGpuRequirements{

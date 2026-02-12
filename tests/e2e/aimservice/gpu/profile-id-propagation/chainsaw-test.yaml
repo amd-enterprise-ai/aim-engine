@@ -1,0 +1,80 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Profile ID Propagation (GPU)
+#
+# This test validates that profileId from a model's recommendedDeployments
+# is correctly propagated through the template to the inference container.
+#
+# Scenario: Llama-3.2-1B-Instruct on MI300X with metric=latency
+# The MI300X latency recommendedDeployment includes profileId in the OCI labels.
+# This test verifies that profileId from recommendedDeployments flows through
+# the template spec to the inference container's AIM_PROFILE_ID environment variable.
+#
+# Uses: amdenterpriseai/aim-meta-llama-llama-3-2-1b-instruct:0.8.5
+# Requires: GPU infrastructure
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-gpu-profile-id-propagation
+  labels:
+    requires: gpu
+spec:
+  description: Test that profileId from recommendedDeployments propagates to inference containers
+  timeouts:
+    assert: 600s
+  steps:
+    - name: Copy hf-token secret into test namespace
+      try:
+        - script:
+            content: |
+              kubectl get secret hf-token -n aim-system -o json \
+                | jq 'del(.metadata.namespace,.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' \
+                | kubectl apply -n $NAMESPACE -f -
+
+    - name: Create runtime config with routing
+      try:
+        - apply:
+            file: runtime-config.yaml
+
+    - name: Create service targeting latency metric
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify AIM_PROFILE_ID is set on inference pod
+      try:
+        - assert:
+            timeout: 10m
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: test-gpu-profile-id
+              spec:
+                (containers[?name == 'kserve-container']):
+                  - (env[?name == 'AIM_PROFILE_ID']):
+                      - name: AIM_PROFILE_ID
+                        value: vllm-mi300x-fp16-tp1-latency
+
+    - name: Verify service reaches Running status
+      try:
+        - assert:
+            timeout: 10m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-gpu-profile-id
+              status:
+                status: Running
+
+    - name: Verify chat completions endpoint works
+      try:
+        - script:
+            timeout: 3m
+            env:
+              - name: HTTP_BASE_PATH
+                value: /integration/gpu-profile-id/test-gpu-profile-id/v1
+            content: bash ../_shared/validate-http.sh
