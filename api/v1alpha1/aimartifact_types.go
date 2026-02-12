@@ -63,7 +63,7 @@ type AIMArtifactSpec struct {
 	SourceURI string `json:"sourceUri"`
 
 	// ModelID is the canonical identifier in {org}/{name} format.
-	// Determines the cache download path: /workspace/artifact/{modelId}
+	// Determines the cache download path: /workspace/cache/{modelId}
 	// For HuggingFace sources, this is typically derived from the URI (e.g., "meta-llama/Llama-3-8B").
 	// For S3 sources, this must be explicitly provided (e.g., "my-team/fine-tuned-llama").
 	// When not specified, derived from SourceURI for HuggingFace sources.

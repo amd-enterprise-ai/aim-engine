@@ -92,6 +92,8 @@ spec:
                 predictor:
                   containers:
                     - name: kserve-container
+                      (env[?name == 'AIM_CACHE_PATH']):
+                        - value: /workspace/cache
                       (env[?name == 'AIM_METRIC']):
                         - value: latency
                       (env[?name == 'AIM_PRECISION']):

@@ -714,7 +714,7 @@ spec:
                     modelId:
                       description: |-
                         ModelID is the canonical identifier in {org}/{name} format.
-                        Determines the cache mount path: /workspace/artifact/{modelId}
+                        Determines the cache mount path: /workspace/cache/{modelId}
                         For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
                         For S3 sources, users define their own organizational structure.
                       pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
@@ -1171,7 +1171,7 @@ spec:
                     modelId:
                       description: |-
                         ModelID is the canonical identifier in {org}/{name} format.
-                        Determines the cache mount path: /workspace/artifact/{modelId}
+                        Determines the cache mount path: /workspace/cache/{modelId}
                         For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
                         For S3 sources, users define their own organizational structure.
                       pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$

@@ -216,7 +216,7 @@ const (
 	// DefaultGPUResourceName is the default resource name for AMD GPUs
 	DefaultGPUResourceName = "amd.com/gpu"
 	// AIMCacheBasePath is the base directory for cached models
-	AIMCacheBasePath = "/workspace/artifact"
+	AIMCacheBasePath = "/workspace/cache"
 )
 
 // Component values for resource labels
@@ -232,7 +232,7 @@ const (
 // Environment variable names
 const (
 	// EnvAIMCachePath is the environment variable for the cache path
-	EnvAIMCachePath = "AIM_ARTIFACT_PATH"
+	EnvAIMCachePath = "AIM_CACHE_PATH"
 	// EnvAIMMetric is the environment variable for the optimization metric
 	EnvAIMMetric = "AIM_METRIC"
 	// EnvAIMPrecision is the environment variable for the numeric precision

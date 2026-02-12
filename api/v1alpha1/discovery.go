@@ -125,7 +125,7 @@ type AIMDiscoveryProfileMetadata struct {
 // Discovery extracts these from the container's configuration to enable caching and validation.
 type AIMModelSource struct {
 	// ModelID is the canonical identifier in {org}/{name} format.
-	// Determines the cache mount path: /workspace/artifact/{modelId}
+	// Determines the cache mount path: /workspace/cache/{modelId}
 	// For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
 	// For S3 sources, users define their own organizational structure.
 	// +required
