@@ -32,6 +32,14 @@ spec:
     - jsonPath: .status.progress.displayPercentage
       name: Progress
       type: string
+    - jsonPath: .status.download.protocol
+      name: Protocol
+      priority: 1
+      type: string
+    - jsonPath: .status.download.attempt
+      name: Attempt
+      priority: 1
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -243,11 +251,11 @@ spec:
                   x-kubernetes-map-type: atomic
                 type: array
               modelDownloadImage:
-                default: ghcr.io/silogen/aim-artifact-downloader:0.1.1
+                default: ghcr.io/silogen/aim-artifact-downloader:0.2.0
                 description: |-
                   ModelDownloadImage specifies the container image used to download and initialize the artifact.
                   This image runs as a job to download model artifacts from the source URI to the cache volume.
-                  When not specified, defaults to "ghcr.io/silogen/aim-artifact-downloader:0.1.1".
+                  When not specified, defaults to "ghcr.io/silogen/aim-artifact-downloader:0.2.0".
                 type: string
               modelId:
                 description: |-
@@ -374,6 +382,33 @@ spec:
                 description: DisplaySize is the human-readable effective size (spec
                   or discovered)
                 type: string
+              download:
+                description: |-
+                  Download represents the current download attempt state, patched by the downloader pod.
+                  Shows which protocol is active, what attempt we're on, etc.
+                properties:
+                  attempt:
+                    description: Attempt is the current attempt number (1-based)
+                    format: int32
+                    type: integer
+                  message:
+                    description: Message is a human-readable status message from the
+                      downloader
+                    type: string
+                  protocol:
+                    description: Protocol is the download protocol currently in use
+                      (e.g., "XET", "HF_TRANSFER", "HTTP")
+                    type: string
+                  protocolSequence:
+                    description: ProtocolSequence is the configured protocol sequence
+                      (e.g., "HF_TRANSFER,XET")
+                    type: string
+                  totalAttempts:
+                    description: TotalAttempts is the total number of attempts configured
+                      via AIM_DOWNLOADER_PROTOCOL
+                    format: int32
+                    type: integer
+                type: object
               headroomPercent:
                 description: HeadroomPercent is the headroom percentage that was applied
                   to the PVC size.

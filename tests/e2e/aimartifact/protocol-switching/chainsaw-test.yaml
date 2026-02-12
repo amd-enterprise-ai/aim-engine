@@ -1,0 +1,68 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: protocol-switching
+spec:
+  description: Test AIM_DOWNLOADER_PROTOCOL switching between protocols and status.download metadata
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Create runtime config
+      try:
+        - apply:
+            file: runtime.yaml
+
+    # === FALLBACK PATH: XET fails, HTTP succeeds ===
+
+    - name: Create artifact with protocol fallback (XET -> HTTP)
+      try:
+        - apply:
+            file: artifact-fallback.yaml
+
+    - name: Assert artifact reaches Ready with HTTP protocol metadata
+      description: >
+        XET should fail, then HTTP should succeed.
+        status.download should show protocol=HTTP, attempt=2, totalAttempts=2.
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: protocol-fallback
+              status:
+                status: Ready
+                download:
+                  protocol: HTTP
+                  attempt: 2
+                  totalAttempts: 2
+                  protocolSequence: "XET,HTTP"
+                  message: Complete
+
+    # === ALL-FAIL PATH: both protocols fail ===
+
+    - name: Create artifact where all protocols fail
+      try:
+        - apply:
+            file: artifact-all-fail.yaml
+
+    - name: Assert artifact reaches Failed with exhausted attempts metadata
+      description: >
+        Both XET and HTTP should fail.
+        status.download should show the last protocol attempted and the exhaustion message.
+      try:
+        - assert:
+            timeout: 240s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: protocol-all-fail
+              status:
+                status: Failed
+                download:
+                  protocol: HTTP
+                  attempt: 2
+                  totalAttempts: 2
+                  protocolSequence: "XET,HTTP"

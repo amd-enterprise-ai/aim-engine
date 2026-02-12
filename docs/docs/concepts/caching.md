@@ -157,8 +157,89 @@ spec:
   storageClassName: rwx-nfs
 ```
 
+## Download Protocol Strategy
+
+AIMArtifact downloads from HuggingFace support multiple download protocols. The operator automatically tries protocols in a configurable sequence, falling back to the next protocol if the current one fails. The main reason for this approach is that some models require XET for parts of the download, while XET seems to have a hard time handling network instability in certain environments. A mixed protocol approach where different protocols are tried in sequence is default to alliviate this, but the default behavior can be changed by setting the AIM_DOWNLOADER_PROTOCOL in the default AIMClusterRuntimeConfig.
+
+### Supported Protocols
+
+| Protocol | Description |
+| -------- | ----------- |
+| `XET` | HuggingFace's content-addressable chunk-based protocol. Default in `huggingface_hub` >= 0.32. Efficient for large files with deduplication. |
+| `HF_TRANSFER` | Rust-based parallel HTTP downloader (deprecated by HuggingFace in favor of XET). |
+| `HTTP` | Standard HTTP range-request downloads. Most compatible, no extra dependencies. |
+
+### Configuration
+
+The download strategy is controlled by the `AIM_DOWNLOADER_PROTOCOL` environment variable, which specifies a comma-separated sequence of protocols to try in order.
+
+**Default**: `XET,HF_TRANSFER`
+
+This can be overridden at three levels (highest precedence first):
+
+1. **Per-artifact** via `AIMArtifact.spec.env`
+2. **Per-namespace** via `AIMRuntimeConfig.spec.env`
+3. **Cluster-wide** via `AIMClusterRuntimeConfig.spec.env`
+
+#### Example: Override per artifact
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: my-model
+spec:
+  sourceUri: hf://meta-llama/Llama-3-8B
+  env:
+    - name: AIM_DOWNLOADER_PROTOCOL
+      value: "HTTP"
+```
+
+#### Example: Cluster-wide default
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: default
+spec:
+  env:
+    - name: AIM_DOWNLOADER_PROTOCOL
+      value: "XET,XET,HTTP"
+```
+
+### Observing Download Status
+
+During downloads, the artifact's `status.download` field is updated by the downloader pod with protocol attempt metadata:
+
+```yaml
+status:
+  download:
+    protocol: HTTP          # Currently active protocol
+    attempt: 2              # Current attempt number (1-based)
+    totalAttempts: 3        # Total attempts in the sequence
+    protocolSequence: "XET,XET,HTTP"
+    message: Complete       # Human-readable status
+```
+
+View these fields with:
+
+```bash
+kubectl get aimart -o wide          # Protocol and Attempt columns (priority=1)
+kubectl get aimart my-model -o yaml # Full status.download details
+```
+
+### How Protocol Switching Works
+
+1. The downloader iterates through the protocol sequence left to right
+2. For each protocol, the appropriate HuggingFace environment variables are set (`HF_HUB_DISABLE_XET`, `HF_HUB_ENABLE_HF_TRANSFER`)
+3. If a protocol fails, any `.incomplete` files are cleaned before switching to the next protocol
+4. Already-completed files are skipped regardless of protocol (metadata-based)
+5. If all protocols are exhausted, the Job fails and Kubernetes retries via `backoffLimit`
+
 ## Related Documentation
 
 - [Templates](templates.md) - Understanding ServiceTemplates and discovery
 - [Services](../usage/services.md) - Deploying services with caching
+- [Runtime Configuration](runtime-config.md) - Cluster-wide and namespace-scoped configuration
 

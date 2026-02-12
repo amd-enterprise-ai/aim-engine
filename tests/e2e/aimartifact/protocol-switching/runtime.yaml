@@ -1,0 +1,6 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+spec:
+  pvcHeadroomPercent: 10

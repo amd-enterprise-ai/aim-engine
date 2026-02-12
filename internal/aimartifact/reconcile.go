@@ -462,39 +462,80 @@ func (r *ArtifactReconciler) DecorateStatus(
 		}
 	}
 
-	// Check if the job has failed
-	jobFailed := obs.downloadJob != nil && !obs.downloadJob.IsNotFound() &&
-		obs.downloadJob.Value != nil && utils.IsJobFailed(obs.downloadJob.Value)
+	// --- Download phase tracking ---
 
+	r.decorateDownloadPhase(status, cm, obs, podFailed)
+}
+
+func (r *ArtifactReconciler) decorateDownloadPhase(
+	status *aimv1alpha1.AIMArtifactStatus,
+	cm *controllerutils.ConditionManager,
+	obs ArtifactObservation,
+	podFailed bool,
+) {
+	// The download pod sets progress to 100% after the download finishes (before verification).
+	// The controller uses this signal to derive the DownloadComplete condition.
+	jobExists := obs.downloadJob != nil && !obs.downloadJob.IsNotFound() && obs.downloadJob.Value != nil
 	jobSucceeded := obs.DownloadJobSucceeded()
+	jobFailed := jobExists && utils.IsJobFailed(obs.downloadJob.Value)
 
-	if podFailed || jobFailed {
-		// When failed, don't use stale progress from logs
-		// Show N/A since the download didn't complete successfully
-		// Preserve existing progress data if available
-		if status.Progress == nil {
+	// Only manage DownloadComplete when the download job exists
+	if jobExists {
+		downloadProgressAt100 := status.Progress != nil && status.Progress.Percentage >= 100
+
+		switch {
+		case jobSucceeded:
+			// Job done (download + verification) → both DownloadComplete=True, progress=100%
+			cm.MarkTrue(aimv1alpha1.ArtifactConditionDownloadComplete,
+				aimv1alpha1.ArtifactReasonVerified,
+				"Download and verification complete",
+				controllerutils.WithNormalEvent())
+
+			expectedSize := obs.GetEffectiveSize()
 			status.Progress = &aimv1alpha1.DownloadProgress{
-				TotalBytes:      0,
-				DownloadedBytes: 0,
-				Percentage:      0,
+				TotalBytes:        expectedSize,
+				DownloadedBytes:   expectedSize,
+				Percentage:        100,
+				DisplayPercentage: "100 %",
 			}
-		}
-		status.Progress.DisplayPercentage = "N/A"
-		return
-	}
+			if status.Download != nil {
+				status.Download.Message = "Complete"
+			}
+			return
 
-	// Check if download job succeeded
-	if jobSucceeded {
-		// When the job succeeds, set progress to 100%
-		// This ensures we show completion even if the downloader didn't have time to report it
-		expectedSize := obs.GetEffectiveSize()
+		case podFailed || jobFailed:
+			// Failed → DownloadComplete=False, progress=N/A
+			if downloadProgressAt100 {
+				// Download succeeded but verification failed
+				cm.MarkFalse(aimv1alpha1.ArtifactConditionDownloadComplete,
+					"VerificationFailed",
+					"Download completed but verification failed",
+					controllerutils.AsWarning())
+			} else {
+				cm.MarkFalse(aimv1alpha1.ArtifactConditionDownloadComplete,
+					aimv1alpha1.ArtifactReasonDownloading,
+					"Download failed before completion",
+					controllerutils.AsWarning())
+			}
+			if status.Progress == nil {
+				status.Progress = &aimv1alpha1.DownloadProgress{}
+			}
+			status.Progress.DisplayPercentage = "N/A"
+			return
 
-		status.Progress = &aimv1alpha1.DownloadProgress{
-			TotalBytes:        expectedSize,
-			DownloadedBytes:   expectedSize,
-			Percentage:        100,
-			DisplayPercentage: "100 %",
+		case downloadProgressAt100:
+			// Download done, verification in progress
+			cm.MarkTrue(aimv1alpha1.ArtifactConditionDownloadComplete,
+				aimv1alpha1.ArtifactReasonVerifying,
+				"Download complete, verifying integrity...",
+				controllerutils.WithNormalEvent())
+
+		default:
+			// Still downloading
+			cm.MarkFalse(aimv1alpha1.ArtifactConditionDownloadComplete,
+				aimv1alpha1.ArtifactReasonDownloading,
+				"Download in progress",
+				controllerutils.WithNormalEvent())
 		}
-		return
 	}
 }

@@ -106,7 +106,7 @@ _Appears in:_
 | `storageClassName` _string_ | StorageClassName specifies the storage class for the cache volume.<br />When not specified, uses the cluster default storage class. |  | Optional: \{\} <br /> |
 | `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Size specifies the size of the cache volume |  | Optional: \{\} <br /> |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env lists the environment variables to use for authentication when downloading models.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  | Optional: \{\} <br /> |
-| `modelDownloadImage` _string_ | ModelDownloadImage specifies the container image used to download and initialize the artifact.<br />This image runs as a job to download model artifacts from the source URI to the cache volume.<br />When not specified, defaults to "ghcr.io/silogen/aim-artifact-downloader:0.1.1". | ghcr.io/silogen/aim-artifact-downloader:0.1.1 | Optional: \{\} <br /> |
+| `modelDownloadImage` _string_ | ModelDownloadImage specifies the container image used to download and initialize the artifact.<br />This image runs as a job to download model artifacts from the source URI to the cache volume.<br />When not specified, defaults to "ghcr.io/silogen/aim-artifact-downloader:0.2.0". | ghcr.io/silogen/aim-artifact-downloader:0.2.0 | Optional: \{\} <br /> |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets references secrets for pulling AIM container images. |  | Optional: \{\} <br /> |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  | Optional: \{\} <br /> |
 
@@ -128,6 +128,7 @@ _Appears in:_
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#condition-v1-meta) array_ | Conditions represent the latest available observations of the artifact's state |  |  |
 | `status` _[AIMStatus](#aimstatus)_ | Status represents the current status of the artifact | Pending | Enum: [Pending Progressing Ready Degraded Failed NotAvailable] <br /> |
 | `progress` _[DownloadProgress](#downloadprogress)_ | Progress represents the download progress when Status is Progressing |  | Optional: \{\} <br /> |
+| `download` _[DownloadState](#downloadstate)_ | Download represents the current download attempt state, patched by the downloader pod.<br />Shows which protocol is active, what attempt we're on, etc. |  | Optional: \{\} <br /> |
 | `displaySize` _string_ | DisplaySize is the human-readable effective size (spec or discovered) |  | Optional: \{\} <br /> |
 | `lastUsed` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#time-v1-meta)_ | LastUsed represents the last time a model was deployed that used this cache |  |  |
 | `persistentVolumeClaim` _string_ | PersistentVolumeClaim represents the name of the created PVC |  |  |
@@ -1785,6 +1786,26 @@ _Appears in:_
 | `downloadedBytes` _integer_ | DownloadedBytes is the number of bytes downloaded so far |  | Optional: \{\} <br /> |
 | `percentage` _integer_ | Percentage is the download progress as a percentage (0-100) |  | Maximum: 100 <br />Minimum: 0 <br />Optional: \{\} <br /> |
 | `displayPercentage` _string_ | DisplayPercentage is a human-readable progress string (e.g., "45 %")<br />This field is automatically populated from Progress.Percentage |  | Optional: \{\} <br /> |
+
+
+#### DownloadState
+
+
+
+DownloadState represents the current download attempt state, updated by the downloader pod
+
+
+
+_Appears in:_
+- [AIMArtifactStatus](#aimartifactstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `protocol` _string_ | Protocol is the download protocol currently in use (e.g., "XET", "HF_TRANSFER", "HTTP") |  | Optional: \{\} <br /> |
+| `attempt` _integer_ | Attempt is the current attempt number (1-based) |  | Optional: \{\} <br /> |
+| `totalAttempts` _integer_ | TotalAttempts is the total number of attempts configured via AIM_DOWNLOADER_PROTOCOL |  | Optional: \{\} <br /> |
+| `protocolSequence` _string_ | ProtocolSequence is the configured protocol sequence (e.g., "HF_TRANSFER,XET") |  | Optional: \{\} <br /> |
+| `message` _string_ | Message is a human-readable status message from the downloader |  | Optional: \{\} <br /> |
 
 
 #### ImageMetadata

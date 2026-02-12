@@ -77,10 +77,9 @@ func buildDownloadJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha
 
 	// Merge env vars with precedence: mc.Spec.Env > runtimeConfigSpec.Env > defaults
 	defaultEnv := []corev1.EnvVar{
-		{Name: "HF_XET_CHUNK_ARTIFACT_SIZE_BYTES", Value: "0"},
-		{Name: "HF_XET_SHARD_ARTIFACT_SIZE_BYTES", Value: "0"},
+		{Name: "AIM_DOWNLOADER_PROTOCOL", Value: "XET,HF_TRANSFER"},
+		{Name: "TMPDIR", Value: "/tmp/"},
 		{Name: "HF_HOME", Value: "/tmp/.hf"},
-		{Name: "UMASK", Value: "0022"},
 		{Name: "EXPECTED_SIZE_BYTES", Value: fmt.Sprintf("%d", expectedSizeBytes)},
 		{Name: "MOUNT_PATH", Value: mountPath},
 		{Name: "ARTIFACT_NAME", Value: mc.Name},

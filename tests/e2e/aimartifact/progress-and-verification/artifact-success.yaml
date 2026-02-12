@@ -1,0 +1,26 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: progress-success
+spec:
+  sourceUri: hf://gpt2
+  size: 10Mi
+  env:
+    # Simulate download phases without actually downloading
+    - name: AIM_DEBUG_SIMULATE_DOWNLOAD
+      value: "true"
+    # Stay in download phase long enough for assertions (seconds)
+    - name: AIM_DEBUG_DOWNLOAD_DURATION
+      value: "15"
+    # Stay in verification phase long enough for assertions (seconds)
+    - name: AIM_DEBUG_VERIFY_DURATION
+      value: "15"
+    # Small simulated size for fast du -sb calculations
+    - name: EXPECTED_SIZE_BYTES
+      value: "1048576"
+    # Fast progress updates
+    - name: PROGRESS_INTERVAL
+      value: "3"
+    # Long stall timeout so it doesn't interfere
+    - name: STALL_TIMEOUT
+      value: "120"

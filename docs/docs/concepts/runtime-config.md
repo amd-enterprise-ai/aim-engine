@@ -317,6 +317,52 @@ spec:
 
 The operator propagates these labels to the InferenceService, HTTPRoute, and any PVCs created for the service, enabling cost tracking and chargeback at the infrastructure level.
 
+## Environment Variable Overrides
+
+Runtime configurations can inject environment variables into managed workloads via `spec.env`. This is useful for setting defaults across an entire namespace or cluster, such as the download protocol strategy for model artifacts.
+
+### Download Protocol Strategy
+
+The `AIM_DOWNLOADER_PROTOCOL` environment variable controls the sequence of protocols tried when downloading HuggingFace models. See [Model Caching – Download Protocol Strategy](caching.md#download-protocol-strategy) for full details.
+
+#### Example: Cluster default for environments where XET is unreliable
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: default
+spec:
+  env:
+    - name: AIM_DOWNLOADER_PROTOCOL
+      value: "HTTP,XET"
+```
+
+#### Example: Namespace override preferring plain HTTP
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+  namespace: ml-team
+spec:
+  env:
+    - name: AIM_DOWNLOADER_PROTOCOL
+      value: "HTTP"
+```
+
+### Merge Precedence
+
+Environment variables are merged with the following precedence (highest first):
+
+1. `AIMArtifact.spec.env` (per-artifact)
+2. `AIMRuntimeConfig.spec.env` (namespace-scoped)
+3. `AIMClusterRuntimeConfig.spec.env` (cluster-scoped)
+4. Operator defaults (e.g., `AIM_DOWNLOADER_PROTOCOL=XET,HF_TRANSFER`)
+
+This means an individual artifact can always override any runtime config setting when needed.
+
 ## Operator Namespace
 
 The AIM controllers determine the operator namespace from the `AIM_SYSTEM_NAMESPACE` environment variable (default: `aim-system`).
@@ -333,3 +379,4 @@ Cluster-scoped workflows such as:
 - [Models](models.md) - How models use runtime configs for discovery and auto-creation
 - [Templates](templates.md) - Template discovery and runtime config resolution
 - [Services Usage](../usage/services.md) - Practical service configuration
+- [Model Caching](caching.md) - Download protocol strategy and cache architecture

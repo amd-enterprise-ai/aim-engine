@@ -1,0 +1,104 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: progress-and-verification
+spec:
+  description: Test progress reporting, DownloadComplete condition, and verification failure handling
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Create runtime config
+      try:
+        - apply:
+            file: runtime.yaml
+
+    # === SUCCESS PATH: progress-success artifact ===
+
+    - name: Create successful artifact with simulated download
+      try:
+        - apply:
+            file: artifact-success.yaml
+
+    - name: Assert enters Progressing with download in progress
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: progress-success
+              status:
+                status: Progressing
+                # Progress monitor caps at 99%, so percentage should be <= 99 while downloading
+                (progress.percentage <= `99`): true
+                (conditions[?type == 'DownloadComplete']):
+                  - status: "False"
+                    reason: Downloading
+
+    - name: Assert download completes and enters verification phase
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: progress-success
+              status:
+                status: Progressing
+                progress:
+                  percentage: 100
+                (conditions[?type == 'DownloadComplete']):
+                  - status: "True"
+                    reason: Verifying
+
+    - name: Assert reaches Ready after verification
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: progress-success
+              status:
+                status: Ready
+                progress:
+                  percentage: 100
+                  displayPercentage: "100 %"
+                (conditions[?type == 'DownloadComplete']):
+                  - status: "True"
+                    reason: Verified
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    # === VERIFICATION FAILURE PATH: progress-verify-fail artifact ===
+
+    - name: Create artifact that will fail verification
+      try:
+        - apply:
+            file: artifact-verify-fail.yaml
+
+    - name: Assert verification failure artifact reaches Failed state
+      description: >
+        The download completes (progress hits 100%) but verification fails.
+        After job backoff is exhausted, the artifact should be Failed with
+        DownloadComplete=False/VerificationFailed and progress N/A.
+      try:
+        - assert:
+            timeout: 240s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: progress-verify-fail
+              status:
+                status: "Failed"
+                progress:
+                  displayPercentage: "N/A"
+                (conditions[?type == 'DownloadComplete']):
+                  - status: "False"
+                    reason: VerificationFailed
+                (conditions[?type == 'Ready']):
+                  - status: "False"

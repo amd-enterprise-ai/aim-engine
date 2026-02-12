@@ -1,0 +1,29 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: protocol-all-fail
+spec:
+  sourceUri: hf://test-org/test-model
+  size: 10Mi
+  env:
+    # Protocol sequence: all fail
+    - name: AIM_DOWNLOADER_PROTOCOL
+      value: "XET,HTTP"
+    # Enable HF download simulation (no real network)
+    - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+      value: "true"
+    # Both protocols fail
+    - name: AIM_DEBUG_SIMULATE_HF_FAIL_PROTOCOLS
+      value: "XET,HTTP"
+    # Fast simulation
+    - name: AIM_DEBUG_SIMULATE_HF_DURATION
+      value: "1"
+    # Small simulated size
+    - name: EXPECTED_SIZE_BYTES
+      value: "102400"
+    # Fast progress updates
+    - name: PROGRESS_INTERVAL
+      value: "3"
+    # Long stall timeout so it doesn't interfere
+    - name: STALL_TIMEOUT
+      value: "120"

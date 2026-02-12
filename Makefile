@@ -161,10 +161,10 @@ CHAINSAW_REPORT_DIR := .tmp/chainsaw-reports
 CHAINSAW_CONFIG_DIR := tests/chainsaw/config
 
 # Kind environment: exclude tests requiring GPU, longhorn storage, or external network
-CHAINSAW_SELECTOR_KIND := requires notin (gpu,longhorn,external-network)
+CHAINSAW_SELECTOR_KIND := requires notin (gpu,longhorn,hf_token)
 
 # GPU environment: exclude tests that only work on Kind (mocked node labels)
-CHAINSAW_SELECTOR_GPU := requires notin (kind,external-network)
+CHAINSAW_SELECTOR_GPU := requires notin (kind,hf_token)
 
 # Select appropriate config based on ENV and CI detection
 # CI is detected via CI env var (set by GitHub Actions, GitLab CI, etc.)
@@ -218,6 +218,8 @@ vcluster-create: ## Create personal vcluster, install dependencies, and connect.
 	vcluster create $(VCLUSTER_NAME) --namespace $(VCLUSTER_NAME) -f hack/dependencies/vcluster.yaml
 	@echo "Installing dependencies..."
 	helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
+	@echo "Installing RBAC..."
+	@kustomize build config/local-dev-kind | kubectl apply -f - --server-side
 	@echo "vCluster '$(VCLUSTER_NAME)' ready."
 
 .PHONY: vcluster-delete

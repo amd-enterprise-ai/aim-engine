@@ -192,6 +192,28 @@ Kubebuilder markers in `api/v1alpha1/*_types.go` control generation:
 - `+kubebuilder:validation:XValidation:rule="..."` - CEL validation
 - `+kubebuilder:printcolumn:...` - kubectl output columns
 
+## AIMArtifact Download Protocol
+
+AIMArtifact supports configurable download protocol fallback for HuggingFace models. The `AIM_DOWNLOADER_PROTOCOL` env var specifies a comma-separated sequence of protocols (`XET`, `HF_TRANSFER`, `HTTP`). The downloader tries each in order, cleaning `.incomplete` files between switches. Default: `XET,HF_TRANSFER`.
+
+Key files:
+- `images/artifact-downloader/hf-download.sh` - HF download logic with protocol switching and status patching
+- `images/artifact-downloader/entrypoint.sh` - Dispatcher (delegates `hf://` to `hf-download.sh`)
+- `internal/aimartifact/download.go` - Job builder; sets default env vars including `AIM_DOWNLOADER_PROTOCOL`
+- `api/v1alpha1/aimartifact_types.go` - `DownloadState` struct in `AIMArtifactStatus`
+
+### Debug Simulation
+
+The downloader supports simulation mode for testing without real network calls:
+
+| Environment Variable | Description |
+| --- | --- |
+| `AIM_DEBUG_SIMULATE_HF_DOWNLOAD` | Set to any non-empty value to enable simulation mode |
+| `AIM_DEBUG_SIMULATE_HF_FAIL_PROTOCOLS` | Comma-separated list of protocols that should simulate failure (e.g., `XET,HF_TRANSFER`) |
+| `AIM_DEBUG_SIMULATE_HF_DURATION` | Sleep duration in seconds per attempt (default: `2`) |
+
+Simulation mode writes small dummy data on success and skips `hf cache verify`. Used by chainsaw tests in `tests/e2e/aimartifact/protocol-switching/`.
+
 ## Key Files
 
 - `cmd/main.go` - Entry point, controller setup, scheme registration

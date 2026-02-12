@@ -1,0 +1,29 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: progress-verify-fail
+spec:
+  sourceUri: hf://gpt2
+  size: 10Mi
+  env:
+    # Simulate download phases without actually downloading
+    - name: AIM_DEBUG_SIMULATE_DOWNLOAD
+      value: "true"
+    # Short download phase
+    - name: AIM_DEBUG_DOWNLOAD_DURATION
+      value: "5"
+    # Short verification before failure
+    - name: AIM_DEBUG_VERIFY_DURATION
+      value: "5"
+    # Cause verification to fail
+    - name: AIM_DEBUG_VERIFY_FAIL
+      value: "true"
+    # Small simulated size
+    - name: EXPECTED_SIZE_BYTES
+      value: "1048576"
+    # Fast progress updates
+    - name: PROGRESS_INTERVAL
+      value: "3"
+    # Long stall timeout so it doesn't interfere
+    - name: STALL_TIMEOUT
+      value: "120"

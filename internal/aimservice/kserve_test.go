@@ -671,7 +671,7 @@ func TestBuildMergedEnvVars_ClusterTemplateEnv(t *testing.T) {
 		},
 	}
 
-		result := buildMergedEnvVars(service, templateSpec, ServiceObservation{})
+	result := buildMergedEnvVars(service, templateSpec, ServiceObservation{})
 
 	envMap := make(map[string]string)
 	for _, env := range result {

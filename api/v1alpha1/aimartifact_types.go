@@ -31,10 +31,21 @@ import (
 )
 
 const (
-	DefaultDownloadImage = "ghcr.io/silogen/aim-artifact-downloader:0.1.1"
+	DefaultDownloadImage = "ghcr.io/silogen/aim-artifact-downloader:0.2.0"
 
 	// ArtifactSourceURIIndexKey is the field index key for AIMArtifact.Spec.SourceURI
 	ArtifactSourceURIIndexKey = ".spec.sourceUri"
+)
+
+const (
+	// ArtifactConditionDownloadComplete is True when the download phase has finished
+	// and the job has moved to verification. Progress will show 100% at this point.
+	ArtifactConditionDownloadComplete = "DownloadComplete"
+
+	ArtifactReasonDownloading      = "Downloading"
+	ArtifactReasonDownloadComplete = "DownloadComplete"
+	ArtifactReasonVerifying        = "Verifying"
+	ArtifactReasonVerified         = "Verified"
 )
 
 // AIMArtifactMode indicates the ownership mode of a artifact, derived from owner references.
@@ -89,9 +100,9 @@ type AIMArtifactSpec struct {
 
 	// ModelDownloadImage specifies the container image used to download and initialize the artifact.
 	// This image runs as a job to download model artifacts from the source URI to the cache volume.
-	// When not specified, defaults to "ghcr.io/silogen/aim-artifact-downloader:0.1.1".
+	// When not specified, defaults to "ghcr.io/silogen/aim-artifact-downloader:0.2.0".
 	// +optional
-	// +kubebuilder:default="ghcr.io/silogen/aim-artifact-downloader:0.1.1"
+	// +kubebuilder:default="ghcr.io/silogen/aim-artifact-downloader:0.2.0"
 	ModelDownloadImage string `json:"modelDownloadImage,omitempty"`
 
 	// ImagePullSecrets references secrets for pulling AIM container images.
@@ -124,6 +135,29 @@ type DownloadProgress struct {
 	DisplayPercentage string `json:"displayPercentage,omitempty"`
 }
 
+// DownloadState represents the current download attempt state, updated by the downloader pod
+type DownloadState struct {
+	// Protocol is the download protocol currently in use (e.g., "XET", "HF_TRANSFER", "HTTP")
+	// +optional
+	Protocol string `json:"protocol,omitempty"`
+
+	// Attempt is the current attempt number (1-based)
+	// +optional
+	Attempt int32 `json:"attempt,omitempty"`
+
+	// TotalAttempts is the total number of attempts configured via AIM_DOWNLOADER_PROTOCOL
+	// +optional
+	TotalAttempts int32 `json:"totalAttempts,omitempty"`
+
+	// ProtocolSequence is the configured protocol sequence (e.g., "HF_TRANSFER,XET")
+	// +optional
+	ProtocolSequence string `json:"protocolSequence,omitempty"`
+
+	// Message is a human-readable status message from the downloader
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
 // AIMArtifactStatus defines the observed state of AIMArtifact
 type AIMArtifactStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -141,6 +175,11 @@ type AIMArtifactStatus struct {
 	// Progress represents the download progress when Status is Progressing
 	// +optional
 	Progress *DownloadProgress `json:"progress,omitempty"`
+
+	// Download represents the current download attempt state, patched by the downloader pod.
+	// Shows which protocol is active, what attempt we're on, etc.
+	// +optional
+	Download *DownloadState `json:"download,omitempty"`
 
 	// DisplaySize is the human-readable effective size (spec or discovered)
 	// +optional
@@ -202,6 +241,8 @@ func (s *AIMArtifactStatus) GetAIMStatus() constants.AIMStatus {
 // +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.status.mode`
 // +kubebuilder:printcolumn:name="Model Size",type=string,JSONPath=`.status.displaySize`
 // +kubebuilder:printcolumn:name="Progress",type=string,JSONPath=`.status.progress.displayPercentage`
+// +kubebuilder:printcolumn:name="Protocol",type=string,JSONPath=`.status.download.protocol`,priority=1
+// +kubebuilder:printcolumn:name="Attempt",type=string,JSONPath=`.status.download.attempt`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // AIMArtifact is the Schema for the artifacts API

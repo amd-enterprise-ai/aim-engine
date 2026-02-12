@@ -1,4 +1,26 @@
 #!/bin/sh
+# MIT License
+
+# Copyright (c) 2026 Advanced Micro Devices, Inc.
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 # Progress monitor - updates AIMArtifact status with download progress
 
 terminated=false
@@ -62,7 +84,7 @@ while [ "$terminated" = "false" ]; do
     # Calculate and update progress
     if [ "$expected_size" -gt 0 ] && [ "$current_size" -gt 0 ]; then
         percent=$((current_size * 100 / expected_size))
-        [ "$percent" -gt 100 ] && percent=100
+        [ "$percent" -gt 99 ] && percent=99 # We only set 100% after the download is complete
     else
         percent=0
     fi

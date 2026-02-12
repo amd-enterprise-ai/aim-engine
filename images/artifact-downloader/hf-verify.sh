@@ -1,6 +1,7 @@
+#!/bin/sh
 # MIT License
 
-# Copyright (c) 2025 Advanced Micro Devices, Inc.
+# Copyright (c) 2026 Advanced Micro Devices, Inc.
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -20,23 +21,24 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import os
-import sys
-from huggingface_hub import HfApi
-from huggingface_hub.utils import RepositoryNotFoundError, GatedRepoError
-MODEL_PATH = os.environ['MODEL_PATH']
-try:
-    info = HfApi().model_info(MODEL_PATH, files_metadata=True)
-    print(sum(f.size or 0 for f in info.siblings))
-except RepositoryNotFoundError:
-    print(f'Repository Not Found: {MODEL_PATH}', file=sys.stderr)
-    print('Check the model name or ensure it exists on HuggingFace.', file=sys.stderr)
-    sys.exit(1)
-except GatedRepoError:
-    print(f'Model requires authentication: {MODEL_PATH}', file=sys.stderr)
-    print('Set HF_TOKEN environment variable with a valid HuggingFace token.', file=sys.stderr)
-    print(f'Cannot access gated repo: {MODEL_PATH}', file=sys.stderr)
-    sys.exit(2)
-except Exception as e:
-    print(f'Failed to fetch model info: {e}', file=sys.stderr)
-    sys.exit(3)
+set -eu
+
+URL="$1"
+TARGET_DIR="$2"
+MODEL_PATH="${URL#hf://}"
+
+
+# Simulation mode: skip real verification
+if [ -n "${AIM_DEBUG_SIMULATE_HF_DOWNLOAD:-}" ]; then
+    echo "[SIMULATE] Verification PASSED"
+    exit 0
+fi
+
+echo "Verifying download (this may take a while for large models)..."
+hf cache verify \
+    --local-dir "$TARGET_DIR" \
+    --fail-on-missing-files \
+    "$MODEL_PATH"
+echo "Download complete and verified"
+echo "Size of HF_HOME: $(du -sh "${HF_HOME:-$HOME/.cache/huggingface}" 2>/dev/null || echo 'N/A')"
+
