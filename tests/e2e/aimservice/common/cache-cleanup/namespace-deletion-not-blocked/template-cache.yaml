@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMTemplateCache
+metadata:
+  name: ns-delete-finalizer-cache
+  labels:
+    aim.eai.amd.com/service.name: ns-delete-finalizer-service
+spec:
+  templateName: ns-delete-finalizer-template
+  templateScope: Namespace

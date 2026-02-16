@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: ns-delete-finalizer-service
+spec:
+  model:
+    image: ghcr.io/silogen/aim-dummy:0.1.10
+  caching:
+    mode: Always

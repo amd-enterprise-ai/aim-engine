@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: ns-delete-finalizer-artifact
+  labels:
+    aim.eai.amd.com/template-cache.name: ns-delete-finalizer-cache
+spec:
+  sourceUri: hf://org/this-model-does-not-exist
+  size: 1Gi

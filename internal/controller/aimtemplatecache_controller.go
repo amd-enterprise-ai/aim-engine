@@ -82,6 +82,7 @@ type AIMTemplateCacheReconciler struct {
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimservicetemplates,verbs=get;list;watch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterservicetemplates,verbs=get;list;watch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimartifacts,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -102,21 +103,53 @@ func (r *AIMTemplateCacheReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if templateCache.DeletionTimestamp != nil {
 		// Template cache is being deleted
 		if controllerutil.ContainsFinalizer(&templateCache, finalizerArtifactCleanup) {
-			// Run cleanup logic
-			if err := r.cleanupArtifacts(ctx, &templateCache); err != nil {
-				logger.Error(err, "Failed to cleanup artifacts")
-				return ctrl.Result{}, err
+			namespaceTerminating, err := isNamespaceTerminating(ctx, r.Client, templateCache.Namespace)
+			if err != nil {
+				if apierrors.IsForbidden(err) {
+					logger.Info("Failed to read namespace during deletion, assuming namespace is terminating",
+						"namespace", templateCache.Namespace,
+						"templateCache", templateCache.Name,
+						"finalizer", finalizerArtifactCleanup)
+					namespaceTerminating = true
+				} else {
+					logger.Error(err, "Failed to check namespace termination", "namespace", templateCache.Namespace)
+					return ctrl.Result{}, err
+				}
+			}
+
+			if namespaceTerminating {
+				logger.Info("Namespace is terminating, skipping artifact cleanup before finalizer removal",
+					"namespace", templateCache.Namespace,
+					"templateCache", templateCache.Name)
+			} else {
+				// Run cleanup logic
+				if err := r.cleanupArtifacts(ctx, &templateCache); err != nil {
+					logger.Error(err, "Failed to cleanup artifacts")
+					return ctrl.Result{}, err
+				}
 			}
 
 			// Remove the finalizer
+			logger.Info("Removing template cache cleanup finalizer",
+				"templateCache", templateCache.Name,
+				"namespace", templateCache.Namespace,
+				"finalizer", finalizerArtifactCleanup)
 			controllerutil.RemoveFinalizer(&templateCache, finalizerArtifactCleanup)
 			if err := r.Update(ctx, &templateCache); err != nil {
+				if apierrors.IsNotFound(err) {
+					// Resource already deleted while removing finalizer
+					return ctrl.Result{}, nil
+				}
 				if apierrors.IsConflict(err) {
 					// Conflict, retry on next reconcile
 					return ctrl.Result{Requeue: true}, nil
 				}
 				return ctrl.Result{}, err
 			}
+			logger.Info("Removed template cache cleanup finalizer",
+				"templateCache", templateCache.Name,
+				"namespace", templateCache.Namespace,
+				"finalizer", finalizerArtifactCleanup)
 		}
 		// Stop reconciliation as the resource is being deleted
 		return ctrl.Result{}, nil

@@ -1,0 +1,102 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService/AIMTemplateCache E2E Test: Namespace deletion is not blocked by finalizers
+#
+# This test validates that namespace termination is not blocked when resources in that
+# namespace have cleanup finalizers:
+# - AIMService finalizer: aim.eai.amd.com/template-cache-cleanup
+# - AIMTemplateCache finalizer: aim.eai.amd.com/artifactcleanup
+#
+# Test flow:
+# 1. Create an isolated namespace dedicated to this test
+# 2. Create AIMService, AIMTemplateCache, and a synthetic non-ready AIMArtifact
+# 3. Verify both finalizers are present
+# 4. Delete the namespace and wait for full namespace deletion
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: namespace-deletion-not-blocked-by-cache-finalizers
+spec:
+  description: Test that namespace deletion is not blocked by AIMService/AIMTemplateCache cleanup finalizers
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create isolated namespace
+      try:
+        - apply:
+            file: namespace.yaml
+
+    - name: Create resources in isolated namespace
+      try:
+        - script:
+            timeout: 10s
+            content: |
+              set -eu
+
+              TEST_NS="chainsaw-finalizer-cleanup-test"
+              echo "Using test namespace: ${TEST_NS}"
+
+              kubectl apply -n "${TEST_NS}" -f service.yaml
+              kubectl apply -n "${TEST_NS}" -f template-cache.yaml
+              kubectl apply -n "${TEST_NS}" -f artifact.yaml
+
+    - name: Wait for service and template cache finalizers
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: ns-delete-finalizer-service
+                namespace: chainsaw-finalizer-cleanup-test
+                finalizers:
+                  - aim.eai.amd.com/template-cache-cleanup
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                name: ns-delete-finalizer-cache
+                namespace: chainsaw-finalizer-cleanup-test
+                finalizers:
+                  - aim.eai.amd.com/artifactcleanup
+
+    - name: Delete namespace
+      try:
+        - script:
+            content: |
+              set -eu
+              kubectl delete namespace chainsaw-finalizer-cleanup-test --wait=false
+
+    - name: Verify namespace entered terminating and log finalizer state
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: chainsaw-finalizer-cleanup-test
+              status:
+                phase: Terminating
+        - script:
+            content: |
+              set -eu
+              echo "Namespace is terminating; dumping current finalizer state"
+              kubectl get aimservice ns-delete-finalizer-service -n chainsaw-finalizer-cleanup-test -o jsonpath='{.metadata.finalizers}' || true
+              echo
+              kubectl get aimtemplatecache ns-delete-finalizer-cache -n chainsaw-finalizer-cleanup-test -o jsonpath='{.metadata.finalizers}' || true
+              echo
+
+    - name: Wait for namespace deletion using Chainsaw assertion
+      try:
+        - error:
+            timeout: 180s
+            resource:
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: chainsaw-finalizer-cleanup-test

@@ -89,6 +89,7 @@ type AIMServiceReconciler struct {
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -110,21 +111,53 @@ func (r *AIMServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if service.DeletionTimestamp != nil {
 		// Service is being deleted
 		if controllerutil.ContainsFinalizer(&service, finalizerTemplateCacheCleanup) {
-			// Run cleanup logic
-			if err := r.cleanupTemplateCaches(ctx, &service); err != nil {
-				logger.Error(err, "Failed to cleanup template caches")
-				return ctrl.Result{}, err
+			namespaceTerminating, err := isNamespaceTerminating(ctx, r.Client, service.Namespace)
+			if err != nil {
+				if apierrors.IsForbidden(err) {
+					logger.Info("Failed to read namespace during deletion, assuming namespace is terminating",
+						"namespace", service.Namespace,
+						"service", service.Name,
+						"finalizer", finalizerTemplateCacheCleanup)
+					namespaceTerminating = true
+				} else {
+					logger.Error(err, "Failed to check namespace termination", "namespace", service.Namespace)
+					return ctrl.Result{}, err
+				}
+			}
+
+			if namespaceTerminating {
+				logger.Info("Namespace is terminating, skipping template cache cleanup before finalizer removal",
+					"namespace", service.Namespace,
+					"service", service.Name)
+			} else {
+				// Run cleanup logic
+				if err := r.cleanupTemplateCaches(ctx, &service); err != nil {
+					logger.Error(err, "Failed to cleanup template caches")
+					return ctrl.Result{}, err
+				}
 			}
 
 			// Remove the finalizer
+			logger.Info("Removing service cleanup finalizer",
+				"service", service.Name,
+				"namespace", service.Namespace,
+				"finalizer", finalizerTemplateCacheCleanup)
 			controllerutil.RemoveFinalizer(&service, finalizerTemplateCacheCleanup)
 			if err := r.Update(ctx, &service); err != nil {
+				if apierrors.IsNotFound(err) {
+					// Resource already deleted while removing finalizer
+					return ctrl.Result{}, nil
+				}
 				if apierrors.IsConflict(err) {
 					// Conflict, retry on next reconcile
 					return ctrl.Result{Requeue: true}, nil
 				}
 				return ctrl.Result{}, err
 			}
+			logger.Info("Removed service cleanup finalizer",
+				"service", service.Name,
+				"namespace", service.Namespace,
+				"finalizer", finalizerTemplateCacheCleanup)
 		}
 		// Stop reconciliation as the resource is being deleted
 		return ctrl.Result{}, nil
