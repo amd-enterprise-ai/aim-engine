@@ -45,19 +45,34 @@ func TestGenerateTemplateCacheName(t *testing.T) {
 		name         string
 		templateName string
 		namespace    string
+		serviceName  string
+		serviceID    string
+		mode         aimv1alpha1.AIMCachingMode
 		wantContains []string
 	}{
 		{
 			name:         "simple template",
 			templateName: "llama-template",
 			namespace:    "my-namespace",
+			serviceName:  "my-svc",
+			serviceID:    "my-svc",
+			mode:         aimv1alpha1.CachingModeShared,
 			wantContains: []string{"llama-template"},
+		},
+		{
+			name:         "dedicated cache includes service name and stays readable",
+			templateName: "llama-template",
+			namespace:    "my-namespace",
+			serviceName:  "my-svc",
+			serviceID:    "my-svc",
+			mode:         aimv1alpha1.CachingModeDedicated,
+			wantContains: []string{"llama-template", "my-svc"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := GenerateTemplateCacheName(tt.templateName, tt.namespace)
+			result, err := GenerateTemplateCacheName(tt.templateName, tt.namespace, tt.serviceName, tt.serviceID, tt.mode)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -69,6 +84,26 @@ func TestGenerateTemplateCacheName(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGenerateTemplateCacheName_DedicatedDifferentUIDs(t *testing.T) {
+	templateName := "llama-template"
+	namespace := "my-namespace"
+	serviceName := "my-svc"
+
+	nameA, err := GenerateTemplateCacheName(templateName, namespace, serviceName, "service-uid-a", aimv1alpha1.CachingModeDedicated)
+	if err != nil {
+		t.Fatalf("unexpected error generating nameA: %v", err)
+	}
+
+	nameB, err := GenerateTemplateCacheName(templateName, namespace, serviceName, "service-uid-b", aimv1alpha1.CachingModeDedicated)
+	if err != nil {
+		t.Fatalf("unexpected error generating nameB: %v", err)
+	}
+
+	if nameA == nameB {
+		t.Fatalf("expected different names for different service identities, got same name: %q", nameA)
 	}
 }
 
@@ -398,16 +433,16 @@ func TestPlanTemplateCache(t *testing.T) {
 		expectMode     aimv1alpha1.AIMTemplateCacheMode
 	}{
 		{
-			name:           "never mode no model sources - no cache",
-			service:        NewService("svc").WithCachingMode(aimv1alpha1.CachingModeNever).Build(),
+			name:           "dedicated mode no model sources - no cache",
+			service:        NewService("svc").WithCachingMode(aimv1alpha1.CachingModeDedicated).Build(),
 			templateName:   "template",
 			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{},
 			obs:            ServiceObservation{},
 			expectCache:    false,
 		},
 		{
-			name:         "never mode creates dedicated cache",
-			service:      NewService("svc").WithCachingMode(aimv1alpha1.CachingModeNever).Build(),
+			name:         "dedicated mode creates dedicated cache",
+			service:      NewService("svc").WithCachingMode(aimv1alpha1.CachingModeDedicated).Build(),
 			templateName: "template",
 			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
 				ModelSources: []aimv1alpha1.AIMModelSource{
@@ -445,8 +480,8 @@ func TestPlanTemplateCache(t *testing.T) {
 			expectCache:    false,
 		},
 		{
-			name:         "auto mode creates dedicated cache when no shared exists",
-			service:      NewService("svc").Build(), // Default is Auto
+			name:         "default mode creates shared cache",
+			service:      NewService("svc").Build(), // Default is Shared
 			templateName: "template",
 			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
 				ModelSources: []aimv1alpha1.AIMModelSource{
@@ -455,10 +490,10 @@ func TestPlanTemplateCache(t *testing.T) {
 			},
 			obs:         ServiceObservation{},
 			expectCache: true,
-			expectMode:  aimv1alpha1.TemplateCacheModeDedicated,
+			expectMode:  aimv1alpha1.TemplateCacheModeShared,
 		},
 		{
-			name:         "always mode creates shared cache",
+			name:         "always compatibility maps to shared cache",
 			service:      NewService("svc").WithCachingMode(aimv1alpha1.CachingModeAlways).Build(),
 			templateName: "template",
 			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
@@ -469,6 +504,32 @@ func TestPlanTemplateCache(t *testing.T) {
 			obs:         ServiceObservation{},
 			expectCache: true,
 			expectMode:  aimv1alpha1.TemplateCacheModeShared,
+		},
+		{
+			name:         "auto compatibility maps to shared cache",
+			service:      NewService("svc").WithCachingMode(aimv1alpha1.CachingModeAuto).Build(),
+			templateName: "template",
+			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
+				ModelSources: []aimv1alpha1.AIMModelSource{
+					NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
+				},
+			},
+			obs:         ServiceObservation{},
+			expectCache: true,
+			expectMode:  aimv1alpha1.TemplateCacheModeShared,
+		},
+		{
+			name:         "never compatibility maps to dedicated cache",
+			service:      NewService("svc").WithCachingMode(aimv1alpha1.CachingModeNever).Build(),
+			templateName: "template",
+			templateStatus: &aimv1alpha1.AIMServiceTemplateStatus{
+				ModelSources: []aimv1alpha1.AIMModelSource{
+					NewModelSource("hf://model/file.safetensors", 10*1024*1024*1024),
+				},
+			},
+			obs:         ServiceObservation{},
+			expectCache: true,
+			expectMode:  aimv1alpha1.TemplateCacheModeDedicated,
 		},
 	}
 
@@ -496,7 +557,7 @@ func TestPlanTemplateCache(t *testing.T) {
 
 func TestPlanTemplateCache_Spec(t *testing.T) {
 	storageClass := testStorageClassName
-	service := NewService("my-svc").WithCachingMode(aimv1alpha1.CachingModeAlways).Build()
+	service := NewService("my-svc").WithCachingMode(aimv1alpha1.CachingModeShared).Build()
 	service.Spec.Storage = &aimv1alpha1.AIMStorageConfig{
 		DefaultStorageClassName: &storageClass,
 	}
@@ -576,7 +637,7 @@ func TestPlanTemplateCache_EnvVars(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := NewService("my-svc").WithCachingMode(aimv1alpha1.CachingModeAlways).Build()
+			service := NewService("my-svc").WithCachingMode(aimv1alpha1.CachingModeShared).Build()
 			service.Spec.Env = tt.serviceEnv
 
 			// Build observation with template that has caching env
@@ -681,7 +742,7 @@ func TestPlanTemplateCache_ClusterTemplateEnvVars(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := NewService("my-svc").WithCachingMode(aimv1alpha1.CachingModeAlways).Build()
+			service := NewService("my-svc").WithCachingMode(aimv1alpha1.CachingModeShared).Build()
 			service.Spec.Env = tt.serviceEnv
 
 			// Build observation with cluster or namespace template

@@ -10,4 +10,4 @@ spec:
   model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   caching:
-    mode: Always
+    mode: Shared

@@ -26,7 +26,7 @@ spec:
           requests: 1
           # model: MI300X
   caching:
-    mode: Always
+    mode: Shared
   replicas: 1
   # Environment variables for the inference container
   # env:

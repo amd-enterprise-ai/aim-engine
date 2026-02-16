@@ -143,18 +143,25 @@ _Appears in:_
 _Underlying type:_ _string_
 
 AIMCachingMode controls caching behavior for a service.
+Canonical values are Dedicated and Shared.
+Legacy values are accepted for backward compatibility:
+- Always maps to Shared
+- Auto maps to Shared
+- Never maps to Dedicated
 
 _Validation:_
-- Enum: [Auto Always Never]
+- Enum: [Dedicated Shared Auto Always Never]
 
 _Appears in:_
 - [AIMServiceCachingConfig](#aimservicecachingconfig)
 
 | Field | Description |
 | --- | --- |
-| `Auto` | CachingModeAuto uses cache if it exists, but doesn't create one.<br />This is the default mode.<br /> |
-| `Always` | CachingModeAlways always uses cache, creating one if it doesn't exist.<br /> |
-| `Never` | CachingModeNever never uses cache, even if one exists.<br /> |
+| `Dedicated` | CachingModeDedicated always creates service-owned dedicated caches/artifacts.<br /> |
+| `Shared` | CachingModeShared reuses and creates shared caches/artifacts.<br /> |
+| `Auto` | CachingModeAuto is deprecated legacy value that maps to Shared.<br /> |
+| `Always` | CachingModeAlways is deprecated legacy value that maps to Shared.<br /> |
+| `Never` | CachingModeNever is deprecated legacy value that maps to Dedicated.<br /> |
 
 
 #### AIMClusterModel
@@ -1153,7 +1160,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `mode` _[AIMCachingMode](#aimcachingmode)_ | Mode controls when to use caching.<br />- Auto (default): Use cache if it exists, but don't create one<br />- Always: Always use cache, create if it doesn't exist<br />- Never: Don't use cache even if it exists | Auto | Enum: [Auto Always Never] <br />Optional: \{\} <br /> |
+| `mode` _[AIMCachingMode](#aimcachingmode)_ | Mode controls when to use caching.<br />Canonical values:<br />- Shared (default): reuse/create shared cache assets<br />- Dedicated: create service-owned dedicated cache assets<br />Legacy values are accepted and normalized:<br />- Always -> Shared<br />- Auto -> Shared<br />- Never -> Dedicated | Shared | Enum: [Dedicated Shared Auto Always Never] <br />Optional: \{\} <br /> |
 
 
 #### AIMServiceList
@@ -1388,8 +1395,8 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `model` _[AIMServiceModel](#aimservicemodel)_ | Model specifies which model to deploy using one of the available reference methods.<br />Use `ref` to reference an existing AIMModel/AIMClusterModel by name, or use `image`<br />to specify a container image URI directly (which will auto-create a model if needed). |  |  |
 | `template` _[AIMServiceTemplateConfig](#aimservicetemplateconfig)_ | Template contains template selection and configuration.<br />Use Template.Name to specify an explicit template, or omit to auto-select. |  | Optional: \{\} <br /> |
-| `caching` _[AIMServiceCachingConfig](#aimservicecachingconfig)_ | Caching controls caching behavior for this service.<br />When nil, defaults to Auto mode (use cache if available, don't create). |  | Optional: \{\} <br /> |
-| `cacheModel` _boolean_ | DEPRECATED: Use Caching.Mode instead. This field will be removed in a future version.<br />For backward compatibility, if Caching is not set, this field is used.<br />Tri-state logic: nil=Auto, true=Always, false=Never |  | Optional: \{\} <br /> |
+| `caching` _[AIMServiceCachingConfig](#aimservicecachingconfig)_ | Caching controls caching behavior for this service.<br />When nil, defaults to Shared mode. |  | Optional: \{\} <br /> |
+| `cacheModel` _boolean_ | DEPRECATED: Use Caching.Mode instead. This field will be removed in a future version.<br />This field is no longer honored by the controller. |  | Optional: \{\} <br /> |
 | `replicas` _integer_ | Replicas specifies the number of replicas for this service.<br />When not specified, defaults to 1 replica.<br />This value overrides any replica settings from the template.<br />For autoscaling, use MinReplicas and MaxReplicas instead. | 1 | Optional: \{\} <br /> |
 | `minReplicas` _integer_ | MinReplicas specifies the minimum number of replicas for autoscaling.<br />Defaults to 1. Scale to zero is not supported.<br />When specified with MaxReplicas, enables autoscaling for the service. |  | Minimum: 1 <br />Optional: \{\} <br /> |
 | `maxReplicas` _integer_ | MaxReplicas specifies the maximum number of replicas for autoscaling.<br />Required when MinReplicas is set or when AutoScaling configuration is provided. |  | Minimum: 1 <br />Optional: \{\} <br /> |
@@ -1919,6 +1926,7 @@ _Appears in:_
 | `gpuCount` _integer_ | GPUCount is the number of GPUs required |  | Optional: \{\} <br /> |
 | `precision` _string_ | Precision is the recommended precision (e.g., fp8, fp16, bf16) |  | Optional: \{\} <br /> |
 | `metric` _string_ | Metric is the optimization target (e.g., latency, throughput) |  | Optional: \{\} <br /> |
+| `profileId` _string_ | ProfileId is the unique identifier of the AIM profile for this deployment.<br />When set, templates created from this deployment will use this profile ID<br />to deterministically select the correct runtime profile in the AIM container. |  | Optional: \{\} <br /> |
 | `description` _string_ | Description provides additional context about this deployment configuration |  | Optional: \{\} <br /> |
 
 

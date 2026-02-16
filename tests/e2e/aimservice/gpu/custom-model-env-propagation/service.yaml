@@ -11,5 +11,5 @@ spec:
     name: test-env-propagation-model
   # Template auto-selected (only one optimized template exists for this model)
   caching:
-    mode: Always
+    mode: Shared
   replicas: 1

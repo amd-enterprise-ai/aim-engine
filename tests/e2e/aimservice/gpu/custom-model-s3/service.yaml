@@ -11,5 +11,5 @@ spec:
   template:
     allowUnoptimized: true
   caching:
-    mode: Always
+    mode: Shared
   replicas: 1

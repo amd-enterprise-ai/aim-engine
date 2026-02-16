@@ -839,11 +839,11 @@ func (r *ServiceReconciler) PlanResources(
 
 	// 3. Plan template cache for all caching modes
 	// Ownership depends on caching mode:
-	// - Always (Shared mode): no owner reference, cache persists independently
-	// - Never/Auto (Dedicated mode): owned by service, garbage collected with it
+	// - Shared: no owner reference, cache persists independently
+	// - Dedicated: owned by service, garbage collected with it
 	if templateCache := planTemplateCache(service, templateName, templateSpec, templateStatus, obs); templateCache != nil {
 		cachingMode := service.Spec.GetCachingMode()
-		if cachingMode == aimv1alpha1.CachingModeAlways {
+		if cachingMode == aimv1alpha1.CachingModeShared {
 			// Shared mode: cache persists independently
 			planResult.ApplyWithoutOwnerRef(templateCache)
 		} else {

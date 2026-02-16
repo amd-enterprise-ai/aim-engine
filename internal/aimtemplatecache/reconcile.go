@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -191,11 +192,6 @@ type TemplateCacheObservation struct {
 	AllCachesAvailable bool
 	MissingCaches      []aimv1alpha1.AIMModelSource
 	BestArtifacts      map[string]aimv1alpha1.AIMArtifact
-
-	// CachesToPromote contains artifacts that need to be promoted from Dedicated to Shared.
-	// This happens when a Shared template cache encounters existing artifacts with owner references.
-	// Promotion removes the owner references so the caches persist independently.
-	CachesToPromote []aimv1alpha1.AIMArtifact
 }
 
 // GetComponentHealth overrides the embedded FetchResult's method to include artifact health.
@@ -257,7 +253,7 @@ func (r *TemplateCacheReconciler) ComposeState(
 
 	obs.BestArtifacts = map[string]aimv1alpha1.AIMArtifact{}
 
-	logger.Info("ComposeState: checking artifacts",
+	logger.V(1).Info("ComposeState: checking artifacts",
 		"templateCache", tc.Name,
 		"templateModelSources", len(templateModelSources),
 		"fetchedArtifacts", len(fetch.artifacts.Value.Items))
@@ -267,16 +263,27 @@ func (r *TemplateCacheReconciler) ComposeState(
 		found := false
 		bestStatusArtifact := aimv1alpha1.AIMArtifact{}
 		for _, cached := range fetch.artifacts.Value.Items {
-			logger.Info("ComposeState: evaluating artifact",
+			logger.V(1).Info("ComposeState: evaluating artifact",
 				"cacheName", cached.Name,
 				"cacheStatus", cached.Status.Status,
 				"cacheSourceURI", cached.Spec.SourceURI,
 				"modelSourceURI", model.SourceURI)
 
 			if cached.Status.Status == "" {
-				logger.Info("ComposeState: skipping cache with empty status", "cacheName", cached.Name)
+				logger.V(1).Info("ComposeState: skipping cache with empty status", "cacheName", cached.Name)
 				continue
 			}
+
+			// Enforce mode isolation:
+			// - Shared template caches can use only shared artifacts (no owner refs)
+			// - Dedicated template caches can use only artifacts owned by this template cache
+			if tc.Spec.Mode == aimv1alpha1.TemplateCacheModeShared && len(cached.GetOwnerReferences()) > 0 {
+				continue
+			}
+			if tc.Spec.Mode == aimv1alpha1.TemplateCacheModeDedicated && !hasOwnerReferenceUID(cached.GetOwnerReferences(), tc.UID) {
+				continue
+			}
+
 			// Artifact is a match if it has the same SourceURI and a StorageClass matching our config
 			if cached.Spec.SourceURI == model.SourceURI &&
 				(tc.Spec.StorageClassName == "" || tc.Spec.StorageClassName == cached.Spec.StorageClassName) {
@@ -284,7 +291,7 @@ func (r *TemplateCacheReconciler) ComposeState(
 				// Note: !found is needed because CompareAIMStatus("", "Failed") returns 0 (equal),
 				// since empty string gets priority 0 from the map (same as Failed)
 				if !found || constants.CompareAIMStatus(bestStatusArtifact.Status.Status, cached.Status.Status) < 0 {
-					logger.Info("ComposeState: selected cache as best match",
+					logger.V(1).Info("ComposeState: selected cache as best match",
 						"cacheName", cached.Name,
 						"cacheStatus", cached.Status.Status,
 						"previousBestStatus", bestStatusArtifact.Status.Status)
@@ -294,23 +301,13 @@ func (r *TemplateCacheReconciler) ComposeState(
 			}
 		}
 		if found {
-			logger.Info("ComposeState: model source matched",
+			logger.V(1).Info("ComposeState: model source matched",
 				"modelID", model.ModelID,
 				"bestCacheName", bestStatusArtifact.Name,
 				"bestCacheStatus", bestStatusArtifact.Status.Status)
 			obs.BestArtifacts[model.ModelID] = bestStatusArtifact
-
-			// Check if promotion is needed: Shared mode but cache has owner references
-			// This promotes Dedicated caches to Shared by removing owner references
-			if tc.Spec.Mode == aimv1alpha1.TemplateCacheModeShared &&
-				len(bestStatusArtifact.GetOwnerReferences()) > 0 {
-				logger.Info("ComposeState: cache needs promotion to Shared",
-					"cacheName", bestStatusArtifact.Name,
-					"ownerCount", len(bestStatusArtifact.GetOwnerReferences()))
-				obs.CachesToPromote = append(obs.CachesToPromote, bestStatusArtifact)
-			}
 		} else {
-			logger.Info("ComposeState: model source missing cache", "modelID", model.ModelID)
+			logger.V(1).Info("ComposeState: model source missing cache", "modelID", model.ModelID)
 			obs.MissingCaches = append(obs.MissingCaches, model)
 		}
 	}
@@ -327,17 +324,7 @@ func (r *TemplateCacheReconciler) PlanResources(
 	result := controllerutils.PlanResult{}
 
 	for idx, cache := range obs.MissingCaches {
-		// Sanitize the model name for use as a Kubernetes resource name
-		// The original model name (with capitalization) is preserved in SourceURI for matching
-		// Replace dots with dashes first to ensure DNS-compliant names (dots cause warnings in Pod names)
-		nameWithoutDots := strings.ReplaceAll(cache.SourceURI, ".", "-")
-
-		artifactName, _ := utils.GenerateDerivedName([]string{nameWithoutDots},
-			// Include all the fields that can impact the artifact uniqueness
-			// TODO verify for any side effects
-			utils.WithHashSource(cache.SourceURI, tc.Spec.Env, tc.Spec.StorageClassName),
-		)
-		// sanitizedName := utils.MakeRFC1123Compliant(nameWithoutDots)
+		artifactName, _ := generateArtifactName(tc, cache)
 
 		// Sanitize template cache name for label value
 		templateCacheLabelValue, _ := utils.SanitizeLabelValue(tc.Name)
@@ -379,16 +366,39 @@ func (r *TemplateCacheReconciler) PlanResources(
 		}
 	}
 
-	// Handle promotion of Dedicated caches to Shared
-	// When a Shared template cache encounters artifacts with owner references,
-	// we remove the owner references so they persist independently
-	for _, cacheToPromote := range obs.CachesToPromote {
-		promotedCache := cacheToPromote.DeepCopy()
-		promotedCache.SetOwnerReferences(nil) // Clear all owner references
-		result.ApplyWithoutOwnerRef(promotedCache)
+	return result
+}
+
+// generateArtifactName returns a deterministic artifact name.
+// Shared caches keep cross-cache reuse behavior by not scoping names to template cache.
+// Dedicated caches scope names to template cache so dedicated/shared artifacts can coexist.
+func generateArtifactName(tc *aimv1alpha1.AIMTemplateCache, modelSource aimv1alpha1.AIMModelSource) (string, error) {
+	// Replace dots with dashes first to ensure DNS-compliant names (dots cause warnings in Pod names)
+	nameWithoutDots := strings.ReplaceAll(modelSource.SourceURI, ".", "-")
+	hashInputs := []any{
+		modelSource.SourceURI,
+		utils.MergeEnvVars(tc.Spec.Env, modelSource.Env),
+		tc.Spec.StorageClassName,
 	}
 
-	return result
+	if tc.Spec.Mode == aimv1alpha1.TemplateCacheModeDedicated {
+		hashInputs = append(hashInputs, "dedicated", tc.Name)
+	}
+
+	return utils.GenerateDerivedName(
+		[]string{nameWithoutDots},
+		utils.WithHashSource(hashInputs...),
+		utils.WithHashLength(10),
+	)
+}
+
+func hasOwnerReferenceUID(ownerRefs []metav1.OwnerReference, ownerUID types.UID) bool {
+	for _, ownerRef := range ownerRefs {
+		if ownerRef.UID == ownerUID {
+			return true
+		}
+	}
+	return false
 }
 
 // DecorateStatus implements StatusDecorator to populate status fields and set domain-specific conditions.

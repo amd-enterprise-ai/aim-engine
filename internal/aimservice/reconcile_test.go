@@ -281,7 +281,7 @@ func TestGetComponentHealth_CacheHealth(t *testing.T) {
 			name: "no template cache - progressing (creating template cache)",
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
-					service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeNever).Build(),
+					service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeDedicated).Build(),
 				},
 			},
 			expectState:  constants.AIMStatusProgressing,
@@ -291,7 +291,7 @@ func TestGetComponentHealth_CacheHealth(t *testing.T) {
 			name: "never mode with ready template cache",
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
-					service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeNever).Build(),
+					service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeDedicated).Build(),
 					templateCache: controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{
 						Value: &aimv1alpha1.AIMTemplateCache{
 							Spec: aimv1alpha1.AIMTemplateCacheSpec{
@@ -372,7 +372,7 @@ func TestGetComponentHealth_CacheHealth(t *testing.T) {
 			name: "always mode no cache - progressing",
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
-					service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeAlways).Build(),
+					service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeShared).Build(),
 				},
 			},
 			expectState:  constants.AIMStatusProgressing,

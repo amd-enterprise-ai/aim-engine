@@ -8,5 +8,5 @@ spec:
   model:
     image: ghcr.io/silogen/aim-dummy:0.1.10
   caching:
-    mode: Always
+    mode: Shared
   runtimeConfigName: cache-cleanup-fail-config

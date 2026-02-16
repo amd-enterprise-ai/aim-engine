@@ -29,6 +29,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -48,15 +49,28 @@ const (
 // =======================================================
 
 // GenerateTemplateCacheName creates a deterministic name for a template cache.
-func GenerateTemplateCacheName(templateName, namespace string) (string, error) {
+// For dedicated mode, serviceIdentity should be the service UID to avoid
+// conflicts when a service is deleted and recreated with the same name.
+func GenerateTemplateCacheName(
+	templateName, namespace, serviceName, serviceIdentity string,
+	cachingMode aimv1alpha1.AIMCachingMode,
+) (string, error) {
+	if cachingMode == aimv1alpha1.CachingModeDedicated {
+		// Keep the visible name readable while including service identity
+		// only in the hash input to guarantee per-instance uniqueness.
+		return utils.GenerateDerivedName(
+			[]string{templateName, serviceName},
+			utils.WithHashSource(serviceIdentity),
+		)
+	}
+
 	return utils.GenerateDerivedName([]string{templateName}, utils.WithHashSource(namespace))
 }
 
 // planTemplateCache creates a template cache for all caching modes.
-// The cache mode is determined by the service's caching mode:
-// - Always: creates Shared cache (no owner reference, persists independently)
-// - Never: creates Dedicated cache (owned by service, garbage collected with it)
-// - Auto: uses existing Shared cache if available, otherwise creates Dedicated cache
+// The cache mode is determined by the service's effective caching mode:
+// - Shared: creates/reuses Shared cache (no owner reference)
+// - Dedicated: creates service-owned Dedicated cache
 func planTemplateCache(
 	service *aimv1alpha1.AIMService,
 	templateName string,
@@ -66,15 +80,7 @@ func planTemplateCache(
 ) client.Object {
 	cachingMode := service.Spec.GetCachingMode()
 
-	// For Auto mode, if a Shared cache already exists and is usable, don't create a new one
-	if cachingMode == aimv1alpha1.CachingModeAuto && obs.templateCache.Value != nil {
-		// Only skip if the existing cache is Shared mode (we want to use it)
-		if obs.templateCache.Value.Spec.Mode == aimv1alpha1.TemplateCacheModeShared {
-			return nil
-		}
-	}
-
-	// Don't create if template cache already exists (for any mode)
+	// Don't create if we already have a usable cache for this service mode.
 	if obs.templateCache.Value != nil {
 		return nil
 	}
@@ -87,12 +93,12 @@ func planTemplateCache(
 	// Determine template cache mode based on service caching mode
 	var cacheMode aimv1alpha1.AIMTemplateCacheMode
 	switch cachingMode {
-	case aimv1alpha1.CachingModeAlways:
-		// Always mode: shared caches that persist independently
-		cacheMode = aimv1alpha1.TemplateCacheModeShared
-	case aimv1alpha1.CachingModeNever, aimv1alpha1.CachingModeAuto:
-		// Never/Auto mode: dedicated caches owned by service
+	case aimv1alpha1.CachingModeDedicated:
+		// Dedicated mode: service-owned caches
 		cacheMode = aimv1alpha1.TemplateCacheModeDedicated
+	case aimv1alpha1.CachingModeShared:
+		// Shared mode: reusable caches that persist independently
+		cacheMode = aimv1alpha1.TemplateCacheModeShared
 	default:
 		cacheMode = aimv1alpha1.TemplateCacheModeShared
 	}
@@ -100,7 +106,13 @@ func planTemplateCache(
 	// Resolve storage class
 	storageClassName := resolveStorageClassName(service, obs)
 
-	cacheName, err := GenerateTemplateCacheName(templateName, service.Namespace)
+	cacheName, err := GenerateTemplateCacheName(
+		templateName,
+		service.Namespace,
+		service.Name,
+		string(service.UID),
+		cachingMode,
+	)
 	if err != nil {
 		// Name generation failed - this would be a programming error
 		return nil
@@ -190,15 +202,20 @@ func tryFetchResolvedTemplateCache(
 	ref := service.Status.Cache.TemplateCacheRef
 	result = controllerutils.Fetch(ctx, c, ref.NamespacedName(), &aimv1alpha1.AIMTemplateCache{})
 
-	if result.OK() && result.Value.Status.Status == constants.AIMStatusReady {
+	if result.OK() && result.Value.Status.Status == constants.AIMStatusReady && isTemplateCacheUsableForService(result.Value, service) {
 		logger.V(1).Info("using resolved template cache", "name", ref.Name)
 		return result, false
 	}
 
 	// Not Ready or deleted - log and continue to search
 	if result.OK() {
-		logger.V(1).Info("resolved template cache not ready, searching for alternatives",
-			"name", ref.Name, "status", result.Value.Status.Status)
+		if !isTemplateCacheUsableForService(result.Value, service) {
+			logger.V(1).Info("resolved template cache incompatible with service mode, searching for alternatives",
+				"name", ref.Name, "mode", result.Value.Spec.Mode, "serviceMode", service.Spec.GetCachingMode())
+		} else {
+			logger.V(1).Info("resolved template cache not ready, searching for alternatives",
+				"name", ref.Name, "status", result.Value.Status.Status)
+		}
 	} else if result.IsNotFound() {
 		logger.V(1).Info("resolved template cache deleted, searching for alternatives", "name", ref.Name)
 	} else {
@@ -226,6 +243,33 @@ func searchTemplateCaches(
 		return controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{}
 	}
 
+	cachingMode := service.Spec.GetCachingMode()
+	if cachingMode == aimv1alpha1.CachingModeDedicated {
+		cacheName, err := GenerateTemplateCacheName(
+			templateName,
+			service.Namespace,
+			service.Name,
+			string(service.UID),
+			cachingMode,
+		)
+		if err != nil {
+			return controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{}
+		}
+
+		cacheResult := controllerutils.Fetch(ctx, c, client.ObjectKey{Namespace: service.Namespace, Name: cacheName}, &aimv1alpha1.AIMTemplateCache{})
+		if cacheResult.IsNotFound() {
+			return controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{}
+		}
+		if cacheResult.Error != nil {
+			return controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{Error: cacheResult.Error}
+		}
+
+		if isTemplateCacheUsableForService(cacheResult.Value, service) {
+			return cacheResult
+		}
+		return controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{}
+	}
+
 	// List template caches in the service namespace
 	cacheListResult := controllerutils.FetchList(ctx, c, &aimv1alpha1.AIMTemplateCacheList{}, client.InNamespace(service.Namespace))
 	if cacheListResult.Error != nil {
@@ -235,7 +279,7 @@ func searchTemplateCaches(
 	// Filter caches matching our template
 	var matchingCaches []aimv1alpha1.AIMTemplateCache
 	for _, cache := range cacheListResult.Value.Items {
-		if cache.Spec.TemplateName == templateName {
+		if cache.Spec.TemplateName == templateName && cache.Spec.Mode == aimv1alpha1.TemplateCacheModeShared {
 			matchingCaches = append(matchingCaches, cache)
 		}
 	}
@@ -254,6 +298,33 @@ func searchTemplateCaches(
 	}
 
 	return controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{Value: best}
+}
+
+func isTemplateCacheUsableForService(cache *aimv1alpha1.AIMTemplateCache, service *aimv1alpha1.AIMService) bool {
+	if cache == nil || service == nil {
+		return false
+	}
+
+	switch service.Spec.GetCachingMode() {
+	case aimv1alpha1.CachingModeDedicated:
+		if cache.Spec.Mode != aimv1alpha1.TemplateCacheModeDedicated {
+			return false
+		}
+		return hasOwnerReferenceUID(cache.GetOwnerReferences(), service.UID)
+	case aimv1alpha1.CachingModeShared:
+		return cache.Spec.Mode == aimv1alpha1.TemplateCacheModeShared
+	default:
+		return cache.Spec.Mode == aimv1alpha1.TemplateCacheModeShared
+	}
+}
+
+func hasOwnerReferenceUID(ownerRefs []metav1.OwnerReference, ownerUID types.UID) bool {
+	for _, ownerRef := range ownerRefs {
+		if ownerRef.UID == ownerUID {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveStorageClassName determines the storage class to use.

@@ -1,0 +1,51 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: template-cache-shared-ignores-dedicated-artifacts
+spec:
+  timeouts:
+    assert: 10m
+  steps:
+    - name: Create shared mode service
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Wait for shared service cache ref
+      try:
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: shared-artifact-owner-service
+              status:
+                cache:
+                  templateCacheRef:
+                    (name != ''): true
+
+    - name: Verify artifacts created for shared cache are unowned
+      try:
+        - script:
+            timeout: 5m
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              CACHE_NAME="$(kubectl -n "$NAMESPACE" get aimservice shared-artifact-owner-service -o jsonpath='{.status.cache.templateCacheRef.name}')"
+              for i in $(seq 1 30); do
+                json="$(kubectl -n "$NAMESPACE" get aimartifacts.aim.eai.amd.com -l aim.eai.amd.com/template-cache.name="$CACHE_NAME" -o json)"
+                count="$(echo "$json" | jq '.items | length')"
+                if [ "$count" -ge 1 ]; then
+                  bad="$(echo "$json" | jq '[.items[] | select((.metadata.ownerReferences // []) | length > 0)] | length')"
+                  if [ "$bad" -eq 0 ]; then
+                    exit 0
+                  fi
+                fi
+                sleep 2
+              done
+              echo "expected shared-cache artifacts with no ownerReferences"
+              kubectl -n "$NAMESPACE" get aimartifacts.aim.eai.amd.com -o yaml
+              exit 1

@@ -8,7 +8,7 @@
 # Test flow:
 # 1. Create AIMClusterRuntimeConfig with labelPropagation enabled (matching "team-*", "cost-center")
 # 2. Create AIMModel with HF source
-# 3. Create AIMService with labels and caching.mode: Always
+# 3. Create AIMService with labels and caching.mode: Shared
 # 4. Verify labels are propagated to all child resources
 # 5. Verify non-matching labels (env) are NOT propagated
 #

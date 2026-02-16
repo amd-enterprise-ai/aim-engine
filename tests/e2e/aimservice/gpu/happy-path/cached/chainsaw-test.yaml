@@ -2,7 +2,7 @@
 #
 # AIMService E2E Test: Happy Path with Caching (GPU)
 #
-# This test validates AIMService with caching.mode: Always on GPU infrastructure.
+# This test validates AIMService with caching.mode: Shared on GPU infrastructure.
 # The service uses spec.model.image to reference the model directly.
 # With caching enabled, the model is pre-cached before inference starts.
 # Also validates chat completions endpoint works correctly.

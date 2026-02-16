@@ -185,22 +185,28 @@ spec:
               cacheModel:
                 description: |-
                   DEPRECATED: Use Caching.Mode instead. This field will be removed in a future version.
-                  For backward compatibility, if Caching is not set, this field is used.
-                  Tri-state logic: nil=Auto, true=Always, false=Never
+                  This field is no longer honored by the controller.
                 type: boolean
               caching:
                 description: |-
                   Caching controls caching behavior for this service.
-                  When nil, defaults to Auto mode (use cache if available, don't create).
+                  When nil, defaults to Shared mode.
                 properties:
                   mode:
-                    default: Auto
+                    default: Shared
                     description: |-
                       Mode controls when to use caching.
-                      - Auto (default): Use cache if it exists, but don't create one
-                      - Always: Always use cache, create if it doesn't exist
-                      - Never: Don't use cache even if it exists
+                      Canonical values:
+                      - Shared (default): reuse/create shared cache assets
+                      - Dedicated: create service-owned dedicated cache assets
+
+                      Legacy values are accepted and normalized:
+                      - Always -> Shared
+                      - Auto -> Shared
+                      - Never -> Dedicated
                     enum:
+                    - Dedicated
+                    - Shared
                     - Auto
                     - Always
                     - Never

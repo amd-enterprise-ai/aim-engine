@@ -1,4 +1,4 @@
-# Service with caching.mode: Never - should not use cache even if one exists
+# Service with caching.mode: Dedicated - should create service-owned cache assets
 # Template is auto-selected from model's discovered templates
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
@@ -8,5 +8,5 @@ spec:
   model:
     name: test-no-cache-model
   caching:
-    mode: Never
+    mode: Dedicated
   replicas: 1

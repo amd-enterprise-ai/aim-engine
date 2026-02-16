@@ -1,0 +1,90 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: service-dedicated-creates-own-cache
+spec:
+  timeouts:
+    assert: 10m
+  steps:
+    - name: Create seed shared service
+      try:
+        - apply:
+            file: seed-service.yaml
+
+    - name: Wait for seed shared service cache ref
+      try:
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: shared-seed-service
+              status:
+                cache:
+                  templateCacheRef:
+                    (name != ''): true
+
+    - name: Create dedicated follow-up service with same resolved template
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              TEMPLATE_NAME="$(kubectl -n "$NAMESPACE" get aimservice shared-seed-service -o jsonpath='{.status.resolvedTemplate.name}')"
+              if [ -z "${TEMPLATE_NAME}" ]; then
+                echo "resolved template name is empty"
+                exit 1
+              fi
+              cat <<EOF | kubectl -n "$NAMESPACE" apply -f -
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: dedicated-followup-service
+              spec:
+                model:
+                  image: ghcr.io/silogen/aim-dummy:0.1.10
+                template:
+                  name: ${TEMPLATE_NAME}
+                caching:
+                  mode: Dedicated
+                replicas: 1
+              EOF
+
+    - name: Verify dedicated cache is service-owned and distinct from shared cache
+      try:
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: dedicated-followup-service
+              status:
+                cache:
+                  templateCacheRef:
+                    (name != ''): true
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              SHARED_CACHE="$(kubectl -n "$NAMESPACE" get aimservice shared-seed-service -o jsonpath='{.status.cache.templateCacheRef.name}')"
+              DEDICATED_CACHE="$(kubectl -n "$NAMESPACE" get aimservice dedicated-followup-service -o jsonpath='{.status.cache.templateCacheRef.name}')"
+              if [ "$SHARED_CACHE" = "$DEDICATED_CACHE" ]; then
+                echo "dedicated service unexpectedly reused shared cache: $DEDICATED_CACHE"
+                exit 1
+              fi
+              MODE="$(kubectl -n "$NAMESPACE" get aimtemplatecache "$DEDICATED_CACHE" -o jsonpath='{.spec.mode}')"
+              if [ "$MODE" != "Dedicated" ]; then
+                echo "expected Dedicated cache mode, got $MODE"
+                exit 1
+              fi
+              OWNER_NAME="$(kubectl -n "$NAMESPACE" get aimtemplatecache "$DEDICATED_CACHE" -o jsonpath='{.metadata.ownerReferences[0].name}')"
+              if [ "$OWNER_NAME" != "dedicated-followup-service" ]; then
+                echo "expected owner dedicated-followup-service, got ${OWNER_NAME:-<none>}"
+                exit 1
+              fi

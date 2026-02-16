@@ -41,28 +41,43 @@ const (
 )
 
 // AIMCachingMode controls caching behavior for a service.
-// +kubebuilder:validation:Enum=Auto;Always;Never
+// Canonical values are Dedicated and Shared.
+// Legacy values are accepted for backward compatibility:
+// - Always maps to Shared
+// - Auto maps to Shared
+// - Never maps to Dedicated
+// +kubebuilder:validation:Enum=Dedicated;Shared;Auto;Always;Never
 type AIMCachingMode string
 
 const (
-	// CachingModeAuto uses cache if it exists, but doesn't create one.
-	// This is the default mode.
+	// CachingModeDedicated always creates service-owned dedicated caches/artifacts.
+	CachingModeDedicated AIMCachingMode = "Dedicated"
+
+	// CachingModeShared reuses and creates shared caches/artifacts.
+	CachingModeShared AIMCachingMode = "Shared"
+
+	// CachingModeAuto is deprecated legacy value that maps to Shared.
 	CachingModeAuto AIMCachingMode = "Auto"
 
-	// CachingModeAlways always uses cache, creating one if it doesn't exist.
+	// CachingModeAlways is deprecated legacy value that maps to Shared.
 	CachingModeAlways AIMCachingMode = "Always"
 
-	// CachingModeNever never uses cache, even if one exists.
+	// CachingModeNever is deprecated legacy value that maps to Dedicated.
 	CachingModeNever AIMCachingMode = "Never"
 )
 
 // AIMServiceCachingConfig controls caching behavior for a service.
 type AIMServiceCachingConfig struct {
 	// Mode controls when to use caching.
-	// - Auto (default): Use cache if it exists, but don't create one
-	// - Always: Always use cache, create if it doesn't exist
-	// - Never: Don't use cache even if it exists
-	// +kubebuilder:default=Auto
+	// Canonical values:
+	// - Shared (default): reuse/create shared cache assets
+	// - Dedicated: create service-owned dedicated cache assets
+	//
+	// Legacy values are accepted and normalized:
+	// - Always -> Shared
+	// - Auto -> Shared
+	// - Never -> Dedicated
+	// +kubebuilder:default=Shared
 	// +optional
 	Mode AIMCachingMode `json:"mode,omitempty"`
 }
@@ -155,13 +170,12 @@ type AIMServiceSpec struct {
 	Template AIMServiceTemplateConfig `json:"template,omitempty"`
 
 	// Caching controls caching behavior for this service.
-	// When nil, defaults to Auto mode (use cache if available, don't create).
+	// When nil, defaults to Shared mode.
 	// +optional
 	Caching *AIMServiceCachingConfig `json:"caching,omitempty"`
 
 	// DEPRECATED: Use Caching.Mode instead. This field will be removed in a future version.
-	// For backward compatibility, if Caching is not set, this field is used.
-	// Tri-state logic: nil=Auto, true=Always, false=Never
+	// This field is no longer honored by the controller.
 	// +optional
 	// +kubebuilder:validation:Deprecated
 	// +kubebuilder:validation:DeprecatedMessage="Use Caching.Mode instead. This field will be removed in a future version."
@@ -408,25 +422,22 @@ func (svc *AIMService) GetStatus() *AIMServiceStatus {
 	return &svc.Status
 }
 
-// GetCachingMode returns the effective caching mode for this service.
-// It checks the new Caching.Mode field first, then falls back to the deprecated
-// CacheModel field for backward compatibility.
+// GetCachingMode returns the effective canonical caching mode for this service.
+// Legacy values are normalized for backward compatibility.
 func (spec *AIMServiceSpec) GetCachingMode() AIMCachingMode {
-	// Prefer new Caching.Mode field
-	if spec.Caching != nil && spec.Caching.Mode != "" {
-		return spec.Caching.Mode
+	if spec.Caching == nil || spec.Caching.Mode == "" {
+		return CachingModeShared
 	}
 
-	// Fall back to deprecated CacheModel field
-	if spec.CacheModel != nil {
-		if *spec.CacheModel {
-			return CachingModeAlways
-		}
-		return CachingModeNever
+	switch spec.Caching.Mode {
+	case CachingModeDedicated, CachingModeNever:
+		return CachingModeDedicated
+	case CachingModeShared, CachingModeAlways, CachingModeAuto:
+		return CachingModeShared
+	default:
+		// Defensive default for unknown values.
+		return CachingModeShared
 	}
-
-	// Default to Auto
-	return CachingModeAuto
 }
 
 func init() {

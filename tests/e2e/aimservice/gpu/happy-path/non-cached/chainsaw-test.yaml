@@ -2,9 +2,9 @@
 #
 # AIMService E2E Test: Happy Path without Caching (GPU)
 #
-# This test validates AIMService with caching.mode: Never on GPU infrastructure.
+# This test validates AIMService with caching.mode: Dedicated on GPU infrastructure.
 # The service uses spec.model.image to reference the model directly.
-# Without caching, the model is pulled directly at runtime.
+# With dedicated caching, the model is pre-cached in service-owned assets.
 # Also validates chat completions endpoint works correctly.
 #
 # Uses: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
@@ -17,7 +17,7 @@ metadata:
   labels:
     requires: gpu
 spec:
-  description: Test AIMService without caching on GPU
+  description: Test AIMService with dedicated caching on GPU
   timeouts:
     assert: 600s
   steps:
@@ -26,7 +26,7 @@ spec:
         - apply:
             file: runtime-config.yaml
 
-    - name: Create service with caching disabled
+    - name: Create service with dedicated caching
       try:
         - apply:
             file: service.yaml

@@ -3,7 +3,7 @@
 # AIMService Frozen Test: Env Propagation to Template Cache
 #
 # This test validates that environment variables from AIMService.spec.env
-# are correctly propagated to the AIMTemplateCache when caching.mode: Always.
+# are correctly propagated to the AIMTemplateCache when caching.mode: Shared.
 #
 # Test type: Frozen dependency test
 # Frozen resources: AIMModel (Ready), AIMServiceTemplate (Ready with modelSources)
@@ -36,7 +36,7 @@ spec:
             content: |
               apply-with-status.sh template.yaml --status-only -n $NAMESPACE
 
-    - name: Create service with env vars and caching mode Always
+    - name: Create service with env vars and caching mode Shared
       try:
         - apply:
             file: service.yaml

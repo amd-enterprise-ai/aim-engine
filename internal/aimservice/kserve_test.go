@@ -122,8 +122,8 @@ func TestIsReadyForInferenceService(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:    "caching mode Always - not ready without cache",
-			service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeAlways).Build(),
+			name:    "caching mode Shared - not ready without cache",
+			service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeShared).Build(),
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
 					modelResult: ModelFetchResult{
@@ -136,8 +136,8 @@ func TestIsReadyForInferenceService(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:    "caching mode Always - ready with cache",
-			service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeAlways).Build(),
+			name:    "caching mode Shared - ready with cache",
+			service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeShared).Build(),
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
 					modelResult: ModelFetchResult{
@@ -157,8 +157,8 @@ func TestIsReadyForInferenceService(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:    "caching mode Auto - ready with template cache",
-			service: NewService("svc").Build(), // Auto is default
+			name:    "default mode Shared - ready with template cache",
+			service: NewService("svc").Build(),
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
 					modelResult: ModelFetchResult{
@@ -178,7 +178,7 @@ func TestIsReadyForInferenceService(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:    "caching mode Never - ready with template cache",
+			name:    "legacy Never maps to Dedicated - ready with template cache",
 			service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeNever).Build(),
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{

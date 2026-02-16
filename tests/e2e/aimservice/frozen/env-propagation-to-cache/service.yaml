@@ -1,4 +1,4 @@
-# AIMService with env vars and caching mode Always
+# AIMService with env vars and caching mode Shared
 # Tests that service.spec.env is propagated to AIMTemplateCache
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
@@ -11,7 +11,7 @@ spec:
     name: test-template
   replicas: 1
   caching:
-    mode: Always
+    mode: Shared
   # These env vars should be propagated to the AIMTemplateCache
   # and should override any matching vars from template.spec.caching.env
   env:

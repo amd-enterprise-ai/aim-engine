@@ -1,0 +1,76 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: service-legacy-mode-mapping
+spec:
+  timeouts:
+    assert: 10m
+  steps:
+    - name: Create services using legacy caching modes
+      try:
+        - apply:
+            file: service-always.yaml
+        - apply:
+            file: service-auto.yaml
+        - apply:
+            file: service-never.yaml
+
+    - name: Verify legacy mode mapping to effective cache modes
+      try:
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: legacy-always-service
+              status:
+                cache:
+                  templateCacheRef:
+                    (name != ''): true
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: legacy-auto-service
+              status:
+                cache:
+                  templateCacheRef:
+                    (name != ''): true
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: legacy-never-service
+              status:
+                cache:
+                  templateCacheRef:
+                    (name != ''): true
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              ALWAYS_CACHE="$(kubectl -n "$NAMESPACE" get aimservice legacy-always-service -o jsonpath='{.status.cache.templateCacheRef.name}')"
+              AUTO_CACHE="$(kubectl -n "$NAMESPACE" get aimservice legacy-auto-service -o jsonpath='{.status.cache.templateCacheRef.name}')"
+              NEVER_CACHE="$(kubectl -n "$NAMESPACE" get aimservice legacy-never-service -o jsonpath='{.status.cache.templateCacheRef.name}')"
+              ALWAYS_MODE="$(kubectl -n "$NAMESPACE" get aimtemplatecache "$ALWAYS_CACHE" -o jsonpath='{.spec.mode}')"
+              AUTO_MODE="$(kubectl -n "$NAMESPACE" get aimtemplatecache "$AUTO_CACHE" -o jsonpath='{.spec.mode}')"
+              NEVER_MODE="$(kubectl -n "$NAMESPACE" get aimtemplatecache "$NEVER_CACHE" -o jsonpath='{.spec.mode}')"
+              if [ "$ALWAYS_MODE" != "Shared" ]; then
+                echo "Always should map to Shared, got $ALWAYS_MODE"
+                exit 1
+              fi
+              if [ "$AUTO_MODE" != "Shared" ]; then
+                echo "Auto should map to Shared, got $AUTO_MODE"
+                exit 1
+              fi
+              if [ "$NEVER_MODE" != "Dedicated" ]; then
+                echo "Never should map to Dedicated, got $NEVER_MODE"
+                exit 1
+              fi

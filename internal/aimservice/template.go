@@ -301,7 +301,7 @@ func buildDerivedTemplate(
 
 	// Set caching config based on service
 	cachingMode := service.Spec.GetCachingMode()
-	if cachingMode == aimv1alpha1.CachingModeAlways {
+	if cachingMode == aimv1alpha1.CachingModeShared {
 		spec.Caching = &aimv1alpha1.AIMTemplateCachingConfig{
 			Enabled: true,
 		}

@@ -370,9 +370,9 @@ func TestBuildDerivedTemplate(t *testing.T) {
 			expectedGPU:       &aimv1alpha1.AIMGpuRequirements{Model: "MI300X", Requests: 4},
 		},
 		{
-			name: "caching mode always enables caching",
+			name: "caching mode shared enables caching",
 			service: NewService("svc").
-				WithCachingMode(aimv1alpha1.CachingModeAlways).
+				WithCachingMode(aimv1alpha1.CachingModeShared).
 				WithOverrideMetric(latency).
 				Build(),
 			templateName:      "derived",

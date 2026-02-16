@@ -6,7 +6,7 @@
 # and artifacts are NOT deleted (they should be preserved for potential reuse).
 #
 # Test flow:
-# 1. Create AIMService with model.image and caching.mode: Always
+# 1. Create AIMService with model.image and caching.mode: Shared
 # 2. Wait for template cache and artifact to become Ready
 # 3. Delete the AIMService
 # 4. Verify the template cache and artifact still exist (preserved because Ready)

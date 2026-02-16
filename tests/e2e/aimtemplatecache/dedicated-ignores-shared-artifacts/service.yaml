@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: dedicated-artifact-owner-service
+spec:
+  model:
+    image: ghcr.io/silogen/aim-dummy:0.1.10
+  caching:
+    mode: Dedicated
+  replicas: 1

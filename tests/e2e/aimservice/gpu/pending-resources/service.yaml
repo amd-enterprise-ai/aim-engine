@@ -16,6 +16,6 @@ spec:
         gpu:
           requests: 20
   caching:
-    mode: Never
+    mode: Dedicated
   template:
     allowUnoptimized: true
