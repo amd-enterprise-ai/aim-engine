@@ -48,9 +48,10 @@ spec:
   runtimeConfigName: ml-research
   metric: throughput
   precision: fp8
-  gpuSelector:
-    count: 2
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 2
+      model: MI300X
   env:
     - name: HF_TOKEN
       valueFrom:
@@ -69,12 +70,23 @@ spec:
 | `runtimeConfigName` | Runtime configuration for storage defaults and discovery settings. Defaults to `default`. |
 | `metric` | Optimization goal: `latency` (interactive) or `throughput` (batch processing). **Immutable** after creation. |
 | `precision` | Numeric precision: `auto`, `fp4`, `fp8`, `fp16`, `fp32`, `bf16`, `int4`, `int8`. **Immutable** after creation. |
-| `gpuSelector.count` | Number of GPUs per replica. **Immutable** after creation. |
-| `gpuSelector.model` | GPU type (e.g., `MI300X`, `MI325X`). **Immutable** after creation. |
+| `hardware.gpu.requests` | Number of GPUs per replica. **Immutable** after creation. |
+| `hardware.gpu.model` | GPU type (e.g., `MI300X`, `MI325X`). **Immutable** after creation. |
+| `hardware.cpu` | CPU requirements (optional). For CPU-only models, use `hardware.cpu` without `hardware.gpu`. **Immutable** after creation. |
 | `imagePullSecrets` | Secrets for pulling container images during discovery and inference. Must exist in the same namespace (or operator namespace for cluster templates). |
 | `serviceAccountName` | Service account for discovery jobs and inference pods. If empty, uses the default service account. |
 | `resources` | Container resource requirements. These override model defaults. |
 | `modelSources` | Static model sources (optional). When provided, discovery is skipped and these sources are used directly. See [Static Model Sources](#static-model-sources) below. |
+
+### Hardware propagation and node affinity
+
+The `hardware` field specifies GPU and CPU requirements. It is part of the shared runtime parameters (`AIMRuntimeParameters`) and flows as follows:
+
+- **AIMModel**: For custom models, `spec.custom.hardware` defines default requirements; `spec.customTemplates[].hardware` can override per template. The model controller merges these when creating or updating templates.
+- **AIMService**: `spec.overrides.hardware` overrides the template’s hardware for that service; the controller creates or selects a derived template with the merged spec.
+- **AIMServiceTemplate / AIMClusterServiceTemplate**: `spec.hardware` is the source of truth for the template. The template controller resolves it (with discovery when applicable) and writes **`status.resolvedHardware`**, which is used by the service controller when creating the inference workload.
+
+**Node affinity**: From `spec.hardware.gpu` (or `status.resolvedHardware.gpu`), the operator builds node affinity rules so that inference pods schedule only on nodes that have the required GPU type (and, when specified, sufficient VRAM). GPU availability is detected via node labels (e.g. GPU product ID). If the required GPU is not present in the cluster, the template status becomes `NotAvailable`.
 
 ### Namespace-Specific Fields
 
@@ -154,9 +166,10 @@ spec:
   modelName: meta-llama-3-8b-instruct
   metric: latency
   precision: fp16
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
   modelSources:
     - name: meta-llama/Llama-3.1-8B-Instruct
       sourceURI: hf://meta-llama/Llama-3.1-8B-Instruct
@@ -194,7 +207,7 @@ When `AIMService.spec.overrides` is specified:
 
 1. **Base Template Resolution**: The controller resolves the base template using automatic selection or explicit `templateName`
 
-2. **Hash Computation**: A SHA256 hash is computed from the override structure (metric, precision, gpuSelector) to ensure deterministic naming
+2. **Hash Computation**: A SHA256 hash is computed from the override structure (metric, precision, hardware) to ensure deterministic naming
 
 3. **Name Generation**: The derived name is `<base-template>-ovr-<hash-suffix>`, truncated to fit Kubernetes 63-character limit
 
@@ -265,6 +278,8 @@ spec:
 | `conditions` | []Condition | Detailed conditions: `Discovered`, `CacheReady`, `Ready`, `Progressing`, `Failure` |
 | `resolvedRuntimeConfig` | object | Metadata about the runtime config that was resolved (name, namespace, scope, UID) |
 | `resolvedModel` | object | Metadata about the model image that was resolved (name, namespace, scope, UID) |
+| `resolvedHardware` | object | Resolved GPU/CPU requirements (from discovery + spec). Used by the service controller for resource requests and node affinity. |
+| `hardwareSummary` | string | Human-readable summary of the hardware requirements (e.g. GPU model and count). |
 | `modelSources` | []ModelSource | Discovered or static model artifacts with URIs and sizes |
 | `profile` | JSON | Complete discovery result with engine arguments and metadata |
 
@@ -329,7 +344,7 @@ When `AIMService.spec.templateName` is omitted, the controller automatically sel
 1. **Enumeration**: Find all templates referencing the model (either by `spec.model.ref` or matching the auto-created model from `spec.model.image`)
 2. **Filtering**: Exclude templates not in `Ready` status
 3. **GPU Filtering**: Exclude templates requiring GPUs not present in the cluster
-4. **Override Matching**: If service specifies overrides, filter by matching metric/precision/GPU selector
+4. **Override Matching**: If service specifies overrides, filter by matching metric/precision/hardware
 5. **Selection**: If exactly one candidate remains, select it
 
 If zero or multiple candidates remain, the service reports a failure condition explaining the issue.
@@ -348,9 +363,10 @@ spec:
   runtimeConfigName: platform-default
   metric: latency
   precision: fp16
-  gpuSelector:
-    count: 1
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
 ```
 
 ### Namespace Template
@@ -366,9 +382,10 @@ spec:
   runtimeConfigName: ml-research
   metric: throughput
   precision: fp8
-  gpuSelector:
-    count: 2
-    model: MI300X
+  hardware:
+    gpu:
+      requests: 2
+      model: MI300X
   env:
     - name: HF_TOKEN
       valueFrom:
@@ -387,9 +404,10 @@ spec:
     ref: meta-llama-3-8b
   overrides:
     metric: throughput
-    gpuSelector:
-      count: 4
-      model: MI325X
+    hardware:
+      gpu:
+        requests: 4
+        model: MI325X
 ```
 
 Auto-created derived template (conceptual):
@@ -405,9 +423,10 @@ metadata:
 spec:
   modelName: meta-llama-3-8b
   metric: throughput
-  gpuSelector:
-    count: 4
-    model: MI325X
+  hardware:
+    gpu:
+      requests: 4
+      model: MI325X
 ```
 
 ## Troubleshooting

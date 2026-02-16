@@ -177,9 +177,10 @@ spec:
   overrides:
     metric: throughput      # or 'latency' for interactive workloads
     precision: fp16         # fp4, fp8, fp16, bf16, int4, int8, auto
-    gpuSelector:
-      count: 2
-      model: MI300X
+    hardware:
+      gpu:
+        requests: 2
+        model: MI300X
 ```
 
 Please note that not all configurations may be supported on each AIM image.
@@ -453,9 +454,10 @@ spec:
   overrides:
     metric: throughput
     precision: fp16
-    gpuSelector:
-      count: 2
-      model: MI300X
+    hardware:
+      gpu:
+        requests: 2
+        model: MI300X
   routing:
     enabled: true
     gatewayRef:

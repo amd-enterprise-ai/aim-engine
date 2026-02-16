@@ -126,16 +126,17 @@ This prevents accidentally deploying unoptimized configurations in production. S
 
 #### Stage 3: Override Matching
 
-If you specify overrides (metric, precision, GPU), only templates matching those constraints are considered:
+If you specify overrides (metric, precision, hardware), only templates matching those constraints are considered:
 
 ```yaml
 spec:
   overrides:
     metric: latency           # Only templates optimized for latency
     precision: fp16           # Only fp16 precision
-    gpuSelector:
-      model: MI300X           # Only templates for MI300X
-      count: 4                # Only 4-GPU configurations
+    hardware:
+      gpu:
+        model: MI300X         # Only templates for MI300X
+        requests: 4           # Only 4-GPU configurations
 ```
 
 #### Stage 4: GPU Availability
@@ -222,9 +223,10 @@ spec:
   overrides:
     metric: latency           # Optimization target
     precision: fp16           # Model precision
-    gpuSelector:
-      model: MI300X           # GPU model
-      count: 4                # Number of GPUs
+    hardware:
+      gpu:
+        model: MI300X         # GPU model
+        requests: 4           # Number of GPUs per replica
 ```
 
 Overrides affect:
