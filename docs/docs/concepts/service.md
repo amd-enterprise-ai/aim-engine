@@ -191,28 +191,31 @@ Derived templates:
 
 ## Caching
 
-AIMService supports model caching to avoid downloading model weights on every pod startup.
+AIMService supports model caching to avoid downloading model weights on every pod startup. Caching is configured via `spec.caching.mode`.
 
 ### Caching Modes
 
 | Mode | Behavior |
 |------|----------|
-| `Always` | Requires cache to be ready before deploying. Service waits for AIMTemplateCache. |
-| `Auto` | Uses cache if available, falls back to download mode if not. Default behavior. |
-| `Never` | Always downloads models; creates a temporary PVC for the service. |
+| `Auto` (default) | Use cache if it exists, but don't create one. If no cache exists, a dedicated cache is created for the service. |
+| `Always` | Always use cache, creating one if it doesn't exist. Service waits for the cache; the cache is shared and persists independently. |
+| `Never` | Don't use cache even if one exists. A dedicated cache is created for the service and is garbage-collected when the service is deleted. |
 
 ```yaml
 spec:
-  caching: Always  # or Auto, Never
+  caching:
+    mode: Always  # or Auto (default), Never
 ```
+
+When `caching` is omitted, mode defaults to `Auto`. For backward compatibility, the deprecated `spec.cacheModel` field is still supported when `caching` is not set: `nil` = Auto, `true` = Always, `false` = Never.
 
 ### How Caching Works
 
 1. **Template Cache**: An `AIMTemplateCache` pre-downloads all model sources for a template to a shared PVC
 2. **Model Caches**: Individual `AIMArtifact` resources manage per-model downloads
-3. **Service PVC**: When no template cache exists, a temporary PVC is created for the service
+3. **Cache ownership**: With `Always`, the template cache is shared and has no owner (persists after the service is deleted). With `Auto` or `Never`, when a cache is created it is dedicated to the service and is deleted with it.
 
-With `caching: Auto`, services can start immediately while artifacts populate in the background.
+With `caching.mode: Auto`, the service uses an existing shared cache if available; otherwise a dedicated cache is created for the service.
 
 ## Overrides
 

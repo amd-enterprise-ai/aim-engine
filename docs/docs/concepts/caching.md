@@ -6,90 +6,85 @@ AIM provides a hierarchical caching system that allows model artifacts to be pre
 
 Model caching in AIM uses three resource types:
 
-1. **AIMArtifact**: Stores downloaded model artifacts on a PVC
-2. **AIMTemplateCache**: Groups artifacts for a specific template (owned by `AIMServiceTemplate`)
-3. **AIMService**: Can trigger template cache creation via `spec.cacheModel: true`
+1. **AIMArtifact**: Manages the model artifacts download process onto a PVC
+2. **AIMTemplateCache**: Groups `AIMArtifacts` for a specific template and allows caching a cluster-scoped `AIMClusterServiceTemplate` into a specific namespace.
+3. **AIMService**: Can trigger template cache creation via `spec.caching.mode: Shared|Dedicated`. See [service.md](./service.md) for more information.
+
+### Shared and dedicated mode
+
+An **AIMTemplateCache** can run in two modes, which differ by who creates it and how `AIMArtifacts` are owned:
+
+- **Shared mode** (`spec.mode: Shared`, default): **AIMArtifact**s created by the template cache have **no** owner references. They persist independently and can be reused by other template caches or services. Used when the template creates the cache (template caching enabled; that template cache is template-owned) or when the service uses `spec.caching.mode: Shared` (service creates or reuses shared caches).
+- **Dedicated mode** (`spec.mode: Dedicated`): **AIMArtifact**s are **owned** by the template cache. When the template cache is deleted, its artifacts are garbage-collected. Used when the service uses `spec.caching.mode: Dedicated`; the template cache is then owned by the service and cleaned up with it. Dedicated template caches and artifacts are only used by a single service and never shared.
 
 ## Caching Hierarchy
 
 ### Ownership Structure
 
+**AIMTemplateCache** may be owned by an `AIMServiceTemplate`, by an `AIMService`, or by nothing (unowned). `AIMArtifact` are owned by the template cache only in Dedicated mode; in Shared mode they have no owner.
+
 ```
-AIMServiceTemplate
-    └── AIMTemplateCache (owned by template)
-            └── AIMArtifact(s) (created by template cache)
-                    └── PVC(s) + Download Job(s) (owned by artifact)
+Who owns AIMTemplateCache (one of):
+  • AIMServiceTemplate   (template-created, Shared)
+  • AIMService           (service-created, Dedicated)
+  • (none)               (service-created with Shared)
+
+Resource hierarchy:
+  AIMTemplateCache (Shared or Dedicated mode)
+      └── AIMArtifact(s)  [created by template, owned by TemplateCache only if Dedicated]
+              └── PVC(s) + Download Job(s) (owned by model cache)
 ```
 
 ### Creation Flow
 
-When an `AIMService` has `spec.cacheModel: true`, the service controller creates an `AIMTemplateCache`, if one doesn't already exist, for the resolved template. However, the cache is **owned by the template**, not the service. This allows:
+An **AIMTemplateCache** is created by an **AIMServiceTemplate** (when the template has caching enabled and is ready), by an **AIMService** (when the service has caching enabled and no suitable cache exists), or **manually**. Ownership depends on the creator and mode: template-owned (template-created), service-owned (service-created with Dedicated), unowned (service-created with Shared), or no owner (manually created).
 
-- Multiple services to share the same template cache
-- Cache preservation when a service is deleted (if the AIMTemplateCache becomes Available)
-- Proper cleanup when the template itself is deleted
-
-The `AIMTemplateCache` creates an `AIMArtifact` for each needed model. The `AIMArtifact` handles the model download.
+For each needed model (matching `sourceURI` and storage class), the **AIMTemplateCache** uses an existing artifact when possible, otherwise creates one. A **shared** template cache reuses any matching **shared** artifact in the namespace; a **dedicated** template cache uses its own dedicated artifact. New artifacts are created shared or dedicated according to the template cache's mode. The **AIMArtifact** handles the download.
 
 ## Cache Status Values
 
-Each cache resource tracks its status:
+**AIMTemplateCache** and **AIMArtifact** use the same status values. The template cache's status is typically derived from its artifacts.
 
 | Status | Description |
 | ------ | ----------- |
-| `Pending` | Cache created, waiting for processing |
+| `Pending` | Created, waiting for processing |
 | `Progressing` | Download or provisioning in progress |
-| `Available` | Cache is ready and can be used |
-| `Failed` | Cache creation failed (download error, storage issue, etc.) |
+| `Ready` | Ready and can be used |
+| `Degraded` | Partially available or limited (e.g. some artifacts failed) |
+| `NotAvailable` | Dependencies not available. **AIMTemplateCache** may report this when its template is not available (e.g. GPU not ready); **AIMArtifact** never sets this. |
+| `Failed` | Creation failed (download error, storage issue, etc.) |
 
-Note that a `Failed` AIMArtifact will retry the download periodically, causing the Status to change at the same time.
+A `Failed` `AIMArtifact` retries the download periodically, so its status may change over time.
 
 ## Deletion Behavior
 
-AIM implements a cache cleanup process that preserves useful caches while cleaning up non-functioning ones. Manually created AIMTemplateCaches and AIMArtifacts are never garbage collected.
+Deletion follows Kubernetes ownership: owned resources are garbage-collected when the owner is deleted. AIM finalizers additionally delete non-Ready caches so that Failed/Pending caches do not block recreation. Manually created AIMTemplateCaches and AIMArtifact (no owner) are never garbage-collected.
 
-### Cache handling when AIMService is deleted
+### When AIMService is deleted
 
-When an `AIMService` is deleted:
+- **Template caches owned by the service** (Dedicated, service-created): Garbage-collected with the service.
+- **Service finalizer**: Deletes any template caches created by this service (by label) that are **not Ready**, so stuck Pending/Progressing/Failed caches do not block a future service from creating a new cache.
+- **Template caches not owned by the service** (template-owned or unowned Shared): Unchanged; they persist and can be reused by other services.
 
-**Template caches** that were created by this service are evaluated:
-- **Available caches** → **Preserved** (can be reused by future services)
-- **Non-available caches** (Pending/Progressing/Failed) → **Deleted**
+### When AIMServiceTemplate is deleted
 
-This design allows cache reuse: if you delete a service and recreate it later, the existing Available cache will be used immediately without re-downloading.
+- **Template caches owned by the template**: When a template creates a cache, the cache is automatically deleted when the template is deleted via Kubernetes garbage collection. Template-created caches use Shared mode by default, so the cached artifacts themselves persist even after the cache is removed.
 
-**Note**: Since template caches are owned by templates (not services), an Available cache persists as long as its owning template exists.
+### When AIMTemplateCache is deleted
 
-### Cache handling when AIMServiceTemplate is deletion
+- **Template cache finalizer**: Ensure that **artifacts** created by this template cache (by label) that are **not Ready** are deleted. **Ready** model caches are left in place so they can be reused by other template caches.
+- The template cache is then removed.
 
-When an `AIMServiceTemplate` is deleted:
+If a service with caching enabled was using this template cache, a new template cache will be created automatically, provided the template itself is still healthy and ready.
 
-1. **Template caches** owned by this template are garbage-collected automatically
-2. This cleans up non-Available artifacts
+### When AIMArtifact is deleted
 
-### AIMTemplateCache Deletion
-
-When an `AIMTemplateCache` is deleted:
-
-1. **artifacts** created by this template cache are evaluated:
-   - **Available caches** → **Preserved** (can be reused by other template caches)
-   - **Non-available caches** (Pending/Progressing/Failed) → **Deleted**
-2. The template cache itself is removed
-
-Available artifacts are preserved because they can be shared across template caches for the same model sources, and they can be reused by any `AIMTemplateCache` created later.
-
-Note that if an AIMService has caching enabled, a new AIMTemplateCache will be immediately created by the AIMService.
-
-### AIMArtifact Deletion
-
-When an `AIMArtifact` is deleted:
-
-1. The **PVC** containing downloaded model files is marked for garbage-collection.
-2. Any running **download Job** is garbage-collected
-
-NOTE: Any AIMService running with this Model will keep the PVC mounted
+- The **PVC** and any **download Job** owned by the artifact is marked for garbage-collection.
+- Any AIMService pod still using that cache keeps the PVC mounted until the pod is gone.
 
 ## Cache Reuse
+
+**Shared** artifacts are **deduplicated per namespace**: if two **shared** template caches request the same source (e.g. same `sourceURI` and storage class), the download runs once and both use the same artifact and PVC. Dedicated template caches only reuse artifacts they already own, so they do not share artifacts across caches.
 
 ### Automatic Reuse
 
@@ -111,7 +106,7 @@ Multiple services can share the same cached models:
 
 * To manually make sure a model is available create an AIMArtifact for that model.
 * To make sure all models that belong to a AIMServiceTemplate or AIMClusterServiceTemplate is available, create an AIMTemplateCache with correctly set templateName in the namespace.
-* Manual cleanup is necessary for all `Available` AIMArtifacts.
+* **Cleanup**: `Ready` AIMArtifacts that have **no owner** (Shared, or manually created) are not garbage-collected; delete them manually if you want to free space. Artifacts owned by a template cache (Dedicated) are removed when that template cache is deleted.
 
 ### AIMService with cache enabled
 
@@ -126,7 +121,8 @@ metadata:
 spec:
   model:
     ref: meta-llama-3-8b
-  cacheModel: true
+  caching:
+    mode: Shared   # default; use Dedicated for service-owned caches
 ```
 
 #### AIMTemplateCache to prepopulate the namespace with caches for a AIMServiceTemplate
