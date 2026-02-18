@@ -26,8 +26,11 @@ import (
 	"strings"
 	"testing"
 
+	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -222,6 +225,39 @@ func TestIsReadyForInferenceService(t *testing.T) {
 			},
 			expected: true,
 		},
+		{
+			name:    "ISVC exists - always ready (update path bypasses model/cache checks)",
+			service: NewService("svc").Build(),
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+						Value: &servingv1beta1.InferenceService{
+							ObjectMeta: metav1.ObjectMeta{Name: "existing-isvc", Namespace: testNamespace},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name:    "ISVC exists - ready even with unhealthy model (update path)",
+			service: NewService("svc").Build(),
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+						Value: &servingv1beta1.InferenceService{
+							ObjectMeta: metav1.ObjectMeta{Name: "existing-isvc", Namespace: testNamespace},
+						},
+					},
+					modelResult: ModelFetchResult{
+						Model: controllerutils.FetchResult[*aimv1alpha1.AIMModel]{
+							Value: NewModel("m").WithStatus(constants.AIMStatusFailed).Build(),
+						},
+					},
+				},
+			},
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -230,6 +266,235 @@ func TestIsReadyForInferenceService(t *testing.T) {
 
 			if result != tt.expected {
 				t.Errorf("expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// PRESERVE EXISTING STORAGE VOLUMES TESTS
+// ============================================================================
+
+func TestPreserveExistingStorageVolumes(t *testing.T) {
+	dshmSize := resource.MustParse("1Gi")
+
+	tests := []struct {
+		name              string
+		existingVolumes   []corev1.Volume
+		existingMounts    []corev1.VolumeMount
+		expectVolumeCount int
+		expectMountCount  int
+		expectVolumeNames []string
+		expectMountNames  []string
+	}{
+		{
+			name: "preserves cache PVC volumes from existing ISVC",
+			existingVolumes: []corev1.Volume{
+				{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &dshmSize}}},
+				{Name: "cache-vol-1", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc-1"}}},
+				{Name: "cache-vol-2", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc-2"}}},
+			},
+			existingMounts: []corev1.VolumeMount{
+				{Name: "dshm", MountPath: "/dev/shm"},
+				{Name: "cache-vol-1", MountPath: "/aim/cache/model-a"},
+				{Name: "cache-vol-2", MountPath: "/aim/cache/model-b"},
+			},
+			expectVolumeCount: 3, // dshm (base) + 2 cache volumes
+			expectMountCount:  3, // dshm (base) + 2 cache mounts
+			expectVolumeNames: []string{"dshm", "cache-vol-1", "cache-vol-2"},
+			expectMountNames:  []string{"dshm", "cache-vol-1", "cache-vol-2"},
+		},
+		{
+			name: "no extra volumes on existing ISVC",
+			existingVolumes: []corev1.Volume{
+				{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &dshmSize}}},
+			},
+			existingMounts: []corev1.VolumeMount{
+				{Name: "dshm", MountPath: "/dev/shm"},
+			},
+			expectVolumeCount: 1,
+			expectMountCount:  1,
+			expectVolumeNames: []string{"dshm"},
+			expectMountNames:  []string{"dshm"},
+		},
+		{
+			name:              "existing ISVC has no containers",
+			existingVolumes:   nil,
+			existingMounts:    nil,
+			expectVolumeCount: 1, // Only base dshm
+			expectMountCount:  1, // Only base dshm
+			expectVolumeNames: []string{"dshm"},
+			expectMountNames:  []string{"dshm"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Build new ISVC with just the base shared memory volume
+			newISVC := &servingv1beta1.InferenceService{
+				Spec: servingv1beta1.InferenceServiceSpec{
+					Predictor: servingv1beta1.PredictorSpec{
+						PodSpec: servingv1beta1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name: "kserve-container",
+									VolumeMounts: []corev1.VolumeMount{
+										{Name: "dshm", MountPath: "/dev/shm"},
+									},
+								},
+							},
+							Volumes: []corev1.Volume{
+								{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &dshmSize}}},
+							},
+						},
+					},
+				},
+			}
+
+			// Build existing ISVC
+			existingISVC := &servingv1beta1.InferenceService{
+				Spec: servingv1beta1.InferenceServiceSpec{
+					Predictor: servingv1beta1.PredictorSpec{
+						PodSpec: servingv1beta1.PodSpec{
+							Volumes: tt.existingVolumes,
+						},
+					},
+				},
+			}
+			if tt.existingMounts != nil {
+				existingISVC.Spec.Predictor.Containers = []corev1.Container{
+					{Name: "kserve-container", VolumeMounts: tt.existingMounts},
+				}
+			}
+
+			preserveExistingStorageVolumes(newISVC, existingISVC)
+
+			if len(newISVC.Spec.Predictor.Volumes) != tt.expectVolumeCount {
+				t.Errorf("expected %d volumes, got %d", tt.expectVolumeCount, len(newISVC.Spec.Predictor.Volumes))
+			}
+			if len(newISVC.Spec.Predictor.Containers[0].VolumeMounts) != tt.expectMountCount {
+				t.Errorf("expected %d mounts, got %d", tt.expectMountCount, len(newISVC.Spec.Predictor.Containers[0].VolumeMounts))
+			}
+
+			// Verify expected volume names
+			volNames := make(map[string]bool)
+			for _, v := range newISVC.Spec.Predictor.Volumes {
+				volNames[v.Name] = true
+			}
+			for _, name := range tt.expectVolumeNames {
+				if !volNames[name] {
+					t.Errorf("expected volume %q not found", name)
+				}
+			}
+
+			// Verify expected mount names
+			mountNames := make(map[string]bool)
+			for _, vm := range newISVC.Spec.Predictor.Containers[0].VolumeMounts {
+				mountNames[vm.Name] = true
+			}
+			for _, name := range tt.expectMountNames {
+				if !mountNames[name] {
+					t.Errorf("expected mount %q not found", name)
+				}
+			}
+		})
+	}
+}
+
+// ============================================================================
+// PLAN INFERENCE SERVICE TESTS - MUTABLE FIELD PROPAGATION
+// ============================================================================
+
+func TestPlanInferenceService_UpdatesReplicasWhenISVCExists(t *testing.T) {
+	ctx := testContext()
+
+	tests := []struct {
+		name        string
+		minReplicas *int32
+		maxReplicas *int32
+		expectMin   int32
+		expectMax   int32
+	}{
+		{
+			name:        "updated min=2, max=5",
+			minReplicas: ptr.To(int32(2)),
+			maxReplicas: ptr.To(int32(5)),
+			expectMin:   2,
+			expectMax:   5,
+		},
+		{
+			name:        "updated min=1, max=10",
+			minReplicas: ptr.To(int32(1)),
+			maxReplicas: ptr.To(int32(10)),
+			expectMin:   1,
+			expectMax:   10,
+		},
+		{
+			name:        "only min set, max defaults to min",
+			minReplicas: ptr.To(int32(3)),
+			maxReplicas: nil,
+			expectMin:   3,
+			expectMax:   3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := NewService("svc").WithModelImage("test-image:v1").Build()
+			service.Spec.MinReplicas = tt.minReplicas
+			service.Spec.MaxReplicas = tt.maxReplicas
+
+			templateSpec := &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				ModelName: testModelName,
+			}
+			templateStatus := &aimv1alpha1.AIMServiceTemplateStatus{
+				Status: constants.AIMStatusReady,
+			}
+
+			obs := ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					service: service,
+					inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+						Value: &servingv1beta1.InferenceService{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      "existing-isvc",
+								Namespace: testNamespace,
+							},
+						},
+					},
+					modelResult: ModelFetchResult{
+						Model: controllerutils.FetchResult[*aimv1alpha1.AIMModel]{
+							Value: NewModel("m").WithImage("test-image:v1").WithStatus(constants.AIMStatusReady).Build(),
+						},
+					},
+					templateCache: controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{
+						Value: &aimv1alpha1.AIMTemplateCache{
+							Status: aimv1alpha1.AIMTemplateCacheStatus{
+								Status: constants.AIMStatusReady,
+							},
+						},
+					},
+				},
+			}
+
+			result := planInferenceService(ctx, service, "test-template", templateSpec, templateStatus, obs)
+			if result == nil {
+				t.Fatal("expected InferenceService to be planned, got nil")
+			}
+
+			isvc, ok := result.(*servingv1beta1.InferenceService)
+			if !ok {
+				t.Fatalf("expected *InferenceService, got %T", result)
+			}
+
+			if isvc.Spec.Predictor.MinReplicas == nil {
+				t.Fatal("expected MinReplicas to be set")
+			}
+			if *isvc.Spec.Predictor.MinReplicas != tt.expectMin {
+				t.Errorf("expected MinReplicas=%d, got %d", tt.expectMin, *isvc.Spec.Predictor.MinReplicas)
+			}
+			if isvc.Spec.Predictor.MaxReplicas != tt.expectMax {
+				t.Errorf("expected MaxReplicas=%d, got %d", tt.expectMax, isvc.Spec.Predictor.MaxReplicas)
 			}
 		})
 	}

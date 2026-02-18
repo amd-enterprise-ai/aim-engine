@@ -78,9 +78,9 @@ type ServiceFetchResult struct {
 }
 
 // FetchRemoteState fetches all resources needed for AIMService reconciliation.
-// Fetching is optimized based on whether the InferenceService already exists:
 // - Always fetch: InferenceService, HTTPRoute, TemplateCache (for health visibility)
-// - Conditionally fetch: Model, Template (only if ISVC doesn't exist or needs recreation)
+// - Fetch when ISVC not found OR successfully fetched: Model, Template (for both creation and update)
+// - Skip on transient ISVC fetch errors: Model, Template (to avoid accidental SSA re-applies)
 func (r *ServiceReconciler) FetchRemoteState(
 	ctx context.Context,
 	c client.Client,
@@ -125,12 +125,17 @@ func (r *ServiceReconciler) FetchRemoteState(
 	// artifact status is resolved through TemplateCache.Status.Artifacts
 	result.templateCache = fetchTemplateCache(ctx, c, service)
 
-	// 4. Only fetch Model and Template if InferenceService needs to be (re)created.
-	// Once the ISVC exists, the config is baked in and we don't need these upstream resources.
-	// Use IsNotFound() rather than !OK() to avoid re-resolving when there's a transient error
-	// fetching an existing ISVC (which could cause SSA to update an existing resource).
-	if result.inferenceService.IsNotFound() {
-		logger.V(1).Info("InferenceService not found, fetching upstream resources")
+	// 4. Fetch Model and Template for both creation and update of the InferenceService.
+	// Mutable fields (replicas, autoscaling, env, resources, etc.) must propagate to an
+	// existing ISVC via SSA, so we always resolve upstream resources when the ISVC fetch
+	// succeeded (OK) or when the ISVC doesn't exist yet (NotFound).
+	// Skip only on transient fetch errors to avoid re-resolving with stale data, which
+	// could cause SSA to update an existing resource unintentionally.
+	if result.inferenceService.IsNotFound() || result.inferenceService.OK() {
+		logger.V(1).Info("Fetching upstream resources",
+			"isvcExists", result.inferenceService.OK(),
+			"isvcNotFound", result.inferenceService.IsNotFound(),
+		)
 
 		// Resolve model (handles ref, image, and custom modes)
 		result.modelResult = fetchModel(ctx, c, service)
@@ -140,7 +145,7 @@ func (r *ServiceReconciler) FetchRemoteState(
 			ctx, c, service, result.modelResult.Model, result.modelResult.ClusterModel,
 		)
 	} else {
-		logger.V(1).Info("InferenceService exists, skipping upstream resource fetch")
+		logger.V(1).Info("Transient error fetching InferenceService, skipping upstream fetch to avoid accidental changes")
 	}
 
 	return result
@@ -669,11 +674,46 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 		return health
 	}
 
+	// Template cache doesn't exist - behavior depends on caching mode and ISVC state.
+	if hasExistingCacheVolumes(obs) {
+		cachingMode := obs.service.Spec.GetCachingMode()
+		switch cachingMode {
+		case aimv1alpha1.CachingModeShared:
+			// Shared caches are not owned by the service; deletion is a true loss.
+			// The service cannot recreate them - operator or user intervention is needed.
+			health.State = constants.AIMStatusDegraded
+			health.Reason = aimv1alpha1.AIMServiceReasonCacheLost
+			health.Message = "Shared template cache was deleted but InferenceService still references cached storage volumes"
+		default:
+			// Dedicated caches are owned by the service and will be recreated
+			// by the reconciler on the next planning cycle.
+			health.State = constants.AIMStatusDegraded
+			health.Reason = aimv1alpha1.AIMServiceReasonCacheCreating
+			health.Message = "Dedicated template cache is being recreated"
+		}
+		return health
+	}
+
 	// Template cache doesn't exist yet - being created
 	health.State = constants.AIMStatusProgressing
 	health.Reason = aimv1alpha1.AIMServiceReasonCacheCreating
 	health.Message = "Creating template cache"
 	return health
+}
+
+// hasExistingCacheVolumes checks whether the existing InferenceService has
+// storage volumes beyond the base shared-memory volume, indicating it was
+// configured with cache PVC mounts that may now be orphaned.
+func hasExistingCacheVolumes(obs ServiceObservation) bool {
+	if obs.inferenceService.Value == nil {
+		return false
+	}
+	for _, v := range obs.inferenceService.Value.Spec.Predictor.Volumes {
+		if v.Name != constants.VolumeSharedMemory && v.PersistentVolumeClaim != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // ============================================================================

@@ -26,6 +26,9 @@ import (
 	"context"
 	"testing"
 
+	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	corev1 "k8s.io/api/core/v1"
+
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
@@ -373,6 +376,81 @@ func TestGetComponentHealth_CacheHealth(t *testing.T) {
 			obs: ServiceObservation{
 				ServiceFetchResult: ServiceFetchResult{
 					service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeShared).Build(),
+				},
+			},
+			expectState:  constants.AIMStatusProgressing,
+			expectReason: aimv1alpha1.AIMServiceReasonCacheCreating,
+		},
+		{
+			name: "shared cache lost - ISVC has cache PVC volumes but shared template cache gone",
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeShared).Build(),
+					inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+						Value: &servingv1beta1.InferenceService{
+							Spec: servingv1beta1.InferenceServiceSpec{
+								Predictor: servingv1beta1.PredictorSpec{
+									PodSpec: servingv1beta1.PodSpec{
+										Volumes: []corev1.Volume{
+											{Name: "dshm"},
+											{Name: "cache-vol", VolumeSource: corev1.VolumeSource{
+												PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc-1"},
+											}},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectState:  constants.AIMStatusDegraded,
+			expectReason: aimv1alpha1.AIMServiceReasonCacheLost,
+		},
+		{
+			name: "dedicated cache recreating - ISVC has cache PVC volumes but dedicated template cache gone",
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					service: NewService("svc").WithCachingMode(aimv1alpha1.CachingModeDedicated).Build(),
+					inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+						Value: &servingv1beta1.InferenceService{
+							Spec: servingv1beta1.InferenceServiceSpec{
+								Predictor: servingv1beta1.PredictorSpec{
+									PodSpec: servingv1beta1.PodSpec{
+										Volumes: []corev1.Volume{
+											{Name: "dshm"},
+											{Name: "cache-vol", VolumeSource: corev1.VolumeSource{
+												PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "pvc-1"},
+											}},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectState:  constants.AIMStatusDegraded,
+			expectReason: aimv1alpha1.AIMServiceReasonCacheCreating,
+		},
+		{
+			name: "no cache, no ISVC cache volumes - normal creating state",
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					service: NewService("svc").Build(),
+					inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+						Value: &servingv1beta1.InferenceService{
+							Spec: servingv1beta1.InferenceServiceSpec{
+								Predictor: servingv1beta1.PredictorSpec{
+									PodSpec: servingv1beta1.PodSpec{
+										Volumes: []corev1.Volume{
+											{Name: "dshm"},
+										},
+									},
+								},
+							},
+						},
+					},
 				},
 			},
 			expectState:  constants.AIMStatusProgressing,

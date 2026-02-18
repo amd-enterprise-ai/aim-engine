@@ -1,0 +1,111 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Autoscaling Update Propagation (Kind)
+#
+# This test validates that updating minReplicas/maxReplicas on an existing AIMService
+# propagates correctly to the InferenceService via SSA. This covers the bug where
+# mutable fields were not re-planned when the ISVC already existed.
+#
+# Flow:
+#   1. Create service with min=1, max=3
+#   2. Wait for ISVC to have min=1, max=3
+#   3. Update service to min=2, max=5
+#   4. Assert ISVC updates to min=2, max=5
+#
+# Uses: ghcr.io/silogen/aim-dummy:0.1.10 (lightweight test image)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-autoscaling-update
+spec:
+  description: Test that updating AIMService minReplicas/maxReplicas propagates to InferenceService
+  timeouts:
+    assert: 300s
+  steps:
+    - name: Create model
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for model to be ready (discovery complete)
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-autoscaling-update-model
+              status:
+                status: Ready
+
+    - name: Create service with initial autoscaling (min=1, max=3)
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify InferenceService has initial replica configuration
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-autoscaling-update-service
+              spec:
+                predictor:
+                  minReplicas: 1
+                  maxReplicas: 3
+
+    - name: Verify service reaches Running status with initial replicas
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-autoscaling-update-service
+              status:
+                status: Running
+                runtime:
+                  minReplicas: 1
+                  maxReplicas: 3
+
+    - name: Update service with new autoscaling values (min=2, max=5)
+      try:
+        - apply:
+            file: service-updated.yaml
+
+    - name: Verify InferenceService updates to new replica configuration
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-autoscaling-update-service
+              spec:
+                predictor:
+                  minReplicas: 2
+                  maxReplicas: 5
+
+    - name: Verify service status reflects updated replicas
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-autoscaling-update-service
+              status:
+                status: Running
+                runtime:
+                  minReplicas: 2
+                  maxReplicas: 5

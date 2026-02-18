@@ -67,6 +67,7 @@ const (
 )
 
 // AIMServiceCachingConfig controls caching behavior for a service.
+// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="caching mode is immutable after creation"
 type AIMServiceCachingConfig struct {
 	// Mode controls when to use caching.
 	// Canonical values:
@@ -83,6 +84,7 @@ type AIMServiceCachingConfig struct {
 }
 
 // AIMServiceTemplateConfig contains template selection configuration for AIMService.
+// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="template selection is immutable after creation"
 type AIMServiceTemplateConfig struct {
 	// Name is the name of the AIMServiceTemplate or AIMClusterServiceTemplate to use.
 	// The template selects the runtime profile and GPU parameters.
@@ -373,6 +375,7 @@ const (
 	AIMServiceReasonCacheNotReady = "CacheNotReady"
 	AIMServiceReasonCacheReady    = "CacheReady"
 	AIMServiceReasonCacheFailed   = "CacheFailed"
+	AIMServiceReasonCacheLost     = "CacheLost"
 
 	// Runtime
 	AIMServiceReasonCreatingRuntime = "CreatingRuntime"

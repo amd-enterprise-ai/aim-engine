@@ -1,0 +1,25 @@
+# Service with updated autoscaling configuration (min=2, max=5)
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-autoscaling-update-service
+spec:
+  model:
+    name: test-autoscaling-update-model
+
+  minReplicas: 2
+  maxReplicas: 5
+
+  autoScaling:
+    metrics:
+      - type: PodMetric
+        podmetric:
+          metric:
+            backend: "opentelemetry"
+            metricNames:
+              - vllm:num_requests_running
+            query: "vllm:num_requests_running"
+            operationOverTime: "avg"
+          target:
+            type: Value
+            value: "1"

@@ -1,0 +1,12 @@
+# Service using model.image with shared caching
+# Shared caches are NOT owned by the service and will NOT be recreated if deleted
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: cache-deleted-shared-svc
+spec:
+  model:
+    image: ghcr.io/silogen/aim-dummy:0.1.10
+  caching:
+    mode: Shared
+  replicas: 1

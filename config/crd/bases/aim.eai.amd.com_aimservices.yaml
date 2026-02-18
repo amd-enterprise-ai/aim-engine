@@ -212,6 +212,9 @@ spec:
                     - Never
                     type: string
                 type: object
+                x-kubernetes-validations:
+                - message: caching mode is immutable after creation
+                  rule: self == oldSelf
               env:
                 description: |-
                   Env specifies environment variables for inference containers.
@@ -1179,6 +1182,9 @@ spec:
                       When not specified, a template will be automatically selected based on the model.
                     type: string
                 type: object
+                x-kubernetes-validations:
+                - message: template selection is immutable after creation
+                  rule: self == oldSelf
             required:
             - model
             type: object

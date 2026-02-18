@@ -1,0 +1,12 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: test-autoscaling-update-model
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.9
+  resources:
+    limits:
+      memory: 1Gi
+    requests:
+      memory: 100Mi
+      cpu: 100m

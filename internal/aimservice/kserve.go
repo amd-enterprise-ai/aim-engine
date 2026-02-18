@@ -145,8 +145,17 @@ func planInferenceService(
 	return buildInferenceService(service, templateName, templateSpec, templateStatus, obs)
 }
 
-// isReadyForInferenceService checks if all prerequisites are met to create the InferenceService.
+// isReadyForInferenceService checks if all prerequisites are met to create or update the InferenceService.
 func isReadyForInferenceService(_ *aimv1alpha1.AIMService, obs ServiceObservation) bool {
+	// If the ISVC already exists, we're on the update path - always proceed.
+	// Mutable fields (replicas, autoscaling, env, resources, etc.) should propagate
+	// even if model or cache are transiently unhealthy.
+	if obs.inferenceService.OK() && obs.inferenceService.Value != nil {
+		return true
+	}
+
+	// Creation path: check model and cache readiness before creating ISVC.
+
 	// Check model is ready
 	modelReady := false
 	if obs.modelResult.Model.Value != nil {
@@ -312,8 +321,16 @@ func buildInferenceService(
 		applyNodeAffinity(inferenceService, templateStatus.ResolvedNodeAffinity)
 	}
 
-	// Add storage volumes (cache or PVC)
-	addStorageVolumes(inferenceService, obs)
+	// Add storage volumes (cache or PVC).
+	// On the update path (ISVC already exists), preserve the existing volume spec
+	// rather than re-resolving from artifacts. Artifacts or their PVCs may be
+	// transiently unavailable, and re-resolving would cause SSA to strip the
+	// storage volumes off the running ISVC.
+	if obs.inferenceService.OK() && obs.inferenceService.Value != nil {
+		preserveExistingStorageVolumes(inferenceService, obs.inferenceService.Value)
+	} else {
+		addStorageVolumes(inferenceService, obs)
+	}
 
 	return inferenceService
 }
@@ -515,34 +532,29 @@ func configureReplicasAndAutoscaling(isvc *servingv1beta1.InferenceService, serv
 }
 
 // disableHPA sets autoscaler to none to prevent HPA creation.
+// Always overwrites the annotation so that switching from autoscaling (keda)
+// to fixed replicas correctly updates the autoscaler class.
 func disableHPA(isvc *servingv1beta1.InferenceService) {
 	if isvc.Annotations == nil {
 		isvc.Annotations = make(map[string]string)
 	}
-	if _, exists := isvc.Annotations[constants.AnnotationKServeAutoscalerClass]; !exists {
-		isvc.Annotations[constants.AnnotationKServeAutoscalerClass] = constants.AutoscalerClassNone
-	}
+	isvc.Annotations[constants.AnnotationKServeAutoscalerClass] = constants.AutoscalerClassNone
 }
 
 // injectAutoscalingAnnotations adds required annotations for KEDA autoscaling.
 // This includes KEDA autoscaler class, OpenTelemetry sidecar injection, and Prometheus metrics port.
+// Always overwrites annotations so that switching from fixed replicas to autoscaling
+// correctly updates the autoscaler class and related annotations.
 func injectAutoscalingAnnotations(isvc *servingv1beta1.InferenceService) {
 	if isvc.Annotations == nil {
 		isvc.Annotations = make(map[string]string)
 	}
 
-	// Add KEDA autoscaler class annotation if not already present
-	if _, exists := isvc.Annotations[constants.AnnotationKServeAutoscalerClass]; !exists {
-		isvc.Annotations[constants.AnnotationKServeAutoscalerClass] = constants.AutoscalerClassKeda
-	}
+	isvc.Annotations[constants.AnnotationKServeAutoscalerClass] = constants.AutoscalerClassKeda
 
-	// Add OpenTelemetry sidecar injection annotation if not already present
-	if _, exists := isvc.Annotations[constants.AnnotationOTelSidecarInject]; !exists {
-		predictorName := isvc.Name + constants.PredictorServiceSuffix
-		isvc.Annotations[constants.AnnotationOTelSidecarInject] = predictorName
-	}
+	predictorName := isvc.Name + constants.PredictorServiceSuffix
+	isvc.Annotations[constants.AnnotationOTelSidecarInject] = predictorName
 
-	// Add Prometheus metrics port annotation if not already present
 	if _, exists := isvc.Annotations[constants.AnnotationPrometheusPort]; !exists {
 		isvc.Annotations[constants.AnnotationPrometheusPort] = constants.DefaultPrometheusPort
 	}
@@ -626,6 +638,40 @@ func addStorageVolumes(isvc *servingv1beta1.InferenceService, obs ServiceObserva
 		}
 
 		addResolvedCacheMount(isvc, container, resolvedCache)
+	}
+}
+
+// preserveExistingStorageVolumes copies storage volumes and volume mounts from the existing
+// InferenceService onto the new one being built for SSA. This is used on the update path
+// to avoid re-resolving from artifacts, which may be transiently unavailable.
+// Only non-base volumes are copied (the shared memory volume is already in the new ISVC).
+func preserveExistingStorageVolumes(newISVC, existingISVC *servingv1beta1.InferenceService) {
+	if len(newISVC.Spec.Predictor.Containers) == 0 || len(existingISVC.Spec.Predictor.Containers) == 0 {
+		return
+	}
+
+	// Copy volumes from existing ISVC that are not already present in the new one
+	existingVolumeNames := make(map[string]bool)
+	for _, v := range newISVC.Spec.Predictor.Volumes {
+		existingVolumeNames[v.Name] = true
+	}
+	for _, v := range existingISVC.Spec.Predictor.Volumes {
+		if !existingVolumeNames[v.Name] {
+			newISVC.Spec.Predictor.Volumes = append(newISVC.Spec.Predictor.Volumes, *v.DeepCopy())
+		}
+	}
+
+	// Copy volume mounts from existing container that are not already present
+	newContainer := &newISVC.Spec.Predictor.Containers[0]
+	existingMountNames := make(map[string]bool)
+	for _, vm := range newContainer.VolumeMounts {
+		existingMountNames[vm.Name] = true
+	}
+	existingContainer := &existingISVC.Spec.Predictor.Containers[0]
+	for _, vm := range existingContainer.VolumeMounts {
+		if !existingMountNames[vm.Name] {
+			newContainer.VolumeMounts = append(newContainer.VolumeMounts, *vm.DeepCopy())
+		}
 	}
 }
 

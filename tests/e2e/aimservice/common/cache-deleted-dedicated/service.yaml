@@ -1,0 +1,12 @@
+# Service using model.image with dedicated caching
+# Dedicated caches are owned by the service and will be recreated if deleted
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: cache-deleted-dedicated-svc
+spec:
+  model:
+    image: ghcr.io/silogen/aim-dummy:0.1.10
+  caching:
+    mode: Dedicated
+  replicas: 1

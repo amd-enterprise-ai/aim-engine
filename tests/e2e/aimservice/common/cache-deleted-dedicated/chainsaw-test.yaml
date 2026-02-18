@@ -1,0 +1,156 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Dedicated Cache Deleted - Recovers
+#
+# Validates that when a dedicated AIMTemplateCache is deleted:
+# 1. The InferenceService preserves its PVC volume mounts (no disruption)
+# 2. The AIMService status shows CacheCreating while the cache is recreated
+# 3. The dedicated cache is automatically recreated (owned by the service)
+# 4. The AIMService recovers to Running once the cache is ready again
+#
+# Note: This test requires external network access for model downloads.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-cache-deleted-dedicated
+  labels:
+    requires: external-network
+spec:
+  description: Test that deleting a dedicated template cache triggers recreation and service recovery
+  timeouts:
+    assert: 300s
+  steps:
+    - name: Create service with dedicated caching
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Wait for template cache to become Ready
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: cache-deleted-dedicated-svc
+              status:
+                status: Ready
+
+    - name: Verify AIMService reaches Running with cache ready
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: cache-deleted-dedicated-svc
+              status:
+                status: Running
+                (conditions[?type == 'CacheReady']):
+                  - status: "True"
+                    reason: CacheReady
+
+    - name: Verify InferenceService has PVC volume from cache
+      try:
+        - script:
+            timeout: 60s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              PVC_COUNT=$(kubectl get inferenceservice -n "${NAMESPACE}" \
+                -l aim.eai.amd.com/service=cache-deleted-dedicated-svc \
+                -o jsonpath='{range .items[*].spec.predictor.volumes[*]}{.persistentVolumeClaim.claimName}{"\n"}{end}' \
+                | grep -c .)
+              echo "Found ${PVC_COUNT} PVC volume(s) on InferenceService"
+              [ "${PVC_COUNT}" -ge 1 ]
+
+    - name: Verify InferenceService is ready before cache deletion
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: cache-deleted-dedicated-svc
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: Delete the template cache and artifacts
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              kubectl delete aimartifact -n "${NAMESPACE}" \
+                -l aim.eai.amd.com/service.name=cache-deleted-dedicated-svc
+              kubectl delete aimtemplatecache -n "${NAMESPACE}" \
+                -l aim.eai.amd.com/service.name=cache-deleted-dedicated-svc
+
+    - name: Verify InferenceService still has PVC volumes after cache deletion
+      try:
+        - script:
+            timeout: 60s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              PVC_COUNT=$(kubectl get inferenceservice -n "${NAMESPACE}" \
+                -l aim.eai.amd.com/service=cache-deleted-dedicated-svc \
+                -o jsonpath='{range .items[*].spec.predictor.volumes[*]}{.persistentVolumeClaim.claimName}{"\n"}{end}' \
+                | grep -c .)
+              echo "Found ${PVC_COUNT} PVC volume(s) on InferenceService after cache deletion"
+              [ "${PVC_COUNT}" -ge 1 ]
+
+    - name: Verify service status reflects cache recreating (not degraded)
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: cache-deleted-dedicated-svc
+              status:
+                (conditions[?type == 'CacheReady']):
+                  - status: "False"
+                    reason: CacheCreating
+
+    - name: Wait for dedicated cache to be recreated and become Ready
+      try:
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: cache-deleted-dedicated-svc
+              status:
+                status: Ready
+
+    - name: Verify service recovers to Running after cache recreation
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: cache-deleted-dedicated-svc
+              status:
+                status: Running
+                (conditions[?type == 'CacheReady']):
+                  - status: "True"
+                    reason: CacheReady
