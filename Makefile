@@ -1,13 +1,15 @@
 # Image URL to use all building/pushing image targets
 TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "latest")
-IMG ?= ghcr.io/silogen/aim-engine:$(TAG)
+GIT_ORG ?= $(shell git remote get-url origin 2>/dev/null | sed -n 's|.*github\.com[:/]\([^/]*\)/.*|\1|p')
+IMG ?= ghcr.io/$(GIT_ORG)/aim-engine:$(TAG)
 
 # Helm chart configuration
 CHART_NAME ?= aim-engine
+CRDS_CHART_NAME ?= aim-engine-crds
 CHART_VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.1.0")
 APP_VERSION ?= $(TAG)
 CHART_OCI_REGISTRY ?= ghcr.io
-CHART_OCI_OWNER ?= silogen
+CHART_OCI_OWNER ?= $(GIT_ORG)
 CHART_OCI_REPO ?= oci://$(CHART_OCI_REGISTRY)/$(CHART_OCI_OWNER)/charts
 
 # Cluster environment configuration
@@ -332,6 +334,22 @@ helm-package: helm ## Package the Helm chart into a .tgz file.
 helm-push-oci: ## Push Helm chart to OCI registry (requires helm-package first).
 	@echo "Pushing Helm chart to OCI registry $(CHART_OCI_REPO)..."
 	helm push dist/$(CHART_NAME)-$(CHART_VERSION).tgz $(CHART_OCI_REPO)
+
+.PHONY: crds-package
+crds-package: crds ## Package CRDs as a Helm chart .tgz for OCI distribution.
+	@echo "Packaging CRDs as Helm chart with version $(CHART_VERSION)..."
+	@rm -rf dist/crds-chart
+	@mkdir -p dist/crds-chart/templates
+	@printf 'apiVersion: v2\nname: %s\ndescription: CRDs for aim-engine operator\ntype: application\nversion: %s\nappVersion: "%s"\n' \
+		"$(CRDS_CHART_NAME)" "$(CHART_VERSION)" "$(APP_VERSION)" > dist/crds-chart/Chart.yaml
+	@cp dist/crds.yaml dist/crds-chart/templates/crds.yaml
+	helm package dist/crds-chart --version=$(CHART_VERSION) --app-version=$(APP_VERSION) --destination=dist/
+	@echo "CRDs chart packaged at dist/$(CRDS_CHART_NAME)-$(CHART_VERSION).tgz"
+
+.PHONY: crds-push-oci
+crds-push-oci: ## Push CRDs Helm chart to OCI registry (requires crds-package first).
+	@echo "Pushing CRDs chart to OCI registry $(CHART_OCI_REPO)..."
+	helm push dist/$(CRDS_CHART_NAME)-$(CHART_VERSION).tgz $(CHART_OCI_REPO)
 
 ##@ Deployment
 
