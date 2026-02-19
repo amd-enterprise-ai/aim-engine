@@ -1,0 +1,92 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: Custom Model with Non-Existent Image
+#
+# Tests two scenarios:
+#
+# Phase 1 - Image validation for custom models:
+#   Custom models must have their image validated (pullable) just like
+#   regular models. A non-existent image should cause the AIMModel to
+#   transition to Degraded (not Failed, since some components like
+#   RuntimeConfig are still healthy). A manually-created template
+#   referencing that model should also go Degraded.
+#
+#   Note: The model controller's Apply phase is blocked by the infra
+#   error from the image fetch, so it won't auto-generate templates.
+#   We create one explicitly to verify the template's model health check.
+#
+# Phase 2 - Circular dependency avoidance:
+#   Simulates the deadlock scenario: if a model is Degraded/Failed ONLY
+#   because its templates are failing (ServiceTemplatesReady=False), the
+#   template should ignore that model failure and recover to Ready. This
+#   prevents a circular dependency where model and template keep each
+#   other in a degraded/failed state.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: custom-model-nonexistent-image
+  labels:
+    requires: gpu
+spec:
+  timeouts:
+    apply: 30s
+    assert: 120s
+  steps:
+    # ── Phase 1: Non-existent image causes degradation ────────────────────
+    - name: Create custom model with non-existent image and a template
+      try:
+        - apply:
+            file: model.yaml
+        - apply:
+            file: template.yaml
+
+    - name: Assert AIMModel transitions to Degraded with ImageMetadataReady=False
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: custom-model-nonexistent
+              status:
+                status: Degraded
+                sourceType: Custom
+                (conditions[?type == 'ImageMetadataReady']):
+                  - status: "False"
+
+    - name: Assert AIMServiceTemplate also transitions to Degraded
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: custom-model-nonexistent-tpl
+              status:
+                status: Degraded
+
+    # ── Phase 2: Circular dependency avoidance ──────────────────────────
+    - name: Freeze model and patch status to template-only failure
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh model-template-only-failure.yaml \
+                --status-only --freeze -n $NAMESPACE
+
+    - name: Assert AIMServiceTemplate recovers (ignores template-only model failure)
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: custom-model-nonexistent-tpl
+              status:
+                status: Ready

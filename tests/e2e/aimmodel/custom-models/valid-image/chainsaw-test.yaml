@@ -1,0 +1,52 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: Custom Model with Valid Image
+#
+# Validates that a custom model pointing at an existing, pullable image
+# successfully transitions to Ready, along with its auto-generated
+# AIMServiceTemplate.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: custom-model-valid-image
+  labels:
+    requires: gpu
+spec:
+  timeouts:
+    apply: 30s
+    assert: 120s
+  steps:
+    - name: Create custom model with valid image
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert AIMModel becomes Ready with ImageMetadataReady=True
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: custom-model-valid
+              status:
+                status: Ready
+                sourceType: Custom
+                (conditions[?type == 'ImageMetadataReady']):
+                  - status: "True"
+                    reason: ImageFound
+
+    - name: Assert AIMServiceTemplate becomes Ready
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: custom-model-valid
+              status:
+                status: Ready

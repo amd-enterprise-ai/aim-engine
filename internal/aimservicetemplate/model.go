@@ -26,9 +26,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -154,6 +156,12 @@ func GetModelLookupHealth(result *ModelLookupResult) controllerutils.ComponentHe
 
 // GetModelHealth inspects an AIMModel to determine component health.
 // Used by ServiceTemplateReconciler to check upstream model availability.
+//
+// To avoid circular dependency deadlocks (model status depends on template status,
+// template status depends on model status), we only propagate model failures that
+// are NOT caused by template failures. If the model is Failed/Degraded solely because
+// its templates are failing (ServiceTemplatesReady=False), we ignore it — otherwise
+// the template and model would keep each other in a failed state permanently.
 func GetModelHealth(model *aimv1alpha1.AIMModel) controllerutils.ComponentHealth {
 	if model == nil {
 		return controllerutils.ComponentHealth{
@@ -171,6 +179,15 @@ func GetModelHealth(model *aimv1alpha1.AIMModel) controllerutils.ComponentHealth
 		}
 	}
 
+	if isModelUnhealthy(model.Status.Status) &&
+		hasNonTemplateFailure(model.Status.Conditions, "ServiceTemplates") {
+		return controllerutils.ComponentHealth{
+			State:   model.Status.Status,
+			Reason:  "ModelFailed",
+			Message: fmt.Sprintf("AIMModel is in %s state", model.Status.Status),
+		}
+	}
+
 	return controllerutils.ComponentHealth{
 		State:   constants.AIMStatusReady,
 		Reason:  "ModelFound",
@@ -180,6 +197,7 @@ func GetModelHealth(model *aimv1alpha1.AIMModel) controllerutils.ComponentHealth
 
 // GetClusterModelHealth inspects an AIMClusterModel to determine component health.
 // Used by ClusterServiceTemplateReconciler to check upstream model availability.
+// See GetModelHealth for the circular dependency avoidance rationale.
 func GetClusterModelHealth(model *aimv1alpha1.AIMClusterModel) controllerutils.ComponentHealth {
 	if model == nil {
 		return controllerutils.ComponentHealth{
@@ -194,6 +212,15 @@ func GetClusterModelHealth(model *aimv1alpha1.AIMClusterModel) controllerutils.C
 			State:   constants.AIMStatusFailed,
 			Reason:  "ImageNotSpecified",
 			Message: "Cluster model does not specify an image",
+		}
+	}
+
+	if isModelUnhealthy(model.Status.Status) &&
+		hasNonTemplateFailure(model.Status.Conditions, "ClusterServiceTemplates") {
+		return controllerutils.ComponentHealth{
+			State:   model.Status.Status,
+			Reason:  "ClusterModelFailed",
+			Message: fmt.Sprintf("AIMClusterModel is in %s state", model.Status.Status),
 		}
 	}
 
@@ -212,4 +239,30 @@ func copyImagePullSecrets(secrets []corev1.LocalObjectReference) []corev1.LocalO
 	result := make([]corev1.LocalObjectReference, len(secrets))
 	copy(result, secrets)
 	return result
+}
+
+// isModelUnhealthy returns true if the model status indicates a problem that
+// should be propagated to templates (Failed or Degraded).
+func isModelUnhealthy(status constants.AIMStatus) bool {
+	return status == constants.AIMStatusFailed || status == constants.AIMStatusDegraded
+}
+
+// hasNonTemplateFailure checks whether a model has Failed for reasons other than
+// its own templates failing. This prevents a circular dependency where templates
+// and models keep each other in Failed state.
+//
+// templateComponent is the component name to skip (e.g. "ServiceTemplates" or
+// "ClusterServiceTemplates"). The derived condition type "Ready" is also skipped
+// since it's the overall rollup.
+func hasNonTemplateFailure(conditions []metav1.Condition, templateComponent string) bool {
+	templateCondition := templateComponent + controllerutils.ComponentConditionSuffix
+	for _, c := range conditions {
+		if c.Type == controllerutils.ConditionTypeReady || c.Type == templateCondition {
+			continue
+		}
+		if strings.HasSuffix(c.Type, controllerutils.ComponentConditionSuffix) && c.Status == metav1.ConditionFalse {
+			return true
+		}
+	}
+	return false
 }

@@ -1,0 +1,49 @@
+# AIMModel with status set to Failed ONLY because of ServiceTemplatesReady=False.
+# All other component conditions are True.
+# Used to simulate the circular dependency / deadlock scenario:
+# if the template sees this model as "Failed", but the failure is only
+# template-related, it should ignore the failure and recover.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: custom-model-nonexistent
+spec:
+  image: amdenterpriseai/aim-base:0
+
+  modelSources:
+    - modelId: test/nonexistent
+      sourceUri: hf://test/nonexistent
+      size: 100Mi
+
+  custom:
+    hardware:
+      gpu:
+        requests: 1
+        model: MI300X
+
+  customTemplates:
+    - name: default
+
+status:
+  status: Failed
+  conditions:
+    - type: RuntimeConfigReady
+      status: "True"
+      reason: RuntimeConfigNotReferenced
+      message: No RuntimeConfig referenced
+      lastTransitionTime: "2025-01-01T00:00:00Z"
+    - type: ImageMetadataReady
+      status: "True"
+      reason: ImageFound
+      message: Image found in registry
+      lastTransitionTime: "2025-01-01T00:00:00Z"
+    - type: ServiceTemplatesReady
+      status: "False"
+      reason: AllTemplatesFailed
+      message: All templates are degraded or failed
+      lastTransitionTime: "2025-01-01T00:00:00Z"
+    - type: Ready
+      status: "False"
+      reason: AllTemplatesFailed
+      message: All templates are degraded or failed
+      lastTransitionTime: "2025-01-01T00:00:00Z"

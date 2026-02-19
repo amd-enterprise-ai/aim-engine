@@ -1,0 +1,22 @@
+# Custom model pointing at a non-existent image tag.
+# The AIMModel should fail because the image cannot be pulled/inspected.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: custom-model-nonexistent
+spec:
+  image: amdenterpriseai/aim-base:0
+
+  modelSources:
+    - modelId: test/nonexistent
+      sourceUri: hf://test/nonexistent
+      size: 100Mi
+
+  custom:
+    hardware:
+      gpu:
+        requests: 1
+        model: MI300X
+
+  customTemplates:
+    - name: default

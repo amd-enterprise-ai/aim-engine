@@ -100,16 +100,8 @@ func (result ClusterModelFetchResult) GetComponentHealth() []controllerutils.Com
 
 	health := []controllerutils.ComponentHealth{runtimeConfigHealth}
 
-	// Only report image metadata health for non-custom models
-	if !IsCustomModel(&result.model.Spec) {
-		imageMetadataHealth := result.imageMetadata.ToUpstreamComponentHealth("ImageMetadata", func(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
-			return controllerutils.ComponentHealth{
-				State:  constants.AIMStatusReady,
-				Reason: "ImageMetadataFound",
-			}
-		})
-		health = append(health, imageMetadataHealth)
-	}
+	imageMetadataHealth := result.imageMetadata.ToUpstreamComponentHealth("ImageMetadata", inspectImageMetadataHealth)
+	health = append(health, imageMetadataHealth)
 
 	health = append(health, clusterServiceTemplateHealth)
 	return health
@@ -137,16 +129,8 @@ func (result ModelFetchResult) GetComponentHealth() []controllerutils.ComponentH
 	runtimeConfigHealth := result.mergedRuntimeConfig.ToComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth)
 	health := []controllerutils.ComponentHealth{runtimeConfigHealth}
 
-	// Only report image metadata health for non-custom models
-	if !IsCustomModel(&result.model.Spec) {
-		imageMetadataHealth := result.imageMetadata.ToComponentHealth("ImageMetadata", func(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
-			return controllerutils.ComponentHealth{
-				State:  constants.AIMStatusReady,
-				Reason: "ImageMetadataFound",
-			}
-		})
-		health = append(health, imageMetadataHealth)
-	}
+	imageMetadataHealth := result.imageMetadata.ToComponentHealth("ImageMetadata", inspectImageMetadataHealth)
+	health = append(health, imageMetadataHealth)
 
 	serviceTemplateHealth := result.serviceTemplates.ToComponentHealth("ServiceTemplates", func(list *aimv1alpha1.AIMServiceTemplateList) controllerutils.ComponentHealth {
 		return inspectServiceTemplateStatuses(
@@ -202,6 +186,22 @@ func inspectServiceTemplateStatuses(expectsTemplates *bool, templates []aimv1alp
 // =========
 // SHARED
 // =========
+
+// inspectImageMetadataHealth returns the component health for a fetched image metadata result.
+// If the image contains model metadata (canonicalName), reports "ImageMetadataFound".
+// Otherwise the image was accessible but had no model metadata — reports "ImageFound".
+func inspectImageMetadataHealth(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
+	if metadata != nil && metadata.Model != nil && metadata.Model.CanonicalName != "" {
+		return controllerutils.ComponentHealth{
+			State:  constants.AIMStatusReady,
+			Reason: "ImageMetadataFound",
+		}
+	}
+	return controllerutils.ComponentHealth{
+		State:  constants.AIMStatusReady,
+		Reason: "ImageFound",
+	}
+}
 
 // aggregateTemplateStatuses aggregates template statuses into a single ComponentState.
 // expectsTemplates indicates whether templates are expected (nil = unknown/still fetching).
@@ -297,11 +297,13 @@ func aggregateTemplateStatuses(expectsTemplates *bool, statuses []constants.AIMS
 
 // fetchImageMetadata determines how to obtain image metadata for a model.
 // It handles these cases:
-//  0. Custom model (has modelSources) - skip fetch entirely, templates are built from CustomTemplates
 //  1. Extraction explicitly disabled - skip fetch entirely
 //  2. Spec-provided metadata (air-gapped environments) - returns the spec value directly
 //  3. Already cached in status - returns empty result (no fetch needed)
 //  4. Needs remote fetch - calls inspectImage to fetch from registry
+//
+// For custom models (with modelSources), the fetched metadata is used only for
+// image validation — templates are still built from customTemplates in PlanResources.
 func fetchImageMetadata(
 	ctx context.Context,
 	clientset kubernetes.Interface,
@@ -309,13 +311,6 @@ func fetchImageMetadata(
 	status *aimv1alpha1.AIMModelStatus,
 	secretNamespace string,
 ) controllerutils.FetchResult[*aimv1alpha1.ImageMetadata] {
-	// Case 0: Custom model - skip image metadata extraction entirely
-	// Custom models use spec.CustomTemplates instead of discovered templates
-	if IsCustomModel(&spec) {
-		log.FromContext(ctx).V(1).Info("custom model detected, skipping image metadata extraction")
-		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{}
-	}
-
 	// Case 1: Extraction explicitly disabled - skip fetch entirely
 	if spec.Discovery != nil && !spec.Discovery.ExtractMetadata {
 		log.FromContext(ctx).V(1).Info("metadata extraction disabled in spec")

@@ -1,0 +1,18 @@
+# Manually-created AIMServiceTemplate referencing the custom model with a
+# non-existent image. Simulates what a user would create (or what the model
+# controller would auto-generate if Apply weren't blocked by infra errors).
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: custom-model-nonexistent-tpl
+spec:
+  modelName: custom-model-nonexistent
+  type: unoptimized
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+  modelSources:
+    - modelId: test/nonexistent
+      sourceUri: hf://test/nonexistent
+      size: 100Mi
