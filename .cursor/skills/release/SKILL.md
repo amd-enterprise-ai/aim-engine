@@ -1,0 +1,1 @@
+../../../hack/release/SKILL.md

@@ -351,6 +351,18 @@ crds-push-oci: ## Push CRDs Helm chart to OCI registry (requires crds-package fi
 	@echo "Pushing CRDs chart to OCI registry $(CHART_OCI_REPO)..."
 	helm push dist/$(CRDS_CHART_NAME)-$(CHART_VERSION).tgz $(CHART_OCI_REPO)
 
+##@ Release
+
+.PHONY: release-prep
+release-prep: ## Create release branch and generate context. Usage: make release-prep VERSION=v0.2.0
+	@test -n "$(VERSION)" || { echo "Usage: make release-prep VERSION=vX.Y.Z"; exit 1; }
+	@bash hack/release/prep.sh $(VERSION)
+
+.PHONY: release
+release: ## Tag and push a release. Usage: make release VERSION=v0.2.0 [YES=1]
+	@test -n "$(VERSION)" || { echo "Usage: make release VERSION=vX.Y.Z"; exit 1; }
+	@bash hack/release/release.sh $(VERSION) $(if $(YES),--yes)
+
 ##@ Deployment
 
 ifndef ignore-not-found

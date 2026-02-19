@@ -214,6 +214,33 @@ The downloader supports simulation mode for testing without real network calls:
 
 Simulation mode writes small dummy data on success and skips `hf cache verify`. Used by chainsaw tests in `tests/e2e/aimartifact/protocol-switching/`.
 
+## Releasing
+
+### Release workflow
+
+```bash
+# 1. Create release branch and generate context (must be on main)
+mise exec -- make release-prep VERSION=v0.2.0
+#    Creates branch release/v0.2.0 and .tmp/release-context/
+
+# 2. Ask AI agent to generate release notes
+#    Agent reads .tmp/release-context/ and updates CHANGELOG.md
+
+# 3. Review CHANGELOG.md, commit, push, open PR to main
+
+# 4. After PR is merged, switch to main and pull
+git checkout main && git pull
+
+# 5. Tag and push
+mise exec -- make release VERSION=v0.2.0
+```
+
+`make release-prep` creates a `release/vX.Y.Z` branch from main and generates diff context in `.tmp/release-context/`. The changelog update goes through a normal PR review. `make release` (run from main after merge) creates the git tag and pushes to origin.
+
+### Release notes with AI agent
+
+`hack/release/SKILL.md` covers the full release lifecycle (prep, changelog generation, tagging). It works with any AI agent. Cursor auto-discovers it as a skill via symlink at `.cursor/skills/release/`.
+
 ## Key Files
 
 - `cmd/main.go` - Entry point, controller setup, scheme registration
