@@ -5,7 +5,7 @@
 # see https://git-scm.com/docs/gitignore#_pattern_format.
 
 
-.github/CODEOWNERS @AVSuni @salexo @bjorn-amd
+.github/CODEOWNERS @AVSuni @salexo @bjorn-amd @williamanzen
 
-*.go @AVSuni @salexo @bjorn-amd
+*.go @AVSuni @salexo @bjorn-amd @williamanzen
 
