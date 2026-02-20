@@ -135,7 +135,7 @@ Redis is the default and currently only supported backend. It provides:
 ### Example
 
 ```
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: llama-with-custom-kvcache
@@ -165,6 +165,6 @@ Note that {SERVICE_URL} placeholder will automatically be updated with the prope
 
 ## See Also
 
-- [KV Cache Usage Guide](../usage/kv-cache.md) - Practical examples and configuration
-- [Deploying Inference Services](../usage/services.md) - AIMService configuration
+- [KV Cache Usage Guide](../guides/kv-cache.md) - Practical examples and configuration
+- [Deploying Inference Services](../guides/deploying-services.md) - AIMService configuration
 - [Runtime Configuration](runtime-config.md) - Additional service configuration

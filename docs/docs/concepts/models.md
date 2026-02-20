@@ -36,7 +36,7 @@ When both cluster and namespace models exist with the same `metadata.name`, the 
 An AIM Model uses `metadata.name` as the canonical model identifier:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModel
 metadata:
   name: meta-llama-3-8b-instruct
@@ -163,7 +163,7 @@ This allows namespace models to override cluster baselines.
 ### Cluster Model with Discovery
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModel
 metadata:
   name: meta-llama-3-8b-instruct
@@ -187,7 +187,7 @@ spec:
 ### Namespace Model Without Discovery
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMModel
 metadata:
   name: meta-llama-3-8b-dev
@@ -218,7 +218,7 @@ data:
   .dockerconfigjson: BASE64_CONFIG
 ---
 # Runtime config in namespace
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMRuntimeConfig
 metadata:
   name: default
@@ -229,7 +229,7 @@ spec:
     - name: private-registry
 ---
 # Model with discovery
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMModel
 metadata:
   name: proprietary-model
@@ -314,7 +314,7 @@ spec:
 Service using direct image reference:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: my-service
@@ -328,7 +328,7 @@ spec:
 If the runtime config has `creationScope: Cluster` and `autoDiscovery: true`, AIM creates:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModel
 metadata:
   name: auto-<hash-of-image>
@@ -361,7 +361,7 @@ There are two ways to create custom models:
 Create an AIMModel or AIMClusterModel with `modelSources` instead of relying on image discovery:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMModel
 metadata:
   name: my-custom-llama
@@ -385,7 +385,7 @@ spec:
 Create an AIMService with `spec.model.custom` to auto-create a custom model:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: my-llama-service
@@ -501,7 +501,7 @@ spec:
     name: my-custom-model-custom-abc123  # Explicit template name
 ```
 
-This safety mechanism prevents accidentally deploying unoptimized configurations in production. See [Template Selection](service.md#template-selection) for more details on how templates are selected and the role of optimization levels.
+This safety mechanism prevents accidentally deploying unoptimized configurations in production. See [Template Selection](services.md#template-selection) for more details on how templates are selected and the role of optimization levels.
 
 ### Authentication
 
@@ -583,7 +583,7 @@ stringData:
   token: hf_xxxxxxxxxxxxx
 ---
 # Custom model service
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: llama-custom
@@ -615,7 +615,7 @@ spec:
 
 - [Templates](templates.md) - Understanding ServiceTemplates and discovery
 - [Runtime Config Concepts](runtime-config.md) - Resolution details including model creation
-- [Services Usage](../usage/services.md) - Deploying services
+- [Services Usage](../guides/deploying-services.md) - Deploying services
 - [Caching](caching.md) - Model caching and download architecture
 
 ## Note on Terminology

@@ -17,7 +17,7 @@ Key features:
 ## Basic Example
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModelSource
 metadata:
   name: silogen-models
@@ -180,7 +180,7 @@ type: kubernetes.io/dockerconfigjson
 data:
   .dockerconfigjson: BASE64_CONFIG
 ---
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModelSource
 metadata:
   name: private-models
@@ -311,7 +311,7 @@ Key status fields:
 ### Docker Hub with Wildcards
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModelSource
 metadata:
   name: dockerhub-models
@@ -327,7 +327,7 @@ spec:
 ### GitHub Container Registry with Version Constraints
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModelSource
 metadata:
   name: ghcr-stable-models
@@ -345,7 +345,7 @@ spec:
 ### Multiple Registries
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModelSource
 metadata:
   name: multi-registry-models
@@ -369,7 +369,7 @@ type: kubernetes.io/dockerconfigjson
 data:
   .dockerconfigjson: BASE64_ENCODED_CONFIG
 ---
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModelSource
 metadata:
   name: private-models
@@ -387,7 +387,7 @@ spec:
 ### Specific Versions Only
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModelSource
 metadata:
   name: specific-versions

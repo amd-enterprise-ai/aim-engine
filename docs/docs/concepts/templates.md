@@ -38,7 +38,7 @@ Namespace-scoped templates are created by ML engineers and data scientists for c
 ## Template Specification
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
 metadata:
   name: llama-3-8b-throughput
@@ -157,7 +157,7 @@ This is useful when:
 **Example with static sources:**
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
 metadata:
   name: llama-3-8b-static
@@ -216,7 +216,7 @@ When `AIMService.spec.overrides` is specified:
 5. **Creation**: If no match exists, a new namespace-scoped template is created with:
    - **Labels**:
      - `app.kubernetes.io/managed-by: aim`
-     - `aim.silogen.ai/derived-template: "true"`
+     - `aim.eai.amd.com/derived-template: "true"`
    - **Ownership**: The service owns the derived template (OwnerReference set)
    - **Cascade Deletion**: Deleting the service automatically deletes the derived template
 
@@ -226,7 +226,7 @@ When `AIMService.spec.overrides` is specified:
 
 **Important notes:**
 - Derived templates are always created in the service's namespace, even if the base template is cluster-scoped
-- The `aim.silogen.ai/derived-template: "true"` label distinguishes auto-created templates from manually created ones
+- The `aim.eai.amd.com/derived-template: "true"` label distinguishes auto-created templates from manually created ones
 - Deterministic SHA256 naming prevents duplicate templates and enables template reuse across reconciliations
 - Services can reference derived templates by name after they're created, but this is not recommended as names may change
 
@@ -235,7 +235,7 @@ When `AIMService.spec.overrides` is specified:
 Service with overrides:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: chat-service
@@ -252,14 +252,14 @@ spec:
 Derived template created:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
 metadata:
   name: base-template-ovr-8fa3c921
   namespace: ml-team
   labels:
     app.kubernetes.io/managed-by: aim
-    aim.silogen.ai/derived-template: "true"
+    aim.eai.amd.com/derived-template: "true"
 spec:
   modelName: meta-llama-3-8b
   metric: throughput     # from override
@@ -354,7 +354,7 @@ If zero or multiple candidates remain, the service reports a failure condition e
 ### Cluster Template - Latency Optimized
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterServiceTemplate
 metadata:
   name: llama-3-8b-latency
@@ -372,7 +372,7 @@ spec:
 ### Namespace Template
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
 metadata:
   name: llama-3-8b-throughput
@@ -413,13 +413,13 @@ spec:
 Auto-created derived template (conceptual):
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
 metadata:
   name: <base>-ovr-a1b2c3d4
   namespace: ml-team
   labels:
-    aim.silogen.ai/derived-template: "true"
+    aim.eai.amd.com/derived-template: "true"
 spec:
   modelName: meta-llama-3-8b
   metric: throughput
@@ -437,10 +437,10 @@ Check discovery job status:
 
 ```bash
 # Cluster template
-kubectl -n aim-system get job -l aim.silogen.ai/template=<template-name>
+kubectl -n aim-system get job -l aim.eai.amd.com/template=<template-name>
 
 # Namespace template
-kubectl -n <namespace> get job -l aim.silogen.ai/template=<template-name>
+kubectl -n <namespace> get job -l aim.eai.amd.com/template=<template-name>
 ```
 
 View job logs:
@@ -485,4 +485,4 @@ Ensure the base template exists and is available.
 - [Models](models.md) - Understanding the model catalog and discovery
 - [Runtime Config Concepts](runtime-config.md) - Resolution algorithm
 - [Model Caching](caching.md) - Cache lifecycle and deletion behavior
-- [Services Usage](../usage/services.md) - Deploying services with templates
+- [Services Usage](../guides/deploying-services.md) - Deploying services with templates

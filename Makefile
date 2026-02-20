@@ -400,4 +400,29 @@ third-party-licenses: ## Generate third-party licenses directory.
 .PHONY: generate-crd-docs
 generate-crd-docs:
 	go install github.com/elastic/crd-ref-docs@latest
-	crd-ref-docs --source-path api/v1alpha1/ --renderer=markdown --output-path=docs/docs/reference/crds/v1alpha1/aim.eai.amd.com.md --config docs/crd-ref-docs-config.yaml
+	crd-ref-docs --source-path api/v1alpha1/ --renderer=markdown --output-path=docs/docs/reference/api/v1alpha1.md --config docs/crd-ref-docs-config.yaml
+
+.PHONY: generate-helm-docs
+generate-helm-docs: ## Generate Helm chart values reference from config/helm/values.yaml.
+	go run hack/generate-helm-values-docs.go
+
+.PHONY: generate-docs
+generate-docs: generate-crd-docs generate-helm-docs ## Generate all documentation (CRD API reference + Helm values).
+
+DOCS_PORT ?= 8000
+
+.PHONY: docs-serve
+docs-serve:
+	@cd docs && \
+	if [ ! -d ".venv" ]; then \
+		echo "Creating virtual environment in docs/.venv..."; \
+		python3 -m venv .venv; \
+	fi && \
+	. .venv/bin/activate && \
+	echo "Installing dependencies..." && \
+	pip install -q -r requirements.txt && \
+	WSL_IP=$$(hostname -I | awk '{print $$1}') && \
+	echo "Starting MkDocs dev server..." && \
+	echo "  http://localhost:$(DOCS_PORT)/" && \
+	echo "  http://$$WSL_IP:$(DOCS_PORT)/" && \
+	mkdocs serve -a 0.0.0.0:$(DOCS_PORT)

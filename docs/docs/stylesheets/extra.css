@@ -1,0 +1,7 @@
+.md-sidebar__scrollwrap {
+  overflow: hidden;
+}
+
+.md-sidebar__scrollwrap:hover {
+  overflow: auto;
+}

@@ -111,7 +111,7 @@ Multiple services can share the same cached models:
 ### AIMService with cache enabled
 
 ```
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: llama-chat
@@ -128,7 +128,7 @@ spec:
 #### AIMTemplateCache to prepopulate the namespace with caches for a AIMServiceTemplate
 
 ```
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMTemplateCache
 metadata:
   name: template-cache
@@ -139,7 +139,7 @@ spec:
 #### AIMArtifact that uses the kserve downloader with XET disabled
 
 ```
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMArtifact
 metadata:
   name: kserve-smollm2-135mx
@@ -236,6 +236,6 @@ kubectl get aimart my-model -o yaml # Full status.download details
 ## Related Documentation
 
 - [Templates](templates.md) - Understanding ServiceTemplates and discovery
-- [Services](../usage/services.md) - Deploying services with caching
+- [Services](../guides/deploying-services.md) - Deploying services with caching
 - [Runtime Configuration](runtime-config.md) - Cluster-wide and namespace-scoped configuration
 

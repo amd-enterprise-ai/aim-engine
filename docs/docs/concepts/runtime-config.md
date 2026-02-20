@@ -70,7 +70,7 @@ Each resource independently resolves its runtime config and publishes the result
 `AIMClusterRuntimeConfig` captures non-secret defaults shared across namespaces:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default
@@ -90,7 +90,7 @@ spec:
 `AIMRuntimeConfig` provides namespace-specific configuration including authentication:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMRuntimeConfig
 metadata:
   name: default
@@ -162,7 +162,7 @@ This allows:
 Runtime config with path template:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMRuntimeConfig
 metadata:
   name: default
@@ -179,7 +179,7 @@ spec:
 Service using template:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: llama-chat
@@ -241,7 +241,7 @@ Runtime configurations support automatic label propagation from parent AIM resou
 Label propagation is configured in the runtime config's `labelPropagation` section:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMRuntimeConfig
 metadata:
   name: default
@@ -285,7 +285,7 @@ For Job resources, propagated labels are applied to both:
 A typical configuration for multi-tenant cost tracking:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default
@@ -301,7 +301,7 @@ spec:
 When users create an AIMService with these labels:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: llama-chat
@@ -378,5 +378,5 @@ Cluster-scoped workflows such as:
 
 - [Models](models.md) - How models use runtime configs for discovery and auto-creation
 - [Templates](templates.md) - Template discovery and runtime config resolution
-- [Services Usage](../usage/services.md) - Practical service configuration
+- [Services Usage](../guides/deploying-services.md) - Practical service configuration
 - [Model Caching](caching.md) - Download protocol strategy and cache architecture

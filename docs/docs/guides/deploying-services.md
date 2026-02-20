@@ -7,7 +7,7 @@
 The minimal service requires just an AIM container image:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: llama-chat
@@ -417,16 +417,16 @@ status:
     name: default
     namespace: ml-team
     scope: Namespace
-    kind: aim.silogen.ai/v1alpha1/AIMRuntimeConfig
+    kind: aim.eai.amd.com/v1alpha1/AIMRuntimeConfig
   resolvedModel:
     name: meta-llama-3-8b
     namespace: ml-team
     scope: Namespace
-    kind: aim.silogen.ai/v1alpha1/AIMModel
+    kind: aim.eai.amd.com/v1alpha1/AIMModel
   resolvedTemplate:
     name: llama-3-8b-latency
     scope: Cluster
-    kind: aim.silogen.ai/v1alpha1/AIMClusterServiceTemplate
+    kind: aim.eai.amd.com/v1alpha1/AIMClusterServiceTemplate
   routing:
     path: /ml-team/llama-chat
 ```
@@ -434,7 +434,7 @@ status:
 ## Complete Example
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: llama-chat

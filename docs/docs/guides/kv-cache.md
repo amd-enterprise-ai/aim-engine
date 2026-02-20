@@ -7,7 +7,7 @@ This guide shows how to configure and use KV cache with your inference services.
 The simplest way to enable KV cache is to let the `AIMService` create one automatically:
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: llama-chat
@@ -75,7 +75,7 @@ Multiple services can share a single KV cache for better resource utilization.
 ### Step 1: Create a Standalone KV Cache
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMKVCache
 metadata:
   name: shared-cache
@@ -91,7 +91,7 @@ spec:
 
 ```yaml
 ---
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: llama-chat
@@ -102,7 +102,7 @@ spec:
   kvCache:
     name: shared-cache  # References existing cache
 ---
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: llama-completion
@@ -127,7 +127,7 @@ When specifying a custom configuration, you should use the `{SERVICE_URL}` place
 **Example with custom configuration:**
 
 ```yaml
-apiVersion: aim.silogen.ai/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: llama-chat
@@ -434,5 +434,5 @@ When configuration is omitted, the following defaults apply:
 ## See Also
 
 - [KV Cache Concepts](../concepts/kv-cache.md) - Architecture and design
-- [Deploying Inference Services](services.md) - AIMService configuration
+- [Deploying Inference Services](deploying-services.md) - AIMService configuration
 - [Models](../concepts/models.md) - Model configuration and optimization

@@ -1,36 +1,109 @@
-site_name: AIM-Engine - AMD Inference Microservice Engine
+site_name: AIM Engine - AMD Inference Microservices
+site_description: Kubernetes operator for deploying and managing AI inference workloads on AMD GPUs
+repo_url: https://github.com/amd-enterprise-ai/aim-engine
+repo_name: amd-enterprise-ai/aim-engine
+
 theme:
   name: material
   features:
-  - navigation.instant
-  - navigation.instant.progress
-  - navigation.tabs
-  - navigation.sections
-  - content.code.copy
-markdown_extensions:
-- def_list
-- pymdownx.highlight:
-    anchor_linenums: true
-    line_spans: __span
-    pygments_lang_class: true
-- pymdownx.inlinehilite
-- pymdownx.snippets
-- admonition
-- pymdownx.details
-- pymdownx.superfences:
-    custom_fences:
-    - name: mermaid
-      class: mermaid
-      format: !!python/name:pymdownx.superfences.fence_code_format
-nav:
-- "Home":
-  - "Overview": "README.md"
-- "Usage":
-    - "Deploying AIM Services": "usage/services.md"
-- "Concepts":
-    - "AIM Models": "concepts/models.md"
-    - "AIM Service Templates": "concepts/templates.md"
-    - "AIM Runtime Configuration": "concepts/runtime-config.md"
-- "Reference":
-  - "API": "reference/crds/v1alpha1/aim.eai.amd.com.md"
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: grey
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: grey
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
 
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - def_list
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+
+nav:
+  - Home:
+      - Overview: README.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+      - Architecture: getting-started/architecture.md
+  - Guides:
+      - Deploying Services: guides/deploying-services.md
+      - Model Catalog: guides/model-catalog.md
+      - Scaling and Autoscaling: guides/scaling-and-autoscaling.md
+      - KV Cache: guides/kv-cache.md
+      - Model Caching: guides/model-caching.md
+      - Routing and Ingress: guides/routing-and-ingress.md
+      - Private Registries: guides/private-registries.md
+      - Multi-Tenancy: guides/multi-tenancy.md
+  - Administration:
+      - Installation Reference: admin/installation.md
+      - KServe Configuration: admin/kserve-configuration.md
+      - GPU Management: admin/gpu-management.md
+      - Storage Configuration: admin/storage-configuration.md
+      - Upgrading: admin/upgrading.md
+      - Monitoring: admin/monitoring.md
+      - Troubleshooting: admin/troubleshooting.md
+      - Security: admin/security.md
+  - Concepts:
+      - AIM Services: concepts/services.md
+      - AIM Models: concepts/models.md
+      - Model Sources: concepts/model-sources.md
+      - Service Templates: concepts/templates.md
+      - Runtime Configuration: concepts/runtime-config.md
+      - Model Caching: concepts/caching.md
+      - KV Cache: concepts/kv-cache.md
+      - Resource Lifecycle: concepts/resource-lifecycle.md
+  - Reference:
+      - CRD API: reference/api/v1alpha1.md
+      - Helm Chart Values: reference/helm-values.md
+      - CLI and Operator Flags: reference/cli.md
+      - Environment Variables: reference/environment-variables.md
+  # - Contributing:
+  #     - Development Setup: contributing/development-setup.md
+  #     - Controller Patterns: contributing/controller-patterns.md
+  #     - Observation Design: contributing/observation-design.md
+  #     - State Engine: contributing/state-engine.md
+  #     - Testing: contributing/testing.md
+  #     - Release Process: contributing/release-process.md
+  - Changelog: changelog.md
