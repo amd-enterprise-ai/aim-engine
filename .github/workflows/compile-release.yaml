@@ -186,13 +186,13 @@ jobs:
             ### Docker Images
             - Operator: `${{ env.PULL_IMAGE_REPO }}:${{ env.VERSION }}`
 
-      - name: Create or update release branch
+      - name: Create or update artifacts branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
           # Create orphan branch
-          git checkout --orphan release-temp || true
+          git checkout --orphan artifacts-temp || true
           
           # Clear the index
           git rm -rf --cached . || true
@@ -219,7 +219,7 @@ jobs:
           
           ```bash
           # 1. Install CRDs
-          kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/release/crd/crds.yaml
+          kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/artifacts/crd/crds.yaml
           kubectl wait --for=condition=Established crd --all --timeout=60s
           
           # 2a. Install operator via Helm OCI (recommended)
@@ -234,7 +234,7 @@ jobs:
           Or clone this branch:
           
           ```bash
-          git clone -b release https://github.com/${{ github.repository }}.git aim-engine
+          git clone -b artifacts https://github.com/${{ github.repository }}.git aim-engine
           cd aim-engine
           
           kubectl apply -f crd/crds.yaml
@@ -251,8 +251,8 @@ jobs:
           # Commit
           git commit -m "Release ${VERSION}" --allow-empty
           
-          # Force push to release branch
-          git push origin HEAD:release --force
+          # Force push to artifacts branch
+          git push origin HEAD:artifacts --force
 
   test-release:
     runs-on: ubuntu-latest
