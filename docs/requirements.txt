@@ -1,1 +1,2 @@
 mkdocs-material
+click<8.2.2  # 8.2.2+ breaks mkdocs livereload (github.com/mkdocs/mkdocs/issues/4032)

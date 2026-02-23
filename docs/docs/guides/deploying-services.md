@@ -10,11 +10,11 @@ The minimal service requires just an AIM container image:
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
-  name: llama-chat
+  name: qwen-chat
   namespace: ml-team
 spec:
   model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
 ```
 
 This creates an inference service using the default runtime configuration and automatically selected profile.
@@ -29,7 +29,7 @@ Control the number of replicas:
 ```yaml
 spec:
   model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   replicas: 3
 ```
 
@@ -44,7 +44,7 @@ Enable autoscaling by specifying minimum and maximum replica counts:
 ```yaml
 spec:
   model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   minReplicas: 1
   maxReplicas: 5
 ```
@@ -58,7 +58,7 @@ For precise control over scaling behavior, configure custom metrics from the inf
 ```yaml
 spec:
   model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   minReplicas: 1
   maxReplicas: 3
   autoScaling:
@@ -117,28 +117,29 @@ When autoscaling is configured, AIMService:
 
 #### Monitoring Autoscaling
 
-Check the ScaledObject status:
+First, get the derived KServe InferenceService name for the AIMService:
 
 ```bash
-kubectl -n <namespace> get scaledobject <service-name>-predictor -o yaml
+kubectl -n <namespace> get inferenceservice -l aim.eai.amd.com/service.name=<service-name>
 ```
 
-Check the HPA created by KEDA:
+KEDA resources are named from the InferenceService name (`<isvc-name>`), not the AIMService name:
 
 ```bash
-kubectl -n <namespace> get hpa keda-hpa-<service-name>-predictor
+kubectl -n <namespace> get scaledobject <isvc-name>-predictor -o yaml
+kubectl -n <namespace> get hpa keda-hpa-<isvc-name>-predictor
 ```
 
 Watch scaling events in real-time:
 
 ```bash
-kubectl -n <namespace> get hpa keda-hpa-<service-name>-predictor -w
+kubectl -n <namespace> get hpa keda-hpa-<isvc-name>-predictor -w
 ```
 
 View current metrics:
 
 ```bash
-kubectl -n <namespace> describe hpa keda-hpa-<service-name>-predictor
+kubectl -n <namespace> describe hpa keda-hpa-<isvc-name>-predictor
 ```
 
 #### Prerequisites
@@ -156,7 +157,7 @@ Override default resource allocations:
 ```yaml
 spec:
   model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   resources:
     limits:
       cpu: "8"
@@ -166,25 +167,6 @@ spec:
       memory: 32Gi
 ```
 
-### Runtime Overrides
-
-Customize optimization settings:
-
-```yaml
-spec:
-  model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
-  overrides:
-    metric: throughput      # or 'latency' for interactive workloads
-    precision: fp16         # fp4, fp8, fp16, bf16, int4, int8, auto
-    hardware:
-      gpu:
-        requests: 2
-        model: MI300X
-```
-
-Please note that not all configurations may be supported on each AIM image.
-
 ## Runtime Configuration
 
 Reference a specific runtime configuration for credentials and defaults:
@@ -192,7 +174,7 @@ Reference a specific runtime configuration for credentials and defaults:
 ```yaml
 spec:
   model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   runtimeConfigName: team-config  # defaults to 'default' if omitted
 ```
 
@@ -201,49 +183,6 @@ Runtime configurations provide:
 
 See [Runtime Configuration](../concepts/runtime-config.md) for details.
 
-## KV Cache
-
-### Creating a New KV Cache
-
-The service automatically creates a KV cache when you specify the `type`:
-
-```yaml
-spec:
-  model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
-  kvCache:
-    type: redis  # Creates 'kvcache-llama-chat' automatically
-```
-
-With custom storage:
-
-```yaml
-spec:
-  model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-70b-instruct:0.7.0
-  kvCache:
-    type: redis
-    storage:
-      size: 100Gi                  # Minimum 1Gi, adjust based on model size
-      storageClassName: fast-ssd   # Optional, uses cluster default if omitted
-```
-
-### Referencing an Existing KV Cache
-
-Multiple services can share a single KV cache:
-
-```yaml
-spec:
-  model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
-  kvCache:
-    name: shared-cache  # References existing AIMKVCache resource
-```
-
-This is useful when running multiple services with the same model or overlapping use cases.
-
-See [KV Cache](kv-cache.md) for detailed configuration and sizing guidance.
-
 ## HTTP Routing
 
 Enable external HTTP access through Gateway API:
@@ -251,7 +190,7 @@ Enable external HTTP access through Gateway API:
 ```yaml
 spec:
   model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   routing:
     enabled: true
     gatewayRef:
@@ -266,7 +205,7 @@ Override the default path using templates:
 ```yaml
 spec:
   model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   routing:
     enabled: true
     gatewayRef:
@@ -291,7 +230,7 @@ For models requiring authentication (e.g., gated Hugging Face models):
 ```yaml
 spec:
   model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   env:
     - name: HF_TOKEN
       valueFrom:
@@ -305,7 +244,7 @@ For private container registries:
 ```yaml
 spec:
   model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   imagePullSecrets:
     - name: registry-credentials
 ```
@@ -350,42 +289,17 @@ The `status` field shows the overall service state:
 
 Services track detailed conditions to help diagnose issues:
 
-**Resolved**: Model and template validation
-- `True`: Model and template have been validated and a runtime profile has been selected
-- `False`: Model or template not found, or validation failed
-- Reasons: `Resolved`, `TemplateNotFound`, `ModelNotFound`, `ModelNotReady`, `TemplateSelectionAmbiguous`
-
-**CacheReady**: Model caching status
-- `True`: Required caches are present or warmed as requested
-- `False`: Caches are not ready
-- Reasons: `CacheReady`, `WaitingForCache`, `CacheWarming`, `CacheFailed`
-
-**RuntimeReady**: KServe InferenceService status
-- `True`: The underlying KServe InferenceService is ready and serving traffic
-- `False`: InferenceService is not ready
-- Reasons: `RuntimeReady`, `CreatingRuntime`, `RuntimeFailed`
-
-**RoutingReady**: HTTP routing status
-- `True`: HTTPRoute has been created and routing is configured
-- `False`: Routing is not ready or disabled
-- Reasons: `RouteReady`, `ConfiguringRoute`, `RouteFailed`, `PathTemplateInvalid`
-
-**Ready**: Overall readiness
-- `True`: Service is fully ready to serve traffic (all other conditions are True)
-- `False`: Service is not ready
-
-**Progressing**: Active reconciliation
-- `True`: Controller is actively reconciling towards readiness
-- `False`: Service has reached a stable state
-
-**Failure**: Terminal failures
-- `True`: An unrecoverable error has occurred
-- Includes detailed reason and message
+- **Framework conditions**: `DependenciesReachable`, `AuthValid`, `ConfigValid`, `Ready`
+- **Component conditions**: `ModelReady`, `TemplateReady`, `RuntimeConfigReady`, `CacheReady`, `InferenceServiceReady`, `InferenceServicePodsReady`, `HTTPRouteReady`, `HPAReady`
+- **Common reasons**:
+  - Model/template resolution: `ModelNotFound`, `ModelNotReady`, `Resolved`, `TemplateNotFound`, `TemplateSelectionAmbiguous`
+  - Runtime and cache lifecycle: `CreatingRuntime`, `RuntimeReady`, `CacheCreating`, `CacheReady`, `CacheFailed`
+  - Routing and autoscaling: `PathTemplateInvalid`, `HTTPRouteAccepted`, `HTTPRoutePending`, `HPAOperational`
 
 ### Example Status
 
 ```bash
-$ kubectl -n ml-team get aimservice llama-chat -o yaml
+$ kubectl -n ml-team get aimservice qwen-chat -o yaml
 ```
 
 ```yaml
@@ -393,42 +307,46 @@ status:
   status: Running
   observedGeneration: 1
   conditions:
-    - type: Resolved
+    - type: ModelReady
+      status: "True"
+      reason: ModelResolved
+      message: "AIMModel qwen-qwen3-32b is ready"
+    - type: TemplateReady
       status: "True"
       reason: Resolved
-      message: "Model and template resolved successfully"
+      message: "AIMClusterServiceTemplate qwen3-32b-latency is ready"
     - type: CacheReady
       status: "True"
       reason: CacheReady
-      message: "Model sources cached"
-    - type: RuntimeReady
+      message: "Template cache is ready"
+    - type: InferenceServiceReady
       status: "True"
       reason: RuntimeReady
       message: "InferenceService is ready"
-    - type: RoutingReady
+    - type: HTTPRouteReady
       status: "True"
-      reason: RouteReady
-      message: "HTTPRoute configured"
+      reason: HTTPRouteAccepted
+      message: "HTTPRoute is accepted by gateway"
     - type: Ready
       status: "True"
-      reason: Ready
-      message: "Service is ready"
+      reason: AllComponentsReady
+      message: "All components are ready"
   resolvedRuntimeConfig:
     name: default
     namespace: ml-team
     scope: Namespace
     kind: aim.eai.amd.com/v1alpha1/AIMRuntimeConfig
   resolvedModel:
-    name: meta-llama-3-8b
+    name: qwen-qwen3-32b
     namespace: ml-team
     scope: Namespace
     kind: aim.eai.amd.com/v1alpha1/AIMModel
   resolvedTemplate:
-    name: llama-3-8b-latency
+    name: qwen3-32b-latency
     scope: Cluster
     kind: aim.eai.amd.com/v1alpha1/AIMClusterServiceTemplate
   routing:
-    path: /ml-team/llama-chat
+    path: /ml-team/qwen-chat
 ```
 
 ## Complete Example
@@ -437,27 +355,21 @@ status:
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
-  name: llama-chat
+  name: qwen-chat
   namespace: ml-team
   labels:
     team: research
 spec:
   model:
-    ref: meta-llama-3-8b
-  templateRef: llama-3-8b-latency
+    name: qwen-qwen3-32b
+  template:
+    name: qwen3-32b-latency
   runtimeConfigName: team-config
   replicas: 2
   resources:
     limits:
       cpu: "6"
       memory: 48Gi
-  overrides:
-    metric: throughput
-    precision: fp16
-    hardware:
-      gpu:
-        requests: 2
-        model: MI300X
   routing:
     enabled: true
     gatewayRef:
@@ -474,30 +386,29 @@ spec:
 
 ## Model Caching
 
-Enable model caching to pre-download model artifacts:
+Model caching is enabled by default in `Shared` mode, pre-downloading model artifacts so they are ready when the inference service starts. To use a dedicated cache owned by the service instead:
 
 ```yaml
 spec:
   model:
-    image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
-  cacheModel: true
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+  caching:
+    mode: Dedicated
 ```
 
-When `cacheModel: true`:
+How caching works:
 
 1. An `AIMTemplateCache` is created for the service's template, if it doesn't already exist
-2. The AIMTemplate will create `AIMArtifact` resources that download model artifacts to PVCs
-3. The service waits for caches to become Available before starting
+2. `AIMArtifact` resources download model artifacts to PVCs
+3. The service waits for caches to become available before starting
 4. Cached models are mounted directly into the inference container
 
 ### Cache Preservation on Deletion
 
-When you delete an `AIMService`:
+Cache behavior on service deletion depends on the mode:
 
-- **Available caches are preserved** - they can be reused by future services
-- **Non-available caches are cleaned up** - failed or incomplete downloads are removed
-
-This means if you recreate the same service, it will immediately use the existing cached models without re-downloading.
+- **Shared** (default): Caches persist independently and can be reused by future services
+- **Dedicated**: Caches are garbage-collected with the service
 
 See [Model Caching](../concepts/caching.md) for detailed information on cache lifecycle and management.
 
@@ -520,12 +431,12 @@ kubectl get aimclusterservicetemplate
 
 Verify the HTTPRoute was created:
 ```bash
-kubectl -n <namespace> get httproute <service-name>-route
+kubectl -n <namespace> get httproute -l aim.eai.amd.com/service.name=<service-name>
 ```
 
 Check for path template errors in status:
 ```bash
-kubectl -n <namespace> get aimservice <name> -o jsonpath='{.status.conditions[?(@.type=="RoutingReady")]}'
+kubectl -n <namespace> get aimservice <name> -o jsonpath='{.status.conditions[?(@.type=="HTTPRouteReady")]}'
 ```
 
 ### Model not found
@@ -540,7 +451,6 @@ If using `spec.model.image` directly, verify the image URI is accessible and the
 
 ## Related Documentation
 
-- [KV Cache](kv-cache.md) - Configure KV caching for improved performance
 - [Runtime Configuration](../concepts/runtime-config.md) - Configure runtime settings and credentials
 - [Models](../concepts/models.md) - Understanding the model catalog
 - [Templates](../concepts/templates.md) - Deep dive on templates and discovery

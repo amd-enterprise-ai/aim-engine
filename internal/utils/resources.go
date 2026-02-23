@@ -54,28 +54,10 @@ const (
 	LabelAMDGPUVRAMBeta = "beta.amd.com/gpu.vram"
 )
 
-// GPU node label keys for NVIDIA GPUs.
-const (
-	// LabelNVIDIAGPUProduct is the label for NVIDIA GPU product name.
-	LabelNVIDIAGPUProduct = "nvidia.com/gpu.product"
-
-	// LabelNVIDIAMIGProduct is the label for NVIDIA MIG product name.
-	LabelNVIDIAMIGProduct = "nvidia.com/mig.product"
-
-	// LabelNVIDIAGPUFamily is the label for NVIDIA GPU family.
-	LabelNVIDIAGPUFamily = "nvidia.com/gpu.family"
-
-	// LabelNFDNVIDIAGPUModel is the Node Feature Discovery label for NVIDIA GPU model.
-	LabelNFDNVIDIAGPUModel = "feature.node.kubernetes.io/nvidia-gpu-model"
-)
-
 // GPU resource name prefixes.
 const (
 	// ResourcePrefixAMD is the resource name prefix for AMD GPUs.
 	ResourcePrefixAMD = "amd.com/"
-
-	// ResourcePrefixNVIDIA is the resource name prefix for NVIDIA GPUs.
-	ResourcePrefixNVIDIA = "nvidia.com/"
 )
 
 // VRAM source values for GetGPUVRAM function.
@@ -164,19 +146,12 @@ var KnownGPUVRAM = map[string]string{
 	"RX7900": "24G",
 	"RX6900": "16G",
 	"RX6800": "16G",
-	// NVIDIA (for future support)
-	"H200":      "141G",
-	"H100":      "80G",
-	"A100":      "80G",
-	"A100-40GB": "40G",
-	"L40S":      "48G",
-	"L4":        "24G",
 }
 
 // KnownVRAMTiers is a sorted list of all known VRAM capacity values.
 // Used for filtering GPUs by minimum VRAM requirement.
 var KnownVRAMTiers = []string{
-	"16G", "24G", "32G", "40G", "48G", "64G", "80G", "128G", "141G", "192G", "256G", "288G",
+	"16G", "24G", "32G", "48G", "64G", "128G", "192G", "256G", "288G",
 }
 
 // GPUResourceInfo contains GPU resource information for a specific GPU model.
@@ -194,8 +169,8 @@ type GPUResourceInfo struct {
 }
 
 // GetClusterGPUResources returns an aggregated view of all GPU resources in the cluster.
-// It scans all nodes and aggregates resources that start with "amd.com/" or "nvidia.com/".
-// Returns a map where keys are GPU models (e.g., "MI300X", "A100") extracted from node labels,
+// It scans all nodes and aggregates resources that start with "amd.com/".
+// Returns a map where keys are GPU models (e.g., "MI300X") extracted from node labels,
 // and values contain the resource name.
 func GetClusterGPUResources(ctx context.Context, k8sClient client.Client) (map[string]GPUResourceInfo, error) {
 	// List all nodes in the cluster
@@ -216,21 +191,15 @@ func GetClusterGPUResources(ctx context.Context, k8sClient client.Client) (map[s
 }
 
 // ExtractGPUModelFromNodeLabels extracts the GPU model from node labels.
-// Supports multiple label formats from AMD and NVIDIA GPU labellers:
+// Supports multiple AMD GPU label formats:
 //   - AMD: amd.com/gpu.device-id (primary), beta.amd.com/gpu.device-id, amd.com/gpu.family,
 //     and count-encoded variants (e.g., amd.com/gpu.device-id.74a1=4)
-//   - NVIDIA: nvidia.com/gpu.product, nvidia.com/mig.product, nvidia.com/gpu.family,
-//     and Node Feature Discovery labels (feature.node.kubernetes.io/nvidia-gpu-model)
 //
-// Returns a normalized GPU model name (e.g., "MI300X", "A100") or empty string if model cannot be determined.
+// Returns a normalized GPU model name (e.g., "MI300X") or empty string if model cannot be determined.
 // Nodes with GPU resources but insufficient labels will be excluded from template matching.
 func ExtractGPUModelFromNodeLabels(labels map[string]string, resourceName string) string {
 	if strings.HasPrefix(resourceName, ResourcePrefixAMD) {
 		return ExtractAMDModel(labels)
-	}
-
-	if strings.HasPrefix(resourceName, ResourcePrefixNVIDIA) {
-		return extractNvidiaModel(labels)
 	}
 
 	return ""
@@ -238,9 +207,9 @@ func ExtractGPUModelFromNodeLabels(labels map[string]string, resourceName string
 
 // NormalizeGPUModel normalizes GPU model names for consistency.
 // Examples:
-//   - "A100-SXM4-40GB" -> "A100"
 //   - "MI300X (rev 2)" -> "MI300X"
-//   - "Tesla-T4-SHARED" -> "T4"
+//   - "Instinct-MI325X" -> "MI325X"
+//   - "RX7900-XTX" -> "RX7900"
 func NormalizeGPUModel(model string) string {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -313,26 +282,6 @@ func ExtractAMDModel(labels map[string]string) string {
 	return ""
 }
 
-func extractNvidiaModel(labels map[string]string) string {
-	if product := labelValue(labels, LabelNVIDIAGPUProduct, LabelNVIDIAMIGProduct); product != "" {
-		return NormalizeGPUModel(product)
-	}
-	if productKey := extractLabelSuffix(labels, LabelNVIDIAGPUProduct+".", LabelNVIDIAMIGProduct+"."); productKey != "" {
-		return NormalizeGPUModel(productKey)
-	}
-	if family := labelValue(labels, LabelNVIDIAGPUFamily); family != "" {
-		return NormalizeGPUModel(family)
-	}
-	if familyKey := extractLabelSuffix(labels, LabelNVIDIAGPUFamily+"."); familyKey != "" {
-		return NormalizeGPUModel(familyKey)
-	}
-	// Node Feature Discovery publishes a descriptive label as well
-	if feature := labelValue(labels, LabelNFDNVIDIAGPUModel); feature != "" {
-		return NormalizeGPUModel(feature)
-	}
-	return ""
-}
-
 func labelValue(labels map[string]string, keys ...string) string {
 	for _, key := range keys {
 		if value, ok := labels[key]; ok {
@@ -374,7 +323,7 @@ func pickGPUModelToken(tokens []string) string {
 		}
 
 		switch token {
-		case "AMD", "NVIDIA", "TESLA", "RTX", "INSTINCT":
+		case "AMD", "INSTINCT":
 			continue
 		}
 
@@ -389,7 +338,7 @@ func pickGPUModelToken(tokens []string) string {
 // filterGPULabelResources performs GPU discovery based on node labels only.
 // Skips GPUs where the model cannot be determined from node labels (strict matching requirement).
 func filterGPULabelResources(node *corev1.Node, aggregate map[string]GPUResourceInfo) {
-	for _, resourcePrefix := range []string{ResourcePrefixAMD, ResourcePrefixNVIDIA} {
+	for _, resourcePrefix := range []string{ResourcePrefixAMD} {
 
 		// Extract GPU model from node labels
 		gpuModel := ExtractGPUModelFromNodeLabels(node.Labels, resourcePrefix)
@@ -414,10 +363,9 @@ func filterGPULabelResources(node *corev1.Node, aggregate map[string]GPUResource
 }
 
 // IsGPUResource checks if a resource name represents a GPU resource.
-// Returns true if the resource name starts with "amd.com/" or "nvidia.com/".
+// Returns true if the resource name starts with "amd.com/".
 func IsGPUResource(resourceName string) bool {
-	return strings.HasPrefix(resourceName, ResourcePrefixAMD) ||
-		strings.HasPrefix(resourceName, ResourcePrefixNVIDIA)
+	return strings.HasPrefix(resourceName, ResourcePrefixAMD)
 }
 
 // GetAMDDeviceIDsForModel returns all AMD device IDs that map to a given GPU model name.
@@ -439,7 +387,7 @@ func GetAMDDeviceIDsForModel(modelName string) []string {
 }
 
 // IsGPUAvailable checks if a specific GPU model is available in the cluster.
-// The gpuModel parameter should be the GPU model name (e.g., "MI300X", "A100"), not the resource name.
+// The gpuModel parameter should be the GPU model name (e.g., "MI300X"), not the resource name.
 // The input is normalized to handle variants like "MI300X (rev 2)" or "Instinct MI300X".
 func IsGPUAvailable(ctx context.Context, k8sClient client.Client, gpuModel string) (bool, error) {
 	resources, err := GetClusterGPUResources(ctx, k8sClient)

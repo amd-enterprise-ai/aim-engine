@@ -66,7 +66,7 @@ type AIMServiceRuntimeConfig struct {
 	// Env specifies environment variables for inference containers.
 	// When set on AIMService, these take highest precedence in the merge hierarchy.
 	// When set on RuntimeConfig, these provide namespace/cluster-level defaults.
-	// Merge order (highest to lowest): Service.Env > RuntimeConfig.Env > Template.Env > Profile.Env
+	// Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env
 	// +optional
 	// +listType=map
 	// +listMapKey=name
@@ -164,7 +164,7 @@ type AIMRuntimeRoutingConfig struct {
 	// Example templates:
 	// - `/{.metadata.namespace}/{.metadata.name}` - namespace and service name
 	// - `/{.metadata.namespace}/{.metadata.labels['team']}/inference` - with label
-	// - `/models/{.spec.aimModelName}` - based on model name
+	// - `/models/{.metadata.name}` - based on service name
 	//
 	// The template must:
 	// - Use valid JSONPath expressions wrapped in {...}

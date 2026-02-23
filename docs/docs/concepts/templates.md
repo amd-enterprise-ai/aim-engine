@@ -1,6 +1,6 @@
 # Service Templates
 
-Service Templates define runtime configurations for models and serve as a discovery cache. This document explains the template architecture, discovery mechanism, derivation algorithm, and lifecycle management.
+Service Templates define runtime configurations for models and serve as a discovery cache. This document explains the template architecture, discovery mechanism, and lifecycle management.
 
 ## Overview
 
@@ -41,10 +41,10 @@ Namespace-scoped templates are created by ML engineers and data scientists for c
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
 metadata:
-  name: llama-3-8b-throughput
+  name: qwen3-32b-throughput
   namespace: ml-research
 spec:
-  modelName: meta-llama-3-8b-instruct
+  modelName: qwen-qwen3-32b
   runtimeConfigName: ml-research
   metric: throughput
   precision: fp8
@@ -83,7 +83,6 @@ spec:
 The `hardware` field specifies GPU and CPU requirements. It is part of the shared runtime parameters (`AIMRuntimeParameters`) and flows as follows:
 
 - **AIMModel**: For custom models, `spec.custom.hardware` defines default requirements; `spec.customTemplates[].hardware` can override per template. The model controller merges these when creating or updating templates.
-- **AIMService**: `spec.overrides.hardware` overrides the template’s hardware for that service; the controller creates or selects a derived template with the merged spec.
 - **AIMServiceTemplate / AIMClusterServiceTemplate**: `spec.hardware` is the source of truth for the template. The template controller resolves it (with discovery when applicable) and writes **`status.resolvedHardware`**, which is used by the service controller when creating the inference workload.
 
 **Node affinity**: From `spec.hardware.gpu` (or `status.resolvedHardware.gpu`), the operator builds node affinity rules so that inference pods schedule only on nodes that have the required GPU type (and, when specified, sufficient VRAM). GPU availability is detected via node labels (e.g. GPU product ID). If the required GPU is not present in the cluster, the template status becomes `NotAvailable`.
@@ -128,11 +127,11 @@ The `status.modelSources[]` array is the primary discovery output:
 ```yaml
 status:
   modelSources:
-    - name: meta-llama/Llama-3.1-8B-Instruct
-      source: hf://meta-llama/Llama-3.1-8B-Instruct
+    - name: Qwen/Qwen3-32B
+      source: hf://Qwen/Qwen3-32B
       sizeBytes: 17179869184
     - name: tokenizer
-      source: hf://meta-llama/Llama-3.1-8B-Instruct/tokenizer.json
+      source: hf://Qwen/Qwen3-32B/tokenizer.json
       sizeBytes: 2097152
 ```
 
@@ -160,10 +159,10 @@ This is useful when:
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
 metadata:
-  name: llama-3-8b-static
+  name: qwen3-32b-static
   namespace: ml-research
 spec:
-  modelName: meta-llama-3-8b-instruct
+  modelName: qwen-qwen3-32b
   metric: latency
   precision: fp16
   hardware:
@@ -171,11 +170,11 @@ spec:
       requests: 1
       model: MI300X
   modelSources:
-    - name: meta-llama/Llama-3.1-8B-Instruct
-      sourceURI: hf://meta-llama/Llama-3.1-8B-Instruct
+    - name: Qwen/Qwen3-32B
+      sourceURI: hf://Qwen/Qwen3-32B
       size: 16Gi
     - name: tokenizer
-      sourceURI: hf://meta-llama/Llama-3.1-8B-Instruct/tokenizer.json
+      sourceURI: hf://Qwen/Qwen3-32B/tokenizer.json
       size: 2Mi
 ```
 
@@ -197,76 +196,6 @@ To avoid delays:
 - Stagger template creation when deploying many models at once
 - Consider whether cluster-scoped templates can be shared across namespaces
 
-## Template Derivation
-
-Services can specify runtime overrides without creating explicit templates. The controller automatically derives namespace-scoped templates incorporating these overrides.
-
-### Derivation Algorithm
-
-When `AIMService.spec.overrides` is specified:
-
-1. **Base Template Resolution**: The controller resolves the base template using automatic selection or explicit `templateName`
-
-2. **Hash Computation**: A SHA256 hash is computed from the override structure (metric, precision, hardware) to ensure deterministic naming
-
-3. **Name Generation**: The derived name is `<base-template>-ovr-<hash-suffix>`, truncated to fit Kubernetes 63-character limit
-
-4. **Template Search**: The controller searches for an existing template (namespace or cluster scope) matching the derived spec
-
-5. **Creation**: If no match exists, a new namespace-scoped template is created with:
-   - **Labels**:
-     - `app.kubernetes.io/managed-by: aim`
-     - `aim.eai.amd.com/derived-template: "true"`
-   - **Ownership**: The service owns the derived template (OwnerReference set)
-   - **Cascade Deletion**: Deleting the service automatically deletes the derived template
-
-6. **Discovery**: The derived template undergoes discovery like any other template
-
-7. **Sharing**: Multiple services with identical overrides share the same derived template (the hash ensures they generate the same name)
-
-**Important notes:**
-- Derived templates are always created in the service's namespace, even if the base template is cluster-scoped
-- The `aim.eai.amd.com/derived-template: "true"` label distinguishes auto-created templates from manually created ones
-- Deterministic SHA256 naming prevents duplicate templates and enables template reuse across reconciliations
-- Services can reference derived templates by name after they're created, but this is not recommended as names may change
-
-### Example
-
-Service with overrides:
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMService
-metadata:
-  name: chat-service
-  namespace: ml-team
-spec:
-  model:
-    ref: meta-llama-3-8b
-  templateName: base-template
-  overrides:
-    metric: throughput
-    precision: fp16
-```
-
-Derived template created:
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMServiceTemplate
-metadata:
-  name: base-template-ovr-8fa3c921
-  namespace: ml-team
-  labels:
-    app.kubernetes.io/managed-by: aim
-    aim.eai.amd.com/derived-template: "true"
-spec:
-  modelName: meta-llama-3-8b
-  metric: throughput     # from override
-  precision: fp16        # from override
-  # other fields copied from base template
-```
-
 ## Template Status
 
 ### Status Fields
@@ -275,7 +204,7 @@ spec:
 | ----- | ---- | ----------- |
 | `observedGeneration` | int64 | Most recent generation observed |
 | `status` | enum | `Pending`, `Progressing`, `NotAvailable`, `Ready`, `Degraded`, `Failed` |
-| `conditions` | []Condition | Detailed conditions: `Discovered`, `CacheReady`, `Ready`, `Progressing`, `Failure` |
+| `conditions` | []Condition | Detailed conditions: `Discovered`, `CacheReady`, `RuntimeConfigReady`, `ModelFound`, `Ready` |
 | `resolvedRuntimeConfig` | object | Metadata about the runtime config that was resolved (name, namespace, scope, UID) |
 | `resolvedModel` | object | Metadata about the model image that was resolved (name, namespace, scope, UID) |
 | `resolvedHardware` | object | Resolved GPU/CPU requirements (from discovery + spec). Used by the service controller for resource requests and node affinity. |
@@ -298,7 +227,8 @@ Services wait for templates to reach `Ready` before deploying.
 
 **Discovered**: Reports discovery status. Reasons:
 
-- `ProfilesDiscovered`: Discovery completed successfully and runtime profiles were extracted
+- `DiscoveryComplete`: Discovery completed successfully and runtime profiles were extracted
+- `InlineModelSources`: Template defines inline model sources, so no discovery job is needed
 - `AwaitingDiscovery`: Discovery job has been created and is waiting to run
 - `DiscoveryFailed`: Discovery job failed (check job logs for details)
 
@@ -311,24 +241,11 @@ Services wait for templates to reach `Ready` before deploying.
 
  **Note:** The underlying `AIMTemplateCache` resource uses different reasons (`Warm`, `Warming`, `Failed`) which are translated to the above reasons at the template level.
 
-**Ready**: Reports overall readiness
-
-- `True` when template is ready for use (discovered and, if requested, cache warmed)
-- `False` during discovery, cache warming, or after failures
-
-**Progressing**: Indicates active reconciliation
-
-- `True` when the controller is actively processing discovery or cache operations
-- `False` when template has reached a stable state
-
-**Failure**: Reports terminal failures
-
-- `True` when an unrecoverable error has occurred
-- Includes detailed reason and message
+**Ready**: Reports overall readiness based on all template components.
 
 ## Auto-Creation from Model Discovery
 
-When AIM Models have `spec.discovery.enabled: true` and `spec.discovery.autoCreateTemplates: true`, the controller creates templates from the model's recommended deployments.
+When AIM Models have `spec.discovery.extractMetadata: true` and `spec.discovery.createServiceTemplates: true`, the controller creates templates from the model's recommended deployments.
 
 These auto-created templates:
 
@@ -339,13 +256,12 @@ These auto-created templates:
 
 ## Template Selection
 
-When `AIMService.spec.templateName` is omitted, the controller automatically selects a template:
+When `AIMService.spec.template.name` is omitted, the controller automatically selects a template:
 
-1. **Enumeration**: Find all templates referencing the model (either by `spec.model.ref` or matching the auto-created model from `spec.model.image`)
+1. **Enumeration**: Find all templates referencing the model (either by `spec.model.name` or matching the auto-created model from `spec.model.image`)
 2. **Filtering**: Exclude templates not in `Ready` status
 3. **GPU Filtering**: Exclude templates requiring GPUs not present in the cluster
-4. **Override Matching**: If service specifies overrides, filter by matching metric/precision/hardware
-5. **Selection**: If exactly one candidate remains, select it
+4. **Selection**: If exactly one candidate remains, select it
 
 If zero or multiple candidates remain, the service reports a failure condition explaining the issue.
 
@@ -357,9 +273,9 @@ If zero or multiple candidates remain, the service reports a failure condition e
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterServiceTemplate
 metadata:
-  name: llama-3-8b-latency
+  name: qwen3-32b-latency
 spec:
-  modelName: meta-llama-3-8b-instruct
+  modelName: qwen-qwen3-32b
   runtimeConfigName: platform-default
   metric: latency
   precision: fp16
@@ -375,10 +291,10 @@ spec:
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMServiceTemplate
 metadata:
-  name: llama-3-8b-throughput
+  name: qwen3-32b-throughput
   namespace: ml-research
 spec:
-  modelName: meta-llama-3-8b-instruct
+  modelName: qwen-qwen3-32b
   runtimeConfigName: ml-research
   metric: throughput
   precision: fp8
@@ -392,41 +308,6 @@ spec:
         secretKeyRef:
           name: hf-creds
           key: token
-```
-
-### Derived Template from Service Override
-
-Service:
-
-```yaml
-spec:
-  model:
-    ref: meta-llama-3-8b
-  overrides:
-    metric: throughput
-    hardware:
-      gpu:
-        requests: 4
-        model: MI325X
-```
-
-Auto-created derived template (conceptual):
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMServiceTemplate
-metadata:
-  name: <base>-ovr-a1b2c3d4
-  namespace: ml-team
-  labels:
-    aim.eai.amd.com/derived-template: "true"
-spec:
-  modelName: meta-llama-3-8b
-  metric: throughput
-  hardware:
-    gpu:
-      requests: 4
-      model: MI325X
 ```
 
 ## Troubleshooting
@@ -464,21 +345,6 @@ kubectl -n <namespace> get aimservicetemplate <name> -o jsonpath='{.status.condi
 ```
 
 The container image may not be a valid AIM container image or may not publish model sources correctly.
-
-### Derived Templates Not Created
-
-Check service status:
-
-```bash
-kubectl -n <namespace> get aimservice <name> -o yaml
-```
-
-Look for:
-
-- Failure conditions explaining why derivation failed
-- `resolvedTemplate` showing which template was selected
-
-Ensure the base template exists and is available.
 
 ## Related Documentation
 

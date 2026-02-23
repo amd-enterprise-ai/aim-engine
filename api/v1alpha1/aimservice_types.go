@@ -110,7 +110,7 @@ type AIMServiceModel struct {
 
 	// Image specifies a container image URI directly.
 	// The controller searches for an existing model with this image, or creates one if none exists.
-	// The scope of the created model is controlled by the runtime config's ModelCreationScope field.
+	// Auto-created models are namespace-scoped and can be reused by other services.
 	// Example: `ghcr.io/silogen/llama-3-8b:v1.2.0`
 	// +optional
 	Image *string `json:"image,omitempty"`
@@ -162,7 +162,7 @@ type AIMServiceOverrides struct {
 // customization.
 type AIMServiceSpec struct {
 	// Model specifies which model to deploy using one of the available reference methods.
-	// Use `ref` to reference an existing AIMModel/AIMClusterModel by name, or use `image`
+	// Use `name` to reference an existing AIMModel/AIMClusterModel by name, or use `image`
 	// to specify a container image URI directly (which will auto-create a model if needed).
 	Model AIMServiceModel `json:"model"`
 

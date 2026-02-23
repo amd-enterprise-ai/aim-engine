@@ -54,6 +54,9 @@ markdown_extensions:
         - name: mermaid
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.tabbed:
       alternate_style: true
 
@@ -71,7 +74,6 @@ nav:
       - Deploying Services: guides/deploying-services.md
       - Model Catalog: guides/model-catalog.md
       - Scaling and Autoscaling: guides/scaling-and-autoscaling.md
-      - KV Cache: guides/kv-cache.md
       - Model Caching: guides/model-caching.md
       - Routing and Ingress: guides/routing-and-ingress.md
       - Private Registries: guides/private-registries.md
@@ -92,13 +94,14 @@ nav:
       - Service Templates: concepts/templates.md
       - Runtime Configuration: concepts/runtime-config.md
       - Model Caching: concepts/caching.md
-      - KV Cache: concepts/kv-cache.md
       - Resource Lifecycle: concepts/resource-lifecycle.md
   - Reference:
       - CRD API: reference/api/v1alpha1.md
       - Helm Chart Values: reference/helm-values.md
       - CLI and Operator Flags: reference/cli.md
       - Environment Variables: reference/environment-variables.md
+      - Naming and Labels: reference/naming-and-labels.md
+      - Conditions: reference/conditions.md
   # - Contributing:
   #     - Development Setup: contributing/development-setup.md
   #     - Controller Patterns: contributing/controller-patterns.md

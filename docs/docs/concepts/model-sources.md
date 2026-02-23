@@ -20,7 +20,7 @@ Key features:
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModelSource
 metadata:
-  name: silogen-models
+  name: amd-models
 spec:
   filters:
     - image: amdenterpriseai/aim-*
@@ -61,7 +61,7 @@ Match a specific tag:
 ```yaml
 spec:
   filters:
-    - image: silogen/aim-llama:1.0.0
+    - image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
 ```
 
 #### Full URI
@@ -72,7 +72,7 @@ Override the registry for specific filters:
 spec:
   registry: docker.io
   filters:
-    - image: ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1
+    - image: docker.io/amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
 ```
 
 #### Full URI with Wildcard
@@ -83,7 +83,7 @@ Override registry and use wildcards:
 spec:
   registry: ghcr.io
   filters:
-    - image: silogen/aim-*
+    - image: amdenterpriseai/aim-*
 ```
 
 ### Version Constraints
@@ -98,11 +98,11 @@ Apply to all filters:
 spec:
   registry: ghcr.io
   filters:
-    - image: silogen/aim-llama
-    - image: silogen/aim-mistral
+    - image: amdenterpriseai/aim-qwen-*
+    - image: amdenterpriseai/aim-deepseek-*
   versions:
-    - ">=1.0.0"
-    - "<2.0.0"
+    - ">=0.8.0"
+    - "<1.0.0"
 ```
 
 #### Per-Filter Version Constraints
@@ -113,12 +113,12 @@ Override global constraints for specific filters:
 spec:
   registry: ghcr.io
   versions:
-    - ">=1.0.0"  # global default
+    - ">=0.8.0"  # global default
   filters:
-    - image: silogen/aim-llama
+    - image: amdenterpriseai/aim-qwen-*
       versions:
-        - ">=2.0.0"  # overrides global for this filter
-    - image: silogen/aim-mistral
+        - ">=0.8.5"  # overrides global for this filter
+    - image: amdenterpriseai/aim-deepseek-*
       # uses global constraint
 ```
 
@@ -238,10 +238,12 @@ Control the maximum number of models created to prevent runaway resource creatio
 
 ```yaml
 spec:
-  maxModels: 100  # default: 100, range: 1-10000
+  maxModels: 100  # CRD default: 100, range: 1-10000
   filters:
     - image: org/very-broad-pattern-*
 ```
+
+When using the Helm chart's optional `clusterModelSource`, the chart default is `maxModels: 500` unless overridden.
 
 When the limit is reached:
 
@@ -280,7 +282,7 @@ kubectl get aimclustermodelsource
 
 ```
 NAME             STATUS   MODELS   LASTSYNC             AGE
-silogen-models   Ready    12       2025-01-15T10:30:00  2d
+amd-models   Ready    12       2025-01-15T10:30:00  2d
 ```
 
 ### Status Values
@@ -294,7 +296,7 @@ silogen-models   Ready    12       2025-01-15T10:30:00  2d
 ### Detailed Status
 
 ```bash
-kubectl get aimclustermodelsource silogen-models -o yaml
+kubectl get aimclustermodelsource amd-models -o yaml
 ```
 
 Key status fields:
@@ -334,11 +336,11 @@ metadata:
 spec:
   registry: ghcr.io
   filters:
-    - image: silogen/aim-llama
-    - image: silogen/aim-mistral
+    - image: amdenterpriseai/aim-qwen-*
+    - image: amdenterpriseai/aim-deepseek-*
   versions:
-    - ">=1.0.0"
-    - "<2.0.0"
+    - ">=0.8.0"
+    - "<1.0.0"
   syncInterval: 1h
 ```
 
@@ -353,7 +355,7 @@ spec:
   registry: docker.io  # default
   filters:
     - image: amdenterpriseai/aim-*  # uses docker.io
-    - image: ghcr.io/silogen/aim-*  # overrides to ghcr.io
+    - image: ghcr.io/amdenterpriseai/aim-*  # overrides to ghcr.io
   syncInterval: 1h
 ```
 
@@ -394,9 +396,9 @@ metadata:
 spec:
   registry: ghcr.io
   filters:
-    - image: silogen/aim-llama:1.0.0
-    - image: silogen/aim-llama:1.1.0
-    - image: silogen/aim-mistral:2.0.0
+    - image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+    - image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.4
+    - image: amdenterpriseai/aim-deepseek-deepseek-r1:0.8.5
   syncInterval: 6h
 ```
 
@@ -472,7 +474,7 @@ All filters failed. Common causes:
 
 ### Wildcard Filters Not Working
 
-Wildcard filters require registry catalog API support. In addition, support for GitHub Container Registry (ghcr.io) is added via the user of their REST API.
+Wildcard filters require registry catalog API support. GitHub Container Registry (`ghcr.io`) wildcard discovery is supported via GHCR's REST API.
 
 ## Related Documentation
 

@@ -7,7 +7,7 @@ An AIMService is the primary resource for deploying AI/ML models as inference en
 When you create an AIMService, the operator:
 
 1. Resolves the model (by name reference or image URI), creating an AIMModel if needed
-2. Resolves the template (explicit reference or auto-selection), creating derived templates if overrides are specified
+2. Resolves the template (explicit reference or auto-selection)
 3. Configures caching if enabled (creates AIMTemplateCache and AIMArtifact resources)
 4. Creates a KServe InferenceService with the appropriate configuration
 5. Optionally configures routing via Gateway API
@@ -22,11 +22,11 @@ Reference an existing model and let AIM Engine auto-select the best template:
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
-  name: llama-service
+  name: qwen-service
   namespace: ml-team
 spec:
   model:
-    name: llama-3-8b
+    name: qwen-qwen3-32b
 ```
 
 ### Deploy by Image URI
@@ -37,11 +37,11 @@ Specify a container image directly. AIM Engine will find or create a matching AI
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
-  name: llama-service
+  name: qwen-service
   namespace: ml-team
 spec:
   model:
-    image: ghcr.io/amd/llama-3-8b:v1.0.0
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
 ```
 
 When using `model.image`, AIM Engine searches for existing models with that image URI. If none exist, it creates an AIMModel automatically (without owner references, so it persists for reuse by other services).
@@ -54,13 +54,13 @@ Specify both the model and template explicitly:
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
-  name: llama-service
+  name: qwen-service
   namespace: ml-team
 spec:
   model:
-    name: llama-3-8b
+    name: qwen-qwen3-32b
   template:
-    name: llama-3-8b-mi300x-fp16-latency
+    name: qwen3-32b-mi300x-fp16-latency
 ```
 
 ## Model Resolution
@@ -71,7 +71,7 @@ AIMService supports three ways to specify the model:
 |------|------------|----------|
 | **Reference** | `model.name` | Looks up existing AIMModel or AIMClusterModel by name |
 | **Image** | `model.image` | Finds or creates a model matching the image URI |
-| **Custom** | `model.custom` | Advanced: bypass model/template logic entirely (coming soon) |
+| **Custom** | `model.custom` | Creates or reuses a namespace-scoped custom AIMModel from inline model sources and hardware requirements |
 
 ### Resolution Order
 
@@ -124,37 +124,22 @@ spec:
 
 This prevents accidentally deploying unoptimized configurations in production. Set `allowUnoptimized: true` during development or when optimized templates aren't available for your hardware.
 
-#### Stage 3: Override Matching
-
-If you specify overrides (metric, precision, hardware), only templates matching those constraints are considered:
-
-```yaml
-spec:
-  overrides:
-    metric: latency           # Only templates optimized for latency
-    precision: fp16           # Only fp16 precision
-    hardware:
-      gpu:
-        model: MI300X         # Only templates for MI300X
-        requests: 4           # Only 4-GPU configurations
-```
-
-#### Stage 4: GPU Availability
+#### Stage 3: GPU Availability
 
 Templates are filtered to only those whose required GPU is available in the cluster. GPU availability is detected via node labels (based on GPU product ID).
 
 If a template requires MI300X GPUs but none are available in the cluster, that template is excluded.
 
-#### Stage 5: Scope Preference
+#### Stage 4: Scope Preference
 
 When both namespace-scoped and cluster-scoped templates match, namespace-scoped templates take precedence. This allows teams to customize model deployments without affecting other namespaces.
 
-#### Stage 6: Preference Scoring
+#### Stage 5: Preference Scoring
 
 If multiple templates remain after filtering, AIM Engine scores them using this preference hierarchy (highest to lowest priority):
 
 1. **Profile Type**: optimized > preview > unoptimized
-2. **GPU Tier**: MI325X > MI300X > MI250X > MI210 > A100 > H100
+2. **GPU Tier**: MI325X > MI300X > MI250X > MI210
 3. **Metric**: latency > throughput
 4. **Precision**: Primary ordering by bit-width (smaller preferred). Secondary ordering by type: fp > bf > int. Full order: fp4 > int4 > fp8 > int8 > fp16 > bf16 > fp32
 
@@ -165,29 +150,7 @@ The template with the best score is selected.
 If multiple templates have identical scores after all filtering and scoring, AIM Engine reports an ambiguous selection error. Resolve this by:
 
 - Specifying `template.name` explicitly
-- Adding overrides to narrow the selection
 - Removing duplicate templates
-
-## Derived Templates
-
-When you specify overrides on a service that uses an explicit template, AIM Engine creates a **derived template**. This is a namespace-scoped copy of the base template with your overrides applied.
-
-```yaml
-spec:
-  template:
-    name: base-template
-  overrides:
-    precision: fp8
-    metric: latency
-```
-
-This creates a derived template with a descriptive name like `base-template-ovr-mi325x-fp16-a1b2`. The name includes the override values for readability, plus a short hash for uniqueness.
-
-Derived templates:
-- Are namespace-scoped (even if the base template is cluster-scoped)
-- Have no owner references (intentionally orphaned for reuse)
-- Can be shared across services with identical overrides
-- Must be manually cleaned up if no longer needed
 
 ## Caching
 
@@ -197,48 +160,26 @@ AIMService supports model caching to avoid downloading model weights on every po
 
 | Mode | Behavior |
 |------|----------|
-| `Auto` (default) | Use cache if it exists, but don't create one. If no cache exists, a dedicated cache is created for the service. |
-| `Always` | Always use cache, creating one if it doesn't exist. Service waits for the cache; the cache is shared and persists independently. |
-| `Never` | Don't use cache even if one exists. A dedicated cache is created for the service and is garbage-collected when the service is deleted. |
+| `Shared` (default) | Reuses or creates shared cache assets. The template cache and artifacts persist independently of the service and can be reused by other services referencing the same template. |
+| `Dedicated` | Creates service-owned cache assets. The template cache and artifacts are owned by the service and garbage-collected when the service is deleted. |
 
 ```yaml
 spec:
   caching:
-    mode: Always  # or Auto (default), Never
+    mode: Shared  # default; use Dedicated for service-owned caches
 ```
 
-When `caching` is omitted, mode defaults to `Auto`. For backward compatibility, the deprecated `spec.cacheModel` field is still supported when `caching` is not set: `nil` = Auto, `true` = Always, `false` = Never.
+When `caching` is omitted, mode defaults to `Shared`.
 
 ### How Caching Works
 
-1. **Template Cache**: An `AIMTemplateCache` pre-downloads all model sources for a template to a shared PVC
+1. **Template Cache**: An `AIMTemplateCache` pre-downloads all model sources for a template to PVCs
 2. **Model Caches**: Individual `AIMArtifact` resources manage per-model downloads
-3. **Cache ownership**: With `Always`, the template cache is shared and has no owner (persists after the service is deleted). With `Auto` or `Never`, when a cache is created it is dedicated to the service and is deleted with it.
-
-With `caching.mode: Auto`, the service uses an existing shared cache if available; otherwise a dedicated cache is created for the service.
-
-## Overrides
-
-Overrides let you customize template behavior without manually creating a new template (a derived template is created automatically):
-
-```yaml
-spec:
-  overrides:
-    metric: latency           # Optimization target
-    precision: fp16           # Model precision
-    hardware:
-      gpu:
-        model: MI300X         # GPU model
-        requests: 4           # Number of GPUs per replica
-```
-
-Overrides affect:
-- **Template selection**: Filters auto-selection to matching templates
-- **Derived templates**: Creates customized template when using explicit template name
+3. **Cache ownership**: In `Shared` mode, the template cache has no owner references and persists after the service is deleted, available for reuse. In `Dedicated` mode, the cache is owned by the service and deleted with it.
 
 ## Resource Configuration
 
-Override compute resources for the inference container:
+Configure compute resources for the inference container:
 
 ```yaml
 spec:
@@ -268,7 +209,7 @@ Service status reflects the health of all components:
 | Status | Meaning |
 |--------|---------|
 | `Pending` | Waiting for upstream dependencies (model, template) |
-| `Progressing` | Creating downstream resources (InferenceService, cache) |
+| `Starting` | Creating downstream resources (InferenceService, cache) |
 | `Running` | InferenceService is ready and serving traffic |
 | `Degraded` | Partially functional (e.g., cache failed but service running) |
 | `Failed` | Critical failure preventing deployment |
@@ -296,7 +237,7 @@ The service is waiting for upstream dependencies:
 
 ```bash
 # Check which component is blocking
-kubectl get aimservice <name> -o jsonpath='{.status.componentHealth}' | jq
+kubectl get aimservice <name> -o jsonpath='{.status.conditions}' | jq
 ```
 
 Common causes:
@@ -304,17 +245,19 @@ Common causes:
 - **Template not found**: Check `template.name` or verify templates exist for the model
 - **Template not ready**: The template's model sources may still be resolving
 
-### Service stuck in "Progressing"
+### Service stuck in "Starting"
 
 Downstream resources are being created:
 
 ```bash
 # Check InferenceService status
-kubectl get inferenceservice <name> -n <namespace>
+kubectl get inferenceservice -l aim.eai.amd.com/service.name=<name> -n <namespace>
 
 # Check pod status
-kubectl get pods -l serving.kserve.io/inferenceservice=<name>
+kubectl get pods -l serving.kserve.io/inferenceservice=<isvc-name> -n <namespace>
 ```
+
+Use the InferenceService name returned by the first command as `<isvc-name>`.
 
 Common causes:
 - **Image pull errors**: Check imagePullSecrets
@@ -334,7 +277,6 @@ kubectl get aimservicetemplates -o custom-columns=NAME:.metadata.name,STATUS:.st
 If templates exist but aren't selected:
 - Templates may be `NotAvailable` (GPU not in cluster)
 - Templates may be unoptimized (set `allowUnoptimized: true`)
-- Overrides may be too restrictive
 
 ### Template selection is ambiguous
 
@@ -346,14 +288,13 @@ kubectl get aimservice <name> -o jsonpath='{.status.conditions[?(@.type=="Ready"
 
 Resolution:
 - Specify `template.name` explicitly
-- Add overrides to narrow selection
 - Remove duplicate templates
 
 ### Cache errors
 
 ```bash
 # Check template cache status
-kubectl get aimtemplatecache -l aim.eai.amd.com/service=<name>
+kubectl get aimtemplatecache -l aim.eai.amd.com/service.name=<name>
 
 # Check artifact status
 kubectl get aimartifact -l aim.eai.amd.com/template=<template-name>

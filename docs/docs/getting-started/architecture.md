@@ -27,7 +27,6 @@ graph TB
         Artifact["AIMArtifact"]
         ISVC["KServe<br/>InferenceService"]
         HTTPRoute["Gateway API<br/>HTTPRoute"]
-        KVCache["AIMKVCache"]
     end
 
     subgraph Infra["Infrastructure"]
@@ -51,7 +50,6 @@ graph TB
 
     Reconciler --> ISVC
     Reconciler --> HTTPRoute
-    Reconciler --> KVCache
 
     ISVC --> KServe
     HTTPRoute --> GatewayAPI
@@ -98,7 +96,37 @@ flowchart LR
 | **AIMRuntimeConfig** / **AIMClusterRuntimeConfig** | Provides storage defaults, routing, and environment variables | Namespace / Cluster |
 | **AIMClusterModelSource** | Discovers models automatically from container registries | Cluster |
 | **AIMArtifact** | Manages model artifact downloads to persistent volumes | Namespace |
-| **AIMKVCache** | Manages KV cache infrastructure for LLM inference | Namespace |
+
+## Cluster vs Namespace Scoping
+
+Several CRDs have both a namespace-scoped and a cluster-scoped variant:
+
+| Namespace-Scoped | Cluster-Scoped | Purpose |
+|-----------------|----------------|---------|
+| `AIMModel` | `AIMClusterModel` | Model definitions |
+| `AIMServiceTemplate` | `AIMClusterServiceTemplate` | Runtime profiles |
+| `AIMRuntimeConfig` | `AIMClusterRuntimeConfig` | Storage, routing, and environment defaults |
+
+**Cluster-scoped** resources are shared across all namespaces. A cluster admin creates them to provide platform-wide defaults: a model catalog, validated runtime profiles, and shared configuration.
+
+**Namespace-scoped** resources are visible only within their namespace. Teams create them for custom models, per-project overrides, or private configurations.
+
+### Resolution Order
+
+When an AIMService needs a model, template, or config, AIM Engine resolves the reference in this order:
+
+1. **Namespace** — look for the resource in the service's namespace
+2. **Cluster** — if not found, fall back to the cluster-scoped variant
+
+Namespace always wins. This lets teams override any cluster default by creating a namespace resource with the same name.
+
+**RuntimeConfig** is special: if both namespace and cluster configs exist, they are **merged** rather than one replacing the other. Namespace values override cluster values for any fields that are set in both.
+
+The resolution scope (`Namespace`, `Cluster`, or `Merged`) is recorded in the AIMService status so you can see which scope was used:
+
+```bash
+kubectl get aimservice <name> -o jsonpath='{.status.resolvedModel.scope}'
+```
 
 ## Reconciliation Flow
 

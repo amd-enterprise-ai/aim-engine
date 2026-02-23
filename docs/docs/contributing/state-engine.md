@@ -107,9 +107,9 @@ The `GetPodsHealth` utility automatically inspects pod logs to categorize failur
 **Example categorization**:
 ```go
 // Pod failed with exit code 1
-// Logs contain: "Access to model meta-llama/Llama-2-7b is restricted"
+// Logs contain: "Access to model Qwen/Qwen3-32B is restricted"
 // → Categorized as Auth error
-// → Status shows: "Container download failed with exit code 1: ...\n\nLog excerpt:\nAccess to model meta-llama/Llama-2-7b is restricted"
+// → Status shows: "Container download failed with exit code 1: ...\n\nLog excerpt:\nAccess to model Qwen/Qwen3-32B is restricted"
 ```
 
 This automatic inspection eliminates the need for manual log checking - the controller surfaces the root cause directly in the status.

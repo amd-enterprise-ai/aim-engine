@@ -218,7 +218,7 @@ func listTemplateCandidatesForModel(
 }
 
 // listAvailableGPUs returns the list of GPU models available in the cluster.
-// Uses device ID-based extraction for AMD GPUs and label-based extraction for NVIDIA GPUs.
+// Uses device ID-based extraction for AMD GPUs.
 func listAvailableGPUs(ctx context.Context, c client.Client) ([]string, error) {
 	nodes := &corev1.NodeList{}
 	if err := c.List(ctx, nodes); err != nil {
@@ -231,7 +231,6 @@ func listAvailableGPUs(ctx context.Context, c client.Client) ([]string, error) {
 		if model := utils.ExtractAMDModel(node.Labels); model != "" {
 			gpuSet[model] = struct{}{}
 		}
-		// Add NVIDIA extraction if needed in the future
 	}
 
 	gpus := make([]string, 0, len(gpuSet))
@@ -527,7 +526,7 @@ func preferNamespaceTemplates(candidates []TemplateCandidate) []TemplateCandidat
 //
 // Preference hierarchy (highest to lowest priority):
 // 1. Profile Type: optimized > preview > unoptimized
-// 2. GPU Tier: MI325X > MI300X > MI250X > MI210 > A100 > H100 (AMD preferred)
+// 2. GPU Tier: MI325X > MI300X > MI250X > MI210
 // 3. Metric: latency > throughput
 // 4. Precision: smaller bit-width preferred (fp4 > int4 > fp8 > int8 > fp16 > bf16 > fp32)
 //
@@ -661,7 +660,7 @@ func candidateProfileType(c TemplateCandidate) string {
 // Preference orders for template selection
 var (
 	gpuPreferenceOrder = []string{
-		"MI325X", "MI300X", "MI250X", "MI210", "A100", "H100",
+		"MI325X", "MI300X", "MI250X", "MI210",
 	}
 	metricPreferenceOrder = []string{
 		"latency", "throughput",

@@ -17,7 +17,7 @@ manager:
   # Image configuration
   image:
     # -- Operator container image repository
-    repository: ghcr.io/silogen/aim-engine
+    repository: docker.io/amdenterpriseai/aim-engine
     # -- Operator container image tag
     tag: latest
     # -- Image pull policy

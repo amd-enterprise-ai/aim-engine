@@ -8,7 +8,7 @@ Model caching in AIM uses three resource types:
 
 1. **AIMArtifact**: Manages the model artifacts download process onto a PVC
 2. **AIMTemplateCache**: Groups `AIMArtifacts` for a specific template and allows caching a cluster-scoped `AIMClusterServiceTemplate` into a specific namespace.
-3. **AIMService**: Can trigger template cache creation via `spec.caching.mode: Shared|Dedicated`. See [service.md](./service.md) for more information.
+3. **AIMService**: Can trigger template cache creation via `spec.caching.mode: Shared|Dedicated`. See [AIM Services](./services.md) for more information.
 
 ### Shared and dedicated mode
 
@@ -114,13 +114,13 @@ Multiple services can share the same cached models:
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
-  name: llama-chat
+  name: qwen-chat
   namespace: ml-team
   labels:
     project: conversational-ai
 spec:
   model:
-    ref: meta-llama-3-8b
+    ref: qwen-qwen3-32b
   caching:
     mode: Shared   # default; use Dedicated for service-owned caches
 ```
@@ -185,7 +185,7 @@ kind: AIMArtifact
 metadata:
   name: my-model
 spec:
-  sourceUri: hf://meta-llama/Llama-3-8B
+  sourceUri: hf://Qwen/Qwen3-32B
   env:
     - name: AIM_DOWNLOADER_PROTOCOL
       value: "HTTP"

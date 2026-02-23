@@ -126,6 +126,5 @@ func resourcesContainGPUChanges(oldResources, newResources corev1.ResourceList) 
 
 func isGPUKey(key string) bool {
 	return strings.HasPrefix(key, "amd.com/") ||
-		strings.HasPrefix(key, "beta.amd.com/") ||
-		strings.HasPrefix(key, "nvidia.com/")
+		strings.HasPrefix(key, "beta.amd.com/")
 }

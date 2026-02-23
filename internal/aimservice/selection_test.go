@@ -324,10 +324,10 @@ func TestFilterTemplatesByGPUAvailability(t *testing.T) {
 			candidates: []TemplateCandidate{
 				NewCandidate("mi300x").WithGPU("MI300X", 4).Build(),
 				NewCandidate("mi325x").WithGPU("MI325X", 8).Build(),
-				NewCandidate("a100").WithGPU("A100", 4).Build(),
+				NewCandidate("mi250x").WithGPU("MI250X", 4).Build(),
 			},
-			availableGPUs: []string{"MI300X", "A100"},
-			expectedNames: []string{"mi300x", "a100"},
+			availableGPUs: []string{"MI300X", "MI250X"},
+			expectedNames: []string{"mi300x", "mi250x"},
 		},
 		{
 			name: "candidate without GPU spec - passes",
@@ -533,7 +533,7 @@ func TestChoosePreferredTemplate(t *testing.T) {
 		{
 			name: "complex scenario with multiple factors",
 			candidates: []TemplateCandidate{
-				NewCandidate("worst").WithProfileType(aimv1alpha1.AIMProfileTypeUnoptimized).WithGPU("A100", 4).WithMetric(throughput).WithPrecision(bf16).Build(),
+				NewCandidate("worst").WithProfileType(aimv1alpha1.AIMProfileTypeUnoptimized).WithGPU("MI210", 4).WithMetric(throughput).WithPrecision(bf16).Build(),
 				NewCandidate("mid").WithProfileType(aimv1alpha1.AIMProfileTypeOptimized).WithGPU("MI300X", 4).WithMetric(throughput).WithPrecision(fp16).Build(),
 				NewCandidate("best").WithProfileType(aimv1alpha1.AIMProfileTypeOptimized).WithGPU("MI325X", 8).WithMetric(latency).WithPrecision(fp8).Build(),
 			},

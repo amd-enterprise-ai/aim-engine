@@ -16,6 +16,8 @@ spec:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
 ```
 
+AIM images (like `amdenterpriseai/aim-qwen-qwen3-32b`) are container images that package open-source models optimized for AMD Instinct GPUs. Each image includes the model weights and a serving runtime tuned for specific GPU configurations and precision modes.
+
 AIM Engine automatically resolves the model, selects an optimal runtime configuration for your hardware, deploys a KServe InferenceService, and optionally creates HTTP routing through Gateway API.
 
 ## Where to Start
@@ -57,7 +59,6 @@ AIM Engine automatically resolves the model, selects an optimal runtime configur
 - **HTTP Routing** -- Expose services through Gateway API with customizable path templates
 - **Autoscaling** -- KEDA integration with OpenTelemetry metrics for demand-based scaling
 - **Multi-tenancy** -- Namespace-scoped and cluster-scoped resources for flexible team isolation
-- **KV Cache** -- Accelerate LLM inference with shared key-value caching across requests
 
 ## Documentation
 
@@ -74,7 +75,6 @@ Task-oriented walkthroughs for common workflows:
 - [Deploying Services](guides/deploying-services.md) -- Deploy and manage inference endpoints
 - [Model Catalog](guides/model-catalog.md) -- Browse and select models
 - [Scaling and Autoscaling](guides/scaling-and-autoscaling.md) -- Replicas, KEDA, and metrics
-- [KV Cache](guides/kv-cache.md) -- Configure KV cache for LLM inference acceleration
 - [Model Caching](guides/model-caching.md) -- Pre-cache models for faster startup
 - [Routing and Ingress](guides/routing-and-ingress.md) -- Gateway API patterns and path templates
 - [Private Registries](guides/private-registries.md) -- Authentication for HuggingFace, S3, and OCI
@@ -99,7 +99,6 @@ Task-oriented walkthroughs for common workflows:
 - [Service Templates](concepts/templates.md) -- Runtime profiles, derivation, and discovery cache
 - [Runtime Configuration](concepts/runtime-config.md) -- Storage defaults, routing, and environment resolution
 - [Model Caching](concepts/caching.md) -- Cache hierarchy, ownership, and deletion behavior
-- [KV Cache](concepts/kv-cache.md) -- Key-value cache architecture for LLM inference
 - [Resource Lifecycle](concepts/resource-lifecycle.md) -- Ownership, finalizers, and deletion behavior
 
 ### Reference
@@ -108,3 +107,5 @@ Task-oriented walkthroughs for common workflows:
 - [Helm Chart Values](reference/helm-values.md) -- All configurable Helm chart values
 - [CLI and Operator Flags](reference/cli.md) -- Operator binary flags and endpoints
 - [Environment Variables](reference/environment-variables.md) -- Operator and downloader configuration
+- [Naming and Labels](reference/naming-and-labels.md) -- Derived naming algorithm and label conventions
+- [Conditions](reference/conditions.md) -- Full catalog of conditions across all CRDs

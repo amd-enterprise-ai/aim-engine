@@ -40,7 +40,7 @@ import (
 func TestIsGPUAvailableForSpec(t *testing.T) {
 	gpuResources := map[string]utils.GPUResourceInfo{
 		"MI300X": {ResourceName: "amd.com/gpu"},
-		"A100":   {ResourceName: "nvidia.com/gpu"},
+		"MI250X": {ResourceName: "amd.com/gpu"},
 	}
 
 	tests := []struct {
@@ -68,7 +68,7 @@ func TestIsGPUAvailableForSpec(t *testing.T) {
 			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
 					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
-						Model:    "H100",
+						Model:    "MI355X",
 						Requests: 1,
 					}},
 				},
@@ -145,7 +145,7 @@ func TestIsGPUAvailableForSpec(t *testing.T) {
 func TestGetGPUHealthFromResources(t *testing.T) {
 	gpuResources := map[string]utils.GPUResourceInfo{
 		"MI300X": {ResourceName: "amd.com/gpu"},
-		"A100":   {ResourceName: "nvidia.com/gpu"},
+		"MI250X": {ResourceName: "amd.com/gpu"},
 	}
 
 	tests := []struct {
@@ -173,7 +173,7 @@ func TestGetGPUHealthFromResources(t *testing.T) {
 			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
 				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
 					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
-						Model:    "H100",
+						Model:    "MI355X",
 						Requests: 1,
 					}},
 				},

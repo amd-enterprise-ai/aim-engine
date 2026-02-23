@@ -57,7 +57,7 @@ type AIMClusterModelSourceSpec struct {
 	Registry string `json:"registry,omitempty"`
 
 	// ImagePullSecrets contains references to secrets for authenticating to private registries.
-	// Secrets must exist in the operator namespace (typically aim-engine-system).
+	// Secrets must exist in the operator namespace (typically aim-system).
 	// Used for both registry catalog listing and image metadata extraction.
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`

@@ -11,7 +11,7 @@ Controller manager configuration
 | Parameter | Description | Default |
 |-----------|-------------|----------|
 | `manager.replicas` | Number of operator replicas | `1` |
-| `manager.image.repository` | Operator container image repository | `ghcr.io/silogen/aim-engine` |
+| `manager.image.repository` | Operator container image repository | `docker.io/amdenterpriseai/aim-engine` |
 | `manager.image.tag` | Operator container image tag | `latest` |
 | `manager.image.pullPolicy` | Image pull policy | `IfNotPresent` |
 | `manager.imagePullSecrets` | Secrets for pulling the operator image from private registries | `[]` |

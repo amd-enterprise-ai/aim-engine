@@ -190,8 +190,8 @@ func TestGetVRAMTiersAboveThreshold(t *testing.T) {
 		{
 			name:         "64G threshold",
 			minVRAMBytes: 64 * 1024 * 1024 * 1024,
-			wantContains: []string{"64G", "80G", "128G", "192G", "256G", "288G"},
-			wantExcludes: []string{"16G", "24G", "32G", "40G", "48G"},
+			wantContains: []string{"64G", "128G", "192G", "256G", "288G"},
+			wantExcludes: []string{"16G", "24G", "32G", "48G"},
 		},
 		{
 			name:         "192G threshold",

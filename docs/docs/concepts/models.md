@@ -39,12 +39,12 @@ An AIM Model uses `metadata.name` as the canonical model identifier:
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModel
 metadata:
-  name: meta-llama-3-8b-instruct
+  name: qwen-qwen3-32b
 spec:
-  image: ghcr.io/silogen/aim-meta-llama-llama-3-1-8b-instruct:0.7.0
+  image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   discovery:
-    enabled: true
-    autoCreateTemplates: true
+    extractMetadata: true
+    createServiceTemplates: true
   resources:
     limits:
       cpu: "8"
@@ -60,7 +60,7 @@ spec:
 | ----- |-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `image` | Container image URI implementing this model. The operator inspects this image during discovery.                                                                   |
 | `discovery` | Controls metadata extraction and automatic template generation. Discovery is attempted automatically.                                                             |
-| `discovery.autoCreateTemplates` | When true (default), creates ServiceTemplates from recommended deployments published by the image.                                                                |
+| `discovery.createServiceTemplates` | When true (default), creates ServiceTemplates from recommended deployments published by the image.                                                                |
 | `defaultServiceTemplate` | Default template name to use when services reference this model without specifying a template. Optional.                                                          |
 | `imagePullSecrets` | Secrets for pulling the container image during discovery and inference. Must exist in the same namespace as the model (or operator namespace for cluster models). |
 | `serviceAccountName` | Service account to use for discovery jobs and metadata extraction. If empty, uses the default service account.                                                    |
@@ -82,14 +82,14 @@ When discovery is enabled:
 
 3. **Metadata Storage**: Extracted metadata is written to `status.imageMetadata`
 
-4. **Template Generation**: If `autoCreateTemplates: true`, the controller examines the image's recommended deployments and creates corresponding ServiceTemplate resources
+4. **Template Generation**: If `createServiceTemplates: true`, the controller examines the image's recommended deployments and creates corresponding ServiceTemplate resources
 
 ### Expected Labels
 
-AIM discovery looks for container image labels with either the new or legacy prefix:
-- `com.amd.aim.model.canonicalName` or `org.amd.silogen.model.canonicalName`
-- `com.amd.aim.model.deployments` or `org.amd.silogen.model.deployments`
-Images without these labels will have minimal metadata. If `autoCreateTemplates: true`
+AIM discovery looks for container image labels with the following prefix:
+- `com.amd.aim.model.canonicalName`
+- `com.amd.aim.model.deployments`
+Images without these labels will have minimal metadata. If `createServiceTemplates: true`
 but no `recommendedDeployments` are found, no templates are created.
 
 ## Lifecycle and Status
@@ -101,7 +101,7 @@ The `status` field tracks discovery progress:
 | Field | Description |
 | ----- | ----------- |
 | `status` | Enum: `Pending`, `Progressing`, `Ready`, `Degraded`, `Failed` |
-| `conditions` | Detailed conditions including `RuntimeResolved` and `MetadataExtracted` |
+| `conditions` | Detailed conditions including `RuntimeConfigReady`, `ImageMetadataReady`, and `ServiceTemplatesReady` |
 | `resolvedRuntimeConfig` | Metadata about the runtime config that was resolved (name, namespace, scope, UID) |
 | `imageMetadata` | Extracted metadata from the container image including model and OCI metadata |
 
@@ -115,29 +115,30 @@ The `status` field tracks discovery progress:
 
 ### Conditions
 
-**RuntimeResolved**: Reports whether runtime config resolution succeeded. Reasons:
+**RuntimeConfigReady**: Reports runtime config resolution status. Common reasons:
 
-- `RuntimeResolved`: Runtime configuration was successfully resolved
-- `RuntimeConfigMissing`: The explicitly referenced runtime config was not found
-- `DefaultRuntimeConfigMissing`: The implicit default runtime config was not found (warning, allows reconciliation to continue)
+- `ConfigFound`: Runtime configuration was successfully resolved
+- `DefaultConfigNotFound`: No default runtime config found (non-fatal)
+- `ConfigNotFound`: Explicitly referenced runtime config not found
 
-**MetadataExtracted**: Reports whether image inspection succeeded. Reasons:
+**ImageMetadataReady**: Reports image inspection status. Common reasons:
 
-- `MetadataExtracted`: Discovery completed successfully
-- `MetadataExtractionFailed`: Discovery job failed or required labels missing from image
+- `ImageMetadataFound`: Metadata extraction succeeded
+- `ImageFound`: Image is reachable, but metadata labels are missing
+- `MetadataExtractionFailed`: Failed to extract metadata from the image
 
 ### Toggling Discovery
 
 You can enable discovery after image creation:
 
 ```bash
-kubectl edit aimclustermodel meta-llama-3-8b-instruct
-# Set spec.discovery.enabled: true
+kubectl edit aimclustermodel qwen-qwen3-32b
+# Set spec.discovery.extractMetadata: true
 ```
 
 The controller runs extraction on the next reconciliation and updates status accordingly.
 
-Disabling discovery after templates exist leaves templates in place. The `TemplatesAutoGenerated` condition remains `True`.
+Disabling discovery after templates exist leaves templates in place. Existing templates are not deleted automatically.
 
 ## Resource Resolution
 
@@ -166,22 +167,20 @@ This allows namespace models to override cluster baselines.
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModel
 metadata:
-  name: meta-llama-3-8b-instruct
+  name: qwen-qwen3-32b
 spec:
-  image: ghcr.io/example/llama-3.1-8b-instruct:v1.2.0
+  image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   runtimeConfigName: platform-default
   discovery:
-    enabled: true
-    autoCreateTemplates: true
+    extractMetadata: true
+    createServiceTemplates: true
   resources:
     limits:
       cpu: "8"
       memory: 64Gi
-      nvidia.com/gpu: "1"
     requests:
       cpu: "4"
       memory: 32Gi
-      nvidia.com/gpu: "1"
 ```
 
 ### Namespace Model Without Discovery
@@ -190,14 +189,15 @@ spec:
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMModel
 metadata:
-  name: meta-llama-3-8b-dev
+  name: qwen-qwen3-32b-dev
   namespace: ml-team
 spec:
-  image: ghcr.io/ml-team/llama-dev:latest
+  image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   runtimeConfigName: ml-team
   defaultServiceTemplate: custom-template-name
   discovery:
-    enabled: false  # skip discovery and auto-templates
+    extractMetadata: false  # skip image metadata extraction
+    createServiceTemplates: false
   resources:
     limits:
       cpu: "6"
@@ -238,7 +238,8 @@ spec:
   image: private.registry/models/proprietary:v1
   runtimeConfigName: default  # uses config above
   discovery:
-    enabled: true
+    extractMetadata: true
+    createServiceTemplates: true
 ```
 
 ## Troubleshooting
@@ -246,7 +247,12 @@ spec:
 ### Discovery Fails
 
 Check the operator logs for registry access errors:
-kubectl -n aim-system logs -l app.kubernetes.io/name=aim-operator --tail=100 | grep -i "model-name"Common causes:
+
+```bash
+kubectl -n aim-system logs -l app.kubernetes.io/name=aim-engine --tail=100 | grep -i "<model-name>"
+```
+
+Common causes:
 - Missing or invalid imagePullSecrets (secrets must exist in operator namespace for cluster models)
 - Image doesn't exist or tag is invalid
 - Network connectivity issues to the registry
@@ -263,16 +269,16 @@ kubectl -n <namespace> get aimmodel <name> -o yaml
 
 Look for:
 
-- `discovery.enabled: false` - discovery is disabled
-- `discovery.autoCreateTemplates: false` - auto-creation disabled
-- `TemplatesAutoGenerated` condition with reason `NoRecommendedTemplates`
+- `discovery.extractMetadata: false` - metadata extraction is disabled
+- `discovery.createServiceTemplates: false` - auto-template creation is disabled
+- Model condition reasons such as `NoTemplatesExpected` or `CreatingTemplates`
 
-### MetadataExtracted Condition False
+### ImageMetadataReady Condition False
 
 The container image is missing required labels or the discovery job failed. Check:
 
 ```bash
-kubectl get aimclustermodel <name> -o jsonpath='{.status.conditions[?(@.type=="MetadataExtracted")]}'
+kubectl get aimclustermodel <name> -o jsonpath='{.status.conditions[?(@.type=="ImageMetadataReady")]}'
 ```
 
 Inspect the container image labels:
@@ -284,20 +290,7 @@ docker inspect <image> --format='{{json .Config.Labels}}'
 
 ## Auto-Creation from Services
 
-When a service uses `spec.model.image` directly (instead of `spec.model.ref`), AIM automatically creates a model resource if one doesn't already exist with that image URI.
-
-### Creation Scope
-
-The runtime config's `spec.model.creationScope` field controls whether the auto-created model is cluster-scoped or namespace-scoped. The default is namespace-scoped:
-
-```yaml
-# In runtime config
-spec:
-  model:
-    creationScope: Cluster  # creates AIMClusterModel
-    # OR
-    creationScope: Namespace  # creates AIMModel in service's namespace
-```
+When a service uses `spec.model.image` directly (instead of `spec.model.name`), AIM automatically creates a model resource if one doesn't already exist with that image URI. Auto-created models are namespace-scoped.
 
 ### Discovery for Auto-Created Models
 
@@ -321,22 +314,23 @@ metadata:
   namespace: ml-team
 spec:
   model:
-    image: ghcr.io/example/my-model:v1.0.0
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   runtimeConfigName: default
 ```
 
-If the runtime config has `creationScope: Cluster` and `autoDiscovery: true`, AIM creates:
+If the runtime config has `autoDiscovery: true`, AIM creates a namespace-scoped model and discovery runs automatically:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMClusterModel
+kind: AIMModel
 metadata:
   name: auto-<hash-of-image>
+  namespace: ml-team
 spec:
-  image: ghcr.io/example/my-model:v1.0.0
+  image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   discovery:
-    enabled: true
-    autoCreateTemplates: true
+    extractMetadata: true
+    createServiceTemplates: true
 ```
 
 ## Custom Models
@@ -364,13 +358,13 @@ Create an AIMModel or AIMClusterModel with `modelSources` instead of relying on 
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMModel
 metadata:
-  name: my-custom-llama
+  name: my-custom-qwen
   namespace: ml-team
 spec:
   image: amdenterpriseai/aim-base:latest
   modelSources:
-    - modelId: meta-llama/Llama-3-8B
-      sourceUri: s3://my-bucket/models/llama-3-8b
+    - modelId: Qwen/Qwen3-32B
+      sourceUri: s3://my-bucket/models/qwen3-32b
       # size: 16Gi  # Optional - auto-discovered by download job if omitted
   custom:
     hardware:
@@ -388,14 +382,15 @@ Create an AIMService with `spec.model.custom` to auto-create a custom model:
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
-  name: my-llama-service
+  name: my-qwen-service
   namespace: ml-team
 spec:
   model:
     custom:
+      baseImage: amdenterpriseai/aim-base:latest
       modelSources:
-        - modelId: meta-llama/Llama-3-8B
-          sourceUri: hf://meta-llama/Llama-3-8B
+        - modelId: Qwen/Qwen3-32B
+          sourceUri: hf://Qwen/Qwen3-32B
           # size is optional - auto-discovered by download job
       hardware:
         gpu:
@@ -413,7 +408,7 @@ Each model source specifies:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `modelId` | Yes | Canonical identifier in `{org}/{name}` format. Determines the cache mount path. |
-| `sourceUri` | Yes | Download location. Schemes: `hf://org/model` (HuggingFace) or `s3://bucket/key` (S3). For S3, use the bucket name directly without the service hostname (e.g., `s3://my-bucket/models/llama`). |
+| `sourceUri` | Yes | Download location. Schemes: `hf://org/model` (HuggingFace) or `s3://bucket/key` (S3). For S3, use the bucket name directly without the service hostname (e.g., `s3://my-bucket/models/qwen3-32b`). |
 | `size` | No | Storage size for PVC provisioning. If omitted, the download job automatically discovers the size. Can be set explicitly to pre-allocate storage. |
 | `env` | No | Per-source credential overrides (e.g., `HF_TOKEN`, `AWS_ACCESS_KEY_ID`) |
 
@@ -452,7 +447,7 @@ Templates also inherit the `type` field from `spec.custom.type`, which defaults 
 ```yaml
 spec:
   modelSources:
-    - modelId: meta-llama/Llama-3-8B
+    - modelId: Qwen/Qwen3-32B
       sourceUri: s3://bucket/model
   custom:
     type: unoptimized  # Default - can be omitted
@@ -501,7 +496,7 @@ spec:
     name: my-custom-model-custom-abc123  # Explicit template name
 ```
 
-This safety mechanism prevents accidentally deploying unoptimized configurations in production. See [Template Selection](services.md#template-selection) for more details on how templates are selected and the role of optimization levels.
+This safety mechanism prevents accidentally deploying unoptimized configurations in production. See [Template Resolution](services.md#template-resolution) for more details on how templates are selected and the role of optimization levels.
 
 ### Authentication
 
@@ -512,8 +507,8 @@ Configure credentials for private sources:
 ```yaml
 spec:
   modelSources:
-    - modelId: meta-llama/Llama-3-8B
-      sourceUri: hf://meta-llama/Llama-3-8B
+    - modelId: Qwen/Qwen3-32B
+      sourceUri: hf://Qwen/Qwen3-32B
       size: 16Gi
       env:
         - name: HF_TOKEN
@@ -586,14 +581,14 @@ stringData:
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
-  name: llama-custom
+  name: qwen-custom
   namespace: ml-team
 spec:
   model:
     custom:
       modelSources:
-        - modelId: meta-llama/Llama-3.1-8B-Instruct
-          sourceUri: hf://meta-llama/Llama-3.1-8B-Instruct
+        - modelId: Qwen/Qwen3-32B
+          sourceUri: hf://Qwen/Qwen3-32B
           # size is optional - auto-discovered by download job
           env:
             - name: HF_TOKEN

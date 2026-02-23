@@ -182,13 +182,13 @@ Service using template:
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
-  name: llama-chat
+  name: qwen-chat
   namespace: ml-team
   labels:
     project: conversational-ai
 spec:
   model:
-    ref: meta-llama-3-8b
+    name: qwen-qwen3-32b
   # routing.pathTemplate omitted - uses runtime config template
 ```
 
@@ -199,12 +199,12 @@ Service with override:
 ```yaml
 spec:
   model:
-    ref: meta-llama-3-8b
+    ref: qwen-qwen3-32b
   routing:
     pathTemplate: "/custom/{.metadata.name}"
 ```
 
-Rendered path: `/custom/llama-chat` (runtime config template ignored)
+Rendered path: `/custom/qwen-chat` (runtime config template ignored)
 
 ## Error and Warning Behavior
 
@@ -304,7 +304,7 @@ When users create an AIMService with these labels:
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
-  name: llama-chat
+  name: qwen-chat
   namespace: ml-team
   labels:
     org.example/cost-center: "eng-ml"
@@ -312,7 +312,7 @@ metadata:
     org.example/project: "chatbot-v2"
 spec:
   model:
-    ref: meta-llama-3-8b
+    ref: qwen-qwen3-32b
 ```
 
 The operator propagates these labels to the InferenceService, HTTPRoute, and any PVCs created for the service, enabling cost tracking and chargeback at the infrastructure level.
