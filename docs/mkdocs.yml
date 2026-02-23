@@ -16,7 +16,7 @@ theme:
     - content.code.annotate
     - search.suggest
     - search.highlight
-palette:
+  palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
       primary: black
