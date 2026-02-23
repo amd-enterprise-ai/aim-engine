@@ -1,0 +1,2375 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Kubernetes operator for deploying and managing AI inference workloads on AMD GPUs">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.2">
+    
+    
+      
+        <title>State Engine Internals - AIM Engine - AMD Inference Microservices</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="grey">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#state-engine-internals" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="AIM Engine - AMD Inference Microservices" class="md-header__button md-logo" aria-label="AIM Engine - AMD Inference Microservices" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AIM Engine - AMD Inference Microservices
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              State Engine Internals
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="grey"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="grey"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/amd-enterprise-ai/aim-engine" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    amd-enterprise-ai/aim-engine
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../.." class="md-tabs__link">
+          
+  
+  
+    
+  
+  Home
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guides/deploying-services/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../admin/installation/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Administration
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concepts/services/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Concepts
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/api/v1alpha1/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../changelog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Changelog
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="AIM Engine - AMD Inference Microservices" class="md-nav__button md-logo" aria-label="AIM Engine - AMD Inference Microservices" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AIM Engine - AMD Inference Microservices
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/amd-enterprise-ai/aim-engine" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    amd-enterprise-ai/aim-engine
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../.." class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Home
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/deploying-services/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploying Services
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/model-catalog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Catalog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/scaling-and-autoscaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scaling and Autoscaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/model-caching/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Caching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/routing-and-ingress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing and Ingress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/private-registries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Private Registries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/multi-tenancy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Tenancy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Administration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Administration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin/kserve-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    KServe Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin/gpu-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GPU Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin/storage-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin/upgrading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin/monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/services/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AIM Services
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AIM Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/model-sources/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Sources
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Service Templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/runtime-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/caching/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Caching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/resource-lifecycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Resource Lifecycle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/v1alpha1/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CRD API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/helm-values/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Helm Chart Values
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and Operator Flags
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/environment-variables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/naming-and-labels/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Naming and Labels
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/conditions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Conditions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#error-categorization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Error Categorization
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Error Categorization">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#infrastructure-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Infrastructure Errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#auth-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auth Errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#invalidspec-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        InvalidSpec Errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#missingupstreamdependency-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MissingUpstreamDependency Errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#missingdownstreamdependency-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MissingDownstreamDependency Errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resourceexhaustion-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ResourceExhaustion Errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unknown-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unknown Errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pod-log-inspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pod Log Inspection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#grace-period-logic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grace Period Logic
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#condition-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Condition Management
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Condition Management">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#component-conditions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Component Conditions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parent-conditions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parent Conditions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ready-condition" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ready Condition
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#condition-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Condition Lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Condition Lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#creation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Creation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#transitions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transitions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#status-field" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Status Field
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reconciliation-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reconciliation Decisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Observability">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#for-component-conditions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        For Component Conditions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#for-parent-conditions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        For Parent Conditions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#manual-override" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Manual Override
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="state-engine-internals">State Engine Internals<a class="headerlink" href="#state-engine-internals" title="Permanent link">&para;</a></h1>
+<p>How the automatic state engine works under the hood.</p>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
+<p>The state engine runs after you've composed observations but before applying desired state. It analyzes component health, categorizes errors, manages conditions, and decides reconciliation behavior.</p>
+<p><strong>Flow</strong>: <code>Fetch → Compose → **StateEngine** → Apply → Events → Status</code></p>
+<hr />
+<h2 id="error-categorization">Error Categorization<a class="headerlink" href="#error-categorization" title="Permanent link">&para;</a></h2>
+<p>All errors are automatically categorized using <code>CategorizeError()</code>:</p>
+<h3 id="infrastructure-errors">Infrastructure Errors<a class="headerlink" href="#infrastructure-errors" title="Permanent link">&para;</a></h3>
+<p><strong>Detection</strong>: Network timeouts, connection refused, DNS failures, 5xx responses, rate limiting</p>
+<p><strong>Behavior</strong>:
+- Sets <code>DependenciesReachable=False</code>
+- Triggers requeue with exponential backoff
+- Applies 10-second grace period before degrading components
+- Component state: <code>Degraded</code> (after grace period)</p>
+<h3 id="auth-errors">Auth Errors<a class="headerlink" href="#auth-errors" title="Permanent link">&para;</a></h3>
+<p><strong>Detection</strong>: 401 Unauthorized, 403 Forbidden, auth-related log patterns (S3, HuggingFace)</p>
+<p><strong>Behavior</strong>:
+- Sets <code>AuthValid=False</code>
+- Stops apply phase (user must fix)
+- Component state: <code>Failed</code> (requires spec/secret change)</p>
+<p><strong>Log patterns detected</strong>:
+- S3: <code>access denied</code>, <code>InvalidAccessKeyId</code>, <code>NoCredentialProviders</code>
+- HuggingFace: <code>Access to model X is restricted</code>, <code>Cannot access gated repo</code>, <code>Invalid token</code></p>
+<h3 id="invalidspec-errors">InvalidSpec Errors<a class="headerlink" href="#invalidspec-errors" title="Permanent link">&para;</a></h3>
+<p><strong>Detection</strong>: Invalid resource specs, conflicts, already exists, 4xx errors</p>
+<p><strong>Behavior</strong>:
+- Sets <code>ConfigValid=False</code>
+- Stops apply phase (user must fix)
+- Component state: <code>Failed</code> (requires spec change)</p>
+<h3 id="missingupstreamdependency-errors">MissingUpstreamDependency Errors<a class="headerlink" href="#missingupstreamdependency-errors" title="Permanent link">&para;</a></h3>
+<p><strong>Detection</strong>: User-referenced resources not found (runtimeConfig, secrets, configmaps)</p>
+<p><strong>Behavior</strong>:
+- Sets <code>ConfigValid=False</code>
+- Stops apply phase (user must fix)
+- Component state: <code>Failed</code> (requires user to create the referenced resource)</p>
+<p><strong>Distinction</strong>: These are resources the <em>user</em> referenced in their spec, not internal resources the controller creates.</p>
+<h3 id="missingdownstreamdependency-errors">MissingDownstreamDependency Errors<a class="headerlink" href="#missingdownstreamdependency-errors" title="Permanent link">&para;</a></h3>
+<p><strong>Detection</strong>: 404 NotFound for internal resources (pods, jobs, deployments being created)</p>
+<p><strong>Behavior</strong>:
+- Marks component as <code>Progressing</code> (waiting state)
+- Does not fail the resource
+- Normal reconciliation continues
+- Component state: <code>Progressing</code> (will self-heal)</p>
+<p><strong>Distinction</strong>: These are resources the <em>controller</em> is creating/managing - they're expected to be missing during initial reconciliation.</p>
+<h3 id="resourceexhaustion-errors">ResourceExhaustion Errors<a class="headerlink" href="#resourceexhaustion-errors" title="Permanent link">&para;</a></h3>
+<p><strong>Detection</strong>: OOM kills, disk full, quota exceeded, storage exhaustion log patterns</p>
+<p><strong>Behavior</strong>:
+- Component state: <code>Failed</code> (requires resource limit/quota increase)
+- Does not set <code>ConfigValid=False</code> (it's a platform/capacity issue, not a config issue)</p>
+<p><strong>Log patterns detected</strong>:
+- <code>no space left on device</code>
+- <code>disk full</code>
+- <code>quota exceeded</code>
+- Pod termination reason: <code>OOMKilled</code></p>
+<h3 id="unknown-errors">Unknown Errors<a class="headerlink" href="#unknown-errors" title="Permanent link">&para;</a></h3>
+<p><strong>Behavior</strong>: Treated as infrastructure errors (requeue with backoff)</p>
+<hr />
+<h2 id="pod-log-inspection">Pod Log Inspection<a class="headerlink" href="#pod-log-inspection" title="Permanent link">&para;</a></h2>
+<p>The <code>GetPodsHealth</code> utility automatically inspects pod logs to categorize failures beyond what Kubernetes API provides:</p>
+<p><strong>How it works</strong>:
+1. Checks for image pull errors (auth, not found, backoff)
+2. For failed pods, fetches the last 50 lines of logs from the failed container
+3. Matches log patterns to categorize the failure type
+4. Returns categorized error with log excerpt for debugging</p>
+<p><strong>Pattern matching order</strong> (first match wins):
+1. <strong>Resource not found</strong> (404, "Repository Not Found") - checked first because HuggingFace returns 401 for non-existent repos
+2. <strong>Auth errors</strong> (credentials, tokens, access denied)
+3. <strong>Storage exhaustion</strong> (disk full, quota exceeded)</p>
+<p><strong>Example categorization</strong>:
+<div class="language-go highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1">// Pod failed with exit code 1</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="c1">// Logs contain: &quot;Access to model Qwen/Qwen3-32B is restricted&quot;</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1">// → Categorized as Auth error</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1">// → Status shows: &quot;Container download failed with exit code 1: ...\n\nLog excerpt:\nAccess to model Qwen/Qwen3-32B is restricted&quot;</span>
+</span></code></pre></div></p>
+<p>This automatic inspection eliminates the need for manual log checking - the controller surfaces the root cause directly in the status.</p>
+<hr />
+<h2 id="grace-period-logic">Grace Period Logic<a class="headerlink" href="#grace-period-logic" title="Permanent link">&para;</a></h2>
+<p>When infrastructure errors occur, components don't immediately degrade:</p>
+<ol>
+<li><strong>First occurrence</strong>: <code>DependenciesReachable</code> set to <code>False</code>, component stays <code>Ready</code>/<code>Progressing</code></li>
+<li><strong>0-10 seconds</strong>: Grace period - component maintains current state</li>
+<li><strong>After 10 seconds</strong>: Component degrades to <code>Degraded</code></li>
+</ol>
+<p>This prevents status flapping from transient network issues.</p>
+<p><strong>Implementation</strong>: Uses <code>LastTransitionTime</code> on the <code>DependenciesReachable</code> condition.</p>
+<hr />
+<h2 id="condition-management">Condition Management<a class="headerlink" href="#condition-management" title="Permanent link">&para;</a></h2>
+<h3 id="component-conditions">Component Conditions<a class="headerlink" href="#component-conditions" title="Permanent link">&para;</a></h3>
+<p>For each component in <code>GetComponentHealth()</code>, the engine creates a condition:</p>
+<ul>
+<li>Component name: <code>"Model"</code> → Condition: <code>"ModelReady"</code></li>
+<li>State mapping:</li>
+<li><code>Ready</code> → <code>ConditionTrue</code></li>
+<li><code>Progressing</code> → <code>ConditionUnknown</code></li>
+<li><code>Failed</code>/<code>Degraded</code>/<code>NotAvailable</code> → <code>ConditionFalse</code></li>
+</ul>
+<h3 id="parent-conditions">Parent Conditions<a class="headerlink" href="#parent-conditions" title="Permanent link">&para;</a></h3>
+<p>Three parent conditions are created <strong>only when relevant</strong> (lazy creation):</p>
+<p><strong><code>AuthValid</code></strong>:
+- Created when auth errors occur (set to <code>False</code>)
+- Transitions to <code>True</code> when errors clear
+- Never deleted once added</p>
+<p><strong><code>ConfigValid</code></strong>:
+- Created when spec validation errors occur (set to <code>False</code>)
+- Transitions to <code>True</code> when errors clear
+- Never deleted once added</p>
+<p><strong><code>DependenciesReachable</code></strong>:
+- Created when infrastructure errors occur (set to <code>False</code>)
+- Transitions to <code>True</code> when errors clear
+- Never deleted once added</p>
+<h3 id="ready-condition">Ready Condition<a class="headerlink" href="#ready-condition" title="Permanent link">&para;</a></h3>
+<p>Always set. Aggregates all component states:</p>
+<ul>
+<li><code>True</code>: All components Ready, no auth/config/infra errors</li>
+<li><code>False</code>: Any component failed, or auth/config/infra errors present</li>
+</ul>
+<hr />
+<h2 id="condition-lifecycle">Condition Lifecycle<a class="headerlink" href="#condition-lifecycle" title="Permanent link">&para;</a></h2>
+<p>Conditions follow specific lifecycle rules for creation, transition, and deletion.</p>
+<h3 id="creation">Creation<a class="headerlink" href="#creation" title="Permanent link">&para;</a></h3>
+<p>Conditions are created at different times depending on their type:</p>
+<p><strong>Always-present conditions:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Condition</th>
+<th>When Created</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ready</code></td>
+<td>First reconcile (always exists)</td>
+</tr>
+<tr>
+<td><code>{Component}Ready</code></td>
+<td>First time component appears in <code>GetComponentHealth()</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Lazy-created conditions</strong> (only appear when relevant):</p>
+<table>
+<thead>
+<tr>
+<th>Condition</th>
+<th>When Created</th>
+<th>Why Lazy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AuthValid</code></td>
+<td>First auth error</td>
+<td>Many controllers never have auth errors</td>
+</tr>
+<tr>
+<td><code>ConfigValid</code></td>
+<td>First spec validation error</td>
+<td>Most specs are valid</td>
+</tr>
+<tr>
+<td><code>DependenciesReachable</code></td>
+<td>First infrastructure error</td>
+<td>Usually infrastructure is healthy</td>
+</tr>
+</tbody>
+</table>
+<p>This keeps the conditions list clean for happy-path resources. A resource that never encounters auth errors will never show <code>AuthValid</code> - reducing noise in <code>kubectl get</code> output.</p>
+<h3 id="transitions">Transitions<a class="headerlink" href="#transitions" title="Permanent link">&para;</a></h3>
+<p>Conditions transition based on observed state. Only Status or Reason changes update <code>LastTransitionTime</code>. Message-only changes are informational and don't trigger a transition.</p>
+<p><strong>Lazy condition lifecycle:</strong></p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>[not present] → Error occurs → False → Error clears → True (persists)
+</span></code></pre></div>
+<p>Once a lazy condition appears, it stays forever. After recovery, it shows <code>True</code> as an audit trail that the error occurred and was resolved. This is useful for debugging ("this resource had auth issues at some point").</p>
+<hr />
+<h2 id="status-field">Status Field<a class="headerlink" href="#status-field" title="Permanent link">&para;</a></h2>
+<p>The <code>status.Status</code> field is set to the "worst" component state using priority ordering:</p>
+<p><strong>Priority (worst to best)</strong>:
+1. <code>Failed</code> - Terminal errors requiring user intervention (auth, invalid spec, resource exhaustion)
+2. <code>Degraded</code> - Recoverable issues (infrastructure errors after grace period, missing upstream dependencies)
+3. <code>NotAvailable</code> - Resource exists but not available due to some reason
+4. <code>Pending</code> - Waiting for scheduling/resources
+5. <code>Progressing</code> - Actively working toward Ready (internal deps, jobs running)
+6. <code>Ready/Running</code> - Fully operational</p>
+<p><strong>State Derivation from Errors</strong>:</p>
+<p>When <code>ComponentHealth.State</code> is not explicitly set, the state is derived from errors:</p>
+<div class="language-go highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1">// DeriveStateFromErrors rules:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="o">-</span><span class="w"> </span><span class="nx">No</span><span class="w"> </span><span class="nx">errors</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">Ready</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="o">-</span><span class="w"> </span><span class="nx">Auth</span><span class="p">,</span><span class="w"> </span><span class="nx">InvalidSpec</span><span class="p">,</span><span class="w"> </span><span class="nx">ResourceExhaustion</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">Failed</span><span class="w"> </span><span class="p">(</span><span class="nx">requires</span><span class="w"> </span><span class="nx">user</span><span class="w"> </span><span class="nx">action</span><span class="p">)</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="o">-</span><span class="w"> </span><span class="nx">MissingUpstreamDependency</span><span class="p">,</span><span class="w"> </span><span class="nx">Infrastructure</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">Degraded</span><span class="w"> </span><span class="p">(</span><span class="nx">may</span><span class="w"> </span><span class="nx">recover</span><span class="p">)</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="o">-</span><span class="w"> </span><span class="nx">MissingDownstreamDependency</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">Progressing</span><span class="w"> </span><span class="p">(</span><span class="nx">will</span><span class="w"> </span><span class="nx">self</span><span class="o">-</span><span class="nx">heal</span><span class="p">)</span>
+</span></code></pre></div>
+<p><strong>During grace period</strong>: Component state is preserved (doesn't degrade to <code>Degraded</code>) until 10 seconds have passed.</p>
+<hr />
+<h2 id="reconciliation-decisions">Reconciliation Decisions<a class="headerlink" href="#reconciliation-decisions" title="Permanent link">&para;</a></h2>
+<p>The state engine returns a <code>StateEngineDecision</code>:</p>
+<div class="language-go highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kd">type</span><span class="w"> </span><span class="nx">StateEngineDecision</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">    </span><span class="nx">ShouldApply</span><span class="w">   </span><span class="kt">bool</span><span class="w">   </span><span class="c1">// Skip apply phase?</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nx">ShouldRequeue</span><span class="w"> </span><span class="kt">bool</span><span class="w">   </span><span class="c1">// Return error to requeue?</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nx">RequeueError</span><span class="w">  </span><span class="kt">error</span><span class="w">  </span><span class="c1">// Error for controller-runtime</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="p">}</span>
+</span></code></pre></div>
+<p><strong>Decision logic</strong>:</p>
+<ul>
+<li><code>AuthValid=False</code> → <code>ShouldApply=false</code> (stop apply)</li>
+<li><code>ConfigValid=False</code> → <code>ShouldApply=false</code> (stop apply)</li>
+<li>Infrastructure errors → <code>ShouldRequeue=true</code> (exponential backoff)</li>
+</ul>
+<hr />
+<h2 id="observability">Observability<a class="headerlink" href="#observability" title="Permanent link">&para;</a></h2>
+<p>The state engine automatically configures event and log emission:</p>
+<h3 id="for-component-conditions">For Component Conditions<a class="headerlink" href="#for-component-conditions" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>Ready</code>/<code>Progressing</code> states → <code>AsInfo()</code> (normal event, info log on transition)</li>
+<li><code>Failed</code>/<code>Degraded</code>/<code>NotAvailable</code> states → <code>AsError()</code> (warning event, error log recurring)</li>
+</ul>
+<h3 id="for-parent-conditions">For Parent Conditions<a class="headerlink" href="#for-parent-conditions" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>AuthValid=False</code> → <code>AsError()</code> (recurring)</li>
+<li><code>ConfigValid=False</code> → <code>AsError()</code> (recurring)</li>
+<li><code>DependenciesReachable=False</code> → <code>AsError()</code> (recurring)</li>
+<li>All <code>=True</code> transitions → <code>AsInfo()</code></li>
+</ul>
+<hr />
+<h2 id="manual-override">Manual Override<a class="headerlink" href="#manual-override" title="Permanent link">&para;</a></h2>
+<p>If you implement <code>ManualStatusController</code> (SetStatus), the state engine:</p>
+<ul>
+<li>✅ Still categorizes errors for requeue decisions</li>
+<li>✅ Still applies infrastructure error requeue logic</li>
+<li>❌ Does NOT set any conditions or status fields (you control everything)</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+      <div class="md-progress" data-md-component="progress" role="progressbar"></div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.instant.progress", "navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "content.code.copy", "content.code.annotate", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
