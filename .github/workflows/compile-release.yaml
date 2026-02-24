@@ -25,6 +25,7 @@ jobs:
       BUILD_IMAGES: ${{ vars.BUILD_IMAGES }}
       PUSH_IMAGE_REPO: ${{ vars.PUSH_IMAGE_REPO }}
       PULL_IMAGE_REPO: ${{ vars.PULL_IMAGE_REPO }}
+      CHART_IMAGE_REPO: ${{ vars.CHART_IMAGE_REPO || vars.PULL_IMAGE_REPO }}
       CHART_NAME: aim-engine-chart
 
     steps:
@@ -73,11 +74,11 @@ jobs:
 
       - name: Generate install.yaml
         run: |
-          make build-installer IMG=${PULL_IMAGE_REPO}:${VERSION}
+          make build-installer IMG=${CHART_IMAGE_REPO}:${VERSION}
 
       - name: Update Helm values with image
         run: |
-          sed -i "s|repository: .*|repository: ${PULL_IMAGE_REPO}|" config/helm/values.yaml
+          sed -i "s|repository: .*|repository: ${CHART_IMAGE_REPO}|" config/helm/values.yaml
           sed -i "s|tag: .*|tag: ${VERSION}|" config/helm/values.yaml
 
       - name: Generate CRDs
@@ -184,7 +185,7 @@ jobs:
             ```
 
             ### Docker Images
-            - Operator: `${{ env.PULL_IMAGE_REPO }}:${{ env.VERSION }}`
+            - Operator: `${{ env.CHART_IMAGE_REPO }}:${{ env.VERSION }}`
 
       - name: Create or update artifacts branch
         run: |
@@ -261,6 +262,7 @@ jobs:
       VERSION: ${{ needs.compile-release.outputs.version }}
       CHART_VERSION: ${{ needs.compile-release.outputs.chart_version }}
       PULL_IMAGE_REPO: ${{ vars.PULL_IMAGE_REPO }}
+      PUSH_IMAGE_REPO: ${{ vars.PUSH_IMAGE_REPO }}
       BUILD_IMAGES: ${{ vars.BUILD_IMAGES }}
       CHART_OCI_REPO: ${{ vars.CHART_OCI_REPO || format('oci://ghcr.io/{0}', github.repository_owner) }}
     steps:
@@ -321,9 +323,12 @@ jobs:
           helm install aim-engine-crds ${CHART_OCI_REPO}/aim-engine-crds-chart \
             --version ${CHART_VERSION}
 
-      - name: Create namespace and image pull secret
+      - name: Create namespace
+        run: kubectl create namespace aim-system
+
+      - name: Create GHCR image pull secret
+        if: env.BUILD_IMAGES == 'true'
         run: |
-          kubectl create namespace aim-system
           kubectl create secret docker-registry ghcr-regcred \
             --namespace aim-system \
             --docker-server=ghcr.io \
@@ -332,10 +337,14 @@ jobs:
 
       - name: Install operator via Helm OCI
         run: |
+          HELM_SET_ARGS=""
+          if [ "${BUILD_IMAGES}" = "true" ]; then
+            HELM_SET_ARGS="--set manager.image.repository=${PUSH_IMAGE_REPO} --set manager.image.tag=${VERSION} --set manager.imagePullSecrets[0].name=ghcr-regcred"
+          fi
           helm install aim-engine ${CHART_OCI_REPO}/aim-engine-chart \
             --version ${CHART_VERSION} \
             --namespace aim-system \
-            --set manager.imagePullSecrets[0].name=ghcr-regcred
+            ${HELM_SET_ARGS}
 
       - name: Wait for operator to be ready
         run: kubectl wait --for=condition=Available --timeout=120s deployment/aim-engine-controller-manager -n aim-system
