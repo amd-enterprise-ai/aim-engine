@@ -4,13 +4,13 @@ GIT_ORG ?= $(shell git remote get-url origin 2>/dev/null | sed -n 's|.*github\.c
 IMG ?= ghcr.io/$(GIT_ORG)/aim-engine:$(TAG)
 
 # Helm chart configuration
-CHART_NAME ?= aim-engine
-CRDS_CHART_NAME ?= aim-engine-crds
+CHART_NAME ?= aim-engine-chart
+CRDS_CHART_NAME ?= aim-engine-crds-chart
 CHART_VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.1.0")
 APP_VERSION ?= $(TAG)
 CHART_OCI_REGISTRY ?= ghcr.io
 CHART_OCI_OWNER ?= $(GIT_ORG)
-CHART_OCI_REPO ?= oci://$(CHART_OCI_REGISTRY)/$(CHART_OCI_OWNER)/charts
+CHART_OCI_REPO ?= oci://$(CHART_OCI_REGISTRY)/$(CHART_OCI_OWNER)
 
 # Cluster environment configuration
 # ENV is auto-detected from kubectl context if not set:
@@ -325,6 +325,7 @@ crds: manifests ## Generate consolidated CRDs file for distribution.
 helm-package: helm ## Package the Helm chart into a .tgz file.
 	@command -v helm >/dev/null 2>&1 || { echo "Helm is not installed"; exit 1; }
 	@echo "Packaging Helm chart with version $(CHART_VERSION) and app version $(APP_VERSION)"
+	@sed -i.bak 's/^name:.*/name: $(CHART_NAME)/' dist/chart/Chart.yaml
 	@sed -i.bak 's/^version:.*/version: $(CHART_VERSION)/' dist/chart/Chart.yaml
 	@sed -i.bak 's/^appVersion:.*/appVersion: "$(APP_VERSION)"/' dist/chart/Chart.yaml
 	helm package dist/chart --version=$(CHART_VERSION) --app-version=$(APP_VERSION) --destination=dist/

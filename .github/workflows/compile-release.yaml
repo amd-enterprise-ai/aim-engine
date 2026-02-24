@@ -25,7 +25,7 @@ jobs:
       BUILD_IMAGES: ${{ vars.BUILD_IMAGES }}
       PUSH_IMAGE_REPO: ${{ vars.PUSH_IMAGE_REPO }}
       PULL_IMAGE_REPO: ${{ vars.PULL_IMAGE_REPO }}
-      CHART_NAME: aim-engine
+      CHART_NAME: aim-engine-chart
 
     steps:
       - name: Checkout repository
@@ -133,7 +133,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: crds-chart
-          path: dist/aim-engine-crds-${CHART_VERSION}.tgz
+          path: dist/aim-engine-crds-chart-${CHART_VERSION}.tgz
 
       - name: Create draft release and upload assets
         uses: softprops/action-gh-release@v2
@@ -142,7 +142,7 @@ jobs:
             dist/install.yaml
             dist/crds.yaml
             dist/${CHART_NAME}-${CHART_VERSION}.tgz
-            dist/aim-engine-crds-${CHART_VERSION}.tgz
+            dist/aim-engine-crds-chart-${CHART_VERSION}.tgz
           token: '${{ secrets.GITHUB_TOKEN }}'
           draft: true
           prerelease: true
@@ -160,7 +160,7 @@ jobs:
 
             ```bash
             # 1a. Install CRDs via Helm OCI (recommended)
-            helm install aim-engine-crds oci://ghcr.io/${{ github.repository_owner }}/charts/aim-engine-crds \
+            helm install aim-engine-crds oci://ghcr.io/${{ github.repository_owner }}/aim-engine-crds-chart \
               --version ${{ steps.ver.outputs.chart_version }}
             ```
 
@@ -172,14 +172,14 @@ jobs:
 
             ```bash
             # 2a. Install operator via Helm OCI (recommended)
-            helm install aim-engine oci://ghcr.io/${{ github.repository_owner }}/charts/aim-engine \
+            helm install aim-engine oci://ghcr.io/${{ github.repository_owner }}/aim-engine-chart \
               --version ${{ steps.ver.outputs.chart_version }} \
               --namespace aim-system --create-namespace
             ```
 
             ```bash
             # 2b. Or install from GitHub Releases tarball
-            curl -L https://github.com/${{ github.repository }}/releases/download/${{ env.VERSION }}/aim-engine-${{ steps.ver.outputs.chart_version }}.tgz -o aim-engine.tgz
+            curl -L https://github.com/${{ github.repository }}/releases/download/${{ env.VERSION }}/aim-engine-chart-${{ steps.ver.outputs.chart_version }}.tgz -o aim-engine.tgz
             helm install aim-engine aim-engine.tgz --namespace aim-system --create-namespace
             ```
 
@@ -223,7 +223,7 @@ jobs:
           kubectl wait --for=condition=Established crd --all --timeout=60s
           
           # 2a. Install operator via Helm OCI (recommended)
-          helm install aim-engine oci://ghcr.io/${{ github.repository_owner }}/charts/aim-engine \
+          helm install aim-engine oci://ghcr.io/${{ github.repository_owner }}/aim-engine-chart \
             --version ${{ steps.ver.outputs.chart_version }} \
             --namespace aim-system --create-namespace
           
@@ -315,7 +315,7 @@ jobs:
 
       - name: Install CRDs via Helm OCI
         run: |
-          helm install aim-engine-crds oci://ghcr.io/${{ github.repository_owner }}/charts/aim-engine-crds \
+          helm install aim-engine-crds oci://ghcr.io/${{ github.repository_owner }}/aim-engine-crds-chart \
             --version ${CHART_VERSION}
 
       - name: Create namespace and image pull secret
@@ -329,7 +329,7 @@ jobs:
 
       - name: Install operator via Helm OCI
         run: |
-          helm install aim-engine oci://ghcr.io/${{ github.repository_owner }}/charts/aim-engine \
+          helm install aim-engine oci://ghcr.io/${{ github.repository_owner }}/aim-engine-chart \
             --version ${CHART_VERSION} \
             --namespace aim-system \
             --set manager.imagePullSecrets[0].name=ghcr-regcred
