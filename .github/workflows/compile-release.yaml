@@ -261,6 +261,8 @@ jobs:
       VERSION: ${{ needs.compile-release.outputs.version }}
       CHART_VERSION: ${{ needs.compile-release.outputs.chart_version }}
       PULL_IMAGE_REPO: ${{ vars.PULL_IMAGE_REPO }}
+      BUILD_IMAGES: ${{ vars.BUILD_IMAGES }}
+      CHART_OCI_REPO: ${{ vars.CHART_OCI_REPO || format('oci://ghcr.io/{0}', github.repository_owner) }}
     steps:
       - name: Free up disk space
         run: |
@@ -311,11 +313,12 @@ jobs:
           done
 
       - name: Log in to GHCR (Helm/OCI)
+        if: env.BUILD_IMAGES == 'true'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u $GITHUB_ACTOR --password-stdin
 
       - name: Install CRDs via Helm OCI
         run: |
-          helm install aim-engine-crds oci://ghcr.io/${{ github.repository_owner }}/aim-engine-crds-chart \
+          helm install aim-engine-crds ${CHART_OCI_REPO}/aim-engine-crds-chart \
             --version ${CHART_VERSION}
 
       - name: Create namespace and image pull secret
@@ -329,7 +332,7 @@ jobs:
 
       - name: Install operator via Helm OCI
         run: |
-          helm install aim-engine oci://ghcr.io/${{ github.repository_owner }}/aim-engine-chart \
+          helm install aim-engine ${CHART_OCI_REPO}/aim-engine-chart \
             --version ${CHART_VERSION} \
             --namespace aim-system \
             --set manager.imagePullSecrets[0].name=ghcr-regcred
