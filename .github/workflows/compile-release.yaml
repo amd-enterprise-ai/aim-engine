@@ -72,10 +72,6 @@ jobs:
           echo "Verifying image ${PULL_IMAGE_REPO}:${VERSION} is available..."
           docker pull ${PULL_IMAGE_REPO}:${VERSION}
 
-      - name: Generate install.yaml
-        run: |
-          make build-installer IMG=${CHART_IMAGE_REPO}:${VERSION}
-
       - name: Update Helm values with image
         run: |
           sed -i "s|repository: .*|repository: ${CHART_IMAGE_REPO}|" config/helm/values.yaml
@@ -97,6 +93,10 @@ jobs:
       - name: Package CRDs as Helm chart
         run: |
           make crds-package CHART_VERSION=${CHART_VERSION} TAG=${VERSION}
+
+      - name: Generate install.yaml
+        run: |
+          make build-installer IMG=${PULL_IMAGE_REPO}:${VERSION}
 
       - name: Log in to GHCR (Helm/OCI)
         if: env.BUILD_IMAGES == 'true'
@@ -122,7 +122,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: helm-chart
-          path: dist/${CHART_NAME}-${CHART_VERSION}.tgz
+          path: dist/${{ env.CHART_NAME }}-${{ env.CHART_VERSION }}.tgz
 
       - name: Upload CRDs artifact
         uses: actions/upload-artifact@v4
@@ -134,7 +134,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: crds-chart
-          path: dist/aim-engine-crds-chart-${CHART_VERSION}.tgz
+          path: dist/aim-engine-crds-chart-${{ env.CHART_VERSION }}.tgz
 
       - name: Create draft release and upload assets
         uses: softprops/action-gh-release@v2
@@ -142,8 +142,8 @@ jobs:
           files: |
             dist/install.yaml
             dist/crds.yaml
-            dist/${CHART_NAME}-${CHART_VERSION}.tgz
-            dist/aim-engine-crds-chart-${CHART_VERSION}.tgz
+            dist/${{ env.CHART_NAME }}-${{ env.CHART_VERSION }}.tgz
+            dist/aim-engine-crds-chart-${{ env.CHART_VERSION }}.tgz
           token: '${{ secrets.GITHUB_TOKEN }}'
           draft: true
           prerelease: true
