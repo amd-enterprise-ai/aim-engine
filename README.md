@@ -12,7 +12,7 @@ kubectl apply -f https://raw.githubusercontent.com/amd-enterprise-ai/aim-engine/
 kubectl wait --for=condition=Established crd --all --timeout=60s
 
 # 2a. Install operator via Helm OCI (recommended)
-helm install aim-engine oci://ghcr.io/amd-enterprise-ai/aim-engine-chart \
+helm install aim-engine oci://registry-1.docker.io/amdenterpriseai/aim-engine-chart \
   --version 0.2.1 \
   --namespace aim-system --create-namespace
 
