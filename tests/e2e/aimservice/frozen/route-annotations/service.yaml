@@ -1,0 +1,13 @@
+# AIMService with service-level routing annotations
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-service
+spec:
+  model:
+    name: test-model
+  replicas: 1
+  routing:
+    annotations:
+      service-key: service-value
+      shared-key: from-service

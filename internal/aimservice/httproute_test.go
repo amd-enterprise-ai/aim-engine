@@ -384,16 +384,21 @@ func TestResolveRequestTimeout(t *testing.T) {
 func TestMergeRouteAnnotations(t *testing.T) {
 	tests := []struct {
 		name             string
+		service          *aimv1alpha1.AIMService
 		runtimeConfig    *aimv1alpha1.AIMRuntimeConfigCommon
 		expectedContains map[string]string
+		expectedLen      int
 	}{
 		{
-			name:             "nil runtime config",
+			name:             "nil runtime config and no service routing",
+			service:          NewService("svc").Build(),
 			runtimeConfig:    nil,
 			expectedContains: map[string]string{},
+			expectedLen:      0,
 		},
 		{
-			name: "with annotations",
+			name:    "runtime config annotations only",
+			service: NewService("svc").Build(),
 			runtimeConfig: &aimv1alpha1.AIMRuntimeConfigCommon{
 				AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
 					Routing: &aimv1alpha1.AIMRuntimeRoutingConfig{
@@ -408,17 +413,68 @@ func TestMergeRouteAnnotations(t *testing.T) {
 				"nginx.ingress.kubernetes.io/ssl-redirect": "true",
 				"custom-annotation":                        "value",
 			},
+			expectedLen: 2,
+		},
+		{
+			name: "service annotations only",
+			service: func() *aimv1alpha1.AIMService {
+				svc := NewService("svc").Build()
+				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
+					Annotations: map[string]string{
+						"cluster-auth/allowed-group": "ce0c754f-bb1b-63bb-5134-5501142effe7",
+					},
+				}
+				return svc
+			}(),
+			runtimeConfig: nil,
+			expectedContains: map[string]string{
+				"cluster-auth/allowed-group": "ce0c754f-bb1b-63bb-5134-5501142effe7",
+			},
+			expectedLen: 1,
+		},
+		{
+			name: "service annotations override runtime config for conflicting keys",
+			service: func() *aimv1alpha1.AIMService {
+				svc := NewService("svc").Build()
+				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
+					Annotations: map[string]string{
+						"shared-key":   "from-service",
+						"service-only": "service-value",
+					},
+				}
+				return svc
+			}(),
+			runtimeConfig: &aimv1alpha1.AIMRuntimeConfigCommon{
+				AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+					Routing: &aimv1alpha1.AIMRuntimeRoutingConfig{
+						Annotations: map[string]string{
+							"shared-key":   "from-runtime",
+							"runtime-only": "runtime-value",
+						},
+					},
+				},
+			},
+			expectedContains: map[string]string{
+				"shared-key":   "from-service",
+				"service-only": "service-value",
+				"runtime-only": "runtime-value",
+			},
+			expectedLen: 3,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := mergeRouteAnnotations(tt.runtimeConfig)
+			result := mergeRouteAnnotations(tt.service, tt.runtimeConfig)
 
 			for key, expectedValue := range tt.expectedContains {
 				if result[key] != expectedValue {
 					t.Errorf("expected annotation %s=%s, got %s", key, expectedValue, result[key])
 				}
+			}
+
+			if len(result) != tt.expectedLen {
+				t.Errorf("expected %d annotations, got %d: %v", tt.expectedLen, len(result), result)
 			}
 		})
 	}

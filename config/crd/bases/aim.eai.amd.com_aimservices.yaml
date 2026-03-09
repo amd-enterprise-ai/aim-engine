@@ -950,7 +950,7 @@ spec:
                       type: string
                     description: |-
                       Annotations defines default annotations to add to all HTTPRoute resources.
-                      Services can add additional annotations or override these via spec.routingAnnotations.
+                      Services can add additional annotations or override these via spec.routing.annotations.
                       When both are specified, service annotations take precedence for conflicting keys.
                       Common use cases include ingress controller settings, rate limiting, monitoring labels,
                       and security policies that should apply to all services using this config.

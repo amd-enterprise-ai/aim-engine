@@ -128,7 +128,7 @@ func buildHTTPRoute(
 	}
 
 	// Build annotations
-	annotations := mergeRouteAnnotations(runtimeConfig)
+	annotations := mergeRouteAnnotations(service, runtimeConfig)
 
 	// Resolve path using JSONPath template
 	path, err := ResolveServiceRoutePath(service, runtimeConfig)
@@ -240,13 +240,22 @@ func isRoutingEnabled(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha
 	return false
 }
 
-// mergeRouteAnnotations merges annotations from runtime config.
-func mergeRouteAnnotations(runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) map[string]string {
+// mergeRouteAnnotations merges annotations from runtime config and service.
+// Runtime config annotations are applied first, then service annotations overlay on top,
+// so service annotations take precedence for conflicting keys.
+func mergeRouteAnnotations(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) map[string]string {
 	annotations := make(map[string]string)
 
-	// Start with runtime config annotations
+	// Start with runtime config annotations as the base
 	if runtimeConfig != nil && runtimeConfig.Routing != nil {
 		for k, v := range runtimeConfig.Routing.Annotations {
+			annotations[k] = v
+		}
+	}
+
+	// Service annotations override runtime config for conflicting keys
+	if service.Spec.Routing != nil {
+		for k, v := range service.Spec.Routing.Annotations {
 			annotations[k] = v
 		}
 	}

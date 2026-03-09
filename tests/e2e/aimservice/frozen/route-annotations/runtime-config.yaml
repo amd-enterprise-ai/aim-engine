@@ -1,0 +1,15 @@
+# Runtime config with routing enabled and annotations
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+spec:
+  routing:
+    enabled: true
+    gatewayRef:
+      name: kserve-ingress-gateway
+      namespace: kgateway-system
+    pathTemplate: "/{.metadata.namespace}/{.metadata.name}"
+    annotations:
+      runtime-key: runtime-value
+      shared-key: from-runtime

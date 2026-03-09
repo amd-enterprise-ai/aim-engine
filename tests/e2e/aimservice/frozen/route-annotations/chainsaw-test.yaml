@@ -1,0 +1,97 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Route Annotation Propagation
+#
+# This test validates that annotations from both AIMRuntimeConfig and AIMService
+# are correctly propagated to the HTTPRoute, with service annotations taking
+# precedence for conflicting keys.
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMModel (Ready), AIMServiceTemplate (Ready)
+#
+# Annotation merge expectations:
+#   runtime-key: runtime-value      (from runtime config only)
+#   service-key: service-value      (from service only)
+#   shared-key:  from-service       (service overrides runtime config)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: route-annotations
+spec:
+  steps:
+    - name: Create runtime config with routing annotations
+      try:
+        - apply:
+            file: runtime-config.yaml
+
+    - name: Create frozen model with Ready status
+      try:
+        - apply:
+            file: model.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh model.yaml --status-only -n $NAMESPACE
+
+    - name: Create frozen template with Ready status
+      try:
+        - apply:
+            file: template.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh template.yaml --status-only -n $NAMESPACE
+
+    - name: Create service with routing annotations
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert HTTPRoute has runtime config annotation
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                annotations:
+                  runtime-key: runtime-value
+
+    - name: Assert HTTPRoute has service-only annotation
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                annotations:
+                  service-key: service-value
+
+    - name: Assert HTTPRoute has service annotation for shared key (service wins)
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                annotations:
+                  shared-key: from-service
+
+    - name: Assert shared-key is NOT from-runtime (service takes precedence)
+      try:
+        - error:
+            timeout: 5s
+            resource:
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                annotations:
+                  shared-key: from-runtime
