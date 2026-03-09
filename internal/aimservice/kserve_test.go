@@ -501,6 +501,85 @@ func TestPlanInferenceService_UpdatesReplicasWhenISVCExists(t *testing.T) {
 }
 
 // ============================================================================
+// PRIORITY CLASS NAME TESTS
+// ============================================================================
+
+func TestBuildInferenceService_PriorityClassName(t *testing.T) {
+	ctx := testContext()
+
+	tests := []struct {
+		name              string
+		priorityClassName string
+		expect            string
+	}{
+		{
+			name:              "priority class propagated to ISVC",
+			priorityClassName: "gpu-priority",
+			expect:            "gpu-priority",
+		},
+		{
+			name:              "empty priority class leaves field unset",
+			priorityClassName: "",
+			expect:            "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := NewService("svc").WithModelImage("test-image:v1").Build()
+			service.Spec.PriorityClassName = tt.priorityClassName
+
+			templateSpec := &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				ModelName: testModelName,
+			}
+			templateStatus := &aimv1alpha1.AIMServiceTemplateStatus{
+				Status: constants.AIMStatusReady,
+			}
+
+			obs := ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					service: service,
+					inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+						Value: &servingv1beta1.InferenceService{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      "existing-isvc",
+								Namespace: testNamespace,
+							},
+						},
+					},
+					modelResult: ModelFetchResult{
+						Model: controllerutils.FetchResult[*aimv1alpha1.AIMModel]{
+							Value: NewModel("m").WithImage("test-image:v1").WithStatus(constants.AIMStatusReady).Build(),
+						},
+					},
+					templateCache: controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]{
+						Value: &aimv1alpha1.AIMTemplateCache{
+							Status: aimv1alpha1.AIMTemplateCacheStatus{
+								Status: constants.AIMStatusReady,
+							},
+						},
+					},
+				},
+			}
+
+			result := planInferenceService(ctx, service, "test-template", templateSpec, templateStatus, obs)
+			if result == nil {
+				t.Fatal("expected InferenceService to be planned, got nil")
+			}
+
+			isvc, ok := result.(*servingv1beta1.InferenceService)
+			if !ok {
+				t.Fatalf("expected *InferenceService, got %T", result)
+			}
+
+			if isvc.Spec.Predictor.PriorityClassName != tt.expect {
+				t.Errorf("expected PriorityClassName=%q, got %q", tt.expect, isvc.Spec.Predictor.PriorityClassName)
+			}
+		})
+	}
+}
+
+// ============================================================================
 // RESOLVE RESOURCES TESTS
 // ============================================================================
 

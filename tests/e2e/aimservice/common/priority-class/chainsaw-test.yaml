@@ -1,0 +1,104 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: PriorityClassName Propagation (Kind)
+#
+# This test validates that spec.priorityClassName propagates correctly
+# to the InferenceService predictor pod spec.
+#
+# Uses: ghcr.io/silogen/aim-dummy:0.1.10 (lightweight test image)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-priority-class
+spec:
+  description: Test AIMService spec.priorityClassName propagates to InferenceService
+  timeouts:
+    assert: 300s
+  steps:
+    - name: Create PriorityClass
+      try:
+        - apply:
+            file: priority-class.yaml
+
+    - name: Create model
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for model to be ready (discovery complete)
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-priority-class-model
+              status:
+                status: Ready
+
+    - name: Create service with priorityClassName
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify service starts
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-priority-class-service
+              status:
+                status: Starting
+
+    - name: Verify InferenceService has correct priorityClassName
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-priority-class-service
+              spec:
+                predictor:
+                  priorityClassName: test-inference-priority
+
+    - name: Verify service reaches Running status
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-priority-class-service
+              status:
+                status: Running
+
+    - name: Verify predictor pod has priorityClassName and priority value
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-priority-class-service
+              spec:
+                priorityClassName: test-inference-priority
+                priority: 1000000
+
+    - name: Cleanup PriorityClass
+      try:
+        - delete:
+            ref:
+              apiVersion: scheduling.k8s.io/v1
+              kind: PriorityClass
+              name: test-inference-priority

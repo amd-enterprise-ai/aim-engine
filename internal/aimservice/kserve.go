@@ -274,6 +274,7 @@ func buildInferenceService(
 				PodSpec: servingv1beta1.PodSpec{
 					ImagePullSecrets:   utils.CopyPullSecrets(service.Spec.ImagePullSecrets),
 					ServiceAccountName: service.Spec.ServiceAccountName,
+					PriorityClassName:  service.Spec.PriorityClassName,
 					Containers: []corev1.Container{
 						{
 							Name:      constants.ContainerKServe,

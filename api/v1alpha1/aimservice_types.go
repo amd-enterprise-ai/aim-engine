@@ -236,6 +236,12 @@ type AIMServiceSpec struct {
 	// If empty, the default service account for the namespace is used.
 	// +optional
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
+	// PriorityClassName specifies the priority class for the inference pods.
+	// This maps directly to the Kubernetes PriorityClassName field on the pod spec.
+	// If empty, no priority class is set.
+	// +optional
+	PriorityClassName string `json:"priorityClassName,omitempty"`
 }
 
 // AIMServiceStatus defines the observed state of AIMService.

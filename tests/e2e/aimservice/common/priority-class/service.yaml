@@ -1,0 +1,8 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-priority-class-service
+spec:
+  model:
+    name: test-priority-class-model
+  priorityClassName: test-inference-priority

@@ -870,6 +870,12 @@ spec:
                     - message: precision is immutable
                       rule: self == oldSelf
                 type: object
+              priorityClassName:
+                description: |-
+                  PriorityClassName specifies the priority class for the inference pods.
+                  This maps directly to the Kubernetes PriorityClassName field on the pod spec.
+                  If empty, no priority class is set.
+                type: string
               replicas:
                 default: 1
                 description: |-

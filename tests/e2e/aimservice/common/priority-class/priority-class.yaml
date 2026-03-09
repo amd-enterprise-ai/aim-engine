@@ -1,0 +1,8 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: test-inference-priority
+value: 1000000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: Test priority class for AIMService e2e test

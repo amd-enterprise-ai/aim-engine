@@ -1409,6 +1409,7 @@ _Appears in:_
 | `overrides` _[AIMServiceOverrides](#aimserviceoverrides)_ | Overrides allows overriding specific template parameters for this service.<br />When specified, these values take precedence over the template values. |  | Optional: \{\} <br /> |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets references secrets for pulling AIM container images. |  | Optional: \{\} <br /> |
 | `serviceAccountName` _string_ | ServiceAccountName specifies the Kubernetes service account to use for the inference workload.<br />This service account is used by the deployed inference pods.<br />If empty, the default service account for the namespace is used. |  | Optional: \{\} <br /> |
+| `priorityClassName` _string_ | PriorityClassName specifies the priority class for the inference pods.<br />This maps directly to the Kubernetes PriorityClassName field on the pod spec.<br />If empty, no priority class is set. |  | Optional: \{\} <br /> |
 
 
 #### AIMServiceStatus
