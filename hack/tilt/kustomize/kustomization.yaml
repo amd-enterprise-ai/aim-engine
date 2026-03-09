@@ -1,0 +1,63 @@
+# Kustomize overlay for Tilt development
+# Adds:
+#   - PVC for Go build cache (faster incremental rebuilds)
+#   - Adjusted resource limits for dev builds
+#   - Removed leader election for single-replica dev
+
+resources:
+  - ../../../config/default
+  - pvcs.yaml
+
+patches:
+  # Patch the deployment for development
+  - target:
+      kind: Deployment
+      name: controller-manager
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: controller-manager
+      spec:
+        template:
+          spec:
+            # Dev image runs as root for BuildKit cache mounts
+            securityContext:
+              runAsNonRoot: false
+            containers:
+              - name: manager
+                securityContext:
+                  runAsNonRoot: false
+                  runAsUser: 0
+                  readOnlyRootFilesystem: false
+                # Increased resources for in-container builds
+                resources:
+                  limits:
+                    cpu: "4"
+                    memory: 4Gi
+                  requests:
+                    cpu: "1"
+                    memory: 1Gi
+                # Override args: no leader election for single dev instance
+                args:
+                  - --health-probe-bind-address=:8081
+                # Mount build cache
+                volumeMounts:
+                  - name: go-build-cache
+                    mountPath: /root/.cache/go-build
+                  - name: go-mod-cache
+                    mountPath: /go/pkg/mod
+            volumes:
+              - name: go-build-cache
+                persistentVolumeClaim:
+                  claimName: aim-engine-go-build-cache
+              - name: go-mod-cache
+                persistentVolumeClaim:
+                  claimName: aim-engine-go-mod-cache
+
+# Image replacement - Tilt will match this and inject its built image
+# Note: config/manager already transforms controller -> ghcr.io/amd-enterprise-ai/aim-engine
+images:
+  - name: ghcr.io/amd-enterprise-ai/aim-engine
+    newName: ttl.sh/aim-placeholder/manager
+    newTag: tilt

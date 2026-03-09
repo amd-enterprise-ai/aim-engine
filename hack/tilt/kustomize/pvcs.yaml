@@ -1,0 +1,26 @@
+# PVCs for Go build caching
+# These persist across pod restarts for faster incremental builds
+# Sized for the aim-engine project dependencies (~2.2G mods, ~1.5G build cache)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: aim-engine-go-build-cache
+  namespace: aim-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: aim-engine-go-mod-cache
+  namespace: aim-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi

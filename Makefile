@@ -13,17 +13,13 @@ CHART_OCI_OWNER ?= $(GIT_ORG)
 CHART_OCI_REPO ?= oci://$(CHART_OCI_REGISTRY)/$(CHART_OCI_OWNER)
 
 # Cluster environment configuration
-# ENV is auto-detected from kubectl context if not set:
+# ENV is auto-detected from kubectl context:
 #   - Context starting with "kind-" -> ENV=kind
 #   - Otherwise -> ENV=gpu
-# Can be overridden via ENV variable or .tmp/current-env file
-ENV_FILE := .tmp/current-env
+# Can be overridden via ENV variable
 CURRENT_CONTEXT := $(shell kubectl config current-context 2>/dev/null)
 AUTO_ENV := $(if $(filter kind-%,$(CURRENT_CONTEXT)),kind,gpu)
-ENV ?= $(or $(shell cat $(ENV_FILE) 2>/dev/null),$(AUTO_ENV))
-KUBE_CONTEXT_KIND := kind-aim-engine
-KUBE_CONTEXT_GPU ?=
-KUBE_CONTEXT = $(if $(filter gpu,$(ENV)),$(or $(KUBE_CONTEXT_GPU),$(error ENV=gpu requires KUBE_CONTEXT_GPU to be set)),$(KUBE_CONTEXT_KIND))
+ENV ?= $(AUTO_ENV)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -135,9 +131,6 @@ kind-create: manifests ## Create kind cluster with all dependencies for local de
 	@echo "Pre-loading test images..."
 	@docker pull ghcr.io/silogen/aim-dummy:0.1.8 2>/dev/null || true
 	@kind load docker-image ghcr.io/silogen/aim-dummy:0.1.8 --name aim-engine 2>/dev/null || true
-	@# Set ENV to kind
-	@mkdir -p $(dir $(ENV_FILE))
-	@echo "kind" > $(ENV_FILE)
 	@echo ""
 	@echo "=== Kind cluster setup complete ==="
 	@echo "Run 'make watch' to start the operator with live reload."
@@ -174,8 +167,9 @@ CHAINSAW_CONFIG_KIND := $(if $(CI),$(CHAINSAW_CONFIG_DIR)/kind-ci.yaml,$(CHAINSA
 CHAINSAW_CONFIG_GPU := $(CHAINSAW_CONFIG_DIR)/gpu.yaml
 CHAINSAW_ENV_CONFIG := $(if $(filter gpu,$(ENV)),$(CHAINSAW_CONFIG_GPU),$(CHAINSAW_CONFIG_KIND))
 
-# Select appropriate selector based on ENV
-CHAINSAW_ENV_SELECTOR := $(if $(filter gpu,$(ENV)),--selector '$(CHAINSAW_SELECTOR_GPU)',$(if $(filter kind,$(ENV)),--selector '$(CHAINSAW_SELECTOR_KIND)',))
+# Select appropriate selector and parallelism based on ENV
+CHAINSAW_ENV_SELECTOR := $(if $(filter gpu,$(ENV)),--selector "$(CHAINSAW_SELECTOR_GPU)",$(if $(filter kind,$(ENV)),--selector "$(CHAINSAW_SELECTOR_KIND)",))
+CHAINSAW_ENV_PARALLEL := $(if $(filter kind,$(ENV)),--parallel 4,)
 
 .PHONY: test-chainsaw
 test-chainsaw: ## Run chainsaw e2e tests (selector based on ENV). Pass CHAINSAW_ARGS for additional options.
@@ -196,6 +190,48 @@ test-chainsaw-kind: ## Run chainsaw e2e tests for KIND environment
 .PHONY: test-chainsaw-gpu
 test-chainsaw-gpu: ## Run chainsaw e2e tests for GPU environment
 	$(MAKE) test-chainsaw ENV=gpu
+
+# Focus test configuration - per-branch local config
+BRANCH_NAME := $(shell git rev-parse --abbrev-ref HEAD | tr '/' '-')
+BRANCH_DIR := .local/$(shell git rev-parse --abbrev-ref HEAD)
+FEATURE_FILE := $(BRANCH_DIR)/feature.yaml
+FEATURE_REPORT_DIR := $(BRANCH_DIR)/test-reports
+
+.PHONY: test-chainsaw-feature
+test-chainsaw-feature: ## Run focused chainsaw tests from .local/{branch}/feature.yaml
+	@if [ ! -f "$(FEATURE_FILE)" ]; then \
+		echo ""; \
+		echo "ERROR: Focus file not found"; \
+		echo ""; \
+		echo "Expected: $(FEATURE_FILE)"; \
+		echo ""; \
+		echo "Create it with:"; \
+		echo "  mkdir -p $(BRANCH_DIR)"; \
+		echo "  cat > $(FEATURE_FILE) << 'EOF'"; \
+		echo "  description: \"Working on feature X\""; \
+		echo "  tests:"; \
+		echo "    - tests/e2e/aimservice/frozen"; \
+		echo "  EOF"; \
+		echo ""; \
+		exit 1; \
+	fi
+	@TIMESTAMP=$$(date +%Y%m%d-%H%M%S); \
+	COMMIT=$$(git rev-parse --short HEAD); \
+	REPORT_NAME="$$TIMESTAMP-$$COMMIT"; \
+	mkdir -p "$(FEATURE_REPORT_DIR)"; \
+	echo "=== Focus Test Run: $$REPORT_NAME ==="; \
+	echo "Branch: $(BRANCH_NAME)"; \
+	echo "Focus file: $(FEATURE_FILE)"; \
+	echo "Description: $$(yq -r '.description // "none"' $(FEATURE_FILE))"; \
+	echo "Tests:"; \
+	yq -r '.tests[]' $(FEATURE_FILE) | while read dir; do echo "  - $$dir"; done; \
+	echo "Report: $(FEATURE_REPORT_DIR)/$$REPORT_NAME.json"; \
+	echo ""; \
+	TEST_DIRS=$$(yq -r '.tests[]' $(FEATURE_FILE) | sed 's/^/--test-dir /' | tr '\n' ' '); \
+	PATH="$(CURDIR)/hack:$(PATH)" chainsaw test $$TEST_DIRS \
+		$(CHAINSAW_ENV_SELECTOR) \
+		--report-format JSON --report-name "$$REPORT_NAME" --report-path "$(FEATURE_REPORT_DIR)" \
+		$(CHAINSAW_ARGS)
 
 .PHONY: lint
 lint: ## Run golangci-lint linter
@@ -234,21 +270,12 @@ vcluster-connect: ## Connect to personal vcluster and switch context.
 	@echo "Connecting to vcluster '$(VCLUSTER_NAME)'..."
 	vcluster connect $(VCLUSTER_NAME) --namespace $(VCLUSTER_NAME)
 
-##@ Environment Switching
-
-.PHONY: switch-env
-switch-env: ## Switch kubectl context based on ENV (kind|gpu). Restart 'make watch' after switching.
-	@echo "Switching to $(ENV) environment (context: $(KUBE_CONTEXT))..."
-	@mkdir -p $(dir $(ENV_FILE))
-	@echo "$(ENV)" > $(ENV_FILE)
-	@kubectl config use-context $(KUBE_CONTEXT)
-	@echo "Context switched. Restart 'make watch' to use new context."
+##@ Environment Info
 
 .PHONY: env-info
-env-info: ## Show current environment configuration.
-	@echo "ENV:          $(ENV) (from $(ENV_FILE))"
-	@echo "KUBE_CONTEXT: $(KUBE_CONTEXT)"
-	@echo "Current ctx:  $$(kubectl config current-context 2>/dev/null || echo 'none')"
+env-info: ## Show current environment configuration (derived from kubectl context).
+	@echo "Context: $(CURRENT_CONTEXT)"
+	@echo "ENV:     $(ENV) (kind-* contexts -> kind, otherwise -> gpu)"
 
 ##@ Build
 
@@ -267,6 +294,18 @@ run-debug: manifests generate fmt vet ## Run a controller with debug logging ena
 .PHONY: watch
 watch: manifests generate install ## Run controller with live reload on file changes.
 	air
+
+.PHONY: tilt-up
+tilt-up: ## Run controller in cluster with Tilt (live reload, in-container builds).
+	tilt up -f hack/tilt/Tiltfile
+
+.PHONY: tilt-up-debug
+tilt-up-debug: ## Run controller in cluster with Tilt in debug mode (Delve on port 2345).
+	tilt up -f hack/tilt/Tiltfile -- --debug
+
+.PHONY: tilt-down
+tilt-down: ## Tear down Tilt resources.
+	tilt down -f hack/tilt/Tiltfile
 
 .PHONY: wait-ready
 wait-ready: ## Wait for operator readiness probe to succeed.

@@ -1,0 +1,191 @@
+# Tiltfile for aim-engine operator development
+#
+# Usage:
+#   make tilt-up              # Normal mode (fast in-container rebuilds)
+#   make tilt-up-debug        # Debug mode (Delve attached)
+#   make tilt-down            # Tear down
+#
+# How it works:
+#   1. Builds a dev image with Go toolchain (pushed to ttl.sh or loaded to Kind)
+#   2. Deploys to cluster with PVC for Go build cache
+#   3. On file changes: syncs files → rebuilds in container → restarts process
+#   4. No image push/pull on incremental changes - just file sync!
+
+load('ext://restart_process', 'docker_build_with_restart')
+
+# ============================================================================
+# Allowed Kubernetes Contexts
+# ============================================================================
+
+# Only allow development contexts (Kind and vcluster)
+# This prevents accidental deployment to production clusters
+ctx = k8s_context()
+if ctx.startswith('kind-') or ctx.startswith('vcluster_'):
+    allow_k8s_contexts(ctx)
+else:
+    fail('Context "%s" is not allowed. Only kind-* and vcluster_* contexts are permitted.' % ctx)
+
+# ============================================================================
+# Configuration
+# ============================================================================
+
+config.define_bool("debug", usage="Enable debug mode with Delve debugger")
+cfg = config.parse()
+
+DEBUG_MODE = cfg.get("debug", False)
+
+# Root of the project (two levels up from hack/tilt)
+ROOT = "../.."
+
+# Image name - must match what kustomize outputs (see kustomize/kustomization.yaml images section)
+IMAGE_NAME = "ttl.sh/aim-placeholder/manager:tilt"
+
+# ============================================================================
+# Build Configuration
+# ============================================================================
+
+# Determine which Dockerfile target to use
+TARGET = "debug" if DEBUG_MODE else "dev"
+
+if DEBUG_MODE:
+    print("=" * 60)
+    print("DEBUG MODE")
+    print("Delve listening on port 2345")
+    print("Connect: dlv connect localhost:2345")
+    print("=" * 60)
+
+    # Debug build with Delve
+    docker_build_with_restart(
+        IMAGE_NAME,
+        context=ROOT,
+        dockerfile='Dockerfile',
+        target='debug',
+        entrypoint=[
+            '/go/bin/dlv', 'exec', '/manager',
+            '--headless', '--listen=:2345',
+            '--api-version=2', '--accept-multiclient',
+            '--continue', '--'
+        ],
+        live_update=[
+            # Sync Go source files
+            sync(ROOT + '/cmd', '/workspace/cmd'),
+            sync(ROOT + '/internal', '/workspace/internal'),
+            sync(ROOT + '/api', '/workspace/api'),
+            sync(ROOT + '/go.mod', '/workspace/go.mod'),
+            sync(ROOT + '/go.sum', '/workspace/go.sum'),
+            # Rebuild binary with debug flags
+            run(
+                'cd /workspace && CGO_ENABLED=0 go build -gcflags="all=-N -l" -o /manager ./cmd/main.go',
+                trigger=[ROOT + '/cmd/', ROOT + '/internal/', ROOT + '/api/']
+            ),
+        ],
+    )
+else:
+    print("=" * 60)
+    print("NORMAL MODE")
+    print("Fast in-container rebuilds")
+    print("=" * 60)
+
+    # Normal build - optimized binary
+    docker_build_with_restart(
+        IMAGE_NAME,
+        context=ROOT,
+        dockerfile='Dockerfile',
+        target='dev',
+        entrypoint=['/manager'],
+        live_update=[
+            # Sync Go source files
+            sync(ROOT + '/cmd', '/workspace/cmd'),
+            sync(ROOT + '/internal', '/workspace/internal'),
+            sync(ROOT + '/api', '/workspace/api'),
+            sync(ROOT + '/go.mod', '/workspace/go.mod'),
+            sync(ROOT + '/go.sum', '/workspace/go.sum'),
+            # Rebuild binary
+            run(
+                'cd /workspace && CGO_ENABLED=0 go build -o /manager ./cmd/main.go',
+                trigger=[ROOT + '/cmd/', ROOT + '/internal/', ROOT + '/api/']
+            ),
+        ],
+    )
+
+# ============================================================================
+# Kubernetes Resources
+# ============================================================================
+
+# Generate deployment with our customizations (PVC for build cache, image override)
+k8s_yaml(kustomize('kustomize'))
+
+# Configure the main deployment
+k8s_resource(
+    'aim-engine-controller-manager',
+    port_forwards=[
+        port_forward(8081, 8081, name='health'),
+        port_forward(8080, 8080, name='metrics'),
+    ] + ([port_forward(2345, 2345, name='delve')] if DEBUG_MODE else []),
+    labels=['aim-engine'],
+)
+
+# ============================================================================
+# Local Resources
+# ============================================================================
+
+# Generate manifests - runs when API types change
+# This regenerates CRDs and deepcopy methods
+local_resource(
+    'generate-manifests',
+    cmd='cd ' + ROOT + ' && mise exec -- make manifests generate',
+    deps=[
+        ROOT + '/api/v1alpha1',
+    ],
+    ignore=[
+        ROOT + '/api/v1alpha1/zz_generated.deepcopy.go',
+    ],
+    labels=['setup'],
+    allow_parallel=True,
+)
+
+# ============================================================================
+# Testing Resources (manual trigger)
+# ============================================================================
+
+# Run unit tests on demand
+local_resource(
+    'unit-tests',
+    cmd='cd ' + ROOT + ' && mise exec -- go test $(go list ./... | grep -v /e2e) -short',
+    labels=['testing'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    allow_parallel=True,
+)
+
+# Run linting on demand
+local_resource(
+    'lint',
+    cmd='cd ' + ROOT + ' && mise exec -- golangci-lint run --timeout 5m',
+    labels=['testing'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    allow_parallel=True,
+)
+
+# Run chainsaw e2e tests on demand
+local_resource(
+    'test-chainsaw',
+    cmd='cd ' + ROOT + ' && mise exec -- make test-chainsaw',
+    labels=['testing'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    allow_parallel=True,
+    resource_deps=['aim-engine-controller-manager'],
+)
+
+# Run focused chainsaw tests from .local/{branch}/feature.yaml
+local_resource(
+    'test-chainsaw-feature',
+    cmd='cd ' + ROOT + ' && mise exec -- make test-chainsaw-feature',
+    labels=['testing'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    allow_parallel=True,
+    resource_deps=['aim-engine-controller-manager'],  # Ensure controller is running
+)

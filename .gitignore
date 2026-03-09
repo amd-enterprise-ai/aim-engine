@@ -41,3 +41,4 @@ venv/
 # Temporary and local directories
 .tmp
 tmp
+.local
