@@ -2,6 +2,19 @@ name: Tests
 
 on:
   pull_request:
+    paths:
+      - 'api/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'config/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Dockerfile'
+      - 'Makefile'
+      - 'hack/**'
+      - 'tests/**'
+      - 'mise.toml'
+      - '.github/workflows/test-e2e.yml'
 
 permissions:
   contents: read

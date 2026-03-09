@@ -26,6 +26,7 @@ jobs:
       PUSH_IMAGE_REPO: ${{ vars.PUSH_IMAGE_REPO }}
       PULL_IMAGE_REPO: ${{ vars.PULL_IMAGE_REPO }}
       CHART_IMAGE_REPO: ${{ vars.CHART_IMAGE_REPO || vars.PULL_IMAGE_REPO }}
+      CHART_OCI_REPO: ${{ vars.CHART_OCI_REPO || format('oci://ghcr.io/{0}', github.repository_owner) }}
       CHART_NAME: aim-engine-chart
 
     steps:
@@ -161,7 +162,7 @@ jobs:
 
             ```bash
             # 1a. Install CRDs via Helm OCI (recommended)
-            helm install aim-engine-crds oci://ghcr.io/${{ github.repository_owner }}/aim-engine-crds-chart \
+            helm install aim-engine-crds ${{ env.CHART_OCI_REPO }}/aim-engine-crds-chart \
               --version ${{ steps.ver.outputs.chart_version }}
             ```
 
@@ -173,7 +174,7 @@ jobs:
 
             ```bash
             # 2a. Install operator via Helm OCI (recommended)
-            helm install aim-engine oci://ghcr.io/${{ github.repository_owner }}/aim-engine-chart \
+            helm install aim-engine ${{ env.CHART_OCI_REPO }}/aim-engine-chart \
               --version ${{ steps.ver.outputs.chart_version }} \
               --namespace aim-system --create-namespace
             ```
@@ -224,7 +225,7 @@ jobs:
           kubectl wait --for=condition=Established crd --all --timeout=60s
           
           # 2a. Install operator via Helm OCI (recommended)
-          helm install aim-engine oci://ghcr.io/${{ github.repository_owner }}/aim-engine-chart \
+          helm install aim-engine ${{ env.CHART_OCI_REPO }}/aim-engine-chart \
             --version ${{ steps.ver.outputs.chart_version }} \
             --namespace aim-system --create-namespace
           
