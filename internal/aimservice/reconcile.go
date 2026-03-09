@@ -811,19 +811,24 @@ func (r *ServiceReconciler) computeRuntimeStatus(fetch ServiceFetchResult) *aimv
 		status.CurrentReplicas = hpa.Status.CurrentReplicas
 		status.DesiredReplicas = hpa.Status.DesiredReplicas
 	} else {
-		// No HPA - fixed replica count from spec
-		// Precedence: MinReplicas > Replicas > default (1)
-		var replicas int32 = 1
+		// No HPA - derive status from spec fields
+		// MinReplicas precedence: Spec.MinReplicas > Spec.Replicas > default (1)
+		var minReplicas int32 = 1
 		if service.Spec.MinReplicas != nil {
-			replicas = *service.Spec.MinReplicas
+			minReplicas = *service.Spec.MinReplicas
 		} else if service.Spec.Replicas != nil {
-			replicas = *service.Spec.Replicas
+			minReplicas = *service.Spec.Replicas
 		}
 
-		status.MinReplicas = replicas
-		status.MaxReplicas = replicas
-		status.CurrentReplicas = replicas
-		status.DesiredReplicas = replicas
+		maxReplicas := minReplicas
+		if service.Spec.MaxReplicas != nil {
+			maxReplicas = *service.Spec.MaxReplicas
+		}
+
+		status.MinReplicas = minReplicas
+		status.MaxReplicas = maxReplicas
+		status.CurrentReplicas = minReplicas
+		status.DesiredReplicas = minReplicas
 	}
 
 	// Compute display string for kubectl output

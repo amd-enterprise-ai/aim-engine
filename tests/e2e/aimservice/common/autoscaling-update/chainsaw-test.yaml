@@ -45,6 +45,21 @@ spec:
         - apply:
             file: service.yaml
 
+    - name: Verify service starts with correct runtime status before HPA exists
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-autoscaling-update-service
+              status:
+                status: Starting
+                runtime:
+                  minReplicas: 1
+                  maxReplicas: 3
+
     - name: Verify InferenceService has initial replica configuration
       try:
         - assert:

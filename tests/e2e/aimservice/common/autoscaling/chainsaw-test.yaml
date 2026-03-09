@@ -41,7 +41,7 @@ spec:
         - apply:
             file: service.yaml
 
-    - name: Verify service starts
+    - name: Verify service starts with correct runtime status before HPA exists
       try:
         - assert:
             timeout: 60s
@@ -52,6 +52,9 @@ spec:
                 name: test-autoscaling-service
               status:
                 status: Starting
+                runtime:
+                  minReplicas: 1
+                  maxReplicas: 3
 
     - name: Verify InferenceService has KEDA autoscaler annotations
       try:
