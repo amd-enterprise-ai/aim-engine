@@ -273,6 +273,102 @@ func TestGetComponentHealth_ModelHealth(t *testing.T) {
 	}
 }
 
+func TestGetComponentHealth_TemplateHealth(t *testing.T) {
+	tests := []struct {
+		name          string
+		obs           ServiceObservation
+		expectState   constants.AIMStatus
+		expectReason  string
+		expectMessage string
+	}{
+		{
+			name: "no templates found for model",
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					service: NewService("svc").Build(),
+					templateSelection: &TemplateSelectionResult{
+						SelectionReason:  aimv1alpha1.AIMServiceReasonTemplateNotFound,
+						SelectionMessage: `No templates found for model "m"`,
+					},
+				},
+			},
+			expectState:   constants.AIMStatusPending,
+			expectReason:  aimv1alpha1.AIMServiceReasonTemplateNotFound,
+			expectMessage: `No templates found for model "m"`,
+		},
+		{
+			name: "templates exist but filtered by optimization level",
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					service: NewService("svc").Build(),
+					templateSelection: &TemplateSelectionResult{
+						SelectionReason:  aimv1alpha1.AIMServiceReasonTemplateNotFound,
+						SelectionMessage: `No available templates match requirements for model "m": 1 unoptimized template(s) filtered out. Set allowUnoptimized to use them.`,
+					},
+				},
+			},
+			expectState:   constants.AIMStatusPending,
+			expectReason:  aimv1alpha1.AIMServiceReasonTemplateNotFound,
+			expectMessage: `No available templates match requirements for model "m": 1 unoptimized template(s) filtered out. Set allowUnoptimized to use them.`,
+		},
+		{
+			name: "templates exist but not ready",
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					service: NewService("svc").Build(),
+					templateSelection: &TemplateSelectionResult{
+						TemplatesExistButNotReady: true,
+					},
+				},
+			},
+			expectState:   constants.AIMStatusProgressing,
+			expectReason:  aimv1alpha1.AIMServiceReasonTemplateNotReady,
+			expectMessage: "Templates exist but are not ready yet",
+		},
+		{
+			name: "selection result missing details uses fallback message",
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					service: NewService("svc").Build(),
+				},
+			},
+			expectState:   constants.AIMStatusPending,
+			expectReason:  aimv1alpha1.AIMServiceReasonTemplateNotFound,
+			expectMessage: "No template found for service",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			health := tt.obs.GetComponentHealth(context.Background(), nil)
+
+			var templateHealth *controllerutils.ComponentHealth
+			for i := range health {
+				if health[i].Component == "Template" {
+					templateHealth = &health[i]
+					break
+				}
+			}
+
+			if templateHealth == nil {
+				t.Fatal("Template health not found")
+			}
+
+			if templateHealth.State != tt.expectState {
+				t.Errorf("expected state %s, got %s", tt.expectState, templateHealth.State)
+			}
+
+			if templateHealth.Reason != tt.expectReason {
+				t.Errorf("expected reason %s, got %s", tt.expectReason, templateHealth.Reason)
+			}
+
+			if templateHealth.Message != tt.expectMessage {
+				t.Errorf("expected message %q, got %q", tt.expectMessage, templateHealth.Message)
+			}
+		})
+	}
+}
+
 func TestGetComponentHealth_CacheHealth(t *testing.T) {
 	tests := []struct {
 		name         string

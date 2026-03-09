@@ -345,6 +345,18 @@ func (obs ServiceObservation) getTemplateHealth() controllerutils.ComponentHealt
 			health.Message = "Templates exist but are not ready yet"
 			return health
 		}
+		if obs.templateSelection.SelectionReason != "" || obs.templateSelection.SelectionMessage != "" {
+			health.State = constants.AIMStatusPending
+			health.Reason = obs.templateSelection.SelectionReason
+			if health.Reason == "" {
+				health.Reason = aimv1alpha1.AIMServiceReasonTemplateNotFound
+			}
+			health.Message = obs.templateSelection.SelectionMessage
+			if health.Message == "" {
+				health.Message = "No template found for service"
+			}
+			return health
+		}
 	}
 
 	// If InferenceService exists and template was previously resolved, report as ready.
