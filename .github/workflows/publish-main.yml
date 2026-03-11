@@ -11,6 +11,7 @@ on:
       - 'config/**'
       - 'Makefile'
       - 'Dockerfile'
+      - '.github/workflows/publish-main.yml'
 
 permissions:
   contents: write
@@ -61,8 +62,10 @@ jobs:
           docker tag ${PUSH_IMAGE_REPO}:${IMAGE_TAG} ${PUSH_IMAGE_REPO}:publish-main
           docker push ${PUSH_IMAGE_REPO}:publish-main
 
-      - name: Update Helm values with image tag
+      - name: Update Helm values with image repository and tag
         run: |
+          CHART_IMAGE_REPO="${PULL_IMAGE_REPO:-$PUSH_IMAGE_REPO}"
+          sed -i "s|repository: .*|repository: ${CHART_IMAGE_REPO}|" config/helm/values.yaml
           sed -i "s|tag: .*|tag: ${IMAGE_TAG}|" config/helm/values.yaml
 
       - name: Generate CRDs
