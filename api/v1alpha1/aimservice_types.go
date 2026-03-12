@@ -386,6 +386,7 @@ const (
 	// Runtime
 	AIMServiceReasonCreatingRuntime = "CreatingRuntime"
 	AIMServiceReasonRuntimeReady    = "RuntimeReady"
+	AIMServiceReasonRuntimeScaling  = "RuntimeScaling"
 
 	// Routing
 	AIMServiceReasonPathTemplateInvalid = "PathTemplateInvalid"

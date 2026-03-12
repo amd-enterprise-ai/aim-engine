@@ -472,6 +472,25 @@ func (f ServiceFetchResult) getInferenceServiceHealth() controllerutils.Componen
 		return health
 	}
 
+	// If pods are still serving traffic, keep status running.
+	if f.inferenceServicePods != nil && f.inferenceServicePods.OK() && f.inferenceServicePods.Value != nil {
+		readyPodCount := 0
+		for _, pod := range f.inferenceServicePods.Value.Items {
+			for _, cond := range pod.Status.Conditions {
+				if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
+					readyPodCount++
+					break
+				}
+			}
+		}
+		if readyPodCount > 0 {
+			health.State = constants.AIMStatusReady
+			health.Reason = aimv1alpha1.AIMServiceReasonRuntimeScaling
+			health.Message = fmt.Sprintf("InferenceService has %d ready pod(s), scaling in progress", readyPodCount)
+			return health
+		}
+	}
+
 	health.State = constants.AIMStatusProgressing
 	health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
 	health.Message = "InferenceService is not ready"
