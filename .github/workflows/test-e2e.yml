@@ -6,6 +6,7 @@ on:
       - 'api/**'
       - 'cmd/**'
       - 'internal/**'
+      - 'images/artifact-downloader/**'
       - 'config/**'
       - 'go.mod'
       - 'go.sum'
@@ -90,17 +91,31 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Build artifact-downloader image
+        uses: docker/build-push-action@v6
+        with:
+          context: images/artifact-downloader
+          load: true
+          tags: aim-artifact-downloader:test
+          cache-from: type=gha,scope=artifact-downloader
+          cache-to: type=gha,scope=artifact-downloader,mode=max
+
       - name: Build operator image
         uses: docker/build-push-action@v6
         with:
           context: .
           load: true
           tags: aim-engine:test
+          build-args: |
+            VERSION=test
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Load image into Kind
-        run: kind load docker-image aim-engine:test --name aim-engine
+      - name: Load images into Kind
+        run: |
+          docker tag aim-artifact-downloader:test ghcr.io/silogen/aim-artifact-downloader:test
+          kind load docker-image ghcr.io/silogen/aim-artifact-downloader:test --name aim-engine
+          kind load docker-image aim-engine:test --name aim-engine
 
       - name: Generate CRDs
         run: make crds

@@ -30,9 +30,11 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
-const (
-	DefaultDownloadImage = "ghcr.io/silogen/aim-artifact-downloader:0.2.0"
+// DefaultDownloadImage is the container image used for artifact downloads when
+// not overridden per-resource. Set at build time via ldflags to match the release tag.
+var DefaultDownloadImage = "ghcr.io/silogen/aim-artifact-downloader:latest"
 
+const (
 	// ArtifactSourceURIIndexKey is the field index key for AIMArtifact.Spec.SourceURI
 	ArtifactSourceURIIndexKey = ".spec.sourceUri"
 )
@@ -100,9 +102,8 @@ type AIMArtifactSpec struct {
 
 	// ModelDownloadImage specifies the container image used to download and initialize the artifact.
 	// This image runs as a job to download model artifacts from the source URI to the cache volume.
-	// When not specified, defaults to "ghcr.io/silogen/aim-artifact-downloader:0.2.0".
+	// When not specified, the controller uses its built-in default (matching the release version).
 	// +optional
-	// +kubebuilder:default="ghcr.io/silogen/aim-artifact-downloader:0.2.0"
 	ModelDownloadImage string `json:"modelDownloadImage,omitempty"`
 
 	// ImagePullSecrets references secrets for pulling AIM container images.

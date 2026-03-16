@@ -4,7 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     s3cmd kubectl \
     procps \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir -U huggingface_hub hf_transfer
+    && pip install --no-cache-dir -U huggingface_hub==1.4.0 hf_transfer==0.1.9
 
 
 COPY entrypoint.sh /entrypoint.sh

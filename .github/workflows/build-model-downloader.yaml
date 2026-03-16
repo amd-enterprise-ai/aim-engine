@@ -4,14 +4,20 @@ on:
   push:
     tags:
       - "v*"
-    branches:
-      - main
-    paths:
-      - "images/artifact-downloader/**"
   pull_request:
     paths:
       - "images/artifact-downloader/**"
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag for the image (e.g. 1.2.3). Leave empty to use ref/sha only.'
+        required: false
+        type: string
+      push_latest:
+        description: 'Also push as :latest'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -19,6 +25,7 @@ permissions:
 
 jobs:
   build:
+    if: vars.ACTIVATE_ARTIFACT_DOWNLOADER_WORKFLOW == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -35,12 +42,13 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/aim-engine/artifact-downloader
+          images: ghcr.io/${{ github.repository_owner }}/aim-artifact-downloader
           tags: |
             type=ref,event=branch
             type=ref,event=tag
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ inputs.push_latest == true || startsWith(github.ref, 'refs/tags/v') }}
             type=sha,prefix=
+            type=raw,value=${{ inputs.version }},enable=${{ inputs.version != '' }}
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:

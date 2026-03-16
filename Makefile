@@ -2,6 +2,8 @@
 TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "latest")
 GIT_ORG ?= $(shell git remote get-url origin 2>/dev/null | sed -n 's|.*github\.com[:/]\([^/]*\)/.*|\1|p')
 IMG ?= ghcr.io/$(GIT_ORG)/aim-engine:$(TAG)
+ARTIFACT_DOWNLOADER_IMG ?= ghcr.io/silogen/aim-artifact-downloader:$(TAG)
+LDFLAGS ?= -X 'github.com/amd-enterprise-ai/aim-engine/api/v1alpha1.DefaultDownloadImage=$(ARTIFACT_DOWNLOADER_IMG)'
 
 # Helm chart configuration
 CHART_NAME ?= aim-engine-chart
@@ -281,7 +283,7 @@ env-info: ## Show current environment configuration (derived from kubectl contex
 
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
-	go build -o bin/manager cmd/main.go
+	go build -ldflags "$(LDFLAGS)" -o bin/manager cmd/main.go
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
@@ -317,7 +319,7 @@ wait-ready: ## Wait for operator readiness probe to succeed.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	$(CONTAINER_TOOL) build --build-arg VERSION=$(TAG) -t ${IMG} .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.

@@ -64,7 +64,7 @@ jobs:
       - name: Build and push Docker image
         if: env.BUILD_IMAGES == 'true'
         run: |
-          make docker-build IMG=${PUSH_IMAGE_REPO}:${VERSION}
+          make docker-build IMG=${PUSH_IMAGE_REPO}:${VERSION} TAG=${VERSION}
           make docker-push IMG=${PUSH_IMAGE_REPO}:${VERSION}
 
       - name: Verify image exists

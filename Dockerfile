@@ -15,6 +15,7 @@ USER 65532:65532
 FROM base AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
+ARG VERSION=latest
 
 # Build as root to use cache mounts (final image is non-root)
 USER root
@@ -25,7 +26,9 @@ COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -a -o manager ./cmd/main.go
+    go build -a \
+    -ldflags "-X 'github.com/amd-enterprise-ai/aim-engine/api/v1alpha1.DefaultDownloadImage=ghcr.io/silogen/aim-artifact-downloader:${VERSION}'" \
+    -o manager ./cmd/main.go
 
 # Dev image for Tilt: full Go env + source + binary
 FROM builder AS dev

@@ -9,6 +9,7 @@ on:
       - 'internal/**'
       - 'cmd/**'
       - 'config/**'
+      - 'images/artifact-downloader/**'
       - 'Makefile'
       - 'Dockerfile'
       - '.github/workflows/publish-main.yml'
@@ -55,9 +56,23 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push artifact-downloader image
+        uses: docker/build-push-action@v6
+        with:
+          context: images/artifact-downloader
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/aim-artifact-downloader:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ github.repository_owner }}/aim-artifact-downloader:publish-main
+          cache-from: type=gha,scope=artifact-downloader
+          cache-to: type=gha,scope=artifact-downloader,mode=max
+
       - name: Build and push Docker image
         run: |
-          make docker-build IMG=${PUSH_IMAGE_REPO}:${IMAGE_TAG}
+          make docker-build IMG=${PUSH_IMAGE_REPO}:${IMAGE_TAG} TAG=${IMAGE_TAG}
           make docker-push IMG=${PUSH_IMAGE_REPO}:${IMAGE_TAG}
           docker tag ${PUSH_IMAGE_REPO}:${IMAGE_TAG} ${PUSH_IMAGE_REPO}:publish-main
           docker push ${PUSH_IMAGE_REPO}:publish-main
