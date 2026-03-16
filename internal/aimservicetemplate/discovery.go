@@ -82,6 +82,12 @@ type DiscoveryJobSpec struct {
 	// OwnerRef sets the owner reference on the discovery Job for garbage collection.
 	// When the template is deleted, the discovery Job will be automatically cleaned up.
 	OwnerRef metav1.OwnerReference
+	// CustomProfileConfigMapName is the name of the ConfigMap containing the custom profile YAML.
+	// When set, the discovery job mounts this ConfigMap and sets AIM_ID + AIM_PROFILE_ID env vars.
+	CustomProfileConfigMapName string
+	// CustomProfileFilename is the profile YAML filename within the ConfigMap.
+	// Required when CustomProfileConfigMapName is set.
+	CustomProfileFilename string
 }
 
 // BuildDiscoveryJob creates a Job that runs model discovery dry-run.
@@ -113,6 +119,24 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 	}
 	if spec.TemplateSpec.ProfileId != "" {
 		hashInput += spec.TemplateSpec.ProfileId
+	}
+	if spec.TemplateSpec.CustomProfile != nil {
+		hashInput += spec.TemplateSpec.AimId + spec.TemplateSpec.ModelId
+		if spec.TemplateSpec.CustomProfile.EngineArgs != nil {
+			hashInput += string(spec.TemplateSpec.CustomProfile.EngineArgs.Raw)
+		}
+
+		envVarKeys := make([]string, 0, len(spec.TemplateSpec.CustomProfile.EnvVars))
+		for k := range spec.TemplateSpec.CustomProfile.EnvVars {
+			envVarKeys = append(envVarKeys, k)
+		}
+		sort.Strings(envVarKeys)
+		for _, k := range envVarKeys {
+			hashInput += k + spec.TemplateSpec.CustomProfile.EnvVars[k]
+		}
+	}
+	if spec.CustomProfileConfigMapName != "" {
+		hashInput += spec.CustomProfileConfigMapName + spec.CustomProfileFilename
 	}
 
 	hash := sha256.Sum256([]byte(hashInput))
@@ -179,6 +203,22 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 		})
 	}
 
+	// Custom profile: set AIM_ID and AIM_PROFILE_ID to select the mounted profile
+	if spec.CustomProfileConfigMapName != "" {
+		env = append(env, controllerutils.CustomProfileEnvVars(
+			spec.TemplateSpec.AimId,
+			spec.CustomProfileFilename,
+		)...)
+	}
+
+	// Build volumes and volume mounts for the discovery container
+	var volumes []corev1.Volume
+	var volumeMounts []corev1.VolumeMount
+	if spec.CustomProfileConfigMapName != "" {
+		volumes = append(volumes, controllerutils.BuildCustomProfileVolume(spec.CustomProfileConfigMapName))
+		volumeMounts = append(volumeMounts, controllerutils.BuildCustomProfileVolumeMount(spec.TemplateSpec.AimId))
+	}
+
 	// Security context for pod security standards compliance
 	allowPrivilegeEscalation := false
 	runAsNonRoot := true
@@ -221,6 +261,7 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 						RunAsUser:      &runAsUser,
 						SeccompProfile: seccompProfile,
 					},
+					Volumes: volumes,
 					Containers: []corev1.Container{
 						{
 							Name:  "discovery",
@@ -229,7 +270,8 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 								"dry-run",
 								"--format=json",
 							},
-							Env: env,
+							Env:          env,
+							VolumeMounts: volumeMounts,
 							SecurityContext: &corev1.SecurityContext{
 								AllowPrivilegeEscalation: &allowPrivilegeEscalation,
 								RunAsNonRoot:             &runAsNonRoot,
@@ -734,6 +776,21 @@ func ComputeDiscoverySpecHash(spec aimv1alpha1.AIMServiceTemplateSpecCommon, mod
 	}
 	if spec.ProfileId != "" {
 		hashInput += spec.ProfileId
+	}
+	if spec.CustomProfile != nil {
+		hashInput += spec.AimId + spec.ModelId
+		if spec.CustomProfile.EngineArgs != nil {
+			hashInput += string(spec.CustomProfile.EngineArgs.Raw)
+		}
+
+		envVarKeys := make([]string, 0, len(spec.CustomProfile.EnvVars))
+		for k := range spec.CustomProfile.EnvVars {
+			envVarKeys = append(envVarKeys, k)
+		}
+		sort.Strings(envVarKeys)
+		for _, k := range envVarKeys {
+			hashInput += k + spec.CustomProfile.EnvVars[k]
+		}
 	}
 
 	hash := sha256.Sum256([]byte(hashInput))

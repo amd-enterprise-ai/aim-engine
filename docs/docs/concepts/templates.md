@@ -243,6 +243,117 @@ Services wait for templates to reach `Ready` before deploying.
 
 **Ready**: Reports overall readiness based on all template components.
 
+## Custom Profiles
+
+Custom profiles allow users to tune inference engine behavior (engine args and environment variables) without building custom container images. Profile data is specified inline on service templates and materialized as a ConfigMap at deploy time.
+
+### Overview
+
+The AIM runtime starts as the container entrypoint, selects a profile, then replaces itself with the inference engine (vLLM) via `os.execv`. Custom profiles let you control the engine args and env vars that are applied during this handoff — without modifying the container image or managing raw ConfigMaps.
+
+When `customProfile` is set on a template, the controller:
+
+1. Assembles a complete profile YAML from the template's fields
+2. Runs the standard discovery job with the profile mounted (validates compatibility and triggers model weight pre-caching)
+3. At deploy time, creates an ephemeral ConfigMap owned by the AIMService and mounts it under the AIM runtime's custom profile path
+4. Sets `AIM_PROFILE_ID` to explicitly select the custom profile, bypassing the runtime's normal profile selection logic
+
+### Required Fields
+
+When `customProfile` is set, a CEL validation rule requires all fields needed to assemble a valid profile YAML:
+
+| Field | Description |
+| ----- | ----------- |
+| `aimId` | AIM product family identifier (e.g., `meta-llama/Llama-3-8B`). Populates the `aim_id` field in the assembled profile YAML. |
+| `modelId` | HuggingFace model URI (e.g., `Qwen/Qwen3-32B-FP8`). Identifies which model weights the profile targets. |
+| `hardware` | GPU requirements — `gpu.model` and `gpu.requests` map to the profile's `metadata.gpu` and `metadata.gpu_count`. |
+| `metric` | Optimization goal (`latency` or `throughput`). |
+| `precision` | Numeric precision (e.g., `fp16`, `fp8`). |
+
+### Custom Profile Fields
+
+The `customProfile` object contains two fields:
+
+| Field | Type | Target | Description |
+| ----- | ---- | ------ | ----------- |
+| `engineArgs` | `map[string]JSON` | Inference engine CLI args | Converted to `--key value` flags on the engine process (e.g., `dtype: float16` becomes `--dtype float16`). Supports typed values — integers, floats, booleans, lists, and strings. |
+| `envVars` | `map[string]string` | Inference engine process env | Set via `os.environ` before `os.execv` to the engine (e.g., `PYTORCH_TUNABLEOP_ENABLED: "1"`). Keys must match `^[A-Z0-9_]+$`. |
+
+These are distinct from the existing `env` field on templates, which sets container-level environment variables affecting the AIM runtime process itself.
+
+### Example
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: llama-3-8b-mi300x-custom
+  namespace: ml-team
+spec:
+  aimId: meta-llama/Llama-3-8B
+  modelId: meta-llama/Llama-3-8B
+  modelName: my-llama-model
+  metric: latency
+  precision: fp16
+  hardware:
+    gpu:
+      model: MI300X
+      requests: 1
+  customProfile:
+    engineArgs:
+      dtype: float16
+      gpu-memory-utilization: 0.95
+      tensor-parallel-size: 1
+    envVars:
+      HIP_FORCE_DEV_KERNARG: "1"
+      PYTORCH_TUNABLEOP_ENABLED: "1"
+```
+
+### Lifecycle
+
+1. **Template creation**: The controller creates a ConfigMap with the assembled profile YAML and runs a discovery job with it mounted. The template enters `Pending` until discovery completes.
+2. **Service deployment**: When an AIMService selects a custom profile template, the controller creates a new ConfigMap in the service's namespace (owned by the AIMService via ownerReference). The ConfigMap is mounted into the inference container and `AIM_PROFILE_ID` is set to select it.
+3. **Service deletion**: The deploy-time ConfigMap is garbage-collected with the AIMService.
+
+The deploy-time ConfigMap is a point-in-time snapshot. If the template's `customProfile` changes after deployment, the existing ConfigMap is not updated — recreate the AIMService to pick up changes.
+
+### Via AIMModel Custom Templates
+
+Custom profiles can also be specified on `AIMModel.spec.customTemplates[]`. The model controller creates an `AIMServiceTemplate` from each entry, copying `aimId`, `modelId`, and `customProfile` to the created template:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: my-finetuned-llama
+  namespace: ml-team
+spec:
+  image: amdenterpriseai/aim-vllm-base:0.10.0
+  modelSources:
+    - modelId: my-org/llama-finetuned
+      sourceUri: s3://my-bucket/weights/
+      size: 16Gi
+  customTemplates:
+    - name: llama-custom
+      aimId: meta-llama/Llama-3-8B
+      modelId: meta-llama/Llama-3-8B
+      hardware:
+        gpu:
+          model: MI300X
+          requests: 1
+      profile:
+        metric: latency
+        precision: fp16
+      customProfile:
+        engineArgs:
+          dtype: float16
+          gpu-memory-utilization: 0.95
+        envVars:
+          HIP_FORCE_DEV_KERNARG: "1"
+```
+
+The same discovery and deploy-time flows apply to templates created this way.
+
 ## Auto-Creation from Model Discovery
 
 When AIM Models have `spec.discovery.extractMetadata: true` and `spec.discovery.createServiceTemplates: true`, the controller creates templates from the model's recommended deployments.

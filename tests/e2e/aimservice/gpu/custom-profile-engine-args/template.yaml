@@ -1,0 +1,24 @@
+# AIMServiceTemplate with customProfile containing max-model-len.
+# This engine arg caps the context window; vLLM reports the effective max_model_len
+# in its /v1/models response, giving a measurable end-to-end proof that custom
+# profile engine args reach the runtime.
+# Note: served-model-name is unconditionally managed by the AIM runtime and cannot
+# be used as a canary.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-cp-engine-args-template
+spec:
+  modelName: test-cp-engine-args-model
+  aimId: Qwen/Qwen3-32B
+  modelId: Qwen/Qwen3-32B
+  metric: latency
+  precision: fp16
+  hardware:
+    gpu:
+      model: MI300X
+      requests: 1
+  customProfile:
+    engineArgs:
+      dtype: float16
+      max-model-len: 8192

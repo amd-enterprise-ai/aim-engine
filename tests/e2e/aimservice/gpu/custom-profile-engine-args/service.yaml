@@ -1,0 +1,12 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-cp-engine-args-svc
+spec:
+  runtimeConfigName: test-cp-engine-args
+  model:
+    name: test-cp-engine-args-model
+  template:
+    name: test-cp-engine-args-template
+    allowUnoptimized: true
+  replicas: 1

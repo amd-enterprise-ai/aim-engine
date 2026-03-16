@@ -1,0 +1,10 @@
+# Qwen3-32B model image. Weights are downloaded by vLLM at startup (not baked in).
+# discovery.createServiceTemplates: false — we create the template manually with customProfile.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: test-cp-engine-args-model
+spec:
+  image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+  discovery:
+    createServiceTemplates: false

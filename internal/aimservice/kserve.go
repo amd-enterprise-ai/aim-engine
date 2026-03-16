@@ -322,6 +322,20 @@ func buildInferenceService(
 		applyNodeAffinity(inferenceService, templateStatus.ResolvedNodeAffinity)
 	}
 
+	// Add custom profile volume and mount when template has a custom profile
+	if controllerutils.HasCustomProfile(templateSpec) {
+		if _, _, err := controllerutils.AssembleProfileYAML(templateSpec); err == nil {
+			cmName := controllerutils.ServiceCustomProfileConfigMapName(service.Name)
+			vol := controllerutils.BuildCustomProfileVolume(cmName)
+			mount := controllerutils.BuildCustomProfileVolumeMount(templateSpec.AimId)
+
+			inferenceService.Spec.Predictor.Volumes = append(inferenceService.Spec.Predictor.Volumes, vol)
+			inferenceService.Spec.Predictor.Containers[0].VolumeMounts = append(
+				inferenceService.Spec.Predictor.Containers[0].VolumeMounts, mount,
+			)
+		}
+	}
+
 	// Add storage volumes (cache or PVC).
 	// On the update path (ISVC already exists), preserve the existing volume spec
 	// rather than re-resolving from artifacts. Artifacts or their PVCs may be
@@ -362,6 +376,14 @@ func buildMergedEnvVars(
 	// Add profile ID if set on template
 	if templateSpec != nil && templateSpec.ProfileId != "" {
 		envVars = append(envVars, corev1.EnvVar{Name: constants.EnvAIMProfileID, Value: templateSpec.ProfileId})
+	}
+
+	// Custom profile: set AIM_ID and AIM_PROFILE_ID for explicit profile selection
+	if controllerutils.HasCustomProfile(templateSpec) {
+		_, filename, err := controllerutils.AssembleProfileYAML(templateSpec)
+		if err == nil {
+			envVars = append(envVars, controllerutils.CustomProfileEnvVars(templateSpec.AimId, filename)...)
+		}
 	}
 
 	// Add metric if set on template

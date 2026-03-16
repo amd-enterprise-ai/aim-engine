@@ -464,6 +464,9 @@ _Appears in:_
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision selects the numeric precision used by the runtime. |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br />Optional: \{\} <br /> |
 | `hardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | Hardware specifies GPU and CPU requirements for each replica.<br />For GPU models, defines the GPU count and model types required for deployment.<br />For CPU-only models, defines CPU resource requirements.<br />This field is immutable after creation. |  | Optional: \{\} <br /> |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  | Optional: \{\} <br /> |
+| `aimId` _string_ | AimId is the AIM product family identifier (e.g., "meta-llama/Llama-3-8B").<br />Required when customProfile is set; used to assemble the profile YAML aim_id field<br />and to compute the custom profile ID for AIM_PROFILE_ID. |  | Optional: \{\} <br /> |
+| `modelId` _string_ | ModelId is the specific model identifier / HuggingFace URI (e.g., "Qwen/Qwen3-32B-FP8").<br />Required when customProfile is set; used for profile YAML model_id field<br />and for weight pre-caching via the discovery job. |  | Optional: \{\} <br /> |
+| `customProfile` _[AIMCustomProfile](#aimcustomprofile)_ | CustomProfile defines inline custom profile data for the inference engine.<br />When set, the controller assembles a profile YAML from this data and template metadata,<br />creates a ConfigMap, and mounts it into discovery and inference containers.<br />Requires aimId, modelId, hardware, metric, and precision to also be set. |  | Optional: \{\} <br /> |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets lists secrets containing credentials for pulling container images.<br />These secrets are used for:<br />- Discovery dry-run jobs that inspect the model container<br />- Pulling the image for inference services<br />The secrets are merged with any model or runtime config defaults.<br />For namespace-scoped templates, secrets must exist in the same namespace.<br />For cluster-scoped templates, secrets must exist in the operator namespace. |  | Optional: \{\} <br /> |
 | `serviceAccountName` _string_ | ServiceAccountName specifies the Kubernetes service account to use for workloads related to this template.<br />This includes discovery dry-run jobs and inference services created from this template.<br />If empty, the default service account for the namespace is used. |  | Optional: \{\} <br /> |
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources defines the default container resource requirements applied to services derived from this template.<br />Service-specific values override the template defaults. |  | Optional: \{\} <br /> |
@@ -509,6 +512,28 @@ _Appears in:_
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type specifies default type for all templates.<br />Individual templates can override this default.<br />When nil, templates default to "unoptimized". |  | Enum: [optimized preview unoptimized] <br />Optional: \{\} <br /> |
 
 
+#### AIMCustomProfile
+
+
+
+AIMCustomProfile defines inline custom profile data for user-provided inference engine configuration.
+When set on a template, the controller assembles a profile YAML, creates a ConfigMap,
+and mounts it into both the discovery job and the inference service container.
+
+
+
+_Appears in:_
+- [AIMClusterServiceTemplateSpec](#aimclusterservicetemplatespec)
+- [AIMCustomTemplate](#aimcustomtemplate)
+- [AIMServiceTemplateSpec](#aimservicetemplatespec)
+- [AIMServiceTemplateSpecCommon](#aimservicetemplatespeccommon)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `engineArgs` _[JSON](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#json-v1-apiextensions-k8s-io)_ | EngineArgs contains inference engine arguments as a free-form JSON object.<br />These are passed as CLI arguments to the inference engine (e.g., vLLM).<br />Do not include "model" — it is injected separately by the runtime. |  | Schemaless: \{\} <br />Optional: \{\} <br /> |
+| `envVars` _object (keys:string, values:string)_ | EnvVars contains environment variables applied to the inference engine process.<br />These are written into the profile YAML and applied by the AIM runtime via os.execv,<br />distinct from container-level Env which targets the AIM runtime container itself.<br />Keys must match ^[A-Z0-9_]+$ (uppercase with underscores). |  | Optional: \{\} <br /> |
+
+
 #### AIMCustomTemplate
 
 
@@ -516,6 +541,7 @@ _Appears in:_
 AIMCustomTemplate defines a custom template configuration for a model.
 When modelSources are specified directly on AIMModel, customTemplates allow
 defining explicit hardware requirements and profiles, skipping the discovery job.
+This is an existing struct (not a CRD); it appears as an element of AIMModel.spec.customTemplates[].
 
 
 
@@ -526,9 +552,12 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `name` _string_ | Name is the template name. If not provided, auto-generated from model name + profile. |  | MaxLength: 63 <br />Optional: \{\} <br /> |
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type indicates the optimization status of this template.<br />- optimized: Template has been tuned for performance<br />- preview: Template is experimental/pre-release<br />- unoptimized: Default, no specific optimizations applied | unoptimized | Enum: [optimized preview unoptimized] <br />Optional: \{\} <br /> |
-| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variable overrides when this template is selected. |  | MaxItems: 64 <br />Optional: \{\} <br /> |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variable overrides when this template is selected.<br />These are container-level env vars applied to the AIM runtime container. |  | MaxItems: 64 <br />Optional: \{\} <br /> |
 | `hardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | Hardware specifies GPU and CPU requirements for this template.<br />Optional when spec.hardware is set (inherits from spec).<br />When both are set, values are merged field-by-field with template taking precedence. |  | Optional: \{\} <br /> |
 | `profile` _[AIMTemplateProfile](#aimtemplateprofile)_ | Profile declares runtime profile variables for template selection.<br />Used when multiple templates exist to select based on metric/precision. |  | Optional: \{\} <br /> |
+| `aimId` _string_ | AimId is the AIM product family identifier (e.g., "meta-llama/Llama-3-8B").<br />Required when customProfile is set. |  | Optional: \{\} <br /> |
+| `modelId` _string_ | ModelId is the specific model identifier / HuggingFace URI (e.g., "Qwen/Qwen3-32B-FP8").<br />Required when customProfile is set. |  | Optional: \{\} <br /> |
+| `customProfile` _[AIMCustomProfile](#aimcustomprofile)_ | CustomProfile defines inline custom profile data for the inference engine.<br />When set, the resulting template will have a custom profile ConfigMap mounted.<br />Requires aimId, modelId, hardware, profile.metric, and profile.precision. |  | Optional: \{\} <br /> |
 
 
 
@@ -1573,6 +1602,9 @@ _Appears in:_
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision selects the numeric precision used by the runtime. |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br />Optional: \{\} <br /> |
 | `hardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | Hardware specifies GPU and CPU requirements for each replica.<br />For GPU models, defines the GPU count and model types required for deployment.<br />For CPU-only models, defines CPU resource requirements.<br />This field is immutable after creation. |  | Optional: \{\} <br /> |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  | Optional: \{\} <br /> |
+| `aimId` _string_ | AimId is the AIM product family identifier (e.g., "meta-llama/Llama-3-8B").<br />Required when customProfile is set; used to assemble the profile YAML aim_id field<br />and to compute the custom profile ID for AIM_PROFILE_ID. |  | Optional: \{\} <br /> |
+| `modelId` _string_ | ModelId is the specific model identifier / HuggingFace URI (e.g., "Qwen/Qwen3-32B-FP8").<br />Required when customProfile is set; used for profile YAML model_id field<br />and for weight pre-caching via the discovery job. |  | Optional: \{\} <br /> |
+| `customProfile` _[AIMCustomProfile](#aimcustomprofile)_ | CustomProfile defines inline custom profile data for the inference engine.<br />When set, the controller assembles a profile YAML from this data and template metadata,<br />creates a ConfigMap, and mounts it into discovery and inference containers.<br />Requires aimId, modelId, hardware, metric, and precision to also be set. |  | Optional: \{\} <br /> |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets lists secrets containing credentials for pulling container images.<br />These secrets are used for:<br />- Discovery dry-run jobs that inspect the model container<br />- Pulling the image for inference services<br />The secrets are merged with any model or runtime config defaults.<br />For namespace-scoped templates, secrets must exist in the same namespace.<br />For cluster-scoped templates, secrets must exist in the operator namespace. |  | Optional: \{\} <br /> |
 | `serviceAccountName` _string_ | ServiceAccountName specifies the Kubernetes service account to use for workloads related to this template.<br />This includes discovery dry-run jobs and inference services created from this template.<br />If empty, the default service account for the namespace is used. |  | Optional: \{\} <br /> |
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources defines the default container resource requirements applied to services derived from this template.<br />Service-specific values override the template defaults. |  | Optional: \{\} <br /> |
@@ -1602,6 +1634,9 @@ _Appears in:_
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision selects the numeric precision used by the runtime. |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br />Optional: \{\} <br /> |
 | `hardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | Hardware specifies GPU and CPU requirements for each replica.<br />For GPU models, defines the GPU count and model types required for deployment.<br />For CPU-only models, defines CPU resource requirements.<br />This field is immutable after creation. |  | Optional: \{\} <br /> |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  | Optional: \{\} <br /> |
+| `aimId` _string_ | AimId is the AIM product family identifier (e.g., "meta-llama/Llama-3-8B").<br />Required when customProfile is set; used to assemble the profile YAML aim_id field<br />and to compute the custom profile ID for AIM_PROFILE_ID. |  | Optional: \{\} <br /> |
+| `modelId` _string_ | ModelId is the specific model identifier / HuggingFace URI (e.g., "Qwen/Qwen3-32B-FP8").<br />Required when customProfile is set; used for profile YAML model_id field<br />and for weight pre-caching via the discovery job. |  | Optional: \{\} <br /> |
+| `customProfile` _[AIMCustomProfile](#aimcustomprofile)_ | CustomProfile defines inline custom profile data for the inference engine.<br />When set, the controller assembles a profile YAML from this data and template metadata,<br />creates a ConfigMap, and mounts it into discovery and inference containers.<br />Requires aimId, modelId, hardware, metric, and precision to also be set. |  | Optional: \{\} <br /> |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets lists secrets containing credentials for pulling container images.<br />These secrets are used for:<br />- Discovery dry-run jobs that inspect the model container<br />- Pulling the image for inference services<br />The secrets are merged with any model or runtime config defaults.<br />For namespace-scoped templates, secrets must exist in the same namespace.<br />For cluster-scoped templates, secrets must exist in the operator namespace. |  | Optional: \{\} <br /> |
 | `serviceAccountName` _string_ | ServiceAccountName specifies the Kubernetes service account to use for workloads related to this template.<br />This includes discovery dry-run jobs and inference services created from this template.<br />If empty, the default service account for the namespace is used. |  | Optional: \{\} <br /> |
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources defines the default container resource requirements applied to services derived from this template.<br />Service-specific values override the template defaults. |  | Optional: \{\} <br /> |

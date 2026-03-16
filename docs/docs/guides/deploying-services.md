@@ -384,6 +384,116 @@ spec:
           key: token
 ```
 
+## Custom Profiles
+
+Custom profiles let you tune inference engine behavior (engine args and environment variables) directly on a service template, without building custom container images.
+
+### Deploying with a Custom Profile Template
+
+First, create a template with `customProfile`:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: llama-3-8b-custom
+  namespace: ml-team
+spec:
+  aimId: meta-llama/Llama-3-8B
+  modelId: meta-llama/Llama-3-8B
+  modelName: my-llama-model
+  metric: latency
+  precision: fp16
+  hardware:
+    gpu:
+      model: MI300X
+      requests: 1
+  customProfile:
+    engineArgs:
+      dtype: float16
+      gpu-memory-utilization: 0.95
+    envVars:
+      PYTORCH_TUNABLEOP_ENABLED: "1"
+```
+
+Wait for the template to become `Ready` (discovery must complete):
+
+```bash
+kubectl -n ml-team get aimservicetemplate llama-3-8b-custom
+```
+
+Then deploy a service that references the template:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: llama-custom
+  namespace: ml-team
+spec:
+  model:
+    name: my-llama-model
+  template:
+    name: llama-3-8b-custom
+```
+
+The controller creates a ConfigMap with the custom profile YAML and mounts it into the inference container. The `AIM_PROFILE_ID` environment variable is set automatically to select the custom profile.
+
+### Custom Profile via AIMModel
+
+Alternatively, define custom profiles on `AIMModel.spec.customTemplates[]`. The model controller creates `AIMServiceTemplate` resources automatically:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: my-finetuned-llama
+  namespace: ml-team
+spec:
+  image: amdenterpriseai/aim-vllm-base:0.10.0
+  modelSources:
+    - modelId: my-org/llama-finetuned
+      sourceUri: s3://my-bucket/weights/
+      size: 16Gi
+  customTemplates:
+    - name: llama-custom-tp1
+      aimId: meta-llama/Llama-3-8B
+      modelId: meta-llama/Llama-3-8B
+      hardware:
+        gpu:
+          model: MI300X
+          requests: 1
+      profile:
+        metric: latency
+        precision: fp16
+      customProfile:
+        engineArgs:
+          dtype: float16
+          gpu-memory-utilization: 0.95
+        envVars:
+          HIP_FORCE_DEV_KERNARG: "1"
+```
+
+Then deploy a service referencing the model. The auto-created template is selected automatically or can be referenced by name.
+
+### Verifying Custom Profile Deployment
+
+Check that the ConfigMap and environment variables are present on the inference container:
+
+```bash
+# Check ConfigMaps in the service namespace
+kubectl -n ml-team get configmap -l aim.eai.amd.com/service.name=llama-custom
+
+# Inspect the InferenceService for the custom profile volume and env vars
+kubectl -n ml-team get inferenceservice -l aim.eai.amd.com/service.name=llama-custom -o yaml
+```
+
+Look for:
+- A volume mount at `/workspace/aim-runtime/profiles/custom/`
+- `AIM_ID` and `AIM_PROFILE_ID` environment variables on the container
+
+See [Custom Profiles](../concepts/templates.md#custom-profiles) for a detailed explanation of the feature, including the three configuration layers and lifecycle management.
+
 ## Model Caching
 
 Model caching is enabled by default in `Shared` mode, pre-downloading model artifacts so they are ready when the inference service starts. To use a dedicated cache owned by the service instead:

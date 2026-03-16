@@ -1,0 +1,9 @@
+# Model without custom templates — just provides the image.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: test-direct-cp-model
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.10
+  discovery:
+    createServiceTemplates: false

@@ -72,6 +72,9 @@ const (
 // AIMCustomTemplate defines a custom template configuration for a model.
 // When modelSources are specified directly on AIMModel, customTemplates allow
 // defining explicit hardware requirements and profiles, skipping the discovery job.
+// This is an existing struct (not a CRD); it appears as an element of AIMModel.spec.customTemplates[].
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.customProfile) || (has(self.aimId) && has(self.modelId) && has(self.hardware) && has(self.profile) && has(self.profile.metric) && has(self.profile.precision))",message="when customProfile is set, aimId, modelId, hardware, profile.metric, and profile.precision are required"
 type AIMCustomTemplate struct {
 	// Name is the template name. If not provided, auto-generated from model name + profile.
 	// +optional
@@ -88,6 +91,7 @@ type AIMCustomTemplate struct {
 	Type AIMProfileType `json:"type,omitempty"`
 
 	// Env specifies environment variable overrides when this template is selected.
+	// These are container-level env vars applied to the AIM runtime container.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
@@ -104,6 +108,22 @@ type AIMCustomTemplate struct {
 	// Used when multiple templates exist to select based on metric/precision.
 	// +optional
 	Profile *AIMTemplateProfile `json:"profile,omitempty"`
+
+	// AimId is the AIM product family identifier (e.g., "meta-llama/Llama-3-8B").
+	// Required when customProfile is set.
+	// +optional
+	AimId string `json:"aimId,omitempty"`
+
+	// ModelId is the specific model identifier / HuggingFace URI (e.g., "Qwen/Qwen3-32B-FP8").
+	// Required when customProfile is set.
+	// +optional
+	ModelId string `json:"modelId,omitempty"`
+
+	// CustomProfile defines inline custom profile data for the inference engine.
+	// When set, the resulting template will have a custom profile ConfigMap mounted.
+	// Requires aimId, modelId, hardware, profile.metric, and profile.precision.
+	// +optional
+	CustomProfile *AIMCustomProfile `json:"customProfile,omitempty"`
 }
 
 // AIMTemplateProfile declares profile variables for template selection.

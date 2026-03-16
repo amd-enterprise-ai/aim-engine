@@ -1,0 +1,120 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Custom Profile Lifecycle
+#
+# Validates the full lifecycle of a custom profile template created via AIMModel:
+# 1. Create AIMModel with customTemplates[].customProfile
+# 2. Assert AIMServiceTemplate is created with customProfile fields propagated
+# 3. Assert template reaches Ready (discovery completes)
+# 4. Create AIMService referencing the model
+# 5. Assert InferenceService has ConfigMap volume mount at custom profile path
+# 6. Assert AIM_ID and AIM_PROFILE_ID env vars set on container
+# 7. Delete AIMService
+# 8. Assert deploy-time ConfigMap is cleaned up (ownerReference GC)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-custom-profile-lifecycle
+spec:
+  description: Test full custom profile lifecycle from model to deployment
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create model with custom profile template
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Verify AIMServiceTemplate is created with customProfile
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: test-custom-profile-model
+              spec:
+                aimId: meta-llama/Llama-3-8B
+                modelId: sshleifer/tiny-gpt2
+                customProfile:
+                  engineArgs:
+                    dtype: float16
+                    gpu-memory-utilization: 0.95
+                  envVars:
+                    HIP_FORCE_DEV_KERNARG: "1"
+
+    - name: Wait for template discovery to complete
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: test-custom-profile-model
+              status:
+                status: Ready
+
+    - name: Create service
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify InferenceService has custom profile volume and env vars
+      try:
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-custom-profile-svc
+              spec:
+                predictor:
+                  (volumes[?name == 'custom-profile']):
+                    - name: custom-profile
+                  (containers[?name == 'kserve-container']):
+                    - (volumeMounts[?name == 'custom-profile']):
+                        - name: custom-profile
+                          readOnly: true
+                      (env[?name == 'AIM_ID']):
+                        - name: AIM_ID
+                          value: meta-llama/Llama-3-8B
+                      (env[?name == 'AIM_PROFILE_ID']):
+                        - name: AIM_PROFILE_ID
+                          value: custom/meta-llama/Llama-3-8B/vllm-mi300x-fp16-tp1-latency
+
+    - name: Verify deploy-time ConfigMap exists (owned by AIMService)
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-custom-profile-svc
+
+    - name: Delete AIMService
+      try:
+        - delete:
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              name: test-custom-profile-svc
+
+    - name: Verify deploy-time ConfigMap is cleaned up
+      try:
+        - error:
+            timeout: 60s
+            resource:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-custom-profile-svc

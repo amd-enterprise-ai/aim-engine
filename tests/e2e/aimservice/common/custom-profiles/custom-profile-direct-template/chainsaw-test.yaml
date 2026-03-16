@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Custom Profile Direct Template
+#
+# Validates the primary entry point: creating an AIMServiceTemplate directly
+# with customProfile, aimId, modelId. No AIMModel.spec.customTemplates involved.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-custom-profile-direct-template
+spec:
+  description: Test custom profile via direct AIMServiceTemplate creation
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create model (image source only)
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Create template with customProfile directly
+      try:
+        - apply:
+            file: template.yaml
+
+    - name: Wait for template to reach Ready
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: test-direct-cp-template
+              status:
+                status: Ready
+
+    - name: Create service referencing template
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify InferenceService has custom profile env vars and volume
+      try:
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-direct-cp-svc
+              spec:
+                predictor:
+                  (volumes[?name == 'custom-profile']):
+                    - name: custom-profile
+                  (containers[?name == 'kserve-container']):
+                    - (env[?name == 'AIM_ID']):
+                        - value: meta-llama/Llama-3-8B
+                      (env[?name == 'AIM_PROFILE_ID']):
+                        - name: AIM_PROFILE_ID
+                          value: custom/meta-llama/Llama-3-8B/vllm-mi300x-fp16-tp1-latency
+                      (volumeMounts[?name == 'custom-profile']):
+                        - name: custom-profile

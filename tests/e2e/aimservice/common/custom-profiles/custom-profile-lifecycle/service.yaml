@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-custom-profile-svc
+spec:
+  model:
+    name: test-custom-profile-model
+  replicas: 1
+  template:
+    allowUnoptimized: true

@@ -30,6 +30,27 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
+// AIMCustomProfile defines inline custom profile data for user-provided inference engine configuration.
+// When set on a template, the controller assembles a profile YAML, creates a ConfigMap,
+// and mounts it into both the discovery job and the inference service container.
+type AIMCustomProfile struct {
+	// EngineArgs contains inference engine arguments as a free-form JSON object.
+	// These are passed as CLI arguments to the inference engine (e.g., vLLM).
+	// Do not include "model" — it is injected separately by the runtime.
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	// +optional
+	EngineArgs *apiextensionsv1.JSON `json:"engineArgs,omitempty"`
+
+	// EnvVars contains environment variables applied to the inference engine process.
+	// These are written into the profile YAML and applied by the AIM runtime via os.execv,
+	// distinct from container-level Env which targets the AIM runtime container itself.
+	// Keys must match ^[A-Z0-9_]+$ (uppercase with underscores).
+	// +optional
+	EnvVars map[string]string `json:"envVars,omitempty"`
+}
+
+// +kubebuilder:validation:XValidation:rule="!has(self.customProfile) || (has(self.aimId) && has(self.modelId) && has(self.hardware) && has(self.metric) && has(self.precision))",message="when customProfile is set, aimId, modelId, hardware, metric, and precision are required"
 type AIMServiceTemplateSpecCommon struct {
 	// ModelName is the model name. Matches `metadata.name` of an AIMModel or AIMClusterModel. Immutable.
 	//
@@ -43,6 +64,25 @@ type AIMServiceTemplateSpecCommon struct {
 
 	// RuntimeConfigRef contains the runtime config reference for this service template
 	RuntimeConfigRef `json:",inline"`
+
+	// AimId is the AIM product family identifier (e.g., "meta-llama/Llama-3-8B").
+	// Required when customProfile is set; used to assemble the profile YAML aim_id field
+	// and to compute the custom profile ID for AIM_PROFILE_ID.
+	// +optional
+	AimId string `json:"aimId,omitempty"`
+
+	// ModelId is the specific model identifier / HuggingFace URI (e.g., "Qwen/Qwen3-32B-FP8").
+	// Required when customProfile is set; used for profile YAML model_id field
+	// and for weight pre-caching via the discovery job.
+	// +optional
+	ModelId string `json:"modelId,omitempty"`
+
+	// CustomProfile defines inline custom profile data for the inference engine.
+	// When set, the controller assembles a profile YAML from this data and template metadata,
+	// creates a ConfigMap, and mounts it into discovery and inference containers.
+	// Requires aimId, modelId, hardware, metric, and precision to also be set.
+	// +optional
+	CustomProfile *AIMCustomProfile `json:"customProfile,omitempty"`
 
 	// ImagePullSecrets lists secrets containing credentials for pulling container images.
 	// These secrets are used for:

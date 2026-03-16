@@ -167,10 +167,39 @@ spec:
                     AIMCustomTemplate defines a custom template configuration for a model.
                     When modelSources are specified directly on AIMModel, customTemplates allow
                     defining explicit hardware requirements and profiles, skipping the discovery job.
+                    This is an existing struct (not a CRD); it appears as an element of AIMModel.spec.customTemplates[].
                   properties:
+                    aimId:
+                      description: |-
+                        AimId is the AIM product family identifier (e.g., "meta-llama/Llama-3-8B").
+                        Required when customProfile is set.
+                      type: string
+                    customProfile:
+                      description: |-
+                        CustomProfile defines inline custom profile data for the inference engine.
+                        When set, the resulting template will have a custom profile ConfigMap mounted.
+                        Requires aimId, modelId, hardware, profile.metric, and profile.precision.
+                      properties:
+                        engineArgs:
+                          description: |-
+                            EngineArgs contains inference engine arguments as a free-form JSON object.
+                            These are passed as CLI arguments to the inference engine (e.g., vLLM).
+                            Do not include "model" — it is injected separately by the runtime.
+                          x-kubernetes-preserve-unknown-fields: true
+                        envVars:
+                          additionalProperties:
+                            type: string
+                          description: |-
+                            EnvVars contains environment variables applied to the inference engine process.
+                            These are written into the profile YAML and applied by the AIM runtime via os.execv,
+                            distinct from container-level Env which targets the AIM runtime container itself.
+                            Keys must match ^[A-Z0-9_]+$ (uppercase with underscores).
+                          type: object
+                      type: object
                     env:
-                      description: Env specifies environment variable overrides when
-                        this template is selected.
+                      description: |-
+                        Env specifies environment variable overrides when this template is selected.
+                        These are container-level env vars applied to the AIM runtime container.
                       items:
                         description: EnvVar represents an environment variable present
                           in a Container.
@@ -404,6 +433,11 @@ spec:
                       x-kubernetes-validations:
                       - message: at least one of gpu or cpu must be specified
                         rule: has(self.gpu) || has(self.cpu)
+                    modelId:
+                      description: |-
+                        ModelId is the specific model identifier / HuggingFace URI (e.g., "Qwen/Qwen3-32B-FP8").
+                        Required when customProfile is set.
+                      type: string
                     name:
                       description: Name is the template name. If not provided, auto-generated
                         from model name + profile.
@@ -467,6 +501,12 @@ spec:
                         - unoptimized: Default, no specific optimizations applied
                       type: string
                   type: object
+                  x-kubernetes-validations:
+                  - message: when customProfile is set, aimId, modelId, hardware,
+                      profile.metric, and profile.precision are required
+                    rule: '!has(self.customProfile) || (has(self.aimId) && has(self.modelId)
+                      && has(self.hardware) && has(self.profile) && has(self.profile.metric)
+                      && has(self.profile.precision))'
                 maxItems: 16
                 type: array
               defaultServiceTemplate:

@@ -259,6 +259,17 @@ func buildCustomServiceTemplate(
 		}
 	}
 
+	// Propagate custom profile fields
+	if customTemplate.AimId != "" {
+		commonSpec.AimId = customTemplate.AimId
+	}
+	if customTemplate.ModelId != "" {
+		commonSpec.ModelId = customTemplate.ModelId
+	}
+	if customTemplate.CustomProfile != nil {
+		commonSpec.CustomProfile = customTemplate.CustomProfile.DeepCopy()
+	}
+
 	return &aimv1alpha1.AIMServiceTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      templateName,
@@ -380,6 +391,17 @@ func buildCustomClusterServiceTemplate(
 			p := customTemplate.Profile.Precision
 			commonSpec.Precision = &p
 		}
+	}
+
+	// Propagate custom profile fields
+	if customTemplate.AimId != "" {
+		commonSpec.AimId = customTemplate.AimId
+	}
+	if customTemplate.ModelId != "" {
+		commonSpec.ModelId = customTemplate.ModelId
+	}
+	if customTemplate.CustomProfile != nil {
+		commonSpec.CustomProfile = customTemplate.CustomProfile.DeepCopy()
 	}
 
 	return &aimv1alpha1.AIMClusterServiceTemplate{

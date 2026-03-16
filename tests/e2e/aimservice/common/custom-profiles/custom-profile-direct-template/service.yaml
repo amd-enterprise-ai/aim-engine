@@ -1,0 +1,11 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-direct-cp-svc
+spec:
+  model:
+    name: test-direct-cp-model
+  template:
+    name: test-direct-cp-template
+    allowUnoptimized: true
+  replicas: 1

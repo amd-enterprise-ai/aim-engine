@@ -952,7 +952,25 @@ func (r *ServiceReconciler) PlanResources(
 		}
 	}
 
-	// 4. Plan InferenceService
+	// 4. Plan custom profile ConfigMap (owned by AIMService)
+	if controllerutils.HasCustomProfile(templateSpec) {
+		yamlBytes, filename, err := controllerutils.AssembleProfileYAML(templateSpec)
+		if err != nil {
+			logger.Error(err, "failed to assemble custom profile YAML for service")
+			// Avoid planning partially-configured runtime resources when profile assembly fails.
+			return planResult
+		}
+
+		cmName := controllerutils.ServiceCustomProfileConfigMapName(service.Name)
+		cm := controllerutils.BuildCustomProfileConfigMap(cmName, service.Namespace, yamlBytes, filename, map[string]string{
+			constants.LabelService:      service.Name,
+			constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
+			constants.LabelK8sComponent: constants.ComponentInference,
+		})
+		planResult.Apply(cm)
+	}
+
+	// 5. Plan InferenceService
 	if isvc := planInferenceService(ctx, service, templateName, templateSpec, templateStatus, obs); isvc != nil {
 		planResult.Apply(isvc)
 	}

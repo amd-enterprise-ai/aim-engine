@@ -1,0 +1,21 @@
+# Direct AIMServiceTemplate with customProfile (primary entry point).
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-direct-cp-template
+spec:
+  modelName: test-direct-cp-model
+  aimId: meta-llama/Llama-3-8B
+  modelId: test-org/test-model
+  metric: latency
+  precision: fp16
+  hardware:
+    gpu:
+      model: MI300X
+      requests: 1
+  customProfile:
+    engineArgs:
+      dtype: float16
+      gpu-memory-utilization: 0.95
+    envVars:
+      PYTORCH_TUNABLEOP_ENABLED: "1"

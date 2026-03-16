@@ -63,11 +63,12 @@ These are set on inference containers by the operator:
 |----------|--------|-------------|
 | `AIM_CACHE_PATH` | Constant | Base path for cached model artifacts. |
 | `VLLM_ENABLE_METRICS` | Constant | Always `true` — enables vLLM Prometheus metrics. |
-| `AIM_PROFILE_ID` | Template | Active profile identifier. |
+| `AIM_ID` | Template | AIM product family identifier (e.g., `meta-llama/Llama-3-8B`). Set when the template has a `customProfile`. Determines the model-specific profile search path and serves as a fallback model identifier. Mutually exclusive with `AIM_MODEL_ID`. |
+| `AIM_PROFILE_ID` | Template | Active profile identifier. For standard templates, set from the discovered profile. For custom profile templates, set to `custom/{aimId}/{profileName}` to explicitly select the custom profile, bypassing the runtime's normal profile selection logic. |
 | `AIM_METRIC` | Template | Optimization metric (`latency` or `throughput`). |
 | `AIM_PRECISION` | Template | Model precision (e.g., `fp16`, `fp8`). |
-| `AIM_MODEL_ID` | Template | Model identifier for custom models. |
-| `AIM_ENGINE_ARGS` | Merged | JSON-encoded engine arguments, merged from service, template, runtime config, and profile. |
+| `AIM_MODEL_ID` | Template | Model identifier for custom models (base container deployments). Mutually exclusive with `AIM_ID`. |
+| `AIM_ENGINE_ARGS` | Merged | JSON-encoded engine arguments, merged from service, template, runtime config, and profile. Can override individual keys from a custom profile's `engine_args` at deploy time. |
 
 ### Environment Variable Merge Order
 

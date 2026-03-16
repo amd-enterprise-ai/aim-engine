@@ -26,10 +26,12 @@ package aimservicetemplate
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -901,6 +903,108 @@ func TestBuildDiscoveryJob_DifferentForDifferentSpecs(t *testing.T) {
 
 	if job1.Name == job2.Name {
 		t.Error("expected different job names for different specs")
+	}
+}
+
+func TestBuildDiscoveryJob_DeterministicCustomProfileEnvVars(t *testing.T) {
+	engineArgsRaw, err := json.Marshal(map[string]any{
+		"dtype":                "fp16",
+		"tensor-parallel-size": 1,
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal engine args: %v", err)
+	}
+
+	spec := DiscoveryJobSpec{
+		TemplateName: "my-template",
+		Namespace:    "default",
+		ModelID:      "test-model",
+		Image:        "ghcr.io/test/image:latest",
+		TemplateSpec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+			ModelName: "test-model",
+			AimId:     "meta-llama/Llama-3-8B",
+			ModelId:   "meta-llama/Llama-3-8B",
+			CustomProfile: &aimv1alpha1.AIMCustomProfile{
+				EngineArgs: &apiextensionsv1.JSON{Raw: engineArgsRaw},
+				EnvVars: map[string]string{
+					"B_FLAG": "2",
+					"A_FLAG": "1",
+				},
+			},
+		},
+		CustomProfileConfigMapName: "my-template-template-custom-profile",
+		CustomProfileFilename:      "vllm-mi300x-fp16-tp1-latency.yaml",
+	}
+
+	job1 := BuildDiscoveryJob(spec)
+	job2 := BuildDiscoveryJob(spec)
+	if job1.Name != job2.Name {
+		t.Fatalf("job names not deterministic: %q != %q", job1.Name, job2.Name)
+	}
+}
+
+func TestBuildDiscoveryJob_DifferentForDifferentCustomProfiles(t *testing.T) {
+	engineArgsRaw, err := json.Marshal(map[string]any{"dtype": "fp16"})
+	if err != nil {
+		t.Fatalf("failed to marshal engine args: %v", err)
+	}
+
+	baseSpec := DiscoveryJobSpec{
+		TemplateName: "my-template",
+		Namespace:    "default",
+		ModelID:      "test-model",
+		Image:        "ghcr.io/test/image:latest",
+		TemplateSpec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+			ModelName: "test-model",
+			AimId:     "meta-llama/Llama-3-8B",
+			ModelId:   "meta-llama/Llama-3-8B",
+			CustomProfile: &aimv1alpha1.AIMCustomProfile{
+				EngineArgs: &apiextensionsv1.JSON{Raw: engineArgsRaw},
+				EnvVars: map[string]string{
+					"FLAG": "1",
+				},
+			},
+		},
+		CustomProfileConfigMapName: "my-template-template-custom-profile",
+		CustomProfileFilename:      "vllm-mi300x-fp16-tp1-latency.yaml",
+	}
+
+	changedSpec := baseSpec
+	changedSpec.TemplateSpec.AimId = "meta-llama/Llama-3.1-8B"
+
+	job1 := BuildDiscoveryJob(baseSpec)
+	job2 := BuildDiscoveryJob(changedSpec)
+	if job1.Name == job2.Name {
+		t.Fatalf("expected different job names when custom profile changes")
+	}
+}
+
+func TestComputeDiscoverySpecHash_DeterministicCustomProfileEnvVars(t *testing.T) {
+	engineArgsRaw, err := json.Marshal(map[string]any{
+		"dtype":                "fp16",
+		"tensor-parallel-size": 1,
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal engine args: %v", err)
+	}
+
+	spec := aimv1alpha1.AIMServiceTemplateSpecCommon{
+		ModelName: "test-model",
+		AimId:     "meta-llama/Llama-3-8B",
+		ModelId:   "meta-llama/Llama-3-8B",
+		CustomProfile: &aimv1alpha1.AIMCustomProfile{
+			EngineArgs: &apiextensionsv1.JSON{Raw: engineArgsRaw},
+			EnvVars: map[string]string{
+				"B_FLAG": "2",
+				"A_FLAG": "1",
+			},
+		},
+	}
+
+	hash1 := ComputeDiscoverySpecHash(spec, "test-model", "ghcr.io/test/image:latest")
+	hash2 := ComputeDiscoverySpecHash(spec, "test-model", "ghcr.io/test/image:latest")
+	if hash1 != hash2 {
+		t.Fatalf("spec hash not deterministic: %q != %q", hash1, hash2)
 	}
 }
 

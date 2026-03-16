@@ -466,6 +466,38 @@ spec:
         # Inherits hardware and type from custom.*
 ```
 
+### Custom Profiles on Custom Templates
+
+Custom templates can include a `customProfile` to tune inference engine behavior. When `customProfile` is set, `aimId`, `modelId`, `hardware`, `profile.metric`, and `profile.precision` are all required:
+
+```yaml
+spec:
+  image: amdenterpriseai/aim-vllm-base:0.10.0
+  modelSources:
+    - modelId: my-org/llama-finetuned
+      sourceUri: s3://my-bucket/weights/
+      size: 16Gi
+  customTemplates:
+    - name: llama-custom-tuned
+      aimId: meta-llama/Llama-3-8B
+      modelId: meta-llama/Llama-3-8B
+      hardware:
+        gpu:
+          model: MI300X
+          requests: 1
+      profile:
+        metric: latency
+        precision: fp16
+      customProfile:
+        engineArgs:
+          dtype: float16
+          gpu-memory-utilization: 0.95
+        envVars:
+          PYTORCH_TUNABLEOP_ENABLED: "1"
+```
+
+The model controller creates an `AIMServiceTemplate` with the custom profile data. The template goes through the standard discovery flow and becomes available for services. See [Custom Profiles](templates.md#custom-profiles) for details on the lifecycle and configuration layers.
+
 #### Unoptimized Templates and allowUnoptimized
 
 Custom models generate templates with `type: unoptimized` by default because no discovery job runs to validate performance characteristics. This has an important implication:

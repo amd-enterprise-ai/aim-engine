@@ -233,17 +233,18 @@ const (
 const (
 	// EnvAIMCachePath is the environment variable for the cache path
 	EnvAIMCachePath = "AIM_CACHE_PATH"
+	// EnvAIMID is the environment variable for the AIM product family identifier
+	EnvAIMID = "AIM_ID"
 	// EnvAIMMetric is the environment variable for the optimization metric
 	EnvAIMMetric = "AIM_METRIC"
+	// EnvAIMModelID is the environment variable for the model ID
+	EnvAIMModelID = "AIM_MODEL_ID"
 	// EnvAIMPrecision is the environment variable for the numeric precision
 	EnvAIMPrecision = "AIM_PRECISION"
 	// EnvAIMProfileID is the environment variable for the profile ID
 	EnvAIMProfileID = "AIM_PROFILE_ID"
 	// EnvVLLMEnableMetrics enables vLLM metrics
 	EnvVLLMEnableMetrics = "VLLM_ENABLE_METRICS"
-
-	EnvAIMModelID = "AIM_MODEL_ID"
-	// EnvAIMModelID is the environment variable for the model ID
 )
 
 // KServe annotation and label keys

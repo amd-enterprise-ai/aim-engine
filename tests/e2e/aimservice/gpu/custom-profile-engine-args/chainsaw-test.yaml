@@ -1,0 +1,102 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Custom Profile Engine Args Reach vLLM (GPU)
+#
+# Proves that engine args specified in a custom profile are actually applied
+# to the running vLLM instance. Uses max-model-len as a canary: if the
+# /v1/models endpoint reports max_model_len=8192 instead of the model default
+# (~40960), the engine arg made it through the full chain:
+#
+#   customProfile.engineArgs -> ConfigMap YAML -> volume mount -> AIM runtime -> vLLM CLI -> API
+#
+# Note: served-model-name cannot be used as a canary because the AIM runtime
+# unconditionally sets it based on model_id/aim_id regardless of the profile.
+#
+# Uses: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5 (weights downloaded via AIMArtifact)
+# Requires: GPU infrastructure
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-gpu-custom-profile-engine-args
+  labels:
+    requires: gpu
+spec:
+  description: Verify custom profile engine args are applied to the running vLLM instance
+  timeouts:
+    assert: 600s
+  steps:
+    - name: Create runtime config with routing
+      try:
+        - apply:
+            file: runtime-config.yaml
+
+    - name: Create model
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Create template with customProfile containing served-model-name
+      try:
+        - apply:
+            file: template.yaml
+
+    - name: Wait for template to reach Ready
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: test-cp-engine-args-template
+              status:
+                status: Ready
+
+    - name: Create service
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify InferenceService has custom profile volume and env vars
+      try:
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-cp-engine-args-svc
+              spec:
+                predictor:
+                  (volumes[?name == 'custom-profile']):
+                    - name: custom-profile
+                  (containers[?name == 'kserve-container']):
+                    - (env[?name == 'AIM_ID']):
+                        - value: Qwen/Qwen3-32B
+                      (env[?name == 'AIM_PROFILE_ID']):
+                        - value: custom/Qwen/Qwen3-32B/vllm-mi300x-fp16-tp1-latency
+
+    - name: Verify service reaches Running status (includes model weight download)
+      try:
+        - assert:
+            timeout: 30m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cp-engine-args-svc
+              status:
+                status: Running
+
+    - name: Verify max-model-len engine arg reached vLLM
+      try:
+        - script:
+            timeout: 3m
+            env:
+              - name: HTTP_BASE_PATH
+                value: /integration/gpu-cp-engine-args/test-cp-engine-args-svc/v1
+              - name: EXPECTED_MAX_MODEL_LEN
+                value: "8192"
+            content: bash validate-model-name.sh

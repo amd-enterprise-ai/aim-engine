@@ -1,0 +1,26 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: test-custom-profile-model
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.10
+  modelSources:
+    - modelId: sshleifer/tiny-gpt2
+      sourceUri: hf://sshleifer/tiny-gpt2
+  customTemplates:
+    - name: custom-latency
+      aimId: meta-llama/Llama-3-8B
+      modelId: sshleifer/tiny-gpt2
+      hardware:
+        gpu:
+          model: MI300X
+          requests: 1
+      profile:
+        metric: latency
+        precision: fp16
+      customProfile:
+        engineArgs:
+          dtype: float16
+          gpu-memory-utilization: 0.95
+        envVars:
+          HIP_FORCE_DEV_KERNARG: "1"

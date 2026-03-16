@@ -28,6 +28,7 @@ import (
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -722,6 +723,53 @@ func TestPlanResources_SkipsWithoutReadyTemplate(t *testing.T) {
 				t.Errorf("expected resources to be planned, got none")
 			}
 		})
+	}
+}
+
+func TestPlanResources_CustomProfileAssemblyFailureSkipsRuntimeResources(t *testing.T) {
+	r := &ServiceReconciler{}
+	metric := aimv1alpha1.AIMMetric("latency")
+	precision := aimv1alpha1.AIMPrecision("fp16")
+
+	template := NewTemplate("t").WithModelName(testModelName).Build()
+	template.Spec.AimId = "meta-llama/Llama-3-8B"
+	template.Spec.ModelId = "meta-llama/Llama-3-8B"
+	template.Spec.Metric = &metric
+	template.Spec.Precision = &precision
+	template.Spec.Hardware = &aimv1alpha1.AIMHardwareRequirements{
+		GPU: &aimv1alpha1.AIMGpuRequirements{
+			Model:    "MI300X",
+			Requests: 1,
+		},
+	}
+	template.Spec.CustomProfile = &aimv1alpha1.AIMCustomProfile{
+		// Invalid JSON type for map[string]any unmarshal in AssembleProfileYAML.
+		EngineArgs: &apiextensionsv1.JSON{Raw: []byte(`"not-an-object"`)},
+	}
+	template.Status.Status = constants.AIMStatusReady
+
+	obs := ServiceObservation{
+		ServiceFetchResult: ServiceFetchResult{
+			service: NewService("svc").Build(),
+			template: controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]{
+				Value: template,
+			},
+			modelResult: ModelFetchResult{
+				Model: controllerutils.FetchResult[*aimv1alpha1.AIMModel]{
+					Value: NewModel(testModelName).WithStatus(constants.AIMStatusReady).Build(),
+				},
+			},
+		},
+	}
+
+	plan := r.PlanResources(testContext(), controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{}, obs)
+	for _, obj := range plan.GetToApply() {
+		switch obj.(type) {
+		case *corev1.ConfigMap:
+			t.Fatalf("unexpected ConfigMap planned when custom profile assembly failed")
+		case *servingv1beta1.InferenceService:
+			t.Fatalf("unexpected InferenceService planned when custom profile assembly failed")
+		}
 	}
 }
 

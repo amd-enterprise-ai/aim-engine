@@ -1,0 +1,85 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Custom Profile CEL Validation
+#
+# Validates that CEL rules correctly reject invalid custom profile configurations:
+# 1. customProfile set but missing aimId — rejected
+# 2. customProfile set but missing hardware — rejected
+# 3. No customProfile and no aimId — accepted (backward compat)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-custom-profile-validation
+spec:
+  description: Test CEL validation rules for customProfile required fields
+  timeouts:
+    assert: 30s
+  steps:
+    - name: Reject template with customProfile but missing aimId
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: test-cp-validation-no-aimid
+              spec:
+                modelName: some-model
+                metric: latency
+                precision: fp16
+                hardware:
+                  gpu:
+                    model: MI300X
+                    requests: 1
+                modelId: test-org/test-model
+                customProfile:
+                  engineArgs:
+                    dtype: float16
+
+    - name: Reject template with customProfile but missing hardware
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: test-cp-validation-no-hw
+              spec:
+                modelName: some-model
+                aimId: meta-llama/Llama-3-8B
+                modelId: test-org/test-model
+                metric: latency
+                precision: fp16
+                customProfile:
+                  engineArgs:
+                    dtype: float16
+
+    - name: Accept template without customProfile (backward compat)
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: test-cp-validation-no-cp
+              spec:
+                modelName: some-model
+                metric: latency
+                precision: fp16
+                hardware:
+                  gpu:
+                    model: MI300X
+                    requests: 1
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: test-cp-validation-no-cp

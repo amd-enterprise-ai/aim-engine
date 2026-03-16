@@ -452,7 +452,7 @@ func (r *ServiceTemplateReconciler) PlanResources(
 			"activeJobs", activeJobs,
 			"limit", constants.MaxConcurrentDiscoveryJobs)
 
-		job := BuildDiscoveryJob(DiscoveryJobSpec{
+		discoverySpec := DiscoveryJobSpec{
 			TemplateName:     template.Name,
 			Namespace:        template.Namespace,
 			ModelID:          template.Spec.ModelName,
@@ -469,7 +469,29 @@ func (r *ServiceTemplateReconciler) PlanResources(
 				Controller:         ptr.To(true),
 				BlockOwnerDeletion: ptr.To(true),
 			},
-		})
+		}
+
+		// Custom profile: create ConfigMap and wire it to the discovery job
+		if controllerutils.HasCustomProfile(&template.Spec.AIMServiceTemplateSpecCommon) {
+			yamlBytes, filename, err := controllerutils.AssembleProfileYAML(&template.Spec.AIMServiceTemplateSpecCommon)
+			if err != nil {
+				logger.Error(err, "failed to assemble custom profile YAML")
+				return planResult
+			}
+
+			cmName := controllerutils.TemplateCustomProfileConfigMapName(template.Name)
+			cm := controllerutils.BuildCustomProfileConfigMap(cmName, template.Namespace, yamlBytes, filename, map[string]string{
+				constants.LabelKeyTemplate:  template.Name,
+				constants.LabelK8sManagedBy: constants.LabelValueManagedByController,
+				constants.LabelK8sComponent: constants.LabelValueComponentDiscovery,
+			})
+			planResult.Apply(cm)
+
+			discoverySpec.CustomProfileConfigMapName = cmName
+			discoverySpec.CustomProfileFilename = filename
+		}
+
+		job := BuildDiscoveryJob(discoverySpec)
 		planResult.Apply(job)
 	}
 
@@ -561,7 +583,7 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 			"activeJobs", activeJobs,
 			"limit", constants.MaxConcurrentDiscoveryJobs)
 
-		job := BuildDiscoveryJob(DiscoveryJobSpec{
+		discoverySpec := DiscoveryJobSpec{
 			TemplateName:     template.Name,
 			Namespace:        operatorNamespace,
 			ModelID:          template.Spec.ModelName,
@@ -578,7 +600,29 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 				Controller:         ptr.To(true),
 				BlockOwnerDeletion: ptr.To(true),
 			},
-		})
+		}
+
+		// Custom profile: create ConfigMap and wire it to the discovery job
+		if controllerutils.HasCustomProfile(&template.Spec.AIMServiceTemplateSpecCommon) {
+			yamlBytes, filename, err := controllerutils.AssembleProfileYAML(&template.Spec.AIMServiceTemplateSpecCommon)
+			if err != nil {
+				logger.Error(err, "failed to assemble custom profile YAML")
+				return planResult
+			}
+
+			cmName := controllerutils.TemplateCustomProfileConfigMapName(template.Name)
+			cm := controllerutils.BuildCustomProfileConfigMap(cmName, operatorNamespace, yamlBytes, filename, map[string]string{
+				constants.LabelKeyTemplate:  template.Name,
+				constants.LabelK8sManagedBy: constants.LabelValueManagedByController,
+				constants.LabelK8sComponent: constants.LabelValueComponentDiscovery,
+			})
+			planResult.Apply(cm)
+
+			discoverySpec.CustomProfileConfigMapName = cmName
+			discoverySpec.CustomProfileFilename = filename
+		}
+
+		job := BuildDiscoveryJob(discoverySpec)
 		planResult.Apply(job)
 	}
 
