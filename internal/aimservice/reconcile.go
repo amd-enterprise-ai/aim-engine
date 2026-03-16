@@ -827,8 +827,13 @@ func (r *ServiceReconciler) computeRuntimeStatus(fetch ServiceFetchResult) *aimv
 			status.MinReplicas = *hpa.Spec.MinReplicas
 		}
 		status.MaxReplicas = hpa.Spec.MaxReplicas
+
 		status.CurrentReplicas = hpa.Status.CurrentReplicas
-		status.DesiredReplicas = hpa.Status.DesiredReplicas
+		if hpa.Status.DesiredReplicas == 0 {
+			status.DesiredReplicas = status.MinReplicas
+		} else {
+			status.DesiredReplicas = hpa.Status.DesiredReplicas
+		}
 	} else {
 		// No HPA - derive status from spec fields
 		// MinReplicas precedence: Spec.MinReplicas > Spec.Replicas > default (1)
@@ -846,8 +851,14 @@ func (r *ServiceReconciler) computeRuntimeStatus(fetch ServiceFetchResult) *aimv
 
 		status.MinReplicas = minReplicas
 		status.MaxReplicas = maxReplicas
-		status.CurrentReplicas = minReplicas
 		status.DesiredReplicas = minReplicas
+		if service.Spec.AutoScaling != nil {
+			// Autoscaling configured but HPA not created yet — no pods serving
+			status.CurrentReplicas = 0
+		} else {
+			// Fixed replicas (no HPA ever) — reflect spec as the source of truth
+			status.CurrentReplicas = minReplicas
+		}
 	}
 
 	// Compute display string for kubectl output

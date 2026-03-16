@@ -1368,10 +1368,10 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `currentReplicas` _integer_ | CurrentReplicas is the current number of replicas as reported by the HPA. |  | Optional: \{\} <br /> |
-| `desiredReplicas` _integer_ | DesiredReplicas is the desired number of replicas as determined by the HPA. |  | Optional: \{\} <br /> |
-| `minReplicas` _integer_ | MinReplicas is the minimum number of replicas configured for autoscaling. |  | Optional: \{\} <br /> |
-| `maxReplicas` _integer_ | MaxReplicas is the maximum number of replicas configured for autoscaling. |  | Optional: \{\} <br /> |
+| `currentReplicas` _integer_ | CurrentReplicas is the current number of replicas as reported by the HPA. |  |  |
+| `desiredReplicas` _integer_ | DesiredReplicas is the desired number of replicas as determined by the HPA. |  |  |
+| `minReplicas` _integer_ | MinReplicas is the minimum number of replicas configured for autoscaling. |  |  |
+| `maxReplicas` _integer_ | MaxReplicas is the maximum number of replicas configured for autoscaling. |  |  |
 | `replicas` _string_ | Replicas is a formatted display string for kubectl output.<br />Shows "current" for fixed replicas or "current/desired (min-max)" for autoscaling. |  | Optional: \{\} <br /> |
 
 

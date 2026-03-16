@@ -301,20 +301,16 @@ type AIMServiceCacheStatus struct {
 // AIMServiceRuntimeStatus captures runtime status including replica counts from HPA.
 type AIMServiceRuntimeStatus struct {
 	// CurrentReplicas is the current number of replicas as reported by the HPA.
-	// +optional
-	CurrentReplicas int32 `json:"currentReplicas,omitempty"`
+	CurrentReplicas int32 `json:"currentReplicas"`
 
 	// DesiredReplicas is the desired number of replicas as determined by the HPA.
-	// +optional
-	DesiredReplicas int32 `json:"desiredReplicas,omitempty"`
+	DesiredReplicas int32 `json:"desiredReplicas"`
 
 	// MinReplicas is the minimum number of replicas configured for autoscaling.
-	// +optional
-	MinReplicas int32 `json:"minReplicas,omitempty"`
+	MinReplicas int32 `json:"minReplicas"`
 
 	// MaxReplicas is the maximum number of replicas configured for autoscaling.
-	// +optional
-	MaxReplicas int32 `json:"maxReplicas,omitempty"`
+	MaxReplicas int32 `json:"maxReplicas"`
 
 	// Replicas is a formatted display string for kubectl output.
 	// Shows "current" for fixed replicas or "current/desired (min-max)" for autoscaling.

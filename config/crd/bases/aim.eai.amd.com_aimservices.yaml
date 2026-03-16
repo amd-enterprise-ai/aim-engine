@@ -1433,6 +1433,11 @@ spec:
                       Replicas is a formatted display string for kubectl output.
                       Shows "current" for fixed replicas or "current/desired (min-max)" for autoscaling.
                     type: string
+                required:
+                - currentReplicas
+                - desiredReplicas
+                - maxReplicas
+                - minReplicas
                 type: object
               status:
                 default: Pending
