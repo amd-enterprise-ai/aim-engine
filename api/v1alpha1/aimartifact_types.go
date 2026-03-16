@@ -50,6 +50,29 @@ const (
 	ArtifactReasonVerified         = "Verified"
 )
 
+const (
+	// ArtifactConditionStorageQuotaExceeded is True when the artifact cannot create
+	// its PVC because doing so would exceed the namespace or cluster storage quota.
+	ArtifactConditionStorageQuotaExceeded = "StorageQuotaExceeded"
+
+	ArtifactReasonNamespaceQuotaExceeded = "NamespaceQuotaExceeded"
+	ArtifactReasonClusterQuotaExceeded   = "ClusterQuotaExceeded"
+	ArtifactReasonEvicting               = "Evicting"
+	ArtifactReasonWithinQuota            = "WithinQuota"
+
+	// ArtifactStorageQuotaAnnotation is the namespace annotation key for per-namespace
+	// artifact storage quota. Overrides DefaultNamespaceLimit from AIMClusterRuntimeConfig.
+	ArtifactStorageQuotaAnnotation = "aim.eai.amd.com/artifact-storage-quota"
+
+	// ArtifactEvictionProtectedAnnotation, when set to ArtifactEvictionProtectedValue
+	// on an AIMArtifact, protects it from automatic eviction regardless of
+	// defaultRetentionPriority or spec.retentionPriority. Use this to exempt specific
+	// artifacts from eviction when a cluster/namespace-wide defaultRetentionPriority
+	// is configured.
+	ArtifactEvictionProtectedAnnotation = "aim.eai.amd.com/eviction-protected"
+	ArtifactEvictionProtectedValue      = "true"
+)
+
 // AIMArtifactMode indicates the ownership mode of a artifact, derived from owner references.
 // +kubebuilder:validation:Enum=Dedicated;Shared
 type AIMArtifactMode string
@@ -109,6 +132,15 @@ type AIMArtifactSpec struct {
 	// ImagePullSecrets references secrets for pulling AIM container images.
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+
+	// RetentionPriority marks this artifact as eligible for automatic eviction
+	// when storage quota is exceeded. Lower values are evicted first.
+	// Artifacts without this field are only evictable if a defaultRetentionPriority
+	// is configured in the runtime config. Use the aim.eai.amd.com/eviction-protected
+	// annotation to exempt an artifact from eviction entirely.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	RetentionPriority *int32 `json:"retentionPriority,omitempty"`
 
 	// RuntimeConfigRef contains the runtime config reference for this artifact.
 	RuntimeConfigRef `json:",inline"`

@@ -52,6 +52,25 @@ _Appears in:_
 | `status` _[AIMArtifactStatus](#aimartifactstatus)_ |  |  |  |
 
 
+#### AIMArtifactConfig
+
+
+
+AIMArtifactConfig controls artifact-level defaults that are not appropriate for
+individual services. These settings apply at namespace/cluster scope only.
+
+
+
+_Appears in:_
+- [AIMClusterRuntimeConfigSpec](#aimclusterruntimeconfigspec)
+- [AIMRuntimeConfigCommon](#aimruntimeconfigcommon)
+- [AIMRuntimeConfigSpec](#aimruntimeconfigspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `defaultRetentionPriority` _integer_ | DefaultRetentionPriority sets the default retention priority for AIMArtifacts<br />that do not specify one in their spec. When set, artifacts without an explicit<br />retentionPriority become eligible for automatic eviction at this priority level.<br />Lower values are evicted first. If not set, artifacts without an explicit<br />retentionPriority are never automatically evicted. |  | Minimum: 0 <br />Optional: \{\} <br /> |
+
+
 #### AIMArtifactList
 
 
@@ -108,6 +127,7 @@ _Appears in:_
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env lists the environment variables to use for authentication when downloading models.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  | Optional: \{\} <br /> |
 | `modelDownloadImage` _string_ | ModelDownloadImage specifies the container image used to download and initialize the artifact.<br />This image runs as a job to download model artifacts from the source URI to the cache volume.<br />When not specified, the controller uses its built-in default (matching the release version). |  | Optional: \{\} <br /> |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets references secrets for pulling AIM container images. |  | Optional: \{\} <br /> |
+| `retentionPriority` _integer_ | RetentionPriority marks this artifact as eligible for automatic eviction<br />when storage quota is exceeded. Lower values are evicted first.<br />Artifacts without this field are only evictable if a defaultRetentionPriority<br />is configured in the runtime config. Use the aim.eai.amd.com/eviction-protected<br />annotation to exempt an artifact from eviction entirely. |  | Minimum: 0 <br />Optional: \{\} <br /> |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  | Optional: \{\} <br /> |
 
 
@@ -136,6 +156,25 @@ _Appears in:_
 | `discoveredSizeBytes` _integer_ | DiscoveredSizeBytes is the model size discovered via check-size job.<br />Populated when spec.size is not provided. |  | Optional: \{\} <br /> |
 | `allocatedSize` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | AllocatedSize is the actual PVC size requested (including headroom). |  | Optional: \{\} <br /> |
 | `headroomPercent` _integer_ | HeadroomPercent is the headroom percentage that was applied to the PVC size. |  | Optional: \{\} <br /> |
+
+
+#### AIMArtifactStorageQuota
+
+
+
+AIMArtifactStorageQuota configures storage limits for AIMArtifacts.
+These settings are only available on AIMClusterRuntimeConfig (cluster-scoped)
+because they enforce cluster-wide and cross-namespace policies.
+
+
+
+_Appears in:_
+- [AIMClusterRuntimeConfigSpec](#aimclusterruntimeconfigspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `clusterLimit` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | ClusterLimit is the maximum total allocated storage for all AIMArtifacts cluster-wide.<br />When the sum of all artifact PVC sizes across all namespaces would exceed this limit,<br />new artifact PVCs are blocked until evictable artifacts are cleaned up or the limit is raised. |  | Optional: \{\} <br /> |
+| `defaultNamespaceLimit` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | DefaultNamespaceLimit is the default maximum allocated storage for AIMArtifacts per namespace.<br />Can be overridden for individual namespaces via the aim.eai.amd.com/artifact-storage-quota annotation. |  | Optional: \{\} <br /> |
 
 
 #### AIMCachingMode
@@ -352,9 +391,11 @@ _Appears in:_
 | `routing` _[AIMRuntimeRoutingConfig](#aimruntimeroutingconfig)_ | Routing controls HTTP routing configuration for this service.<br />When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} <br /> |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for inference containers.<br />When set on AIMService, these take highest precedence in the merge hierarchy.<br />When set on RuntimeConfig, these provide namespace/cluster-level defaults.<br />Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} <br /> |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults.<br />This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} <br /> |
+| `artifact` _[AIMArtifactConfig](#aimartifactconfig)_ | Artifact controls artifact-level defaults such as eviction policy.<br />This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} <br /> |
 | `labelPropagation` _[AIMRuntimeConfigLabelPropagationSpec](#aimruntimeconfiglabelpropagationspec)_ | LabelPropagation controls how labels from parent AIM resources are propagated to child resources.<br />When enabled, labels matching the specified patterns are automatically copied from parent resources<br />(e.g., AIMService, AIMTemplateCache) to their child resources (e.g., Deployments, Services, PVCs).<br />This is useful for propagating organizational metadata like cost centers, team identifiers,<br />or compliance labels through the resource hierarchy. |  | Optional: \{\} <br /> |
 | `defaultStorageClassName` _string_ | DEPRECATED: Use Storage.DefaultStorageClassName instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.DefaultStorageClassName is not set,<br />the value will be automatically migrated. |  | Optional: \{\} <br /> |
 | `pvcHeadroomPercent` _integer_ | DEPRECATED: Use Storage.PVCHeadroomPercent instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.PVCHeadroomPercent is not set,<br />the value will be automatically migrated. |  | Optional: \{\} <br /> |
+| `artifactStorageQuota` _[AIMArtifactStorageQuota](#aimartifactstoragequota)_ | ArtifactStorageQuota configures storage limits for AIMArtifacts.<br />These limits control how much total PVC storage artifacts may consume,<br />both cluster-wide and per-namespace. |  | Optional: \{\} <br /> |
 
 
 #### AIMClusterServiceTemplate
@@ -961,6 +1002,7 @@ _Appears in:_
 | `routing` _[AIMRuntimeRoutingConfig](#aimruntimeroutingconfig)_ | Routing controls HTTP routing configuration for this service.<br />When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} <br /> |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for inference containers.<br />When set on AIMService, these take highest precedence in the merge hierarchy.<br />When set on RuntimeConfig, these provide namespace/cluster-level defaults.<br />Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} <br /> |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults.<br />This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} <br /> |
+| `artifact` _[AIMArtifactConfig](#aimartifactconfig)_ | Artifact controls artifact-level defaults such as eviction policy.<br />This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} <br /> |
 | `labelPropagation` _[AIMRuntimeConfigLabelPropagationSpec](#aimruntimeconfiglabelpropagationspec)_ | LabelPropagation controls how labels from parent AIM resources are propagated to child resources.<br />When enabled, labels matching the specified patterns are automatically copied from parent resources<br />(e.g., AIMService, AIMTemplateCache) to their child resources (e.g., Deployments, Services, PVCs).<br />This is useful for propagating organizational metadata like cost centers, team identifiers,<br />or compliance labels through the resource hierarchy. |  | Optional: \{\} <br /> |
 | `defaultStorageClassName` _string_ | DEPRECATED: Use Storage.DefaultStorageClassName instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.DefaultStorageClassName is not set,<br />the value will be automatically migrated. |  | Optional: \{\} <br /> |
 | `pvcHeadroomPercent` _integer_ | DEPRECATED: Use Storage.PVCHeadroomPercent instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.PVCHeadroomPercent is not set,<br />the value will be automatically migrated. |  | Optional: \{\} <br /> |
@@ -1020,6 +1062,7 @@ _Appears in:_
 | `routing` _[AIMRuntimeRoutingConfig](#aimruntimeroutingconfig)_ | Routing controls HTTP routing configuration for this service.<br />When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} <br /> |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for inference containers.<br />When set on AIMService, these take highest precedence in the merge hierarchy.<br />When set on RuntimeConfig, these provide namespace/cluster-level defaults.<br />Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} <br /> |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults.<br />This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} <br /> |
+| `artifact` _[AIMArtifactConfig](#aimartifactconfig)_ | Artifact controls artifact-level defaults such as eviction policy.<br />This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} <br /> |
 | `labelPropagation` _[AIMRuntimeConfigLabelPropagationSpec](#aimruntimeconfiglabelpropagationspec)_ | LabelPropagation controls how labels from parent AIM resources are propagated to child resources.<br />When enabled, labels matching the specified patterns are automatically copied from parent resources<br />(e.g., AIMService, AIMTemplateCache) to their child resources (e.g., Deployments, Services, PVCs).<br />This is useful for propagating organizational metadata like cost centers, team identifiers,<br />or compliance labels through the resource hierarchy. |  | Optional: \{\} <br /> |
 | `defaultStorageClassName` _string_ | DEPRECATED: Use Storage.DefaultStorageClassName instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.DefaultStorageClassName is not set,<br />the value will be automatically migrated. |  | Optional: \{\} <br /> |
 | `pvcHeadroomPercent` _integer_ | DEPRECATED: Use Storage.PVCHeadroomPercent instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.PVCHeadroomPercent is not set,<br />the value will be automatically migrated. |  | Optional: \{\} <br /> |

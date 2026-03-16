@@ -684,6 +684,7 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 
 	// All caching now goes through template cache (both Shared and Dedicated modes)
 	if obs.templateCache.Value != nil {
+		readyMsg := getCacheReadyMessage(obs.templateCache.Value)
 		switch obs.templateCache.Value.Status.Status {
 		case constants.AIMStatusReady:
 			health.State = constants.AIMStatusReady
@@ -692,15 +693,15 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 		case constants.AIMStatusProgressing:
 			health.State = constants.AIMStatusProgressing
 			health.Reason = aimv1alpha1.AIMServiceReasonCacheNotReady
-			health.Message = "Template cache is progressing"
+			health.Message = readyMsg
 		case constants.AIMStatusFailed:
 			health.State = constants.AIMStatusFailed
 			health.Reason = aimv1alpha1.AIMServiceReasonCacheFailed
-			health.Message = "Template cache failed"
+			health.Message = readyMsg
 		default:
 			health.State = constants.AIMStatusProgressing
 			health.Reason = aimv1alpha1.AIMServiceReasonCacheCreating
-			health.Message = "Template cache status: " + string(obs.templateCache.Value.Status.Status)
+			health.Message = readyMsg
 		}
 		return health
 	}
@@ -730,6 +731,18 @@ func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
 	health.Reason = aimv1alpha1.AIMServiceReasonCacheCreating
 	health.Message = "Creating template cache"
 	return health
+}
+
+// getCacheReadyMessage extracts the message from the template cache's Ready
+// condition. This propagates the root cause (e.g., quota-blocked artifact)
+// up to the AIMService status instead of using generic strings.
+func getCacheReadyMessage(cache *aimv1alpha1.AIMTemplateCache) string {
+	for _, cond := range cache.Status.Conditions {
+		if cond.Type == controllerutils.ConditionTypeReady && cond.Message != "" {
+			return cond.Message
+		}
+	}
+	return "Template cache status: " + string(cache.Status.Status)
 }
 
 // hasExistingCacheVolumes checks whether the existing InferenceService has

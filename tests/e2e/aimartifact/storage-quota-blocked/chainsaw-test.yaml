@@ -1,0 +1,108 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: storage-quota-blocked
+spec:
+  description: >
+    Tests that an artifact is blocked (not evicted) when namespace quota is exceeded
+    and there are no evictable artifacts (none have retentionPriority set).
+  timeouts:
+    assert: 120s
+  steps:
+    # ========================================
+    # Phase 1: Set namespace quota annotation
+    # ========================================
+    - name: Set namespace storage quota to 1Gi
+      try:
+        - script:
+            timeout: 10s
+            content: |
+              kubectl annotate namespace $NAMESPACE aim.eai.amd.com/artifact-storage-quota=1Gi --overwrite
+
+    # ========================================
+    # Phase 2: Create one artifact that fills the quota
+    # ========================================
+    - name: Create fill-quota (no retentionPriority, not evictable)
+      try:
+        - apply:
+            file: artifact-fill.yaml
+
+    - name: Wait for fill-quota to reach Ready
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: fill-quota
+              status:
+                status: Ready
+
+    # ========================================
+    # Phase 3: Create a new artifact that exceeds quota
+    # ========================================
+    - name: Create blocked-artifact that exceeds quota
+      try:
+        - apply:
+            file: artifact-blocked.yaml
+
+    - name: Assert blocked artifact gets StorageQuotaExceeded and Ready reflects it
+      description: >
+        The artifact should be blocked from creating its PVC.
+        StorageQuotaExceeded=True and Ready=False with the quota reason,
+        so the root cause propagates up through AIMTemplateCache to AIMService.
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              for i in $(seq 1 30); do
+                CONDS=$(kubectl get aimartifact blocked-artifact -n $NAMESPACE -o json | jq -c '.status.conditions // []')
+
+                QUOTA=$(echo "$CONDS" | jq -r '.[] | select(.type=="StorageQuotaExceeded") | "\(.status)|\(.reason)"')
+                READY=$(echo "$CONDS" | jq -r '.[] | select(.type=="Ready") | "\(.status)|\(.reason)"')
+
+                if [ "$QUOTA" = "True|NamespaceQuotaExceeded" ] && [ "$READY" = "False|NamespaceQuotaExceeded" ]; then
+                  echo "OK: StorageQuotaExceeded=True and Ready=False with NamespaceQuotaExceeded"
+                  exit 0
+                fi
+                echo "Waiting... quota=$QUOTA ready=$READY"
+                sleep 2
+              done
+              echo "ERROR: conditions not met within timeout"
+              kubectl get aimartifact blocked-artifact -n $NAMESPACE -o jsonpath='{.status.conditions}' | jq .
+              exit 1
+
+    - name: Assert blocked artifact has no PVC
+      try:
+        - script:
+            timeout: 10s
+            content: |
+              PVC=$(kubectl get aimartifact blocked-artifact -n $NAMESPACE -o jsonpath='{.status.persistentVolumeClaim}')
+              if [ -n "$PVC" ]; then
+                echo "ERROR: blocked artifact should not have a PVC, got: $PVC"
+                exit 1
+              fi
+              echo "OK: blocked artifact has no PVC"
+
+    # ========================================
+    # Phase 4: Raise quota and verify unblocking
+    # ========================================
+    - name: Raise namespace quota to allow the blocked artifact
+      try:
+        - script:
+            timeout: 10s
+            content: |
+              kubectl annotate namespace $NAMESPACE aim.eai.amd.com/artifact-storage-quota=2Gi --overwrite
+
+    - name: Assert blocked artifact eventually reaches Ready
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: blocked-artifact
+              status:
+                status: Ready

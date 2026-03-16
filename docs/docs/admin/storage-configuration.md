@@ -66,6 +66,91 @@ kubectl get pvc -l aim.eai.amd.com/artifact -n <namespace>
 kubectl get aimartifact -n <namespace>
 ```
 
+## Storage Quotas
+
+AIM Engine can enforce storage limits on artifact PVCs to prevent unbounded growth. Quotas are evaluated before creating PVCs -- when a new artifact would exceed the limit, it is either blocked or existing artifacts are evicted to make room.
+
+### Namespace Quota
+
+Set a per-namespace limit via annotation:
+
+```bash
+kubectl annotate namespace ml-team aim.eai.amd.com/artifact-storage-quota=100Gi
+```
+
+This limits the total allocated PVC storage for all AIMArtifacts in that namespace.
+
+### Cluster-Wide Defaults
+
+Configure default namespace limits and a cluster-wide cap via `AIMClusterRuntimeConfig`:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: default
+spec:
+  artifactStorageQuota:
+    clusterLimit: 500Gi
+    defaultNamespaceLimit: 100Gi
+```
+
+- **`clusterLimit`**: Maximum total PVC storage across all namespaces.
+- **`defaultNamespaceLimit`**: Applied to namespaces that don't have the annotation. The namespace annotation takes precedence when both are set.
+
+### Eviction Policy
+
+When quota is exceeded and evictable artifacts exist, AIM Engine automatically deletes the lowest-priority artifacts to make room. Eviction eligibility requires:
+
+1. The artifact has a `retentionPriority` (set explicitly or via `defaultRetentionPriority` in runtime config)
+2. The artifact is `Shared` and `Ready`
+3. The artifact is not in use by any `AIMTemplateCache`
+4. The artifact is not annotated with `aim.eai.amd.com/eviction-protected: "true"`
+
+Lower `retentionPriority` values are evicted first. Among equal priorities, the oldest artifact is evicted first.
+
+#### Default Retention Priority
+
+To make all artifacts evictable by default without setting `retentionPriority` on each one:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: default
+spec:
+  artifact:
+    defaultRetentionPriority: 10
+```
+
+Artifacts with an explicit `spec.retentionPriority` override this default. Artifacts without either remain non-evictable.
+
+#### Protecting Specific Artifacts
+
+To exempt an artifact from eviction even when a default priority is configured:
+
+```bash
+kubectl annotate aimartifact important-model aim.eai.amd.com/eviction-protected=true
+```
+
+### Quota Status
+
+When an artifact is blocked by quota, its status shows the reason:
+
+```bash
+kubectl get aimartifact -n ml-team
+# STATUS column shows "Failed" for blocked artifacts
+
+kubectl get aimartifact blocked-model -n ml-team -o yaml
+# status.conditions includes:
+#   - type: StorageQuotaExceeded
+#     status: "True"
+#     reason: NamespaceQuotaExceeded
+#     message: "Namespace quota exceeded: 90Gi used + 20Gi needed > 100Gi limit"
+```
+
+This condition propagates up through `AIMTemplateCache` and `AIMService`, so `kubectl get aimservice` shows the quota reason when a service is waiting for a blocked artifact.
+
 ## Cleanup
 
 Template cache PVCs are owned by `AIMTemplateCache` resources, which are owned by templates. When a template is deleted, its caches and PVCs are cleaned up automatically.

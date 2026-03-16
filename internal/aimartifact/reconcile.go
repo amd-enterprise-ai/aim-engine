@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimruntimeconfig"
@@ -40,7 +41,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -48,6 +51,8 @@ import (
 type ArtifactReconciler struct {
 	Clientset kubernetes.Interface
 	Scheme    *runtime.Scheme
+	APIReader client.Reader
+	Recorder  record.EventRecorder
 }
 
 type ArtifactFetchResult struct {
@@ -67,6 +72,13 @@ type ArtifactFetchResult struct {
 
 	// roleBinding stores the role binding for updating the artifact status
 	roleBinding controllerutils.FetchResult[*rbacv1.RoleBinding]
+
+	// Quota-related fetches (populated when PVC not yet created)
+	namespace          *controllerutils.FetchResult[*corev1.Namespace]
+	clusterConfig      *controllerutils.FetchResult[*aimv1alpha1.AIMClusterRuntimeConfig]
+	namespaceArtifacts *controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]
+	clusterArtifacts   *controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]
+	templateCaches     *controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCacheList]
 }
 
 type checkSizeOutput struct {
@@ -240,6 +252,56 @@ func (r *ArtifactReconciler) FetchRemoteState(
 		}
 	}
 
+	// Quota data: always fetch when PVC does not yet exist.
+	// This ensures quota evaluation runs on the same cycle as size discovery,
+	// preventing PVC creation from bypassing quota checks. ComposeState skips
+	// evaluation when size is not yet known (no projected size to check against).
+	//
+	// Reads use the API reader (bypasses informer cache) so that quota evaluation
+	// under the distributed lock always sees the latest state. Without this, a
+	// concurrent reconciler that just created a PVC might not yet be visible in
+	// the cache, leading to a quota overshoot.
+	if result.cachePvc.IsNotFound() {
+		ar := r.APIReader
+
+		nsFetch := controllerutils.FetchDirect(ctx, ar,
+			client.ObjectKey{Name: mc.Namespace}, &corev1.Namespace{})
+		result.namespace = &nsFetch
+
+		configName := mc.GetRuntimeConfigRef().Name
+		if configName == "" {
+			configName = constants.DefaultRuntimeConfigName
+		}
+		clCfgFetch := controllerutils.FetchDirect(ctx, ar,
+			client.ObjectKey{Name: configName}, &aimv1alpha1.AIMClusterRuntimeConfig{})
+		result.clusterConfig = &clCfgFetch
+
+		nsArtifacts := controllerutils.FetchListDirect(ctx, ar,
+			&aimv1alpha1.AIMArtifactList{}, client.InNamespace(mc.Namespace))
+		result.namespaceArtifacts = &nsArtifacts
+
+		// Fetch cluster-wide artifact list only when a cluster quota is configured
+		if !clCfgFetch.HasError() && !clCfgFetch.IsNotFound() &&
+			clCfgFetch.Value.Spec.ArtifactStorageQuota != nil &&
+			clCfgFetch.Value.Spec.ArtifactStorageQuota.ClusterLimit != nil {
+			clArtifacts := controllerutils.FetchListDirect(ctx, ar,
+				&aimv1alpha1.AIMArtifactList{})
+			result.clusterArtifacts = &clArtifacts
+		}
+
+		// Fetch template caches to identify in-use artifacts (whose PVCs may be mounted).
+		// When cluster quota is active, eviction can span namespaces, so we need
+		// template caches from all namespaces to protect in-use artifacts everywhere.
+		if result.clusterArtifacts != nil {
+			tcFetch := controllerutils.FetchListDirect(ctx, ar, &aimv1alpha1.AIMTemplateCacheList{})
+			result.templateCaches = &tcFetch
+		} else {
+			tcFetch := controllerutils.FetchListDirect(ctx, ar,
+				&aimv1alpha1.AIMTemplateCacheList{}, client.InNamespace(mc.Namespace))
+			result.templateCaches = &tcFetch
+		}
+	}
+
 	return result
 }
 
@@ -267,6 +329,32 @@ func (obs ArtifactObservation) GetComponentHealth(ctx context.Context, clientset
 				DependencyType: controllerutils.DependencyTypeDownstream,
 			})
 		}
+	}
+
+	// Quota gate: always report StorageQuota health when quota was evaluated so the
+	// condition transitions cleanly between blocked and allowed states.
+	if obs.quotaDecision != nil {
+		if obs.quotaDecision.Blocked {
+			reason := aimv1alpha1.ArtifactReasonNamespaceQuotaExceeded
+			if obs.quotaDecision.ClusterExceeded {
+				reason = aimv1alpha1.ArtifactReasonClusterQuotaExceeded
+			}
+			health = append(health, controllerutils.ComponentHealth{
+				Component:      "StorageQuota",
+				State:          constants.AIMStatusFailed,
+				Reason:         reason,
+				Message:        obs.quotaDecision.BlockReason,
+				DependencyType: controllerutils.DependencyTypeDownstream,
+			})
+			return health
+		}
+		health = append(health, controllerutils.ComponentHealth{
+			Component:      "StorageQuota",
+			State:          constants.AIMStatusReady,
+			Reason:         aimv1alpha1.ArtifactReasonWithinQuota,
+			Message:        "Storage usage is within quota limits",
+			DependencyType: controllerutils.DependencyTypeDownstream,
+		})
 	}
 
 	// Phase 2+: PVC and download job health (only after size is known)
@@ -306,6 +394,11 @@ type ArtifactObservation struct {
 	// Discovered size bytes and parse error from check-size job
 	discoveredSizeBytes *int64
 	sizeParseError      error
+
+	quotaDataFetched bool
+
+	// Quota evaluation result (populated when quota data is available)
+	quotaDecision *QuotaDecision
 }
 
 func (r *ArtifactReconciler) ComposeState(
@@ -330,6 +423,67 @@ func (r *ArtifactReconciler) ComposeState(
 		}
 	}
 
+	// If fetch.namespace is non-nil, we are on the execution path that fetches quota-related data.
+	obs.quotaDataFetched = fetch.namespace != nil
+
+	// Evaluate quota when quota data is available
+	if fetch.namespaceArtifacts != nil && !fetch.namespaceArtifacts.HasError() &&
+		fetch.namespace != nil && !fetch.namespace.HasError() {
+
+		runtimeConfig := fetch.mergedRuntimeConfig.Value
+		headroomPercent := utils.GetPVCHeadroomPercent(runtimeConfig)
+
+		mc := fetch.artifact
+		effectiveSize := int64(0)
+		if !mc.Spec.Size.IsZero() {
+			effectiveSize = mc.Spec.Size.Value()
+		} else if obs.discoveredSizeBytes != nil {
+			effectiveSize = *obs.discoveredSizeBytes
+		} else if mc.Status.DiscoveredSizeBytes != nil {
+			effectiveSize = *mc.Status.DiscoveredSizeBytes
+		}
+
+		// Only evaluate quota when we have a concrete size to check against.
+		// When size is still unknown (check-size job running), we skip evaluation
+		// and PlanResources stays in Phase 1 (size discovery).
+		if effectiveSize > 0 {
+			projectedSize := utils.ApplyHeadroomAndRound(effectiveSize, headroomPercent)
+
+			var clusterQuotaCfg *aimv1alpha1.AIMArtifactStorageQuota
+			if fetch.clusterConfig != nil && !fetch.clusterConfig.HasError() && !fetch.clusterConfig.IsNotFound() {
+				clusterQuotaCfg = fetch.clusterConfig.Value.Spec.ArtifactStorageQuota
+			}
+
+			var clusterArtifacts []aimv1alpha1.AIMArtifact
+			if fetch.clusterArtifacts != nil && !fetch.clusterArtifacts.HasError() {
+				clusterArtifacts = fetch.clusterArtifacts.Value.Items
+			}
+
+			var inUseUIDs map[types.UID]bool
+			if fetch.templateCaches != nil && !fetch.templateCaches.HasError() {
+				inUseUIDs = BuildInUseArtifactUIDs(fetch.templateCaches.Value.Items)
+			}
+
+			var defaultRetentionPriority *int32
+			if runtimeConfig != nil && runtimeConfig.Artifact != nil {
+				defaultRetentionPriority = runtimeConfig.Artifact.DefaultRetentionPriority
+			}
+
+			dec := EvaluateQuota(
+				mc.UID,
+				projectedSize,
+				fetch.namespaceArtifacts.Value.Items,
+				clusterArtifacts,
+				fetch.namespace.Value,
+				clusterQuotaCfg,
+				headroomPercent,
+				defaultRetentionPriority,
+				inUseUIDs,
+			)
+			obs.quotaDecision = &dec
+		}
+	}
+
 	return obs
 }
 
@@ -338,6 +492,7 @@ func (r *ArtifactReconciler) PlanResources(
 	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha1.AIMArtifact],
 	obs ArtifactObservation,
 ) controllerutils.PlanResult {
+	logger := log.FromContext(ctx)
 	mc := reconcileCtx.Object
 	result := controllerutils.PlanResult{}
 
@@ -361,13 +516,60 @@ func (r *ArtifactReconciler) PlanResources(
 		return result
 	}
 
-	// Phase 2: PVC creation - size is known
+	// Phase 2: Quota gate + PVC creation - size is known.
+	// When size was just discovered from the check-size job in this cycle,
+	// defer PVC creation so discoveredSizeBytes is persisted to status first.
+	// This ensures NeedsQuotaLock acquires the lock on the next reconcile,
+	// serializing quota evaluation and PVC creation.
 	if obs.cachePvc.IsNotFound() {
-		// Include PVC only if it doesn't exist yet
-		// Once created, PVCs are immutable - we never modify them to avoid:
-		// 1. StorageClassName mutation errors (forbidden by Kubernetes)
-		// 2. Storage size shrinkage errors (forbidden by Kubernetes)
-		// 3. Unexpected PVC expansion from runtime config changes
+		if obs.discoveredSizeBytes != nil && mc.Status.DiscoveredSizeBytes == nil {
+			logger.Info("Size just discovered, deferring PVC creation to next cycle",
+				"namespace", mc.Namespace, "name", mc.Name,
+				"discoveredSizeBytes", *obs.discoveredSizeBytes)
+			result.RequeueAfter = 1 * time.Second
+			return result
+		}
+
+		// Quota evaluation is mandatory before PVC creation. If we entered the
+		// quota-evaluation path but no decision was reached, requeue rather than
+		// bypassing the gate.
+		if obs.quotaDataFetched && obs.quotaDecision == nil {
+			logger.Info("Quota evaluation incomplete, requeueing before PVC creation",
+				"namespace", mc.Namespace, "name", mc.Name)
+			result.RequeueAfter = 5 * time.Second
+			return result
+		}
+
+		if obs.quotaDecision != nil && (obs.quotaDecision.NamespaceExceeded || obs.quotaDecision.ClusterExceeded) {
+			if len(obs.quotaDecision.ToEvict) > 0 {
+				for i := range obs.quotaDecision.ToEvict {
+					evicted := &obs.quotaDecision.ToEvict[i]
+					logger.Info("Evicting artifact to free storage quota",
+						"evicted", evicted.Name,
+						"evictedNamespace", evicted.Namespace,
+						"retentionPriority", effectiveRetentionPriority(evicted, obs.quotaDecision.DefaultRetentionPriority),
+						"forArtifact", mc.Name)
+					if r.Recorder != nil {
+						r.Recorder.Eventf(evicted, corev1.EventTypeWarning, "Evicted",
+							"Evicted to free storage quota for artifact %s/%s", mc.Namespace, mc.Name)
+					}
+					result.Delete(evicted)
+				}
+				result.RequeueAfter = 10 * time.Second
+				return result
+			}
+			// Blocked: cannot evict enough to satisfy quota. PVC creation is skipped.
+			// The StorageQuotaExceeded condition is set in DecorateStatus.
+			// Requeue periodically so we pick up config changes (e.g., raised quota,
+			// new defaultRetentionPriority, deleted artifacts) without needing
+			// explicit watches for every possible config source.
+			logger.Info("Artifact blocked by storage quota",
+				"reason", obs.quotaDecision.BlockReason,
+				"namespace", mc.Namespace,
+				"name", mc.Name)
+			result.RequeueAfter = 30 * time.Second
+			return result
+		}
 
 		headroomPercent := utils.GetPVCHeadroomPercent(runtimeConfig)
 		storageClassName := utils.ResolveStorageClass(mc.Spec.StorageClassName, runtimeConfig)
@@ -462,9 +664,62 @@ func (r *ArtifactReconciler) DecorateStatus(
 		}
 	}
 
+	// --- Quota condition tracking ---
+	r.decorateQuotaCondition(cm, obs)
+
 	// --- Download phase tracking ---
 
 	r.decorateDownloadPhase(status, cm, obs, podFailed)
+}
+
+func (r *ArtifactReconciler) decorateQuotaCondition(
+	cm *controllerutils.ConditionManager,
+	obs ArtifactObservation,
+) {
+	if obs.quotaDecision == nil {
+		return
+	}
+
+	dec := obs.quotaDecision
+
+	// Append config warning to messages so it's visible in status
+	warnSuffix := ""
+	if dec.ConfigWarning != "" {
+		warnSuffix = " (warning: " + dec.ConfigWarning + ")"
+	}
+
+	if dec.Blocked {
+		reason := aimv1alpha1.ArtifactReasonNamespaceQuotaExceeded
+		if dec.ClusterExceeded {
+			reason = aimv1alpha1.ArtifactReasonClusterQuotaExceeded
+		}
+		cm.MarkTrue(aimv1alpha1.ArtifactConditionStorageQuotaExceeded,
+			reason, dec.BlockReason+warnSuffix, controllerutils.AsWarning())
+		return
+	}
+
+	if len(dec.ToEvict) > 0 {
+		cm.MarkTrue(aimv1alpha1.ArtifactConditionStorageQuotaExceeded,
+			aimv1alpha1.ArtifactReasonEvicting,
+			fmt.Sprintf("Evicting %d artifact(s) to free storage quota", len(dec.ToEvict))+warnSuffix,
+			controllerutils.AsWarning())
+		return
+	}
+
+	if dec.NamespaceQuota != nil || dec.ClusterQuota != nil {
+		msg := "Storage usage is within quota limits"
+		if warnSuffix != "" {
+			msg += warnSuffix
+		}
+		cm.MarkFalse(aimv1alpha1.ArtifactConditionStorageQuotaExceeded,
+			aimv1alpha1.ArtifactReasonWithinQuota, msg)
+		return
+	}
+
+	if dec.ConfigWarning != "" {
+		cm.MarkFalse(aimv1alpha1.ArtifactConditionStorageQuotaExceeded,
+			"ConfigWarning", dec.ConfigWarning, controllerutils.AsWarning())
+	}
 }
 
 func (r *ArtifactReconciler) decorateDownloadPhase(

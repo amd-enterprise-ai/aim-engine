@@ -1,0 +1,19 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: fill-a
+spec:
+  sourceUri: hf://test-org/fill-model-a
+  size: 1Mi
+  retentionPriority: 0
+  env:
+    - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+      value: "true"
+    - name: AIM_DEBUG_SIMULATE_HF_DURATION
+      value: "1"
+    - name: EXPECTED_SIZE_BYTES
+      value: "1048576"
+    - name: PROGRESS_INTERVAL
+      value: "2"
+    - name: STALL_TIMEOUT
+      value: "120"

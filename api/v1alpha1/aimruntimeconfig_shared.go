@@ -24,6 +24,7 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -81,6 +82,19 @@ type AIMModelConfig struct {
 	AutoDiscovery *bool `json:"autoDiscovery,omitempty"`
 }
 
+// AIMArtifactConfig controls artifact-level defaults that are not appropriate for
+// individual services. These settings apply at namespace/cluster scope only.
+type AIMArtifactConfig struct {
+	// DefaultRetentionPriority sets the default retention priority for AIMArtifacts
+	// that do not specify one in their spec. When set, artifacts without an explicit
+	// retentionPriority become eligible for automatic eviction at this priority level.
+	// Lower values are evicted first. If not set, artifacts without an explicit
+	// retentionPriority are never automatically evicted.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	DefaultRetentionPriority *int32 `json:"defaultRetentionPriority,omitempty"`
+}
+
 // AIMRuntimeConfigCommon captures configuration fields shared across cluster and namespace scopes.
 // These settings apply to both AIMRuntimeConfig (namespace-scoped) and AIMClusterRuntimeConfig (cluster-scoped).
 // It embeds AIMServiceRuntimeConfig which contains fields that can also be overridden at the service level.
@@ -91,6 +105,11 @@ type AIMRuntimeConfigCommon struct {
 	// This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services.
 	// +optional
 	Model *AIMModelConfig `json:"model,omitempty"`
+
+	// Artifact controls artifact-level defaults such as eviction policy.
+	// This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services.
+	// +optional
+	Artifact *AIMArtifactConfig `json:"artifact,omitempty"`
 
 	// LabelPropagation controls how labels from parent AIM resources are propagated to child resources.
 	// When enabled, labels matching the specified patterns are automatically copied from parent resources
@@ -130,9 +149,31 @@ type AIMRuntimeConfigLabelPropagationSpec struct {
 	Match []string `json:"match,omitempty"`
 }
 
+// AIMArtifactStorageQuota configures storage limits for AIMArtifacts.
+// These settings are only available on AIMClusterRuntimeConfig (cluster-scoped)
+// because they enforce cluster-wide and cross-namespace policies.
+type AIMArtifactStorageQuota struct {
+	// ClusterLimit is the maximum total allocated storage for all AIMArtifacts cluster-wide.
+	// When the sum of all artifact PVC sizes across all namespaces would exceed this limit,
+	// new artifact PVCs are blocked until evictable artifacts are cleaned up or the limit is raised.
+	// +optional
+	ClusterLimit *resource.Quantity `json:"clusterLimit,omitempty"`
+
+	// DefaultNamespaceLimit is the default maximum allocated storage for AIMArtifacts per namespace.
+	// Can be overridden for individual namespaces via the aim.eai.amd.com/artifact-storage-quota annotation.
+	// +optional
+	DefaultNamespaceLimit *resource.Quantity `json:"defaultNamespaceLimit,omitempty"`
+}
+
 // AIMClusterRuntimeConfigSpec defines cluster-wide defaults for AIM resources.
 type AIMClusterRuntimeConfigSpec struct {
 	AIMRuntimeConfigCommon `json:",inline"`
+
+	// ArtifactStorageQuota configures storage limits for AIMArtifacts.
+	// These limits control how much total PVC storage artifacts may consume,
+	// both cluster-wide and per-namespace.
+	// +optional
+	ArtifactStorageQuota *AIMArtifactStorageQuota `json:"artifactStorageQuota,omitempty"`
 }
 
 // AIMRuntimeConfigSpec defines namespace-scoped overrides for AIM resources.

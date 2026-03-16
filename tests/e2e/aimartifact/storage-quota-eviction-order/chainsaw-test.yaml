@@ -1,0 +1,132 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: storage-quota-eviction-order
+spec:
+  description: >
+    Tests defaultRetentionPriority from RuntimeConfig and eviction ordering.
+    A RuntimeConfig sets defaultRetentionPriority=5, making artifacts without
+    an explicit retentionPriority evictable at priority 5.
+    Three artifacts fill a 3Gi namespace quota:
+      - default-prio: no explicit retentionPriority (effective 5 from default)
+      - prio-50: explicit retentionPriority=50
+      - prio-100: explicit retentionPriority=100
+    A 4th artifact triggers eviction. default-prio (effective priority 5,
+    the lowest) should be the one evicted.
+  timeouts:
+    assert: 120s
+  steps:
+    # ========================================
+    # Setup: RuntimeConfig + namespace quota
+    # ========================================
+    - name: Create RuntimeConfig with defaultRetentionPriority
+      try:
+        - apply:
+            file: runtime.yaml
+
+    - name: Set namespace storage quota to 3Gi
+      try:
+        - script:
+            timeout: 10s
+            content: |
+              kubectl annotate namespace $NAMESPACE aim.eai.amd.com/artifact-storage-quota=3Gi --overwrite
+
+    # ========================================
+    # Fill the quota with three artifacts
+    # ========================================
+    - name: Create three artifacts that fill the quota
+      try:
+        - apply:
+            file: artifact-default-prio.yaml
+        - apply:
+            file: artifact-prio-50.yaml
+        - apply:
+            file: artifact-prio-100.yaml
+
+    - name: Wait for all three artifacts to reach Ready
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: default-prio
+              status:
+                status: Ready
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: prio-50
+              status:
+                status: Ready
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: prio-100
+              status:
+                status: Ready
+
+    # ========================================
+    # Trigger eviction with a 4th artifact
+    # ========================================
+    - name: Create trigger artifact that exceeds quota
+      try:
+        - apply:
+            file: artifact-trigger.yaml
+
+    - name: Assert default-prio is evicted (lowest effective priority)
+      description: >
+        default-prio has no explicit retentionPriority, so it uses the
+        defaultRetentionPriority=5 from RuntimeConfig. This is the lowest
+        effective priority (5 < 50 < 100), so it should be evicted first.
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              for i in $(seq 1 30); do
+                if ! kubectl get aimartifact default-prio -n $NAMESPACE 2>/dev/null; then
+                  echo "default-prio evicted (effective retentionPriority=5, lowest)"
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "ERROR: default-prio was not evicted within timeout"
+              exit 1
+
+    - name: Assert trigger artifact eventually reaches Ready
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: trigger
+              status:
+                status: Ready
+
+    - name: Assert prio-50 and prio-100 are still present
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: prio-50
+              status:
+                status: Ready
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: prio-100
+              status:
+                status: Ready

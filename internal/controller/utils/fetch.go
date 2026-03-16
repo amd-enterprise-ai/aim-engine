@@ -108,6 +108,24 @@ func FetchList[T client.ObjectList](ctx context.Context, c client.Client, list T
 	}
 }
 
+// FetchDirect retrieves a single object directly from the API server, bypassing the
+// informer cache. Use this when stale data is unacceptable (e.g., quota evaluation
+// under a distributed lock where the previous lock holder just wrote new state).
+func FetchDirect[T client.Object](ctx context.Context, r client.Reader, key client.ObjectKey, obj T) FetchResult[T] {
+	err := r.Get(ctx, key, obj)
+	if err != nil {
+		var zero T
+		return FetchResult[T]{Value: zero, Error: err}
+	}
+	return FetchResult[T]{Value: obj, Error: nil}
+}
+
+// FetchListDirect retrieves a list of objects directly from the API server, bypassing
+// the informer cache. See FetchDirect for when to use this.
+func FetchListDirect[T client.ObjectList](ctx context.Context, r client.Reader, list T, opts ...client.ListOption) FetchResult[T] {
+	return FetchResult[T]{Value: list, Error: r.List(ctx, list, opts...)}
+}
+
 // ToComponentHealth converts a FetchResult into ComponentHealth with automatic error handling.
 // Fetch errors are passed through as raw errors (categorized later by the state engine).
 // If the fetch succeeded, the inspector function determines the semantic state.

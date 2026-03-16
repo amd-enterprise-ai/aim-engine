@@ -265,6 +265,16 @@ spec:
                   When not specified, derived from SourceURI for HuggingFace sources.
                 pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                 type: string
+              retentionPriority:
+                description: |-
+                  RetentionPriority marks this artifact as eligible for automatic eviction
+                  when storage quota is exceeded. Lower values are evicted first.
+                  Artifacts without this field are only evictable if a defaultRetentionPriority
+                  is configured in the runtime config. Use the aim.eai.amd.com/eviction-protected
+                  annotation to exempt an artifact from eviction entirely.
+                format: int32
+                minimum: 0
+                type: integer
               runtimeConfigName:
                 description: |-
                   Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both

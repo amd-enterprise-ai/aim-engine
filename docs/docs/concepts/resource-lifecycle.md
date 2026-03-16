@@ -67,6 +67,18 @@ The reconciliation framework manages a standard set of conditions on every resou
 | `ConfigValid` | Resource configuration is valid |
 | `Ready` | Overall readiness |
 
+AIMArtifact adds component-specific conditions:
+
+| Condition | Description |
+|-----------|-------------|
+| `RuntimeConfigReady` | Runtime config resolved |
+| `StorageQuotaReady` | Storage quota check passed |
+| `StorageQuotaExceeded` | `True` when PVC creation is blocked by namespace or cluster quota. Reason is `NamespaceQuotaExceeded`, `ClusterQuotaExceeded`, `Evicting`, or `WithinQuota`. |
+| `CachePvcReady` | PVC is provisioned and bound |
+| `DownloadJobReady` | Download job is complete |
+| `DownloadJobPodsReady` | Download pod is running |
+| `DownloadComplete` | Download verified successfully |
+
 AIMService adds component-specific conditions:
 
 | Condition | Description |

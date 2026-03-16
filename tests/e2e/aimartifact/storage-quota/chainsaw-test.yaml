@@ -1,0 +1,104 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: storage-quota
+spec:
+  description: >
+    Tests artifact storage quota enforcement and eviction.
+    Each artifact uses size=1Mi which rounds up to 1Gi PVC (with headroom + Gi rounding).
+    Namespace quota is set to 2Gi, so 2 artifacts fit. The 3rd triggers eviction or blocking.
+  timeouts:
+    assert: 120s
+  steps:
+    # ========================================
+    # Phase 1: Set namespace quota annotation
+    # ========================================
+    - name: Set namespace storage quota
+      try:
+        - script:
+            timeout: 10s
+            content: |
+              kubectl annotate namespace $NAMESPACE aim.eai.amd.com/artifact-storage-quota=2Gi --overwrite
+
+    # ========================================
+    # Phase 2: Create two artifacts that fill the quota
+    # ========================================
+    - name: Create fill-a (evictable, retentionPriority=0)
+      try:
+        - apply:
+            file: artifact-fill-a.yaml
+
+    - name: Create fill-b (not evictable, no retentionPriority)
+      try:
+        - apply:
+            file: artifact-fill-b.yaml
+
+    - name: Wait for both artifacts to reach Ready
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: fill-a
+              status:
+                status: Ready
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: fill-b
+              status:
+                status: Ready
+
+    # ========================================
+    # Phase 3: Create a new artifact that exceeds quota
+    # ========================================
+    - name: Create new artifact that exceeds quota
+      try:
+        - apply:
+            file: artifact-new.yaml
+
+    - name: Assert fill-a is evicted (has retentionPriority=0)
+      description: >
+        fill-a has retentionPriority=0, so it should be evicted to make room.
+        fill-b has no retentionPriority, so it is not evictable.
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              for i in $(seq 1 30); do
+                if ! kubectl get aimartifact fill-a -n $NAMESPACE 2>/dev/null; then
+                  echo "fill-a has been evicted"
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "ERROR: fill-a was not evicted within timeout"
+              exit 1
+
+    - name: Assert new artifact eventually reaches Ready
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: new-artifact
+              status:
+                status: Ready
+
+    - name: Assert fill-b is still present
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: fill-b
+              status:
+                status: Ready

@@ -46,6 +46,22 @@ spec:
             description: AIMRuntimeConfigSpec defines namespace-scoped overrides for
               AIM resources.
             properties:
+              artifact:
+                description: |-
+                  Artifact controls artifact-level defaults such as eviction policy.
+                  This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services.
+                properties:
+                  defaultRetentionPriority:
+                    description: |-
+                      DefaultRetentionPriority sets the default retention priority for AIMArtifacts
+                      that do not specify one in their spec. When set, artifacts without an explicit
+                      retentionPriority become eligible for automatic eviction at this priority level.
+                      Lower values are evicted first. If not set, artifacts without an explicit
+                      retentionPriority are never automatically evicted.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                type: object
               defaultStorageClassName:
                 description: |-
                   DEPRECATED: Use Storage.DefaultStorageClassName instead. This field will be removed in a future version.

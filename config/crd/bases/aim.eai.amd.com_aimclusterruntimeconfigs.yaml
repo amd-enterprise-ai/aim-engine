@@ -53,6 +53,48 @@ spec:
             description: AIMClusterRuntimeConfigSpec defines cluster-wide defaults
               for AIM resources.
             properties:
+              artifact:
+                description: |-
+                  Artifact controls artifact-level defaults such as eviction policy.
+                  This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services.
+                properties:
+                  defaultRetentionPriority:
+                    description: |-
+                      DefaultRetentionPriority sets the default retention priority for AIMArtifacts
+                      that do not specify one in their spec. When set, artifacts without an explicit
+                      retentionPriority become eligible for automatic eviction at this priority level.
+                      Lower values are evicted first. If not set, artifacts without an explicit
+                      retentionPriority are never automatically evicted.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                type: object
+              artifactStorageQuota:
+                description: |-
+                  ArtifactStorageQuota configures storage limits for AIMArtifacts.
+                  These limits control how much total PVC storage artifacts may consume,
+                  both cluster-wide and per-namespace.
+                properties:
+                  clusterLimit:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      ClusterLimit is the maximum total allocated storage for all AIMArtifacts cluster-wide.
+                      When the sum of all artifact PVC sizes across all namespaces would exceed this limit,
+                      new artifact PVCs are blocked until evictable artifacts are cleaned up or the limit is raised.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  defaultNamespaceLimit:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      DefaultNamespaceLimit is the default maximum allocated storage for AIMArtifacts per namespace.
+                      Can be overridden for individual namespaces via the aim.eai.amd.com/artifact-storage-quota annotation.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                type: object
               defaultStorageClassName:
                 description: |-
                   DEPRECATED: Use Storage.DefaultStorageClassName instead. This field will be removed in a future version.

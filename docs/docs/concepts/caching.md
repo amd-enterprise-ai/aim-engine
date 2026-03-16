@@ -102,6 +102,28 @@ Multiple services can share the same cached models:
 - Services using the same template reference the same `AIMTemplateCache`
 - artifacts are identified by `sourceURI`, enabling reuse across templates
 
+## Storage Quota and Eviction
+
+AIM Engine supports storage quotas that limit the total PVC space consumed by AIMArtifacts. When a new artifact would exceed the configured limit, the controller either evicts lower-priority artifacts to free space or blocks the new artifact until capacity is available.
+
+### How Eviction Works
+
+Eviction only applies to **Shared**, **Ready** artifacts that have a retention priority (either from `spec.retentionPriority` or a `defaultRetentionPriority` in the runtime config). The controller evicts the minimum number of artifacts needed, starting with the lowest priority. Artifacts in use by an `AIMTemplateCache` are never evicted.
+
+```
+Eviction order:
+  1. Lowest retentionPriority value first
+  2. Among equal priorities, oldest creationTimestamp first
+```
+
+When no evictable candidates can free enough space, the new artifact is blocked with a `StorageQuotaExceeded` condition. This condition propagates up through `AIMTemplateCache` and `AIMService` status, so users can see the root cause at any level.
+
+### Dedicated vs Shared Eviction
+
+Only **Shared** artifacts are eligible for eviction. **Dedicated** artifacts (owned by a specific template cache) are never evicted because they belong to a single service and removing them would break that service.
+
+For configuration details, see [Storage Quotas](../admin/storage-configuration.md#storage-quotas).
+
 ## Manual Cache Management
 
 * To manually make sure a model is available create an AIMArtifact for that model.

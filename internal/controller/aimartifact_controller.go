@@ -30,6 +30,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
@@ -102,9 +103,31 @@ func (r *AIMArtifactReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
-	result, err := r.pipeline.Run(ctx, &model)
-	if err != nil {
-		return ctrl.Result{}, err
+	var result ctrl.Result
+	var pipelineErr error
+
+	// Acquire the quota lock when PVC creation is possible.
+	// This serializes the "evaluate quota + create PVC" operation across all
+	// artifact reconciliations, preventing two artifacts from both passing
+	// the quota check and both creating PVCs that together exceed the limit.
+	if aimartifact.NeedsQuotaLock(&model) {
+		lockErr := aimartifact.WithQuotaLock(ctx, r.Client, 30*time.Second, func() error {
+			result, pipelineErr = r.pipeline.Run(ctx, &model)
+			return nil
+		})
+		if lockErr != nil {
+			logger.V(1).Info("Could not acquire quota lock, requeuing",
+				"artifact", model.Name, "namespace", model.Namespace)
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
+		if pipelineErr != nil {
+			return ctrl.Result{}, pipelineErr
+		}
+	} else {
+		result, pipelineErr = r.pipeline.Run(ctx, &model)
+		if pipelineErr != nil {
+			return ctrl.Result{}, pipelineErr
+		}
 	}
 
 	// If pipeline requests a requeue, honor it
@@ -293,11 +316,123 @@ func (r *AIMArtifactReconciler) findArtifactForPod(ctx context.Context, pod clie
 	}
 }
 
+// findArtifactsForNamespace enqueues all AIMArtifacts in a namespace when
+// the namespace's storage quota annotation changes.
+func (r *AIMArtifactReconciler) findArtifactsForNamespace(ctx context.Context, obj client.Object) []ctrl.Request {
+	ns, ok := obj.(*corev1.Namespace)
+	if !ok {
+		return nil
+	}
+
+	var artifacts aimv1alpha1.AIMArtifactList
+	if err := r.List(ctx, &artifacts, client.InNamespace(ns.Name)); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMArtifacts for Namespace",
+			"namespace", ns.Name)
+		return nil
+	}
+
+	requests := make([]ctrl.Request, len(artifacts.Items))
+	for i := range artifacts.Items {
+		requests[i] = ctrl.Request{
+			NamespacedName: client.ObjectKeyFromObject(&artifacts.Items[i]),
+		}
+	}
+	return requests
+}
+
+// namespaceQuotaPredicate triggers only when the artifact storage quota annotation changes.
+func namespaceQuotaPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			_, has := e.Object.GetAnnotations()[aimv1alpha1.ArtifactStorageQuotaAnnotation]
+			return has
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldVal := e.ObjectOld.GetAnnotations()[aimv1alpha1.ArtifactStorageQuotaAnnotation]
+			newVal := e.ObjectNew.GetAnnotations()[aimv1alpha1.ArtifactStorageQuotaAnnotation]
+			return oldVal != newVal
+		},
+		DeleteFunc: func(_ event.DeleteEvent) bool { return false },
+	}
+}
+
+// findAllArtifactsForClusterConfig enqueues every AIMArtifact in the cluster
+// when the cluster runtime config's quota settings change.
+func (r *AIMArtifactReconciler) findAllArtifactsForClusterConfig(ctx context.Context, _ client.Object) []ctrl.Request {
+	var artifacts aimv1alpha1.AIMArtifactList
+	if err := r.List(ctx, &artifacts); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMArtifacts for ClusterRuntimeConfig change")
+		return nil
+	}
+
+	requests := make([]ctrl.Request, len(artifacts.Items))
+	for i := range artifacts.Items {
+		requests[i] = ctrl.Request{
+			NamespacedName: client.ObjectKeyFromObject(&artifacts.Items[i]),
+		}
+	}
+	return requests
+}
+
+// clusterQuotaPredicate triggers only when the ArtifactStorageQuota field changes.
+func clusterQuotaPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			cfg, ok := e.Object.(*aimv1alpha1.AIMClusterRuntimeConfig)
+			return ok && cfg.Spec.ArtifactStorageQuota != nil
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldCfg, ok1 := e.ObjectOld.(*aimv1alpha1.AIMClusterRuntimeConfig)
+			newCfg, ok2 := e.ObjectNew.(*aimv1alpha1.AIMClusterRuntimeConfig)
+			if !ok1 || !ok2 {
+				return false
+			}
+			oldHas := oldCfg.Spec.ArtifactStorageQuota != nil
+			newHas := newCfg.Spec.ArtifactStorageQuota != nil
+			if oldHas != newHas {
+				return true
+			}
+			if !oldHas {
+				return false
+			}
+			// Both have quota; trigger if either limit changed.
+			return !quotaEqual(oldCfg.Spec.ArtifactStorageQuota, newCfg.Spec.ArtifactStorageQuota)
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			cfg, ok := e.Object.(*aimv1alpha1.AIMClusterRuntimeConfig)
+			return ok && cfg.Spec.ArtifactStorageQuota != nil
+		},
+	}
+}
+
+func quotaEqual(a, b *aimv1alpha1.AIMArtifactStorageQuota) bool {
+	clEq := quantityPtrEqual(a.ClusterLimit, b.ClusterLimit)
+	nsEq := quantityPtrEqual(a.DefaultNamespaceLimit, b.DefaultNamespaceLimit)
+	return clEq && nsEq
+}
+
+func quantityPtrEqual(a, b *resource.Quantity) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Cmp(*b) == 0
+}
+
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterruntimeconfigs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimtemplatecaches,verbs=get;list;watch
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *AIMArtifactReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.reconciler = &aimartifact.ArtifactReconciler{
 		Clientset: r.Clientset,
 		Scheme:    r.Scheme,
+		APIReader: mgr.GetAPIReader(),
+		Recorder:  r.Recorder,
 	}
 	r.pipeline = controllerutils.Pipeline[
 		*aimv1alpha1.AIMArtifact,
@@ -329,6 +464,16 @@ func (r *AIMArtifactReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&rbacv1.RoleBinding{},
 			handler.EnqueueRequestsFromMapFunc(r.findArtifactsForRoleBinding),
 			builder.WithPredicates(roleBindingPredicate()),
+		).
+		Watches(
+			&corev1.Namespace{},
+			handler.EnqueueRequestsFromMapFunc(r.findArtifactsForNamespace),
+			builder.WithPredicates(namespaceQuotaPredicate()),
+		).
+		Watches(
+			&aimv1alpha1.AIMClusterRuntimeConfig{},
+			handler.EnqueueRequestsFromMapFunc(r.findAllArtifactsForClusterConfig),
+			builder.WithPredicates(clusterQuotaPredicate()),
 		).
 		Named(artifactName).
 		Complete(r)
