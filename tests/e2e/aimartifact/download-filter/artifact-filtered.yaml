@@ -1,0 +1,8 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: filter-no-subdirs
+spec:
+  sourceUri: hf://hf-internal-testing/tiny-random-CLIPModel
+  # No downloadFilter set — uses the default which excludes subdirectory files (*/*).
+  # This is equivalent to: downloadFilter: { exclude: ["*/*"] }

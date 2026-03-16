@@ -1,0 +1,121 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: download-filter
+spec:
+  description: >
+    Verifies that downloadFilter.exclude skips subdirectory files in both
+    the size estimator and the downloader. Uses hf-internal-testing/tiny-random-CLIPModel
+    which has root files (~1.4 MB) and an onnx/ subdirectory (~1.5 MB).
+  steps:
+    - name: Create both artifacts (full and filtered)
+      try:
+        - apply:
+            file: artifact-full.yaml
+        - apply:
+            file: artifact-filtered.yaml
+
+    - name: Assert both artifacts reach Ready via size discovery
+      try:
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: filter-full
+              status:
+                status: Ready
+                (discoveredSizeBytes != null): true
+                progress:
+                  percentage: 100
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: filter-no-subdirs
+              status:
+                status: Ready
+                (discoveredSizeBytes != null): true
+                progress:
+                  percentage: 100
+
+    - name: Verify filtered artifact discovered less data than full
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              set -e
+              FULL=$(kubectl get aimartifact filter-full -n $NAMESPACE -o jsonpath='{.status.discoveredSizeBytes}')
+              FILTERED=$(kubectl get aimartifact filter-no-subdirs -n $NAMESPACE -o jsonpath='{.status.discoveredSizeBytes}')
+              echo "Full size:     $FULL bytes"
+              echo "Filtered size: $FILTERED bytes"
+              if [ "$FILTERED" -ge "$FULL" ]; then
+                echo "FAIL: filtered size ($FILTERED) should be less than full size ($FULL)"
+                exit 1
+              fi
+              echo "PASS: filtered < full"
+
+    - name: Verify filtered PVC does not contain onnx directory
+      try:
+        - script:
+            timeout: 2m
+            content: |
+              set -e
+              FULL_PVC=$(kubectl get aimartifact filter-full -n $NAMESPACE -o jsonpath='{.status.persistentVolumeClaim}')
+              FILTERED_PVC=$(kubectl get aimartifact filter-no-subdirs -n $NAMESPACE -o jsonpath='{.status.persistentVolumeClaim}')
+
+              cat <<EOF | kubectl apply -n $NAMESPACE -f -
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                name: verify-filter
+              spec:
+                template:
+                  spec:
+                    restartPolicy: Never
+                    containers:
+                      - name: verify
+                        image: alpine:latest
+                        command: ["/bin/sh", "-c"]
+                        args:
+                          - |
+                            set -e
+                            echo "=== Full artifact contents ==="
+                            ls -la /full/
+                            echo ""
+                            echo "=== Filtered artifact contents ==="
+                            ls -la /filtered/
+
+                            # Full download must have onnx/
+                            if [ ! -d /full/onnx ]; then
+                              echo "FAIL: full download missing onnx/ directory"
+                              exit 1
+                            fi
+                            echo "PASS: full download has onnx/"
+
+                            # Filtered download must NOT have onnx/
+                            if [ -d /filtered/onnx ]; then
+                              echo "FAIL: filtered download should not have onnx/ directory"
+                              exit 1
+                            fi
+                            echo "PASS: filtered download has no onnx/"
+                        volumeMounts:
+                          - name: full
+                            mountPath: /full
+                            readOnly: true
+                          - name: filtered
+                            mountPath: /filtered
+                            readOnly: true
+                    volumes:
+                      - name: full
+                        persistentVolumeClaim:
+                          claimName: ${FULL_PVC}
+                      - name: filtered
+                        persistentVolumeClaim:
+                          claimName: ${FILTERED_PVC}
+              EOF
+
+              kubectl wait --for=condition=complete job/verify-filter -n $NAMESPACE --timeout=2m

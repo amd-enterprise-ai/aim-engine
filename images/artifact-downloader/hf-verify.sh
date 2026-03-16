@@ -35,9 +35,16 @@ if [ -n "${AIM_DEBUG_SIMULATE_HF_DOWNLOAD:-}" ]; then
 fi
 
 echo "Verifying download (this may take a while for large models)..."
+VERIFY_ARGS=""
+if [ -z "${AIM_HF_INCLUDE:-}" ] && [ -z "${AIM_HF_EXCLUDE:-}" ]; then
+    VERIFY_ARGS="--fail-on-missing-files"
+else
+    echo "Download filter active — skipping missing-files check (filtered files are expected to be absent)"
+fi
+# shellcheck disable=SC2086
 hf cache verify \
     --local-dir "$TARGET_DIR" \
-    --fail-on-missing-files \
+    $VERIFY_ARGS \
     "$MODEL_PATH"
 echo "Download complete and verified"
 echo "Size of HF_HOME: $(du -sh "${HF_HOME:-$HOME/.cache/huggingface}" 2>/dev/null || echo 'N/A')"

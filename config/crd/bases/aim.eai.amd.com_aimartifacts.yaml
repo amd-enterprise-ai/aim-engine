@@ -68,6 +68,36 @@ spec:
           spec:
             description: AIMArtifactSpec defines the desired state of AIMArtifact
             properties:
+              downloadFilter:
+                description: |-
+                  DownloadFilter controls which files are included or excluded when downloading from HuggingFace.
+                  Overrides any filter set in the runtime config's storage.downloadFilter.
+                  When neither is set, subdirectory files are excluded by default (equivalent to exclude: ["*/*"]).
+                  To download all files including subdirectories, set this to an empty object: downloadFilter: {}.
+                  This field is immutable — to change the filter, recreate the artifact.
+                properties:
+                  exclude:
+                    description: |-
+                      Exclude specifies glob patterns for files to skip.
+                      Files matching any exclude pattern are removed after include filtering.
+                      Patterns use fnmatch syntax (e.g., ["*/*", "*.bin"]).
+                      Use ["*/*"] to exclude all files in subdirectories (the default when no filter is set).
+                    items:
+                      type: string
+                    type: array
+                  include:
+                    description: |-
+                      Include specifies glob patterns for files to download.
+                      Only files matching at least one pattern are considered.
+                      If empty, all files pass the include check.
+                      Patterns use fnmatch syntax (e.g., ["*.safetensors", "config.json"]).
+                    items:
+                      type: string
+                    type: array
+                type: object
+                x-kubernetes-validations:
+                - message: downloadFilter is immutable
+                  rule: self == oldSelf
               env:
                 description: |-
                   Env lists the environment variables to use for authentication when downloading models.

@@ -22,12 +22,33 @@
 
 import os
 import sys
+from fnmatch import fnmatch
 from huggingface_hub import HfApi
 from huggingface_hub.utils import RepositoryNotFoundError, GatedRepoError
+
 MODEL_PATH = os.environ['MODEL_PATH']
+
+def parse_patterns(env_var):
+    raw = os.environ.get(env_var, '')
+    return [p.strip() for p in raw.split(',') if p.strip()]
+
+def apply_filter(siblings):
+    include = parse_patterns('AIM_HF_INCLUDE')
+    exclude = parse_patterns('AIM_HF_EXCLUDE')
+    print(f'Download filter: include={include or "<none>"} exclude={exclude or "<none>"}', file=sys.stderr)
+    before = len(siblings)
+    if include:
+        siblings = [f for f in siblings if any(fnmatch(f.rfilename, p) for p in include)]
+    if exclude:
+        siblings = [f for f in siblings if not any(fnmatch(f.rfilename, p) for p in exclude)]
+    if before != len(siblings):
+        print(f'Filter: {before} files -> {len(siblings)} files', file=sys.stderr)
+    return siblings
+
 try:
     info = HfApi().model_info(MODEL_PATH, files_metadata=True)
-    print(sum(f.size or 0 for f in info.siblings))
+    siblings = apply_filter(info.siblings)
+    print(sum(f.size or 0 for f in siblings))
 except RepositoryNotFoundError:
     print(f'Repository Not Found: {MODEL_PATH}', file=sys.stderr)
     print('Check the model name or ensure it exists on HuggingFace.', file=sys.stderr)

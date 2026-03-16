@@ -25,6 +25,7 @@ package aimartifact
 import (
 	_ "embed"
 	"fmt"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -57,6 +58,36 @@ func buildRoleBinding(mc *aimv1alpha1.AIMArtifact) *rbacv1.RoleBinding {
 	}
 }
 
+// defaultDownloadFilter excludes subdirectory files when no explicit filter is configured.
+var defaultDownloadFilter = &aimv1alpha1.AIMDownloadFilter{Exclude: []string{"*/*"}}
+
+// resolveDownloadFilter returns the effective download filter.
+// Precedence: artifact spec > runtime config storage > default (exclude subdirs).
+// An explicit empty filter (downloadFilter: {}) on the artifact disables all filtering.
+func resolveDownloadFilter(mc *aimv1alpha1.AIMArtifact, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) *aimv1alpha1.AIMDownloadFilter {
+	if mc.Spec.DownloadFilter != nil {
+		return mc.Spec.DownloadFilter
+	}
+	if runtimeConfig != nil && runtimeConfig.Storage != nil && runtimeConfig.Storage.DownloadFilter != nil {
+		return runtimeConfig.Storage.DownloadFilter
+	}
+	return defaultDownloadFilter
+}
+
+func downloadFilterEnvVars(filter *aimv1alpha1.AIMDownloadFilter) []corev1.EnvVar {
+	if filter == nil {
+		return nil
+	}
+	var envs []corev1.EnvVar
+	if len(filter.Include) > 0 {
+		envs = append(envs, corev1.EnvVar{Name: "AIM_HF_INCLUDE", Value: strings.Join(filter.Include, ",")})
+	}
+	if len(filter.Exclude) > 0 {
+		envs = append(envs, corev1.EnvVar{Name: "AIM_HF_EXCLUDE", Value: strings.Join(filter.Exclude, ",")})
+	}
+	return envs
+}
+
 func getDownloadJobName(mc *aimv1alpha1.AIMArtifact) string {
 	name, _ := utils.GenerateDerivedName([]string{mc.Name, "download"}, utils.WithHashSource(mc.UID))
 	return name
@@ -75,7 +106,7 @@ func buildDownloadJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha
 		runtimeEnv = runtimeConfigSpec.Env
 	}
 
-	// Merge env vars with precedence: mc.Spec.Env > runtimeConfigSpec.Env > defaults
+	// Merge env vars with precedence: mc.Spec.Env > runtimeConfigSpec.Env > filter > defaults
 	defaultEnv := []corev1.EnvVar{
 		{Name: "AIM_DOWNLOADER_PROTOCOL", Value: "XET,HF_TRANSFER"},
 		{Name: "TMPDIR", Value: "/tmp/"},
@@ -87,6 +118,7 @@ func buildDownloadJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha
 		{Name: "STALL_TIMEOUT", Value: "120"},
 		{Name: "TARGET_DIR", Value: mountPath},
 	}
+	defaultEnv = append(defaultEnv, downloadFilterEnvVars(resolveDownloadFilter(mc, runtimeConfigSpec))...)
 	newEnv := utils.MergeEnvVars(defaultEnv, runtimeEnv)
 	newEnv = utils.MergeEnvVars(newEnv, mc.Spec.Env)
 
@@ -165,12 +197,14 @@ func buildCheckSizeJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alph
 		downloadImage = mc.Spec.ModelDownloadImage
 	}
 
-	// Get auth env vars from runtime config and spec
+	// Get auth env vars from runtime config and spec, plus download filter
 	var runtimeEnv []corev1.EnvVar
 	if runtimeConfigSpec != nil {
 		runtimeEnv = runtimeConfigSpec.Env
 	}
-	envVars := utils.MergeEnvVars(runtimeEnv, mc.Spec.Env)
+	filterEnv := downloadFilterEnvVars(resolveDownloadFilter(mc, runtimeConfigSpec))
+	envVars := utils.MergeEnvVars(filterEnv, runtimeEnv)
+	envVars = utils.MergeEnvVars(envVars, mc.Spec.Env)
 
 	return &batchv1.Job{
 		TypeMeta: metav1.TypeMeta{

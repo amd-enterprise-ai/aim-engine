@@ -129,6 +129,15 @@ type AIMArtifactSpec struct {
 	// +optional
 	ModelDownloadImage string `json:"modelDownloadImage,omitempty"`
 
+	// DownloadFilter controls which files are included or excluded when downloading from HuggingFace.
+	// Overrides any filter set in the runtime config's storage.downloadFilter.
+	// When neither is set, subdirectory files are excluded by default (equivalent to exclude: ["*/*"]).
+	// To download all files including subdirectories, set this to an empty object: downloadFilter: {}.
+	// This field is immutable — to change the filter, recreate the artifact.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="downloadFilter is immutable"
+	DownloadFilter *AIMDownloadFilter `json:"downloadFilter,omitempty"`
+
 	// ImagePullSecrets references secrets for pulling AIM container images.
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`

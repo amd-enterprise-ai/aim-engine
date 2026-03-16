@@ -72,9 +72,27 @@ clean_incomplete() {
     fi
 }
 
+# ── Build --include/--exclude flags from env vars ────────────
+build_filter_args() {
+    _args=""
+    _old_ifs="$IFS"; IFS=','
+    set -f  # disable pathname expansion — patterns like */* must stay literal
+    for _p in ${AIM_HF_INCLUDE:-}; do
+        [ -n "$_p" ] && _args="$_args --include $_p"
+    done
+    for _p in ${AIM_HF_EXCLUDE:-}; do
+        [ -n "$_p" ] && _args="$_args --exclude $_p"
+    done
+    set +f
+    IFS="$_old_ifs"
+    echo "$_args"
+}
+
 # ── Download + verify ───────────────────────────────────────
 do_hf_download() {
     echo "Environment: HF_HUB_DISABLE_XET=${HF_HUB_DISABLE_XET:-unset} HF_HUB_ENABLE_HF_TRANSFER=${HF_HUB_ENABLE_HF_TRANSFER:-unset}"
+    echo "Download filter: include=[${AIM_HF_INCLUDE:-}] exclude=[${AIM_HF_EXCLUDE:-}]"
+    FILTER_ARGS=$(build_filter_args)
 
     # Simulation mode: simulate success/failure without network
     if [ -n "${AIM_DEBUG_SIMULATE_HF_DOWNLOAD:-}" ]; then
@@ -100,7 +118,10 @@ do_hf_download() {
         return 0
     fi
 
-    hf download --local-dir "$TARGET_DIR" "$MODEL_PATH"
+    # shellcheck disable=SC2086
+    set -f  # prevent glob expansion of filter patterns (e.g. */*) during word splitting
+    hf download --local-dir "$TARGET_DIR" $FILTER_ARGS "$MODEL_PATH"
+    set +f
 }
 
 

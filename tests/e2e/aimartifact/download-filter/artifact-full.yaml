@@ -1,0 +1,8 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: filter-full
+spec:
+  sourceUri: hf://hf-internal-testing/tiny-random-CLIPModel
+  # Explicit empty filter overrides the default, downloading all files including subdirectories
+  downloadFilter: {}

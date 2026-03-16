@@ -29,10 +29,8 @@ case "$URL" in
     hf://*)
     export MODEL_PATH="${URL#hf://}"
     
-    # Capture both stdout and stderr, check exit code
-    if ! SIZE_OUTPUT=$(python /check-size/check-hf-size.py 2>&1); then
+    if ! SIZE_OUTPUT=$(python /check-size/check-hf-size.py); then
         echo "Error: Failed to get size for $URL" >&2
-        echo "$SIZE_OUTPUT" >&2
         exit 1
     fi
     

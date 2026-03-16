@@ -31,6 +31,33 @@ import (
 
 // Shared runtime configuration types for both namespace and cluster-scoped configs
 
+// AIMDownloadFilter controls which files are included or excluded during artifact downloads.
+// Patterns use fnmatch-style glob syntax applied against relative file paths in the repository.
+// Both the size estimator and downloader apply the same filter, ensuring PVC sizing matches the actual download.
+//
+// Filter order (matching huggingface_hub behavior):
+//  1. Include: if set, only files matching at least one include pattern are considered
+//  2. Exclude: files matching any exclude pattern are then removed
+//
+// When no filter is configured (neither on the artifact nor in the runtime config),
+// subdirectory files are excluded by default (equivalent to exclude: ["*/*"]).
+// To download all files including subdirectories, set an empty filter: downloadFilter: {}.
+type AIMDownloadFilter struct {
+	// Include specifies glob patterns for files to download.
+	// Only files matching at least one pattern are considered.
+	// If empty, all files pass the include check.
+	// Patterns use fnmatch syntax (e.g., ["*.safetensors", "config.json"]).
+	// +optional
+	Include []string `json:"include,omitempty"`
+
+	// Exclude specifies glob patterns for files to skip.
+	// Files matching any exclude pattern are removed after include filtering.
+	// Patterns use fnmatch syntax (e.g., ["*/*", "*.bin"]).
+	// Use ["*/*"] to exclude all files in subdirectories (the default when no filter is set).
+	// +optional
+	Exclude []string `json:"exclude,omitempty"`
+}
+
 // AIMStorageConfig configures storage defaults for artifacts and PVCs.
 type AIMStorageConfig struct {
 	// DefaultStorageClassName specifies the storage class to use for artifacts and PVCs
@@ -47,6 +74,14 @@ type AIMStorageConfig struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	PVCHeadroomPercent *int32 `json:"pvcHeadroomPercent,omitempty"`
+
+	// DownloadFilter controls which files are included or excluded during artifact downloads.
+	// When set here, applies as the default for all artifacts using this runtime config.
+	// Individual artifacts can override this with their own downloadFilter.
+	// When no filter is configured at any level, subdirectory files are excluded by default.
+	// Set to an empty object (downloadFilter: {}) to explicitly allow all files.
+	// +optional
+	DownloadFilter *AIMDownloadFilter `json:"downloadFilter,omitempty"`
 }
 
 // AIMServiceRuntimeConfig contains runtime configuration fields that apply to services.

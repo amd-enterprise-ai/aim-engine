@@ -126,6 +126,7 @@ _Appears in:_
 | `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Size specifies the size of the cache volume |  | Optional: \{\} <br /> |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env lists the environment variables to use for authentication when downloading models.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  | Optional: \{\} <br /> |
 | `modelDownloadImage` _string_ | ModelDownloadImage specifies the container image used to download and initialize the artifact.<br />This image runs as a job to download model artifacts from the source URI to the cache volume.<br />When not specified, the controller uses its built-in default (matching the release version). |  | Optional: \{\} <br /> |
+| `downloadFilter` _[AIMDownloadFilter](#aimdownloadfilter)_ | DownloadFilter controls which files are included or excluded when downloading from HuggingFace.<br />Overrides any filter set in the runtime config's storage.downloadFilter.<br />When neither is set, subdirectory files are excluded by default (equivalent to exclude: ["*/*"]).<br />To download all files including subdirectories, set this to an empty object: downloadFilter: \{\}.<br />This field is immutable — to change the filter, recreate the artifact. |  | Optional: \{\} <br /> |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets references secrets for pulling AIM container images. |  | Optional: \{\} <br /> |
 | `retentionPriority` _integer_ | RetentionPriority marks this artifact as eligible for automatic eviction<br />when storage quota is exceeded. Lower values are evicted first.<br />Artifacts without this field are only evictable if a defaultRetentionPriority<br />is configured in the runtime config. Use the aim.eai.amd.com/eviction-protected<br />annotation to exempt an artifact from eviction entirely. |  | Minimum: 0 <br />Optional: \{\} <br /> |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  | Optional: \{\} <br /> |
@@ -581,6 +582,34 @@ _Appears in:_
 | `metric` _[AIMMetric](#aimmetric)_ | Metric indicates the optimization goal for this profile ("latency" or "throughput"). |  | Enum: [latency throughput] <br />Optional: \{\} <br /> |
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision specifies the numeric precision used in this profile (e.g., "fp16", "fp8"). |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br />Optional: \{\} <br /> |
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type specifies the optimization level of this profile (optimized, unoptimized, preview). |  | Enum: [optimized preview unoptimized] <br />Optional: \{\} <br /> |
+
+
+#### AIMDownloadFilter
+
+
+
+AIMDownloadFilter controls which files are included or excluded during artifact downloads.
+Patterns use fnmatch-style glob syntax applied against relative file paths in the repository.
+Both the size estimator and downloader apply the same filter, ensuring PVC sizing matches the actual download.
+
+Filter order (matching huggingface_hub behavior):
+ 1. Include: if set, only files matching at least one include pattern are considered
+ 2. Exclude: files matching any exclude pattern are then removed
+
+When no filter is configured (neither on the artifact nor in the runtime config),
+subdirectory files are excluded by default (equivalent to exclude: ["*/*"]).
+To download all files including subdirectories, set an empty filter: downloadFilter: {}.
+
+
+
+_Appears in:_
+- [AIMArtifactSpec](#aimartifactspec)
+- [AIMStorageConfig](#aimstorageconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `include` _string array_ | Include specifies glob patterns for files to download.<br />Only files matching at least one pattern are considered.<br />If empty, all files pass the include check.<br />Patterns use fnmatch syntax (e.g., ["*.safetensors", "config.json"]). |  | Optional: \{\} <br /> |
+| `exclude` _string array_ | Exclude specifies glob patterns for files to skip.<br />Files matching any exclude pattern are removed after include filtering.<br />Patterns use fnmatch syntax (e.g., ["*/*", "*.bin"]).<br />Use ["*/*"] to exclude all files in subdirectories (the default when no filter is set). |  | Optional: \{\} <br /> |
 
 
 #### AIMGpuRequirements
@@ -1694,6 +1723,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `defaultStorageClassName` _string_ | DefaultStorageClassName specifies the storage class to use for artifacts and PVCs<br />when the consuming resource (AIMArtifact, AIMTemplateCache, AIMServiceTemplate) does not<br />specify a storage class. If this field is empty, the cluster's default storage class is used. |  | Optional: \{\} <br /> |
 | `pvcHeadroomPercent` _integer_ | PVCHeadroomPercent specifies the percentage of extra space to add to PVCs<br />for model storage. This accounts for filesystem overhead and temporary files<br />during model loading. The value represents a percentage (e.g., 10 means 10% extra space).<br />If not specified, defaults to 10%. | 10 | Minimum: 0 <br />Optional: \{\} <br /> |
+| `downloadFilter` _[AIMDownloadFilter](#aimdownloadfilter)_ | DownloadFilter controls which files are included or excluded during artifact downloads.<br />When set here, applies as the default for all artifacts using this runtime config.<br />Individual artifacts can override this with their own downloadFilter.<br />When no filter is configured at any level, subdirectory files are excluded by default.<br />Set to an empty object (downloadFilter: \{\}) to explicitly allow all files. |  | Optional: \{\} <br /> |
 
 
 #### AIMTemplateCache

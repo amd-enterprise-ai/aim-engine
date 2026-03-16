@@ -507,6 +507,33 @@ spec:
                       when the consuming resource (AIMArtifact, AIMTemplateCache, AIMServiceTemplate) does not
                       specify a storage class. If this field is empty, the cluster's default storage class is used.
                     type: string
+                  downloadFilter:
+                    description: |-
+                      DownloadFilter controls which files are included or excluded during artifact downloads.
+                      When set here, applies as the default for all artifacts using this runtime config.
+                      Individual artifacts can override this with their own downloadFilter.
+                      When no filter is configured at any level, subdirectory files are excluded by default.
+                      Set to an empty object (downloadFilter: {}) to explicitly allow all files.
+                    properties:
+                      exclude:
+                        description: |-
+                          Exclude specifies glob patterns for files to skip.
+                          Files matching any exclude pattern are removed after include filtering.
+                          Patterns use fnmatch syntax (e.g., ["*/*", "*.bin"]).
+                          Use ["*/*"] to exclude all files in subdirectories (the default when no filter is set).
+                        items:
+                          type: string
+                        type: array
+                      include:
+                        description: |-
+                          Include specifies glob patterns for files to download.
+                          Only files matching at least one pattern are considered.
+                          If empty, all files pass the include check.
+                          Patterns use fnmatch syntax (e.g., ["*.safetensors", "config.json"]).
+                        items:
+                          type: string
+                        type: array
+                    type: object
                   pvcHeadroomPercent:
                     default: 10
                     description: |-
