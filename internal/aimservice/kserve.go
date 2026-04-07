@@ -277,10 +277,11 @@ func buildInferenceService(
 					PriorityClassName:  service.Spec.PriorityClassName,
 					Containers: []corev1.Container{
 						{
-							Name:      constants.ContainerKServe,
-							Image:     image,
-							Env:       envVars,
-							Resources: resources,
+							Name:            constants.ContainerKServe,
+							Image:           image,
+							ImagePullPolicy: corev1.PullAlways,
+							Env:             envVars,
+							Resources:       resources,
 							Ports: []corev1.ContainerPort{
 								{
 									ContainerPort: constants.DefaultHTTPPort,
