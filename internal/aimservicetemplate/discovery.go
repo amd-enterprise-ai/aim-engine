@@ -65,8 +65,9 @@ const (
 	DiscoveryJobBackoffLimit = 0
 
 	// DiscoveryJobTTLSeconds defines how long completed discovery jobs persist
-	// before automatic cleanup. This allows time for status inspection and log retrieval.
-	DiscoveryJobTTLSeconds = 60
+	// before automatic cleanup. This allows time for status inspection and log retrieval
+	// even when the reconcile loop is delayed by high event volume.
+	DiscoveryJobTTLSeconds = 600
 )
 
 // DiscoveryJobSpec defines parameters for creating a discovery job.
