@@ -105,13 +105,15 @@ var KnownAmdDevices = map[string]string{
 	"7461": "V710", // Radeon Pro V710 MxGPU
 	"7448": "W7900",
 	"744a": "W7900", // W7900 Dual Slot
+	"744b": "W7900", // W7900D
 	"7449": "W7800", // W7800 48GB
 	"745e": "W7800",
 	"73a2": "W6900X",
 	"73a3": "W6800",  // W6800 GL-XL
 	"73ab": "W6800X", // W6800X / W6800X Duo
 	"73a1": "V620",
-	"73ae": "V620", // Radeon Pro V620 MxGPU
+	"73ae": "V620",  // Radeon Pro V620 MxGPU
+	"7551": "R9700", // AI PRO R9700 / R9700S / R9600D
 	// AMD Radeon
 	"7550": "RX9070", // RX 9070 / 9070 XT
 	"744c": "RX7900", // RX 7900 XT / 7900 XTX / 7900 GRE / 7900M
