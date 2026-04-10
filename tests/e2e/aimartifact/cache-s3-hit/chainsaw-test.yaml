@@ -1,0 +1,25 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: cache-s3-hit
+spec:
+  steps:
+    - name: Create artifact with hf:// source
+      try:
+        - apply:
+            file: artifact.yaml
+
+    - name: Assert resolved source is set and artifact gets Ready
+      try:
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: cache-s3-hit
+              status:
+                status: Ready
+                (resolvedSourceUri != null && resolvedSourceUri != ''): true
+                progress:
+                  percentage: 100

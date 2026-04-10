@@ -23,7 +23,7 @@ permissions:
 jobs:
   test-unit:
     name: test-unit
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Clone the code
         uses: actions/checkout@v4
@@ -48,7 +48,17 @@ jobs:
 
   test-e2e:
     name: test-e2e
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    timeout-minutes: 60
+    concurrency:
+      group: test-e2e-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    env:
+      KIND_CLUSTER: aim-${{ github.run_id }}-${{ github.run_attempt }}
+      ARTIFACT_DOWNLOADER_IMAGE: ghcr.io/silogen/aim-artifact-downloader:${{ github.run_id }}-${{ github.run_attempt }}
+      OPERATOR_IMAGE_REPOSITORY: aim-engine
+      OPERATOR_IMAGE_TAG: ${{ github.run_id }}-${{ github.run_attempt }}
+      OPERATOR_IMAGE: aim-engine:${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Free up disk space
         run: |
@@ -58,12 +68,23 @@ jobs:
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune -af
           echo "After cleanup:"
           df -h /
 
       - name: Clone the code
         uses: actions/checkout@v4
+
+      - name: Show runner specs
+        run: |
+          echo "Runner: ${RUNNER_NAME}"
+          echo "OS: ${RUNNER_OS}"
+          echo "Arch: ${RUNNER_ARCH}"
+          echo "CPU count:"
+          nproc
+          echo "Memory:"
+          free -h
+          echo "Disk:"
+          df -h /
 
       - name: Setup mise
         uses: jdx/mise-action@v2
@@ -79,8 +100,11 @@ jobs:
           restore-keys: |
             go-build-${{ runner.os }}-
 
+      - name: Set per-run kubeconfig path
+        run: echo "KUBECONFIG=${RUNNER_TEMP}/kubeconfig-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_ENV}"
+
       - name: Create Kind cluster
-        run: kind create cluster --config hack/kind/config.yaml
+        run: kind create cluster --name "${KIND_CLUSTER}" --config hack/kind/config.yaml
 
       - name: Install Kind dependencies (NFS provisioner)
         run: helmfile sync -f hack/kind/helmfile.yaml.gotmpl
@@ -96,7 +120,7 @@ jobs:
         with:
           context: images/artifact-downloader
           load: true
-          tags: aim-artifact-downloader:test
+          tags: ${{ env.ARTIFACT_DOWNLOADER_IMAGE }}
           cache-from: type=gha,scope=artifact-downloader
           cache-to: type=gha,scope=artifact-downloader,mode=max
 
@@ -105,17 +129,20 @@ jobs:
         with:
           context: .
           load: true
-          tags: aim-engine:test
+          tags: ${{ env.OPERATOR_IMAGE }}
           build-args: |
-            VERSION=test
+            VERSION=${{ env.OPERATOR_IMAGE_TAG }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Load images into Kind
         run: |
-          docker tag aim-artifact-downloader:test ghcr.io/silogen/aim-artifact-downloader:test
-          kind load docker-image ghcr.io/silogen/aim-artifact-downloader:test --name aim-engine
-          kind load docker-image aim-engine:test --name aim-engine
+          kind load docker-image "${ARTIFACT_DOWNLOADER_IMAGE}" --name "${KIND_CLUSTER}"
+          kind load docker-image "${OPERATOR_IMAGE}" --name "${KIND_CLUSTER}"
+          for tag in 0.1.8 0.1.9 0.1.10; do
+            docker pull "ghcr.io/silogen/aim-dummy:${tag}" || true
+            kind load docker-image "ghcr.io/silogen/aim-dummy:${tag}" --name "${KIND_CLUSTER}" || true
+          done
 
       - name: Generate CRDs
         run: make crds
@@ -123,11 +150,23 @@ jobs:
       - name: Generate Helm chart
         run: make helm
 
+      - name: Create aim-system namespace
+        run: kubectl create namespace aim-system --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Initialize SeaweedFS bucket
+        run: make seaweedfs-init-bucket
+
       - name: Install CRDs
         run: kubectl apply -f dist/crds.yaml
 
+      - name: Apply default cluster runtime config
+        run: kubectl apply -f hack/default-cluster-runtime-config.yaml
+
+      - name: Pre-warm S3 artifact cache
+        run: make cache-warm
+
       - name: Install operator via Helm
-        run: helm install aim-engine dist/chart --namespace aim-system --create-namespace --set manager.image.repository=aim-engine --set manager.image.tag=test
+        run: helm install aim-engine dist/chart --namespace aim-system --create-namespace --set manager.image.repository="${OPERATOR_IMAGE_REPOSITORY}" --set manager.image.tag="${OPERATOR_IMAGE_TAG}" --set acceleratorDetector.enable=false
 
       - name: Wait for operator to be ready
         run: kubectl wait --for=condition=Available --timeout=120s deployment/aim-engine-controller-manager -n aim-system
@@ -156,3 +195,32 @@ jobs:
           kubectl logs -n aim-system -l control-plane=controller-manager --tail=200 || true
           echo "=== All AIM resources ==="
           kubectl get aimservice,aimmodel,aimtemplatecache,aimartifact -A || true
+          echo "=== Pods across all namespaces ==="
+          kubectl get pods -A || true
+          echo "=== Non-running pods ==="
+          kubectl get pods -A --field-selector 'status.phase!=Running,status.phase!=Succeeded' || true
+          echo "=== Events (warnings only) ==="
+          kubectl get events -A --field-selector type=Warning --sort-by='.lastTimestamp' || true
+          echo "=== Storage classes ==="
+          kubectl get storageclass -o wide || true
+          echo "=== PVs ==="
+          kubectl get pv || true
+          echo "=== PVCs ==="
+          kubectl get pvc -A || true
+          echo "=== Pending PVCs ==="
+          kubectl get pvc -A --field-selector status.phase=Pending || true
+          echo "=== Describe pending PVCs ==="
+          for pvc in $(kubectl get pvc -A --field-selector status.phase=Pending -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}'); do
+            ns="${pvc%/*}"
+            name="${pvc#*/}"
+            echo "--- ${ns}/${name} ---"
+            kubectl describe pvc -n "${ns}" "${name}" || true
+          done
+
+      - name: Delete Kind cluster
+        if: always()
+        run: kind delete cluster --name "${KIND_CLUSTER}" || true
+
+      - name: Delete kubeconfig
+        if: always()
+        run: rm -f "${KUBECONFIG}"

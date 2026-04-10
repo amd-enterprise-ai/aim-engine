@@ -395,6 +395,11 @@ type ArtifactObservation struct {
 	discoveredSizeBytes *int64
 	sizeParseError      error
 
+	// Cache check result: true = cache hit, false = miss or not checked
+	cacheHit bool
+	// The resolved S3 path for cache hits
+	resolvedCacheURI string
+
 	quotaDataFetched bool
 
 	// Quota evaluation result (populated when quota data is available)
@@ -408,6 +413,24 @@ func (r *ArtifactReconciler) ComposeState(
 ) ArtifactObservation {
 	logger := log.FromContext(ctx)
 	obs := ArtifactObservation{ArtifactFetchResult: fetch}
+
+	// Direct S3 cache check when source is hf:// and not yet resolved
+	mc := fetch.artifact
+	runtimeConfig := fetch.mergedRuntimeConfig.Value
+	if strings.HasPrefix(mc.Spec.SourceURI, "hf://") && mc.Status.ResolvedSourceURI == "" && runtimeConfig != nil {
+		filter := resolveDownloadFilter(mc, runtimeConfig)
+		resolvedURI, err := CheckCacheHit(ctx, runtimeConfig.ArtifactCache, mc.Spec.SourceURI, filter)
+		if err != nil {
+			logger.Error(err, "S3 cache check failed, proceeding without cache",
+				"namespace", mc.Namespace, "name", mc.Name)
+		} else if resolvedURI != "" {
+			obs.cacheHit = true
+			obs.resolvedCacheURI = resolvedURI
+			logger.Info("S3 cache hit for artifact",
+				"namespace", mc.Namespace, "name", mc.Name,
+				"resolvedUri", resolvedURI)
+		}
+	}
 
 	// Parse check-size output if job succeeded
 	if fetch.CheckSizeJobSucceeded() && fetch.checkSizeOutput != "" {
@@ -487,6 +510,17 @@ func (r *ArtifactReconciler) ComposeState(
 	return obs
 }
 
+// resolveCacheEnv returns cache config env vars when the source was rewritten to S3.
+func resolveCacheEnv(mc *aimv1alpha1.AIMArtifact, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) []corev1.EnvVar {
+	if mc.Status.ResolvedSourceURI == "" || runtimeConfig == nil {
+		return nil
+	}
+	if cc := runtimeConfig.ArtifactCache; cc != nil {
+		return cc.Env
+	}
+	return nil
+}
+
 func (r *ArtifactReconciler) PlanResources(
 	ctx context.Context,
 	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha1.AIMArtifact],
@@ -505,11 +539,12 @@ func (r *ArtifactReconciler) PlanResources(
 		result.ApplyWithoutOwnerRef(roleBinding)
 	}
 
+	cacheEnv := resolveCacheEnv(mc, runtimeConfig)
+
 	// Phase 1: Size discovery (when spec.size is empty)
 	if !obs.IsSizeKnown() {
 		if obs.checkSizeJob != nil && obs.checkSizeJob.IsNotFound() {
-			// Create check-size job
-			checkSizeJob := buildCheckSizeJob(mc, runtimeConfig)
+			checkSizeJob := buildCheckSizeJob(mc, runtimeConfig, cacheEnv...)
 			result.Apply(checkSizeJob)
 		}
 		// Don't proceed until size is known
@@ -584,7 +619,7 @@ func (r *ArtifactReconciler) PlanResources(
 	// Phase 3: Download job creation - size is known and PVC, rolebinding exists
 	if mc.Status.Status != constants.AIMStatusReady &&
 		obs.downloadJob != nil && obs.downloadJob.IsNotFound() && obs.roleBinding.OK() {
-		downloadJob := buildDownloadJob(mc, runtimeConfig, obs.GetEffectiveSize())
+		downloadJob := buildDownloadJob(mc, runtimeConfig, obs.GetEffectiveSize(), cacheEnv...)
 		result.Apply(downloadJob)
 	}
 
@@ -608,6 +643,11 @@ func (r *ArtifactReconciler) DecorateStatus(
 
 	mc := obs.artifact
 	runtimeConfig := obs.mergedRuntimeConfig.Value
+
+	// Persist cache resolution to status
+	if obs.cacheHit && obs.resolvedCacheURI != "" {
+		status.ResolvedSourceURI = obs.resolvedCacheURI
+	}
 
 	if obs.discoveredSizeBytes != nil {
 		status.DiscoveredSizeBytes = obs.discoveredSizeBytes

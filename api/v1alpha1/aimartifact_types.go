@@ -250,6 +250,12 @@ type AIMArtifactStatus struct {
 	// HeadroomPercent is the headroom percentage that was applied to the PVC size.
 	// +optional
 	HeadroomPercent *int32 `json:"headroomPercent,omitempty"`
+
+	// ResolvedSourceURI is the effective download source after cache resolution.
+	// When the S3 artifact cache has a hit, this contains the rewritten s3:// URI.
+	// When empty, spec.sourceUri is used directly.
+	// +optional
+	ResolvedSourceURI string `json:"resolvedSourceUri,omitempty"`
 }
 
 func (m *AIMArtifact) GetStatus() *AIMArtifactStatus {

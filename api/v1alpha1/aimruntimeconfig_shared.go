@@ -146,6 +146,11 @@ type AIMRuntimeConfigCommon struct {
 	// +optional
 	Artifact *AIMArtifactConfig `json:"artifact,omitempty"`
 
+	// ArtifactCache configures the S3-backed artifact cache for HuggingFace models.
+	// When enabled, the controller checks internal S3 before downloading from HuggingFace.
+	// +optional
+	ArtifactCache *ArtifactCacheConfig `json:"artifactCache,omitempty"`
+
 	// LabelPropagation controls how labels from parent AIM resources are propagated to child resources.
 	// When enabled, labels matching the specified patterns are automatically copied from parent resources
 	// (e.g., AIMService, AIMTemplateCache) to their child resources (e.g., Deployments, Services, PVCs).
@@ -198,6 +203,28 @@ type AIMArtifactStorageQuota struct {
 	// Can be overridden for individual namespaces via the aim.eai.amd.com/artifact-storage-quota annotation.
 	// +optional
 	DefaultNamespaceLimit *resource.Quantity `json:"defaultNamespaceLimit,omitempty"`
+}
+
+// ArtifactCacheConfig configures the S3-backed artifact cache.
+// When enabled, the controller checks internal S3 for cached models before
+// downloading from HuggingFace. On cache hit, the download source is rewritten
+// to s3:// so the download job pulls from the local cache instead.
+type ArtifactCacheConfig struct {
+	// Enabled controls whether the S3 artifact cache is active.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// S3URI is the base S3 path for cached artifacts (e.g. s3://aim-cache/artifacts).
+	// +optional
+	S3URI string `json:"s3Uri,omitempty"`
+
+	// Env provides S3 endpoint configuration for the cache bucket.
+	// Injected into download jobs when the source is rewritten to s3://.
+	// Typical vars: AWS_ENDPOINT_URL, S3_NO_SSL. Credentials optional (anonymous access).
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Env []corev1.EnvVar `json:"env,omitempty"`
 }
 
 // AIMClusterRuntimeConfigSpec defines cluster-wide defaults for AIM resources.

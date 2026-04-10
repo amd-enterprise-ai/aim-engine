@@ -6,6 +6,8 @@ repositories:
     url: https://kedacore.github.io/charts
   - name: open-telemetry
     url: https://open-telemetry.github.io/opentelemetry-helm-charts
+  - name: seaweedfs
+    url: https://seaweedfs.github.io/seaweedfs/helm
 
 releases:
   - name: cert-manager
@@ -136,3 +138,30 @@ releases:
               requests:
                 cpu: ""
                 memory: ""
+
+  - name: seaweedfs
+    namespace: seaweedfs-system
+    chart: seaweedfs/seaweedfs
+    version: 4.19.0
+    createNamespace: true
+    wait: true
+    timeout: 300
+    values:
+      - master:
+          replicas: 1
+          affinity: ""
+          data:
+            type: emptyDir
+        volume:
+          replicas: 1
+          affinity: ""
+          data:
+            type: emptyDir
+        filer:
+          replicas: 1
+          affinity: ""
+          s3:
+            enabled: true
+            enableAuth: false
+          data:
+            type: emptyDir

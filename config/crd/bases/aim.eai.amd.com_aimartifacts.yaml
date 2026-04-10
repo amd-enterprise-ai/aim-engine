@@ -501,6 +501,12 @@ spec:
                     format: int64
                     type: integer
                 type: object
+              resolvedSourceUri:
+                description: |-
+                  ResolvedSourceURI is the effective download source after cache resolution.
+                  When the S3 artifact cache has a hit, this contains the rewritten s3:// URI.
+                  When empty, spec.sourceUri is used directly.
+                type: string
               status:
                 default: Pending
                 description: Status represents the current status of the artifact

@@ -1,0 +1,60 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cache-warm
+  namespace: aim-system
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+      - name: downloader
+        image: kserve/storage-initializer:v0.16.0
+        args:
+        - "hf://HuggingFaceTB/SmolLM2-135M"
+        - "/mnt/models"
+        env:
+        - name: AIM_HF_EXCLUDE
+          value: "*/*"
+        volumeMounts:
+        - name: model-storage
+          mountPath: /mnt/models
+      containers:
+      - name: uploader
+        image: alpine/curl:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          S3_ENDPOINT="seaweedfs-s3.seaweedfs-system:8333"
+
+          # Cache key for default filter (exclude: ["*/*"]):
+          #   input = "\n*/*"
+          #   sha256[:16] = d699cbf72e50fd7d
+          CACHE_PREFIX="aim-cache/artifacts/HuggingFaceTB/SmolLM2-135M/d699cbf72e50fd7d"
+
+          echo "Uploading model files to S3 cache: $CACHE_PREFIX"
+          for f in /mnt/models/*; do
+            [ -f "$f" ] || continue
+            fname=$(basename "$f")
+            echo "  uploading $fname ..."
+            curl -sf -X PUT "http://${S3_ENDPOINT}/${CACHE_PREFIX}/${fname}" \
+              --data-binary "@${f}"
+          done
+
+          echo "Writing manifest.json (publish signal)..."
+          SIZE=$(du -sb /mnt/models | cut -f1)
+          MANIFEST="{\"sourceUri\":\"hf://HuggingFaceTB/SmolLM2-135M\",\"modelId\":\"HuggingFaceTB/SmolLM2-135M\",\"filter\":{\"include\":[],\"exclude\":[\"*/*\"]},\"sizeBytes\":${SIZE},\"createdAt\":\"$(date -Is)\"}"
+          echo "$MANIFEST" | curl -sf -X PUT "http://${S3_ENDPOINT}/${CACHE_PREFIX}/manifest.json" \
+            -H "Content-Type: application/json" --data-binary @-
+
+          echo "Cache warm complete: $CACHE_PREFIX"
+        volumeMounts:
+        - name: model-storage
+          mountPath: /mnt/models
+          readOnly: true
+      volumes:
+      - name: model-storage
+        emptyDir: {}

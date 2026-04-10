@@ -38,6 +38,15 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
+// effectiveSourceURI returns the download source URI, using the resolved
+// cache URI when available (cache hit) and falling back to spec.sourceUri.
+func effectiveSourceURI(mc *aimv1alpha1.AIMArtifact) string {
+	if mc.Status.ResolvedSourceURI != "" {
+		return mc.Status.ResolvedSourceURI
+	}
+	return mc.Spec.SourceURI
+}
+
 func buildRoleBinding(mc *aimv1alpha1.AIMArtifact) *rbacv1.RoleBinding {
 	return &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
@@ -93,12 +102,15 @@ func getDownloadJobName(mc *aimv1alpha1.AIMArtifact) string {
 	return name
 }
 
-func buildDownloadJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon, expectedSizeBytes int64) *batchv1.Job {
+func buildDownloadJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon, expectedSizeBytes int64, cacheEnv ...corev1.EnvVar) *batchv1.Job {
 	mountPath := "/cache"
 	downloadImage := aimv1alpha1.DefaultDownloadImage
 	if len(mc.Spec.ModelDownloadImage) > 0 {
 		downloadImage = mc.Spec.ModelDownloadImage
 	}
+
+	// Use resolved source (cache hit) or original spec source
+	sourceURI := effectiveSourceURI(mc)
 
 	// Get env vars from runtime config, or empty slice if nil
 	var runtimeEnv []corev1.EnvVar
@@ -119,7 +131,8 @@ func buildDownloadJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha
 		{Name: "TARGET_DIR", Value: mountPath},
 	}
 	defaultEnv = append(defaultEnv, downloadFilterEnvVars(resolveDownloadFilter(mc, runtimeConfigSpec))...)
-	newEnv := utils.MergeEnvVars(defaultEnv, runtimeEnv)
+	newEnv := utils.MergeEnvVars(defaultEnv, cacheEnv)
+	newEnv = utils.MergeEnvVars(newEnv, runtimeEnv)
 	newEnv = utils.MergeEnvVars(newEnv, mc.Spec.Env)
 
 	return &batchv1.Job{
@@ -174,7 +187,7 @@ func buildDownloadJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha
 								RunAsGroup: ptr.To(int64(1000)),
 							},
 							Env:  newEnv,
-							Args: []string{mc.Spec.SourceURI},
+							Args: []string{sourceURI},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "cache", MountPath: mountPath},
 							},
@@ -191,11 +204,13 @@ func getCheckSizeJobName(mc *aimv1alpha1.AIMArtifact) string {
 	return name
 }
 
-func buildCheckSizeJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon) *batchv1.Job {
+func buildCheckSizeJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon, cacheEnv ...corev1.EnvVar) *batchv1.Job {
 	downloadImage := aimv1alpha1.DefaultDownloadImage
 	if len(mc.Spec.ModelDownloadImage) > 0 {
 		downloadImage = mc.Spec.ModelDownloadImage
 	}
+
+	sourceURI := effectiveSourceURI(mc)
 
 	// Get auth env vars from runtime config and spec, plus download filter
 	var runtimeEnv []corev1.EnvVar
@@ -203,7 +218,8 @@ func buildCheckSizeJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alph
 		runtimeEnv = runtimeConfigSpec.Env
 	}
 	filterEnv := downloadFilterEnvVars(resolveDownloadFilter(mc, runtimeConfigSpec))
-	envVars := utils.MergeEnvVars(filterEnv, runtimeEnv)
+	envVars := utils.MergeEnvVars(filterEnv, cacheEnv)
+	envVars = utils.MergeEnvVars(envVars, runtimeEnv)
 	envVars = utils.MergeEnvVars(envVars, mc.Spec.Env)
 
 	return &batchv1.Job{
@@ -245,7 +261,7 @@ func buildCheckSizeJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alph
 							Image:           downloadImage,
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							Command:         []string{"/check-size.sh"},
-							Args:            []string{mc.Spec.SourceURI},
+							Args:            []string{sourceURI},
 							Env:             envVars,
 						},
 					},

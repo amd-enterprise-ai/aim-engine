@@ -5,12 +5,12 @@ metadata:
 spec:
   image: ghcr.io/silogen/aim-dummy:0.1.10
   modelSources:
-    - modelId: sshleifer/tiny-gpt2
-      sourceUri: hf://sshleifer/tiny-gpt2
+    - modelId: HuggingFaceTB/SmolLM2-135M
+      sourceUri: hf://HuggingFaceTB/SmolLM2-135M
   customTemplates:
     - name: custom-latency
       aimId: meta-llama/Llama-3-8B
-      modelId: sshleifer/tiny-gpt2
+      modelId: HuggingFaceTB/SmolLM2-135M
       hardware:
         gpu:
           model: MI300X

@@ -157,6 +157,7 @@ _Appears in:_
 | `discoveredSizeBytes` _integer_ | DiscoveredSizeBytes is the model size discovered via check-size job.<br />Populated when spec.size is not provided. |  | Optional: \{\} <br /> |
 | `allocatedSize` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | AllocatedSize is the actual PVC size requested (including headroom). |  | Optional: \{\} <br /> |
 | `headroomPercent` _integer_ | HeadroomPercent is the headroom percentage that was applied to the PVC size. |  | Optional: \{\} <br /> |
+| `resolvedSourceUri` _string_ | ResolvedSourceURI is the effective download source after cache resolution.<br />When the S3 artifact cache has a hit, this contains the rewritten s3:// URI.<br />When empty, spec.sourceUri is used directly. |  | Optional: \{\} <br /> |
 
 
 #### AIMArtifactStorageQuota
@@ -393,6 +394,7 @@ _Appears in:_
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for inference containers.<br />When set on AIMService, these take highest precedence in the merge hierarchy.<br />When set on RuntimeConfig, these provide namespace/cluster-level defaults.<br />Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} <br /> |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults.<br />This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} <br /> |
 | `artifact` _[AIMArtifactConfig](#aimartifactconfig)_ | Artifact controls artifact-level defaults such as eviction policy.<br />This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} <br /> |
+| `artifactCache` _[ArtifactCacheConfig](#artifactcacheconfig)_ | ArtifactCache configures the S3-backed artifact cache for HuggingFace models.<br />When enabled, the controller checks internal S3 before downloading from HuggingFace. |  | Optional: \{\} <br /> |
 | `labelPropagation` _[AIMRuntimeConfigLabelPropagationSpec](#aimruntimeconfiglabelpropagationspec)_ | LabelPropagation controls how labels from parent AIM resources are propagated to child resources.<br />When enabled, labels matching the specified patterns are automatically copied from parent resources<br />(e.g., AIMService, AIMTemplateCache) to their child resources (e.g., Deployments, Services, PVCs).<br />This is useful for propagating organizational metadata like cost centers, team identifiers,<br />or compliance labels through the resource hierarchy. |  | Optional: \{\} <br /> |
 | `defaultStorageClassName` _string_ | DEPRECATED: Use Storage.DefaultStorageClassName instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.DefaultStorageClassName is not set,<br />the value will be automatically migrated. |  | Optional: \{\} <br /> |
 | `pvcHeadroomPercent` _integer_ | DEPRECATED: Use Storage.PVCHeadroomPercent instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.PVCHeadroomPercent is not set,<br />the value will be automatically migrated. |  | Optional: \{\} <br /> |
@@ -1061,6 +1063,7 @@ _Appears in:_
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for inference containers.<br />When set on AIMService, these take highest precedence in the merge hierarchy.<br />When set on RuntimeConfig, these provide namespace/cluster-level defaults.<br />Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} <br /> |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults.<br />This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} <br /> |
 | `artifact` _[AIMArtifactConfig](#aimartifactconfig)_ | Artifact controls artifact-level defaults such as eviction policy.<br />This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} <br /> |
+| `artifactCache` _[ArtifactCacheConfig](#artifactcacheconfig)_ | ArtifactCache configures the S3-backed artifact cache for HuggingFace models.<br />When enabled, the controller checks internal S3 before downloading from HuggingFace. |  | Optional: \{\} <br /> |
 | `labelPropagation` _[AIMRuntimeConfigLabelPropagationSpec](#aimruntimeconfiglabelpropagationspec)_ | LabelPropagation controls how labels from parent AIM resources are propagated to child resources.<br />When enabled, labels matching the specified patterns are automatically copied from parent resources<br />(e.g., AIMService, AIMTemplateCache) to their child resources (e.g., Deployments, Services, PVCs).<br />This is useful for propagating organizational metadata like cost centers, team identifiers,<br />or compliance labels through the resource hierarchy. |  | Optional: \{\} <br /> |
 | `defaultStorageClassName` _string_ | DEPRECATED: Use Storage.DefaultStorageClassName instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.DefaultStorageClassName is not set,<br />the value will be automatically migrated. |  | Optional: \{\} <br /> |
 | `pvcHeadroomPercent` _integer_ | DEPRECATED: Use Storage.PVCHeadroomPercent instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.PVCHeadroomPercent is not set,<br />the value will be automatically migrated. |  | Optional: \{\} <br /> |
@@ -1121,6 +1124,7 @@ _Appears in:_
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for inference containers.<br />When set on AIMService, these take highest precedence in the merge hierarchy.<br />When set on RuntimeConfig, these provide namespace/cluster-level defaults.<br />Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} <br /> |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults.<br />This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} <br /> |
 | `artifact` _[AIMArtifactConfig](#aimartifactconfig)_ | Artifact controls artifact-level defaults such as eviction policy.<br />This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} <br /> |
+| `artifactCache` _[ArtifactCacheConfig](#artifactcacheconfig)_ | ArtifactCache configures the S3-backed artifact cache for HuggingFace models.<br />When enabled, the controller checks internal S3 before downloading from HuggingFace. |  | Optional: \{\} <br /> |
 | `labelPropagation` _[AIMRuntimeConfigLabelPropagationSpec](#aimruntimeconfiglabelpropagationspec)_ | LabelPropagation controls how labels from parent AIM resources are propagated to child resources.<br />When enabled, labels matching the specified patterns are automatically copied from parent resources<br />(e.g., AIMService, AIMTemplateCache) to their child resources (e.g., Deployments, Services, PVCs).<br />This is useful for propagating organizational metadata like cost centers, team identifiers,<br />or compliance labels through the resource hierarchy. |  | Optional: \{\} <br /> |
 | `defaultStorageClassName` _string_ | DEPRECATED: Use Storage.DefaultStorageClassName instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.DefaultStorageClassName is not set,<br />the value will be automatically migrated. |  | Optional: \{\} <br /> |
 | `pvcHeadroomPercent` _integer_ | DEPRECATED: Use Storage.PVCHeadroomPercent instead. This field will be removed in a future version.<br />For backward compatibility, if this field is set and Storage.PVCHeadroomPercent is not set,<br />the value will be automatically migrated. |  | Optional: \{\} <br /> |
@@ -1862,6 +1866,29 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `metric` _[AIMMetric](#aimmetric)_ | Metric specifies the optimization target (e.g., latency, throughput). |  | Enum: [latency throughput] <br />Optional: \{\} <br /> |
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision specifies the numerical precision (e.g., fp8, fp16, bf16). |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br />Optional: \{\} <br /> |
+
+
+#### ArtifactCacheConfig
+
+
+
+ArtifactCacheConfig configures the S3-backed artifact cache.
+When enabled, the controller checks internal S3 for cached models before
+downloading from HuggingFace. On cache hit, the download source is rewritten
+to s3:// so the download job pulls from the local cache instead.
+
+
+
+_Appears in:_
+- [AIMClusterRuntimeConfigSpec](#aimclusterruntimeconfigspec)
+- [AIMRuntimeConfigCommon](#aimruntimeconfigcommon)
+- [AIMRuntimeConfigSpec](#aimruntimeconfigspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `enabled` _boolean_ | Enabled controls whether the S3 artifact cache is active. |  | Optional: \{\} <br /> |
+| `s3Uri` _string_ | S3URI is the base S3 path for cached artifacts (e.g. s3://aim-cache/artifacts). |  | Optional: \{\} <br /> |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env provides S3 endpoint configuration for the cache bucket.<br />Injected into download jobs when the source is rewritten to s3://.<br />Typical vars: AWS_ENDPOINT_URL, S3_NO_SSL. Credentials optional (anonymous access). |  | Optional: \{\} <br /> |
 
 
 #### DiscoveryState

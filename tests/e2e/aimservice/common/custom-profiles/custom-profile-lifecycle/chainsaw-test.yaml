@@ -38,7 +38,7 @@ spec:
                   aim.eai.amd.com/model: test-custom-profile-model
               spec:
                 aimId: meta-llama/Llama-3-8B
-                modelId: sshleifer/tiny-gpt2
+                modelId: HuggingFaceTB/SmolLM2-135M
                 customProfile:
                   engineArgs:
                     dtype: float16

@@ -1,0 +1,7 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: cache-s3-hit
+spec:
+  sourceUri: hf://HuggingFaceTB/SmolLM2-135M
+  size: 2.2Gi

@@ -129,13 +129,38 @@ kind-create: manifests ## Create kind cluster with all dependencies for local de
 	@$(MAKE) install
 	@echo "Installing RBAC..."
 	@kustomize build config/local-dev-kind | kubectl apply -f - --server-side
+	@$(MAKE) seaweedfs-init-bucket
+	@$(MAKE) seaweedfs-default-config
+	@$(MAKE) cache-warm
 	@# Pre-load test images for faster e2e tests
 	@echo "Pre-loading test images..."
-	@docker pull ghcr.io/silogen/aim-dummy:0.1.8 2>/dev/null || true
-	@kind load docker-image ghcr.io/silogen/aim-dummy:0.1.8 --name aim-engine 2>/dev/null || true
+	@for tag in 0.1.8 0.1.9 0.1.10; do \
+		docker pull ghcr.io/silogen/aim-dummy:$$tag 2>/dev/null || true; \
+		kind load docker-image ghcr.io/silogen/aim-dummy:$$tag --name aim-engine 2>/dev/null || true; \
+	done
 	@echo ""
 	@echo "=== Kind cluster setup complete ==="
 	@echo "Run 'make watch' to start the operator with live reload."
+
+.PHONY: seaweedfs-init-bucket
+seaweedfs-init-bucket: ## Create the aim-cache S3 bucket in SeaweedFS.
+	@echo "Creating S3 cache bucket..."
+	@kubectl run seaweedfs-init --namespace=seaweedfs-system --rm -i --restart=Never \
+		--image=alpine/curl:latest -- \
+		sh -c 'curl -sf -X PUT http://seaweedfs-s3.seaweedfs-system:8333/aim-cache -o /dev/null -w "bucket created (HTTP %{http_code})\n"' || true
+
+.PHONY: seaweedfs-default-config
+seaweedfs-default-config: ## Apply default AIMClusterRuntimeConfig with S3 cache enabled.
+	@echo "Applying default AIMClusterRuntimeConfig..."
+	@kubectl apply -f hack/default-cluster-runtime-config.yaml
+
+.PHONY: cache-warm
+cache-warm: ## Pre-warm the S3 artifact cache with test models.
+	@echo "Pre-warming S3 artifact cache..."
+	@kubectl delete job cache-warm -n aim-system --ignore-not-found
+	@kubectl apply -f hack/cache-warm-job.yaml
+	@kubectl wait --for=condition=complete job/cache-warm -n aim-system --timeout=10m
+	@echo "S3 cache warm complete."
 
 .PHONY: kind-delete
 kind-delete: ## Delete the kind cluster.
@@ -258,8 +283,15 @@ vcluster-create: ## Create personal vcluster, install dependencies, and connect.
 	vcluster create $(VCLUSTER_NAME) --namespace $(VCLUSTER_NAME) -f hack/dependencies/vcluster.yaml
 	@echo "Installing dependencies..."
 	helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
+	@echo "Creating aim-system namespace..."
+	@kubectl create namespace aim-system --dry-run=client -o yaml | kubectl apply -f -
+	@echo "Installing CRDs..."
+	@$(MAKE) install
 	@echo "Installing RBAC..."
 	@kustomize build config/local-dev-kind | kubectl apply -f - --server-side
+	@$(MAKE) seaweedfs-init-bucket
+	@$(MAKE) seaweedfs-default-config
+	@$(MAKE) cache-warm
 	@echo "vCluster '$(VCLUSTER_NAME)' ready."
 
 .PHONY: vcluster-delete

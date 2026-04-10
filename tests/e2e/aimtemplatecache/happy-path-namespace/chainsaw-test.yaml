@@ -32,7 +32,7 @@ spec:
                   aim.eai.amd.com/template.index: "0"
                   aim.eai.amd.com/template.scope: "Namespace"
               spec:
-                sourceUri: hf://sshleifer/tiny-gpt2
+                sourceUri: hf://HuggingFaceTB/SmolLM2-135M
                 size: 2Gi
                 env:
                   - name: HF_TOKEN
@@ -47,7 +47,7 @@ spec:
                   aim.eai.amd.com/template.index: "1"
                   aim.eai.amd.com/template.scope: "Namespace"
               spec:
-                sourceUri: hf://HuggingFaceTB/SmolLM-135M
+                sourceUri: hf://HuggingFaceTB/SmolLM2-135M
                 size: 4Gi
 
     # TODO add an assert to check the template cache becomes ready (once the artifact is merged)
