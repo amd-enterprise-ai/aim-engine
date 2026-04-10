@@ -228,7 +228,7 @@ type AIMServiceTemplateStatus struct {
 
 	// Profile contains the full discovery result profile as a free-form JSON object.
 	// This includes metadata, engine args, environment variables, and model details.
-	Profile *AIMProfile `json:"profile,omitempty"`
+	Profile *AIMDiscoveredProfile `json:"profile,omitempty"`
 
 	// DiscoveryJob is a reference to the job that was run for discovery
 	DiscoveryJob *AIMResolvedReference `json:"discoveryJob,omitempty"`
@@ -280,7 +280,7 @@ func (s *AIMServiceTemplateStatus) GetAIMStatus() constants.AIMStatus {
 	return s.Status
 }
 
-// AIMProfile contains the cached discovery results for a template.
+// AIMDiscoveredProfile contains the cached discovery results for a template.
 // This is the processed and validated version of AIMDiscoveryProfile that is stored
 // in the template's status after successful discovery.
 //
@@ -290,7 +290,7 @@ func (s *AIMServiceTemplateStatus) GetAIMStatus() constants.AIMStatus {
 //
 // See discovery.go for AIMDiscoveryProfile (the raw discovery output) and the
 // relationship between these types.
-type AIMProfile struct {
+type AIMDiscoveredProfile struct {
 	// EngineArgs contains runtime-specific engine configuration as a free-form JSON object.
 	// The structure depends on the inference engine being used (e.g., vLLM, TGI).
 	// These arguments are passed to the runtime container to configure model loading and inference.

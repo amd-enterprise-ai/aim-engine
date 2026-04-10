@@ -7,7 +7,10 @@ This page describes how AIM Engine manages resource ownership, status transition
 AIM Engine uses Kubernetes owner references to express resource relationships. When an owner is deleted, its owned resources are garbage collected automatically.
 
 ```
-AIMServiceTemplate
+AIMProfile / AIMClusterProfile
+    (standalone — no owned child resources)
+
+AIMServiceTemplate (deprecated — use Profiles)
     └── AIMTemplateCache (owned by template)
             └── AIMArtifact (owned by template cache)
                     └── PVC + Download Job (owned by artifact)

@@ -563,5 +563,6 @@ If using `spec.model.image` directly, verify the image URI is accessible and the
 
 - [Runtime Configuration](../concepts/runtime-config.md) - Configure runtime settings and credentials
 - [Models](../concepts/models.md) - Understanding the model catalog
-- [Templates](../concepts/templates.md) - Deep dive on templates and discovery
+- [Profiles](../concepts/profiles.md) - Self-contained runtime configurations (v1alpha2, recommended)
+- [Templates](../concepts/templates.md) - Templates and discovery (v1alpha1, deprecated)
 - [Model Caching](../concepts/caching.md) - Cache lifecycle and deletion behavior

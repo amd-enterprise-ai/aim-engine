@@ -1,0 +1,50 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimprofile-namespace-scoped
+spec:
+  description: |
+    Tests that a namespace-scoped AIMProfile works correctly.
+    Creates a profile without accelerator requirements and verifies it becomes Ready
+    with correct status fields including version extraction and hardware summary.
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create namespace-scoped profile
+      try:
+        - apply:
+            file: profile.yaml
+
+    - name: Verify profile becomes Ready
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: test-ns-profile
+              status:
+                status: Ready
+                version: 2.0.0
+                hardwareSummary: CPU
+
+    - name: Verify spec fields are preserved
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: test-ns-profile
+              spec:
+                aimId: test/namespace-scoped-model
+                profileId: vllm-thr-fp16-tp1
+                engine: vllm
+                metric: throughput
+                precision: fp16
+                type: general
+                primary: false
+                modelSources:
+                  - modelId: test/namespace-scoped-model-fp16
+                    sourceUri: hf://test/namespace-scoped-model-fp16

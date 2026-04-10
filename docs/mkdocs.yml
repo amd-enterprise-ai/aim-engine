@@ -91,12 +91,14 @@ nav:
       - AIM Services: concepts/services.md
       - AIM Models: concepts/models.md
       - Model Sources: concepts/model-sources.md
-      - Service Templates: concepts/templates.md
+      - Profiles: concepts/profiles.md
+      - Service Templates (v1alpha1): concepts/templates.md
       - Runtime Configuration: concepts/runtime-config.md
       - Model Caching: concepts/caching.md
       - Resource Lifecycle: concepts/resource-lifecycle.md
   - Reference:
-      - CRD API: reference/api/v1alpha1.md
+      - CRD API (v1alpha2): reference/api/v1alpha2.md
+      - CRD API (v1alpha1): reference/api/v1alpha1.md
       - Helm Chart Values: reference/helm-values.md
       - CLI and Operator Flags: reference/cli.md
       - Environment Variables: reference/environment-variables.md

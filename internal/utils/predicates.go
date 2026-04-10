@@ -126,5 +126,6 @@ func resourcesContainGPUChanges(oldResources, newResources corev1.ResourceList) 
 
 func isGPUKey(key string) bool {
 	return strings.HasPrefix(key, "amd.com/") ||
-		strings.HasPrefix(key, "beta.amd.com/")
+		strings.HasPrefix(key, "beta.amd.com/") ||
+		strings.HasPrefix(key, "feature.node.kubernetes.io/aim-accelerator-model.")
 }

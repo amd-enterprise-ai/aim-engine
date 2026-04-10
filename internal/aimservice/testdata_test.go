@@ -257,7 +257,7 @@ func NewTemplate(name string) *TemplateBuilder {
 			Spec: aimv1alpha1.AIMServiceTemplateSpec{},
 			Status: aimv1alpha1.AIMServiceTemplateStatus{
 				Status: constants.AIMStatusReady,
-				Profile: &aimv1alpha1.AIMProfile{
+				Profile: &aimv1alpha1.AIMDiscoveredProfile{
 					Metadata: aimv1alpha1.AIMProfileMetadata{
 						Type: aimv1alpha1.AIMProfileTypeOptimized,
 					},
@@ -336,7 +336,7 @@ func NewClusterTemplate(name string) *ClusterTemplateBuilder {
 			Spec: aimv1alpha1.AIMClusterServiceTemplateSpec{},
 			Status: aimv1alpha1.AIMServiceTemplateStatus{
 				Status: constants.AIMStatusReady,
-				Profile: &aimv1alpha1.AIMProfile{
+				Profile: &aimv1alpha1.AIMDiscoveredProfile{
 					Metadata: aimv1alpha1.AIMProfileMetadata{
 						Type: aimv1alpha1.AIMProfileTypeOptimized,
 					},
@@ -399,7 +399,7 @@ func NewCandidate(name string) *CandidateBuilder {
 			Scope:     aimv1alpha1.AIMResolutionScopeNamespace,
 			Status: aimv1alpha1.AIMServiceTemplateStatus{
 				Status: constants.AIMStatusReady,
-				Profile: &aimv1alpha1.AIMProfile{
+				Profile: &aimv1alpha1.AIMDiscoveredProfile{
 					Metadata: aimv1alpha1.AIMProfileMetadata{
 						Type: aimv1alpha1.AIMProfileTypeOptimized,
 					},

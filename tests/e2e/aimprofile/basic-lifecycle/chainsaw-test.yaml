@@ -1,0 +1,76 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimprofile-basic-lifecycle
+spec:
+  description: |
+    Tests the basic lifecycle of AIMClusterProfile for both Ready and NotAvailable paths.
+    1. A profile WITHOUT spec.accelerator becomes Ready (no hardware constraints).
+       Verifies status fields: status, version, hardwareSummary, primary default, and conditions.
+    2. A profile WITH spec.accelerator (requesting a GPU not present in kind) becomes NotAvailable.
+       Verifies matchingNodes=0 and HardwareNotAvailable condition.
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create profiles (CPU-only and GPU-requiring)
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - apply:
+            file: gpu-profile.yaml
+
+    - name: Verify CPU profile becomes Ready
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-basic-lifecycle-profile
+              status:
+                status: Ready
+                version: 1.0.0
+                hardwareSummary: CPU
+              spec:
+                primary: true
+
+    - name: Verify CPU profile HardwareAvailable condition
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-basic-lifecycle-profile
+              status:
+                (conditions[?type == 'HardwareAvailable']):
+                  - status: "True"
+                    reason: NoAcceleratorSpecified
+
+    - name: Verify GPU profile becomes NotAvailable (no MI300X in kind cluster)
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-gpu-not-available-profile
+              status:
+                status: NotAvailable
+                matchingNodes: 0
+                hardwareSummary: 1 x MI300X
+
+    - name: Verify GPU profile HardwareNotAvailable condition
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-gpu-not-available-profile
+              status:
+                (conditions[?type == 'HardwareAvailable']):
+                  - status: "False"
+                    reason: HardwareNotAvailable

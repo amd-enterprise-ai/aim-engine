@@ -24,17 +24,31 @@ GPU preference scoring (highest to lowest): MI325X > MI300X > MI250X > MI210.
 
 ## GPU Resource Requests
 
-Templates specify GPU requirements that translate to Kubernetes resource requests:
+Profiles (v1alpha2) and templates (v1alpha1) specify GPU requirements that translate to Kubernetes resource requests:
 
-```yaml
-# In an AIMServiceTemplate profile
-hardware:
-  gpu:
-    model: MI300X
-    requests: 4
-```
+=== "Profile (v1alpha2)"
 
-This results in the inference pod requesting `amd.com/gpu: 4`.
+    ```yaml
+    # In an AIMProfile / AIMClusterProfile
+    spec:
+      accelerator:
+        model: MI300X
+      resources:
+        requests:
+          amd.com/gpu: "4"
+    ```
+
+=== "Template (v1alpha1, deprecated)"
+
+    ```yaml
+    # In an AIMServiceTemplate
+    hardware:
+      gpu:
+        model: MI300X
+        requests: 4
+    ```
+
+Both result in the inference pod requesting `amd.com/gpu: 4`. Profiles use standard Kubernetes `ResourceRequirements` directly, while templates use a simplified `hardware` abstraction.
 
 ## Node Affinity
 

@@ -432,18 +432,18 @@ type discoveryModelResult struct {
 // ParsedDiscovery holds the parsed discovery result.
 type ParsedDiscovery struct {
 	ModelSources []aimv1alpha1.AIMModelSource
-	Profile      *aimv1alpha1.AIMProfile
+	Profile      *aimv1alpha1.AIMDiscoveredProfile
 }
 
-// convertToAIMProfile converts the raw discovery profile to AIMProfile API type.
-func convertToAIMProfile(raw discoveryProfileResult) (*aimv1alpha1.AIMProfile, error) {
+// convertToAIMDiscoveredProfile converts the raw discovery profile to AIMDiscoveredProfile API type.
+func convertToAIMDiscoveredProfile(raw discoveryProfileResult) (*aimv1alpha1.AIMDiscoveredProfile, error) {
 	// Marshal engine args to JSON
 	engineArgsBytes, err := json.Marshal(raw.EngineArgs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal engine args: %w", err)
 	}
 
-	return &aimv1alpha1.AIMProfile{
+	return &aimv1alpha1.AIMDiscoveredProfile{
 		EngineArgs: &apiextensionsv1.JSON{Raw: engineArgsBytes},
 		EnvVars:    raw.EnvVars,
 		Metadata: aimv1alpha1.AIMProfileMetadata{
@@ -616,7 +616,7 @@ func ParseDiscoveryLogs(ctx context.Context, c client.Client, clientset kubernet
 	result := results[0]
 
 	// Convert raw discovery profile to AIMProfile
-	profile, err := convertToAIMProfile(result.Profile)
+	profile, err := convertToAIMDiscoveredProfile(result.Profile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert profile: %w", err)
 	}

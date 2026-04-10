@@ -50,6 +50,7 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -62,6 +63,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(aimv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(aimv1alpha2.AddToScheme(scheme))
 
 	// Register Gateway API schemes
 	utilruntime.Must(gatewayapiv1.Install(scheme))
@@ -278,6 +280,22 @@ func main() {
 		Clientset: clientset,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AIMService")
+		os.Exit(1)
+	}
+	if err := (&controller.AIMProfileReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Clientset: clientset,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AIMProfile")
+		os.Exit(1)
+	}
+	if err := (&controller.AIMClusterProfileReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Clientset: clientset,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterProfile")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

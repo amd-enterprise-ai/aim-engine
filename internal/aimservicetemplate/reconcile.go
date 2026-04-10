@@ -767,11 +767,11 @@ func decorateTemplateStatusCommon(
 		"Waiting for discovery to complete")
 }
 
-// buildProfileFromSpec creates an AIMProfile from template spec for custom models.
+// buildProfileFromSpec creates an AIMDiscoveredProfile from template spec for custom models.
 // This is used when discovery doesn't run (inline model sources) to populate
 // the status.Profile with GPU count and other metadata from the spec.
-func buildProfileFromSpec(spec *aimv1alpha1.AIMServiceTemplateSpecCommon) *aimv1alpha1.AIMProfile {
-	profile := &aimv1alpha1.AIMProfile{
+func buildProfileFromSpec(spec *aimv1alpha1.AIMServiceTemplateSpecCommon) *aimv1alpha1.AIMDiscoveredProfile {
+	profile := &aimv1alpha1.AIMDiscoveredProfile{
 		Metadata: aimv1alpha1.AIMProfileMetadata{},
 	}
 

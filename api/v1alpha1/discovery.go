@@ -40,7 +40,7 @@ import (
 // 4. Returns structured metadata that is cached in the template's status
 //
 // The types in this file capture both the intermediate discovery output (AIMDiscoveryProfile)
-// and the final cached profile (AIMProfile in aimservicetemplate_types.go).
+// and the final cached profile (AIMDiscoveredProfile in aimservicetemplate_shared.go).
 
 // ProfileDiscoveryStatusEnum tracks the lifecycle of discovery for a specific deployment profile.
 // A single image may have multiple profiles (e.g., latency-optimized for MI300X, throughput-optimized for MI325X).
@@ -72,9 +72,9 @@ const (
 // GPU type, and GPU count. A single image may produce multiple profiles for different hardware
 // configurations.
 //
-// Relationship to AIMProfile:
+// Relationship to AIMDiscoveredProfile:
 // - AIMDiscoveryProfile: Raw discovery job output, used during initial inspection
-// - AIMProfile (in aimservicetemplate_types.go): Processed and cached in template status
+// - AIMDiscoveredProfile (in aimservicetemplate_shared.go): Processed and cached in template status
 //
 // Both types have identical structure but serve different lifecycle stages.
 type AIMDiscoveryProfile struct {

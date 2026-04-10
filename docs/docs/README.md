@@ -53,7 +53,7 @@ AIM Engine automatically resolves the model, selects an optimal runtime configur
 ## Key Features
 
 - **Simple Service Deployment** -- Deploy inference endpoints with minimal configuration using `AIMService` resources
-- **Automatic Optimization** -- Smart template selection picks the best runtime profile based on GPU availability, precision, and optimization goals
+- **Automatic Optimization** -- Smart profile selection picks the best runtime configuration based on GPU availability, precision, and optimization goals
 - **Model Catalog** -- Maintain a catalog of available models with automatic discovery from container registries
 - **Model Caching** -- Pre-download model artifacts to shared PVCs for faster startup and reduced bandwidth
 - **HTTP Routing** -- Expose services through Gateway API with customizable path templates
@@ -96,14 +96,16 @@ Task-oriented walkthroughs for common workflows:
 - [AIM Services](concepts/services.md) -- Service deployment lifecycle, template selection, and caching
 - [AIM Models](concepts/models.md) -- Model catalog, discovery, and resolution
 - [Model Sources](concepts/model-sources.md) -- Automatic model discovery from container registries
-- [Service Templates](concepts/templates.md) -- Runtime profiles, derivation, and discovery cache
+- [Profiles](concepts/profiles.md) -- Self-contained runtime configurations (v1alpha2, recommended)
+- [Service Templates](concepts/templates.md) -- Runtime profiles and discovery cache (v1alpha1, deprecated)
 - [Runtime Configuration](concepts/runtime-config.md) -- Storage defaults, routing, and environment resolution
 - [Model Caching](concepts/caching.md) -- Cache hierarchy, ownership, and deletion behavior
 - [Resource Lifecycle](concepts/resource-lifecycle.md) -- Ownership, finalizers, and deletion behavior
 
 ### Reference
 
-- [CRD API Reference](reference/api/v1alpha1.md) -- Complete API specification for all custom resources
+- [CRD API Reference (v1alpha2)](reference/api/v1alpha2.md) -- API specification for Profiles
+- [CRD API Reference (v1alpha1)](reference/api/v1alpha1.md) -- API specification for all other custom resources
 - [Helm Chart Values](reference/helm-values.md) -- All configurable Helm chart values
 - [CLI and Operator Flags](reference/cli.md) -- Operator binary flags and endpoints
 - [Environment Variables](reference/environment-variables.md) -- Operator and downloader configuration

@@ -71,9 +71,11 @@ rules:
   - aimartifacts/finalizers
   - aimclustermodels/finalizers
   - aimclustermodelsources/finalizers
+  - aimclusterprofiles/finalizers
   - aimclusterruntimeconfigs/finalizers
   - aimclusterservicetemplates/finalizers
   - aimmodels/finalizers
+  - aimprofiles/finalizers
   - aimruntimeconfigs/finalizers
   - aimservices/finalizers
   - aimservicetemplates/finalizers
@@ -86,9 +88,11 @@ rules:
   - aimartifacts/status
   - aimclustermodels/status
   - aimclustermodelsources/status
+  - aimclusterprofiles/status
   - aimclusterruntimeconfigs/status
   - aimclusterservicetemplates/status
   - aimmodels/status
+  - aimprofiles/status
   - aimruntimeconfigs/status
   - aimservices/status
   - aimservicetemplates/status
@@ -97,6 +101,15 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - aim.eai.amd.com
+  resources:
+  - aimclusterprofiles
+  - aimprofiles
+  verbs:
+  - get
+  - list
+  - watch
 - apiGroups:
   - autoscaling
   resources:

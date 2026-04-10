@@ -1,0 +1,13 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterProfile
+metadata:
+  name: test-basic-lifecycle-profile
+spec:
+  aimId: test/basic-lifecycle-model
+  modelId: test/basic-lifecycle-model-fp8
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: optimized
+  primary: true
+  image: registry.example.com/test-image:1.0.0

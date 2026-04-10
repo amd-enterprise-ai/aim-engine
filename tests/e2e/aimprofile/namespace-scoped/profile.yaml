@@ -1,0 +1,22 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: test-ns-profile
+spec:
+  aimId: test/namespace-scoped-model
+  modelId: test/namespace-scoped-model-fp16
+  profileId: vllm-thr-fp16-tp1
+  engine: vllm
+  metric: throughput
+  precision: fp16
+  type: general
+  primary: false
+  image: registry.example.com/test-image:2.0.0
+  engineArgs:
+    distributed_executor_backend: mp
+    gpu-memory-utilization: "0.90"
+  engineEnv:
+    VLLM_DO_NOT_TRACK: "1"
+  modelSources:
+    - modelId: test/namespace-scoped-model-fp16
+      sourceUri: hf://test/namespace-scoped-model-fp16

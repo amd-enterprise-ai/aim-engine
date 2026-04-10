@@ -2,12 +2,14 @@
 # since it depends on service name and namespace that are out of this kustomize package.
 # It should be run by config/default
 resources:
+- bases/aim.eai.amd.com_aimartifacts.yaml
 - bases/aim.eai.amd.com_aimclustermodels.yaml
 - bases/aim.eai.amd.com_aimclustermodelsources.yaml
+- bases/aim.eai.amd.com_aimclusterprofiles.yaml
 - bases/aim.eai.amd.com_aimclusterruntimeconfigs.yaml
 - bases/aim.eai.amd.com_aimclusterservicetemplates.yaml
-- bases/aim.eai.amd.com_aimartifacts.yaml
 - bases/aim.eai.amd.com_aimmodels.yaml
+- bases/aim.eai.amd.com_aimprofiles.yaml
 - bases/aim.eai.amd.com_aimruntimeconfigs.yaml
 - bases/aim.eai.amd.com_aimservices.yaml
 - bases/aim.eai.amd.com_aimservicetemplates.yaml

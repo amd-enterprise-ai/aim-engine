@@ -1,5 +1,10 @@
 # Service Templates
 
+!!! warning "Deprecated"
+    Service Templates (`AIMServiceTemplate` / `AIMClusterServiceTemplate`) are part of the `v1alpha1` API and are **deprecated**. They will be removed in a future release. New deployments should use [Profiles](profiles.md) (`v1alpha2`), which provide a self-contained runtime configuration without requiring model lookups for the deployment image.
+
+    Existing v1alpha1 Service Templates continue to work during the transition period. Both API versions coexist in the same cluster.
+
 Service Templates define runtime configurations for models and serve as a discovery cache. This document explains the template architecture, discovery mechanism, and lifecycle management.
 
 ## Overview
@@ -459,6 +464,7 @@ The container image may not be a valid AIM container image or may not publish mo
 
 ## Related Documentation
 
+- [Profiles](profiles.md) - Self-contained runtime configurations (v1alpha2, recommended)
 - [Models](models.md) - Understanding the model catalog and discovery
 - [Runtime Config Concepts](runtime-config.md) - Resolution algorithm
 - [Model Caching](caching.md) - Cache lifecycle and deletion behavior

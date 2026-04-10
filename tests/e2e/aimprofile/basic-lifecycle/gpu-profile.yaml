@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterProfile
+metadata:
+  name: test-gpu-not-available-profile
+spec:
+  aimId: test/gpu-model
+  modelId: test/gpu-model-fp8
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: optimized
+  primary: false
+  image: registry.example.com/test-gpu-image:1.0.0
+  acceleratorModel: MI300X
+  acceleratorType: gpu
+  acceleratorCount: 1

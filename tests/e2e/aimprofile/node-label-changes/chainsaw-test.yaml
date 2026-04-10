@@ -1,0 +1,65 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimprofile-node-label-changes
+spec:
+  # Skip: This test modifies node labels which is not safe for shared clusters.
+  skip: true
+  description: |
+    Tests that AIMClusterProfile reacts to node GPU label changes.
+    When the required accelerator label is absent, the profile should be NotAvailable.
+    When the label is added, the profile should become Ready.
+    When the label is removed, it should revert to NotAvailable.
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create profile requiring MI355X accelerator
+      try:
+        - apply:
+            file: profile.yaml
+
+    - name: Verify profile is NotAvailable (no MI355X nodes)
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-node-label-profile
+              status:
+                status: NotAvailable
+                matchingNodes: 0
+
+    - name: Add MI355X label to a node and verify profile becomes Ready
+      try:
+        - script:
+            content: |
+              NODE=$(kubectl get nodes --sort-by=.metadata.name -o jsonpath='{.items[0].metadata.name}')
+              kubectl label node "$NODE" feature.node.kubernetes.io/aim-accelerator-model.MI355X="" --overwrite
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-node-label-profile
+              status:
+                status: Ready
+      finally:
+        - script:
+            content: |
+              NODE=$(kubectl get nodes --sort-by=.metadata.name -o jsonpath='{.items[0].metadata.name}')
+              kubectl label node "$NODE" feature.node.kubernetes.io/aim-accelerator-model.MI355X- 2>/dev/null || true
+
+    - name: Verify profile reverts to NotAvailable after label removal
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-node-label-profile
+              status:
+                status: NotAvailable

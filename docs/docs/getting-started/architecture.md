@@ -22,7 +22,8 @@ graph TB
     end
 
     subgraph Managed["Managed Resources"]
-        Template["AIMServiceTemplate /<br/>AIMClusterServiceTemplate"]
+        Profile["AIMProfile /<br/>AIMClusterProfile"]
+        Template["AIMServiceTemplate /<br/>AIMClusterServiceTemplate<br/><small>(deprecated)</small>"]
         TemplateCache["AIMTemplateCache"]
         Artifact["AIMArtifact"]
         ISVC["KServe<br/>InferenceService"]
@@ -41,7 +42,9 @@ graph TB
     ModelSource -->|discovers| AIMModel
     RuntimeConfig --> Reconciler
 
+    ModelCtrl --> Profile
     Reconciler --> Selection
+    Selection --> Profile
     Selection --> Template
     Reconciler --> CacheCtrl
     CacheCtrl --> TemplateCache
@@ -88,14 +91,15 @@ flowchart LR
 
 ## Component Overview
 
-| Component | Purpose | Scope |
-|-----------|---------|-------|
-| **AIMService** | Primary resource for deploying inference endpoints | Namespace |
-| **AIMModel** / **AIMClusterModel** | Maps model names to container images | Namespace / Cluster |
-| **AIMServiceTemplate** / **AIMClusterServiceTemplate** | Defines runtime profiles (GPU, precision, optimization) | Namespace / Cluster |
-| **AIMRuntimeConfig** / **AIMClusterRuntimeConfig** | Provides storage defaults, routing, and environment variables | Namespace / Cluster |
-| **AIMClusterModelSource** | Discovers models automatically from container registries | Cluster |
-| **AIMArtifact** | Manages model artifact downloads to persistent volumes | Namespace |
+| Component | API Version | Purpose | Scope |
+|-----------|-------------|---------|-------|
+| **AIMService** | v1alpha1 | Primary resource for deploying inference endpoints | Namespace |
+| **AIMModel** / **AIMClusterModel** | v1alpha1 | Maps model names to container images | Namespace / Cluster |
+| **AIMProfile** / **AIMClusterProfile** | v1alpha2 | Self-contained runtime configurations (accelerator, resources, engine config, image) | Namespace / Cluster |
+| **AIMServiceTemplate** / **AIMClusterServiceTemplate** | v1alpha1 | Runtime profiles (deprecated — use Profiles) | Namespace / Cluster |
+| **AIMRuntimeConfig** / **AIMClusterRuntimeConfig** | v1alpha1 | Provides storage defaults, routing, and environment variables | Namespace / Cluster |
+| **AIMClusterModelSource** | v1alpha1 | Discovers models automatically from container registries | Cluster |
+| **AIMArtifact** | v1alpha1 | Manages model artifact downloads to persistent volumes | Namespace |
 
 ## Cluster vs Namespace Scoping
 
@@ -104,7 +108,8 @@ Several CRDs have both a namespace-scoped and a cluster-scoped variant:
 | Namespace-Scoped | Cluster-Scoped | Purpose |
 |-----------------|----------------|---------|
 | `AIMModel` | `AIMClusterModel` | Model definitions |
-| `AIMServiceTemplate` | `AIMClusterServiceTemplate` | Runtime profiles |
+| `AIMProfile` | `AIMClusterProfile` | Self-contained runtime configurations (v1alpha2) |
+| `AIMServiceTemplate` | `AIMClusterServiceTemplate` | Runtime profiles (v1alpha1, deprecated) |
 | `AIMRuntimeConfig` | `AIMClusterRuntimeConfig` | Storage, routing, and environment defaults |
 
 **Cluster-scoped** resources are shared across all namespaces. A cluster admin creates them to provide platform-wide defaults: a model catalog, validated runtime profiles, and shared configuration.

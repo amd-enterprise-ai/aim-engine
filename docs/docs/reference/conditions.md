@@ -142,7 +142,22 @@ Tracks whether the predictor pods are running and ready.
 | `False` | `CreatingTemplates` | Creating service templates |
 | `False` | `MetadataExtractionFailed` | Failed to extract model metadata |
 
+## AIMProfile / AIMClusterProfile Conditions
+
+### HardwareAvailable
+
+Reports whether the cluster has nodes matching the profile's accelerator labels and resource requests.
+
+| Status | Reason | Description |
+|--------|--------|-------------|
+| `True` | `HardwareAvailable` | Matching nodes found in cluster |
+| `True` | `NoAcceleratorSpecified` | No accelerator requirements — profile is always available |
+| `False` | `HardwareNotAvailable` | No cluster nodes match accelerator labels and resource requests |
+
 ## AIMServiceTemplate / AIMClusterServiceTemplate Conditions
+
+!!! note
+    Service Templates are part of the `v1alpha1` API and are deprecated in favor of [Profiles](../concepts/profiles.md) (`v1alpha2`).
 
 ### Discovered
 

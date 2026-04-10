@@ -17,7 +17,7 @@ Cluster-scoped models are typically installed by administrators through GitOps w
 
 Cluster models provide a consistent baseline across all namespaces. Any namespace can reference a cluster model unless it defines a namespace-scoped model with the same name, which takes precedence.
 
-**Discovery for cluster models** runs in the operator namespace (default: `aim-system`). Auto-generated templates are created as cluster-scoped resources.
+**Discovery for cluster models** runs in the operator namespace (default: `aim-system`). Auto-generated templates are created as cluster-scoped resources. When a cluster model uses the `v1alpha2` API, discovery also creates [AIMClusterProfiles](profiles.md).
 
 ### AIMModel
 
@@ -29,7 +29,7 @@ Namespace-scoped models allow teams to:
 
 When both cluster and namespace models exist with the same `metadata.name`, the namespace resource takes precedence within that namespace.
 
-**Discovery for namespace models** runs in the model's namespace. Auto-generated templates are created as namespace-scoped resources.
+**Discovery for namespace models** runs in the model's namespace. Auto-generated templates are created as namespace-scoped resources. When a namespace model uses the `v1alpha2` API, discovery also creates [AIMProfiles](profiles.md).
 
 ## Model Specification
 
@@ -640,7 +640,8 @@ spec:
 
 ## Related Documentation
 
-- [Templates](templates.md) - Understanding ServiceTemplates and discovery
+- [Profiles](profiles.md) - Self-contained runtime configurations (v1alpha2)
+- [Templates](templates.md) - ServiceTemplates and discovery (v1alpha1, deprecated)
 - [Runtime Config Concepts](runtime-config.md) - Resolution details including model creation
 - [Services Usage](../guides/deploying-services.md) - Deploying services
 - [Caching](caching.md) - Model caching and download architecture

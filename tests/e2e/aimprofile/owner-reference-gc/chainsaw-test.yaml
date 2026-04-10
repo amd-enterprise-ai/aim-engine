@@ -1,0 +1,68 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimprofile-owner-reference-gc
+spec:
+  description: |
+    Tests that a namespace-scoped AIMProfile with an ownerReference is garbage-collected
+    when the owner is deleted. Creates a ConfigMap as the owner, sets an ownerReference
+    on the profile, then deletes the ConfigMap and verifies the profile is cleaned up.
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create parent ConfigMap
+      try:
+        - apply:
+            file: parent-configmap.yaml
+
+    - name: Create profile owned by the ConfigMap
+      try:
+        - script:
+            content: |
+              CM_UID=$(kubectl get configmap test-owner-parent -n $NAMESPACE -o jsonpath='{.metadata.uid}')
+              cat <<EOF | kubectl apply -f -
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: test-owned-profile
+                namespace: $NAMESPACE
+                ownerReferences:
+                  - apiVersion: v1
+                    kind: ConfigMap
+                    name: test-owner-parent
+                    uid: "${CM_UID}"
+                    blockOwnerDeletion: true
+              spec:
+                aimId: test/gc-model
+                image: registry.example.com/test-image:1.0.0
+              EOF
+
+    - name: Verify profile exists and becomes Ready
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: test-owned-profile
+              status:
+                status: Ready
+
+    - name: Delete the parent ConfigMap
+      try:
+        - delete:
+            ref:
+              apiVersion: v1
+              kind: ConfigMap
+              name: test-owner-parent
+
+    - name: Verify profile is garbage-collected
+      try:
+        - error:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: test-owned-profile

@@ -1,6 +1,9 @@
 # Services
 
-An AIMService is the primary resource for deploying AI/ML models as inference endpoints on Kubernetes. It brings together a Model and a ServiceTemplate to create a running KServe InferenceService.
+An AIMService is the primary resource for deploying AI/ML models as inference endpoints on Kubernetes. It brings together a Model and a runtime configuration — either a [Profile](profiles.md) (`v1alpha2`) or a [Service Template](templates.md) (`v1alpha1`, deprecated) — to create a running KServe InferenceService.
+
+!!! tip "Profiles vs Service Templates"
+    The AIMService `spec.template` field currently references v1alpha1 Service Templates. The transition to v1alpha2 Profiles is in progress. New runtime configurations should be created as [Profiles](profiles.md) to prepare for the migration.
 
 ## Overview
 
@@ -86,7 +89,7 @@ When resolving by image URI, AIM Engine searches both namespace and cluster-scop
 
 ## Template Resolution
 
-Templates define how to run a model: GPU requirements, precision, optimization metric, environment variables, and more.
+Templates define how to run a model: GPU requirements, precision, optimization metric, environment variables, and more. In the current API, AIMService references v1alpha1 Service Templates. These will be replaced by [Profiles](profiles.md) in a future AIMService API update.
 
 ### Explicit Template
 

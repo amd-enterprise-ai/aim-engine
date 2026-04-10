@@ -563,6 +563,34 @@ _Appears in:_
 | `customProfile` _[AIMCustomProfile](#aimcustomprofile)_ | CustomProfile defines inline custom profile data for the inference engine.<br />When set, the resulting template will have a custom profile ConfigMap mounted.<br />Requires aimId, modelId, hardware, profile.metric, and profile.precision. |  | Optional: \{\} <br /> |
 
 
+#### AIMDiscoveredProfile
+
+
+
+AIMDiscoveredProfile contains the cached discovery results for a template.
+This is the processed and validated version of AIMDiscoveryProfile that is stored
+in the template's status after successful discovery.
+
+The profile serves as a cache of runtime configuration, eliminating the need to
+re-run discovery for each service that uses this template. Services and caching
+mechanisms reference this cached profile for deployment parameters and model sources.
+
+See discovery.go for AIMDiscoveryProfile (the raw discovery output) and the
+relationship between these types.
+
+
+
+_Appears in:_
+- [AIMServiceTemplateStatus](#aimservicetemplatestatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `engine_args` _[JSON](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#json-v1-apiextensions-k8s-io)_ | EngineArgs contains runtime-specific engine configuration as a free-form JSON object.<br />The structure depends on the inference engine being used (e.g., vLLM, TGI).<br />These arguments are passed to the runtime container to configure model loading and inference. |  | Schemaless: \{\} <br /> |
+| `env_vars` _object (keys:string, values:string)_ | EnvVars contains environment variables required by the runtime for this profile.<br />These may include engine-specific settings, optimization flags, or hardware configuration. |  | Optional: \{\} <br /> |
+| `metadata` _[AIMProfileMetadata](#aimprofilemetadata)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `originalDiscoveryOutput` _[JSON](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#json-v1-apiextensions-k8s-io)_ | OriginalDiscoveryOutput contains the raw discovery job JSON output.<br />This preserves the complete discovery result from the dry-run container,<br />including all fields that may not be mapped to structured fields above. |  | Schemaless: \{\} <br />Optional: \{\} <br /> |
+
+
 
 
 #### AIMDiscoveryProfileMetadata
@@ -882,34 +910,6 @@ _Appears in:_
 | `int8` |  |
 
 
-#### AIMProfile
-
-
-
-AIMProfile contains the cached discovery results for a template.
-This is the processed and validated version of AIMDiscoveryProfile that is stored
-in the template's status after successful discovery.
-
-The profile serves as a cache of runtime configuration, eliminating the need to
-re-run discovery for each service that uses this template. Services and caching
-mechanisms reference this cached profile for deployment parameters and model sources.
-
-See discovery.go for AIMDiscoveryProfile (the raw discovery output) and the
-relationship between these types.
-
-
-
-_Appears in:_
-- [AIMServiceTemplateStatus](#aimservicetemplatestatus)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `engine_args` _[JSON](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#json-v1-apiextensions-k8s-io)_ | EngineArgs contains runtime-specific engine configuration as a free-form JSON object.<br />The structure depends on the inference engine being used (e.g., vLLM, TGI).<br />These arguments are passed to the runtime container to configure model loading and inference. |  | Schemaless: \{\} <br /> |
-| `env_vars` _object (keys:string, values:string)_ | EnvVars contains environment variables required by the runtime for this profile.<br />These may include engine-specific settings, optimization flags, or hardware configuration. |  | Optional: \{\} <br /> |
-| `metadata` _[AIMProfileMetadata](#aimprofilemetadata)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
-| `originalDiscoveryOutput` _[JSON](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#json-v1-apiextensions-k8s-io)_ | OriginalDiscoveryOutput contains the raw discovery job JSON output.<br />This preserves the complete discovery result from the dry-run container,<br />including all fields that may not be mapped to structured fields above. |  | Schemaless: \{\} <br />Optional: \{\} <br /> |
-
-
 #### AIMProfileMetadata
 
 
@@ -920,7 +920,7 @@ This is identical to AIMDiscoveryProfileMetadata but exists in the template stat
 
 
 _Appears in:_
-- [AIMProfile](#aimprofile)
+- [AIMDiscoveredProfile](#aimdiscoveredprofile)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -1703,7 +1703,7 @@ _Appears in:_
 | `hardwareSummary` _string_ | HardwareSummary is a human-readable display string for the hardware requirements.<br />Format: "\{count\} x \{model\}" for GPU (e.g., "2 x MI300X") or "CPU" for CPU-only.<br />This is a computed field for display purposes only. |  | Optional: \{\} <br /> |
 | `status` _[AIMStatus](#aimstatus)_ | Status represents the current high‑level status of the template lifecycle.<br />Values: `Pending`, `Progressing`, `Ready`, `Degraded`, `Failed`. | Pending | Enum: [Pending Progressing Ready Degraded Failed NotAvailable] <br /> |
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources list the models that this template requires to run. These are the models that will be<br />cached, if this template is cached. |  |  |
-| `profile` _[AIMProfile](#aimprofile)_ | Profile contains the full discovery result profile as a free-form JSON object.<br />This includes metadata, engine args, environment variables, and model details. |  |  |
+| `profile` _[AIMDiscoveredProfile](#aimdiscoveredprofile)_ | Profile contains the full discovery result profile as a free-form JSON object.<br />This includes metadata, engine args, environment variables, and model details. |  |  |
 | `discoveryJob` _[AIMResolvedReference](#aimresolvedreference)_ | DiscoveryJob is a reference to the job that was run for discovery |  |  |
 | `discovery` _[DiscoveryState](#discoverystate)_ | Discovery contains state tracking for the discovery process, including<br />retry attempts and backoff timing for the circuit breaker pattern. |  | Optional: \{\} <br /> |
 

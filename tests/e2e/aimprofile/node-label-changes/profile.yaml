@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterProfile
+metadata:
+  name: test-node-label-profile
+spec:
+  aimId: test/node-label-model
+  modelId: test/node-label-model-fp8
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: optimized
+  primary: true
+  image: registry.example.com/test-image:1.0.0
+  acceleratorModel: MI355X
+  acceleratorType: gpu
+  acceleratorCount: 1
