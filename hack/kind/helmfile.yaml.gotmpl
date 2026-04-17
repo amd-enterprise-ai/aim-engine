@@ -1,28 +1,39 @@
 ---
 # Kind-specific dependencies
-# Provides NFS-based RWX storage class for local testing
+# Provides NFS-based RWX storage class for local testing via csi-driver-nfs
+# and a lightweight kernel NFS server (nfs-server-alpine).
 repositories:
-  - name: nfs-ganesha-server-and-external-provisioner
-    url: https://kubernetes-sigs.github.io/nfs-ganesha-server-and-external-provisioner/
+  - name: csi-driver-nfs
+    url: https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts
 
 releases:
-  - name: nfs-server-provisioner
-    namespace: nfs-system
-    chart: nfs-ganesha-server-and-external-provisioner/nfs-server-provisioner
-    version: 1.8.0
-    createNamespace: true
+  - name: csi-driver-nfs
+    namespace: kube-system
+    chart: csi-driver-nfs/csi-driver-nfs
+    version: 4.12.0
     wait: true
     timeout: 300
     values:
-      - storageClass:
-          name: nfs
-          defaultClass: true
-          reclaimPolicy: Delete
-        persistence:
-          enabled: true
-          storageClass: standard
-          size: 10Gi
+      - storageClasses:
+          - name: nfs
+            annotations:
+              storageclass.kubernetes.io/is-default-class: "true"
+            parameters:
+              server: nfs-server.nfs-system.svc.cluster.local
+              share: /
+            reclaimPolicy: Delete
+            volumeBindingMode: Immediate
+            mountOptions:
+              - nfsvers=4
     hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: sh
+        args:
+          - -c
+          - |
+            kubectl apply -f nfs-server.yaml
+            kubectl wait --for=condition=Ready --timeout=120s pod -l app=nfs-server -n nfs-system
       - events: ["postsync"]
         showlogs: true
         command: kubectl

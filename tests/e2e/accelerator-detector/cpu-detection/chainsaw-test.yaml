@@ -1,0 +1,60 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AcceleratorDetector E2E Test: CPU Detection
+#
+# Validates that the CPU AcceleratorDetector DaemonSet:
+# 1. Runs successfully on CPU nodes
+# 2. Writes NFD feature files that result in aim-accelerator.* node labels
+#
+# Prerequisites:
+# - NFD (Node Feature Discovery) installed on the cluster
+# - CPU AcceleratorDetector DaemonSet deployed with a valid aim-epyc-base image
+# - AMD EPYC CPU hardware available on at least one node
+#
+# This test is environment-specific and excluded from CI.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: accelerator-detector-cpu
+  labels:
+    requires: nfd
+spec:
+  description: Verify CPU AcceleratorDetector DaemonSet detects EPYC CPUs and node labels appear
+  timeouts:
+    assert: 300s
+  steps:
+    - name: Verify CPU DaemonSet pods are running
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: apps/v1
+              kind: DaemonSet
+              metadata:
+                name: aim-engine-accelerator-detector-cpu
+                namespace: aim-system
+              status:
+                (numberReady > `0`): true
+
+    - name: Verify CPU accelerator model label exists on at least one node
+      try:
+        - script:
+            timeout: 180s
+            content: |
+              # Wait for NFD to pick up the feature file and apply labels.
+              for i in $(seq 1 30); do
+                for model in EPYC_9965 EPYC_9755 EPYC_9655 EPYC_9575F EPYC_9175F; do
+                  NODES=$(kubectl get nodes -l "feature.node.kubernetes.io/aim-accelerator.${model}" -o name 2>/dev/null)
+                  if [ -n "$NODES" ]; then
+                    echo "Found CPU-labeled nodes ($model): $NODES"
+                    exit 0
+                  fi
+                done
+                echo "Attempt $i/30: No CPU labels found yet, waiting 6s..."
+                sleep 6
+              done
+              echo "ERROR: No nodes found with aim-accelerator CPU labels after 180s"
+              kubectl get nodes --show-labels | grep aim-accelerator || true
+              exit 1
+

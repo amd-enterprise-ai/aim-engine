@@ -307,6 +307,43 @@ jobs:
             sleep 10
           done
 
+      - name: Verify NFS server and CSI driver readiness
+        run: |
+          echo "--- Waiting for NFS server pod ---"
+          kubectl wait --for=condition=Ready --timeout=180s pod -l app=nfs-server -n nfs-system
+
+          echo "--- Waiting for csi-driver-nfs controller ---"
+          kubectl rollout status deployment/csi-nfs-controller -n kube-system --timeout=180s
+
+          echo "--- Waiting for csi-driver-nfs node DaemonSet ---"
+          kubectl rollout status daemonset/csi-nfs-node -n kube-system --timeout=180s
+
+          echo "--- Verifying default StorageClass ---"
+          NFS_DEFAULT="$(kubectl get storageclass nfs -o jsonpath='{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}')"
+          if [ "${NFS_DEFAULT}" != "true" ]; then
+            echo "Expected storageclass 'nfs' to be default but got '${NFS_DEFAULT}'"
+            kubectl get storageclass -o wide
+            exit 1
+          fi
+
+          echo "--- RWX PVC smoke test ---"
+          kubectl create namespace storage-smoke --dry-run=client -o yaml | kubectl apply -f -
+          cat <<'EOF' | kubectl apply -n storage-smoke -f -
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: nfs-smoke-pvc
+          spec:
+            storageClassName: nfs
+            accessModes:
+              - ReadWriteMany
+            resources:
+              requests:
+                storage: 1Mi
+          EOF
+          kubectl wait --for=jsonpath='{.status.phase}'=Bound --timeout=180s pvc/nfs-smoke-pvc -n storage-smoke
+          kubectl delete namespace storage-smoke --wait=false
+
       - name: Install core dependencies
         run: |
           for i in 1 2 3; do
@@ -345,6 +382,7 @@ jobs:
           helm install aim-engine ${CHART_OCI_REPO}/aim-engine-chart \
             --version ${CHART_VERSION} \
             --namespace aim-system \
+            --set acceleratorDetector.enable=false \
             ${HELM_SET_ARGS}
 
       - name: Wait for operator to be ready

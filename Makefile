@@ -121,7 +121,7 @@ kind-create: manifests ## Create kind cluster with all dependencies for local de
 	@# Install core dependencies (cert-manager, kgateway, kserve)
 	@echo "Installing core dependencies..."
 	@helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
-	@# Install kind-specific dependencies (NFS provisioner)
+	@# Install kind-specific dependencies (NFS server + csi-driver-nfs)
 	@echo "Installing kind-specific dependencies..."
 	@helmfile sync -f hack/kind/helmfile.yaml.gotmpl
 	@# Install CRDs
@@ -183,10 +183,10 @@ CHAINSAW_REPORT_DIR := .tmp/chainsaw-reports
 CHAINSAW_CONFIG_DIR := tests/chainsaw/config
 
 # Kind environment: exclude tests requiring GPU, longhorn storage, or external network
-CHAINSAW_SELECTOR_KIND := requires notin (gpu,longhorn,hf_token)
+CHAINSAW_SELECTOR_KIND := requires notin (gpu,longhorn,hf_token,nfd)
 
 # GPU environment: exclude tests that only work on Kind (mocked node labels)
-CHAINSAW_SELECTOR_GPU := requires notin (kind,hf_token)
+CHAINSAW_SELECTOR_GPU := requires notin (kind,hf_token,nfd)
 
 # Select appropriate config based on ENV and CI detection
 # CI is detected via CI env var (set by GitHub Actions, GitLab CI, etc.)

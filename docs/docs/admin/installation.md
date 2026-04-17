@@ -34,6 +34,10 @@ helm install aim-engine oci://docker.io/amdenterpriseai/charts/aim-engine \
   --set 'manager.args={--leader-elect,--metrics-secure=false}'
 ```
 
+### Accelerator Detection
+
+The Helm chart deploys an [AcceleratorDetector](../concepts/accelerator-detection.md) as DaemonSets on cluster nodes. It detects GPUs and CPUs and publishes the results as node labels via NFD, which AIM Engine uses for workload scheduling. [Node Feature Discovery](https://nfd.sigs.k8s.io/) must be installed on the cluster (included with the AMD GPU Operator).
+
 ### CRD Management
 
 CRDs are distributed as a separate Helm chart and should be installed before the operator. See [Installation](../getting-started/installation.md#1-install-crds).

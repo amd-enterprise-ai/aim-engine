@@ -48,6 +48,24 @@ echo "  - Removing CRDs from chart (distributed separately)..."
 rm -rf "${CHART_DIR}/templates/crd"
 
 # ------------------------------------------------------------------------------
+# Remove kustomize-generated accelerator-detector resources from other.yaml
+# These are replaced by the custom Helm template with values support
+# ------------------------------------------------------------------------------
+OTHER_YAML="${CHART_DIR}/templates/other/other.yaml"
+if [[ -f "${OTHER_YAML}" ]]; then
+    echo "  - Removing kustomize-generated accelerator-detector from other.yaml..."
+    python3 -c "
+import re, sys
+with open('${OTHER_YAML}') as f:
+    content = f.read()
+docs = re.split(r'^---$', content, flags=re.MULTILINE)
+filtered = [d for d in docs if 'accelerator-detector' not in d]
+with open('${OTHER_YAML}', 'w') as f:
+    f.write('---'.join(filtered))
+"
+fi
+
+# ------------------------------------------------------------------------------
 # Apply custom values.yaml if it exists
 # Since dist/ is gitignored, we need persistent config in config/helm/
 # ------------------------------------------------------------------------------
@@ -63,6 +81,18 @@ fi
 if [[ -d config/helm/templates ]]; then
     echo "  - Copying custom templates..."
     cp -r config/helm/templates/* "${CHART_DIR}/templates/"
+fi
+
+# ------------------------------------------------------------------------------
+# Copy shared files referenced by Helm templates via .Files.Get
+# The detect-and-label.py script is shared between kustomize (configMapGenerator)
+# and Helm (.Files.Get) to keep a single source of truth.
+# ------------------------------------------------------------------------------
+SCRIPT_SRC="config/accelerator-detector/scripts/detect-and-label.py"
+if [[ -f "${SCRIPT_SRC}" ]]; then
+    echo "  - Copying accelerator-detector script to chart files..."
+    mkdir -p "${CHART_DIR}/files"
+    cp "${SCRIPT_SRC}" "${CHART_DIR}/files/detect-and-label.py"
 fi
 
 echo "Helm chart patching complete."

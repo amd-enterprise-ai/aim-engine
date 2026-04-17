@@ -1,5 +1,8 @@
 # GPU Management
 
+!!! note "AcceleratorDetector"
+    AIM Engine includes an [AcceleratorDetector](../concepts/accelerator-detection.md) that detects GPUs and CPUs via NFD, writing labels under `feature.node.kubernetes.io/aim-accelerator.*`. It is enabled by default. The k8s-device-plugin labels documented below remain supported as a fallback.
+
 AIM Engine detects available GPUs in the cluster and uses this information for template selection and node scheduling.
 
 ## GPU Detection
@@ -62,7 +65,14 @@ Check which GPU labels are present on your nodes:
 kubectl get nodes -o custom-columns='NAME:.metadata.name,DEVICE_ID:.metadata.labels.amd\.com/gpu\.device-id,FAMILY:.metadata.labels.amd\.com/gpu\.family,VRAM:.metadata.labels.amd\.com/gpu\.vram'
 ```
 
+If the AcceleratorDetector is deployed, also check for `aim-accelerator.*` labels:
+
+```bash
+kubectl get nodes --show-labels | grep aim-accelerator
+```
+
 ## Next Steps
 
+- [Accelerator Detection](../concepts/accelerator-detection.md) — Unified hardware detection and NFD labels
 - [AIM Services](../concepts/services.md) — Template selection algorithm
 - [Service Templates](../concepts/templates.md) — Runtime profiles and GPU requirements

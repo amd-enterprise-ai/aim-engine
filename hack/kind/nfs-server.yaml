@@ -1,0 +1,86 @@
+---
+# Lightweight kernel NFS server for Kind clusters.
+# Used by csi-driver-nfs to provision RWX PersistentVolumes.
+# Data is ephemeral (emptyDir) -- acceptable for CI and local dev.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nfs-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfs-server
+  namespace: nfs-system
+  labels:
+    app: nfs-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nfs-server
+  template:
+    metadata:
+      labels:
+        app: nfs-server
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+        - name: nfs-server
+          image: itsthenetwork/nfs-server-alpine:latest
+          env:
+            - name: SHARED_DIRECTORY
+              value: /exports
+          ports:
+            - name: nfs
+              containerPort: 2049
+              protocol: TCP
+            - name: rpcbind
+              containerPort: 111
+              protocol: UDP
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: nfs-data
+              mountPath: /exports
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          livenessProbe:
+            tcpSocket:
+              port: nfs
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: nfs
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: nfs-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nfs-server
+  namespace: nfs-system
+  labels:
+    app: nfs-server
+spec:
+  selector:
+    app: nfs-server
+  ports:
+    - name: nfs
+      port: 2049
+      targetPort: 2049
+      protocol: TCP
+    - name: rpcbind
+      port: 111
+      targetPort: 111
+      protocol: UDP
+  type: ClusterIP

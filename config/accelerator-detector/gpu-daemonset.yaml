@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: accelerator-detector-gpu
+  namespace: system
+  labels:
+    app.kubernetes.io/name: aim-accelerator-detector
+    app.kubernetes.io/component: gpu-detection
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aim-accelerator-detector
+      app.kubernetes.io/component: gpu-detection
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aim-accelerator-detector
+        app.kubernetes.io/component: gpu-detection
+    spec:
+      serviceAccountName: accelerator-detector
+      nodeSelector:
+        feature.node.kubernetes.io/amd-gpu: "true"
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: detector
+          image: accelerator-detector-gpu:latest
+          command: ["python3", "/scripts/detect-and-label.py"]
+          env:
+            - name: DETECT_TYPE
+              value: "gpu"
+            - name: DETECT_INTERVAL
+              value: "300"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          startupProbe:
+            exec:
+              command:
+                - python3
+                - -c
+                - "import os; os.stat('/tmp/healthy')"
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command:
+                - python3
+                - -c
+                - "import os,time;assert time.time()-os.path.getmtime('/tmp/healthy')<720"
+            periodSeconds: 60
+            failureThreshold: 3
+          volumeMounts:
+            - name: nfd-features
+              mountPath: /nfd-features
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: dev-kfd
+              mountPath: /dev/kfd
+              readOnly: true
+            - name: dev-dri
+              mountPath: /dev/dri
+              readOnly: true
+          securityContext:
+            privileged: true
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+      volumes:
+        - name: nfd-features
+          hostPath:
+            path: /etc/kubernetes/node-feature-discovery/features.d/
+            type: DirectoryOrCreate
+        - name: scripts
+          configMap:
+            name: accelerator-detector-script
+            defaultMode: 0755
+        - name: dev-kfd
+          hostPath:
+            path: /dev/kfd
+            type: CharDevice
+        - name: dev-dri
+          hostPath:
+            path: /dev/dri
+            type: Directory

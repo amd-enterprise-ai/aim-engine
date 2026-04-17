@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: accelerator-detector-cpu
+  namespace: system
+  labels:
+    app.kubernetes.io/name: aim-accelerator-detector
+    app.kubernetes.io/component: cpu-detection
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aim-accelerator-detector
+      app.kubernetes.io/component: cpu-detection
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aim-accelerator-detector
+        app.kubernetes.io/component: cpu-detection
+    spec:
+      serviceAccountName: accelerator-detector
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: feature.node.kubernetes.io/amd-gpu
+                    operator: DoesNotExist
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: detector
+          image: accelerator-detector-cpu:latest
+          command: ["python3", "/scripts/detect-and-label.py"]
+          env:
+            - name: DETECT_TYPE
+              value: "cpu"
+            - name: DETECT_INTERVAL
+              value: "300"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          startupProbe:
+            exec:
+              command:
+                - python3
+                - -c
+                - "import os; os.stat('/tmp/healthy')"
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command:
+                - python3
+                - -c
+                - "import os,time;assert time.time()-os.path.getmtime('/tmp/healthy')<720"
+            periodSeconds: 60
+            failureThreshold: 3
+          volumeMounts:
+            - name: nfd-features
+              mountPath: /nfd-features
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: host-proc-cpuinfo
+              mountPath: /proc/cpuinfo
+              readOnly: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+      volumes:
+        - name: nfd-features
+          hostPath:
+            path: /etc/kubernetes/node-feature-discovery/features.d/
+            type: DirectoryOrCreate
+        - name: scripts
+          configMap:
+            name: accelerator-detector-script
+            defaultMode: 0755
+        - name: host-proc-cpuinfo
+          hostPath:
+            path: /proc/cpuinfo
+            type: File

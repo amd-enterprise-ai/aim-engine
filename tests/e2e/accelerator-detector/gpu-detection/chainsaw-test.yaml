@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AcceleratorDetector E2E Test: GPU Detection
+#
+# Validates that the GPU AcceleratorDetector DaemonSet:
+# 1. Runs successfully on GPU nodes
+# 2. Writes NFD feature files that result in aim-accelerator.* node labels
+#
+# Prerequisites:
+# - NFD (Node Feature Discovery) installed on the cluster
+# - GPU AcceleratorDetector DaemonSet deployed with a valid aim-base image
+# - AMD GPU hardware available on at least one node
+#
+# This test is environment-specific and excluded from CI.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: accelerator-detector-gpu
+  labels:
+    requires: nfd
+spec:
+  description: Verify GPU AcceleratorDetector DaemonSet detects GPUs and node labels appear
+  timeouts:
+    assert: 300s
+  steps:
+    - name: Verify GPU DaemonSet pods are running
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: apps/v1
+              kind: DaemonSet
+              metadata:
+                name: aim-engine-accelerator-detector-gpu
+                namespace: aim-system
+              status:
+                (numberReady > `0`): true
+
+    - name: Verify GPU accelerator model label exists on at least one node
+      try:
+        - script:
+            timeout: 180s
+            content: |
+              # Wait for NFD to pick up the feature file and apply labels.
+              # Check for any label matching the aim-accelerator.MI* pattern.
+              for i in $(seq 1 30); do
+                NODES=$(kubectl get nodes -l 'feature.node.kubernetes.io/aim-accelerator.MI300X' -o name 2>/dev/null)
+                if [ -n "$NODES" ]; then
+                  echo "Found GPU-labeled nodes: $NODES"
+                  exit 0
+                fi
+                # Also check for other GPU models
+                for model in MI325X MI350X MI355X MI308X MI300A MI250X MI210; do
+                  NODES=$(kubectl get nodes -l "feature.node.kubernetes.io/aim-accelerator.${model}" -o name 2>/dev/null)
+                  if [ -n "$NODES" ]; then
+                    echo "Found GPU-labeled nodes ($model): $NODES"
+                    exit 0
+                  fi
+                done
+                echo "Attempt $i/30: No GPU labels found yet, waiting 6s..."
+                sleep 6
+              done
+              echo "ERROR: No nodes found with aim-accelerator GPU labels after 180s"
+              kubectl get nodes --show-labels | grep aim-accelerator || true
+              exit 1
+

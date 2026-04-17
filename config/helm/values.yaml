@@ -170,3 +170,86 @@ clusterModelSource:
 
     # -- Maximum number of AIMClusterModel resources to create (prevents runaway creation)
     maxModels: 500
+
+# -- AcceleratorDetector DaemonSets for hardware detection via NFD.
+# Detects GPU and CPU accelerators on cluster nodes and writes NFD feature
+# files so that AIM profiles can target specific hardware. Requires NFD
+# (Node Feature Discovery) to be installed on the cluster.
+acceleratorDetector:
+  # -- Enable the AcceleratorDetector DaemonSets
+  enable: true
+
+  # -- Seconds between re-detection cycles
+  detectInterval: 300
+
+  # -- GPU node detection (uses aim-base image with ROCm/amdsmi).
+  # Detects AMD Instinct GPUs and writes NFD labels like
+  # feature.node.kubernetes.io/aim-accelerator.MI300X=8
+  # Only scheduled on nodes with feature.node.kubernetes.io/amd-gpu=true
+  # (set by the AMD GPU Operator NFD rule).
+  gpu:
+    # -- Enable GPU accelerator detection DaemonSet
+    enable: true
+    image:
+      # -- GPU detector image repository (aim-base)
+      repository: ""
+      # -- GPU detector image tag
+      tag: ""
+      # -- Image pull policy
+      pullPolicy: IfNotPresent
+    # -- Secrets for pulling the GPU detector image from private registries
+    # @default -- `[]`
+    # imagePullSecrets:
+    #   - name: ghcr-pull-secret
+    imagePullSecrets: []
+    # -- Node selector to target GPU nodes (requires AMD GPU Operator NFD rule)
+    # @default -- `{feature.node.kubernetes.io/amd-gpu: "true"}`
+    nodeSelector:
+      feature.node.kubernetes.io/amd-gpu: "true"
+    # -- Tolerations for GPU nodes (defaults to tolerate all taints)
+    # @default -- `[{operator: Exists}]`
+    tolerations: []
+    # -- Resource limits and requests for GPU detector pods
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 50m
+        memory: 128Mi
+
+  # -- CPU node detection (uses aim-epyc-base image, lighter, no ROCm).
+  # Detects AMD EPYC CPUs and writes NFD labels like
+  # feature.node.kubernetes.io/aim-accelerator.EPYC_9965=128
+  # Only scheduled on nodes WITHOUT feature.node.kubernetes.io/amd-gpu label
+  # (i.e. CPU-only nodes).
+  cpu:
+    # -- Enable CPU accelerator detection DaemonSet
+    enable: true
+    image:
+      # -- CPU detector image repository (aim-epyc-base)
+      repository: ""
+      # -- CPU detector image tag
+      tag: ""
+      # -- Image pull policy
+      pullPolicy: IfNotPresent
+    # -- Secrets for pulling the CPU detector image from private registries
+    # @default -- `[]`
+    # imagePullSecrets:
+    #   - name: ghcr-pull-secret
+    imagePullSecrets: []
+    # -- Node selector for CPU-only nodes (no additional selector needed;
+    # the DaemonSet uses nodeAffinity DoesNotExist on the amd-gpu label)
+    # @default -- `{}`
+    nodeSelector: {}
+    # -- Tolerations for CPU detector pods (defaults to tolerate all taints)
+    # @default -- `[{operator: Exists}]`
+    tolerations: []
+    # -- Resource limits and requests for CPU detector pods
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 50m
+        memory: 128Mi

@@ -85,6 +85,16 @@ All AIM labels use the `aim.eai.amd.com/` prefix.
 | `aim.eai.amd.com/custom-model` | `"true"` | Marks custom model templates |
 | `aim.eai.amd.com/source-model` | Model identifier | Source model reference |
 
+### Accelerator Detection Labels
+
+Labels written by the [AcceleratorDetector](../concepts/accelerator-detection.md) DaemonSet via NFD. These use the **value-in-key** pattern — each hardware identifier is a separate label key, matched with the `Exists` operator. The label value carries the accelerator count.
+
+| Label Pattern | Example Key | Example Value | Purpose |
+|---------------|-------------|---------------|---------|
+| `feature.node.kubernetes.io/aim-accelerator.{model}` | `aim-accelerator.MI300X` | `"8"` (GPU count) | Specific GPU or CPU model |
+
+See [Accelerator Detection](../concepts/accelerator-detection.md) for details on label production and future architecture-level labels.
+
 ### Standard Kubernetes Labels
 
 | Label | Value | Purpose |
