@@ -30,7 +30,8 @@ import (
 	"go.uber.org/zap/zapcore"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/amd-enterprise-ai/aim-engine/internal/controller"
+	v1alpha1controller "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/controller"
+	v1alpha2controller "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/controller"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -211,7 +212,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.AIMClusterModelReconciler{
+	if err := (&v1alpha1controller.AIMClusterModelReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Clientset: clientset,
@@ -219,7 +220,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterModel")
 		os.Exit(1)
 	}
-	if err := (&controller.AIMModelReconciler{
+	if err := (&v1alpha1controller.AIMModelReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Clientset: clientset,
@@ -229,7 +230,7 @@ func main() {
 	}
 
 	// Setup AIMClusterModelSource controller
-	if err = (&controller.AIMClusterModelSourceReconciler{
+	if err = (&v1alpha1controller.AIMClusterModelSourceReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Clientset: clientset,
@@ -238,7 +239,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.AIMArtifactReconciler{
+	if err := (&v1alpha1controller.AIMArtifactReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Clientset: clientset,
@@ -247,7 +248,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.AIMTemplateCacheReconciler{
+	if err := (&v1alpha1controller.AIMTemplateCacheReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Clientset: clientset,
@@ -256,7 +257,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.AIMServiceTemplateReconciler{
+	if err := (&v1alpha1controller.AIMServiceTemplateReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Clientset: clientset,
@@ -265,7 +266,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.AIMClusterServiceTemplateReconciler{
+	if err := (&v1alpha1controller.AIMClusterServiceTemplateReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Clientset: clientset,
@@ -274,7 +275,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.AIMServiceReconciler{
+	if err := (&v1alpha1controller.AIMServiceReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Clientset: clientset,
@@ -282,7 +283,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "AIMService")
 		os.Exit(1)
 	}
-	if err := (&controller.AIMProfileReconciler{
+	if err := (&v1alpha2controller.AIMProfileReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Clientset: clientset,
@@ -290,7 +291,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "AIMProfile")
 		os.Exit(1)
 	}
-	if err := (&controller.AIMClusterProfileReconciler{
+	if err := (&v1alpha2controller.AIMClusterProfileReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Clientset: clientset,

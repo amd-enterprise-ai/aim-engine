@@ -6,7 +6,7 @@ AIM Engine uses Go unit tests and [Chainsaw](https://kyverno.github.io/chainsaw/
 
 ```bash
 make test                           # All unit tests (excludes e2e)
-go test ./internal/aimservice -v    # Specific package
+go test ./internal/v1alpha1/aimservice -v    # Specific package
 go test ./internal/... -run TestFoo # Specific test
 ```
 

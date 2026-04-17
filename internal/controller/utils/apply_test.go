@@ -29,8 +29,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 )
 
 const testLabelValueAlpha = "alpha"
@@ -310,7 +308,7 @@ func TestPropagateLabels(t *testing.T) {
 		name           string
 		parentLabels   map[string]string
 		childLabels    map[string]string
-		config         *aimv1alpha1.AIMRuntimeConfigCommon
+		config         *LabelPropagationSettings
 		expectedLabels map[string]string
 	}{
 		{
@@ -321,99 +319,59 @@ func TestPropagateLabels(t *testing.T) {
 			expectedLabels: nil,
 		},
 		{
-			name:         "disabled propagation does nothing",
-			parentLabels: map[string]string{"team": testLabelValueAlpha},
-			childLabels:  nil,
-			config: &aimv1alpha1.AIMRuntimeConfigCommon{
-				LabelPropagation: &aimv1alpha1.AIMRuntimeConfigLabelPropagationSpec{
-					Enabled: false,
-					Match:   []string{"team"},
-				},
-			},
+			name:           "disabled propagation does nothing",
+			parentLabels:   map[string]string{"team": testLabelValueAlpha},
+			childLabels:    nil,
+			config:         &LabelPropagationSettings{Enabled: false, Match: []string{"team"}},
 			expectedLabels: nil,
 		},
 		{
-			name:         "empty match patterns does nothing",
-			parentLabels: map[string]string{"team": testLabelValueAlpha},
-			childLabels:  nil,
-			config: &aimv1alpha1.AIMRuntimeConfigCommon{
-				LabelPropagation: &aimv1alpha1.AIMRuntimeConfigLabelPropagationSpec{
-					Enabled: true,
-					Match:   []string{},
-				},
-			},
+			name:           "empty match patterns does nothing",
+			parentLabels:   map[string]string{"team": testLabelValueAlpha},
+			childLabels:    nil,
+			config:         &LabelPropagationSettings{Enabled: true, Match: []string{}},
 			expectedLabels: nil,
 		},
 		{
-			name:         "propagates matching labels",
-			parentLabels: map[string]string{"team": testLabelValueAlpha, "env": "prod"},
-			childLabels:  nil,
-			config: &aimv1alpha1.AIMRuntimeConfigCommon{
-				LabelPropagation: &aimv1alpha1.AIMRuntimeConfigLabelPropagationSpec{
-					Enabled: true,
-					Match:   []string{"team"},
-				},
-			},
+			name:           "propagates matching labels",
+			parentLabels:   map[string]string{"team": testLabelValueAlpha, "env": "prod"},
+			childLabels:    nil,
+			config:         &LabelPropagationSettings{Enabled: true, Match: []string{"team"}},
 			expectedLabels: map[string]string{"team": testLabelValueAlpha},
 		},
 		{
-			name:         "propagates with wildcard patterns",
-			parentLabels: map[string]string{"team-alpha": "1", "team-beta": "2", "env": "prod"},
-			childLabels:  nil,
-			config: &aimv1alpha1.AIMRuntimeConfigCommon{
-				LabelPropagation: &aimv1alpha1.AIMRuntimeConfigLabelPropagationSpec{
-					Enabled: true,
-					Match:   []string{"team-*"},
-				},
-			},
+			name:           "propagates with wildcard patterns",
+			parentLabels:   map[string]string{"team-alpha": "1", "team-beta": "2", "env": "prod"},
+			childLabels:    nil,
+			config:         &LabelPropagationSettings{Enabled: true, Match: []string{"team-*"}},
 			expectedLabels: map[string]string{"team-alpha": "1", "team-beta": "2"},
 		},
 		{
-			name:         "preserves existing child labels",
-			parentLabels: map[string]string{"team": testLabelValueAlpha, "env": "prod"},
-			childLabels:  map[string]string{"existing": "value"},
-			config: &aimv1alpha1.AIMRuntimeConfigCommon{
-				LabelPropagation: &aimv1alpha1.AIMRuntimeConfigLabelPropagationSpec{
-					Enabled: true,
-					Match:   []string{"team"},
-				},
-			},
+			name:           "preserves existing child labels",
+			parentLabels:   map[string]string{"team": testLabelValueAlpha, "env": "prod"},
+			childLabels:    map[string]string{"existing": "value"},
+			config:         &LabelPropagationSettings{Enabled: true, Match: []string{"team"}},
 			expectedLabels: map[string]string{"existing": "value", "team": testLabelValueAlpha},
 		},
 		{
-			name:         "does not overwrite existing child labels",
-			parentLabels: map[string]string{"team": testLabelValueAlpha},
-			childLabels:  map[string]string{"team": "beta"},
-			config: &aimv1alpha1.AIMRuntimeConfigCommon{
-				LabelPropagation: &aimv1alpha1.AIMRuntimeConfigLabelPropagationSpec{
-					Enabled: true,
-					Match:   []string{"team"},
-				},
-			},
+			name:           "does not overwrite existing child labels",
+			parentLabels:   map[string]string{"team": testLabelValueAlpha},
+			childLabels:    map[string]string{"team": "beta"},
+			config:         &LabelPropagationSettings{Enabled: true, Match: []string{"team"}},
 			expectedLabels: map[string]string{"team": "beta"},
 		},
 		{
-			name:         "multiple match patterns",
-			parentLabels: map[string]string{"team": testLabelValueAlpha, "org": "mycompany", "env": "prod"},
-			childLabels:  nil,
-			config: &aimv1alpha1.AIMRuntimeConfigCommon{
-				LabelPropagation: &aimv1alpha1.AIMRuntimeConfigLabelPropagationSpec{
-					Enabled: true,
-					Match:   []string{"team", "org"},
-				},
-			},
+			name:           "multiple match patterns",
+			parentLabels:   map[string]string{"team": testLabelValueAlpha, "org": "mycompany", "env": "prod"},
+			childLabels:    nil,
+			config:         &LabelPropagationSettings{Enabled: true, Match: []string{"team", "org"}},
 			expectedLabels: map[string]string{"team": testLabelValueAlpha, "org": "mycompany"},
 		},
 		{
-			name:         "empty parent labels does nothing",
-			parentLabels: map[string]string{},
-			childLabels:  nil,
-			config: &aimv1alpha1.AIMRuntimeConfigCommon{
-				LabelPropagation: &aimv1alpha1.AIMRuntimeConfigLabelPropagationSpec{
-					Enabled: true,
-					Match:   []string{"team"},
-				},
-			},
+			name:           "empty parent labels does nothing",
+			parentLabels:   map[string]string{},
+			childLabels:    nil,
+			config:         &LabelPropagationSettings{Enabled: true, Match: []string{"team"}},
 			expectedLabels: nil,
 		},
 	}
@@ -476,12 +434,7 @@ func TestPropagateLabels_Job(t *testing.T) {
 		},
 	}
 
-	config := &aimv1alpha1.AIMRuntimeConfigCommon{
-		LabelPropagation: &aimv1alpha1.AIMRuntimeConfigLabelPropagationSpec{
-			Enabled: true,
-			Match:   []string{"team"},
-		},
-	}
+	config := &LabelPropagationSettings{Enabled: true, Match: []string{"team"}}
 
 	PropagateLabels(parent, child, config)
 
@@ -506,12 +459,7 @@ func TestPropagateLabelsFoResult(t *testing.T) {
 		},
 	}
 
-	config := &aimv1alpha1.AIMRuntimeConfigCommon{
-		LabelPropagation: &aimv1alpha1.AIMRuntimeConfigLabelPropagationSpec{
-			Enabled: true,
-			Match:   []string{"team"},
-		},
-	}
+	config := &LabelPropagationSettings{Enabled: true, Match: []string{"team"}}
 
 	planResult := &PlanResult{
 		toApply: []client.Object{

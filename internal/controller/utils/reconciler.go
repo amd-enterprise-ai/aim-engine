@@ -39,8 +39,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
@@ -238,8 +236,7 @@ func (p *Pipeline[T, S, F, Obs]) GetFullName() string {
 }
 
 type ReconcileContext[T client.Object] struct {
-	Object              T
-	MergedRuntimeConfig FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
+	Object T
 }
 
 // Run executes the standard Fetch → Compose → Plan → StateEngine → Apply → Events → Status flow.
@@ -263,14 +260,6 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) (ctrl.Result, e
 	reconcileCtx := ReconcileContext[T]{
 		Object: obj,
 	}
-
-	name := DefaultRuntimeConfigName
-	if r, ok := any(obj).(RuntimeConfigRefProvider); ok {
-		if ref := r.GetRuntimeConfigRef(); ref.Name != "" {
-			name = ref.Name
-		}
-	}
-	reconcileCtx.MergedRuntimeConfig = FetchMergedRuntimeConfig(ctx, p.Client, name, obj.GetNamespace())
 
 	// 2) Deep copy the entire object to capture old status for comparison
 	oldObj, ok := obj.DeepCopyObject().(T)
@@ -322,8 +311,13 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) (ctrl.Result, e
 	// Use Server-Side Apply to create/update desired objects (only if decision allows).
 	var applyErr error
 	if decision.ShouldApply && len(deleteErrs) == 0 {
+		var applyOptions ApplyOptions
+		if provider, ok := any(p.Reconciler).(ApplyOptionsProvider[Obs]); ok {
+			applyOptions = provider.GetApplyOptions(obs)
+		}
+
 		// Propagate labels from the parent to the children
-		PropagateLabelsForResult(reconcileCtx.Object, &planResult, reconcileCtx.MergedRuntimeConfig.Value)
+		PropagateLabelsForResult(reconcileCtx.Object, &planResult, applyOptions.LabelPropagation)
 
 		// Add standard controller labels to all resources
 		controllerLabels := map[string]string{

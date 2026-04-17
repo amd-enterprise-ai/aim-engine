@@ -72,7 +72,7 @@ mise exec -- make env-info                     # Show current environment (reads
 
 ```bash
 mise exec -- make test                         # Unit tests (excludes e2e)
-mise exec -- go test ./internal/aimservice -v  # Run specific package tests
+mise exec -- go test ./internal/v1alpha1/aimservice -v  # Run specific package tests
 
 # Chainsaw e2e tests (selector auto-applied based on ENV)
 # IMPORTANT: After editing code, wait for the operator to rebuild before running tests
@@ -174,7 +174,7 @@ PlanResources(ctx, reconcileCtx, obs) PlanResult   // Decide what to create/upda
 
 **Condition management**: Framework manages DependenciesReachable, AuthValid, ConfigValid, Ready. Domain reconcilers add custom conditions via `StatusDecorator`.
 
-**Template auto-selection**: When `service.spec.template.name` is empty, AIMService auto-selects based on model's `defaultServiceTemplate`, availability, GPU capacity. Logic in `internal/aimservice/selection.go`.
+**Template auto-selection**: When `service.spec.template.name` is empty, AIMService auto-selects based on model's `defaultServiceTemplate`, availability, GPU capacity. Logic in `internal/v1alpha1/aimservice/selection.go`.
 
 **Watch indexing**: Controllers use field indexers for efficient lookups (e.g., find all services referencing a template). See `SetupWithManager` for index setup.
 
@@ -199,7 +199,7 @@ AIMArtifact supports configurable download protocol fallback for HuggingFace mod
 Key files:
 - `images/artifact-downloader/hf-download.sh` - HF download logic with protocol switching and status patching
 - `images/artifact-downloader/entrypoint.sh` - Dispatcher (delegates `hf://` to `hf-download.sh`)
-- `internal/aimartifact/download.go` - Job builder; sets default env vars including `AIM_DOWNLOADER_PROTOCOL`
+- `internal/v1alpha1/aimartifact/download.go` - Job builder; sets default env vars including `AIM_DOWNLOADER_PROTOCOL`
 - `api/v1alpha1/aimartifact_types.go` - `DownloadState` struct in `AIMArtifactStatus`
 
 ### Debug Simulation
@@ -246,7 +246,7 @@ mise exec -- make release VERSION=v0.2.0
 - `cmd/main.go` - Entry point, controller setup, scheme registration
 - `internal/controller/utils/reconciler.go` - Pipeline & DomainReconciler interface
 - `api/v1alpha1/aimservice_types.go` - Most complex CRD definition
-- `internal/aimservice/reconcile.go` - Complex domain logic example
+- `internal/v1alpha1/aimservice/reconcile.go` - Complex domain logic example
 
 ## External Dependencies
 

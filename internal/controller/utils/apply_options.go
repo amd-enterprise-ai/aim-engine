@@ -20,29 +20,23 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package controller
+package controllerutils
 
-import (
-	"context"
+// LabelPropagationSettings contains the shared label propagation behavior needed
+// during apply without coupling the pipeline to a specific API version.
+type LabelPropagationSettings struct {
+	Enabled bool
+	Match   []string
+}
 
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-)
+// ApplyOptions lets domain reconcilers provide version-specific apply behavior
+// while keeping the pipeline package version-neutral.
+type ApplyOptions struct {
+	LabelPropagation *LabelPropagationSettings
+}
 
-// IsNamespaceTerminating returns true when the namespace is deleting or already deleted.
-func IsNamespaceTerminating(ctx context.Context, c client.Client, namespace string) (bool, error) {
-	if namespace == "" {
-		return false, nil
-	}
-
-	var ns corev1.Namespace
-	if err := c.Get(ctx, client.ObjectKey{Name: namespace}, &ns); err != nil {
-		if apierrors.IsNotFound(err) {
-			return true, nil
-		}
-		return false, err
-	}
-
-	return ns.DeletionTimestamp != nil, nil
+// ApplyOptionsProvider is implemented by reconcilers that need to customize the
+// shared apply phase based on the composed observation.
+type ApplyOptionsProvider[Obs any] interface {
+	GetApplyOptions(obs Obs) ApplyOptions
 }

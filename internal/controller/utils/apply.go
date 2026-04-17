@@ -35,7 +35,6 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
@@ -188,7 +187,7 @@ func sortObjects(objects []client.Object) []client.Object {
 	return sorted
 }
 
-func PropagateLabelsForResult(parent client.Object, planResult *PlanResult, config *aimv1alpha1.AIMRuntimeConfigCommon) {
+func PropagateLabelsForResult(parent client.Object, planResult *PlanResult, config *LabelPropagationSettings) {
 	for _, obj := range planResult.toApply {
 		PropagateLabels(parent, obj, config)
 	}
@@ -266,7 +265,7 @@ func applyControllerLabels(obj client.Object, labels map[string]string) {
 // The child's existing labels are preserved and only new labels are added.
 //
 // Special handling for Jobs: Labels are also propagated to the PodTemplateSpec.
-func PropagateLabels(parent, child client.Object, config *aimv1alpha1.AIMRuntimeConfigCommon) {
+func PropagateLabels(parent, child client.Object, config *LabelPropagationSettings) {
 	parentLabels := parent.GetLabels()
 	if len(parentLabels) == 0 {
 		return
@@ -282,10 +281,7 @@ func PropagateLabels(parent, child client.Object, config *aimv1alpha1.AIMRuntime
 	labelsToPropagate := make(map[string]string)
 
 	// Check if user-defined label propagation is enabled
-	userPropagationEnabled := config != nil &&
-		config.LabelPropagation != nil &&
-		config.LabelPropagation.Enabled &&
-		len(config.LabelPropagation.Match) > 0
+	userPropagationEnabled := config != nil && config.Enabled && len(config.Match) > 0
 
 	// Iterate through parent labels and collect ones to propagate
 	for key, value := range parentLabels {
@@ -302,7 +298,7 @@ func PropagateLabels(parent, child client.Object, config *aimv1alpha1.AIMRuntime
 		}
 
 		// Propagate labels matching user-defined patterns if enabled
-		if userPropagationEnabled && matchesAnyPattern(key, config.LabelPropagation.Match) {
+		if userPropagationEnabled && matchesAnyPattern(key, config.Match) {
 			childLabels[key] = value
 			labelsToPropagate[key] = value
 		}
