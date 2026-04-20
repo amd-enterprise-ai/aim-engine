@@ -85,6 +85,8 @@ jobs:
             .manager.image.repository = strenv(CHART_IMAGE_REPO) |
             .manager.image.tag = strenv(IMAGE_TAG) |
             .manager.imagePullSecrets = [{"name": "regcred"}]
+            .acceleratorDetector.gpu.imagePullSecrets = [{"name": "regcred"}]
+            .acceleratorDetector.cpu.imagePullSecrets = [{"name": "regcred"}]
           ' config/helm/values.yaml
 
       - name: Generate CRDs
