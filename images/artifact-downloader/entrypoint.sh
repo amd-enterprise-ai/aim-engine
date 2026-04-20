@@ -24,7 +24,7 @@
 set -eu
 
 URL="${1:?Usage: $0 <hf://org/model or s3://bucket/path>}"
-TARGET_DIR="${TARGET_DIR:-/cache}"
+export TARGET_DIR="${TARGET_DIR:-/cache}"
 
 # Start progress monitor in background
 MONITOR_PID=""
@@ -99,8 +99,10 @@ fi
 
 case "$URL" in
     hf://*)
+        export MODEL_PATH="${URL#hf://}"
         /hf-download.sh "$URL" "$TARGET_DIR"
         stop_progress_monitor
+        python /verify-files.py
         /hf-verify.sh "$URL" "$TARGET_DIR"
         ;;
     s3://*)

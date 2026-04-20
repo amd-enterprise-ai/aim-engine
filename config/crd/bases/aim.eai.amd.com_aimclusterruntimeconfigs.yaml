@@ -68,6 +68,13 @@ spec:
                     format: int32
                     minimum: 0
                     type: integer
+                  modelDownloadImage:
+                    description: |-
+                      ModelDownloadImage specifies the default container image for artifact
+                      download and size-check jobs. Applies when an AIMArtifact does not set
+                      spec.modelDownloadImage. When neither is set, the operator falls back
+                      to its build-time default (matching the release version).
+                    type: string
                 type: object
               artifactCache:
                 description: |-

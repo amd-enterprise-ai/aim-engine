@@ -4,8 +4,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     s3cmd kubectl \
     procps \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir -U huggingface_hub==1.4.0 hf_transfer==0.1.9
+    && pip install --no-cache-dir -U huggingface_hub==1.11.0 hf_transfer hf_xet
 
+ENV PYTHONUNBUFFERED=1
 
 COPY entrypoint.sh /entrypoint.sh
 COPY progress-monitor.sh /progress-monitor.sh
@@ -14,14 +15,15 @@ COPY hf-download.sh /hf-download.sh
 COPY hf-verify.sh /hf-verify.sh
 RUN mkdir -p /check-size /storage-initializer/scripts
 COPY check-size/check-hf-size.py /check-size/check-hf-size.py
+COPY verify-files.py /verify-files.py
 COPY kserve-entrypoint.sh /storage-initializer/scripts/initializer-entrypoint
 
 RUN chmod +x /entrypoint.sh /check-size.sh /progress-monitor.sh /storage-initializer/scripts/initializer-entrypoint /hf-download.sh /hf-verify.sh
 
 
-RUN mkdir /cache && chown 1000:1000 /cache
+RUN mkdir -p /cache/models && chown -R 1000:1000 /cache
 
-WORKDIR /cache
+WORKDIR /cache/models
 USER 1000
 
 ENTRYPOINT ["/entrypoint.sh"]

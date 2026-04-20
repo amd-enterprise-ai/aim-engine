@@ -101,6 +101,7 @@ Common causes:
 
 - **StorageSizeError** — Model size not yet discovered; typically resolves automatically
 - **Download failure** — Network issues, authentication errors, or protocol incompatibility
+- **Verification failure** — Files missing or corrupt after download. The downloader automatically retries with a clean state. Check the download job logs for details on which files failed verification
 - **PVC binding failure** — Storage class doesn't support `ReadWriteMany`
 
 ### Routing Not Working

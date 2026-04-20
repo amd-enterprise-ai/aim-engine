@@ -255,6 +255,16 @@ kubectl get aimart my-model -o yaml # Full status.download details
 4. Already-completed files are skipped regardless of protocol (metadata-based)
 5. If all protocols are exhausted, the Job fails and Kubernetes retries via `backoffLimit`
 
+## Download Verification
+
+After each download, AIM Engine performs a two-stage verification to ensure all model files are correctly persisted:
+
+1. **File presence check** — The downloader independently queries HuggingFace for the expected file list (respecting any download filters), then verifies that every expected file exists on disk. Each verified file is explicitly fsynced to ensure it has been written to the underlying storage, which is particularly important on network filesystems. If any files are missing, the download job fails, triggering a retry.
+
+2. **Integrity verification** — The downloader runs `hf cache verify` to validate file checksums against HuggingFace metadata. If integrity verification fails, the local metadata cache is cleared by default so that the retry performs a full fresh download rather than skipping files based on stale metadata.
+
+To preserve the metadata cache on failure (e.g., for debugging), set the `AIM_KEEP_METADATA_ON_FAILURE` environment variable. See [Environment Variables](../reference/environment-variables.md) for details.
+
 ## Related Documentation
 
 - [Templates](templates.md) - Understanding ServiceTemplates and discovery

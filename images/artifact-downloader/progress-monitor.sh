@@ -76,9 +76,11 @@ while [ "$terminated" = "false" ]; do
         last_size=$current_size
         last_change_time=$now
     elif [ $((now - last_change_time)) -ge "$stall_timeout" ]; then
-        echo "Download stalled for ${stall_timeout}s, killing" >&2
+        echo "Download stalled for ${stall_timeout}s, killing download process" >&2
         pkill -9 -f "python|s3cmd" 2>/dev/null || true
-        exit 1
+        # Keep monitoring: hf-download.sh will retry the next protocol.
+        last_size=0
+        last_change_time=$now
     fi
 
     # Calculate and update progress

@@ -18,8 +18,8 @@ These are set automatically by the operator on download jobs.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AIM_DOWNLOADER_PROTOCOL` | `XET,HF_TRANSFER` | Comma-separated protocol sequence for HuggingFace downloads. Tried in order; falls back on failure. |
-| `MOUNT_PATH` | `/cache` | PVC mount path in the download container. |
-| `TARGET_DIR` | `/cache` | Download target directory. |
+| `MOUNT_PATH` | `/cache/models` | PVC mount path in the download container. |
+| `TARGET_DIR` | `/cache/models` | Download target directory. |
 | `EXPECTED_SIZE_BYTES` | (computed) | Expected model size in bytes. |
 | `ARTIFACT_NAME` | (from resource) | Name of the AIMArtifact resource. |
 | `ARTIFACT_NAMESPACE` | (from resource) | Namespace of the AIMArtifact resource. |
@@ -38,6 +38,12 @@ The `AIM_DOWNLOADER_PROTOCOL` variable accepts a comma-separated list of:
 | `HTTP` | Standard HTTP — slowest but most compatible |
 
 The downloader tries each protocol in order. On failure, it cleans up `.incomplete` files and moves to the next protocol.
+
+### Verification
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AIM_KEEP_METADATA_ON_FAILURE` | (unset) | When set to any non-empty value, preserves the HuggingFace metadata cache on integrity verification failure. By default, the metadata cache is removed on failure to ensure a clean retry. |
 
 ## Debug and Simulation Variables
 

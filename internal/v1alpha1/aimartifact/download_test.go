@@ -241,6 +241,60 @@ func TestBothJobsGetSameFilterEnvVars(t *testing.T) {
 	}
 }
 
+func TestResolveDownloadImage(t *testing.T) {
+	const (
+		artifactImage = "ghcr.io/example/downloader:artifact"
+		runtimeImage  = "ghcr.io/example/downloader:runtime"
+	)
+
+	tests := []struct {
+		name          string
+		artifact      *aimv1alpha1.AIMArtifact
+		runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon
+		want          string
+	}{
+		{
+			name:     "falls back to build-time default when nothing set",
+			artifact: &aimv1alpha1.AIMArtifact{},
+			want:     aimv1alpha1.DefaultDownloadImage,
+		},
+		{
+			name:     "uses runtime config when artifact does not override",
+			artifact: &aimv1alpha1.AIMArtifact{},
+			runtimeConfig: &aimv1alpha1.AIMRuntimeConfigCommon{
+				Artifact: &aimv1alpha1.AIMArtifactConfig{ModelDownloadImage: runtimeImage},
+			},
+			want: runtimeImage,
+		},
+		{
+			name: "artifact spec overrides runtime config",
+			artifact: &aimv1alpha1.AIMArtifact{
+				Spec: aimv1alpha1.AIMArtifactSpec{ModelDownloadImage: artifactImage},
+			},
+			runtimeConfig: &aimv1alpha1.AIMRuntimeConfigCommon{
+				Artifact: &aimv1alpha1.AIMArtifactConfig{ModelDownloadImage: runtimeImage},
+			},
+			want: artifactImage,
+		},
+		{
+			name:     "nil Artifact section falls back to default",
+			artifact: &aimv1alpha1.AIMArtifact{},
+			runtimeConfig: &aimv1alpha1.AIMRuntimeConfigCommon{
+				Artifact: nil,
+			},
+			want: aimv1alpha1.DefaultDownloadImage,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveDownloadImage(tt.artifact, tt.runtimeConfig); got != tt.want {
+				t.Errorf("resolveDownloadImage() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func envToMap(envs []corev1.EnvVar) map[string]string {
 	m := make(map[string]string)
 	for _, e := range envs {

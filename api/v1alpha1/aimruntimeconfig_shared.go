@@ -128,6 +128,13 @@ type AIMArtifactConfig struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	DefaultRetentionPriority *int32 `json:"defaultRetentionPriority,omitempty"`
+
+	// ModelDownloadImage specifies the default container image for artifact
+	// download and size-check jobs. Applies when an AIMArtifact does not set
+	// spec.modelDownloadImage. When neither is set, the operator falls back
+	// to its build-time default (matching the release version).
+	// +optional
+	ModelDownloadImage string `json:"modelDownloadImage,omitempty"`
 }
 
 // AIMRuntimeConfigCommon captures configuration fields shared across cluster and namespace scopes.

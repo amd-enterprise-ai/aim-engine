@@ -1,0 +1,41 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: stall-then-retry
+spec:
+  description: >
+    Verify the progress monitor survives a stall-kill and continues to
+    watch subsequent protocol retries. Protocol 1 hangs and is killed by
+    the monitor; if the monitor stayed alive, protocol 2 is also killed
+    and all attempts exhaust to Failed. If the monitor self-exited (the
+    pre-fix behavior), protocol 2 runs unmonitored for the full hang
+    duration and this test times out.
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create runtime config
+      try:
+        - apply:
+            file: runtime.yaml
+
+    - name: Create artifact that hangs on every protocol
+      try:
+        - apply:
+            file: artifact.yaml
+
+    - name: Assert artifact reaches Failed after both protocols killed by monitor
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: stall-then-retry
+              status:
+                status: Failed
+                download:
+                  protocol: HTTP
+                  attempt: 2
+                  totalAttempts: 2
+                  protocolSequence: "XET,HTTP"

@@ -77,6 +77,12 @@ spec:
     defaultStorageClassName: longhorn
 ```
 
+## Download Verification
+
+After each download completes, AIM Engine automatically verifies that all expected files are present on disk and persisted to storage. If verification fails, the download job retries with a clean state. No configuration is required — verification runs by default for all HuggingFace downloads.
+
+For details on how verification works, see [Download Verification](../concepts/caching.md#download-verification).
+
 ## Monitoring Cache Status
 
 Check the status of template caches and artifacts:

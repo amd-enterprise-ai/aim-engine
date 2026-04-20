@@ -42,10 +42,22 @@ else
     echo "Download filter active — skipping missing-files check (filtered files are expected to be absent)"
 fi
 # shellcheck disable=SC2086
-hf cache verify \
+if hf cache verify \
     --local-dir "$TARGET_DIR" \
     $VERIFY_ARGS \
-    "$MODEL_PATH"
-echo "Download complete and verified"
+    "$MODEL_PATH"; then
+    echo "Download complete and verified"
+else
+    rc=$?
+    echo "Integrity verification failed (exit code $rc)" >&2
+    if [ -z "${AIM_KEEP_METADATA_ON_FAILURE:-}" ]; then
+        METADATA_DIR="$TARGET_DIR/.cache/huggingface"
+        echo "Cleaning metadata cache ($METADATA_DIR) to force fresh download on retry" >&2
+        rm -rf "$METADATA_DIR"
+    else
+        echo "AIM_KEEP_METADATA_ON_FAILURE is set, keeping metadata cache" >&2
+    fi
+    exit "$rc"
+fi
 echo "Size of HF_HOME: $(du -sh "${HF_HOME:-$HOME/.cache/huggingface}" 2>/dev/null || echo 'N/A')"
 

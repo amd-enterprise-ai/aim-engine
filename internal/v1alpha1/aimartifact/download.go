@@ -47,6 +47,18 @@ func effectiveSourceURI(mc *aimv1alpha1.AIMArtifact) string {
 	return mc.Spec.SourceURI
 }
 
+// resolveDownloadImage picks the container image for download and size-check
+// jobs. Precedence: artifact spec > runtime config > build-time default.
+func resolveDownloadImage(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon) string {
+	if len(mc.Spec.ModelDownloadImage) > 0 {
+		return mc.Spec.ModelDownloadImage
+	}
+	if runtimeConfigSpec != nil && runtimeConfigSpec.Artifact != nil && runtimeConfigSpec.Artifact.ModelDownloadImage != "" {
+		return runtimeConfigSpec.Artifact.ModelDownloadImage
+	}
+	return aimv1alpha1.DefaultDownloadImage
+}
+
 func buildRoleBinding(mc *aimv1alpha1.AIMArtifact) *rbacv1.RoleBinding {
 	return &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
@@ -103,11 +115,8 @@ func getDownloadJobName(mc *aimv1alpha1.AIMArtifact) string {
 }
 
 func buildDownloadJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon, expectedSizeBytes int64, cacheEnv ...corev1.EnvVar) *batchv1.Job {
-	mountPath := "/cache"
-	downloadImage := aimv1alpha1.DefaultDownloadImage
-	if len(mc.Spec.ModelDownloadImage) > 0 {
-		downloadImage = mc.Spec.ModelDownloadImage
-	}
+	mountPath := "/cache/models"
+	downloadImage := resolveDownloadImage(mc, runtimeConfigSpec)
 
 	// Use resolved source (cache hit) or original spec source
 	sourceURI := effectiveSourceURI(mc)
@@ -205,10 +214,7 @@ func getCheckSizeJobName(mc *aimv1alpha1.AIMArtifact) string {
 }
 
 func buildCheckSizeJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon, cacheEnv ...corev1.EnvVar) *batchv1.Job {
-	downloadImage := aimv1alpha1.DefaultDownloadImage
-	if len(mc.Spec.ModelDownloadImage) > 0 {
-		downloadImage = mc.Spec.ModelDownloadImage
-	}
+	downloadImage := resolveDownloadImage(mc, runtimeConfigSpec)
 
 	sourceURI := effectiveSourceURI(mc)
 

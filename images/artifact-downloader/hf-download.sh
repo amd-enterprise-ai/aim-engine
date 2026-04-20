@@ -94,34 +94,48 @@ do_hf_download() {
     echo "Download filter: include=[${AIM_HF_INCLUDE:-}] exclude=[${AIM_HF_EXCLUDE:-}]"
     FILTER_ARGS=$(build_filter_args)
 
-    # Simulation mode: simulate success/failure without network
+    # Simulation mode: shadow the real `hf` CLI with a shell function so
+    # the rest of this function (set -f / exit-code capture / set +f /
+    # return) runs exactly as in production. An early `return` here would
+    # bypass the code path the original bug lived in, making the test
+    # unable to catch a regression of that bug.
     if [ -n "${AIM_DEBUG_SIMULATE_HF_DOWNLOAD:-}" ]; then
         _current_proto="${HF_HUB_DISABLE_XET:-0}:${HF_HUB_ENABLE_HF_TRANSFER:-0}"
-        # Determine the protocol name from env vars
         case "$_current_proto" in
             0:0) _proto_name="XET" ;;
             1:1) _proto_name="HF_TRANSFER" ;;
             1:0) _proto_name="HTTP" ;;
             *)   _proto_name="UNKNOWN" ;;
         esac
-        # Check if this protocol should fail
-        _fail_protos="${AIM_DEBUG_SIMULATE_HF_FAIL_PROTOCOLS:-}"
-        if echo ",$_fail_protos," | grep -q ",$_proto_name,"; then
-            echo "[SIMULATE] Download FAILING for protocol $_proto_name"
+        hf() {
+            _fail_protos="${AIM_DEBUG_SIMULATE_HF_FAIL_PROTOCOLS:-}"
+            _hang_protos="${AIM_DEBUG_SIMULATE_HF_HANG_PROTOCOLS:-}"
+            # HANG mode: real python sleep that progress-monitor can pkill.
+            # Lets tests exercise stall-kill + retry monitoring end-to-end.
+            if echo ",$_hang_protos," | grep -q ",$_proto_name,"; then
+                echo "[SIMULATE] Download HANGING for protocol $_proto_name"
+                python -c "import time; time.sleep(${AIM_DEBUG_SIMULATE_HF_HANG_DURATION:-300})"
+                return $?
+            fi
             sleep "${AIM_DEBUG_SIMULATE_HF_DURATION:-2}"
-            return 1
-        fi
-        echo "[SIMULATE] Download SUCCEEDING for protocol $_proto_name"
-        sleep "${AIM_DEBUG_SIMULATE_HF_DURATION:-2}"
-        # Write simulated data so progress monitor has something to measure
-        dd if=/dev/zero of="$TARGET_DIR/simulated_data" bs=1024 count=100 2>/dev/null
-        return 0
+            if echo ",$_fail_protos," | grep -q ",$_proto_name,"; then
+                echo "[SIMULATE] Download FAILING for protocol $_proto_name (rc=137)"
+                # Mimic a SIGKILL-style non-zero exit so the outer
+                # exit-code propagation is under test.
+                return 137
+            fi
+            echo "[SIMULATE] Download SUCCEEDING for protocol $_proto_name"
+            dd if=/dev/zero of="$TARGET_DIR/simulated_data" bs=1024 count=100 2>/dev/null
+            return 0
+        }
     fi
 
-    # shellcheck disable=SC2086
+    # Capture the hf CLI exit code explicitly so we dont return the result of set
     set -f  # prevent glob expansion of filter patterns (e.g. */*) during word splitting
-    hf download --local-dir "$TARGET_DIR" $FILTER_ARGS "$MODEL_PATH"
+    _hf_rc=0
+    hf download --local-dir "$TARGET_DIR" $FILTER_ARGS "$MODEL_PATH" || _hf_rc=$?
     set +f
+    return "$_hf_rc"
 }
 
 

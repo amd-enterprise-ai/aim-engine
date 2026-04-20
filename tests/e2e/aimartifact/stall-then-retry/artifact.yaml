@@ -1,0 +1,26 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: stall-then-retry
+spec:
+  sourceUri: hf://test-org/test-model
+  size: 10Mi
+  env:
+    - name: AIM_DOWNLOADER_PROTOCOL
+      value: "XET,HTTP"
+    - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+      value: "true"
+    # Both protocols hang via `python sleep` so the progress-monitor must
+    # pkill each attempt. Validates that the monitor stays alive across
+    # kills (regression guard for the self-exit bug).
+    - name: AIM_DEBUG_SIMULATE_HF_HANG_PROTOCOLS
+      value: "XET,HTTP"
+    - name: AIM_DEBUG_SIMULATE_HF_HANG_DURATION
+      value: "300"
+    - name: EXPECTED_SIZE_BYTES
+      value: "102400"
+    - name: PROGRESS_INTERVAL
+      value: "2"
+    # Short stall timeout keeps the test fast.
+    - name: STALL_TIMEOUT
+      value: "8"

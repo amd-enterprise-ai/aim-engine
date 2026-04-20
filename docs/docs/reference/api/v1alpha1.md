@@ -69,6 +69,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `defaultRetentionPriority` _integer_ | DefaultRetentionPriority sets the default retention priority for AIMArtifacts<br />that do not specify one in their spec. When set, artifacts without an explicit<br />retentionPriority become eligible for automatic eviction at this priority level.<br />Lower values are evicted first. If not set, artifacts without an explicit<br />retentionPriority are never automatically evicted. |  | Minimum: 0 <br />Optional: \{\} <br /> |
+| `modelDownloadImage` _string_ | ModelDownloadImage specifies the default container image for artifact<br />download and size-check jobs. Applies when an AIMArtifact does not set<br />spec.modelDownloadImage. When neither is set, the operator falls back<br />to its build-time default (matching the release version). |  | Optional: \{\} <br /> |
 
 
 #### AIMArtifactList
