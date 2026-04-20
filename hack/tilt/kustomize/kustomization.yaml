@@ -50,6 +50,8 @@ patches:
       metadata:
         name: controller-manager
       spec:
+        strategy:
+          type: Recreate
         template:
           spec:
             # Dev image runs as root for BuildKit cache mounts

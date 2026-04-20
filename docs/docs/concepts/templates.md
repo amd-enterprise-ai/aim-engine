@@ -216,6 +216,7 @@ To avoid delays:
 | `hardwareSummary` | string | Human-readable summary of the hardware requirements (e.g. GPU model and count). |
 | `modelSources` | []ModelSource | Discovered or static model artifacts with URIs and sizes |
 | `profile` | JSON | Complete discovery result with engine arguments and metadata |
+| `version` | string | AIM version extracted from the owning model's image tag (e.g., `0.8.5`). Used by fine-tuned model matching to filter templates by version policy. |
 
 ### Status Lifecycle
 
@@ -369,6 +370,20 @@ These auto-created templates:
 - Include preset metric, precision, and GPU requirements
 - Undergo discovery like manually created templates
 - Are managed by the model controller
+
+## Fine-Tuned Template Copies
+
+When an AIMModel specifies `spec.aimId` with `spec.modelSources` (a fine-tuned model), the model controller creates template copies by matching against existing official templates. See [Fine-Tuned Models](models.md#fine-tuned-models) for the full matching algorithm.
+
+Template copies:
+
+- Inherit all runtime configuration from the original (hardware, profile, engine args, environment)
+- Override `spec.modelName` to point to the fine-tuned model and `spec.modelSources` to use the custom weights
+- Are labeled with `aim.eai.amd.com/origin: fine-tuned` to distinguish them from manually created or auto-discovered templates
+- Are owned by the fine-tuned model and garbage-collected on deletion
+- Go through the normal template reconciliation lifecycle (discovery is skipped since they have inline `modelSources`)
+
+The controller watches for changes to official templates matching the model's `aimId` and reconciles copies when templates are added or removed.
 
 ## Template Selection
 

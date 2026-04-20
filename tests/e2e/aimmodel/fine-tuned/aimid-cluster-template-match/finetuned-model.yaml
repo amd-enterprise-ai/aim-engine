@@ -1,0 +1,11 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: ft-finetuned-from-cluster
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.10
+  aimId: test/cluster-base-model
+  modelSources:
+    - modelId: test/model-fp8
+      sourceUri: hf://my-org/cluster-finetuned-weights
+      size: 300Mi

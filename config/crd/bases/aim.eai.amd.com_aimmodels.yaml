@@ -61,6 +61,13 @@ spec:
           spec:
             description: AIMModelSpec defines the desired state of AIMModel.
             properties:
+              aimId:
+                description: |-
+                  AimId is the AIM product family identifier (e.g., "qwen/qwen3-32b").
+                  When set together with modelSources, enables aimId-based template matching:
+                  the controller finds official templates by aimId, filters by versionPolicy,
+                  matches by modelId, and creates copies with the custom weight source.
+                type: string
               custom:
                 description: |-
                   Custom contains configuration for custom models (models with inline modelSources).
@@ -70,7 +77,7 @@ spec:
                     description: |-
                       Hardware specifies default hardware requirements for all templates.
                       Individual templates can override these defaults.
-                      Required when modelSources is set and customTemplates is empty.
+                      Required when modelSources is set and customTemplates is empty (unless aimId is set).
                     properties:
                       cpu:
                         description: CPU specifies CPU requirements.
@@ -153,6 +160,19 @@ spec:
                       Type specifies default type for all templates.
                       Individual templates can override this default.
                       When nil, templates default to "unoptimized".
+                    type: string
+                  versionPolicy:
+                    default: pinned
+                    description: |-
+                      VersionPolicy controls how template versions are filtered during aimId-based matching.
+                      - pinned (default): match templates whose status.version equals the model's image tag
+                      - latest: match only templates at the newest available status.version
+                      - any: match templates at any version
+                      Only used when spec.aimId is set.
+                    enum:
+                    - pinned
+                    - latest
+                    - any
                     type: string
                 type: object
               customTemplates:
@@ -700,7 +720,7 @@ spec:
                   Image is the container image URI for this AIM model.
                   This image is inspected by the operator to select runtime profiles used by templates.
                   Discovery behavior is controlled by the discovery field and runtime config's AutoDiscovery setting.
-                minLength: 1
+                  Required unless aimId is set with versionPolicy latest or any.
                 type: string
               imageMetadata:
                 description: |-
@@ -1173,16 +1193,18 @@ spec:
                   This includes metadata extraction jobs and any other model-related operations.
                   If empty, the default service account for the namespace is used.
                 type: string
-            required:
-            - image
             type: object
             x-kubernetes-validations:
-            - message: 'when using modelSources, hardware must be specified: set custom.hardware
-                (inherited by all templates) or set hardware on each template individually'
-              rule: '!has(self.modelSources) || size(self.modelSources) == 0 || (has(self.custom)
-                && has(self.custom.hardware)) || !has(self.customTemplates) || size(self.customTemplates)
-                == 0 || self.customTemplates.all(t, has(t.hardware) || (has(self.custom)
-                && has(self.custom.hardware)))'
+            - message: when using modelSources without aimId, set custom.hardware
+                or set hardware on each customTemplate
+              rule: '!has(self.modelSources) || size(self.modelSources) == 0 || has(self.aimId)
+                || (has(self.custom) && has(self.custom.hardware)) || !has(self.customTemplates)
+                || size(self.customTemplates) == 0 || self.customTemplates.all(t,
+                has(t.hardware) || (has(self.custom) && has(self.custom.hardware)))'
+            - message: image is required unless aimId is set with versionPolicy latest
+                or any
+              rule: size(self.image) > 0 || (has(self.aimId) && has(self.custom) &&
+                has(self.custom.versionPolicy) && self.custom.versionPolicy != 'pinned')
           status:
             description: AIMModelStatus defines the observed state of AIMModel.
             properties:

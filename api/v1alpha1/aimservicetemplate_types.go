@@ -30,6 +30,10 @@ const (
 	// ServiceTemplateModelNameIndexKey is the field index key for AIMServiceTemplate.Spec.ModelName
 	// This is also used for AIMClusterServiceTemplate.Spec.ModelName
 	ServiceTemplateModelNameIndexKey = ".spec.modelName"
+
+	// ServiceTemplateAimIdIndexKey is the field index key for AIMServiceTemplate.Spec.AimId.
+	// Used for aimId-based template matching to find official templates for fine-tuned models.
+	ServiceTemplateAimIdIndexKey = ".spec.aimId"
 )
 
 // AIMServiceTemplate is the Schema for namespace-scoped AIM service templates.

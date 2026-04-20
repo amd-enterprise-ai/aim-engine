@@ -512,8 +512,9 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `hardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | Hardware specifies default hardware requirements for all templates.<br />Individual templates can override these defaults.<br />Required when modelSources is set and customTemplates is empty. |  | Optional: \{\} <br /> |
+| `hardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | Hardware specifies default hardware requirements for all templates.<br />Individual templates can override these defaults.<br />Required when modelSources is set and customTemplates is empty (unless aimId is set). |  | Optional: \{\} <br /> |
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type specifies default type for all templates.<br />Individual templates can override this default.<br />When nil, templates default to "unoptimized". |  | Enum: [optimized preview unoptimized] <br />Optional: \{\} <br /> |
+| `versionPolicy` _[AIMVersionPolicy](#aimversionpolicy)_ | VersionPolicy controls how template versions are filtered during aimId-based matching.<br />- pinned (default): match templates whose status.version equals the model's image tag<br />- latest: match only templates at the newest available status.version<br />- any: match templates at any version<br />Only used when spec.aimId is set. | pinned | Enum: [pinned latest any] <br />Optional: \{\} <br /> |
 
 
 #### AIMCustomProfile
@@ -844,7 +845,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `image` _string_ | Image is the container image URI for this AIM model.<br />This image is inspected by the operator to select runtime profiles used by templates.<br />Discovery behavior is controlled by the discovery field and runtime config's AutoDiscovery setting. |  | MinLength: 1 <br /> |
+| `image` _string_ | Image is the container image URI for this AIM model.<br />This image is inspected by the operator to select runtime profiles used by templates.<br />Discovery behavior is controlled by the discovery field and runtime config's AutoDiscovery setting.<br />Required unless aimId is set with versionPolicy latest or any. |  | Optional: \{\} <br /> |
+| `aimId` _string_ | AimId is the AIM product family identifier (e.g., "qwen/qwen3-32b").<br />When set together with modelSources, enables aimId-based template matching:<br />the controller finds official templates by aimId, filters by versionPolicy,<br />matches by modelId, and creates copies with the custom weight source. |  | Optional: \{\} <br /> |
 | `discovery` _[AIMModelDiscoveryConfig](#aimmodeldiscoveryconfig)_ | Discovery controls discovery behavior for this model.<br />When unset, uses runtime config defaults. |  | Optional: \{\} <br /> |
 | `defaultServiceTemplate` _string_ | DefaultServiceTemplate specifies the default AIMServiceTemplate to use when creating services for this model.<br />When set, services that reference this model will use this template if no template is explicitly specified.<br />If this is not set, a template will be automatically selected. |  | Optional: \{\} <br /> |
 | `custom` _[AIMCustomModelSpec](#aimcustommodelspec)_ | Custom contains configuration for custom models (models with inline modelSources).<br />Only used when modelSources are specified; ignored for image-based models. |  | Optional: \{\} <br /> |
@@ -1704,6 +1706,7 @@ _Appears in:_
 | `hardwareSummary` _string_ | HardwareSummary is a human-readable display string for the hardware requirements.<br />Format: "\{count\} x \{model\}" for GPU (e.g., "2 x MI300X") or "CPU" for CPU-only.<br />This is a computed field for display purposes only. |  | Optional: \{\} <br /> |
 | `status` _[AIMStatus](#aimstatus)_ | Status represents the current high‑level status of the template lifecycle.<br />Values: `Pending`, `Progressing`, `Ready`, `Degraded`, `Failed`. | Pending | Enum: [Pending Progressing Ready Degraded Failed NotAvailable] <br /> |
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources list the models that this template requires to run. These are the models that will be<br />cached, if this template is cached. |  |  |
+| `version` _string_ | Version is the AIM version extracted from the owning model's image tag<br />(e.g., "0.8.5" from "aim-base:0.8.5"). Set during discovery.<br />Used for version-based template matching with fine-tuned models. |  | Optional: \{\} <br /> |
 | `profile` _[AIMDiscoveredProfile](#aimdiscoveredprofile)_ | Profile contains the full discovery result profile as a free-form JSON object.<br />This includes metadata, engine args, environment variables, and model details. |  |  |
 | `discoveryJob` _[AIMResolvedReference](#aimresolvedreference)_ | DiscoveryJob is a reference to the job that was run for discovery |  |  |
 | `discovery` _[DiscoveryState](#discoverystate)_ | Discovery contains state tracking for the discovery process, including<br />retry attempts and backoff timing for the circuit breaker pattern. |  | Optional: \{\} <br /> |
@@ -1867,6 +1870,25 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `metric` _[AIMMetric](#aimmetric)_ | Metric specifies the optimization target (e.g., latency, throughput). |  | Enum: [latency throughput] <br />Optional: \{\} <br /> |
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision specifies the numerical precision (e.g., fp8, fp16, bf16). |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br />Optional: \{\} <br /> |
+
+
+#### AIMVersionPolicy
+
+_Underlying type:_ _string_
+
+AIMVersionPolicy controls how template versions are filtered during aimId-based matching.
+
+_Validation:_
+- Enum: [pinned latest any]
+
+_Appears in:_
+- [AIMCustomModelSpec](#aimcustommodelspec)
+
+| Field | Description |
+| --- | --- |
+| `pinned` | AIMVersionPolicyPinned matches templates whose status.version equals the model's image tag.<br /> |
+| `latest` | AIMVersionPolicyLatest matches only templates at the newest available status.version.<br /> |
+| `any` | AIMVersionPolicyAny matches templates at any version.<br /> |
 
 
 #### ArtifactCacheConfig

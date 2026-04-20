@@ -1,0 +1,68 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: Fine-Tuned Model with No Matching aimId
+#
+# Validates the negative case: a fine-tuned model specifies an aimId
+# that has no matching official templates. The model should stay in
+# Progressing state (expects templates but none can be created) and
+# no fine-tuned template copies should exist.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: finetuned-aimid-no-match
+spec:
+  timeouts:
+    apply: 30s
+    assert: 120s
+  steps:
+    - name: Create base model
+      try:
+        - apply:
+            file: base-model.yaml
+
+    - name: Create official template with a specific aimId
+      try:
+        - apply:
+            file: official-template.yaml
+
+    - name: Wait for official template to become Ready
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: ft-official-template-nomatch
+              status:
+                status: Ready
+
+    - name: Create fine-tuned model with non-matching aimId
+      try:
+        - apply:
+            file: finetuned-model.yaml
+
+    - name: Assert model reaches Progressing (reconciler ran, no templates matched)
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: ft-finetuned-nomatch
+              status:
+                sourceType: Custom
+                status: Progressing
+
+    - name: Assert no fine-tuned template copy was created
+      try:
+        - error:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: ft-finetuned-nomatch
+                  aim.eai.amd.com/origin: fine-tuned

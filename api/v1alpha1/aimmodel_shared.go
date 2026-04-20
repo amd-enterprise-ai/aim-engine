@@ -140,13 +140,26 @@ type AIMTemplateProfile struct {
 	Precision AIMPrecision `json:"precision,omitempty"`
 }
 
+// AIMVersionPolicy controls how template versions are filtered during aimId-based matching.
+// +kubebuilder:validation:Enum=pinned;latest;any
+type AIMVersionPolicy string
+
+const (
+	// AIMVersionPolicyPinned matches templates whose status.version equals the model's image tag.
+	AIMVersionPolicyPinned AIMVersionPolicy = "pinned"
+	// AIMVersionPolicyLatest matches only templates at the newest available status.version.
+	AIMVersionPolicyLatest AIMVersionPolicy = "latest"
+	// AIMVersionPolicyAny matches templates at any version.
+	AIMVersionPolicyAny AIMVersionPolicy = "any"
+)
+
 // AIMCustomModelSpec contains configuration for custom models.
 // These fields are only used when modelSources is specified (custom models).
 // For image-based models, these settings come from discovery.
 type AIMCustomModelSpec struct {
 	// Hardware specifies default hardware requirements for all templates.
 	// Individual templates can override these defaults.
-	// Required when modelSources is set and customTemplates is empty.
+	// Required when modelSources is set and customTemplates is empty (unless aimId is set).
 	// +optional
 	Hardware *AIMHardwareRequirements `json:"hardware,omitempty"`
 
@@ -156,16 +169,34 @@ type AIMCustomModelSpec struct {
 	// +optional
 	// +kubebuilder:validation:Enum=optimized;preview;unoptimized
 	Type *AIMProfileType `json:"type,omitempty"`
+
+	// VersionPolicy controls how template versions are filtered during aimId-based matching.
+	// - pinned (default): match templates whose status.version equals the model's image tag
+	// - latest: match only templates at the newest available status.version
+	// - any: match templates at any version
+	// Only used when spec.aimId is set.
+	// +optional
+	// +kubebuilder:default=pinned
+	VersionPolicy AIMVersionPolicy `json:"versionPolicy,omitempty"`
 }
 
 // AIMModelSpec defines the desired state of AIMModel.
-// +kubebuilder:validation:XValidation:rule="!has(self.modelSources) || size(self.modelSources) == 0 || (has(self.custom) && has(self.custom.hardware)) || !has(self.customTemplates) || size(self.customTemplates) == 0 || self.customTemplates.all(t, has(t.hardware) || (has(self.custom) && has(self.custom.hardware)))",message="when using modelSources, hardware must be specified: set custom.hardware (inherited by all templates) or set hardware on each template individually"
+// +kubebuilder:validation:XValidation:rule="!has(self.modelSources) || size(self.modelSources) == 0 || has(self.aimId) || (has(self.custom) && has(self.custom.hardware)) || !has(self.customTemplates) || size(self.customTemplates) == 0 || self.customTemplates.all(t, has(t.hardware) || (has(self.custom) && has(self.custom.hardware)))",message="when using modelSources without aimId, set custom.hardware or set hardware on each customTemplate"
+// +kubebuilder:validation:XValidation:rule="size(self.image) > 0 || (has(self.aimId) && has(self.custom) && has(self.custom.versionPolicy) && self.custom.versionPolicy != 'pinned')",message="image is required unless aimId is set with versionPolicy latest or any"
 type AIMModelSpec struct {
 	// Image is the container image URI for this AIM model.
 	// This image is inspected by the operator to select runtime profiles used by templates.
 	// Discovery behavior is controlled by the discovery field and runtime config's AutoDiscovery setting.
-	// +kubebuilder:validation:MinLength=1
-	Image string `json:"image"`
+	// Required unless aimId is set with versionPolicy latest or any.
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// AimId is the AIM product family identifier (e.g., "qwen/qwen3-32b").
+	// When set together with modelSources, enables aimId-based template matching:
+	// the controller finds official templates by aimId, filters by versionPolicy,
+	// matches by modelId, and creates copies with the custom weight source.
+	// +optional
+	AimId string `json:"aimId,omitempty"`
 
 	// Discovery controls discovery behavior for this model.
 	// When unset, uses runtime config defaults.
@@ -315,6 +346,12 @@ func (s *AIMModelSpec) GetEffectiveImageMetadata(status *AIMModelStatus) *ImageM
 	return nil
 }
 
+// IsFineTunedModel returns true if the model uses aimId-based template matching.
+// A fine-tuned model has spec.aimId set together with spec.modelSources.
+func (s *AIMModelSpec) IsFineTunedModel() bool {
+	return s.AimId != "" && len(s.ModelSources) > 0
+}
+
 // ShouldCreateTemplates returns whether template creation is enabled for this model.
 // Returns true if discovery.createServiceTemplates is unset or true.
 func (s *AIMModelSpec) ShouldCreateTemplates() bool {
@@ -333,6 +370,12 @@ func (s *AIMModelSpec) ExpectsTemplates(status *AIMModelStatus) *bool {
 	// Check if template creation is disabled
 	if !s.ShouldCreateTemplates() {
 		result := false
+		return &result
+	}
+
+	// Fine-tuned models (aimId + modelSources) expect templates from matched official templates
+	if s.IsFineTunedModel() {
+		result := true
 		return &result
 	}
 

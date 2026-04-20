@@ -95,6 +95,24 @@ env:
     value: "2"
 ```
 
+## Test Directories
+
+Key e2e test areas:
+
+| Directory | What it tests |
+|-----------|--------------|
+| `tests/e2e/aimmodel/fine-tuned/` | aimId-based template matching for fine-tuned models |
+| `tests/e2e/aimmodel/custom-models/` | Custom models with explicit hardware and modelSources |
+| `tests/e2e/aimservicetemplate/` | Template discovery, inline sources, GPU availability |
+| `tests/e2e/aimservice/` | Full service lifecycle including frozen models and GPU tests |
+| `tests/e2e/aimartifact/` | Model artifact downloads, quotas, and protocols |
+
+Run a specific test area:
+
+```bash
+make test-chainsaw CHAINSAW_ARGS="--test-dir tests/e2e/aimmodel/fine-tuned"
+```
+
 ## Next Steps
 
 - [Development Setup](development-setup.md) — Local environment configuration

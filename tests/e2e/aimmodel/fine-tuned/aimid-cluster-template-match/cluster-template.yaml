@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterServiceTemplate
+metadata:
+  name: ft-cluster-official-template
+spec:
+  modelName: ft-cluster-base-model
+  aimId: test/cluster-base-model
+  modelId: test/model-fp8
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+  modelSources:
+    - modelId: test/model-fp8
+      sourceUri: hf://test/model-fp8
+      size: 100Mi

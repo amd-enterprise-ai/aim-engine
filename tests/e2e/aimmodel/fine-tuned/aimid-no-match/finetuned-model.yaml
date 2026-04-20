@@ -1,0 +1,11 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: ft-finetuned-nomatch
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.1.10
+  aimId: test/nonexistent-aimid
+  modelSources:
+    - modelId: test/model-fp8
+      sourceUri: hf://my-org/finetuned-weights
+      size: 200Mi

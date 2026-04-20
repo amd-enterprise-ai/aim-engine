@@ -150,6 +150,8 @@ Two PVCs are created in `aim-system` namespace:
 
 These persist across pod restarts. The first build populates the cache; subsequent builds are incremental.
 
+The PVCs use `ReadWriteOnce` access mode. To prevent pod restart deadlocks (new pod can't mount the PVC while the old pod still holds it), the deployment uses `strategy.type: Recreate` — Kubernetes terminates the old pod before creating the new one.
+
 ## Manual Resources
 
 In the Tilt UI, you can manually trigger:

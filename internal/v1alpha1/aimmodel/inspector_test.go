@@ -31,6 +31,8 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 )
 
+const inspectorTestGPUModel = "MI300X"
+
 // ============================================================================
 // LABEL PARSING TESTS
 // ============================================================================
@@ -387,8 +389,8 @@ func TestParseImageLabels_WithRecommendedDeployments(t *testing.T) {
 	}
 
 	deployment := metadata.Model.RecommendedDeployments[0]
-	if deployment.GPUModel != "MI300X" {
-		t.Errorf("expected GPUModel=MI300X, got %s", deployment.GPUModel)
+	if deployment.GPUModel != inspectorTestGPUModel {
+		t.Errorf("expected GPUModel=%s, got %s", inspectorTestGPUModel, deployment.GPUModel)
 	}
 	if deployment.GPUCount != 1 {
 		t.Errorf("expected GPUCount=1, got %d", deployment.GPUCount)

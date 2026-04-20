@@ -117,6 +117,28 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
+	// Index AIMServiceTemplate by aimId for aimId-based template matching
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMServiceTemplate{}, aimv1alpha1.ServiceTemplateAimIdIndexKey, func(obj client.Object) []string {
+		template, ok := obj.(*aimv1alpha1.AIMServiceTemplate)
+		if !ok || template.Spec.AimId == "" {
+			return nil
+		}
+		return []string{template.Spec.AimId}
+	}); err != nil {
+		return err
+	}
+
+	// Index AIMClusterServiceTemplate by aimId for aimId-based template matching
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMClusterServiceTemplate{}, aimv1alpha1.ServiceTemplateAimIdIndexKey, func(obj client.Object) []string {
+		template, ok := obj.(*aimv1alpha1.AIMClusterServiceTemplate)
+		if !ok || template.Spec.AimId == "" {
+			return nil
+		}
+		return []string{template.Spec.AimId}
+	}); err != nil {
+		return err
+	}
+
 	// Index AIMModel by image for efficient lookup
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMModel{}, aimv1alpha1.ModelImageIndexKey, func(obj client.Object) []string {
 		model, ok := obj.(*aimv1alpha1.AIMModel)
@@ -142,6 +164,17 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
+	// Index AIMModel by aimId for reverse lookup when official templates change
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMModel{}, aimv1alpha1.ModelAimIdIndexKey, func(obj client.Object) []string {
+		model, ok := obj.(*aimv1alpha1.AIMModel)
+		if !ok || model.Spec.AimId == "" {
+			return nil
+		}
+		return []string{model.Spec.AimId}
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMModel{}).
 		Owns(&aimv1alpha1.AIMServiceTemplate{}).
@@ -149,6 +182,12 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&aimv1alpha1.AIMServiceTemplate{},
 			handler.EnqueueRequestsFromMapFunc(r.findModelForServiceTemplate),
+		).
+		// Watch cluster-scoped templates for aimId-based matching:
+		// when a new official template appears, fine-tuned models need to reconcile
+		Watches(
+			&aimv1alpha1.AIMClusterServiceTemplate{},
+			handler.EnqueueRequestsFromMapFunc(r.findModelsForClusterServiceTemplate),
 		).
 		// Watch namespace-scoped RuntimeConfigs and enqueue models that reference them
 		Watches(
@@ -182,6 +221,36 @@ func (r *AIMModelReconciler) findModelForServiceTemplate(ctx context.Context, ob
 			Namespace: template.Namespace,
 		},
 	}}
+}
+
+// findModelsForClusterServiceTemplate returns reconcile requests for all AIMModels
+// whose aimId matches the template's aimId. This triggers re-matching when new
+// official templates are created or existing ones are updated/deleted.
+func (r *AIMModelReconciler) findModelsForClusterServiceTemplate(ctx context.Context, obj client.Object) []reconcile.Request {
+	template, ok := obj.(*aimv1alpha1.AIMClusterServiceTemplate)
+	if !ok || template.Spec.AimId == "" {
+		return nil
+	}
+
+	var models aimv1alpha1.AIMModelList
+	if err := r.List(ctx, &models,
+		client.MatchingFields{aimv1alpha1.ModelAimIdIndexKey: template.Spec.AimId},
+	); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMModels for ClusterServiceTemplate aimId",
+			"aimId", template.Spec.AimId)
+		return nil
+	}
+
+	requests := make([]reconcile.Request, len(models.Items))
+	for i, model := range models.Items {
+		requests[i] = reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      model.Name,
+				Namespace: model.Namespace,
+			},
+		}
+	}
+	return requests
 }
 
 // findModelsForRuntimeConfig returns reconcile requests for all AIMModels

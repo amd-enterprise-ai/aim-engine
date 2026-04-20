@@ -99,6 +99,29 @@ func getMetricShorthand(metric string) string {
 	return metric
 }
 
+// ExtractVersionFromImage extracts the version tag from a container image reference.
+// For "amdenterpriseai/aim-base:0.8.5" it returns "0.8.5".
+// Returns "" if no tag is present or the image is empty.
+func ExtractVersionFromImage(image string) string {
+	if image == "" {
+		return ""
+	}
+	// Handle digest references (image@sha256:...)
+	if idx := strings.LastIndex(image, "@"); idx >= 0 {
+		return ""
+	}
+	// Find the last colon after the last slash (to avoid matching port in registry)
+	lastSlash := strings.LastIndex(image, "/")
+	tagPart := image
+	if lastSlash >= 0 {
+		tagPart = image[lastSlash:]
+	}
+	if idx := strings.LastIndex(tagPart, ":"); idx >= 0 {
+		return tagPart[idx+1:]
+	}
+	return ""
+}
+
 // TemplateRequiresGPU returns true if the template spec declares GPU requirements with models.
 func TemplateRequiresGPU(spec aimv1alpha1.AIMServiceTemplateSpecCommon) bool {
 	if spec.Hardware == nil || spec.Hardware.GPU == nil {

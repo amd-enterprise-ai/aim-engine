@@ -64,6 +64,9 @@ type ClusterModelFetchResult struct {
 	mergedRuntimeConfig     controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
 	imageMetadata           controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]
 	clusterServiceTemplates controllerutils.FetchResult[*aimv1alpha1.AIMClusterServiceTemplateList]
+
+	// aimIdClusterTemplates holds official cluster templates matching model.spec.aimId (fine-tuned flow).
+	aimIdClusterTemplates controllerutils.FetchResult[*aimv1alpha1.AIMClusterServiceTemplateList]
 }
 
 func (r *ClusterModelReconciler) FetchRemoteState(
@@ -91,6 +94,13 @@ func (r *ClusterModelReconciler) FetchRemoteState(
 	// Cluster service templates
 	templates := &aimv1alpha1.AIMClusterServiceTemplateList{}
 	result.clusterServiceTemplates = controllerutils.FetchList(ctx, c, templates, client.MatchingFields{aimv1alpha1.ServiceTemplateModelNameIndexKey: clusterModel.Name})
+
+	// For fine-tuned models, fetch official templates by aimId
+	if clusterModel.Spec.IsFineTunedModel() {
+		aimIdTemplates := &aimv1alpha1.AIMClusterServiceTemplateList{}
+		result.aimIdClusterTemplates = controllerutils.FetchList(ctx, c, aimIdTemplates,
+			client.MatchingFields{aimv1alpha1.ServiceTemplateAimIdIndexKey: clusterModel.Spec.AimId})
+	}
 
 	return result
 }
@@ -130,6 +140,11 @@ type ModelFetchResult struct {
 	mergedRuntimeConfig controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
 	imageMetadata       controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]
 	serviceTemplates    controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplateList]
+
+	// aimIdTemplates holds official templates matching model.spec.aimId (fine-tuned flow).
+	// These are fetched across the namespace and cluster scopes for matching.
+	aimIdTemplates        controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplateList]
+	aimIdClusterTemplates controllerutils.FetchResult[*aimv1alpha1.AIMClusterServiceTemplateList]
 }
 
 func (result ModelFetchResult) GetComponentHealth() []controllerutils.ComponentHealth {
@@ -179,6 +194,17 @@ func (r *ModelReconciler) FetchRemoteState(
 	result.serviceTemplates = controllerutils.FetchList(ctx, c, templates,
 		client.InNamespace(model.Namespace),
 		client.MatchingFields{aimv1alpha1.ServiceTemplateModelNameIndexKey: model.Name})
+
+	// For fine-tuned models, fetch official templates by aimId for matching
+	if model.Spec.IsFineTunedModel() {
+		aimIdNsTemplates := &aimv1alpha1.AIMServiceTemplateList{}
+		result.aimIdTemplates = controllerutils.FetchList(ctx, c, aimIdNsTemplates,
+			client.MatchingFields{aimv1alpha1.ServiceTemplateAimIdIndexKey: model.Spec.AimId})
+
+		aimIdClTemplates := &aimv1alpha1.AIMClusterServiceTemplateList{}
+		result.aimIdClusterTemplates = controllerutils.FetchList(ctx, c, aimIdClTemplates,
+			client.MatchingFields{aimv1alpha1.ServiceTemplateAimIdIndexKey: model.Spec.AimId})
+	}
 
 	return result
 }
@@ -408,6 +434,23 @@ func (r *ClusterModelReconciler) PlanResources(
 		return controllerutils.PlanResult{}
 	}
 
+	// Fine-tuned models: match official templates by aimId and create copies
+	if model.Spec.IsFineTunedModel() {
+		logger.V(1).Info("building fine-tuned templates for cluster model via aimId matching",
+			"aimId", model.Spec.AimId)
+		if obs.aimIdClusterTemplates.OK() && obs.aimIdClusterTemplates.Value != nil {
+			matches := MatchClusterTemplatesForModel(&model.Spec, obs.aimIdClusterTemplates.Value.Items)
+			logger.V(1).Info("aimId template matching complete",
+				"candidates", len(obs.aimIdClusterTemplates.Value.Items),
+				"matches", len(matches))
+			templates := BuildFineTunedClusterServiceTemplates(model, matches)
+			for _, template := range templates {
+				planResult.Apply(template)
+			}
+		}
+		return planResult
+	}
+
 	// For custom models (with modelSources), build templates from customTemplates only
 	if IsCustomModel(&model.Spec) {
 		logger.V(1).Info("building custom templates for cluster model")
@@ -454,6 +497,35 @@ func (r *ModelReconciler) PlanResources(
 	if expects == nil || !*expects {
 		logger.V(1).Info("no templates expected", "expects", expects)
 		return controllerutils.PlanResult{}
+	}
+
+	// Fine-tuned models: match official templates by aimId and create copies
+	if model.Spec.IsFineTunedModel() {
+		logger.V(1).Info("building fine-tuned templates for model via aimId matching",
+			"aimId", model.Spec.AimId)
+		// Match against namespace-scoped templates
+		if obs.aimIdTemplates.OK() && obs.aimIdTemplates.Value != nil {
+			matches := MatchTemplatesForModel(&model.Spec, obs.aimIdTemplates.Value.Items)
+			logger.V(1).Info("aimId template matching complete (namespace)",
+				"candidates", len(obs.aimIdTemplates.Value.Items),
+				"matches", len(matches))
+			templates := BuildFineTunedServiceTemplates(model, matches)
+			for _, t := range templates {
+				planResult.Apply(t)
+			}
+		}
+		// Also match against cluster-scoped templates and create namespace-scoped copies
+		if obs.aimIdClusterTemplates.OK() && obs.aimIdClusterTemplates.Value != nil {
+			matches := MatchClusterTemplatesForModel(&model.Spec, obs.aimIdClusterTemplates.Value.Items)
+			logger.V(1).Info("aimId template matching complete (cluster)",
+				"candidates", len(obs.aimIdClusterTemplates.Value.Items),
+				"matches", len(matches))
+			templates := BuildFineTunedServiceTemplates(model, matches)
+			for _, t := range templates {
+				planResult.Apply(t)
+			}
+		}
+		return planResult
 	}
 
 	// For custom models (with modelSources), build templates from customTemplates only
@@ -514,8 +586,10 @@ func decorateModelStatus(
 	spec *aimv1alpha1.AIMModelSpec,
 	imageMetadataResult controllerutils.FetchResult[*aimv1alpha1.ImageMetadata],
 ) {
-	// Set source type based on whether this is a custom model
-	if IsCustomModel(spec) {
+	// Set source type
+	if spec.IsFineTunedModel() {
+		status.SourceType = aimv1alpha1.AIMModelSourceTypeCustom
+	} else if IsCustomModel(spec) {
 		status.SourceType = aimv1alpha1.AIMModelSourceTypeCustom
 	} else {
 		status.SourceType = aimv1alpha1.AIMModelSourceTypeImage

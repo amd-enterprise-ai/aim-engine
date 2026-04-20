@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: ft-official-template-pinned
+spec:
+  modelName: ft-base-model-pinned
+  aimId: test/base-model-pinned
+  modelId: test/model-fp8
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+  modelSources:
+    - modelId: test/model-fp8
+      sourceUri: hf://test/model-fp8
+      size: 100Mi

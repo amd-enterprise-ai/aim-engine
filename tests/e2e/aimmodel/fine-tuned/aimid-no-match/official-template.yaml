@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: ft-official-template-nomatch
+spec:
+  modelName: ft-base-model-nomatch
+  aimId: test/base-model-nomatch
+  modelId: test/model-fp8
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+  modelSources:
+    - modelId: test/model-fp8
+      sourceUri: hf://test/model-fp8
+      size: 100Mi

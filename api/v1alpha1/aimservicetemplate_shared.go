@@ -226,6 +226,12 @@ type AIMServiceTemplateStatus struct {
 	// cached, if this template is cached.
 	ModelSources []AIMModelSource `json:"modelSources,omitempty"`
 
+	// Version is the AIM version extracted from the owning model's image tag
+	// (e.g., "0.8.5" from "aim-base:0.8.5"). Set during discovery.
+	// Used for version-based template matching with fine-tuned models.
+	// +optional
+	Version string `json:"version,omitempty"`
+
 	// Profile contains the full discovery result profile as a free-form JSON object.
 	// This includes metadata, engine args, environment variables, and model details.
 	Profile *AIMDiscoveredProfile `json:"profile,omitempty"`

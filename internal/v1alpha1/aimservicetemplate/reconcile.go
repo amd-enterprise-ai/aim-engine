@@ -379,20 +379,14 @@ func (r *ServiceTemplateReconciler) PlanResources(
 		return planResult
 	}
 
-	model := obs.model.Value
-	image := model.Spec.Image
-	if image == "" {
-		logger.V(1).Info("model has no image specified", "modelName", template.Spec.ModelName)
-		return planResult
-	}
-
 	// Check GPU availability first - required for both custom and discovery-based models
 	if !obs.isGPUAvailable() {
 		logger.V(1).Info("required GPU not available, skipping resource planning")
 		return planResult
 	}
 
-	// Check if inline model sources are provided - template is immediately ready (no discovery needed)
+	// Inline model sources (e.g. fine-tuned template copies) are immediately ready — no
+	// model image or discovery needed. Check this before requiring the model's image.
 	if len(template.Spec.ModelSources) > 0 {
 		logger.V(1).Info("template has inline model sources, skipping discovery")
 
@@ -404,6 +398,13 @@ func (r *ServiceTemplateReconciler) PlanResources(
 			}
 		}
 
+		return planResult
+	}
+
+	model := obs.model.Value
+	image := model.Spec.Image
+	if image == "" {
+		logger.V(1).Info("model has no image specified", "modelName", template.Spec.ModelName)
 		return planResult
 	}
 
@@ -529,22 +530,22 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 		return planResult
 	}
 
-	clusterModel := obs.clusterModel.Value
-	image := clusterModel.Spec.Image
-	if image == "" {
-		logger.V(1).Info("cluster model has no image specified", "modelName", template.Spec.ModelName)
-		return planResult
-	}
-
 	// Check GPU availability first - required for both custom and discovery-based models
 	if !obs.isGPUAvailable() {
 		logger.V(1).Info("required GPU not available, skipping resource planning")
 		return planResult
 	}
 
-	// Check if inline model sources are provided - template is immediately ready (no discovery needed)
+	// Inline model sources (e.g. fine-tuned template copies) are immediately ready
 	if len(template.Spec.ModelSources) > 0 {
 		logger.V(1).Info("template has inline model sources, skipping discovery")
+		return planResult
+	}
+
+	clusterModel := obs.clusterModel.Value
+	image := clusterModel.Spec.Image
+	if image == "" {
+		logger.V(1).Info("cluster model has no image specified", "modelName", template.Spec.ModelName)
 		return planResult
 	}
 
@@ -661,12 +662,13 @@ func (r *ServiceTemplateReconciler) DecorateStatus(
 		obs.template.Status.Discovery, specHash, obs.gpuResources,
 	)
 
-	// Set resolved model reference if available
+	// Set resolved model reference and extract version from image tag
 	if obs.model.Value != nil {
 		status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
 			Name:      obs.model.Value.Name,
 			Namespace: obs.model.Value.Namespace,
 		}
+		status.Version = ExtractVersionFromImage(obs.model.Value.Spec.Image)
 	}
 }
 
@@ -687,11 +689,12 @@ func (r *ClusterServiceTemplateReconciler) DecorateStatus(
 		obs.template.Status.Discovery, specHash, obs.gpuResources,
 	)
 
-	// Set resolved model reference if available
+	// Set resolved model reference and extract version from image tag
 	if obs.clusterModel.Value != nil {
 		status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
 			Name: obs.clusterModel.Value.Name,
 		}
+		status.Version = ExtractVersionFromImage(obs.clusterModel.Value.Spec.Image)
 	}
 }
 

@@ -638,6 +638,100 @@ spec:
   replicas: 1
 ```
 
+## Fine-Tuned Models
+
+Fine-tuned models are a specialization of custom models where the user has custom weights for a known base model. Instead of requiring explicit hardware specifications and `customTemplates`, fine-tuned models use `aimId`-based template matching to automatically inherit runtime configuration from existing official templates.
+
+### Overview
+
+When an AIMModel specifies `spec.aimId` together with `spec.modelSources`, the controller treats it as a fine-tuned model and performs automatic template matching:
+
+1. Finds official templates whose `spec.aimId` matches the model's `spec.aimId`
+2. Filters by version according to `spec.custom.versionPolicy`
+3. Matches by `modelId` — the template's `spec.modelId` must equal one of the model's `modelSources[].modelId`
+4. Creates template copies with hardware, engine args, and profile inherited from the official template, but with the custom weight source baked in
+
+### Fine-Tuned vs Fully Custom
+
+| | Fine-Tuned Model | Fully Custom Model |
+|---|---|---|
+| `spec.aimId` | Set — identifies the base model family | Not set |
+| `spec.modelSources[].modelId` | Matches an official template's `modelId` | Arbitrary identifier |
+| Hardware | Inherited from matched template | Declared via `spec.custom.hardware` |
+| `customTemplates` | Not required | Required (or `custom.hardware` for auto-generation) |
+
+### Example: Pinned Version
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: my-finetuned-qwen
+  namespace: ml-team
+spec:
+  image: amdenterpriseai/aim-base:0.8.5
+  aimId: qwen/qwen3-32b
+  modelSources:
+    - modelId: qwen/qwen3-32b-fp8
+      sourceUri: s3://my-bucket/weights/
+```
+
+The controller finds official templates for `qwen/qwen3-32b`, filters to those at version `0.8.5` (extracted from the image tag), matches the one whose `modelId` is `qwen/qwen3-32b-fp8`, and creates a copy with the custom `sourceUri`.
+
+### Example: Latest Version
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: my-finetuned-qwen-latest
+  namespace: ml-team
+spec:
+  aimId: qwen/qwen3-32b
+  modelSources:
+    - modelId: qwen/qwen3-32b-fp8
+      sourceUri: s3://my-bucket/weights/
+  custom:
+    versionPolicy: latest
+```
+
+With `versionPolicy: latest`, `spec.image` can be omitted. The controller matches only templates at the newest available version and resolves the deployment image from the matched template's `AIM_BASE_IMAGE_REF` environment variable.
+
+### Version Policy
+
+The `spec.custom.versionPolicy` field controls version filtering during template matching:
+
+| Policy | `spec.image` | Version Filter | Deployment Image |
+|---|---|---|---|
+| `pinned` (default) | Required | `status.version` == image tag | `spec.image` |
+| `latest` | Optional | Newest `status.version` only | `AIM_BASE_IMAGE_REF` from matched template |
+| `any` | Optional | All versions accepted | `AIM_BASE_IMAGE_REF` from each matched template |
+
+### Template Copies
+
+For each matched template, the controller creates a copy scoped to the owning model:
+
+- **AIMModel** (namespace-scoped) creates **AIMServiceTemplate** copies in the same namespace
+- **AIMClusterModel** (cluster-scoped) creates **AIMClusterServiceTemplate** copies
+
+Copies inherit all configuration from the original template (hardware, profile, engine args, environment) and override:
+
+- `spec.modelName` — points to the fine-tuned model
+- `spec.modelSources` — uses the custom weight source from the fine-tuned model
+- Labels: `aim.eai.amd.com/model: <model-name>`, `aim.eai.amd.com/origin: fine-tuned`
+
+Copies are owned by the model and garbage-collected when the model is deleted. The controller watches for new or deleted matching templates and reconciles copies accordingly.
+
+### Status
+
+Fine-tuned models report `sourceType: Custom` in their status, the same as fully custom models:
+
+```yaml
+status:
+  status: Ready
+  sourceType: Custom
+```
+
 ## Related Documentation
 
 - [Profiles](profiles.md) - Self-contained runtime configurations (v1alpha2)

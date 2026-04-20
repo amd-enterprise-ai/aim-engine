@@ -1,0 +1,100 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: Fine-Tuned Model Matching Cluster-Scoped Template
+#
+# Validates cross-scope aimId matching: a namespace-scoped fine-tuned
+# AIMModel matches an AIMClusterServiceTemplate by aimId and creates
+# a namespace-scoped AIMServiceTemplate copy (not cluster-scoped).
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: finetuned-aimid-cluster-template-match
+spec:
+  timeouts:
+    apply: 30s
+    assert: 120s
+  steps:
+    - name: Create cluster-scoped base model
+      try:
+        - apply:
+            file: cluster-model.yaml
+
+    - name: Create cluster-scoped official template with aimId
+      try:
+        - apply:
+            file: cluster-template.yaml
+
+    - name: Wait for cluster template to become Ready
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterServiceTemplate
+              metadata:
+                name: ft-cluster-official-template
+              status:
+                status: Ready
+
+    - name: Verify cluster template has version from model image
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterServiceTemplate
+              metadata:
+                name: ft-cluster-official-template
+              status:
+                version: "0.1.10"
+
+    - name: Create namespace-scoped fine-tuned model with matching aimId
+      try:
+        - apply:
+            file: finetuned-model.yaml
+
+    - name: Assert namespace-scoped template copy is created
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: ft-finetuned-from-cluster
+                  aim.eai.amd.com/origin: fine-tuned
+
+    - name: Assert template copy has correct spec from cluster template
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: ft-finetuned-from-cluster
+                  aim.eai.amd.com/origin: fine-tuned
+              spec:
+                modelName: ft-finetuned-from-cluster
+                hardware:
+                  gpu:
+                    requests: 1
+                    model: MI300X
+                modelSources:
+                  - modelId: test/model-fp8
+                    sourceUri: hf://my-org/cluster-finetuned-weights
+                    size: 300Mi
+
+    - name: Assert fine-tuned model reaches Ready with Custom source type
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: ft-finetuned-from-cluster
+              status:
+                status: Ready
+                sourceType: Custom

@@ -142,9 +142,25 @@ func (r *AIMClusterModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
+	// Index AIMClusterModel by aimId for reverse lookup when official templates change
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMClusterModel{}, aimv1alpha1.ClusterModelAimIdIndexKey, func(obj client.Object) []string {
+		model, ok := obj.(*aimv1alpha1.AIMClusterModel)
+		if !ok || model.Spec.AimId == "" {
+			return nil
+		}
+		return []string{model.Spec.AimId}
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMClusterModel{}).
 		Owns(&aimv1alpha1.AIMClusterServiceTemplate{}).
+		// Watch cluster-scoped templates for aimId-based matching
+		Watches(
+			&aimv1alpha1.AIMClusterServiceTemplate{},
+			handler.EnqueueRequestsFromMapFunc(r.findClusterModelsForClusterServiceTemplate),
+		).
 		// Watch cluster-scoped RuntimeConfigs and enqueue cluster models that reference them
 		Watches(
 			&aimv1alpha1.AIMClusterRuntimeConfig{},
@@ -152,6 +168,34 @@ func (r *AIMClusterModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		).
 		Named(clusterModelName).
 		Complete(r)
+}
+
+// findClusterModelsForClusterServiceTemplate returns reconcile requests for all AIMClusterModels
+// whose aimId matches the template's aimId.
+func (r *AIMClusterModelReconciler) findClusterModelsForClusterServiceTemplate(ctx context.Context, obj client.Object) []reconcile.Request {
+	template, ok := obj.(*aimv1alpha1.AIMClusterServiceTemplate)
+	if !ok || template.Spec.AimId == "" {
+		return nil
+	}
+
+	var models aimv1alpha1.AIMClusterModelList
+	if err := r.List(ctx, &models,
+		client.MatchingFields{aimv1alpha1.ClusterModelAimIdIndexKey: template.Spec.AimId},
+	); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMClusterModels for template aimId",
+			"aimId", template.Spec.AimId)
+		return nil
+	}
+
+	requests := make([]reconcile.Request, len(models.Items))
+	for i, model := range models.Items {
+		requests[i] = reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name: model.Name,
+			},
+		}
+	}
+	return requests
 }
 
 // findClusterModelsForClusterRuntimeConfig returns reconcile requests for all AIMClusterModels

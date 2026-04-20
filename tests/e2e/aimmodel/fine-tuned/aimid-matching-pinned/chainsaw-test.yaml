@@ -1,0 +1,102 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: Fine-Tuned Model with aimId Matching (Pinned Version)
+#
+# Validates the aimId-based template matching flow for fine-tuned models:
+# 1. Base model owns an "official" template with aimId + modelId
+# 2. Fine-tuned model with matching aimId triggers template copy creation
+# 3. Copy inherits hardware/profile from official, overrides modelSources
+# 4. Fine-tuned model reaches Ready with sourceType: Custom
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: finetuned-aimid-matching-pinned
+spec:
+  timeouts:
+    apply: 30s
+    assert: 120s
+  steps:
+    - name: Create base model
+      try:
+        - apply:
+            file: base-model.yaml
+
+    - name: Create official template with aimId and inline modelSources
+      try:
+        - apply:
+            file: official-template.yaml
+
+    - name: Wait for official template to become Ready
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: ft-official-template-pinned
+              status:
+                status: Ready
+
+    - name: Verify official template has version extracted from model image
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: ft-official-template-pinned
+              status:
+                version: "0.1.10"
+
+    - name: Create fine-tuned model with matching aimId
+      try:
+        - apply:
+            file: finetuned-model.yaml
+
+    - name: Assert fine-tuned template copy is created with correct labels
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: ft-finetuned-pinned
+                  aim.eai.amd.com/origin: fine-tuned
+
+    - name: Assert template copy has correct spec
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: ft-finetuned-pinned
+                  aim.eai.amd.com/origin: fine-tuned
+              spec:
+                modelName: ft-finetuned-pinned
+                hardware:
+                  gpu:
+                    requests: 1
+                    model: MI300X
+                modelSources:
+                  - modelId: test/model-fp8
+                    sourceUri: hf://my-org/finetuned-weights
+                    size: 200Mi
+
+    - name: Assert fine-tuned model reaches Ready with Custom source type
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: ft-finetuned-pinned
+              status:
+                status: Ready
+                sourceType: Custom

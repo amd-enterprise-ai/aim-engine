@@ -32,6 +32,10 @@ const (
 
 	// ModelRuntimeConfigIndexKey is the field index key for AIMModel.Spec.Name (runtimeConfigName)
 	ModelRuntimeConfigIndexKey = ".spec.runtimeConfigName"
+
+	// ModelAimIdIndexKey is the field index key for AIMModel.Spec.AimId.
+	// Used to find fine-tuned models that match a given aimId when official templates change.
+	ModelAimIdIndexKey = ".spec.aimId"
 )
 
 // AIMModel is the Schema for namespace-scoped AIM model catalog entries.
