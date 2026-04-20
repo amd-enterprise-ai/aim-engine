@@ -77,13 +77,14 @@ jobs:
           docker tag ${PUSH_IMAGE_REPO}:${IMAGE_TAG} ${PUSH_IMAGE_REPO}:publish-main
           docker push ${PUSH_IMAGE_REPO}:publish-main
 
-      - name: Update Helm values with image repository and tag
+      - name: Update Helm values with image repository, tag, and pull secret
         run: |
           CHART_IMAGE_REPO="${PULL_IMAGE_REPO:-$PUSH_IMAGE_REPO}" \
           IMAGE_TAG="${IMAGE_TAG}" \
           yq -i '
             .manager.image.repository = strenv(CHART_IMAGE_REPO) |
-            .manager.image.tag = strenv(IMAGE_TAG)
+            .manager.image.tag = strenv(IMAGE_TAG) |
+            .manager.imagePullSecrets = [{"name": "regcred"}]
           ' config/helm/values.yaml
 
       - name: Generate CRDs
@@ -110,66 +111,66 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
+
           # Create orphan branch or checkout existing
           git checkout --orphan publish-main-temp || true
-          
+
           # Clear the index
           git rm -rf --cached . || true
-          
+
           # Add the chart directory
           mkdir -p chart
           cp -r dist/chart/* chart/
           git add chart/
-          
+
           # Add the crd directory with crds.yaml as separate file (distributed independently)
           mkdir -p crd
           cp dist/crds.yaml crd/crds.yaml
           git add crd/crds.yaml
-          
+
           # Create a README for the branch
           cat > README.md << 'EOF'
           # aim-engine
-          
+
           This branch contains the auto-generated Helm chart and CRDs for aim-engine.
-          
+
           ## Installation
-          
+
           CRDs are distributed separately and must be installed first:
-          
+
           ```bash
           # 1. Install CRDs
           kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/publish-main/crd/crds.yaml
           kubectl wait --for=condition=Established crd --all --timeout=60s
-          
+
           # 2a. Install operator via Helm OCI (recommended)
           helm install aim-engine oci://ghcr.io/${{ github.repository_owner }}/charts/aim-engine \
             --version ${{ steps.ver.outputs.chart_version }} \
             --namespace aim-system --create-namespace
-          
+
           # 2b. Or install from this branch
           helm install aim-engine ./chart --namespace aim-system --create-namespace
           ```
-          
+
           Or clone this branch:
-          
+
           ```bash
           git clone -b publish-main https://github.com/${{ github.repository }}.git aim-engine
           cd aim-engine
-          
+
           kubectl apply -f crd/crds.yaml
           kubectl wait --for=condition=Established crd --all --timeout=60s
           helm install aim-engine ./chart --namespace aim-system --create-namespace
           ```
-          
+
           ## Source
-          
+
           Generated from commit: ${{ github.sha }}
           EOF
           git add README.md
-          
+
           # Commit
           git commit -m "Publish chart from ${GITHUB_SHA::7}" --allow-empty
-          
+
           # Force push to publish-main
           git push origin HEAD:publish-main --force
