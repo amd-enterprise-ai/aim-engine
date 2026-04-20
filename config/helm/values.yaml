@@ -60,8 +60,6 @@ manager:
   # Resource limits and requests
   resources:
     limits:
-      # -- CPU limit
-      cpu: 500m
       # -- Memory limit
       memory: 4Gi
     requests:
@@ -192,9 +190,9 @@ acceleratorDetector:
     enable: true
     image:
       # -- GPU detector image repository (aim-base)
-      repository: ""
+      repository: ghcr.io/silogen/aim-base
       # -- GPU detector image tag
-      tag: ""
+      tag: "0.11-rc113"
       # -- Image pull policy
       pullPolicy: IfNotPresent
     # -- Secrets for pulling the GPU detector image from private registries
@@ -212,7 +210,6 @@ acceleratorDetector:
     # -- Resource limits and requests for GPU detector pods
     resources:
       limits:
-        cpu: 500m
         memory: 512Mi
       requests:
         cpu: 50m
@@ -228,9 +225,9 @@ acceleratorDetector:
     enable: true
     image:
       # -- CPU detector image repository (aim-epyc-base)
-      repository: ""
+      repository: ghcr.io/silogen/aim-epyc-base
       # -- CPU detector image tag
-      tag: ""
+      tag: "0.11-rc201"
       # -- Image pull policy
       pullPolicy: IfNotPresent
     # -- Secrets for pulling the CPU detector image from private registries
@@ -248,7 +245,6 @@ acceleratorDetector:
     # -- Resource limits and requests for CPU detector pods
     resources:
       limits:
-        cpu: 500m
         memory: 512Mi
       requests:
         cpu: 50m
