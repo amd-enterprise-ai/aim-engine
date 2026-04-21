@@ -337,6 +337,15 @@ const (
 // AIMProfileMetadata describes the characteristics of a cached deployment profile.
 // This is identical to AIMDiscoveryProfileMetadata but exists in the template status namespace.
 type AIMProfileMetadata struct {
+	// AimID is the model-family identifier from the profile YAML's top-level `aim_id`.
+	// Used for cross-scope fine-tune template matching (AIMModel.spec.aimId -> template.spec.aimId).
+	// +optional
+	AimID string `json:"aimId,omitempty"`
+
+	// ModelID is the per-profile model variant identifier from the profile YAML's top-level `model_id`.
+	// +optional
+	ModelID string `json:"modelId,omitempty"`
+
 	// Engine identifies the inference engine used for this profile (e.g., "vllm", "tgi").
 	// +optional
 	Engine string `json:"engine,omitempty"`

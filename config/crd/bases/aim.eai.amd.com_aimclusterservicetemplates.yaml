@@ -1094,6 +1094,11 @@ spec:
                     description: Metadata provides structured information about this
                       deployment profile's characteristics.
                     properties:
+                      aimId:
+                        description: |-
+                          AimID is the model-family identifier from the profile YAML's top-level `aim_id`.
+                          Used for cross-scope fine-tune template matching (AIMModel.spec.aimId -> template.spec.aimId).
+                        type: string
                       engine:
                         description: Engine identifies the inference engine used for
                           this profile (e.g., "vllm", "tgi").
@@ -1113,6 +1118,10 @@ spec:
                         enum:
                         - latency
                         - throughput
+                        type: string
+                      modelId:
+                        description: ModelID is the per-profile model variant identifier
+                          from the profile YAML's top-level `model_id`.
                         type: string
                       precision:
                         description: Precision specifies the numeric precision used

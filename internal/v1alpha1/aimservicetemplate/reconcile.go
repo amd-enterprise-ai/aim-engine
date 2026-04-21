@@ -144,6 +144,13 @@ func (r *ServiceTemplateReconciler) FetchRemoteState(
 					logger.Error(err, "Failed to parse discovery logs", "job", job.Name)
 				} else {
 					result.parsedDiscovery = discovery
+					if perr := maybePromoteDiscoveredIdentity(
+						ctx, c, template,
+						&template.Spec.AIMServiceTemplateSpecCommon,
+						discovery.Profile,
+					); perr != nil {
+						logger.Error(perr, "Failed to promote discovered identity", "template", template.Name)
+					}
 				}
 			}
 		}
@@ -270,6 +277,13 @@ func (r *ClusterServiceTemplateReconciler) FetchRemoteState(
 					logger.Error(err, "Failed to parse discovery logs", "job", job.Name)
 				} else {
 					result.parsedDiscovery = discovery
+					if perr := maybePromoteDiscoveredIdentity(
+						ctx, c, template,
+						&template.Spec.AIMServiceTemplateSpecCommon,
+						discovery.Profile,
+					); perr != nil {
+						logger.Error(perr, "Failed to promote discovered identity", "template", template.Name)
+					}
 				}
 			}
 		}
@@ -696,6 +710,32 @@ func (r *ClusterServiceTemplateReconciler) DecorateStatus(
 		}
 		status.Version = ExtractVersionFromImage(obs.clusterModel.Value.Spec.Image)
 	}
+}
+
+// maybePromoteDiscoveredIdentity patches spec.aimId / spec.modelId from the
+// discovered profile when the user has not set them. Called after successful
+// discovery so the field indexer (and fine-tune matcher) can find this template.
+func maybePromoteDiscoveredIdentity(
+	ctx context.Context, c client.Client,
+	obj client.Object,
+	spec *aimv1alpha1.AIMServiceTemplateSpecCommon,
+	profile *aimv1alpha1.AIMDiscoveredProfile,
+) error {
+	if profile == nil {
+		return nil
+	}
+	if (spec.AimId != "" || profile.Metadata.AimID == "") &&
+		(spec.ModelId != "" || profile.Metadata.ModelID == "") {
+		return nil
+	}
+	patch := client.MergeFrom(obj.DeepCopyObject().(client.Object))
+	if spec.AimId == "" && profile.Metadata.AimID != "" {
+		spec.AimId = profile.Metadata.AimID
+	}
+	if spec.ModelId == "" && profile.Metadata.ModelID != "" {
+		spec.ModelId = profile.Metadata.ModelID
+	}
+	return c.Patch(ctx, obj, patch)
 }
 
 // decorateTemplateStatusCommon handles shared status decoration for both namespace and cluster-scoped templates.

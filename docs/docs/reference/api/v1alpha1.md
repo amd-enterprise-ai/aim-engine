@@ -927,6 +927,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
+| `aimId` _string_ | AimID is the model-family identifier from the profile YAML's top-level `aim_id`.<br />Used for cross-scope fine-tune template matching (AIMModel.spec.aimId -> template.spec.aimId). |  | Optional: \{\} <br /> |
+| `modelId` _string_ | ModelID is the per-profile model variant identifier from the profile YAML's top-level `model_id`. |  | Optional: \{\} <br /> |
 | `engine` _string_ | Engine identifies the inference engine used for this profile (e.g., "vllm", "tgi"). |  | Optional: \{\} <br /> |
 | `gpu` _string_ | GPU specifies the GPU model this profile is optimized for (e.g., "MI300X", "MI325X"). |  | Optional: \{\} <br /> |
 | `gpuCount` _integer_ | GPUCount indicates how many GPUs are required per replica for this profile. |  | Optional: \{\} <br /> |

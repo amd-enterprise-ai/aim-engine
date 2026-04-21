@@ -412,6 +412,8 @@ type discoveryResult struct {
 
 // discoveryProfileResult is the raw profile format from discovery job output.
 type discoveryProfileResult struct {
+	AimID          string            `json:"aim_id"`
+	ModelID        string            `json:"model_id"`
 	Model          string            `json:"model"`
 	QuantizedModel string            `json:"quantized_model"`
 	Metadata       profileMetadata   `json:"metadata"`
@@ -481,6 +483,8 @@ func convertToAIMDiscoveredProfile(raw discoveryProfileResult) (*aimv1alpha1.AIM
 		EngineArgs: &apiextensionsv1.JSON{Raw: engineArgsBytes},
 		EnvVars:    raw.EnvVars,
 		Metadata: aimv1alpha1.AIMProfileMetadata{
+			AimID:     raw.AimID,
+			ModelID:   raw.ModelID,
 			Engine:    raw.Metadata.Engine,
 			GPU:       raw.Metadata.GPU,
 			GPUCount:  raw.Metadata.GPUCount,

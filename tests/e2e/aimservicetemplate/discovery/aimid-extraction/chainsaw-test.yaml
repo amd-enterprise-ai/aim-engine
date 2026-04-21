@@ -1,0 +1,90 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: servicetemplate-discovery-aimid-extraction
+  labels:
+    requires: gpu
+spec:
+  description: >-
+    Verify that aimId/modelId from the profile YAML of a real AIM image
+    are extracted during discovery and land on the auto-generated
+    AIM(Cluster)ServiceTemplate (status.profile.metadata + late-bound spec),
+    without any manually-authored templates.
+  timeouts:
+    assert: 600s
+  steps:
+    - name: Create cluster-scoped and identical namespace-scoped models
+      try:
+        - apply: { file: cluster-model.yaml }
+        - apply: { file: model.yaml }
+    - name: AIMClusterModel produces at least one auto-generated cluster template
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: aimid-ext-cluster-model
+                  aim.eai.amd.com/origin: auto-generated
+    - name: Auto-generated cluster template becomes Ready (discovery succeeded)
+      try:
+        - assert:
+            timeout: 600s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: aimid-ext-cluster-model
+                  aim.eai.amd.com/origin: auto-generated
+              status:
+                status: Ready
+    - name: Cluster template has aimId/modelId in status.profile.metadata (from discovery JSON)
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: aimid-ext-cluster-model
+                  aim.eai.amd.com/origin: auto-generated
+              status:
+                profile:
+                  metadata:
+                    aimId: meta-llama/Llama-3.2-3B-Instruct
+                    modelId: meta-llama/Llama-3.2-3B-Instruct
+    - name: Cluster template has aimId/modelId late-bound into spec (so the matcher indexer finds it)
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: aimid-ext-cluster-model
+                  aim.eai.amd.com/origin: auto-generated
+              spec:
+                aimId: meta-llama/Llama-3.2-3B-Instruct
+                modelId: meta-llama/Llama-3.2-3B-Instruct
+    - name: Same assertions for the namespace-scoped auto-generated template
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: aimid-ext-ns-model
+                  aim.eai.amd.com/origin: auto-generated
+              spec:
+                aimId: meta-llama/Llama-3.2-3B-Instruct
+                modelId: meta-llama/Llama-3.2-3B-Instruct
+              status:
+                status: Ready
+                profile:
+                  metadata:
+                    aimId: meta-llama/Llama-3.2-3B-Instruct
+                    modelId: meta-llama/Llama-3.2-3B-Instruct
