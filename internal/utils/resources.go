@@ -73,7 +73,7 @@ const (
 //
 // The mapping includes:
 //   - AMD Instinct accelerators (MI series): MI100, MI210, MI250X, MI300X, MI308X, MI325X, MI350X, MI355X
-//   - AMD Radeon Pro workstation GPUs: W6800, W6900X, W7800, W7900, V620, V710
+//   - AMD Radeon Pro workstation GPUs: W6800, W6900X, W7800, W7900, V620, V710, R9700
 //   - AMD Radeon gaming GPUs: RX6800, RX6900, RX7900, RX9070
 //
 // Note: Some device IDs map to the same model (e.g., multiple MI300X variants).
@@ -143,6 +143,7 @@ var KnownGPUVRAM = map[string]string{
 	"W6800":  "32G",
 	"W6800X": "32G",
 	"V620":   "32G",
+	"R9700":  "32G",
 	// AMD Radeon (consumer)
 	"RX9070": "16G",
 	"RX7900": "24G",

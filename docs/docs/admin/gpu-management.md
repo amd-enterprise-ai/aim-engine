@@ -23,7 +23,7 @@ Legacy labels with `beta.amd.com/` prefix are also supported.
 
 During [template auto-selection](../concepts/services.md#auto-selection), AIM Engine filters templates to only those whose required GPU is available in the cluster. A template requiring MI325X GPUs is excluded if no MI325X nodes exist.
 
-GPU preference scoring (highest to lowest): MI325X > MI300X > MI250X > MI210.
+GPU preference scoring (highest to lowest): MI325X > MI300X > MI250X > MI210 > R9700 > W7900. Models outside this list tie at the bottom of the ranking.
 
 ## GPU Resource Requests
 

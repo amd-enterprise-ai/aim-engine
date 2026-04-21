@@ -231,6 +231,90 @@ INFO: done`),
 			wantEngine:    "vllm",
 			wantType:      "unoptimized",
 		},
+		{
+			name: "accelerator_model schema (W7900)",
+			input: []byte(`[{
+				"filename": "profile.yaml",
+				"profile": {
+					"model": "openai/gpt-oss-20b",
+					"quantized_model": "",
+					"metadata": {
+						"engine": "vllm",
+						"accelerator_model": "W7900",
+						"accelerator_type": "gpu",
+						"accelerator_count": 1,
+						"metric": "throughput",
+						"precision": "fp16",
+						"type": "optimized"
+					},
+					"engine_args": {"tensor_parallel_size": 1},
+					"env_vars": {}
+				},
+				"models": []
+			}]`),
+			wantErr:       false,
+			wantResultLen: 1,
+			wantEngine:    "vllm",
+			wantGPU:       "W7900",
+			wantGPUCount:  1,
+			wantMetric:    "throughput",
+			wantPrecision: "fp16",
+			wantType:      "optimized",
+		},
+		{
+			name: "accelerator_model schema (R9700 multi-accelerator)",
+			input: []byte(`[{
+				"filename": "profile.yaml",
+				"profile": {
+					"model": "openai/gpt-oss-20b",
+					"quantized_model": "",
+					"metadata": {
+						"engine": "vllm",
+						"accelerator_model": "R9700",
+						"accelerator_type": "gpu",
+						"accelerator_count": 2,
+						"metric": "throughput",
+						"precision": "fp16",
+						"type": "optimized"
+					},
+					"engine_args": {"tensor_parallel_size": 2},
+					"env_vars": {}
+				},
+				"models": []
+			}]`),
+			wantErr:       false,
+			wantResultLen: 1,
+			wantGPU:       "R9700",
+			wantGPUCount:  2,
+		},
+		{
+			name: "mixed schema - legacy gpu fields take precedence",
+			input: []byte(`[{
+				"filename": "profile.yaml",
+				"profile": {
+					"model": "test",
+					"quantized_model": "",
+					"metadata": {
+						"engine": "vllm",
+						"gpu": "MI300X",
+						"gpu_count": 4,
+						"accelerator_model": "W7900",
+						"accelerator_type": "gpu",
+						"accelerator_count": 1,
+						"metric": "throughput",
+						"precision": "fp16",
+						"type": "optimized"
+					},
+					"engine_args": {},
+					"env_vars": {}
+				},
+				"models": []
+			}]`),
+			wantErr:       false,
+			wantResultLen: 1,
+			wantGPU:       "MI300X",
+			wantGPUCount:  4,
+		},
 	}
 
 	for _, tt := range tests {
@@ -295,6 +379,61 @@ INFO: done`),
 
 			if tt.wantModelSize != 0 && len(result.Models) > 0 && result.Models[0].SizeGB != tt.wantModelSize {
 				t.Errorf("model size = %f, want %f", result.Models[0].SizeGB, tt.wantModelSize)
+			}
+		})
+	}
+}
+
+// TestNormalizeAcceleratorFields exercises the precedence and type-guard rules
+// directly, since the table-driven parser test only makes positive assertions.
+func TestNormalizeAcceleratorFields(t *testing.T) {
+	tests := []struct {
+		name         string
+		in           profileMetadata
+		wantGPU      string
+		wantGPUCount int32
+	}{
+		{
+			name:         "accelerator fields backfilled when gpu unset",
+			in:           profileMetadata{AcceleratorModel: "W7900", AcceleratorType: "gpu", AcceleratorCount: 2},
+			wantGPU:      "W7900",
+			wantGPUCount: 2,
+		},
+		{
+			name:         "accelerator_type empty treated as gpu",
+			in:           profileMetadata{AcceleratorModel: "R9700", AcceleratorCount: 1},
+			wantGPU:      "R9700",
+			wantGPUCount: 1,
+		},
+		{
+			name:         "legacy gpu fields win over accelerator",
+			in:           profileMetadata{GPU: "MI300X", GPUCount: 4, AcceleratorModel: "W7900", AcceleratorType: "gpu", AcceleratorCount: 1},
+			wantGPU:      "MI300X",
+			wantGPUCount: 4,
+		},
+		{
+			name:         "non-gpu accelerator_type is ignored",
+			in:           profileMetadata{AcceleratorModel: "EPYC-9004", AcceleratorType: "cpu", AcceleratorCount: 8},
+			wantGPU:      "",
+			wantGPUCount: 0,
+		},
+		{
+			name:         "accelerator_type is case-insensitive",
+			in:           profileMetadata{AcceleratorModel: "W7900", AcceleratorType: "GPU", AcceleratorCount: 1},
+			wantGPU:      "W7900",
+			wantGPUCount: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tt.in
+			m.normalizeAcceleratorFields()
+			if m.GPU != tt.wantGPU {
+				t.Errorf("GPU = %q, want %q", m.GPU, tt.wantGPU)
+			}
+			if m.GPUCount != tt.wantGPUCount {
+				t.Errorf("GPUCount = %d, want %d", m.GPUCount, tt.wantGPUCount)
 			}
 		})
 	}
@@ -405,6 +544,28 @@ func TestConvertToAIMProfile(t *testing.T) {
 			},
 			wantErr:    false,
 			wantEngine: "vllm",
+		},
+		{
+			name: "accelerator fields backfilled to GPU when constructed directly",
+			input: discoveryProfileResult{
+				Model: "test-model",
+				Metadata: profileMetadata{
+					Engine:           "vllm",
+					AcceleratorModel: "W7900",
+					AcceleratorType:  "gpu",
+					AcceleratorCount: 1,
+					Metric:           "throughput",
+					Precision:        "fp16",
+					Type:             "optimized",
+				},
+				EngineArgs: map[string]any{},
+				EnvVars:    map[string]string{},
+			},
+			wantErr:      false,
+			wantEngine:   "vllm",
+			wantGPU:      "W7900",
+			wantGPUCount: 1,
+			wantType:     aimv1alpha1.AIMProfileTypeOptimized,
 		},
 	}
 
@@ -770,7 +931,11 @@ func TestBuildDiscoveryJob(t *testing.T) {
 					},
 				},
 			},
-			wantEnvNames: []string{"AIM_LOG_LEVEL_ROOT", "AIM_LOG_LEVEL", "AIM_GPU_MODEL", "AIM_GPU_COUNT"},
+			wantEnvNames: []string{
+				"AIM_LOG_LEVEL_ROOT", "AIM_LOG_LEVEL",
+				"AIM_GPU_MODEL", "AIM_GPU_COUNT",
+				"AIM_ACCELERATOR_MODEL", "AIM_ACCELERATOR_COUNT",
+			},
 		},
 		{
 			name: "job with profile ID",

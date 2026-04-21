@@ -24,8 +24,10 @@ package aimservicetemplate
 
 import (
 	"errors"
+	"sort"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -434,6 +436,119 @@ func TestGetGPUHealthFromResources_WithMinVRAM(t *testing.T) {
 			}
 			if tt.expectedReason != "" && result.Reason != tt.expectedReason {
 				t.Errorf("GetGPUHealthFromResources() reason = %v, want %v", result.Reason, tt.expectedReason)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// BUILD NODE AFFINITY FROM GPU REQUIREMENTS TESTS
+// ============================================================================
+
+// TestBuildNodeAffinityFromGPURequirements_AMDModels verifies the device IDs
+// emitted for each supported AMD GPU model. A regression here would let pods
+// schedule onto the wrong accelerators (or none at all).
+func TestBuildNodeAffinityFromGPURequirements_AMDModels(t *testing.T) {
+	tests := []struct {
+		name              string
+		model             string
+		expectedDeviceIDs []string
+	}{
+		{
+			name:              "Radeon Pro W7900",
+			model:             "W7900",
+			expectedDeviceIDs: []string{"7448", "744a", "744b"},
+		},
+		{
+			name:              "Radeon AI Pro R9700",
+			model:             "R9700",
+			expectedDeviceIDs: []string{"7551"},
+		},
+		{
+			name:              "Instinct MI300X",
+			model:             "MI300X",
+			expectedDeviceIDs: []string{"74a1", "74a9", "74b5", "74bd"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := aimv1alpha1.AIMServiceTemplateSpecCommon{
+				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{
+						GPU: &aimv1alpha1.AIMGpuRequirements{
+							Model:    tt.model,
+							Requests: 1,
+						},
+					},
+				},
+			}
+
+			got := BuildNodeAffinityFromGPURequirements(spec, nil)
+			if got == nil {
+				t.Fatalf("expected non-nil NodeAffinity for model %q", tt.model)
+			}
+			req := got.RequiredDuringSchedulingIgnoredDuringExecution
+			if req == nil || len(req.NodeSelectorTerms) != 1 {
+				t.Fatalf("expected exactly one NodeSelectorTerm, got %+v", req)
+			}
+			term := req.NodeSelectorTerms[0]
+			if len(term.MatchExpressions) != 1 {
+				t.Fatalf("expected exactly one MatchExpression, got %d", len(term.MatchExpressions))
+			}
+			expr := term.MatchExpressions[0]
+			if expr.Key != utils.LabelAMDGPUDeviceID {
+				t.Errorf("expected key %q, got %q", utils.LabelAMDGPUDeviceID, expr.Key)
+			}
+			if expr.Operator != corev1.NodeSelectorOpIn {
+				t.Errorf("expected operator In, got %v", expr.Operator)
+			}
+			// KnownAmdDevices map iteration is non-deterministic; sort before compare.
+			gotIDs := append([]string(nil), expr.Values...)
+			sort.Strings(gotIDs)
+			wantIDs := append([]string(nil), tt.expectedDeviceIDs...)
+			sort.Strings(wantIDs)
+			if len(gotIDs) != len(wantIDs) {
+				t.Fatalf("expected %d device IDs %v, got %d %v", len(wantIDs), wantIDs, len(gotIDs), gotIDs)
+			}
+			for i := range gotIDs {
+				if gotIDs[i] != wantIDs[i] {
+					t.Errorf("device IDs mismatch: got %v, want %v", gotIDs, wantIDs)
+					break
+				}
+			}
+		})
+	}
+}
+
+// TestBuildNodeAffinityFromGPURequirements_NoAffinity asserts that specs
+// without a GPU constraint or with an unknown model produce no node affinity.
+func TestBuildNodeAffinityFromGPURequirements_NoAffinity(t *testing.T) {
+	tests := []struct {
+		name string
+		spec aimv1alpha1.AIMServiceTemplateSpecCommon
+	}{
+		{
+			name: "no hardware requirements",
+			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{},
+		},
+		{
+			name: "GPU model unknown to KnownAmdDevices",
+			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+				AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+					Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
+						Model:    "NotAGPU9000",
+						Requests: 1,
+					}},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := BuildNodeAffinityFromGPURequirements(tt.spec, nil); got != nil {
+				t.Errorf("expected nil NodeAffinity, got %+v", got)
 			}
 		})
 	}

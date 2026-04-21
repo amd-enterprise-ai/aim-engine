@@ -31,6 +31,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -184,16 +185,21 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 
 	if spec.TemplateSpec.Hardware != nil && spec.TemplateSpec.Hardware.GPU != nil {
 		if spec.TemplateSpec.Hardware.GPU.Model != "" {
-			env = append(env, corev1.EnvVar{
-				Name:  "AIM_GPU_MODEL",
-				Value: spec.TemplateSpec.Hardware.GPU.Model,
-			})
+			// AIM images expose one of two environment variable sets for profile
+			// selection during dry-run: AIM_GPU_* (older images) and
+			// AIM_ACCELERATOR_* (newer images). Emit both so the discovery job
+			// works regardless of which set the image consumes.
+			env = append(env,
+				corev1.EnvVar{Name: "AIM_GPU_MODEL", Value: spec.TemplateSpec.Hardware.GPU.Model},
+				corev1.EnvVar{Name: "AIM_ACCELERATOR_MODEL", Value: spec.TemplateSpec.Hardware.GPU.Model},
+			)
 		}
 		if spec.TemplateSpec.Hardware.GPU.Requests > 0 {
-			env = append(env, corev1.EnvVar{
-				Name:  "AIM_GPU_COUNT",
-				Value: strconv.Itoa(int(spec.TemplateSpec.Hardware.GPU.Requests)),
-			})
+			countStr := strconv.Itoa(int(spec.TemplateSpec.Hardware.GPU.Requests))
+			env = append(env,
+				corev1.EnvVar{Name: "AIM_GPU_COUNT", Value: countStr},
+				corev1.EnvVar{Name: "AIM_ACCELERATOR_COUNT", Value: countStr},
+			)
 		}
 	}
 
@@ -414,13 +420,36 @@ type discoveryProfileResult struct {
 }
 
 // profileMetadata is the raw metadata format from discovery job output.
+// Both the legacy gpu/gpu_count and the accelerator_* field names are accepted;
+// normalizeAcceleratorFields copies accelerator_* values into GPU/GPUCount when
+// the latter are unset so downstream code only needs to read GPU/GPUCount.
 type profileMetadata struct {
-	Engine    string `json:"engine"`
-	GPU       string `json:"gpu"`
-	Precision string `json:"precision"`
-	GPUCount  int32  `json:"gpu_count"`
-	Metric    string `json:"metric"`
-	Type      string `json:"type"`
+	Engine           string `json:"engine"`
+	GPU              string `json:"gpu"`
+	GPUCount         int32  `json:"gpu_count"`
+	AcceleratorModel string `json:"accelerator_model,omitempty"`
+	AcceleratorType  string `json:"accelerator_type,omitempty"`
+	AcceleratorCount int32  `json:"accelerator_count,omitempty"`
+	Precision        string `json:"precision"`
+	Metric           string `json:"metric"`
+	Type             string `json:"type"`
+}
+
+// normalizeAcceleratorFields copies accelerator_* fields into GPU/GPUCount when
+// those are unset. Only GPU accelerators are copied: when AcceleratorType is
+// set to anything other than "gpu" the accelerator_* values are ignored, to
+// avoid misrepresenting non-GPU profiles as GPU profiles in v1alpha1 status.
+// If both sets of fields are populated, gpu/gpu_count win.
+func (m *profileMetadata) normalizeAcceleratorFields() {
+	if m.AcceleratorType != "" && !strings.EqualFold(m.AcceleratorType, "gpu") {
+		return
+	}
+	if m.GPU == "" && m.AcceleratorModel != "" {
+		m.GPU = m.AcceleratorModel
+	}
+	if m.GPUCount == 0 && m.AcceleratorCount > 0 {
+		m.GPUCount = m.AcceleratorCount
+	}
 }
 
 // discoveryModelResult represents a model in the raw discovery output.
@@ -443,6 +472,10 @@ func convertToAIMDiscoveredProfile(raw discoveryProfileResult) (*aimv1alpha1.AIM
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal engine args: %w", err)
 	}
+
+	// Callers may construct discoveryProfileResult directly, so normalize here
+	// as well as in parseDiscoveryJSON.
+	raw.Metadata.normalizeAcceleratorFields()
 
 	return &aimv1alpha1.AIMDiscoveredProfile{
 		EngineArgs: &apiextensionsv1.JSON{Raw: engineArgsBytes},
@@ -563,6 +596,7 @@ func parseDiscoveryJSON(ctx context.Context, logBytes []byte) ([]discoveryResult
 
 	var results []discoveryResult
 	if err := json.Unmarshal(logBytes, &results); err == nil {
+		normalizeAcceleratorFieldsInResults(results)
 		return results, nil
 	}
 
@@ -576,7 +610,16 @@ func parseDiscoveryJSON(ctx context.Context, logBytes []byte) ([]discoveryResult
 		return nil, fmt.Errorf("failed to parse extracted JSON array: %w", err)
 	}
 
+	normalizeAcceleratorFieldsInResults(results)
 	return results, nil
+}
+
+// normalizeAcceleratorFieldsInResults applies normalizeAcceleratorFields to
+// every parsed result.
+func normalizeAcceleratorFieldsInResults(results []discoveryResult) {
+	for i := range results {
+		results[i].Profile.Metadata.normalizeAcceleratorFields()
+	}
 }
 
 // ParseDiscoveryLogs parses the discovery job output to extract model sources and profile.

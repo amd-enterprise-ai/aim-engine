@@ -1,0 +1,81 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: Radeon (W7900/R9700) auto-generated AIMServiceTemplates
+#
+# Verifies that AIMModel materializes one AIMServiceTemplate per
+# recommendedDeployment in the image's OCI labels, with spec.hardware.gpu
+# set to the advertised Radeon model (W7900 and R9700 in this test).
+#
+# Scope is limited to template wiring. Device-id correctness for these
+# models is covered by TestBuildNodeAffinityFromGPURequirements_AMDModels
+# in internal/v1alpha1/aimservicetemplate/gpu_test.go.
+#
+# Requires a GPU cluster (the Radeon image is large; image pull is too
+# heavy for kind), but does NOT require actual Radeon hardware.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimmodel-radeon-accelerator-template
+  labels:
+    requires: gpu
+spec:
+  description: |
+    Verify AIMModel auto-creates W7900 and R9700 AIMServiceTemplates with the
+    correct spec.hardware.gpu from a real Radeon v0.12 image.
+  timeouts:
+    assert: 300s
+  steps:
+    - name: Copy ghcr-regcred pull secret into test namespace
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              set -eu
+              # The ghcr-regcred dockerconfigjson secret lives in the default
+              # namespace on the test cluster; copy it here so image inspection
+              # can authenticate against ghcr.io/silogen.
+              kubectl get secret ghcr-regcred -n default -o json \
+                | jq 'del(.metadata.namespace,.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' \
+                | kubectl apply -n "$NAMESPACE" -f -
+
+    - name: Create model with Radeon image
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert auto-generated W7900 template exists with correct spec
+      try:
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/model: test-model-radeon-accelerator
+              spec:
+                modelName: test-model-radeon-accelerator
+                hardware:
+                  gpu:
+                    model: W7900
+                    requests: 1
+
+    - name: Assert auto-generated R9700 template exists with correct spec
+      try:
+        - assert:
+            timeout: 5m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/model: test-model-radeon-accelerator
+              spec:
+                modelName: test-model-radeon-accelerator
+                hardware:
+                  gpu:
+                    model: R9700
+                    requests: 1

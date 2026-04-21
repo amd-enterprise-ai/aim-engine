@@ -486,6 +486,24 @@ func TestChoosePreferredTemplate(t *testing.T) {
 			expectedCount: 1,
 		},
 		{
+			name: "prefer Instinct over Radeon (MI210 over R9700)",
+			candidates: []TemplateCandidate{
+				NewCandidate("r9700").WithProfileType(aimv1alpha1.AIMProfileTypeOptimized).WithGPU("R9700", 1).Build(),
+				NewCandidate("mi210").WithProfileType(aimv1alpha1.AIMProfileTypeOptimized).WithGPU("MI210", 1).Build(),
+			},
+			expectedName:  "mi210",
+			expectedCount: 1,
+		},
+		{
+			name: "prefer R9700 over W7900 within Radeon tier",
+			candidates: []TemplateCandidate{
+				NewCandidate("w7900").WithProfileType(aimv1alpha1.AIMProfileTypeOptimized).WithGPU("W7900", 1).Build(),
+				NewCandidate("r9700").WithProfileType(aimv1alpha1.AIMProfileTypeOptimized).WithGPU("R9700", 1).Build(),
+			},
+			expectedName:  "r9700",
+			expectedCount: 1,
+		},
+		{
 			name: "prefer latency over throughput (metric)",
 			candidates: []TemplateCandidate{
 				NewCandidate("throughput").WithProfileType(aimv1alpha1.AIMProfileTypeOptimized).WithGPU("MI300X", 4).WithMetric(throughput).Build(),

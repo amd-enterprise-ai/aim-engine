@@ -659,8 +659,13 @@ func candidateProfileType(c TemplateCandidate) string {
 
 // Preference orders for template selection
 var (
+	// gpuPreferenceOrder ranks GPU models when scoring template candidates.
+	// Earlier entries are preferred. Instinct data-center accelerators are
+	// ranked above Radeon workstation GPUs; models not listed tie at the
+	// bottom via getPreferenceScore's fallback.
 	gpuPreferenceOrder = []string{
 		"MI325X", "MI300X", "MI250X", "MI210",
+		"R9700", "W7900",
 	}
 	metricPreferenceOrder = []string{
 		"latency", "throughput",

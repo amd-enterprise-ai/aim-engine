@@ -13,9 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `spec.custom.versionPolicy` field on AIMCustomModelSpec (`pinned`, `latest`, `any`) for controlling which template versions are matched
 - `status.version` field on AIMServiceTemplateStatus, populated from the owning model's image tag during reconciliation
 - E2E tests for fine-tuned model flows: pinned version matching, no-match negative case, and cluster-to-namespace cross-scope matching (`tests/e2e/aimmodel/fine-tuned/`)
+- Support for AMD Radeon Pro W7900 and Radeon AI Pro R9700 as first-class
+  GPU targets in AIMModel and AIMServiceTemplate, including device-ID node
+  affinity and GPU-preference ranking (ranked below all Instinct models).
+- Discovery jobs now also emit `AIM_ACCELERATOR_MODEL` / `AIM_ACCELERATOR_COUNT`
+  alongside the legacy `AIM_GPU_*` variables, and accept `accelerator_*`
+  fields in profile metadata, so v1alpha1 works against AIM images that use
+  the newer accelerator-oriented schema.
 
 ### Fixed
 - Tilt dev deployment uses `Recreate` strategy to prevent pod restart deadlocks caused by RWO PVC contention during rolling updates
+
 
 ## [0.2.2] - 2026-03-20
 
