@@ -168,7 +168,7 @@ func newRouteTestService() *aimv1alpha1.AIMService {
 			},
 		},
 		Spec: aimv1alpha1.AIMServiceSpec{
-			Model: aimv1alpha1.AIMServiceModel{Name: ptr.To("Meta/Llama-3-8B")},
+			Model: &aimv1alpha1.AIMServiceModel{Name: ptr.To("Meta/Llama-3-8B")},
 		},
 	}
 }

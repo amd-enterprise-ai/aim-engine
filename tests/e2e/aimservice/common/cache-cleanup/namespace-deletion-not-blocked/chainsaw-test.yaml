@@ -4,7 +4,7 @@
 #
 # This test validates that namespace termination is not blocked when resources in that
 # namespace have cleanup finalizers:
-# - AIMService finalizer: aim.eai.amd.com/template-cache-cleanup
+# - AIMService finalizer: aim.eai.amd.com/cache-cleanup
 # - AIMTemplateCache finalizer: aim.eai.amd.com/artifactcleanup
 #
 # Test flow:
@@ -52,7 +52,7 @@ spec:
                 name: ns-delete-finalizer-service
                 namespace: chainsaw-finalizer-cleanup-test
                 finalizers:
-                  - aim.eai.amd.com/template-cache-cleanup
+                  - aim.eai.amd.com/cache-cleanup
         - assert:
             timeout: 120s
             resource:

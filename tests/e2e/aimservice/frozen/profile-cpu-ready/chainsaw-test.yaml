@@ -1,0 +1,90 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: CPU Profile Ready (v1alpha2)
+#
+# Tests that a v1alpha2 AIMService correctly resolves a CPU-only AIMClusterProfile
+# and creates a profile ConfigMap with the v1alpha2 accelerator naming
+# (accelerator_model, accelerator_type, accelerator_count).
+#
+# For CPU profiles, accelerator_count represents the number of CPU sockets (typically 1).
+# The AIM runtime auto-detects available cores at startup via cgroup/cpuset and adjusts
+# OMP_NUM_THREADS accordingly.
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMClusterProfile (Ready, CPU-only)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-cpu-ready
+spec:
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create frozen CPU cluster profile with Ready status
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-profile.yaml --status-only
+
+    - name: Create v1alpha2 service referencing the CPU profile
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert service resolves CPU profile
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cpu-service
+              status:
+                (conditions[?type == 'ProfileReady']):
+                  - status: "True"
+                    reason: ProfileResolved
+                resolvedProfile:
+                  name: test-cpu-profile
+                  scope: Cluster
+
+    - name: Assert profile ConfigMap uses v1alpha2 accelerator naming
+      try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-cpu-service
+                  app.kubernetes.io/managed-by: aim-engine
+                  app.kubernetes.io/component: inference
+
+    - name: Assert InferenceService is created with CPU profile image
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-cpu-service
+                  aim.eai.amd.com/profile: test-cpu-profile
+              spec:
+                predictor:
+                  containers:
+                    - name: kserve-container
+                      image: registry.example.com/aim-cpu-base:0.12.0
+
+    - name: Assert service reaches Starting status
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cpu-service
+              status:
+                status: Starting

@@ -39,8 +39,8 @@ func TestIsGPUKey(t *testing.T) {
 		{"amd.com/gpu", true},
 		{"amd.com/gpu.device-id", true},
 		{"beta.amd.com/gpu.device-id", true},
-		{"feature.node.kubernetes.io/aim-accelerator-model.MI300X", true},
-		{"feature.node.kubernetes.io/aim-accelerator-model.EPYC_9965", true},
+		{"feature.node.kubernetes.io/aim-accelerator.MI300X", true},
+		{"feature.node.kubernetes.io/aim-accelerator.EPYC_9965", true},
 		{"kubernetes.io/hostname", false},
 		{"nvidia.com/gpu", false},
 		{"node.kubernetes.io/instance-type", false},
@@ -78,30 +78,30 @@ func TestLabelsContainGPUChanges(t *testing.T) {
 		{
 			name:      "accelerator label added",
 			oldLabels: map[string]string{},
-			newLabels: map[string]string{"feature.node.kubernetes.io/aim-accelerator-model.MI300X": "4"},
+			newLabels: map[string]string{"feature.node.kubernetes.io/aim-accelerator.MI300X": "4"},
 			want:      true,
 		},
 		{
 			name:      "accelerator label replaced",
-			oldLabels: map[string]string{"feature.node.kubernetes.io/aim-accelerator-model.MI300X": "4"},
-			newLabels: map[string]string{"feature.node.kubernetes.io/aim-accelerator-model.MI325X": "8"},
+			oldLabels: map[string]string{"feature.node.kubernetes.io/aim-accelerator.MI300X": "4"},
+			newLabels: map[string]string{"feature.node.kubernetes.io/aim-accelerator.MI325X": "8"},
 			want:      true,
 		},
 		{
 			name:      "accelerator label removed",
-			oldLabels: map[string]string{"feature.node.kubernetes.io/aim-accelerator-model.MI300X": "4"},
+			oldLabels: map[string]string{"feature.node.kubernetes.io/aim-accelerator.MI300X": "4"},
 			newLabels: map[string]string{},
 			want:      true,
 		},
 		{
 			name: "non-GPU label changed, GPU label unchanged",
 			oldLabels: map[string]string{
-				"kubernetes.io/hostname":                                  "node-1",
-				"feature.node.kubernetes.io/aim-accelerator-model.MI300X": "4",
+				"kubernetes.io/hostname":                            "node-1",
+				"feature.node.kubernetes.io/aim-accelerator.MI300X": "4",
 			},
 			newLabels: map[string]string{
-				"kubernetes.io/hostname":                                  "node-2",
-				"feature.node.kubernetes.io/aim-accelerator-model.MI300X": "4",
+				"kubernetes.io/hostname":                            "node-2",
+				"feature.node.kubernetes.io/aim-accelerator.MI300X": "4",
 			},
 			want: false,
 		},
@@ -132,7 +132,7 @@ func TestNodeGPUChangePredicate_UpdateAcceleratorLabels(t *testing.T) {
 	}
 
 	newNode := oldNode.DeepCopy()
-	newNode.Labels["feature.node.kubernetes.io/aim-accelerator-model.MI300X"] = "4"
+	newNode.Labels["feature.node.kubernetes.io/aim-accelerator.MI300X"] = "4"
 
 	got := pred.Update(event.UpdateEvent{
 		ObjectOld: oldNode,

@@ -1,0 +1,161 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Profile Cache CPU Live (GPU cluster)
+#
+# End-to-end test for the full v1alpha2 profile cache pipeline on real hardware.
+# Uses ghcr.io/silogen/aim-cpu-qwen-qwen3-0-6b:0.12.0-rc1 — a lightweight CPU model
+# that runs on any node with the CPU accelerator label. The image lives in the
+# private silogen GHCR org, so the test namespace needs a pull secret
+# (ghcr-regcred). By default we copy it from ${GHCR_PULL_SECRET_FILE:-~/workspace/silogen/ghcr_pull_secret_read_202604.yaml}.
+#
+# Flow:
+# 1. Create AIMClusterProfile with modelSources -> profile becomes Ready
+#    (relies on the AcceleratorDetector DaemonSet to label nodes with the
+#    matching feature.node.kubernetes.io/aim-accelerator.EPYC_ZEN5 label)
+# 2. Create AIMService -> creates AIMProfileCache -> downloads model weights
+# 3. Profile cache becomes Ready -> ISVC created with PVC volume mounts
+# 4. ISVC pod starts, model loads, service reaches Running
+# 5. Hit /v1/models and /v1/chat/completions endpoints
+#
+# Requires: GPU cluster (for Longhorn storage / real downloads), running
+# AcceleratorDetector that labels nodes with aim-accelerator.EPYC_ZEN5.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-cache-cpu-live
+  labels:
+    requires: gpu
+spec:
+  description: Full profile cache pipeline with real CPU inference and endpoint validation
+  timeouts:
+    assert: 600s
+  steps:
+    - name: Copy GHCR pull secret into the test namespace
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              SRC="${GHCR_PULL_SECRET_FILE:-$HOME/workspace/silogen/ghcr_pull_secret_read_202604.yaml}"
+              if [ ! -f "$SRC" ]; then
+                echo "ERROR: Pull secret file not found at $SRC" >&2
+                echo "Set GHCR_PULL_SECRET_FILE to point at a dockerconfigjson Secret manifest." >&2
+                exit 1
+              fi
+              kubectl -n "$NAMESPACE" apply -f "$SRC"
+
+    # Even public HF repos hit anonymous rate limits on the XET backend, which
+    # makes the downloader job stall. Inject a real user token so the download
+    # job can authenticate. Referenced as HF_TOKEN via caching.env in profile.yaml.
+    - name: Copy HF token secret into the test namespace
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              SRC="${HF_TOKEN_SECRET_FILE:-$HOME/workspace/silogen/hf-token-secret.yaml}"
+              if [ ! -f "$SRC" ]; then
+                echo "ERROR: HF token secret file not found at $SRC" >&2
+                echo "Set HF_TOKEN_SECRET_FILE to point at a v1 Secret named 'huggingface-creds' with key 'token'." >&2
+                exit 1
+              fi
+              kubectl -n "$NAMESPACE" apply -f "$SRC"
+
+    - name: Create runtime config with routing
+      try:
+        - apply:
+            file: runtime-config.yaml
+
+    - name: Create CPU profile (namespaced) with modelSources
+      try:
+        - apply:
+            file: profile.yaml
+
+    - name: Wait for profile to become Ready via node matching
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: qwen3-0-6b-cpu-live
+                namespace: ($namespace)
+              status:
+                status: Ready
+
+    - name: Create v1alpha2 service referencing the CPU profile
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify AIMProfileCache is created
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                namespace: ($namespace)
+                labels:
+                  aim.eai.amd.com/service: test-profile-cache-cpu
+              spec:
+                profileName: qwen3-0-6b-cpu-live
+                profileScope: Namespace
+                mode: Shared
+
+    - name: Verify AIMArtifact is created for the model
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                namespace: ($namespace)
+                labels:
+                  aim.eai.amd.com/profile.name: qwen3-0-6b-cpu-live
+              spec:
+                sourceUri: hf://Qwen/Qwen3-0.6B
+
+    - name: Wait for profile cache to become Ready (model download)
+      try:
+        - assert:
+            timeout: 10m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                namespace: ($namespace)
+                labels:
+                  aim.eai.amd.com/service: test-profile-cache-cpu
+              status:
+                status: Ready
+
+    - name: Verify service reaches Running status
+      try:
+        - assert:
+            timeout: 10m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-profile-cache-cpu
+              status:
+                status: Running
+                resolvedProfile:
+                  name: qwen3-0-6b-cpu-live
+                  scope: Namespace
+
+    - name: Verify chat completions endpoint works
+      try:
+        - script:
+            timeout: 6m
+            env:
+              - name: HTTP_BASE_PATH
+                value: (join('', ['/integration/profile-cache-cpu-live/', $namespace, '/test-profile-cache-cpu/v1']))
+            content: bash ../_shared/validate-http.sh

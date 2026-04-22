@@ -1,0 +1,83 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Finalizer Migration (v1alpha1 → v1alpha2)
+#
+# Validates that the AIMService controller migrates the legacy
+# `aim.eai.amd.com/template-cache-cleanup` finalizer to the renamed
+# `aim.eai.amd.com/cache-cleanup` finalizer on the next reconcile. This
+# protects services created before the rename from leaking stale finalizers.
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMClusterProfile (Ready)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-cache-finalizer-migration
+spec:
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create frozen cluster profile (no modelSources)
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-profile.yaml --status-only
+
+    - name: Create v1alpha2 AIMService
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Wait for service to gain the new finalizer
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-finalizer-migration-service
+                finalizers:
+                  - aim.eai.amd.com/cache-cleanup
+
+    - name: Inject the legacy finalizer to simulate a pre-rename service
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              kubectl patch aimservice test-finalizer-migration-service \
+                -n "$NAMESPACE" --type=merge \
+                -p '{"metadata":{"finalizers":["aim.eai.amd.com/cache-cleanup","aim.eai.amd.com/template-cache-cleanup"]}}'
+
+              # Trigger a reconcile by bumping an annotation.
+              kubectl annotate aimservice test-finalizer-migration-service \
+                -n "$NAMESPACE" \
+                aim.eai.amd.com/test-nudge="$(date +%s)" --overwrite
+
+    - name: Verify legacy finalizer is stripped and new finalizer remains
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-finalizer-migration-service
+                finalizers:
+                  - aim.eai.amd.com/cache-cleanup
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              finalizers=$(kubectl get aimservice test-finalizer-migration-service \
+                -n "$NAMESPACE" -o jsonpath='{.metadata.finalizers}')
+              echo "Finalizers after migration: $finalizers"
+              if echo "$finalizers" | grep -q "template-cache-cleanup"; then
+                echo "ERROR: legacy finalizer 'template-cache-cleanup' was not removed"
+                exit 1
+              fi
+              echo "OK: legacy finalizer was removed"

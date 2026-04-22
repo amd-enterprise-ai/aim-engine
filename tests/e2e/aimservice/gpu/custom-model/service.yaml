@@ -7,12 +7,11 @@ metadata:
   name: test-gpu-custom-model
 spec:
   runtimeConfigName: test-gpu-custom-model
-  # Pull secret for ghcr.io/silogen images
-  imagePullSecrets:
-    - name: ghcr-regcred
   model:
     custom:
-      # AIM base image (not a pre-built model image)
+      # AIM base image (not a pre-built model image).
+      # amdenterpriseai/aim-base is a public Docker Hub image, so no
+      # imagePullSecrets are required.
       baseImage: amdenterpriseai/aim-base:0.9
       # Model to download from HuggingFace
       # Using Qwen2-0.5B (small public model, no auth needed) for faster testing

@@ -1,0 +1,54 @@
+# Namespaced AIMProfile for Qwen3-0.6B (CPU) with modelSources for cache testing.
+# Uses the real silogen CPU image. The profile controller will match nodes
+# labeled with feature.node.kubernetes.io/aim-accelerator.EPYC_ZEN5 by the
+# AcceleratorDetector DaemonSet.
+#
+# Namespace-scoped so it lives and dies with the ephemeral chainsaw namespace,
+# avoiding cluster-state leakage and collisions between concurrent test runs.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: qwen3-0-6b-cpu-live
+spec:
+  aimId: Qwen/Qwen3-0.6B
+  modelId: Qwen/Qwen3-0.6B
+  engine: vllm
+  metric: latency
+  precision: bf16
+  # Mirrors the embedded profile at
+  # /workspace/aim-runtime/profiles/Qwen/Qwen3-0.6B/vllm-cpu-bf16-tp1-latency.yaml
+  # inside ghcr.io/silogen/aim-cpu-qwen-qwen3-0-6b:0.12.0-rc1.
+  # Once assembled and mounted under custom/<aimId>/, the AIM runtime uses this
+  # copy instead of the embedded one.
+  type: unoptimized
+  primary: true
+  acceleratorModel: EPYC_ZEN5
+  acceleratorType: cpu
+  acceleratorCount: 1
+  image: ghcr.io/silogen/aim-cpu-qwen-qwen3-0-6b:0.12.0-rc1
+  imagePullSecrets:
+    - name: ghcr-regcred
+  modelSources:
+    - modelId: Qwen/Qwen3-0.6B
+      sourceUri: hf://Qwen/Qwen3-0.6B
+      size: 2Gi
+  # caching.env is piped through to the AIMArtifact download Job (via
+  # AIMProfileCache.spec.env). HF_TOKEN authenticates the XET/HF_TRANSFER
+  # clients so anonymous rate limits don't stall the download. The secret is
+  # copied into the test namespace by the "Copy HF token secret" step.
+  caching:
+    enabled: true
+    env:
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: huggingface-creds
+            key: token
+  engineArgs:
+    dtype: bfloat16
+  engineEnv:
+    MKL_NUM_THREADS: "4"
+    OMP_NUM_THREADS: "4"
+    VLLM_CPU_KVCACHE_SPACE: "6"
+    VLLM_DO_NOT_TRACK: "1"
+    VLLM_TARGET_DEVICE: cpu

@@ -3,9 +3,8 @@ kind: AIMModel
 metadata:
   name: test-gpu-s3-model
 spec:
+  # Public Docker Hub image, no imagePullSecrets required.
   image: amdenterpriseai/aim-base:0.9
-  imagePullSecrets:
-    - name: ghcr-regcred
   modelSources:
     - modelId: Qwen/Qwen2-0.5B
       sourceUri: s3://models/Qwen2-0.5B

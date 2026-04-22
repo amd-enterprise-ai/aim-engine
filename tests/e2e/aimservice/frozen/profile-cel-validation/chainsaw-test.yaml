@@ -1,0 +1,172 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService CEL Validation: Field Constraints
+#
+# Validates CEL rules that enforce field-level constraints:
+# - spec.profile and spec.template are mutually exclusive
+# - spec.profileOverrides requires spec.profile
+# - at least one of spec.model or spec.profile must be specified
+#
+# Also validates that version-independent fields work across API versions:
+# - v1alpha1 can use spec.profile (no version gating)
+# - v1alpha2 can use spec.model (no version gating)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-cel-validation
+spec:
+  description: Test CEL validation rules for field constraints and cross-version compatibility
+  timeouts:
+    assert: 30s
+  steps:
+    # --- Rejection cases ---
+
+    - name: Reject service with both profile and template (mutually exclusive)
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-cel-profile-and-template
+              spec:
+                profile:
+                  name: some-profile
+                template:
+                  name: some-template
+                replicas: 1
+
+    - name: Reject service with profileOverrides but no profile
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-cel-overrides-without-profile
+              spec:
+                model:
+                  image: registry.example.com/test-image:1.0.0
+                profileOverrides:
+                  engineArgs:
+                    max_model_len: 4096
+                replicas: 1
+
+    - name: Reject v1alpha1 service without model or profile
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cel-v1a1-no-model
+              spec:
+                template:
+                  name: some-template
+                replicas: 1
+
+    - name: Reject v1alpha2 service without model or profile
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-cel-v1a2-no-model
+              spec:
+                template:
+                  name: some-template
+                replicas: 1
+
+    # --- Acceptance cases ---
+
+    - name: Accept v1alpha2 service with profile only
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-cel-v1alpha2-profile
+              spec:
+                profile:
+                  name: some-profile
+                replicas: 1
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cel-v1alpha2-profile
+
+    - name: Accept v1alpha1 service with model and template
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cel-v1alpha1-model
+              spec:
+                model:
+                  image: registry.example.com/test-image:1.0.0
+                template:
+                  name: some-template
+                replicas: 1
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cel-v1alpha1-model
+
+    - name: Accept v1alpha1 service with profile (cross-version compatibility)
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cel-v1a1-profile
+              spec:
+                profile:
+                  name: some-profile
+                replicas: 1
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cel-v1a1-profile
+
+    - name: Accept v1alpha2 service with model (cross-version compatibility)
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-cel-v1a2-model
+              spec:
+                model:
+                  image: registry.example.com/test-image:1.0.0
+                replicas: 1
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cel-v1a2-model

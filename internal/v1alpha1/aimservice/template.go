@@ -69,7 +69,7 @@ func fetchTemplate(
 	var clusterTemplateResult controllerutils.FetchResult[*aimv1alpha1.AIMClusterServiceTemplate]
 
 	// Case 1: Explicit template name specified
-	if service.Spec.Template.Name != "" {
+	if service.Spec.Template != nil && service.Spec.Template.Name != "" {
 		templateName := strings.TrimSpace(service.Spec.Template.Name)
 		logger.V(1).Info("looking up template by name", "templateName", templateName)
 

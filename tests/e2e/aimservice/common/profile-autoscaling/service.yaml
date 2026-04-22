@@ -1,0 +1,13 @@
+# v1alpha2 AIMService exercising the profile + autoscaling path. Both
+# minReplicas and maxReplicas are set so the ISVC must be built with KEDA
+# autoscaling (min != max), and the ProfileServiceReconciler must wire both
+# fields through to the predictor spec.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: test-profile-autoscaling-service
+spec:
+  profile:
+    name: test-profile-autoscaling-profile
+  minReplicas: 1
+  maxReplicas: 3

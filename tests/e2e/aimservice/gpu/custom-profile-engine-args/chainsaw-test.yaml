@@ -96,7 +96,7 @@ spec:
             timeout: 3m
             env:
               - name: HTTP_BASE_PATH
-                value: /integration/gpu-cp-engine-args/test-cp-engine-args-svc/v1
+                value: (join('', ['/integration/gpu-cp-engine-args/', $namespace, '/test-cp-engine-args-svc/v1']))
               - name: EXPECTED_MAX_MODEL_LEN
                 value: "8192"
             content: bash validate-model-name.sh

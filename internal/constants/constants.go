@@ -46,6 +46,8 @@ const (
 const (
 	// LabelTemplate is the label key for the template name
 	LabelTemplate = AimLabelDomain + "/template"
+	// LabelProfile is the label key for the profile name (v1alpha2 path)
+	LabelProfile = AimLabelDomain + "/profile"
 	// LabelService is the label key for the service name
 	LabelService = AimLabelDomain + "/service"
 	// LabelModelID is the label key for the model ID
@@ -58,6 +60,8 @@ const (
 	LabelCacheType = AimLabelDomain + "/cache-type"
 	// LabelTemplateCacheName is the label key for the template cache name (used on artifacts)
 	LabelTemplateCacheName = AimLabelDomain + "/template-cache.name"
+	// LabelProfileCacheName is the label key for the profile cache name (used on artifacts)
+	LabelProfileCacheName = AimLabelDomain + "/profile-cache.name"
 )
 
 // Label values

@@ -2,6 +2,11 @@ apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
   name: aimprofile-basic-lifecycle
+  labels:
+    # The NotAvailable scenario asserts that requesting MI300X yields 0 matching
+    # nodes. That's only true on kind (no real hardware); on GPU clusters with
+    # actual MI300X nodes the profile legitimately becomes Ready. Pin to kind.
+    requires: kind
 spec:
   description: |
     Tests the basic lifecycle of AIMClusterProfile for both Ready and NotAvailable paths.

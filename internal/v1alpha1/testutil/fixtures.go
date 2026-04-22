@@ -181,10 +181,10 @@ func NewService(opts ...ServiceOption) *aimv1alpha1.AIMService {
 			Namespace: "default",
 		},
 		Spec: aimv1alpha1.AIMServiceSpec{
-			Model: aimv1alpha1.AIMServiceModel{
+			Model: &aimv1alpha1.AIMServiceModel{
 				Name: ptr.To("test-model"),
 			},
-			Template: aimv1alpha1.AIMServiceTemplateConfig{
+			Template: &aimv1alpha1.AIMServiceTemplateConfig{
 				Name: "test-template",
 			},
 			Replicas: ptr.To(int32(1)),
@@ -213,12 +213,18 @@ func WithServiceNamespace(namespace string) ServiceOption {
 
 func WithServiceModelRef(modelRef string) ServiceOption {
 	return func(s *aimv1alpha1.AIMService) {
+		if s.Spec.Model == nil {
+			s.Spec.Model = &aimv1alpha1.AIMServiceModel{}
+		}
 		s.Spec.Model.Name = &modelRef
 	}
 }
 
 func WithServiceTemplate(templateName string) ServiceOption {
 	return func(s *aimv1alpha1.AIMService) {
+		if s.Spec.Template == nil {
+			s.Spec.Template = &aimv1alpha1.AIMServiceTemplateConfig{}
+		}
 		s.Spec.Template.Name = templateName
 	}
 }

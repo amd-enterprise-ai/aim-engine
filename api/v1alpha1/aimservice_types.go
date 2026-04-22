@@ -24,6 +24,7 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -38,6 +39,10 @@ const (
 	// AIMServiceResolvedTemplateIndexKey is the field index key for resolved template name
 	// Indexes by .status.resolvedTemplate.name for finding services using a specific template
 	AIMServiceResolvedTemplateIndexKey = ".status.resolvedTemplate.name"
+
+	// AIMServiceProfileIndexKey is the field index key for indexing AIMService resources
+	// by their profile reference (.spec.profile.name).
+	AIMServiceProfileIndexKey = ".spec.profileRef"
 )
 
 // AIMCachingMode controls caching behavior for a service.
@@ -154,22 +159,66 @@ type AIMServiceOverrides struct {
 	AIMRuntimeParameters `json:",inline"`
 }
 
+// AIMServiceProfileConfig contains profile selection configuration for AIMService v1alpha2.
+// When set, the service uses a profile-based reconciliation path instead of the template path.
+type AIMServiceProfileConfig struct {
+	// Name is the name of the AIMProfile or AIMClusterProfile to use.
+	// The controller looks for a namespace-scoped AIMProfile first, then falls back to AIMClusterProfile.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+}
+
+// AIMServiceProfileOverrides allows overriding profile parameters at the service level.
+// When specified, the controller creates a service-owned copy of the profile configuration
+// with these overrides applied. The original profile is not modified.
+type AIMServiceProfileOverrides struct {
+	// EngineArgs overrides or extends the profile's inference engine CLI arguments.
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	// +optional
+	EngineArgs *apiextensionsv1.JSON `json:"engineArgs,omitempty"`
+
+	// ContainerEnv overrides or extends the profile's container-level environment variables.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	ContainerEnv []corev1.EnvVar `json:"containerEnv,omitempty"`
+}
+
 // AIMServiceSpec defines the desired state of AIMService.
 //
 // Binds a canonical model to an AIMServiceTemplate and configures replicas,
 // caching behavior, and optional overrides. The template governs the base
 // runtime selection knobs, while the overrides field allows service-specific
 // customization.
+//
+// With v1alpha2, a Profile can be used instead of a Template. Template and Profile
+// are mutually exclusive — at least one resolution path must be specified.
 type AIMServiceSpec struct {
 	// Model specifies which model to deploy using one of the available reference methods.
 	// Use `name` to reference an existing AIMModel/AIMClusterModel by name, or use `image`
 	// to specify a container image URI directly (which will auto-create a model if needed).
-	Model AIMServiceModel `json:"model"`
+	// Required for v1alpha1 (template path), not permitted for v1alpha2 (profile path).
+	// +optional
+	Model *AIMServiceModel `json:"model,omitempty"`
 
 	// Template contains template selection and configuration.
 	// Use Template.Name to specify an explicit template, or omit to auto-select.
+	// Mutually exclusive with Profile (v1alpha2).
 	// +optional
-	Template AIMServiceTemplateConfig `json:"template,omitempty"`
+	Template *AIMServiceTemplateConfig `json:"template,omitempty"`
+
+	// Profile contains profile selection configuration (v1alpha2 only).
+	// When set, the service uses a profile-based reconciliation path.
+	// Mutually exclusive with Template.
+	// +optional
+	Profile *AIMServiceProfileConfig `json:"profile,omitempty"`
+
+	// ProfileOverrides allows overriding specific profile parameters for this service.
+	// Only valid when Profile is set.
+	// +optional
+	ProfileOverrides *AIMServiceProfileOverrides `json:"profileOverrides,omitempty"`
 
 	// Caching controls caching behavior for this service.
 	// When nil, defaults to Shared mode.
@@ -274,6 +323,11 @@ type AIMServiceStatus struct {
 
 	// ResolvedTemplate captures metadata about the template that satisfied the reference.
 	ResolvedTemplate *AIMResolvedReference `json:"resolvedTemplate,omitempty"`
+
+	// ResolvedProfile captures metadata about the profile that satisfied the reference.
+	// Set when the service uses a profile-based reconciliation path (v1alpha2).
+	// +optional
+	ResolvedProfile *AIMResolvedReference `json:"resolvedProfile,omitempty"`
 
 	// Cache captures cache-related status for this service.
 	// +optional
@@ -386,17 +440,27 @@ const (
 
 	// Routing
 	AIMServiceReasonPathTemplateInvalid = "PathTemplateInvalid"
+
+	// Profile Resolution (v1alpha2)
+	AIMServiceReasonProfileNotFound = "ProfileNotFound"
+	AIMServiceReasonProfileNotReady = "ProfileNotReady"
+	AIMServiceReasonProfileResolved = "ProfileResolved"
 )
 
 // AIMService manages a KServe-based AIM inference service for the selected model and template.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:deprecatedversion:warning="aim.eai.amd.com/v1alpha1 AIMService is deprecated; use aim.eai.amd.com/v1alpha2 (spec.profile) instead. The v1alpha1 model/template fields may be removed in a future release."
 // +kubebuilder:resource:shortName=aimsvc,categories=aim;all
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 // +kubebuilder:printcolumn:name="Model",type=string,JSONPath=`.status.resolvedModel.name`
 // +kubebuilder:printcolumn:name="Template",type=string,JSONPath=`.status.resolvedTemplate.name`
+// +kubebuilder:printcolumn:name="Profile",type=string,JSONPath=`.status.resolvedProfile.name`,priority=1
 // +kubebuilder:printcolumn:name="Replicas",type=string,JSONPath=`.status.runtime.replicas`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.profileOverrides) || has(self.spec.profile)",message="spec.profileOverrides requires spec.profile to be set"
+// +kubebuilder:validation:XValidation:rule="!(has(self.spec.profile) && has(self.spec.template))",message="spec.profile and spec.template are mutually exclusive"
+// +kubebuilder:validation:XValidation:rule="has(self.spec.model) || has(self.spec.profile)",message="one of spec.model or spec.profile must be specified"
 // Note: KServe uses {name}-{namespace} format which must not exceed 63 characters.
 // This constraint is validated at runtime since CEL cannot access metadata.namespace.
 type AIMService struct {

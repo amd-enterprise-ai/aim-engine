@@ -1,0 +1,26 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterProfile
+metadata:
+  name: test-cleanup-failed-profile
+  annotations:
+    aim.eai.amd.com/reconciliation-paused: "true"
+spec:
+  aimId: test/cleanup-failed
+  modelId: test/cleanup-failed-fp8
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: optimized
+  primary: true
+  image: registry.example.com/test-image:1.0.0
+status:
+  status: Ready
+  version: 1.0.0
+  hardwareSummary: CPU
+  matchingNodes: 1
+  conditions:
+    - type: HardwareAvailable
+      status: "True"
+      reason: NoAcceleratorSpecified
+      message: No accelerator specified
+      lastTransitionTime: "2025-01-01T00:00:00Z"

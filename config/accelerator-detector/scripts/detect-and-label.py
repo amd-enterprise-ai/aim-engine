@@ -30,7 +30,10 @@ logging.basicConfig(
 logger = logging.getLogger("accelerator-detector")
 
 FEATURES_DIR = "/nfd-features"
-FEATURE_FILE = "aim-accelerator"
+# Each DaemonSet writes its own feature file so CPU and GPU detectors can run
+# concurrently on the same node without clobbering each other. NFD merges
+# labels across all files in features.d/.
+FEATURE_FILE_TEMPLATE = "aim-accelerator-{}"
 LABEL_PREFIX = "feature.node.kubernetes.io/aim-accelerator"
 HEALTH_FILE = "/tmp/healthy"
 
@@ -90,14 +93,17 @@ def build_feature_lines(detections: list) -> list:
     return lines
 
 
-def write_feature_file(lines: list) -> None:
+def write_feature_file(lines: list, detect_type: str) -> None:
     """Atomically write the NFD feature file.
 
     Writes to a dot-prefixed temp file then renames, per NFD docs, to
-    avoid race conditions with the NFD worker.
+    avoid race conditions with the NFD worker. The filename is namespaced
+    by detect_type so the CPU and GPU DaemonSets can co-exist on the same
+    node without clobbering each other's features.
     """
-    target = os.path.join(FEATURES_DIR, FEATURE_FILE)
-    tmp_path = os.path.join(FEATURES_DIR, f".{FEATURE_FILE}")
+    filename = FEATURE_FILE_TEMPLATE.format(detect_type)
+    target = os.path.join(FEATURES_DIR, filename)
+    tmp_path = os.path.join(FEATURES_DIR, f".{filename}")
 
     content = "# Written by aim-accelerator-detector\n"
     if lines:
@@ -126,10 +132,10 @@ def main():
         detections = detect_hardware(detect_type)
         lines = build_feature_lines(detections)
         if lines:
-            write_feature_file(lines)
+            write_feature_file(lines, detect_type)
         else:
             logger.warning("No accelerators detected")
-            write_feature_file([])
+            write_feature_file([], detect_type)
 
         open(HEALTH_FILE, "w").close()
 

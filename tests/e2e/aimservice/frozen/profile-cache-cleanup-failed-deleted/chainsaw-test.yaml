@@ -1,0 +1,101 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Profile Cache Cleanup - Failed Deleted (v1alpha2)
+#
+# Validates that when an AIMService with spec.profile is deleted, non-Ready
+# AIMProfileCache resources and non-Ready shared AIMArtifacts labeled with the
+# service are torn down so the cluster does not accumulate broken caches.
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMClusterProfile (Ready), AIMProfileCache (Failed, paused),
+# AIMArtifact (Failed, paused, shared - no owner refs)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-cache-cleanup-failed-deleted
+spec:
+  timeouts:
+    assert: 60s
+    delete: 60s
+  steps:
+    - name: Create frozen cluster profile (no modelSources)
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-profile.yaml --status-only
+
+    - name: Create Failed AIMProfileCache labeled with the service
+      try:
+        - apply:
+            file: profile-cache.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh profile-cache.yaml --status-only -n $NAMESPACE
+
+    - name: Create Failed shared AIMArtifact labeled with profile-cache.name
+      try:
+        - apply:
+            file: artifact.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh artifact.yaml --status-only -n $NAMESPACE
+
+    - name: Create v1alpha2 AIMService
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Wait for service to pick up the finalizer
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cleanup-failed-service
+                finalizers:
+                  - aim.eai.amd.com/cache-cleanup
+
+    - name: Delete the AIMService
+      try:
+        - delete:
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              name: test-cleanup-failed-service
+
+    - name: Verify service is fully deleted
+      try:
+        - error:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cleanup-failed-service
+
+    - name: Verify Failed AIMProfileCache was deleted
+      try:
+        - error:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                name: test-cleanup-failed-cache
+
+    - name: Verify Failed shared AIMArtifact was deleted
+      try:
+        - error:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: test-cleanup-failed-artifact

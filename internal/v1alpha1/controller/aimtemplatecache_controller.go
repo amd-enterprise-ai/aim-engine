@@ -135,14 +135,14 @@ func (r *AIMTemplateCacheReconciler) Reconcile(ctx context.Context, req ctrl.Req
 				"templateCache", templateCache.Name,
 				"namespace", templateCache.Namespace,
 				"finalizer", finalizerArtifactCleanup)
+			// Metadata-scoped patch: send only the finalizer diff, never spec.
+			patch := client.MergeFrom(templateCache.DeepCopy())
 			controllerutil.RemoveFinalizer(&templateCache, finalizerArtifactCleanup)
-			if err := r.Update(ctx, &templateCache); err != nil {
+			if err := r.Patch(ctx, &templateCache, patch); err != nil {
 				if apierrors.IsNotFound(err) {
-					// Resource already deleted while removing finalizer
 					return ctrl.Result{}, nil
 				}
 				if apierrors.IsConflict(err) {
-					// Conflict, retry on next reconcile
 					return ctrl.Result{Requeue: true}, nil
 				}
 				return ctrl.Result{}, err
@@ -152,21 +152,19 @@ func (r *AIMTemplateCacheReconciler) Reconcile(ctx context.Context, req ctrl.Req
 				"namespace", templateCache.Namespace,
 				"finalizer", finalizerArtifactCleanup)
 		}
-		// Stop reconciliation as the resource is being deleted
 		return ctrl.Result{}, nil
 	}
 
-	// Ensure finalizer is present
+	// Ensure finalizer is present (metadata-scoped patch).
 	if !controllerutil.ContainsFinalizer(&templateCache, finalizerArtifactCleanup) {
+		patch := client.MergeFrom(templateCache.DeepCopy())
 		controllerutil.AddFinalizer(&templateCache, finalizerArtifactCleanup)
-		if err := r.Update(ctx, &templateCache); err != nil {
+		if err := r.Patch(ctx, &templateCache, patch); err != nil {
 			if apierrors.IsConflict(err) {
-				// Conflict, retry on next reconcile
 				return ctrl.Result{Requeue: true}, nil
 			}
 			return ctrl.Result{}, err
 		}
-		// Requeue to continue with main reconciliation after finalizer is added
 		return ctrl.Result{Requeue: true}, nil
 	}
 

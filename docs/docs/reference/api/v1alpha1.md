@@ -1425,6 +1425,42 @@ _Appears in:_
 | `target` _[AIMServiceMetricTarget](#aimservicemetrictarget)_ | Target specifies the target value for the metric.<br />The autoscaler will scale to maintain this target value. |  |  |
 
 
+#### AIMServiceProfileConfig
+
+
+
+AIMServiceProfileConfig contains profile selection configuration for AIMService v1alpha2.
+When set, the service uses a profile-based reconciliation path instead of the template path.
+
+
+
+_Appears in:_
+- [AIMServiceSpec](#aimservicespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name is the name of the AIMProfile or AIMClusterProfile to use.<br />The controller looks for a namespace-scoped AIMProfile first, then falls back to AIMClusterProfile. |  | MinLength: 1 <br />Required: \{\} <br /> |
+
+
+#### AIMServiceProfileOverrides
+
+
+
+AIMServiceProfileOverrides allows overriding profile parameters at the service level.
+When specified, the controller creates a service-owned copy of the profile configuration
+with these overrides applied. The original profile is not modified.
+
+
+
+_Appears in:_
+- [AIMServiceSpec](#aimservicespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `engineArgs` _[JSON](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#json-v1-apiextensions-k8s-io)_ | EngineArgs overrides or extends the profile's inference engine CLI arguments. |  | Schemaless: \{\} <br />Optional: \{\} <br /> |
+| `containerEnv` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | ContainerEnv overrides or extends the profile's container-level environment variables. |  | Optional: \{\} <br /> |
+
+
 #### AIMServiceRoutingStatus
 
 
@@ -1496,6 +1532,9 @@ caching behavior, and optional overrides. The template governs the base
 runtime selection knobs, while the overrides field allows service-specific
 customization.
 
+With v1alpha2, a Profile can be used instead of a Template. Template and Profile
+are mutually exclusive — at least one resolution path must be specified.
+
 
 
 _Appears in:_
@@ -1503,8 +1542,10 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `model` _[AIMServiceModel](#aimservicemodel)_ | Model specifies which model to deploy using one of the available reference methods.<br />Use `name` to reference an existing AIMModel/AIMClusterModel by name, or use `image`<br />to specify a container image URI directly (which will auto-create a model if needed). |  |  |
-| `template` _[AIMServiceTemplateConfig](#aimservicetemplateconfig)_ | Template contains template selection and configuration.<br />Use Template.Name to specify an explicit template, or omit to auto-select. |  | Optional: \{\} <br /> |
+| `model` _[AIMServiceModel](#aimservicemodel)_ | Model specifies which model to deploy using one of the available reference methods.<br />Use `name` to reference an existing AIMModel/AIMClusterModel by name, or use `image`<br />to specify a container image URI directly (which will auto-create a model if needed).<br />Required for v1alpha1 (template path), not permitted for v1alpha2 (profile path). |  | Optional: \{\} <br /> |
+| `template` _[AIMServiceTemplateConfig](#aimservicetemplateconfig)_ | Template contains template selection and configuration.<br />Use Template.Name to specify an explicit template, or omit to auto-select.<br />Mutually exclusive with Profile (v1alpha2). |  | Optional: \{\} <br /> |
+| `profile` _[AIMServiceProfileConfig](#aimserviceprofileconfig)_ | Profile contains profile selection configuration (v1alpha2 only).<br />When set, the service uses a profile-based reconciliation path.<br />Mutually exclusive with Template. |  | Optional: \{\} <br /> |
+| `profileOverrides` _[AIMServiceProfileOverrides](#aimserviceprofileoverrides)_ | ProfileOverrides allows overriding specific profile parameters for this service.<br />Only valid when Profile is set. |  | Optional: \{\} <br /> |
 | `caching` _[AIMServiceCachingConfig](#aimservicecachingconfig)_ | Caching controls caching behavior for this service.<br />When nil, defaults to Shared mode. |  | Optional: \{\} <br /> |
 | `cacheModel` _boolean_ | DEPRECATED: Use Caching.Mode instead. This field will be removed in a future version.<br />This field is no longer honored by the controller. |  | Optional: \{\} <br /> |
 | `replicas` _integer_ | Replicas specifies the number of replicas for this service.<br />When not specified, defaults to 1 replica.<br />This value overrides any replica settings from the template.<br />For autoscaling, use MinReplicas and MaxReplicas instead. | 1 | Optional: \{\} <br /> |
@@ -1542,6 +1583,7 @@ _Appears in:_
 | `status` _[AIMStatus](#aimstatus)_ | Status represents the current high‑level status of the service lifecycle.<br />Values: `Pending`, `Starting`, `Running`, `Degraded`, `Failed`. | Pending | Enum: [Pending Starting Running Degraded Failed] <br /> |
 | `routing` _[AIMServiceRoutingStatus](#aimserviceroutingstatus)_ | Routing surfaces information about the configured HTTP routing, when enabled. |  | Optional: \{\} <br /> |
 | `resolvedTemplate` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedTemplate captures metadata about the template that satisfied the reference. |  |  |
+| `resolvedProfile` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedProfile captures metadata about the profile that satisfied the reference.<br />Set when the service uses a profile-based reconciliation path (v1alpha2). |  | Optional: \{\} <br /> |
 | `cache` _[AIMServiceCacheStatus](#aimservicecachestatus)_ | Cache captures cache-related status for this service. |  | Optional: \{\} <br /> |
 | `runtime` _[AIMServiceRuntimeStatus](#aimserviceruntimestatus)_ | Runtime captures runtime status including replica counts. |  | Optional: \{\} <br /> |
 

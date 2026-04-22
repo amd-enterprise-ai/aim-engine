@@ -36,7 +36,7 @@ spec:
         - script:
             content: |
               NODE=$(kubectl get nodes --sort-by=.metadata.name -o jsonpath='{.items[0].metadata.name}')
-              kubectl label node "$NODE" feature.node.kubernetes.io/aim-accelerator-model.MI355X="" --overwrite
+              kubectl label node "$NODE" feature.node.kubernetes.io/aim-accelerator.MI355X="" --overwrite
         - assert:
             timeout: 30s
             resource:
@@ -50,7 +50,7 @@ spec:
         - script:
             content: |
               NODE=$(kubectl get nodes --sort-by=.metadata.name -o jsonpath='{.items[0].metadata.name}')
-              kubectl label node "$NODE" feature.node.kubernetes.io/aim-accelerator-model.MI355X- 2>/dev/null || true
+              kubectl label node "$NODE" feature.node.kubernetes.io/aim-accelerator.MI355X- 2>/dev/null || true
 
     - name: Verify profile reverts to NotAvailable after label removal
       try:

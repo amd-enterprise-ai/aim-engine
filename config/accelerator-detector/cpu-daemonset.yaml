@@ -18,15 +18,23 @@ spec:
         app.kubernetes.io/component: cpu-detection
     spec:
       serviceAccountName: accelerator-detector
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - key: feature.node.kubernetes.io/amd-gpu
-                    operator: DoesNotExist
       tolerations:
         - operator: Exists
+      # NFD's features.d lives under /etc/kubernetes on the host and is
+      # root-owned. The GPU detector (privileged) creates it, so on
+      # heterogeneous nodes the nonroot CPU container can't write its
+      # feature file. chmod it once from a root init container and keep
+      # the main container hardened (nonroot, no caps).
+      initContainers:
+        - name: prep-features-dir
+          image: accelerator-detector-cpu:latest
+          command: ["sh", "-c", "mkdir -p /nfd-features && chmod 0777 /nfd-features"]
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+          volumeMounts:
+            - name: nfd-features
+              mountPath: /nfd-features
       containers:
         - name: detector
           image: accelerator-detector-cpu:latest

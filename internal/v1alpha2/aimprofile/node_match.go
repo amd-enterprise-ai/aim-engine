@@ -35,11 +35,13 @@ import (
 
 const (
 	// AcceleratorLabelPrefix is the node label prefix for accelerator matching.
-	// The AcceleratorDetector writes labels with the model as part of the key:
-	//   feature.node.kubernetes.io/aim-accelerator-model.MI300X=""
-	// A single node may have multiple labels (model, architecture, family).
-	// The operator uses an Exists selector on this key for node affinity.
-	AcceleratorLabelPrefix = "feature.node.kubernetes.io/aim-accelerator-model."
+	// The AcceleratorDetector writes one label per detected identifier:
+	//   feature.node.kubernetes.io/aim-accelerator.MI300X=8
+	//   feature.node.kubernetes.io/aim-accelerator.EPYC_ZEN5=128
+	// The value carries the accelerator count but is ignored by the matcher;
+	// the operator uses an Exists selector on the key for node affinity. A
+	// single node may have multiple labels (model, architecture, family).
+	AcceleratorLabelPrefix = "feature.node.kubernetes.io/aim-accelerator."
 )
 
 // NodeMatchResult holds the result of matching a profile against cluster nodes.
@@ -82,6 +84,19 @@ func ResolveResources(accelType aimv1alpha2.AcceleratorType, accelCount int32, r
 	if derivedName != "" {
 		if _, exists := resolved.Requests[derivedName]; !exists {
 			resolved.Requests[derivedName] = derivedQty
+		}
+		// GPU (and other extended/device resources) are non-overcommitable, so
+		// Kubernetes requires Limits to be set for them on the Pod spec and
+		// enforces requests==limits. Mirror the derived request into Limits when
+		// the accelerator is a device type; CPU is overcommitable and can be
+		// left unlimited.
+		if accelType == aimv1alpha2.AcceleratorTypeGPU {
+			if resolved.Limits == nil {
+				resolved.Limits = make(corev1.ResourceList)
+			}
+			if _, exists := resolved.Limits[derivedName]; !exists {
+				resolved.Limits[derivedName] = derivedQty
+			}
 		}
 	}
 

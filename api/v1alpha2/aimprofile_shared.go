@@ -98,10 +98,10 @@ type AIMProfileSpecCommon struct {
 
 	// AcceleratorModel is the accelerator identifier for node selection.
 	// Maps to a node label key using the Exists operator:
-	//   feature.node.kubernetes.io/aim-accelerator-model.{value}: Exists
+	//   feature.node.kubernetes.io/aim-accelerator.{value}: Exists
 	// Supports both specific models (e.g., "MI300X") and architecture-level
-	// fallbacks (e.g., "CDNA3") — the AcceleratorDetector labels nodes with
-	// all applicable identifiers.
+	// fallbacks (e.g., "EPYC_ZEN5") — the AcceleratorDetector labels nodes
+	// with all applicable identifiers.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=63

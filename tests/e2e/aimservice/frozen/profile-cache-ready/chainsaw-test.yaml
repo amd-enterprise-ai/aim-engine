@@ -1,0 +1,172 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Profile Cache Ready (v1alpha2)
+#
+# This test validates the full profile cache flow:
+# 1. AIMService creates AIMProfileCache when profile has modelSources
+# 2. AIMProfileCache controller creates AIMArtifact(s)
+# 3. ISVC creation is gated until the cache is Ready
+# 4. When cache becomes Ready, ISVC is created with artifact PVC volumes
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMClusterProfile (Ready), AIMProfileCache (patched to Ready)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-cache-ready
+spec:
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create frozen cluster profile with Ready status and modelSources
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-profile.yaml --status-only
+
+    - name: Create v1alpha2 service referencing the profile
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert AIMProfileCache is created for the profile
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                namespace: ($namespace)
+                labels:
+                  aim.eai.amd.com/service: test-cache-service
+              spec:
+                profileName: test-profile-cache
+                profileScope: Cluster
+                mode: Shared
+
+    - name: Assert AIMArtifact is created by profile cache controller
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                namespace: ($namespace)
+                labels:
+                  aim.eai.amd.com/profile.name: test-profile-cache
+                  aim.eai.amd.com/profile.scope: Cluster
+                  aim.eai.amd.com/profile.index: "0"
+              spec:
+                sourceUri: hf://test-org/test-model-weights
+                size: 2Gi
+
+    - name: Assert ISVC is NOT created yet (cache not ready)
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              count=$(kubectl get inferenceservice -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l)
+              if [ "$count" -ne 0 ]; then
+                echo "ERROR: Expected no InferenceService but found $count"
+                exit 1
+              fi
+              echo "OK: No InferenceService found (cache not ready yet)"
+
+    - name: Freeze profile cache with Ready status and resolved artifacts
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              PC_NAME=$(kubectl get aimprofilecache -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=test-cache-service \
+                -o jsonpath='{.items[0].metadata.name}')
+              if [ -z "$PC_NAME" ]; then
+                echo "ERROR: No AIMProfileCache found"
+                exit 1
+              fi
+              echo "Found AIMProfileCache: $PC_NAME"
+
+              ART_NAME=$(kubectl get aimartifact -n "$NAMESPACE" \
+                -l aim.eai.amd.com/profile.name=test-profile-cache \
+                -o jsonpath='{.items[0].metadata.name}')
+              if [ -z "$ART_NAME" ]; then
+                echo "ERROR: No AIMArtifact found"
+                exit 1
+              fi
+              echo "Found AIMArtifact: $ART_NAME"
+
+              kubectl annotate aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+
+              kubectl patch aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                --type=merge --subresource=status \
+                -p "{
+                  \"status\": {
+                    \"status\": \"Ready\",
+                    \"conditions\": [
+                      {
+                        \"type\": \"ProfileFound\",
+                        \"status\": \"True\",
+                        \"reason\": \"ProfileResolved\",
+                        \"message\": \"Profile resolved\",
+                        \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"
+                      },
+                      {
+                        \"type\": \"ArtifactsReady\",
+                        \"status\": \"True\",
+                        \"reason\": \"AllCachesReady\",
+                        \"message\": \"All artifacts are ready\",
+                        \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"
+                      }
+                    ],
+                    \"artifacts\": {
+                      \"$ART_NAME\": {
+                        \"name\": \"$ART_NAME\",
+                        \"model\": \"test-org/test-model-weights\",
+                        \"status\": \"Ready\",
+                        \"persistentVolumeClaim\": \"$ART_NAME-pvc\",
+                        \"mountPoint\": \"/workspace/cache/test-org/test-model-weights\"
+                      }
+                    }
+                  }
+                }"
+
+              echo "Patched AIMProfileCache $PC_NAME to Ready"
+
+    - name: Assert InferenceService is created with profile image
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                namespace: ($namespace)
+                labels:
+                  aim.eai.amd.com/service: test-cache-service
+                  aim.eai.amd.com/profile: test-profile-cache
+              spec:
+                predictor:
+                  containers:
+                    - name: kserve-container
+                      image: registry.example.com/test-image:1.0.0
+
+    - name: Assert service reaches Starting status with resolved profile
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cache-service
+              status:
+                status: Starting
+                resolvedProfile:
+                  name: test-profile-cache
+                  scope: Cluster

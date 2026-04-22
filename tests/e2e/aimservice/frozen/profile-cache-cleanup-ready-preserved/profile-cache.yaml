@@ -1,0 +1,21 @@
+# Ready AIMProfileCache labeled with the service; paused so its status sticks.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfileCache
+metadata:
+  name: test-cleanup-ready-cache
+  labels:
+    aim.eai.amd.com/service: test-cleanup-ready-service
+  annotations:
+    aim.eai.amd.com/reconciliation-paused: "true"
+spec:
+  profileName: test-cleanup-ready-profile
+  profileScope: Cluster
+  mode: Shared
+status:
+  status: Ready
+  conditions:
+    - type: ArtifactsReady
+      status: "True"
+      reason: AllCachesReady
+      message: All artifacts ready
+      lastTransitionTime: "2025-01-01T00:00:00Z"

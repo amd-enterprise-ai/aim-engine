@@ -59,7 +59,7 @@ Both DaemonSets are independently configurable via Helm values.
 
 ### NFD Integration
 
-Feature files are written to `/etc/kubernetes/node-feature-discovery/features.d/aim-accelerator`. NFD's [local source](https://nfd.sigs.k8s.io/usage/customization-guide#local-feature-source) picks up these files and publishes their contents as node labels. Writes use an atomic rename to avoid race conditions with the NFD worker.
+Feature files are written to `/etc/kubernetes/node-feature-discovery/features.d/aim-accelerator-{gpu,cpu}`, one per DaemonSet. NFD's [local source](https://nfd.sigs.k8s.io/usage/customization-guide#local-feature-source) picks up every file and merges the resulting labels onto the node. The CPU and GPU detectors write separate files so they can co-exist on heterogeneous nodes without clobbering each other. Writes use an atomic rename to avoid race conditions with the NFD worker.
 
 ## Prerequisites
 

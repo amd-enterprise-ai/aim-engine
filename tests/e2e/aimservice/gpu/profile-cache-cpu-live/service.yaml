@@ -1,0 +1,12 @@
+# v1alpha2 AIMService using the CPU profile with model caching.
+# The profile has modelSources, so AIMService creates an AIMProfileCache
+# which downloads the model weights before ISVC creation.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: test-profile-cache-cpu
+spec:
+  runtimeConfigName: profile-cache-cpu-live
+  profile:
+    name: qwen3-0-6b-cpu-live
+  replicas: 1

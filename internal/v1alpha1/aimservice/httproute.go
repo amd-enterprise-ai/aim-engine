@@ -72,8 +72,18 @@ func planHTTPRoute(
 	service *aimv1alpha1.AIMService,
 	obs ServiceObservation,
 ) client.Object {
+	return PlanHTTPRoute(ctx, service, obs.mergedRuntimeConfig.Value)
+}
+
+// PlanHTTPRoute is an exported variant of planHTTPRoute usable from other
+// packages (e.g. the v1alpha2 profile-based reconciler) that don't carry the
+// full ServiceObservation.
+func PlanHTTPRoute(
+	ctx context.Context,
+	service *aimv1alpha1.AIMService,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+) client.Object {
 	logger := log.FromContext(ctx).WithName("planHTTPRoute")
-	runtimeConfig := obs.mergedRuntimeConfig.Value
 
 	logger.V(1).Info("checking routing",
 		"runtimeConfigNil", runtimeConfig == nil,
@@ -85,7 +95,6 @@ func planHTTPRoute(
 		return nil
 	}
 
-	// Need gateway ref to create route
 	gatewayRef := resolveGatewayRef(service, runtimeConfig)
 	if gatewayRef == nil {
 		logger.V(1).Info("gateway ref not configured")

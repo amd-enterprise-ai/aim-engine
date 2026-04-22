@@ -519,54 +519,7 @@ func isTransientKServeError(message string) bool {
 }
 
 func (obs ServiceObservation) getHTTPRouteHealth() controllerutils.ComponentHealth {
-	health := controllerutils.ComponentHealth{
-		Component:      "HTTPRoute",
-		DependencyType: controllerutils.DependencyTypeDownstream,
-	}
-
-	runtimeConfig := obs.mergedRuntimeConfig.Value
-
-	// If routing is disabled, no health check needed
-	if !isRoutingEnabled(obs.service, runtimeConfig) {
-		return controllerutils.ComponentHealth{}
-	}
-
-	// Routing is enabled - check if gateway ref is configured
-	gatewayRef := resolveGatewayRef(obs.service, runtimeConfig)
-	if gatewayRef == nil {
-		// Routing is enabled but no gateway configured - configuration error
-		health.State = constants.AIMStatusFailed
-		health.Reason = "GatewayNotConfigured"
-		health.Message = "Routing is enabled but no gatewayRef is configured in service or runtime config"
-		health.Errors = []error{
-			controllerutils.NewInvalidSpecError(
-				"GatewayNotConfigured",
-				"Routing is enabled but no gatewayRef is configured. Set spec.routing.gatewayRef on the service or runtimeConfig.routing.gatewayRef on the runtime config.",
-				nil,
-			),
-		}
-		return health
-	}
-
-	// Gateway is configured - check the HTTPRoute status
-	if obs.httpRoute.Error != nil {
-		if obs.httpRoute.IsNotFound() {
-			// Route doesn't exist yet but will be created
-			health.State = constants.AIMStatusProgressing
-			health.Reason = "HTTPRouteCreating"
-			health.Message = "HTTPRoute is being created"
-			return health
-		}
-		// Other fetch error
-		health.State = constants.AIMStatusFailed
-		health.Reason = "HTTPRouteFetchError"
-		health.Message = obs.httpRoute.Error.Error()
-		health.Errors = []error{obs.httpRoute.Error}
-		return health
-	}
-
-	// Delegate to the standard HTTPRoute health check
-	return obs.httpRoute.ToComponentHealth("HTTPRoute", controllerutils.GetHTTPRouteHealth)
+	return HTTPRouteComponentHealth(obs.service, obs.mergedRuntimeConfig.Value, obs.httpRoute)
 }
 
 func (obs ServiceObservation) getHPAHealth() controllerutils.ComponentHealth {
@@ -829,70 +782,9 @@ func (r *ServiceReconciler) ComposeState(
 	}
 
 	// Compute runtime status from InferenceService and pods
-	obs.runtimeStatus = r.computeRuntimeStatus(fetch)
+	obs.runtimeStatus = ComputeRuntimeStatus(fetch.service, fetch.hpa)
 
 	return obs
-}
-
-// computeRuntimeStatus extracts replica counts from HPA or falls back to spec defaults.
-func (r *ServiceReconciler) computeRuntimeStatus(fetch ServiceFetchResult) *aimv1alpha1.AIMServiceRuntimeStatus {
-	status := &aimv1alpha1.AIMServiceRuntimeStatus{}
-	service := fetch.service
-
-	if fetch.hpa.OK() && fetch.hpa.Value != nil {
-		// HPA exists - use its spec and status for replica information
-		hpa := fetch.hpa.Value
-
-		if hpa.Spec.MinReplicas != nil {
-			status.MinReplicas = *hpa.Spec.MinReplicas
-		}
-		status.MaxReplicas = hpa.Spec.MaxReplicas
-
-		status.CurrentReplicas = hpa.Status.CurrentReplicas
-		if hpa.Status.DesiredReplicas == 0 {
-			status.DesiredReplicas = status.MinReplicas
-		} else {
-			status.DesiredReplicas = hpa.Status.DesiredReplicas
-		}
-	} else {
-		// No HPA - derive status from spec fields
-		// MinReplicas precedence: Spec.MinReplicas > Spec.Replicas > default (1)
-		var minReplicas int32 = 1
-		if service.Spec.MinReplicas != nil {
-			minReplicas = *service.Spec.MinReplicas
-		} else if service.Spec.Replicas != nil {
-			minReplicas = *service.Spec.Replicas
-		}
-
-		maxReplicas := minReplicas
-		if service.Spec.MaxReplicas != nil {
-			maxReplicas = *service.Spec.MaxReplicas
-		}
-
-		status.MinReplicas = minReplicas
-		status.MaxReplicas = maxReplicas
-		status.DesiredReplicas = minReplicas
-		if service.Spec.AutoScaling != nil {
-			// Autoscaling configured but HPA not created yet — no pods serving
-			status.CurrentReplicas = 0
-		} else {
-			// Fixed replicas (no HPA ever) — reflect spec as the source of truth
-			status.CurrentReplicas = minReplicas
-		}
-	}
-
-	// Compute display string for kubectl output
-	if status.MinReplicas == status.MaxReplicas {
-		// Fixed replicas - just show current
-		status.Replicas = fmt.Sprintf("%d", status.CurrentReplicas)
-	} else {
-		// Autoscaling - show "current/desired (min-max)"
-		status.Replicas = fmt.Sprintf("%d/%d (%d-%d)",
-			status.CurrentReplicas, status.DesiredReplicas,
-			status.MinReplicas, status.MaxReplicas)
-	}
-
-	return status
 }
 
 // ============================================================================

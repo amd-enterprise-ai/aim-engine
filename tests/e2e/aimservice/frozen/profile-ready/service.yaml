@@ -1,0 +1,10 @@
+# v1alpha2 AIMService referencing a profile.
+# No spec.model — forbidden on v1alpha2 (profile is self-contained).
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: test-service
+spec:
+  profile:
+    name: test-profile-ready
+  replicas: 1

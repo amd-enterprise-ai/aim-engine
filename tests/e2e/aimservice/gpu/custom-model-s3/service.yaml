@@ -4,8 +4,8 @@ metadata:
   name: test-gpu-s3-service
 spec:
   runtimeConfigName: test-gpu-s3-config
-  imagePullSecrets:
-    - name: ghcr-regcred
+  # The referenced model uses the public amdenterpriseai/aim-base image,
+  # so no imagePullSecrets are required here.
   model:
     name: test-gpu-s3-model
   template:

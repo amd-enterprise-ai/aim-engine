@@ -1,0 +1,8 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: test-finalizer-migration-service
+spec:
+  profile:
+    name: test-finalizer-migration-profile
+  replicas: 1

@@ -12,7 +12,11 @@ Package v1alpha2 contains API Schema definitions for the aim v1alpha2 API group.
 - [AIMClusterProfile](#aimclusterprofile)
 - [AIMClusterProfileList](#aimclusterprofilelist)
 - [AIMProfile](#aimprofile)
+- [AIMProfileCache](#aimprofilecache)
+- [AIMProfileCacheList](#aimprofilecachelist)
 - [AIMProfileList](#aimprofilelist)
+- [AIMService](#aimservice)
+- [AIMServiceList](#aimservicelist)
 
 
 
@@ -81,7 +85,7 @@ _Appears in:_
 | `primary` _boolean_ | Primary marks this as a default/recommended profile. When true, the profile is<br />advertised for standard deployment and copied automatically for custom weight models.<br />Defaults to false when not specified. | false |  |
 | `engineArgs` _[JSON](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#json-v1-apiextensions-k8s-io)_ | EngineArgs contains inference engine CLI arguments as a free-form JSON object.<br />Passed to the inference engine (e.g., vLLM) at startup. |  | Schemaless: \{\} <br />Optional: \{\} <br /> |
 | `engineEnv` _object (keys:string, values:string)_ | EngineEnv contains environment variables for the inference engine subprocess.<br />Applied via os.execv, distinct from container-level ContainerEnv. |  | Optional: \{\} <br /> |
-| `acceleratorModel` _string_ | AcceleratorModel is the accelerator identifier for node selection.<br />Maps to a node label key using the Exists operator:<br />  feature.node.kubernetes.io/aim-accelerator-model.\{value\}: Exists<br />Supports both specific models (e.g., "MI300X") and architecture-level<br />fallbacks (e.g., "CDNA3") — the AcceleratorDetector labels nodes with<br />all applicable identifiers. |  | MaxLength: 63 <br />Pattern: `^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$` <br />Optional: \{\} <br /> |
+| `acceleratorModel` _string_ | AcceleratorModel is the accelerator identifier for node selection.<br />Maps to a node label key using the Exists operator:<br />  feature.node.kubernetes.io/aim-accelerator.\{value\}: Exists<br />Supports both specific models (e.g., "MI300X") and architecture-level<br />fallbacks (e.g., "EPYC_ZEN5") — the AcceleratorDetector labels nodes<br />with all applicable identifiers. |  | MaxLength: 63 <br />Pattern: `^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$` <br />Optional: \{\} <br /> |
 | `acceleratorType` _[AcceleratorType](#acceleratortype)_ | AcceleratorType determines the resource derivation strategy: gpu or cpu.<br />AIM Engine computes default resource requests from this field combined<br />with AcceleratorCount and cluster-level configuration. |  | Enum: [gpu cpu] <br />Optional: \{\} <br /> |
 | `acceleratorCount` _integer_ | AcceleratorCount is the number of accelerator units required (e.g., GPU count).<br />Combined with AcceleratorType and cluster-level configuration to compute<br />default resource requests in status.resources. |  | Minimum: 0 <br />Optional: \{\} <br /> |
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources is an optional override for K8s resource requests/limits.<br />When set, merged on top of the defaults that AIM Engine computes from<br />AcceleratorType, AcceleratorCount, and cluster-level configuration.<br />The resolved result is written to status.resources. |  | Optional: \{\} <br /> |
@@ -183,6 +187,101 @@ _Appears in:_
 | `status` _[AIMProfileStatus](#aimprofilestatus)_ |  |  |  |
 
 
+#### AIMProfileCache
+
+
+
+AIMProfileCache pre-warms model artifacts for a specified profile's model sources.
+
+
+
+_Appears in:_
+- [AIMProfileCacheList](#aimprofilecachelist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMProfileCache` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMProfileCacheSpec](#aimprofilecachespec)_ |  |  |  |
+| `status` _[AIMProfileCacheStatus](#aimprofilecachestatus)_ |  |  |  |
+
+
+#### AIMProfileCacheList
+
+
+
+AIMProfileCacheList contains a list of AIMProfileCache.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMProfileCacheList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMProfileCache](#aimprofilecache) array_ |  |  |  |
+
+
+#### AIMProfileCacheMode
+
+_Underlying type:_ _string_
+
+AIMProfileCacheMode controls the ownership behavior of artifacts created by a profile cache.
+
+_Validation:_
+- Enum: [Dedicated Shared]
+
+_Appears in:_
+- [AIMProfileCacheSpec](#aimprofilecachespec)
+
+| Field | Description |
+| --- | --- |
+| `Dedicated` | ProfileCacheModeDedicated means artifacts are owned by this profile cache and<br />garbage collected when it is deleted.<br /> |
+| `Shared` | ProfileCacheModeShared means artifacts have no owner references and persist<br />independently of the profile cache lifecycle. This is the default mode.<br /> |
+
+
+#### AIMProfileCacheSpec
+
+
+
+AIMProfileCacheSpec defines the desired state of AIMProfileCache.
+
+
+
+_Appears in:_
+- [AIMProfileCache](#aimprofilecache)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `profileName` _string_ | ProfileName is the name of the AIMProfile or AIMClusterProfile to cache.<br />The controller resolves model sources from the referenced profile's spec.modelSources. |  | MinLength: 1 <br /> |
+| `profileScope` _[AIMResolutionScope](#aimresolutionscope)_ | ProfileScope indicates whether the profile is namespace-scoped or cluster-scoped. |  | Enum: [Namespace Cluster] <br />Required: \{\} <br /> |
+| `storageClassName` _string_ | StorageClassName specifies the storage class for cache volumes.<br />When not specified, uses the cluster default storage class. |  | Optional: \{\} <br /> |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for authentication when downloading models.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  | Optional: \{\} <br /> |
+| `mode` _[AIMProfileCacheMode](#aimprofilecachemode)_ | Mode controls the ownership behavior of artifacts created by this profile cache.<br />- Dedicated: artifacts are owned by this profile cache and garbage collected when it's deleted.<br />- Shared (default): artifacts have no owner references and persist independently. | Shared | Enum: [Dedicated Shared] <br />Optional: \{\} <br /> |
+
+
+#### AIMProfileCacheStatus
+
+
+
+AIMProfileCacheStatus defines the observed state of AIMProfileCache.
+
+
+
+_Appears in:_
+- [AIMProfileCache](#aimprofilecache)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `observedGeneration` _integer_ | ObservedGeneration is the most recent generation observed by the controller. |  |  |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#condition-v1-meta) array_ | Conditions represent the latest observations of the profile cache state. |  |  |
+| `status` _[AIMStatus](#aimstatus)_ | Status represents the current high-level status of the profile cache. | Pending | Enum: [Pending Progressing Ready Failed Degraded NotAvailable] <br /> |
+| `artifacts` _object (keys:string, values:AIMResolvedArtifact)_ | Artifacts maps artifact names to their resolved AIMArtifact resources. |  | Optional: \{\} <br /> |
+
+
 #### AIMProfileCachingConfig
 
 
@@ -241,7 +340,7 @@ _Appears in:_
 | `primary` _boolean_ | Primary marks this as a default/recommended profile. When true, the profile is<br />advertised for standard deployment and copied automatically for custom weight models.<br />Defaults to false when not specified. | false |  |
 | `engineArgs` _[JSON](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#json-v1-apiextensions-k8s-io)_ | EngineArgs contains inference engine CLI arguments as a free-form JSON object.<br />Passed to the inference engine (e.g., vLLM) at startup. |  | Schemaless: \{\} <br />Optional: \{\} <br /> |
 | `engineEnv` _object (keys:string, values:string)_ | EngineEnv contains environment variables for the inference engine subprocess.<br />Applied via os.execv, distinct from container-level ContainerEnv. |  | Optional: \{\} <br /> |
-| `acceleratorModel` _string_ | AcceleratorModel is the accelerator identifier for node selection.<br />Maps to a node label key using the Exists operator:<br />  feature.node.kubernetes.io/aim-accelerator-model.\{value\}: Exists<br />Supports both specific models (e.g., "MI300X") and architecture-level<br />fallbacks (e.g., "CDNA3") — the AcceleratorDetector labels nodes with<br />all applicable identifiers. |  | MaxLength: 63 <br />Pattern: `^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$` <br />Optional: \{\} <br /> |
+| `acceleratorModel` _string_ | AcceleratorModel is the accelerator identifier for node selection.<br />Maps to a node label key using the Exists operator:<br />  feature.node.kubernetes.io/aim-accelerator.\{value\}: Exists<br />Supports both specific models (e.g., "MI300X") and architecture-level<br />fallbacks (e.g., "EPYC_ZEN5") — the AcceleratorDetector labels nodes<br />with all applicable identifiers. |  | MaxLength: 63 <br />Pattern: `^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$` <br />Optional: \{\} <br /> |
 | `acceleratorType` _[AcceleratorType](#acceleratortype)_ | AcceleratorType determines the resource derivation strategy: gpu or cpu.<br />AIM Engine computes default resource requests from this field combined<br />with AcceleratorCount and cluster-level configuration. |  | Enum: [gpu cpu] <br />Optional: \{\} <br /> |
 | `acceleratorCount` _integer_ | AcceleratorCount is the number of accelerator units required (e.g., GPU count).<br />Combined with AcceleratorType and cluster-level configuration to compute<br />default resource requests in status.resources. |  | Minimum: 0 <br />Optional: \{\} <br /> |
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources is an optional override for K8s resource requests/limits.<br />When set, merged on top of the defaults that AIM Engine computes from<br />AcceleratorType, AcceleratorCount, and cluster-level configuration.<br />The resolved result is written to status.resources. |  | Optional: \{\} <br /> |
@@ -280,7 +379,7 @@ _Appears in:_
 | `primary` _boolean_ | Primary marks this as a default/recommended profile. When true, the profile is<br />advertised for standard deployment and copied automatically for custom weight models.<br />Defaults to false when not specified. | false |  |
 | `engineArgs` _[JSON](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#json-v1-apiextensions-k8s-io)_ | EngineArgs contains inference engine CLI arguments as a free-form JSON object.<br />Passed to the inference engine (e.g., vLLM) at startup. |  | Schemaless: \{\} <br />Optional: \{\} <br /> |
 | `engineEnv` _object (keys:string, values:string)_ | EngineEnv contains environment variables for the inference engine subprocess.<br />Applied via os.execv, distinct from container-level ContainerEnv. |  | Optional: \{\} <br /> |
-| `acceleratorModel` _string_ | AcceleratorModel is the accelerator identifier for node selection.<br />Maps to a node label key using the Exists operator:<br />  feature.node.kubernetes.io/aim-accelerator-model.\{value\}: Exists<br />Supports both specific models (e.g., "MI300X") and architecture-level<br />fallbacks (e.g., "CDNA3") — the AcceleratorDetector labels nodes with<br />all applicable identifiers. |  | MaxLength: 63 <br />Pattern: `^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$` <br />Optional: \{\} <br /> |
+| `acceleratorModel` _string_ | AcceleratorModel is the accelerator identifier for node selection.<br />Maps to a node label key using the Exists operator:<br />  feature.node.kubernetes.io/aim-accelerator.\{value\}: Exists<br />Supports both specific models (e.g., "MI300X") and architecture-level<br />fallbacks (e.g., "EPYC_ZEN5") — the AcceleratorDetector labels nodes<br />with all applicable identifiers. |  | MaxLength: 63 <br />Pattern: `^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$` <br />Optional: \{\} <br /> |
 | `acceleratorType` _[AcceleratorType](#acceleratortype)_ | AcceleratorType determines the resource derivation strategy: gpu or cpu.<br />AIM Engine computes default resource requests from this field combined<br />with AcceleratorCount and cluster-level configuration. |  | Enum: [gpu cpu] <br />Optional: \{\} <br /> |
 | `acceleratorCount` _integer_ | AcceleratorCount is the number of accelerator units required (e.g., GPU count).<br />Combined with AcceleratorType and cluster-level configuration to compute<br />default resource requests in status.resources. |  | Minimum: 0 <br />Optional: \{\} <br /> |
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources is an optional override for K8s resource requests/limits.<br />When set, merged on top of the defaults that AIM Engine computes from<br />AcceleratorType, AcceleratorCount, and cluster-level configuration.<br />The resolved result is written to status.resources. |  | Optional: \{\} <br /> |
@@ -336,6 +435,46 @@ _Appears in:_
 | `general` |  |
 | `preview` |  |
 | `unoptimized` |  |
+
+
+#### AIMService
+
+
+
+AIMService manages a KServe-based AIM inference service for the selected model and template.
+Note: KServe uses {name}-{namespace} format which must not exceed 63 characters.
+This constraint is validated at runtime since CEL cannot access metadata.namespace.
+
+
+
+_Appears in:_
+- [AIMServiceList](#aimservicelist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMService` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMServiceSpec](#aimservicespec)_ |  |  |  |
+| `status` _[AIMServiceStatus](#aimservicestatus)_ |  |  |  |
+
+
+#### AIMServiceList
+
+
+
+AIMServiceList contains a list of AIMService.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMServiceList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMService](#aimservice) array_ |  |  |  |
 
 
 #### AcceleratorType

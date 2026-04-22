@@ -52,6 +52,7 @@ spec:
               metadata:
                 labels:
                   aim.eai.amd.com/service.name: test-gpu-profile-id
+                  app.kubernetes.io/component: inference
               spec:
                 (containers[?name == 'kserve-container']):
                   - (env[?name == 'AIM_PROFILE_ID']):
@@ -76,5 +77,5 @@ spec:
             timeout: 3m
             env:
               - name: HTTP_BASE_PATH
-                value: /integration/gpu-profile-id/test-gpu-profile-id/v1
+                value: (join('', ['/integration/gpu-profile-id/', $namespace, '/test-gpu-profile-id/v1']))
             content: bash ../_shared/validate-http.sh

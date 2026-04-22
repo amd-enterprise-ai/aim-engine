@@ -67,6 +67,16 @@ func fetchModel(
 ) ModelFetchResult {
 	logger := log.FromContext(ctx)
 
+	if service.Spec.Model == nil {
+		var result ModelFetchResult
+		result.Model.Error = controllerutils.NewInvalidSpecError(
+			aimv1alpha1.AIMServiceReasonModelNotFound,
+			"no model specified in service spec",
+			nil,
+		)
+		return result
+	}
+
 	// Try to use previously resolved model if Ready
 	if result, shouldContinue := tryFetchResolvedModel(ctx, c, service); !shouldContinue {
 		return result
@@ -166,7 +176,7 @@ func tryFetchResolvedModel(
 		result.Model = controllerutils.Fetch(ctx, c, ref.NamespacedName(), &aimv1alpha1.AIMModel{})
 		if result.Model.OK() && result.Model.Value.Status.Status == constants.AIMStatusReady {
 			logger.V(1).Info("using resolved model", "name", ref.Name)
-			if service.Spec.Model.Image != nil && *service.Spec.Model.Image != "" {
+			if service.Spec.Model != nil && service.Spec.Model.Image != nil && *service.Spec.Model.Image != "" {
 				result.ImageURI = strings.TrimSpace(*service.Spec.Model.Image)
 			}
 			return result, false
@@ -185,7 +195,7 @@ func tryFetchResolvedModel(
 		result.ClusterModel = controllerutils.Fetch(ctx, c, ref.NamespacedName(), &aimv1alpha1.AIMClusterModel{})
 		if result.ClusterModel.OK() && result.ClusterModel.Value.Status.Status == constants.AIMStatusReady {
 			logger.V(1).Info("using resolved cluster model", "name", ref.Name)
-			if service.Spec.Model.Image != nil && *service.Spec.Model.Image != "" {
+			if service.Spec.Model != nil && service.Spec.Model.Image != nil && *service.Spec.Model.Image != "" {
 				result.ImageURI = strings.TrimSpace(*service.Spec.Model.Image)
 			}
 			return result, false

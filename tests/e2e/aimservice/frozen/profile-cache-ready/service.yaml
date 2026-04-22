@@ -1,0 +1,9 @@
+# v1alpha2 AIMService referencing a profile with modelSources.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: test-cache-service
+spec:
+  profile:
+    name: test-profile-cache
+  replicas: 1

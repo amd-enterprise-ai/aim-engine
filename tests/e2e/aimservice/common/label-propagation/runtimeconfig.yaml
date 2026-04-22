@@ -14,7 +14,7 @@ spec:
     gatewayRef:
       name: kserve-ingress-gateway
       namespace: kgateway-system
-    pathTemplate: "/integration/label-propagation/{.metadata.name}"
+    pathTemplate: "/integration/label-propagation/{.metadata.namespace}/{.metadata.name}"
   artifactCache:
     enabled: true
     s3Uri: "s3://aim-cache/artifacts"

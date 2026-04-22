@@ -1,0 +1,166 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Profile Cache GPU Live (MI300X cluster)
+#
+# End-to-end test for the full v1alpha2 profile cache pipeline on real GPU
+# hardware. Exercises GLM-4.7-FP8 on MI300X (TP=2 latency) using
+# ghcr.io/silogen/aim-zai-org-glm-4-7:0.12.0-rc3 — the aim-build 0.12 image
+# that natively consumes the v1alpha2 AIMProfile CR format.
+#
+# Flow:
+# 1. Create AIMProfile with modelSources and acceleratorModel=MI300X
+# 2. Profile becomes Ready once nodes with MI300X accelerator label are present
+# 3. Create AIMService -> creates AIMProfileCache -> downloads FP8 weights
+# 4. Profile cache becomes Ready -> ISVC created with PVC volume mounts
+# 5. ISVC pod starts, weights load, service reaches Running
+# 6. Hit /v1/models and /v1/chat/completions via the gateway
+#
+# Requires:
+# - GPU cluster with at least two MI300X-labeled nodes/devices (TP=2)
+# - Longhorn storage for the shared profile cache PVC (~450 GiB)
+# - ghcr-regcred secret on the default service account (to pull the AIM image)
+# - huggingface-creds secret in-namespace (this test copies it in; see below)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-cache-gpu-live
+  labels:
+    # tier=manual keeps this out of the default selectors entirely: a 362 GiB
+    # download + multi-GPU cold warmup runs for ~30-45m end-to-end and is too
+    # heavy for routine CI. Whoever invokes a manual test already knows the
+    # environmental prerequisites (GPU cluster, Longhorn, HF token), so we
+    # don't bother tagging requires=gpu/longhorn/hf_token here. Run it via:
+    #   make test-chainsaw-gpu CHAINSAW_TEST_DIR=tests/e2e/aimservice/gpu/profile-cache-gpu-live
+    tier: manual
+spec:
+  description: Full profile cache pipeline with real MI300X inference and endpoint validation
+  timeouts:
+    assert: 600s
+  steps:
+    # The profile controller matches nodes on
+    # feature.node.kubernetes.io/aim-accelerator.MI300X, which is written by the
+    # AcceleratorDetector DaemonSet running on each MI300X node. No manual
+    # labeling step is required.
+    #
+    # GLM-4.7-FP8 is a gated-ish HF repo and the XET/HF_TRANSFER backends
+    # anonymous-rate-limit hard on repos this large. Inject a real user token
+    # so the download job can authenticate. Referenced as HF_TOKEN via
+    # caching.env in profile.yaml.
+    - name: Copy HF token secret into the test namespace
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              SRC="${HF_TOKEN_SECRET_FILE:-$HOME/workspace/silogen/hf-token-secret.yaml}"
+              if [ ! -f "$SRC" ]; then
+                echo "ERROR: HF token secret file not found at $SRC" >&2
+                echo "Set HF_TOKEN_SECRET_FILE to point at a v1 Secret named 'huggingface-creds' with key 'token'." >&2
+                exit 1
+              fi
+              kubectl -n "$NAMESPACE" apply -f "$SRC"
+
+    - name: Create runtime config with routing
+      try:
+        - apply:
+            file: runtime-config.yaml
+
+    - name: Create GPU profile (namespaced) with modelSources
+      try:
+        - apply:
+            file: profile.yaml
+
+    - name: Wait for profile to become Ready via node matching
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: glm-4-7-mi300x-live
+                namespace: ($namespace)
+              status:
+                status: Ready
+
+    - name: Create v1alpha2 service referencing the GPU profile
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify AIMProfileCache is created
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                namespace: ($namespace)
+                labels:
+                  aim.eai.amd.com/service: test-profile-cache-gpu
+              spec:
+                profileName: glm-4-7-mi300x-live
+                profileScope: Namespace
+                mode: Shared
+
+    - name: Verify AIMArtifact is created for the model
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                namespace: ($namespace)
+                labels:
+                  aim.eai.amd.com/profile.name: glm-4-7-mi300x-live
+              spec:
+                sourceUri: hf://zai-org/GLM-4.7-FP8
+
+    - name: Wait for profile cache to become Ready (model download)
+      try:
+        - assert:
+            # GLM-4.7-FP8 is ~362 GiB across 93 shards. Even with XET and a
+            # generous link, expect 30-60m; give it real headroom.
+            timeout: 90m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                namespace: ($namespace)
+                labels:
+                  aim.eai.amd.com/service: test-profile-cache-gpu
+              status:
+                status: Ready
+
+    - name: Verify service reaches Running status
+      try:
+        - assert:
+            # TP=2 fp8 warmup + KV-cache init on MI300X for a 350+ GiB model
+            # takes substantial time: PVC -> HBM transfer alone is multi-minute,
+            # and vLLM graph capture / torch.compile / ROCm kernel warmup add
+            # more on top. 20m was too tight in a real run; 45m is the
+            # current sweet spot with room for cold caches.
+            timeout: 45m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-profile-cache-gpu
+              status:
+                status: Running
+                resolvedProfile:
+                  name: glm-4-7-mi300x-live
+                  scope: Namespace
+
+    - name: Verify chat completions endpoint works
+      try:
+        - script:
+            timeout: 10m
+            env:
+              - name: HTTP_BASE_PATH
+                value: (join('', ['/integration/profile-cache-gpu-live/', $namespace, '/test-profile-cache-gpu/v1']))
+            content: bash ../_shared/validate-http.sh

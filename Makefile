@@ -182,11 +182,15 @@ CHAINSAW_TEST_DIR := tests/e2e
 CHAINSAW_REPORT_DIR := .tmp/chainsaw-reports
 CHAINSAW_CONFIG_DIR := tests/chainsaw/config
 
-# Kind environment: exclude tests requiring GPU, longhorn storage, or external network
-CHAINSAW_SELECTOR_KIND := requires notin (gpu,longhorn,hf_token,nfd)
+# Kind environment: exclude tests requiring GPU, longhorn storage, or external
+# network. `tier notin (manual)` excludes expensive / operator-gated tests that
+# shouldn't run by default (e.g. multi-hundred-GiB live model downloads).
+CHAINSAW_SELECTOR_KIND := requires notin (gpu,longhorn,hf_token,nfd),tier notin (manual)
 
-# GPU environment: exclude tests that only work on Kind (mocked node labels)
-CHAINSAW_SELECTOR_GPU := requires notin (kind,hf_token,nfd)
+# GPU environment: exclude tests that only work on Kind (mocked node labels).
+# `tier notin (manual)` excludes expensive tests — run those explicitly by
+# pointing CHAINSAW_TEST_DIR at the specific test directory.
+CHAINSAW_SELECTOR_GPU := requires notin (kind,hf_token,nfd),tier notin (manual)
 
 # Select appropriate config based on ENV and CI detection
 # CI is detected via CI env var (set by GitHub Actions, GitLab CI, etc.)

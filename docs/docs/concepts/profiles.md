@@ -117,7 +117,7 @@ Three flat spec fields describe the hardware accelerator:
 
 | Field | Description |
 |-------|-------------|
-| `acceleratorModel` | Accelerator identifier for node selection (e.g., `MI300X`, `CDNA3`, `EPYC_9965`). Maps to a node label key with an `Exists` selector. |
+| `acceleratorModel` | Accelerator identifier for node selection (e.g., `MI300X`, `CDNA3`, `EPYC_ZEN5`). Maps to a node label key with an `Exists` selector. |
 | `acceleratorType` | `gpu` or `cpu`. Determines how AIM Engine derives Kubernetes resource requests. |
 | `acceleratorCount` | Number of accelerator units required (e.g., GPU count or CPU core count). |
 
@@ -126,17 +126,17 @@ Three flat spec fields describe the hardware accelerator:
 The profile specifies a single `acceleratorModel` string. AIM Engine constructs one label key and uses the `Exists` operator for node affinity:
 
 ```
-acceleratorModel: MI300X  →  feature.node.kubernetes.io/aim-accelerator-model.MI300X  (Exists)
+acceleratorModel: MI300X  →  feature.node.kubernetes.io/aim-accelerator.MI300X  (Exists)
 ```
 
-The **AcceleratorDetector** (DaemonSet) labels each node with all applicable identifiers. For example, a node with an MI300X GPU gets:
+The **AcceleratorDetector** (DaemonSet) labels each node with all applicable identifiers. For example, a node with an MI300X GPU and EPYC 9575F CPU gets:
 
 ```
-feature.node.kubernetes.io/aim-accelerator-model.MI300X: ""    # GPU model
-feature.node.kubernetes.io/aim-accelerator-model.CDNA3: ""     # GPU architecture
+feature.node.kubernetes.io/aim-accelerator.MI300X: "8"      # GPU model + count
+feature.node.kubernetes.io/aim-accelerator.EPYC_ZEN5: "128" # CPU arch + core count
 ```
 
-A profile targeting `MI300X` matches that node (exact). A fallback profile targeting `CDNA3` also matches (any CDNA3 GPU). AIM Engine is fully blind — it constructs one label key from `acceleratorModel` and sets `operator: Exists`.
+A profile targeting `MI300X` matches that node (exact). A fallback profile targeting `EPYC_ZEN5` also matches any Zen5 EPYC node. AIM Engine is fully blind — it constructs one label key from `acceleratorModel` and sets `operator: Exists`; the label value (accelerator count) is informational only.
 
 ### Resource derivation
 
@@ -309,7 +309,7 @@ kubectl get aimclusterprofile <name> -o jsonpath='{.status.resources}' | jq
 kubectl get aimclusterprofile <name> -o jsonpath='{.status.matchingNodes}'
 
 # List nodes with accelerator labels
-kubectl get nodes -l feature.node.kubernetes.io/aim-accelerator-model.MI300X
+kubectl get nodes -l feature.node.kubernetes.io/aim-accelerator.MI300X
 ```
 
 Common causes:

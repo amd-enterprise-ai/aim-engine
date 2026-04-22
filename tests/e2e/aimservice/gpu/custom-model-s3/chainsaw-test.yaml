@@ -143,5 +143,5 @@ spec:
             timeout: 3m
             env:
               - name: HTTP_BASE_PATH
-                value: /integration/gpu-custom-model-s3/test-gpu-s3-service/v1
+                value: (join('', ['/integration/gpu-custom-model-s3/', $namespace, '/test-gpu-s3-service/v1']))
             content: bash ../_shared/validate-http.sh

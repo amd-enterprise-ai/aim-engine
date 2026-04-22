@@ -1,0 +1,85 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Profile Ready (v1alpha2)
+#
+# This test validates that a v1alpha2 AIMService correctly resolves a Ready
+# AIMClusterProfile, creates a profile ConfigMap and InferenceService.
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMClusterProfile (Ready)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-ready
+spec:
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create frozen cluster profile with Ready status
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-profile.yaml --status-only
+
+    - name: Create v1alpha2 service referencing the profile
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert service resolves profile and has ProfileReady condition
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-service
+              status:
+                (conditions[?type == 'ProfileReady']):
+                  - status: "True"
+                    reason: ProfileResolved
+                resolvedProfile:
+                  name: test-profile-ready
+                  scope: Cluster
+
+    - name: Assert profile ConfigMap is created with correct labels
+      try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-service
+                  app.kubernetes.io/managed-by: aim-engine
+                  app.kubernetes.io/component: inference
+
+    - name: Assert InferenceService is created with profile image and volume mount
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-service
+                  aim.eai.amd.com/profile: test-profile-ready
+              spec:
+                predictor:
+                  containers:
+                    - name: kserve-container
+                      image: registry.example.com/test-image:1.0.0
+
+    - name: Assert service reaches Starting status (waiting for ISVC to become ready)
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-service
+              status:
+                status: Starting

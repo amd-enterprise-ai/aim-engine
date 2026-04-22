@@ -1,0 +1,85 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Profile-based Autoscaling Wiring (v1alpha2)
+#
+# Regression test for the v1alpha2 profile pipeline: minReplicas, maxReplicas
+# and the KEDA autoscaler annotation must be propagated from the AIMService
+# spec onto the generated InferenceService.
+#
+# Uses an EPYC_ZEN5 CPU profile, which requires the
+# feature.node.kubernetes.io/aim-accelerator.EPYC_ZEN5 label on at least one
+# node. That label is produced by the AcceleratorDetector (backed by NFD), so
+# the test is gated on `requires: nfd`: environments without the detector
+# (e.g. the default kind CI run) skip it, and environments with the detector
+# (local kind with the detector enabled, or GPU vclusters) execute it.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-autoscaling
+  labels:
+    requires: nfd
+spec:
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create CPU cluster profile
+      try:
+        - apply:
+            file: cluster-profile.yaml
+
+    - name: Wait for profile to become Ready
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-profile-autoscaling-profile
+              status:
+                status: Ready
+
+    - name: Create AIMService with minReplicas/maxReplicas
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify InferenceService has KEDA autoscaler annotation
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-profile-autoscaling-service
+                annotations:
+                  serving.kserve.io/autoscalerClass: "keda"
+
+    - name: Verify InferenceService has minReplicas=1 and maxReplicas=3
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-profile-autoscaling-service
+              spec:
+                predictor:
+                  minReplicas: 1
+                  maxReplicas: 3
+
+    - name: Verify AIMService runtime status reports the autoscaling range
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-profile-autoscaling-service
+              status:
+                runtime:
+                  minReplicas: 1
+                  maxReplicas: 3

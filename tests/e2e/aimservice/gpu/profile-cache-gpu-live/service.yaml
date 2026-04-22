@@ -1,0 +1,12 @@
+# v1alpha2 AIMService using the GPU profile with model caching.
+# The profile has modelSources, so AIMService creates an AIMProfileCache
+# which downloads the GLM-4.7-FP8 weights before ISVC creation.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: test-profile-cache-gpu
+spec:
+  runtimeConfigName: profile-cache-gpu-live
+  profile:
+    name: glm-4-7-mi300x-live
+  replicas: 1

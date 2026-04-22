@@ -1,0 +1,27 @@
+# Frozen AIMClusterProfile: Ready status (no accelerator → CPU-only)
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterProfile
+metadata:
+  name: test-profile-ready
+  annotations:
+    aim.eai.amd.com/reconciliation-paused: "true"
+spec:
+  aimId: test/profile-model
+  modelId: test/profile-model-fp8
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: optimized
+  primary: true
+  image: registry.example.com/test-image:1.0.0
+status:
+  status: Ready
+  version: 1.0.0
+  hardwareSummary: CPU
+  matchingNodes: 1
+  conditions:
+    - type: HardwareAvailable
+      status: "True"
+      reason: NoAcceleratorSpecified
+      message: No accelerator specified, profile is available on any node
+      lastTransitionTime: "2025-01-01T00:00:00Z"

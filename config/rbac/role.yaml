@@ -53,6 +53,7 @@ rules:
   - aimclusterruntimeconfigs
   - aimclusterservicetemplates
   - aimmodels
+  - aimprofilecaches
   - aimruntimeconfigs
   - aimservices
   - aimservicetemplates
@@ -75,6 +76,7 @@ rules:
   - aimclusterruntimeconfigs/finalizers
   - aimclusterservicetemplates/finalizers
   - aimmodels/finalizers
+  - aimprofilecaches/finalizers
   - aimprofiles/finalizers
   - aimruntimeconfigs/finalizers
   - aimservices/finalizers
@@ -92,6 +94,7 @@ rules:
   - aimclusterruntimeconfigs/status
   - aimclusterservicetemplates/status
   - aimmodels/status
+  - aimprofilecaches/status
   - aimprofiles/status
   - aimruntimeconfigs/status
   - aimservices/status

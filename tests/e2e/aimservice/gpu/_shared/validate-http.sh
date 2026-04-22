@@ -10,6 +10,12 @@ SVC_PORT="${HTTP_PORT:-80}"
 BASE_PATH="${HTTP_BASE_PATH:-/integration/test/v1}"  # contains /models and /chat/completions
 TIMEOUT="${HTTP_TIMEOUT:-60}"
 
+# Retry budget. The KServe predictor can report Ready before the HTTPRoute has
+# propagated and before vLLM has finished loading weights, so we poll instead
+# of one-shotting. All values in seconds.
+RETRY_DEADLINE="${HTTP_RETRY_DEADLINE:-300}"
+RETRY_INTERVAL="${HTTP_RETRY_INTERVAL:-5}"
+
 # Optional: if your gateway expects Authorization
 AUTH_HEADER=()
 if [[ -n "${OPENAI_API_KEY:-}" ]]; then
@@ -40,17 +46,28 @@ echo "Starting kubectl proxy…"
 start_proxy
 echo "kubectl proxy on 127.0.0.1:${PROXY_PORT}"
 
-# Test /v1/models endpoint
+# Test /v1/models endpoint. Retry while the route/pod is still settling.
 MODELS_URL="http://127.0.0.1:${PROXY_PORT}/api/v1/namespaces/${NS}/services/${SVC}:${SVC_PORT}/proxy${BASE_PATH}/models"
-echo "GET $MODELS_URL"
+echo "GET $MODELS_URL (retry for up to ${RETRY_DEADLINE}s)"
 
-RESP="$(curl -sS -w '\n%{http_code}' --max-time "$TIMEOUT" "${AUTH_HEADER[@]}" "$MODELS_URL")"
-BODY="$(echo "$RESP" | head -n -1)"
-CODE="$(echo "$RESP" | tail -n 1)"
+deadline=$(( SECONDS + RETRY_DEADLINE ))
+CODE=""
+BODY=""
+attempt=0
+while (( SECONDS < deadline )); do
+  attempt=$(( attempt + 1 ))
+  RESP="$(curl -sS -w '\n%{http_code}' --max-time "$TIMEOUT" "${AUTH_HEADER[@]}" "$MODELS_URL" 2>&1 || true)"
+  BODY="$(echo "$RESP" | head -n -1)"
+  CODE="$(echo "$RESP" | tail -n 1)"
+  echo "attempt $attempt: HTTP $CODE"
+  if [[ "$CODE" == "200" ]] && echo "$BODY" | jq empty >/dev/null 2>&1; then
+    break
+  fi
+  sleep "$RETRY_INTERVAL"
+done
 
-echo "HTTP: $CODE"
 if [[ "$CODE" != "200" ]]; then
-  echo "ERROR: expected 200 from /models, got $CODE"
+  echo "ERROR: expected 200 from /models within ${RETRY_DEADLINE}s, last code $CODE"
   echo "$BODY" | head -c 600; echo
   exit 1
 fi
@@ -75,16 +92,26 @@ PAYLOAD="$(jq -n --arg model "$MODEL_ID" '
   temperature: 0
 }')"
 
-RESP2="$(curl -sS -w '\n%{http_code}' --max-time "$TIMEOUT" \
-  -H 'Content-Type: application/json' "${AUTH_HEADER[@]}" \
-  -d "$PAYLOAD" "$CHAT_URL")"
+deadline=$(( SECONDS + RETRY_DEADLINE ))
+CODE2=""
+BODY2=""
+attempt=0
+while (( SECONDS < deadline )); do
+  attempt=$(( attempt + 1 ))
+  RESP2="$(curl -sS -w '\n%{http_code}' --max-time "$TIMEOUT" \
+    -H 'Content-Type: application/json' "${AUTH_HEADER[@]}" \
+    -d "$PAYLOAD" "$CHAT_URL" 2>&1 || true)"
+  BODY2="$(echo "$RESP2" | head -n -1)"
+  CODE2="$(echo "$RESP2" | tail -n 1)"
+  echo "attempt $attempt: HTTP $CODE2"
+  if [[ "$CODE2" == "200" ]]; then
+    break
+  fi
+  sleep "$RETRY_INTERVAL"
+done
 
-BODY2="$(echo "$RESP2" | head -n -1)"
-CODE2="$(echo "$RESP2" | tail -n 1)"
-
-echo "HTTP: $CODE2"
 if [[ "$CODE2" != "200" ]]; then
-  echo "ERROR: expected 200 from /chat/completions, got $CODE2"
+  echo "ERROR: expected 200 from /chat/completions within ${RETRY_DEADLINE}s, last code $CODE2"
   echo "$BODY2" | head -c 800; echo
   exit 1
 fi

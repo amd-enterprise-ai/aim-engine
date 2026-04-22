@@ -80,21 +80,33 @@ func (b *ServiceBuilder) WithNamespace(ns string) *ServiceBuilder {
 }
 
 func (b *ServiceBuilder) WithModelName(name string) *ServiceBuilder {
+	if b.service.Spec.Model == nil {
+		b.service.Spec.Model = &aimv1alpha1.AIMServiceModel{}
+	}
 	b.service.Spec.Model.Name = ptr.To(name)
 	return b
 }
 
 func (b *ServiceBuilder) WithModelImage(image string) *ServiceBuilder {
+	if b.service.Spec.Model == nil {
+		b.service.Spec.Model = &aimv1alpha1.AIMServiceModel{}
+	}
 	b.service.Spec.Model.Image = ptr.To(image)
 	return b
 }
 
 func (b *ServiceBuilder) WithTemplateName(name string) *ServiceBuilder {
+	if b.service.Spec.Template == nil {
+		b.service.Spec.Template = &aimv1alpha1.AIMServiceTemplateConfig{}
+	}
 	b.service.Spec.Template.Name = name
 	return b
 }
 
 func (b *ServiceBuilder) WithAllowUnoptimized(allow bool) *ServiceBuilder {
+	if b.service.Spec.Template == nil {
+		b.service.Spec.Template = &aimv1alpha1.AIMServiceTemplateConfig{}
+	}
 	b.service.Spec.Template.AllowUnoptimized = allow
 	return b
 }

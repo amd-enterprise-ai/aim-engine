@@ -1,0 +1,31 @@
+# Frozen AIMClusterProfile: Ready status with modelSources for cache testing
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterProfile
+metadata:
+  name: test-profile-cache
+  annotations:
+    aim.eai.amd.com/reconciliation-paused: "true"
+spec:
+  aimId: test/cache-model
+  modelId: test/cache-model-fp8
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: optimized
+  primary: true
+  image: registry.example.com/test-image:1.0.0
+  modelSources:
+    - modelId: test-org/test-model-weights
+      sourceUri: hf://test-org/test-model-weights
+      size: 2Gi
+status:
+  status: Ready
+  version: 1.0.0
+  hardwareSummary: CPU
+  matchingNodes: 1
+  conditions:
+    - type: HardwareAvailable
+      status: "True"
+      reason: NoAcceleratorSpecified
+      message: No accelerator specified, profile is available on any node
+      lastTransitionTime: "2025-01-01T00:00:00Z"

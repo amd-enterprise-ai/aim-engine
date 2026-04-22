@@ -1,0 +1,108 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: CPU Profile Basic Lifecycle (v1alpha2)
+#
+# End-to-end test for a v1alpha2 AIMService with a CPU-only profile.
+# Both the profile controller and service controller reconcile naturally (not frozen).
+#
+# The profile has acceleratorModel: EPYC_ZEN5, which requires the
+# feature.node.kubernetes.io/aim-accelerator.EPYC_ZEN5 node label to be present.
+# That label is produced by the AcceleratorDetector (backed by NFD), so the test
+# is gated on `requires: nfd`: environments without the detector (e.g. the
+# default kind CI run) skip it, and environments with the detector (local kind
+# with the detector enabled, or GPU vclusters) execute it naturally.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-cpu-basic
+  labels:
+    requires: nfd
+spec:
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create CPU cluster profile
+      try:
+        - apply:
+            file: cluster-profile.yaml
+
+    - name: Wait for profile to become Ready via node matching
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-cpu-basic-profile
+              status:
+                status: Ready
+                # matchingNodes varies by environment:
+                #   - kind: exactly 1 (we label one node above)
+                #   - GPU vcluster: every EPYC_ZEN5 node the detector finds
+                # status: Ready already implies matchingNodes >= 1, so we
+                # don't pin an exact count here.
+                (conditions[?type == 'HardwareAvailable']):
+                  - status: "True"
+                    reason: HardwareAvailable
+
+    - name: Create v1alpha2 service referencing the CPU profile
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert service resolves the CPU profile
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cpu-basic-service
+              status:
+                (conditions[?type == 'ProfileReady']):
+                  - status: "True"
+                    reason: ProfileResolved
+                resolvedProfile:
+                  name: test-cpu-basic-profile
+                  scope: Cluster
+
+    - name: Assert profile ConfigMap is created
+      try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-cpu-basic-service
+                  app.kubernetes.io/managed-by: aim-engine
+                  app.kubernetes.io/component: inference
+
+    - name: Assert InferenceService is created with CPU profile
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-cpu-basic-service
+                  aim.eai.amd.com/profile: test-cpu-basic-profile
+              spec:
+                predictor:
+                  containers:
+                    - name: kserve-container
+                      image: registry.example.com/aim-cpu-base:0.12.0
+
+    - name: Assert service reaches Starting status
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cpu-basic-service
+              status:
+                status: Starting

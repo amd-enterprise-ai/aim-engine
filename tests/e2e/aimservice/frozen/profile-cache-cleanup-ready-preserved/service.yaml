@@ -1,0 +1,9 @@
+# v1alpha2 AIMService referencing the profile.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: test-cleanup-ready-service
+spec:
+  profile:
+    name: test-cleanup-ready-profile
+  replicas: 1

@@ -106,7 +106,7 @@ func selectTemplateForModel(
 	}
 
 	// Determine if unoptimized templates are allowed
-	allowUnoptimized := service.Spec.Template.AllowUnoptimized
+	allowUnoptimized := service.Spec.Template != nil && service.Spec.Template.AllowUnoptimized
 
 	// Select the best template
 	selected, count, diag, evaluations := selectBestTemplate(

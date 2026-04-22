@@ -30,6 +30,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"k8s.io/client-go/kubernetes"
 
+	sharedcontroller "github.com/amd-enterprise-ai/aim-engine/internal/controller"
 	v1alpha1controller "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/controller"
 	v1alpha2controller "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/controller"
 
@@ -275,7 +276,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&v1alpha1controller.AIMServiceReconciler{
+	if err := (&sharedcontroller.AIMServiceReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Clientset: clientset,
@@ -297,6 +298,14 @@ func main() {
 		Clientset: clientset,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterProfile")
+		os.Exit(1)
+	}
+	if err := (&v1alpha2controller.AIMProfileCacheReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Clientset: clientset,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AIMProfileCache")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

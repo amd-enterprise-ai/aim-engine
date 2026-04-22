@@ -1,0 +1,8 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: test-cleanup-failed-service
+spec:
+  profile:
+    name: test-cleanup-failed-profile
+  replicas: 1

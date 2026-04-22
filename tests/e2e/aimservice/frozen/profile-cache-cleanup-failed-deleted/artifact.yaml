@@ -1,0 +1,20 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: test-cleanup-failed-artifact
+  labels:
+    aim.eai.amd.com/profile-cache.name: test-cleanup-failed-cache
+  annotations:
+    aim.eai.amd.com/reconciliation-paused: "true"
+spec:
+  sourceUri: hf://test-org/test-model
+  modelId: test-org/test-model
+  size: 1Gi
+status:
+  status: Failed
+  conditions:
+    - type: DownloadComplete
+      status: "False"
+      reason: DownloadFailed
+      message: Download failed
+      lastTransitionTime: "2025-01-01T00:00:00Z"

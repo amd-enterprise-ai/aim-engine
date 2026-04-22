@@ -1,0 +1,14 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: profile-cache-gpu-live
+spec:
+  routing:
+    enabled: true
+    gatewayRef:
+      name: kserve-ingress-gateway
+      namespace: kgateway-system
+    # Include {.metadata.namespace} so parallel / leftover runs don't collide
+    # on the shared gateway. See sibling profile-cache-cpu-live for the why.
+    pathTemplate: "/integration/profile-cache-gpu-live/{.metadata.namespace}/{.metadata.name}"
+    requestTimeout: "180s"

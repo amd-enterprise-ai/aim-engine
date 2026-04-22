@@ -1,0 +1,22 @@
+# Ready shared AIMArtifact (no owner refs) labeled with the profile cache name.
+# Paused so its status sticks.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: test-cleanup-ready-artifact
+  labels:
+    aim.eai.amd.com/profile-cache.name: test-cleanup-ready-cache
+  annotations:
+    aim.eai.amd.com/reconciliation-paused: "true"
+spec:
+  sourceUri: hf://test-org/test-model
+  modelId: test-org/test-model
+  size: 1Gi
+status:
+  status: Ready
+  conditions:
+    - type: DownloadComplete
+      status: "True"
+      reason: Cached
+      message: Artifact is cached
+      lastTransitionTime: "2025-01-01T00:00:00Z"

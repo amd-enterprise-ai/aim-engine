@@ -62,5 +62,5 @@ spec:
             timeout: 3m
             env:
               - name: HTTP_BASE_PATH
-                value: /integration/gpu-cached/test-gpu-cached/v1
+                value: (join('', ['/integration/gpu-cached/', $namespace, '/test-gpu-cached/v1']))
             content: bash ../../_shared/validate-http.sh

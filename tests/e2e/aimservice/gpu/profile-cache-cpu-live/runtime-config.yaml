@@ -1,0 +1,13 @@
+# Runtime config with routing for inference endpoint testing
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: profile-cache-cpu-live
+spec:
+  routing:
+    enabled: true
+    gatewayRef:
+      name: kserve-ingress-gateway
+      namespace: kgateway-system
+    pathTemplate: "/integration/profile-cache-cpu-live/{.metadata.namespace}/{.metadata.name}"
+    requestTimeout: "180s"
