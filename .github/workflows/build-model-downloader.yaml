@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+      - "*int-test"
   pull_request:
     paths:
       - "images/artifact-downloader/**"
