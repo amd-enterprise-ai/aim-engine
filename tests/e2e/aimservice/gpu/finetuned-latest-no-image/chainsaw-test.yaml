@@ -1,0 +1,176 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Fine-tuned model with empty spec.image (versionPolicy=latest)
+#
+# End-to-end coverage of the "fine-tuned model without spec.image" flow
+# documented in docs/docs/concepts/models.md. Exercises the full discovery
+# chain so we verify the feature works all the way through:
+#
+#   1. Apply a base AIMModel pointing at a real AIM image.
+#   2. AIMModel discovery inspects the image and records AIM_BASE_IMAGE_REF
+#      on status.imageMetadata.baseImageRef.
+#   3. AIMModel creates auto-generated AIMServiceTemplates from the image's
+#      recommendedDeployments.
+#   4. Each AIMServiceTemplate runs its own discovery (dry-run) job, which
+#      populates spec.aimId / spec.modelId from the profile metadata.
+#   5. Apply a fine-tuned AIMModel (no spec.image, versionPolicy=latest)
+#      whose aimId + modelSources[].modelId match what (4) produced.
+#   6. The AIMModel controller resolves the matched template owner's
+#      baseImageRef per match, rebases it onto the owner's registry+org,
+#      and stamps the result onto the generated fine-tuned template copy
+#      as the aim.eai.amd.com/deployment-image-ref annotation. The
+#      fine-tuned AIMModel's spec.image stays empty. AIMService reads the
+#      annotation when building the KServe InferenceService.
+#   7. Hit /v1/models and /v1/chat/completions through the gateway to prove
+#      the pod actually serves requests with the resolved image.
+#
+# Requires:
+# - GPU infrastructure (real AIM image, real dry-run, real inference).
+# - `hf-token` secret in `aim-system` (meta-llama is a gated HF repo). Copied
+#   into the test namespace by the step below. The resolved base image
+#   (amdenterpriseai/aim-base:*) lives on public Docker Hub, so no registry
+#   pull secret is required.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-gpu-finetuned-latest-no-image
+  labels:
+    requires: gpu
+spec:
+  description: >-
+    Validate that a fine-tuned AIMModel with empty spec.image and
+    versionPolicy=latest resolves its deployment image from the matched
+    template owner's AIM_BASE_IMAGE_REF, stamps it on the generated template
+    copy as aim.eai.amd.com/deployment-image-ref, and serves requests through
+    a standard KServe InferenceService that pulls that image.
+  timeouts:
+    assert: 600s
+  steps:
+    # Copy the HF token (for the gated meta-llama weights) from aim-system
+    # into the ephemeral test namespace. Same pattern as
+    # profile-id-propagation. No registry pull secret is needed: the resolved
+    # base image is on public Docker Hub.
+    - name: Copy hf-token into the test namespace
+      try:
+        - script:
+            content: |
+              kubectl get secret hf-token -n aim-system -o json \
+                | jq 'del(.metadata.namespace,.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields,.metadata.ownerReferences)' \
+                | kubectl apply -n "$NAMESPACE" -f -
+
+    - name: Apply the base AIMModel (real AIM image)
+      try:
+        - apply:
+            file: base-model.yaml
+
+    # The aim-meta-llama:0.11.0 image ships with
+    # AIM_BASE_IMAGE_REF=ghcr.io/silogen/aim-base:0.11
+    # baked into its OCI config. The AIMModel inspector must surface that on
+    # status.imageMetadata.baseImageRef — that's what the fine-tuned flow keys
+    # off of.
+    - name: Base model is Ready with baseImageRef populated
+      try:
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: ft-latest-base
+              status:
+                status: Ready
+                imageMetadata:
+                  baseImageRef: ghcr.io/silogen/aim-base:0.11
+
+    # The AIMServiceTemplate discovery (dry-run) job runs per auto-generated
+    # template and late-binds spec.aimId / spec.modelId. We wait for at least
+    # one such template to finish before the fine-tuned model can match.
+    - name: An auto-discovered AIMServiceTemplate has aimId+modelId late-bound
+      try:
+        - assert:
+            timeout: 600s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: ft-latest-base
+                  aim.eai.amd.com/origin: auto-generated
+              spec:
+                aimId: meta-llama/Llama-3.2-1B-Instruct
+                modelId: meta-llama/Llama-3.2-1B-Instruct
+              status:
+                status: Ready
+
+    - name: Apply the fine-tuned AIMModel (no spec.image, versionPolicy=latest)
+      try:
+        - apply:
+            file: finetuned-model.yaml
+
+    - name: Fine-tuned model reaches Ready (spec.image stays empty)
+      try:
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: ft-latest-finetuned
+              status:
+                status: Ready
+                sourceType: Custom
+
+    # The fine-tuned template copy is a controller-owned AIMServiceTemplate
+    # that points to the fine-tuned model; it inherits modelName and modelId
+    # from the source template, and carries the resolved deployment image
+    # on its aim.eai.amd.com/deployment-image-ref annotation.
+    #
+    #   base spec.image:                amdenterpriseai/aim-meta-llama-…:0.11.0
+    #   base baseImageRef:              ghcr.io/silogen/aim-base:0.11
+    #   rebased deployment-image-ref:   amdenterpriseai/aim-base:0.11
+    - name: Fine-tuned template copy carries the rebased deployment image annotation
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: ft-latest-finetuned
+                  aim.eai.amd.com/origin: fine-tuned
+                annotations:
+                  aim.eai.amd.com/deployment-image-ref: amdenterpriseai/aim-base:0.11
+              spec:
+                aimId: meta-llama/Llama-3.2-1B-Instruct
+                modelId: meta-llama/Llama-3.2-1B-Instruct
+                modelName: ft-latest-finetuned
+
+    - name: Apply runtime config and AIMService consuming the fine-tuned model
+      try:
+        - apply:
+            file: runtime-config.yaml
+        - apply:
+            file: service.yaml
+
+    - name: AIMService reaches Running
+      try:
+        - assert:
+            timeout: 15m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-ft-latest
+              status:
+                status: Running
+
+    - name: Verify chat completions endpoint works
+      try:
+        - script:
+            timeout: 5m
+            env:
+              - name: HTTP_BASE_PATH
+                value: (join('', ['/integration/gpu-finetuned-latest-no-image/', $namespace, '/test-ft-latest/v1']))
+            content: bash ../_shared/validate-http.sh

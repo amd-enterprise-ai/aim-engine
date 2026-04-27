@@ -346,6 +346,17 @@ func (s *AIMModelSpec) GetEffectiveImageMetadata(status *AIMModelStatus) *ImageM
 	return nil
 }
 
+// GetBaseImageRef returns the AIM_BASE_IMAGE_REF value extracted from this model's
+// image (through spec-provided metadata first, falling back to status-extracted
+// metadata). Returns empty string when the base image ref is not known.
+func (s *AIMModelSpec) GetBaseImageRef(status *AIMModelStatus) string {
+	md := s.GetEffectiveImageMetadata(status)
+	if md == nil {
+		return ""
+	}
+	return md.BaseImageRef
+}
+
 // IsFineTunedModel returns true if the model uses aimId-based template matching.
 // A fine-tuned model has spec.aimId set together with spec.modelSources.
 func (s *AIMModelSpec) IsFineTunedModel() bool {

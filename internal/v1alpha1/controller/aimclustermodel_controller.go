@@ -86,6 +86,7 @@ func (r *AIMClusterModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
 
 	r.reconciler = &aimmodel.ClusterModelReconciler{
+		Client:    mgr.GetClient(),
 		Clientset: r.Clientset,
 		Scheme:    r.Scheme,
 	}

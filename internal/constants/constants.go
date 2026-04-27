@@ -275,6 +275,16 @@ const (
 	// The controller will skip all reconciliation logic and return immediately.
 	// This is useful for testing or debugging purposes.
 	AnnotationReconciliationPaused = AimLabelDomain + "/reconciliation-paused"
+
+	// AnnotationDeploymentImageRef records the container image to deploy for a
+	// given AIM(Cluster)ServiceTemplate copy. Stamped by the AIMModel controller
+	// onto fine-tuned template copies at build time so each copy carries the
+	// exact image it inherited from its specific source owner — which may differ
+	// from sibling copies when matched templates span owners with different base
+	// images (e.g. aim-base vs aim-epyc-base) or different versions
+	// (versionPolicy=any). When present, AIMService prefers this annotation
+	// over the resolved AIMModel's spec.image.
+	AnnotationDeploymentImageRef = AimLabelDomain + "/deployment-image-ref"
 )
 
 // Template-related constants

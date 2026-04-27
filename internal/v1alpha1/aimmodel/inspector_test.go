@@ -516,3 +516,61 @@ func TestParseRecommendedDeployments_PartialFields(t *testing.T) {
 		t.Error("expected Metric to be empty when not specified")
 	}
 }
+
+// ============================================================================
+// ENV EXTRACTION TESTS
+// ============================================================================
+
+func TestExtractEnvValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      []string
+		key      string
+		expected string
+	}{
+		{
+			name:     "key present",
+			env:      []string{"PATH=/usr/bin", "AIM_BASE_IMAGE_REF=ghcr.io/silogen/aim-base:0.8.5"},
+			key:      "AIM_BASE_IMAGE_REF",
+			expected: "ghcr.io/silogen/aim-base:0.8.5",
+		},
+		{
+			name:     "value contains equals signs",
+			env:      []string{"FOO=bar=baz", "OTHER=value"},
+			key:      "FOO",
+			expected: "bar=baz",
+		},
+		{
+			name:     "key missing",
+			env:      []string{"PATH=/usr/bin"},
+			key:      "AIM_BASE_IMAGE_REF",
+			expected: "",
+		},
+		{
+			name:     "empty value",
+			env:      []string{"AIM_BASE_IMAGE_REF="},
+			key:      "AIM_BASE_IMAGE_REF",
+			expected: "",
+		},
+		{
+			name:     "empty env slice",
+			env:      nil,
+			key:      "AIM_BASE_IMAGE_REF",
+			expected: "",
+		},
+		{
+			name:     "prefix collision (no match)",
+			env:      []string{"AIM_BASE_IMAGE_REF_OLD=wrong"},
+			key:      "AIM_BASE_IMAGE_REF",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := extractEnvValue(tt.env, tt.key); got != tt.expected {
+				t.Errorf("extractEnvValue() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}

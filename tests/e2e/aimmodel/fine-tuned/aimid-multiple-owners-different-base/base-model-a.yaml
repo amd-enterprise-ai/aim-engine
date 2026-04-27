@@ -1,0 +1,16 @@
+# Cluster base model representing one base-image family (e.g. aim-base on
+# MI300). spec.imageMetadata is provided directly so no registry fetch is
+# attempted; baseImageRef is what the fine-tuned image resolver reads when
+# stamping the deployment-image-ref annotation on each generated copy.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModel
+metadata:
+  name: ft-multi-base-a
+spec:
+  image: ghcr.io/silogen/aim-multi-llama-mi300:0.1.10
+  discovery:
+    createServiceTemplates: false
+  imageMetadata:
+    baseImageRef: ghcr.io/silogen/aim-multi-base:0.11
+    model:
+      canonicalName: ft-multi-llama-mi300

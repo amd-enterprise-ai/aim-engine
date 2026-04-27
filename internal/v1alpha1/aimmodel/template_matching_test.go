@@ -23,8 +23,10 @@
 package aimmodel
 
 import (
+	"context"
 	"testing"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -240,6 +242,63 @@ func TestMatchTemplatesForModel_NoMatchingModelId(t *testing.T) {
 	}
 }
 
+// Guards against a feedback loop: the aimId index returns all templates
+// carrying a given aimId, including fine-tuned copies the controller created
+// on an earlier reconcile. Those copies must not become sources themselves —
+// otherwise the fine-tuned template's own `status.version` (e.g. "0.11" from
+// the base-image tag) races with the canonical `status.version` ("0.11.0"
+// from the model image), versionPolicy=latest flip-flops, and we end up
+// stamping out additional copies named after both version spellings.
+func TestMatchTemplatesForModel_ExcludesFineTunedCopies(t *testing.T) {
+	modelSpec := &aimv1alpha1.AIMModelSpec{
+		Image: "ghcr.io/silogen/aim-base:0.11",
+		AimId: "meta-llama/Llama-3.2-1B-Instruct",
+		ModelSources: []aimv1alpha1.AIMModelSource{
+			{ModelID: "meta-llama/Llama-3.2-1B-Instruct", SourceURI: "hf://meta-llama/Llama-3.2-1B-Instruct"},
+		},
+		Custom: &aimv1alpha1.AIMCustomModelSpec{
+			VersionPolicy: aimv1alpha1.AIMVersionPolicyLatest,
+		},
+	}
+
+	base := makeTemplate("base-auto", "meta-llama/Llama-3.2-1B-Instruct", "meta-llama/Llama-3.2-1B-Instruct", "0.11.0", "latency", "fp16")
+	stale := makeTemplate("ft-copy-stale", "meta-llama/Llama-3.2-1B-Instruct", "meta-llama/Llama-3.2-1B-Instruct", "0.11", "latency", "fp16")
+	stale.Labels = map[string]string{constants.LabelKeyOrigin: LabelValueOriginFineTuned}
+
+	matches := MatchTemplatesForModel(modelSpec, []aimv1alpha1.AIMServiceTemplate{base, stale})
+	if len(matches) != 1 {
+		t.Fatalf("expected exactly 1 match (base only), got %d", len(matches))
+	}
+	if matches[0].OriginalVersion != "0.11.0" {
+		t.Errorf("expected match to carry base version 0.11.0, got %s", matches[0].OriginalVersion)
+	}
+}
+
+func TestMatchClusterTemplatesForModel_ExcludesFineTunedCopies(t *testing.T) {
+	modelSpec := &aimv1alpha1.AIMModelSpec{
+		Image: "ghcr.io/silogen/aim-base:0.11",
+		AimId: "meta-llama/Llama-3.2-1B-Instruct",
+		ModelSources: []aimv1alpha1.AIMModelSource{
+			{ModelID: "meta-llama/Llama-3.2-1B-Instruct", SourceURI: "hf://meta-llama/Llama-3.2-1B-Instruct"},
+		},
+		Custom: &aimv1alpha1.AIMCustomModelSpec{
+			VersionPolicy: aimv1alpha1.AIMVersionPolicyLatest,
+		},
+	}
+
+	base := makeClusterTemplate("base-auto", "meta-llama/Llama-3.2-1B-Instruct", "meta-llama/Llama-3.2-1B-Instruct", "0.11.0")
+	stale := makeClusterTemplate("ft-copy-stale", "meta-llama/Llama-3.2-1B-Instruct", "meta-llama/Llama-3.2-1B-Instruct", "0.11")
+	stale.Labels = map[string]string{constants.LabelKeyOrigin: LabelValueOriginFineTuned}
+
+	matches := MatchClusterTemplatesForModel(modelSpec, []aimv1alpha1.AIMClusterServiceTemplate{base, stale})
+	if len(matches) != 1 {
+		t.Fatalf("expected exactly 1 match (base only), got %d", len(matches))
+	}
+	if matches[0].OriginalVersion != "0.11.0" {
+		t.Errorf("expected match to carry base version 0.11.0, got %s", matches[0].OriginalVersion)
+	}
+}
+
 func TestMatchClusterTemplatesForModel(t *testing.T) {
 	modelSpec := &aimv1alpha1.AIMModelSpec{
 		Image: "amdenterpriseai/aim-base:0.9.0",
@@ -279,6 +338,9 @@ func TestBuildFineTunedServiceTemplates(t *testing.T) {
 			ModelSources: []aimv1alpha1.AIMModelSource{
 				{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "s3://my-bucket/weights/"},
 			},
+			Custom: &aimv1alpha1.AIMCustomModelSpec{
+				VersionPolicy: aimv1alpha1.AIMVersionPolicyPinned,
+			},
 		},
 	}
 
@@ -311,12 +373,18 @@ func TestBuildFineTunedServiceTemplates(t *testing.T) {
 		},
 	}
 
-	templates := BuildFineTunedServiceTemplates(model, matches)
+	// versionPolicy=pinned with model.spec.image set short-circuits owner
+	// lookup, so a no-object client is sufficient.
+	templates := BuildFineTunedServiceTemplates(context.Background(), newFakeClient(), model, matches)
 	if len(templates) != 1 {
 		t.Fatalf("expected 1 template, got %d", len(templates))
 	}
 
 	tpl := templates[0]
+
+	if got := tpl.Annotations[constants.AnnotationDeploymentImageRef]; got != model.Spec.Image {
+		t.Errorf("expected deployment image annotation %q, got %q", model.Spec.Image, got)
+	}
 
 	// Verify the copy points to the fine-tuned model
 	if tpl.Spec.ModelName != "my-finetuned-qwen" {
@@ -361,9 +429,321 @@ func TestBuildFineTunedServiceTemplates(t *testing.T) {
 	}
 }
 
+func TestBuildFineTunedServiceTemplates_PropagatesSourceProfileAsCustomProfile(t *testing.T) {
+	model := &aimv1alpha1.AIMModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "ft-llama", Namespace: "default"},
+		Spec: aimv1alpha1.AIMModelSpec{
+			Image: "ghcr.io/silogen/aim-base:0.11",
+			AimId: "meta-llama/Llama-3.2-1B-Instruct",
+			ModelSources: []aimv1alpha1.AIMModelSource{
+				{ModelID: "meta-llama/Llama-3.2-1B-Instruct", SourceURI: "s3://bucket/weights/"},
+			},
+			Custom: &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyPinned},
+		},
+	}
+
+	lat := aimv1alpha1.AIMMetric("latency")
+	fp16 := aimv1alpha1.AIMPrecision("fp16")
+	engineArgs := &apiextensionsv1.JSON{Raw: []byte(`{"tensor-parallel-size":1}`)}
+	envVars := map[string]string{"HIP_FORCE_DEV_KERNARG": "1"}
+
+	matches := []TemplateMatchResult{{
+		OriginalAimId:   "meta-llama/Llama-3.2-1B-Instruct",
+		OriginalModelId: "meta-llama/Llama-3.2-1B-Instruct",
+		OriginalVersion: "0.11.0",
+		MatchedModelSource: aimv1alpha1.AIMModelSource{
+			ModelID:   "meta-llama/Llama-3.2-1B-Instruct",
+			SourceURI: "s3://bucket/weights/",
+		},
+		Spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+			ModelName: "official-base",
+			AimId:     "meta-llama/Llama-3.2-1B-Instruct",
+			ModelId:   "meta-llama/Llama-3.2-1B-Instruct",
+			ProfileId: "vllm-mi300x-fp16-tp1-latency",
+			AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+				Metric:    &lat,
+				Precision: &fp16,
+				Hardware: &aimv1alpha1.AIMHardwareRequirements{
+					GPU: &aimv1alpha1.AIMGpuRequirements{Model: "MI300X", Requests: 1},
+				},
+			},
+		},
+		SourceProfile: &aimv1alpha1.AIMDiscoveredProfile{
+			EngineArgs: engineArgs,
+			EnvVars:    envVars,
+		},
+	}}
+
+	tpl := BuildFineTunedServiceTemplates(context.Background(), newFakeClient(), model, matches)[0]
+
+	if tpl.Spec.CustomProfile == nil {
+		t.Fatal("expected CustomProfile to be populated from source profile")
+	}
+	if tpl.Spec.CustomProfile.EngineArgs == nil ||
+		string(tpl.Spec.CustomProfile.EngineArgs.Raw) != `{"tensor-parallel-size":1}` {
+		t.Errorf("expected engineArgs to carry over, got %+v", tpl.Spec.CustomProfile.EngineArgs)
+	}
+	if tpl.Spec.CustomProfile.EnvVars["HIP_FORCE_DEV_KERNARG"] != "1" {
+		t.Errorf("expected envVars to carry over, got %+v", tpl.Spec.CustomProfile.EnvVars)
+	}
+	// ProfileId is cleared so the kserve builder doesn't emit a built-in
+	// AIM_PROFILE_ID that conflicts with the custom one.
+	if tpl.Spec.ProfileId != "" {
+		t.Errorf("expected ProfileId to be cleared, got %q", tpl.Spec.ProfileId)
+	}
+}
+
+// TestBuildFineTunedServiceTemplates_SkipsEmptySourceProfile guards the
+// v1alpha1 CEL rule on AIMServiceTemplateSpecCommon: `when customProfile is
+// set, aimId, modelId, hardware, metric, and precision are required`. Source
+// templates that declare identity via inline modelSources (e.g. aim-dummy
+// fixtures) legitimately omit metric/precision and produce a status.Profile
+// with no engineArgs/envVars. Stamping an empty customProfile onto the copy
+// would push the API server to reject the apply. The match should leave
+// CustomProfile unset in that case.
+func TestBuildFineTunedServiceTemplates_SkipsEmptySourceProfile(t *testing.T) {
+	model := &aimv1alpha1.AIMModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "ft-dummy", Namespace: "default"},
+		Spec: aimv1alpha1.AIMModelSpec{
+			Image: "ghcr.io/silogen/aim-base:0.1.10",
+			AimId: "test/base-model-pinned",
+			ModelSources: []aimv1alpha1.AIMModelSource{
+				{ModelID: "test/model-fp8", SourceURI: "hf://my-org/finetuned-weights"},
+			},
+			Custom: &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyPinned},
+		},
+	}
+
+	matches := []TemplateMatchResult{{
+		OriginalAimId:   "test/base-model-pinned",
+		OriginalModelId: "test/model-fp8",
+		OriginalVersion: "0.1.10",
+		MatchedModelSource: aimv1alpha1.AIMModelSource{
+			ModelID:   "test/model-fp8",
+			SourceURI: "hf://my-org/finetuned-weights",
+		},
+		Spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+			ModelName: "official-base",
+			AimId:     "test/base-model-pinned",
+			ModelId:   "test/model-fp8",
+			ProfileId: "vllm-mi300x-fp16-tp1-latency",
+			AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+				Hardware: &aimv1alpha1.AIMHardwareRequirements{
+					GPU: &aimv1alpha1.AIMGpuRequirements{Model: "MI300X", Requests: 1},
+				},
+				// Metric / Precision deliberately omitted (source template
+				// carries inline modelSources only — no discovered profile).
+			},
+		},
+		// Profile built via buildProfileFromSpec for an inline-modelSources
+		// template: non-nil but with no engineArgs/envVars.
+		SourceProfile: &aimv1alpha1.AIMDiscoveredProfile{},
+	}}
+
+	tpl := BuildFineTunedServiceTemplates(context.Background(), newFakeClient(), model, matches)[0]
+
+	if tpl.Spec.CustomProfile != nil {
+		t.Errorf("expected CustomProfile to remain unset when source profile is empty, got %+v", tpl.Spec.CustomProfile)
+	}
+	// ProfileId should be preserved when no custom profile is being stamped;
+	// otherwise we'd lose the link to the image's baked-in profile catalog.
+	if tpl.Spec.ProfileId != "vllm-mi300x-fp16-tp1-latency" {
+		t.Errorf("expected ProfileId to be preserved, got %q", tpl.Spec.ProfileId)
+	}
+}
+
+func TestBuildFineTunedServiceTemplates_PreservesExistingCustomProfile(t *testing.T) {
+	model := &aimv1alpha1.AIMModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "ft-llama", Namespace: "default"},
+		Spec: aimv1alpha1.AIMModelSpec{
+			Image: "ghcr.io/silogen/aim-base:0.11",
+			AimId: "meta-llama/Llama-3.2-1B-Instruct",
+			ModelSources: []aimv1alpha1.AIMModelSource{
+				{ModelID: "meta-llama/Llama-3.2-1B-Instruct", SourceURI: "s3://bucket/weights/"},
+			},
+			Custom: &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyPinned},
+		},
+	}
+
+	userArgs := &apiextensionsv1.JSON{Raw: []byte(`{"max-model-len":4096}`)}
+	matches := []TemplateMatchResult{{
+		OriginalAimId:   "meta-llama/Llama-3.2-1B-Instruct",
+		OriginalModelId: "meta-llama/Llama-3.2-1B-Instruct",
+		MatchedModelSource: aimv1alpha1.AIMModelSource{
+			ModelID:   "meta-llama/Llama-3.2-1B-Instruct",
+			SourceURI: "s3://bucket/weights/",
+		},
+		Spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+			ModelName: "official-base",
+			AimId:     "meta-llama/Llama-3.2-1B-Instruct",
+			ModelId:   "meta-llama/Llama-3.2-1B-Instruct",
+			CustomProfile: &aimv1alpha1.AIMCustomProfile{
+				EngineArgs: userArgs,
+			},
+		},
+		SourceProfile: &aimv1alpha1.AIMDiscoveredProfile{
+			EngineArgs: &apiextensionsv1.JSON{Raw: []byte(`{"tensor-parallel-size":1}`)},
+		},
+	}}
+
+	tpl := BuildFineTunedServiceTemplates(context.Background(), newFakeClient(), model, matches)[0]
+
+	if tpl.Spec.CustomProfile == nil ||
+		string(tpl.Spec.CustomProfile.EngineArgs.Raw) != `{"max-model-len":4096}` {
+		t.Errorf("expected pre-existing CustomProfile to be preserved, got %+v", tpl.Spec.CustomProfile)
+	}
+}
+
+// Two matches whose source owners ship different base images produce two
+// copies stamped with two different deployment-image annotations. This is the
+// scenario that motivated moving image resolution onto each copy: a single
+// patched model.spec.image cannot honor heterogeneous owners.
+func TestBuildFineTunedClusterServiceTemplates_StampsAnnotationPerMatch(t *testing.T) {
+	mi300 := clusterOwner("qwen3-mi300", "ghcr.io/silogen/qwen3:0.11.0", "ghcr.io/silogen/aim-base:0.11")
+	epyc := clusterOwner("qwen3-epyc", "ghcr.io/silogen/qwen3-epyc:0.11.0", "ghcr.io/silogen/aim-epyc-base:0.11")
+
+	model := &aimv1alpha1.AIMClusterModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "ft-qwen"},
+		Spec: aimv1alpha1.AIMModelSpec{
+			AimId:        "qwen/qwen3-32b",
+			ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
+			Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyAny},
+		},
+	}
+
+	// Identical (aimId, modelId, version, precision, gpu) across the two
+	// matches: only the source owner differs. The name generator must hash
+	// owner identity, otherwise the two copies collide and one overwrites
+	// the other.
+	matches := []TemplateMatchResult{
+		match("qwen3-mi300", "", "0.11.0"),
+		match("qwen3-epyc", "", "0.11.0"),
+	}
+
+	c := newFakeClient(mi300, epyc)
+	templates := BuildFineTunedClusterServiceTemplates(context.Background(), c, model, matches)
+	if len(templates) != 2 {
+		t.Fatalf("expected 2 templates, got %d", len(templates))
+	}
+	if templates[0].Name == templates[1].Name {
+		t.Fatalf("template copies collided on name %q despite different source owners", templates[0].Name)
+	}
+
+	gotImages := map[string]bool{}
+	for _, tpl := range templates {
+		ref := tpl.Annotations[constants.AnnotationDeploymentImageRef]
+		if ref == "" {
+			t.Errorf("template %s missing deployment-image-ref annotation", tpl.Name)
+		}
+		gotImages[ref] = true
+	}
+	for _, want := range []string{"ghcr.io/silogen/aim-base:0.11", "ghcr.io/silogen/aim-epyc-base:0.11"} {
+		if !gotImages[want] {
+			t.Errorf("expected at least one template stamped with %q, got %v", want, gotImages)
+		}
+	}
+}
+
+// Matches whose source owners cannot be resolved are skipped (no copy
+// applied), so a transiently-broken owner doesn't keep a stale, image-less
+// copy alive on the server.
+func TestBuildFineTunedClusterServiceTemplates_SkipsUnresolvableMatches(t *testing.T) {
+	resolvable := clusterOwner("qwen3-resolvable", "ghcr.io/silogen/qwen3:0.11.0", "ghcr.io/silogen/aim-base:0.11")
+	// "deferred" has no baseImageRef and a non-semver tag -> resolver gives up.
+	deferred := clusterOwner("qwen3-deferred", "ghcr.io/silogen/qwen3:latest", "")
+
+	model := &aimv1alpha1.AIMClusterModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "ft-qwen"},
+		Spec: aimv1alpha1.AIMModelSpec{
+			AimId:        "qwen/qwen3-32b",
+			ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
+			Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyAny},
+		},
+	}
+
+	matches := []TemplateMatchResult{
+		match("qwen3-resolvable", "", "0.11.0"),
+		match("qwen3-deferred", "", "latest"),
+	}
+
+	c := newFakeClient(resolvable, deferred)
+	templates := BuildFineTunedClusterServiceTemplates(context.Background(), c, model, matches)
+	if len(templates) != 1 {
+		t.Fatalf("expected 1 template (deferred match skipped), got %d", len(templates))
+	}
+	if got := templates[0].Annotations[constants.AnnotationDeploymentImageRef]; got != "ghcr.io/silogen/aim-base:0.11" {
+		t.Errorf("unexpected stamped image: %q", got)
+	}
+}
+
 // ============================================================================
 // HELPER TESTS
 // ============================================================================
+
+// generateFineTunedTemplateName must disambiguate matches that differ only by
+// source owner. Without owner identity in the hash, two siblings with the
+// same (aimId, modelId, version, precision, gpu) — the heterogeneous-base
+// case the per-copy annotation flow exists for — would collide on apply.
+func TestGenerateFineTunedTemplateName_DisambiguatesByOwner(t *testing.T) {
+	mkMatch := func(ownerName, ownerNs string) TemplateMatchResult {
+		return TemplateMatchResult{
+			OriginalAimId:   "qwen/qwen3-32b",
+			OriginalModelId: "qwen/qwen3-32b-fp8",
+			OriginalVersion: "0.11.0",
+			Spec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+				ModelName: ownerName,
+			},
+			OwnerNamespace: ownerNs,
+		}
+	}
+
+	cases := []struct {
+		name string
+		a, b TemplateMatchResult
+	}{
+		{
+			name: "two cluster-scoped owners (same aimId, different base families)",
+			a:    mkMatch("qwen3-mi300", ""),
+			b:    mkMatch("qwen3-epyc", ""),
+		},
+		{
+			name: "same owner name, different namespaces",
+			a:    mkMatch("qwen3", "team-a"),
+			b:    mkMatch("qwen3", "team-b"),
+		},
+		{
+			name: "namespace-scoped vs cluster-scoped owner with same name",
+			a:    mkMatch("qwen3", "team-a"),
+			b:    mkMatch("qwen3", ""),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ftModel := "ft-qwen"
+			na := generateFineTunedTemplateName(ftModel, tc.a)
+			nb := generateFineTunedTemplateName(ftModel, tc.b)
+			if na == nb {
+				t.Fatalf("expected distinct names, both = %q", na)
+			}
+		})
+	}
+}
+
+// Two calls with the same match must produce the same name (deterministic).
+func TestGenerateFineTunedTemplateName_Deterministic(t *testing.T) {
+	m := TemplateMatchResult{
+		OriginalAimId:   "qwen/qwen3-32b",
+		OriginalModelId: "qwen/qwen3-32b-fp8",
+		OriginalVersion: "0.11.0",
+		Spec:            aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: "qwen3-mi300"},
+	}
+	a := generateFineTunedTemplateName("ft-qwen", m)
+	b := generateFineTunedTemplateName("ft-qwen", m)
+	if a != b {
+		t.Errorf("expected deterministic name, got %q vs %q", a, b)
+	}
+}
 
 func TestGetVersionPolicy(t *testing.T) {
 	tests := []struct {
@@ -449,17 +829,5 @@ func TestIsFineTunedModel(t *testing.T) {
 				t.Errorf("expected %v, got %v", tt.expected, got)
 			}
 		})
-	}
-}
-
-func TestSortByVersionDesc(t *testing.T) {
-	versions := []string{"0.7.0", "0.9.0", "0.8.5", "1.0.0"}
-	sortByVersionDesc(versions)
-
-	expected := []string{"1.0.0", "0.9.0", "0.8.5", "0.7.0"}
-	for i, v := range versions {
-		if v != expected[i] {
-			t.Errorf("index %d: expected %s, got %s", i, expected[i], v)
-		}
 	}
 }

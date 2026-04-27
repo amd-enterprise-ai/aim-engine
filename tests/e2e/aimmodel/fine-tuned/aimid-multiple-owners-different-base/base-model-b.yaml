@@ -1,0 +1,27 @@
+# Cluster base model representing a different base-image family (e.g.
+# aim-cpu-base) for the same canonical aimId as base-model-a. The deployment
+# image resolver must produce a *different* deployment-image-ref annotation
+# for the copy derived from this owner — which is the behavior this test
+# exercises.
+#
+# Owner B deliberately uses a Docker Hub spec.image (no registry prefix means
+# docker.io/amdenterpriseai/...) while keeping baseImageRef on
+# ghcr.io/silogen/... . The rebaseImageRegistry logic in
+# internal/v1alpha1/aimmodel/finetune_image.go must then produce a
+# deployment-image-ref that takes the registry+org from spec.image and the
+# image-name+tag from baseImageRef — i.e.
+# `amdenterpriseai/aim-multi-cpu-base:0.11`. This proves the rebase works
+# across *different registry hosts*, not just different repo paths under
+# the same host.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModel
+metadata:
+  name: ft-multi-base-b
+spec:
+  image: amdenterpriseai/aim-multi-llama-cpu:0.1.10
+  discovery:
+    createServiceTemplates: false
+  imageMetadata:
+    baseImageRef: ghcr.io/silogen/aim-multi-cpu-base:0.11
+    model:
+      canonicalName: ft-multi-llama-cpu

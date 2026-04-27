@@ -1,0 +1,17 @@
+# Fine-tuned AIMModel that targets two heterogeneous base-image families
+# under the same aimId. spec.image is intentionally omitted: with
+# versionPolicy=any the controller must resolve a *per-copy* deployment
+# image from each matched template's owner and stamp it as the
+# aim.eai.amd.com/deployment-image-ref annotation on that copy.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: ft-multi-finetuned
+spec:
+  aimId: test/ft-multi-llama
+  custom:
+    versionPolicy: any
+  modelSources:
+    - modelId: test/ft-multi-fp8
+      sourceUri: hf://my-org/ft-multi-finetuned-weights
+      size: 100Mi

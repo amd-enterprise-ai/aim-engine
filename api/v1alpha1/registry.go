@@ -65,6 +65,15 @@ type ImageMetadata struct {
 	// This preserves all labels from the image, including those not mapped to structured fields.
 	// +optional
 	OriginalLabels map[string]string `json:"originalLabels,omitempty"`
+
+	// BaseImageRef is the value of the AIM_BASE_IMAGE_REF environment variable
+	// baked into the image's OCI config at build time. For AIM model images this
+	// records the base image (e.g. "ghcr.io/silogen/aim-base:0.8.5") that the
+	// model image was built from. Used by the AIMModel controller to resolve
+	// the deployment image for fine-tuned models whose spec.image is omitted
+	// (versionPolicy=latest or any).
+	// +optional
+	BaseImageRef string `json:"baseImageRef,omitempty"`
 }
 
 // ModelMetadata contains AMD Silogen model-specific metadata extracted from image labels.

@@ -23,6 +23,8 @@
 package utils
 
 import (
+	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -393,6 +395,70 @@ func TestGetAMDDeviceIDsForMinVRAM(t *testing.T) {
 				if !resultMap[want] {
 					t.Errorf("GetAMDDeviceIDsForMinVRAM(%d, %q) missing expected device ID %q", tt.minVRAMBytes, tt.gpuModel, want)
 				}
+			}
+		})
+	}
+}
+
+// GetAMDDeviceIDsForModel feeds Pod nodeAffinity matchExpressions.values. That
+// list is baked into the pod-template-hash, so the output order must be stable
+// across calls — otherwise every reconcile produces a different hash and
+// triggers an endless Deployment rollout. This test pins the invariant.
+func TestGetAMDDeviceIDsForModel_IsDeterministicallySorted(t *testing.T) {
+	tests := []struct {
+		name        string
+		model       string
+		wantAtLeast []string // at minimum the expected IDs must be present (other mapped IDs are fine)
+	}{
+		{
+			name:        "MI300X maps to all four PCI device IDs",
+			model:       "MI300X",
+			wantAtLeast: []string{"74a1", "74a9", "74b5", "74bd"},
+		},
+		{
+			name:        "model name is normalized",
+			model:       "Instinct MI300X",
+			wantAtLeast: []string{"74a1", "74a9", "74b5", "74bd"},
+		},
+		{
+			name:        "unknown model returns empty slice",
+			model:       "NOT-A-GPU",
+			wantAtLeast: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Call many times — if the impl iterates the KnownAmdDevices map
+			// without sorting, one of these calls will return a different order
+			// and catch the regression.
+			var first []string
+			for i := 0; i < 50; i++ {
+				got := GetAMDDeviceIDsForModel(tt.model)
+				if i == 0 {
+					first = got
+					if !sort.StringsAreSorted(got) {
+						t.Fatalf("GetAMDDeviceIDsForModel(%q) = %v, want sorted", tt.model, got)
+					}
+					continue
+				}
+				if !reflect.DeepEqual(got, first) {
+					t.Fatalf("GetAMDDeviceIDsForModel(%q) returned different orders across calls: %v vs %v", tt.model, first, got)
+				}
+			}
+
+			if tt.wantAtLeast != nil {
+				have := make(map[string]bool, len(first))
+				for _, id := range first {
+					have[id] = true
+				}
+				for _, id := range tt.wantAtLeast {
+					if !have[id] {
+						t.Errorf("GetAMDDeviceIDsForModel(%q) missing device ID %q (got %v)", tt.model, id, first)
+					}
+				}
+			} else if len(first) != 0 {
+				t.Errorf("GetAMDDeviceIDsForModel(%q) = %v, want empty", tt.model, first)
 			}
 		})
 	}

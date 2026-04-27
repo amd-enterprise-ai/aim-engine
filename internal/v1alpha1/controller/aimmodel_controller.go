@@ -86,6 +86,7 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
 
 	r.reconciler = &aimmodel.ModelReconciler{
+		Client:    mgr.GetClient(),
 		Clientset: r.Clientset,
 		Scheme:    r.Scheme,
 	}
@@ -178,10 +179,14 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMModel{}).
 		Owns(&aimv1alpha1.AIMServiceTemplate{}).
-		// Watch all ServiceTemplates (including externally-created) that reference this model
+		// Watch namespace-scoped ServiceTemplates and enqueue:
+		//   - the owning AIMModel (so externally-created templates are observed)
+		//   - any fine-tuned AIMModels whose spec.aimId matches the template's
+		//     spec.aimId (so fine-tuned consumers re-reconcile when a source
+		//     template's aimId is late-bound by its discovery job).
 		Watches(
 			&aimv1alpha1.AIMServiceTemplate{},
-			handler.EnqueueRequestsFromMapFunc(r.findModelForServiceTemplate),
+			handler.EnqueueRequestsFromMapFunc(r.findModelsForServiceTemplate),
 		).
 		// Watch cluster-scoped templates for aimId-based matching:
 		// when a new official template appears, fine-tuned models need to reconcile
@@ -203,24 +208,58 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// findModelForServiceTemplate returns a reconcile request for the AIMModel
-// referenced by the template's spec.modelName field.
-func (r *AIMModelReconciler) findModelForServiceTemplate(ctx context.Context, obj client.Object) []reconcile.Request {
+// findModelsForServiceTemplate returns reconcile requests for AIMModels
+// affected by the given AIMServiceTemplate event. It enqueues:
+//
+//  1. The owning AIMModel referenced by template.spec.modelName (in the same
+//     namespace). This covers externally-created templates that aren't owned
+//     via OwnerReferences.
+//  2. All fine-tuned AIMModels (across namespaces) whose spec.aimId matches
+//     template.spec.aimId. This is the symmetric counterpart of
+//     findModelsForClusterServiceTemplate and is needed because a fine-tuned
+//     model resolves its deployment image by reading the matched template's
+//     owner — once a namespace-scoped source template late-binds its aimId
+//     via discovery, the consumers must re-reconcile to pick up the new
+//     match.
+//
+// Duplicates are deduped by controller-runtime's workqueue.
+func (r *AIMModelReconciler) findModelsForServiceTemplate(ctx context.Context, obj client.Object) []reconcile.Request {
 	template, ok := obj.(*aimv1alpha1.AIMServiceTemplate)
 	if !ok {
 		return nil
 	}
 
-	if template.Spec.ModelName == "" {
-		return nil
+	var requests []reconcile.Request
+
+	if template.Spec.ModelName != "" {
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      template.Spec.ModelName,
+				Namespace: template.Namespace,
+			},
+		})
 	}
 
-	return []reconcile.Request{{
-		NamespacedName: types.NamespacedName{
-			Name:      template.Spec.ModelName,
-			Namespace: template.Namespace,
-		},
-	}}
+	if template.Spec.AimId != "" {
+		var models aimv1alpha1.AIMModelList
+		if err := r.List(ctx, &models,
+			client.MatchingFields{aimv1alpha1.ModelAimIdIndexKey: template.Spec.AimId},
+		); err != nil {
+			log.FromContext(ctx).Error(err, "failed to list AIMModels for ServiceTemplate aimId",
+				"aimId", template.Spec.AimId)
+		} else {
+			for _, model := range models.Items {
+				requests = append(requests, reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Name:      model.Name,
+						Namespace: model.Namespace,
+					},
+				})
+			}
+		}
+	}
+
+	return requests
 }
 
 // findModelsForClusterServiceTemplate returns reconcile requests for all AIMModels

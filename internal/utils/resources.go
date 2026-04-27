@@ -371,12 +371,16 @@ func IsGPUResource(resourceName string) bool {
 	return strings.HasPrefix(resourceName, ResourcePrefixAMD)
 }
 
-// GetAMDDeviceIDsForModel returns all AMD device IDs that map to a given GPU model name.
+// GetAMDDeviceIDsForModel returns all AMD device IDs that map to a given GPU model name,
+// sorted lexicographically for deterministic output.
 // This is the inverse of MapAMDDeviceIDToModel, allowing lookup of all device IDs for a model.
 // Example: GetAMDDeviceIDsForModel("MI300X") returns ["74a1", "74a9", "74b5", "74bd"]
 // Returns empty slice if the model is not found or is not an AMD GPU.
+//
+// The sort is load-bearing: this list feeds Pod nodeAffinity matchExpressions.values,
+// which is baked into the pod-template-hash. An unsorted (map-order) result flips
+// the hash on every reconcile and triggers endless Deployment rollouts.
 func GetAMDDeviceIDsForModel(modelName string) []string {
-	// Normalize the model name for comparison
 	normalized := NormalizeGPUModel(modelName)
 
 	var deviceIDs []string
@@ -385,7 +389,7 @@ func GetAMDDeviceIDsForModel(modelName string) []string {
 			deviceIDs = append(deviceIDs, deviceID)
 		}
 	}
-
+	sort.Strings(deviceIDs)
 	return deviceIDs
 }
 

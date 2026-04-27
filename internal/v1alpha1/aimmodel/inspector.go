@@ -187,11 +187,30 @@ func inspectImage(
 		return nil, fmt.Errorf("failed to parse image labels: %w", err)
 	}
 
+	// Extract AIM_BASE_IMAGE_REF from the image's env config. This env var is baked
+	// into AIM model images at build time and records the base image the model
+	// image was built from. It is consumed by the AIMModel controller to resolve
+	// spec.image for fine-tuned models whose spec.image is omitted.
+	metadata.BaseImageRef = extractEnvValue(configFile.Config.Env, EnvAIMBaseImageRef)
+
 	logger.V(1).Info("Successfully extracted image metadata", "imageURI", imageURI,
 		"canonicalName", metadata.Model.CanonicalName,
-		"recommendedDeploymentCount", len(metadata.Model.RecommendedDeployments))
+		"recommendedDeploymentCount", len(metadata.Model.RecommendedDeployments),
+		"baseImageRef", metadata.BaseImageRef)
 
 	return metadata, nil
+}
+
+// extractEnvValue scans an OCI image Config.Env slice (entries in "KEY=VALUE" form)
+// for the first entry whose key equals name. Returns "" when no such entry is found.
+func extractEnvValue(env []string, name string) string {
+	prefix := name + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return entry[len(prefix):]
+		}
+	}
+	return ""
 }
 
 // metadataFormatError indicates the image metadata is malformed and cannot be processed.

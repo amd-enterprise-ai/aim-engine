@@ -1,0 +1,13 @@
+# Runtime config with routing enabled for integration testing
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: test-ft-latest
+spec:
+  routing:
+    enabled: true
+    gatewayRef:
+      name: kserve-ingress-gateway
+      namespace: kgateway-system
+    pathTemplate: "/integration/gpu-finetuned-latest-no-image/{.metadata.namespace}/{.metadata.name}"
+    requestTimeout: "180s"

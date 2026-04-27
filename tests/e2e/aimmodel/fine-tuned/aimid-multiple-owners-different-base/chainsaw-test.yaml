@@ -1,0 +1,150 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: Fine-Tuned Model with Multiple Owners / Different Base Images
+#
+# Validates the per-copy deployment-image-ref annotation behavior under the
+# scenario that motivated the per-copy refactor: two AIMClusterModels with
+# the SAME aimId but DIFFERENT base-image families (e.g. aim-base vs
+# aim-cpu-base) each contribute an "official" template under the same
+# (aimId, modelId, version, precision, gpu) tuple.
+#
+# Tested behavior:
+#   1. The fine-tuned model (no spec.image, versionPolicy=any) matches both
+#      official templates.
+#   2. Two distinct fine-tuned template copies are created — one per source
+#      owner — without name collision (the owner identity participates in
+#      the generated copy name's hash).
+#   3. Each copy carries the deployment-image-ref annotation resolved from
+#      its OWN source owner's baseImageRef. Sibling copies must end up with
+#      different annotations even though they share aimId/modelId/hardware.
+#   4. A third template that shares the same aimId but a non-matching
+#      modelId produces NO copy.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: finetuned-aimid-multiple-owners-different-base
+spec:
+  timeouts:
+    apply: 30s
+    assert: 120s
+  steps:
+    - name: Create both base cluster models (different base-image families, same aimId in their templates)
+      try:
+        - apply:
+            file: base-model-a.yaml
+        - apply:
+            file: base-model-b.yaml
+
+    - name: Create both official cluster templates (matching) and one unrelated cluster template (non-matching modelId)
+      try:
+        - apply:
+            file: template-a.yaml
+        - apply:
+            file: template-b.yaml
+        - apply:
+            file: template-unrelated.yaml
+
+    - name: Wait for the matching templates to become Ready
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterServiceTemplate
+              metadata:
+                name: ft-multi-template-a
+              status:
+                status: Ready
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterServiceTemplate
+              metadata:
+                name: ft-multi-template-b
+              status:
+                status: Ready
+
+    - name: Create the namespace-scoped fine-tuned model (no spec.image, versionPolicy=any)
+      try:
+        - apply:
+            file: finetuned-model.yaml
+
+    - name: Assert a fine-tuned copy is created with the aim-base annotation
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: ft-multi-finetuned
+                  aim.eai.amd.com/origin: fine-tuned
+                annotations:
+                  aim.eai.amd.com/deployment-image-ref: ghcr.io/silogen/aim-multi-base:0.11
+              spec:
+                aimId: test/ft-multi-llama
+                modelId: test/ft-multi-fp8
+                modelName: ft-multi-finetuned
+
+    - name: Assert a fine-tuned copy is created with the aim-cpu-base annotation rebased to the Docker Hub registry
+      # Owner B has spec.image=amdenterpriseai/aim-multi-llama-cpu:0.1.10 and
+      # baseImageRef=ghcr.io/silogen/aim-multi-cpu-base:0.11 — the resolver
+      # must rebase to amdenterpriseai/aim-multi-cpu-base:0.11.
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: ft-multi-finetuned
+                  aim.eai.amd.com/origin: fine-tuned
+                annotations:
+                  aim.eai.amd.com/deployment-image-ref: amdenterpriseai/aim-multi-cpu-base:0.11
+              spec:
+                aimId: test/ft-multi-llama
+                modelId: test/ft-multi-fp8
+                modelName: ft-multi-finetuned
+
+    # Authoritative check that exactly two fine-tuned copies exist and that
+    # neither matches the unrelated template (different modelId). Doing
+    # this with kubectl+jq sidesteps the need for JMESPath list assertions
+    # on the chainsaw side.
+    - name: Assert exactly two fine-tuned copies exist (no copy from the unrelated template)
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              set -eu
+              copies=$(kubectl -n "$NAMESPACE" get aimservicetemplates \
+                -l aim.eai.amd.com/model=ft-multi-finetuned,aim.eai.amd.com/origin=fine-tuned \
+                -o json)
+              count=$(echo "$copies" | jq '.items | length')
+              if [ "$count" != "2" ]; then
+                echo "expected 2 fine-tuned copies, got $count" >&2
+                echo "$copies" | jq '.items[].metadata.name' >&2
+                exit 1
+              fi
+              # Defense-in-depth: prove no copy was derived from the unrelated template.
+              wrong=$(echo "$copies" | jq '[.items[] | select(.spec.modelId == "test/ft-multi-other-id")] | length')
+              if [ "$wrong" != "0" ]; then
+                echo "expected no copy with modelId test/ft-multi-other-id, got $wrong" >&2
+                exit 1
+              fi
+
+    - name: Assert fine-tuned model reaches Ready with Custom source type
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: ft-multi-finetuned
+              status:
+                status: Ready
+                sourceType: Custom

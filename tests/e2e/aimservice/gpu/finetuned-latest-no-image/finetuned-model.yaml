@@ -1,0 +1,24 @@
+# Fine-tuned AIMModel that omits spec.image and uses versionPolicy: latest.
+# aimId matches what the AIMServiceTemplate discovery job extracts from the
+# base model's AIM image (AIM_ID=meta-llama/Llama-3.2-1B-Instruct).
+# The controller should:
+#   1. Match this model's aimId to the auto-discovered official template.
+#   2. Read the matched template's owning model's
+#      status.imageMetadata.baseImageRef (= AIM_BASE_IMAGE_REF baked into the
+#      aim-meta-llama image), rebased onto the owner's registry+org.
+#   3. Stamp the resolved image onto the generated fine-tuned template copy
+#      as the aim.eai.amd.com/deployment-image-ref annotation. AIMService
+#      reads that annotation when building the KServe InferenceService.
+#      spec.image on this AIMModel stays empty.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: ft-latest-finetuned
+spec:
+  aimId: meta-llama/Llama-3.2-1B-Instruct
+  custom:
+    versionPolicy: latest
+  modelSources:
+    - modelId: meta-llama/Llama-3.2-1B-Instruct
+      sourceUri: hf://meta-llama/Llama-3.2-1B-Instruct
+      size: 2Gi

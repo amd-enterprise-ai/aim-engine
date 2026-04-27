@@ -1,0 +1,20 @@
+# Official template owned by base-model-a. Same (aimId, modelId, version,
+# precision, gpu) as template-b — only the source owner differs. Without
+# owner identity in the fine-tuned copy name hash, this template's copy
+# would collide with template-b's on apply.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterServiceTemplate
+metadata:
+  name: ft-multi-template-a
+spec:
+  modelName: ft-multi-base-a
+  aimId: test/ft-multi-llama
+  modelId: test/ft-multi-fp8
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X
+  modelSources:
+    - modelId: test/ft-multi-fp8
+      sourceUri: hf://test/ft-multi-fp8
+      size: 100Mi

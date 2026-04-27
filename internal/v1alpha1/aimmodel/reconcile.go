@@ -37,11 +37,19 @@ import (
 )
 
 type ClusterModelReconciler struct {
+	// Client is needed in PlanResources to resolve fine-tuned template
+	// deployment images per-match (each copy needs its source owner's
+	// baseImageRef rebased onto the source registry; matches may span owners,
+	// so we GET them on demand with an in-memory cache).
+	Client    client.Client
 	Clientset kubernetes.Interface
 	Scheme    *runtime.Scheme
 }
 
 type ModelReconciler struct {
+	// Client is needed in PlanResources to resolve fine-tuned template
+	// deployment images per-match. See ClusterModelReconciler.Client.
+	Client    client.Client
 	Clientset kubernetes.Interface
 	Scheme    *runtime.Scheme
 }
@@ -334,11 +342,13 @@ func aggregateTemplateStatuses(expectsTemplates *bool, statuses []constants.AIMS
 // It handles these cases:
 //  1. Extraction explicitly disabled - skip fetch entirely
 //  2. Spec-provided metadata (air-gapped environments) - returns the spec value directly
-//  3. Already cached in status - returns empty result (no fetch needed)
-//  4. Needs remote fetch - calls inspectImage to fetch from registry
+//  3. Fine-tuned model - templates come from the base model via aimId, skip fetch
+//  4. Already cached in status - returns empty result (no fetch needed)
+//  5. Needs remote fetch - calls inspectImage to fetch from registry
 //
-// For custom models (with modelSources), the fetched metadata is used only for
-// image validation — templates are still built from customTemplates in PlanResources.
+// For custom models (with modelSources) but NOT fine-tuned, the fetched metadata
+// is used only for image validation — templates are still built from
+// customTemplates in PlanResources.
 func fetchImageMetadata(
 	ctx context.Context,
 	clientset kubernetes.Interface,
@@ -360,12 +370,19 @@ func fetchImageMetadata(
 		}
 	}
 
-	// Case 3: Already cached in status - no fetch needed
+	// Case 3: Fine-tuned models inherit their AIMServiceTemplates from the
+	// matched base model via aimId, so there's no recommendedDeployments to
+	// extract from this image — skip the fetch entirely.
+	if spec.IsFineTunedModel() {
+		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{}
+	}
+
+	// Case 4: Already cached in status - no fetch needed
 	if !shouldExtractMetadata(status) {
 		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{}
 	}
 
-	// Case 4: Fetch from registry
+	// Case 5: Fetch from registry
 	metadata, err := inspectImage(
 		ctx,
 		spec.Image,
@@ -443,7 +460,7 @@ func (r *ClusterModelReconciler) PlanResources(
 			logger.V(1).Info("aimId template matching complete",
 				"candidates", len(obs.aimIdClusterTemplates.Value.Items),
 				"matches", len(matches))
-			templates := BuildFineTunedClusterServiceTemplates(model, matches)
+			templates := BuildFineTunedClusterServiceTemplates(ctx, r.Client, model, matches)
 			for _, template := range templates {
 				planResult.Apply(template)
 			}
@@ -509,7 +526,7 @@ func (r *ModelReconciler) PlanResources(
 			logger.V(1).Info("aimId template matching complete (namespace)",
 				"candidates", len(obs.aimIdTemplates.Value.Items),
 				"matches", len(matches))
-			templates := BuildFineTunedServiceTemplates(model, matches)
+			templates := BuildFineTunedServiceTemplates(ctx, r.Client, model, matches)
 			for _, t := range templates {
 				planResult.Apply(t)
 			}
@@ -520,7 +537,7 @@ func (r *ModelReconciler) PlanResources(
 			logger.V(1).Info("aimId template matching complete (cluster)",
 				"candidates", len(obs.aimIdClusterTemplates.Value.Items),
 				"matches", len(matches))
-			templates := BuildFineTunedServiceTemplates(model, matches)
+			templates := BuildFineTunedServiceTemplates(ctx, r.Client, model, matches)
 			for _, t := range templates {
 				planResult.Apply(t)
 			}

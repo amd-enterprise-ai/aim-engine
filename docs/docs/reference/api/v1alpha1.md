@@ -2035,6 +2035,7 @@ _Appears in:_
 | `model` _[ModelMetadata](#modelmetadata)_ | Model contains AMD Silogen model-specific metadata. |  | Optional: \{\} <br /> |
 | `oci` _[OCIMetadata](#ocimetadata)_ | OCI contains standard OCI image metadata. |  | Optional: \{\} <br /> |
 | `originalLabels` _object (keys:string, values:string)_ | OriginalLabels contains the raw OCI image labels as a JSON object.<br />This preserves all labels from the image, including those not mapped to structured fields. |  | Optional: \{\} <br /> |
+| `baseImageRef` _string_ | BaseImageRef is the value of the AIM_BASE_IMAGE_REF environment variable<br />baked into the image's OCI config at build time. For AIM model images this<br />records the base image (e.g. "ghcr.io/silogen/aim-base:0.8.5") that the<br />model image was built from. Used by the AIMModel controller to resolve<br />the deployment image for fine-tuned models whose spec.image is omitted<br />(versionPolicy=latest or any). |  | Optional: \{\} <br /> |
 
 
 #### ModelMetadata

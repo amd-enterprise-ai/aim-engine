@@ -171,7 +171,13 @@ func GetModelHealth(model *aimv1alpha1.AIMModel) controllerutils.ComponentHealth
 		}
 	}
 
-	if model.Spec.Image == "" {
+	// Fine-tuned models legitimately leave spec.image empty: their templates
+	// are copies of base models' templates and each copy carries its own
+	// deployment image as the constants.AnnotationDeploymentImageRef
+	// annotation, so the owning AIMModel never needs to host one image. Skip
+	// the spec.image presence check entirely for them; failures of individual
+	// copies surface on the copies themselves.
+	if model.Spec.Image == "" && !model.Spec.IsFineTunedModel() {
 		return controllerutils.ComponentHealth{
 			State:   constants.AIMStatusFailed,
 			Reason:  "ImageNotSpecified",
@@ -191,7 +197,7 @@ func GetModelHealth(model *aimv1alpha1.AIMModel) controllerutils.ComponentHealth
 	return controllerutils.ComponentHealth{
 		State:   constants.AIMStatusReady,
 		Reason:  "ModelFound",
-		Message: "AIMModel found with valid image",
+		Message: "AIMModel found",
 	}
 }
 
@@ -207,7 +213,10 @@ func GetClusterModelHealth(model *aimv1alpha1.AIMClusterModel) controllerutils.C
 		}
 	}
 
-	if model.Spec.Image == "" {
+	// See GetModelHealth: fine-tuned cluster models legitimately leave
+	// spec.image empty; the deployment image lives on each copy as an
+	// annotation.
+	if model.Spec.Image == "" && !model.Spec.IsFineTunedModel() {
 		return controllerutils.ComponentHealth{
 			State:   constants.AIMStatusFailed,
 			Reason:  "ImageNotSpecified",
@@ -227,7 +236,7 @@ func GetClusterModelHealth(model *aimv1alpha1.AIMClusterModel) controllerutils.C
 	return controllerutils.ComponentHealth{
 		State:   constants.AIMStatusReady,
 		Reason:  "ClusterModelFound",
-		Message: "AIMClusterModel found with valid image",
+		Message: "AIMClusterModel found",
 	}
 }
 

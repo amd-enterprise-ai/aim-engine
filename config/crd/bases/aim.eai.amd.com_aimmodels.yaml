@@ -731,6 +731,15 @@ spec:
                   This field is intended to be used when there are network restrictions, or in other similar situations.
                   If this field is set, the remote extraction will not be performed at all.
                 properties:
+                  baseImageRef:
+                    description: |-
+                      BaseImageRef is the value of the AIM_BASE_IMAGE_REF environment variable
+                      baked into the image's OCI config at build time. For AIM model images this
+                      records the base image (e.g. "ghcr.io/silogen/aim-base:0.8.5") that the
+                      model image was built from. Used by the AIMModel controller to resolve
+                      the deployment image for fine-tuned models whose spec.image is omitted
+                      (versionPolicy=latest or any).
+                    type: string
                   model:
                     description: Model contains AMD Silogen model-specific metadata.
                     properties:
@@ -1272,6 +1281,15 @@ spec:
               imageMetadata:
                 description: ImageMetadata is the metadata extracted from an AIM image
                 properties:
+                  baseImageRef:
+                    description: |-
+                      BaseImageRef is the value of the AIM_BASE_IMAGE_REF environment variable
+                      baked into the image's OCI config at build time. For AIM model images this
+                      records the base image (e.g. "ghcr.io/silogen/aim-base:0.8.5") that the
+                      model image was built from. Used by the AIMModel controller to resolve
+                      the deployment image for fine-tuned models whose spec.image is omitted
+                      (versionPolicy=latest or any).
+                    type: string
                   model:
                     description: Model contains AMD Silogen model-specific metadata.
                     properties:

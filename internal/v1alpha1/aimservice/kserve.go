@@ -223,13 +223,14 @@ func buildInferenceService(
 	// Build environment variables
 	envVars := buildMergedEnvVars(service, templateSpec, obs)
 
-	// Determine image from the resolved model
-	image := ""
-	if obs.modelResult.Model.Value != nil {
-		image = obs.modelResult.Model.Value.Spec.Image
-	} else if obs.modelResult.ClusterModel.Value != nil {
-		image = obs.modelResult.ClusterModel.Value.Spec.Image
-	}
+	// Determine the deployment image. Fine-tuned template copies stamp the
+	// resolved image as the AnnotationDeploymentImageRef annotation at build
+	// time so each copy can target a different base image (different version
+	// per copy under versionPolicy=any, or different base family across owners
+	// like aim-base vs aim-epyc-base for the same aimId). Otherwise fall back
+	// to the resolved AIMModel's spec.image (the conventional path for image-
+	// based and custom models).
+	image := resolveDeploymentImage(obs)
 
 	// Get GPU count and resource name from template status.resolvedHardware.
 	// The template controller computes resolvedHardware from discovery + spec fallback.
@@ -375,17 +376,22 @@ func buildMergedEnvVars(
 		envVars = utils.MergeEnvVars(envVars, obs.mergedRuntimeConfig.Value.Env, utils.EnvVarAIMEngineArgs)
 	}
 
-	// Add profile ID if set on template
-	if templateSpec != nil && templateSpec.ProfileId != "" {
-		envVars = append(envVars, corev1.EnvVar{Name: constants.EnvAIMProfileID, Value: templateSpec.ProfileId})
-	}
+	hasCustomProfile := v1alpha1utils.HasCustomProfile(templateSpec)
+	hasModelSources := templateSpec != nil && len(templateSpec.ModelSources) > 0
 
-	// Custom profile: set AIM_ID and AIM_PROFILE_ID for explicit profile selection
-	if v1alpha1utils.HasCustomProfile(templateSpec) {
-		_, filename, err := v1alpha1utils.AssembleProfileYAML(templateSpec)
-		if err == nil {
-			envVars = append(envVars, v1alpha1utils.CustomProfileEnvVars(templateSpec.AimId, filename)...)
+	// AIM_PROFILE_ID selection. Custom profile wins (ConfigMap-mounted file
+	// under /workspace/aim-runtime/profiles/custom/); fall back to the built-in
+	// profile id baked into the image.
+	switch {
+	case hasCustomProfile:
+		if _, filename, err := v1alpha1utils.AssembleProfileYAML(templateSpec); err == nil {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  constants.EnvAIMProfileID,
+				Value: v1alpha1utils.CustomProfileID(templateSpec.AimId, filename),
+			})
 		}
+	case templateSpec != nil && templateSpec.ProfileId != "":
+		envVars = append(envVars, corev1.EnvVar{Name: constants.EnvAIMProfileID, Value: templateSpec.ProfileId})
 	}
 
 	// Add metric if set on template
@@ -404,10 +410,35 @@ func buildMergedEnvVars(
 		envVars = utils.MergeEnvVars(envVars, templateSpec.Env, utils.EnvVarAIMEngineArgs)
 	}
 
-	// Add AIM_MODEL_ID env var if model sources are specified on template spec (custom models)
-	if templateSpec != nil && len(templateSpec.ModelSources) > 0 {
-		modelIDEnvVar := corev1.EnvVar{Name: constants.EnvAIMModelID, Value: templateSpec.ModelSources[0].ModelID}
-		envVars = append(envVars, modelIDEnvVar)
+	// AIM_ID and AIM_MODEL_ID are mutually exclusive in the aim-runtime —
+	// enforced at container startup (see aim-build's aim_runtime/config.py
+	// and docs/custom_profiles.md). Two modes:
+	//
+	//   AIM_ID       — model-specific profile (family baked into image or
+	//                  mounted as a custom profile at
+	//                  /workspace/aim-runtime/profiles/custom/<aimId>/)
+	//   AIM_MODEL_ID — general profile + custom weights (weight redirect
+	//                  against a generic base image)
+	//
+	// Pick exactly one:
+	//
+	//   - hasCustomProfile: the user (or the fine-tune matcher) supplied a
+	//     profile; mount it and let the runtime select it via AIM_ID. This
+	//     applies whether or not modelSources is also set — a model-specific
+	//     custom profile is the right mode when both are present.
+	//   - hasModelSources only (no custom profile): emit AIM_MODEL_ID and
+	//     explicitly clobber any "ENV AIM_ID=<family>" baked into a per-AIM
+	//     container image; otherwise the runtime's mutual-exclusion check
+	//     rejects the pod.
+	//   - neither: leave it to the image's baked-in ENV AIM_ID.
+	switch {
+	case hasCustomProfile:
+		envVars = append(envVars, corev1.EnvVar{Name: constants.EnvAIMID, Value: templateSpec.AimId})
+	case hasModelSources:
+		envVars = append(envVars,
+			corev1.EnvVar{Name: constants.EnvAIMID, Value: ""},
+			corev1.EnvVar{Name: constants.EnvAIMModelID, Value: templateSpec.ModelSources[0].ModelID},
+		)
 	}
 
 	// Merge service-level env vars (highest precedence)
@@ -750,4 +781,38 @@ func applyNodeAffinity(isvc *servingv1beta1.InferenceService, nodeAffinity *core
 	// Apply the node affinity directly
 	// TODO: In the future, merge with any existing service-level affinity if needed
 	isvc.Spec.Predictor.Affinity.NodeAffinity = nodeAffinity.DeepCopy()
+}
+
+// resolveDeploymentImage returns the container image to deploy for this service.
+//
+// Priority:
+//
+//  1. AnnotationDeploymentImageRef on the resolved AIM(Cluster)ServiceTemplate:
+//     stamped by the AIMModel controller onto fine-tuned template copies so
+//     each copy carries its specifically resolved base image. This is the
+//     authoritative source for fine-tuned services and lets sibling copies
+//     under one fine-tuned AIMModel target different images (e.g. one copy
+//     per version with versionPolicy=any, or aim-base vs aim-epyc-base for
+//     the same aimId across owners).
+//  2. AIMModel/AIMClusterModel spec.image: conventional path for image-based
+//     and custom models, and the fallback when a template hasn't been
+//     stamped (e.g. older copies created before this annotation existed).
+func resolveDeploymentImage(obs ServiceObservation) string {
+	if t := obs.template.Value; t != nil {
+		if ref := t.Annotations[constants.AnnotationDeploymentImageRef]; ref != "" {
+			return ref
+		}
+	}
+	if t := obs.clusterTemplate.Value; t != nil {
+		if ref := t.Annotations[constants.AnnotationDeploymentImageRef]; ref != "" {
+			return ref
+		}
+	}
+	if m := obs.modelResult.Model.Value; m != nil {
+		return m.Spec.Image
+	}
+	if m := obs.modelResult.ClusterModel.Value; m != nil {
+		return m.Spec.Image
+	}
+	return ""
 }

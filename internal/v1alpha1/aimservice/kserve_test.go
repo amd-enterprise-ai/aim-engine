@@ -28,6 +28,7 @@ import (
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -580,6 +581,127 @@ func TestBuildInferenceService_PriorityClassName(t *testing.T) {
 }
 
 // ============================================================================
+// RESOLVE DEPLOYMENT IMAGE TESTS
+// ============================================================================
+
+// resolveDeploymentImage prefers a fine-tuned template copy's stamped
+// deployment-image annotation over the resolved AIMModel's spec.image. This
+// is the path that lets sibling copies under one fine-tuned AIMModel target
+// different images (e.g. different versions per copy with versionPolicy=any
+// or aim-base vs aim-epyc-base for the same aimId across owners).
+func TestResolveDeploymentImage(t *testing.T) {
+	const stampedImage = "ghcr.io/silogen/aim-base:0.11"
+	const modelImage = "ghcr.io/silogen/aim-base:0.10"
+
+	tests := []struct {
+		name string
+		obs  ServiceObservation
+		want string
+	}{
+		{
+			name: "namespace template annotation wins over model.spec.image",
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					template: controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]{
+						Value: &aimv1alpha1.AIMServiceTemplate{
+							ObjectMeta: metav1.ObjectMeta{
+								Name: "ft-copy",
+								Annotations: map[string]string{
+									constants.AnnotationDeploymentImageRef: stampedImage,
+								},
+							},
+						},
+					},
+					modelResult: ModelFetchResult{
+						Model: controllerutils.FetchResult[*aimv1alpha1.AIMModel]{
+							Value: NewModel("m").WithImage(modelImage).Build(),
+						},
+					},
+				},
+			},
+			want: stampedImage,
+		},
+		{
+			name: "cluster template annotation wins over model.spec.image",
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					clusterTemplate: controllerutils.FetchResult[*aimv1alpha1.AIMClusterServiceTemplate]{
+						Value: &aimv1alpha1.AIMClusterServiceTemplate{
+							ObjectMeta: metav1.ObjectMeta{
+								Name: "ft-cluster-copy",
+								Annotations: map[string]string{
+									constants.AnnotationDeploymentImageRef: stampedImage,
+								},
+							},
+						},
+					},
+					modelResult: ModelFetchResult{
+						ClusterModel: controllerutils.FetchResult[*aimv1alpha1.AIMClusterModel]{
+							Value: &aimv1alpha1.AIMClusterModel{
+								Spec: aimv1alpha1.AIMModelSpec{Image: modelImage},
+							},
+						},
+					},
+				},
+			},
+			want: stampedImage,
+		},
+		{
+			name: "no annotation falls back to AIMModel.spec.image",
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					template: controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]{
+						Value: &aimv1alpha1.AIMServiceTemplate{
+							ObjectMeta: metav1.ObjectMeta{Name: "plain-template"},
+						},
+					},
+					modelResult: ModelFetchResult{
+						Model: controllerutils.FetchResult[*aimv1alpha1.AIMModel]{
+							Value: NewModel("m").WithImage(modelImage).Build(),
+						},
+					},
+				},
+			},
+			want: modelImage,
+		},
+		{
+			name: "empty annotation value is treated as absent",
+			obs: ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					template: controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]{
+						Value: &aimv1alpha1.AIMServiceTemplate{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:        "ft-copy",
+								Annotations: map[string]string{constants.AnnotationDeploymentImageRef: ""},
+							},
+						},
+					},
+					modelResult: ModelFetchResult{
+						Model: controllerutils.FetchResult[*aimv1alpha1.AIMModel]{
+							Value: NewModel("m").WithImage(modelImage).Build(),
+						},
+					},
+				},
+			},
+			want: modelImage,
+		},
+		{
+			name: "no template, no model returns empty string",
+			obs:  ServiceObservation{},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveDeploymentImage(tt.obs); got != tt.want {
+				t.Errorf("resolveDeploymentImage = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// ============================================================================
 // RESOLVE RESOURCES TESTS
 // ============================================================================
 
@@ -1000,6 +1122,133 @@ func TestBuildMergedEnvVars_ServiceOverridesAll(t *testing.T) {
 	// Service should win
 	if envMap["SHARED_VAR"] != "from-service" {
 		t.Errorf("expected SHARED_VAR='from-service', got '%s'", envMap["SHARED_VAR"])
+	}
+}
+
+// aim-runtime (aim-build's aim_runtime/config.py) rejects pods that set both
+// AIM_ID and AIM_MODEL_ID. aim-build's docs/custom_profiles.md documents the
+// two intended modes when running aim-base with a mounted custom profile:
+//
+//	AIM_ID:       model-specific profile keyed by the family aimId
+//	AIM_MODEL_ID: general profile + weight redirect (fine-tune / weight redirect
+//	              against a generic base image)
+//
+// CustomProfile takes precedence: an explicit profile (whether user-declared or
+// carried across by the fine-tune matcher) means "model-specific mode" even
+// when ModelSources is also set — the profile is the thing selecting the
+// runtime behaviour, and ModelSources just provides the weights.
+//
+// These tests exercise the four relevant shapes of templateSpec:
+//  1. CustomProfile + ModelSources (fine-tuned copy w/ propagated profile) → AIM_ID only
+//  2. ModelSources without CustomProfile (weight redirect) → AIM_MODEL_ID only, AIM_ID clobbered to ""
+//  3. CustomProfile without ModelSources (custom model-specific profile) → AIM_ID only
+//  4. Neither → neither var emitted (the image's baked-in ENV AIM_ID stands)
+func TestBuildMergedEnvVars_AimIdAndModelIdAreMutuallyExclusive(t *testing.T) {
+	engineArgs := &apiextensionsv1.JSON{Raw: []byte(`{"tensor-parallel-size":1}`)}
+	customProfile := &aimv1alpha1.AIMCustomProfile{EngineArgs: engineArgs}
+
+	tests := []struct {
+		name                string
+		templateSpec        *aimv1alpha1.AIMServiceTemplateSpecCommon
+		wantAimID           *string // nil = must not be emitted; non-nil = must match exactly
+		wantModelID         *string
+		wantProfileID       *string // exact match
+		wantProfileIDPrefix string  // when set, match by HasPrefix (for AssembleProfileYAML-derived filenames)
+	}{
+		{
+			name: "CustomProfile with ModelSources: AIM_ID only (custom profile wins over weight redirect)",
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				AimId:         "meta-llama/Llama-3.2-1B-Instruct",
+				CustomProfile: customProfile,
+				ModelSources: []aimv1alpha1.AIMModelSource{
+					{ModelID: "meta-llama/Llama-3.2-1B-Instruct", SourceURI: "pvc://weights"},
+				},
+			},
+			wantAimID:           ptr.To("meta-llama/Llama-3.2-1B-Instruct"),
+			wantModelID:         nil,
+			wantProfileIDPrefix: "custom/meta-llama/Llama-3.2-1B-Instruct/",
+		},
+		{
+			name: "ModelSources without CustomProfile: AIM_MODEL_ID only, AIM_ID clobbered",
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				AimId: "qwen/qwen3-32b",
+				ModelSources: []aimv1alpha1.AIMModelSource{
+					{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "s3://weights"},
+				},
+			},
+			wantAimID:   ptr.To(""),
+			wantModelID: ptr.To("qwen/qwen3-32b-fp8"),
+		},
+		{
+			name: "CustomProfile without ModelSources: AIM_ID only, no AIM_MODEL_ID",
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				AimId:         "qwen/qwen3-32b",
+				CustomProfile: customProfile,
+			},
+			wantAimID:           ptr.To("qwen/qwen3-32b"),
+			wantModelID:         nil,
+			wantProfileIDPrefix: "custom/qwen/qwen3-32b/",
+		},
+		{
+			name: "plain template with ProfileId: neither AIM_ID nor AIM_MODEL_ID emitted",
+			templateSpec: &aimv1alpha1.AIMServiceTemplateSpecCommon{
+				AimId:     "qwen/qwen3-32b",
+				ProfileId: "vllm-mi300x-fp16-tp1-latency",
+			},
+			wantAimID:     nil,
+			wantModelID:   nil,
+			wantProfileID: ptr.To("vllm-mi300x-fp16-tp1-latency"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildMergedEnvVars(&aimv1alpha1.AIMService{}, tt.templateSpec, ServiceObservation{})
+
+			// Count occurrences; a doubly-declared AIM_ID would still trip the
+			// aim-runtime mutual-exclusion check, so both presence and count matter.
+			counts := make(map[string]int)
+			values := make(map[string]string)
+			for _, e := range result {
+				counts[e.Name]++
+				values[e.Name] = e.Value
+			}
+			for _, name := range []string{constants.EnvAIMID, constants.EnvAIMModelID, constants.EnvAIMProfileID} {
+				if counts[name] > 1 {
+					t.Errorf("%s emitted %d times; must appear at most once", name, counts[name])
+				}
+			}
+
+			assertEnvMatches(t, counts, values, constants.EnvAIMID, tt.wantAimID)
+			assertEnvMatches(t, counts, values, constants.EnvAIMModelID, tt.wantModelID)
+			switch {
+			case tt.wantProfileIDPrefix != "":
+				if counts[constants.EnvAIMProfileID] == 0 {
+					t.Errorf("AIM_PROFILE_ID: expected value with prefix %q, got absent", tt.wantProfileIDPrefix)
+				} else if !strings.HasPrefix(values[constants.EnvAIMProfileID], tt.wantProfileIDPrefix) {
+					t.Errorf("AIM_PROFILE_ID: expected prefix %q, got %q", tt.wantProfileIDPrefix, values[constants.EnvAIMProfileID])
+				}
+			default:
+				assertEnvMatches(t, counts, values, constants.EnvAIMProfileID, tt.wantProfileID)
+			}
+		})
+	}
+}
+
+func assertEnvMatches(t *testing.T, counts map[string]int, values map[string]string, name string, want *string) {
+	t.Helper()
+	if want == nil {
+		if counts[name] != 0 {
+			t.Errorf("%s: expected absent, got value=%q", name, values[name])
+		}
+		return
+	}
+	if counts[name] == 0 {
+		t.Errorf("%s: expected value=%q, got absent", name, *want)
+		return
+	}
+	if values[name] != *want {
+		t.Errorf("%s: expected value=%q, got %q", name, *want, values[name])
 	}
 }
 

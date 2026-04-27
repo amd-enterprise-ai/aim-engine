@@ -103,7 +103,7 @@ The `status` field tracks discovery progress:
 | `status` | Enum: `Pending`, `Progressing`, `Ready`, `Degraded`, `Failed` |
 | `conditions` | Detailed conditions including `RuntimeConfigReady`, `ImageMetadataReady`, and `ServiceTemplatesReady` |
 | `resolvedRuntimeConfig` | Metadata about the runtime config that was resolved (name, namespace, scope, UID) |
-| `imageMetadata` | Extracted metadata from the container image including model and OCI metadata |
+| `imageMetadata` | Extracted metadata from the container image including model info, OCI metadata, and `baseImageRef` (the base image the AIM image was built from). |
 
 ### Status Values
 
@@ -649,7 +649,7 @@ When an AIMModel specifies `spec.aimId` together with `spec.modelSources`, the c
 1. Finds official templates whose `spec.aimId` matches the model's `spec.aimId`
 2. Filters by version according to `spec.custom.versionPolicy`
 3. Matches by `modelId` — the template's `spec.modelId` must equal one of the model's `modelSources[].modelId`
-4. Creates template copies with hardware, engine args, and profile inherited from the official template, but with the custom weight source baked in
+4. Creates template copies with hardware, engine args, and profile inherited from the official template, but with the custom weight source baked in. The controller stamps the resolved deployment image onto **each copy** as the `aim.eai.amd.com/deployment-image-ref` annotation, so different copies can target different base images when matched templates span owners with different versions or base families (see [Deployment Image Resolution](#deployment-image-resolution) below)
 
 ### Fine-Tuned vs Fully Custom
 
@@ -695,7 +695,7 @@ spec:
     versionPolicy: latest
 ```
 
-With `versionPolicy: latest`, `spec.image` can be omitted. The controller matches only templates at the newest available version and resolves the deployment image from the matched template's `AIM_BASE_IMAGE_REF` environment variable.
+With `versionPolicy: latest`, `spec.image` can be omitted. The controller resolves the deployment image per matched template — from the matched template's owning model — and stamps it onto each generated copy.
 
 ### Version Policy
 
@@ -703,9 +703,40 @@ The `spec.custom.versionPolicy` field controls version filtering during template
 
 | Policy | `spec.image` | Version Filter | Deployment Image |
 |---|---|---|---|
-| `pinned` (default) | Required | `status.version` == image tag | `spec.image` |
-| `latest` | Optional | Newest `status.version` only | `AIM_BASE_IMAGE_REF` from matched template |
-| `any` | Optional | All versions accepted | `AIM_BASE_IMAGE_REF` from each matched template |
+| `pinned` (default) | Required | `status.version` == image tag | `spec.image` (stamped on each copy) |
+| `latest` | Optional | Newest `status.version` only | Resolved per-copy from the matched template owner's `baseImageRef` |
+| `any` | Optional | All versions accepted | Resolved per-copy from the matched template owner's `baseImageRef` |
+
+### Deployment Image Resolution
+
+Every official AIM model image declares the base image it was built from (e.g. `ghcr.io/silogen/aim-base:0.11`). The AIM image inspector reads the `AIM_BASE_IMAGE_REF` environment variable from the image's OCI config at build time and records it on the owning model's `status.imageMetadata.baseImageRef`.
+
+The fine-tuned model's `spec.image` is **never** patched. Instead, the controller resolves a deployment image **once per matched template** and stamps it onto the generated `AIMServiceTemplate` / `AIMClusterServiceTemplate` copy as the `aim.eai.amd.com/deployment-image-ref` annotation. `AIMService` reads this annotation when constructing the KServe `InferenceService`, falling back to `AIMModel.spec.image` only when the annotation is absent.
+
+This per-copy resolution is necessary because matched templates may span owners with different base images — different architectures (e.g. `aim-base` vs `aim-epyc-base`) for the same `aimId`, or different versions under `versionPolicy: any`. Pinning a single image on the fine-tuned model would force every copy to share that image; annotating each copy individually keeps the deployments precisely aligned with the source they were derived from.
+
+For each matched template, the controller:
+
+1. Takes the matched template's owning model (`AIMModel` or `AIMClusterModel`).
+2. Reads the owner's `status.imageMetadata.baseImageRef`.
+3. Rebases that reference onto the owner's `spec.image` registry+org so the fine-tuned deployment pulls `aim-base` from the same place the base model was pulled from (see below).
+4. Stamps the result onto the generated copy as `aim.eai.amd.com/deployment-image-ref`.
+
+For `versionPolicy: pinned` with an explicit `spec.image`, the resolver short-circuits and stamps `spec.image` on every copy.
+
+**Registry rebasing.** Official AIM images bake a `docker.io/amdenterpriseai/aim-base:…` reference into their OCI config, but operators frequently mirror both the base model *and* `aim-base` into a private registry. Rather than force fine-tuned deployments to reach back to Docker Hub, the resolver swaps the registry+org prefix of `baseImageRef` with the prefix of the source owner's `spec.image`. Concretely:
+
+| Source owner `spec.image` | Owner's `status.imageMetadata.baseImageRef` | Resolved annotation on copy |
+|---|---|---|
+| `ghcr.io/silogen/qwen3:0.11.0` | `docker.io/amdenterpriseai/aim-base:0.11` | `ghcr.io/silogen/aim-base:0.11` |
+| `docker.io/amdenterpriseai/qwen3:0.11.0` | `ghcr.io/silogen/aim-base:0.11` | `docker.io/amdenterpriseai/aim-base:0.11` |
+| `registry.example.com/team/models/qwen3:0.11` | `ghcr.io/silogen/aim-base:0.11` | `registry.example.com/team/models/aim-base:0.11` |
+
+This means mirroring `aim-base` into the same org as the base model is sufficient — no cluster-wide configuration, no registry rewriting rules.
+
+If a matched template's owner has no resolvable image (no `baseImageRef`, no legacy fallback, owner not yet fetchable), the controller skips that copy and retries on the next reconcile. Image inspection is skipped on the fine-tuned model itself — it inherits its deployment plumbing from the matched templates' owners, not from its own image metadata.
+
+**Legacy installs.** `baseImageRef` is extracted from the base model's image during metadata inspection, but inspection is skipped once `status.imageMetadata` is cached. Operators who upgraded past this feature therefore have existing base models with populated metadata but `baseImageRef == ""`. For those owners the resolver falls back to synthesizing `aim-base:MAJOR.MINOR` from the owner's `spec.image` tag (rebased onto its registry+org as above) so fine-tuned models keep working without a manual re-inspection. When the tag isn't semver-shaped the fallback is skipped and that copy is omitted — clear the base model's `status.imageMetadata` to force a fresh inspection if you need the real, image-declared reference.
 
 ### Template Copies
 
@@ -719,6 +750,9 @@ Copies inherit all configuration from the original template (hardware, profile, 
 - `spec.modelName` — points to the fine-tuned model
 - `spec.modelSources` — uses the custom weight source from the fine-tuned model
 - Labels: `aim.eai.amd.com/model: <model-name>`, `aim.eai.amd.com/origin: fine-tuned`
+- Annotation: `aim.eai.amd.com/deployment-image-ref: <resolved-image>` — the image `AIMService` will deploy for this copy
+
+Each copy carries its own deployment image annotation, so heterogeneous matches (different versions under `versionPolicy: any`, or different base families under the same `aimId`) deploy with the correct image per copy.
 
 Copies are owned by the model and garbage-collected when the model is deleted. The controller watches for new or deleted matching templates and reconciles copies accordingly.
 
@@ -731,6 +765,8 @@ status:
   status: Ready
   sourceType: Custom
 ```
+
+Inspect the generated `AIMServiceTemplate` copies (`kubectl get aimservicetemplate -l aim.eai.amd.com/model=<model-name> -o=jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.aim\.eai\.amd\.com/deployment-image-ref}{"\n"}{end}'`) to see the per-copy deployment image.
 
 ## Related Documentation
 
