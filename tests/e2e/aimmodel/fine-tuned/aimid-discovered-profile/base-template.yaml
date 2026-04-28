@@ -1,0 +1,20 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: ft-discovered-base-template
+spec:
+  modelName: ft-discovered-base-model
+  # aimId / modelId are set up-front so the fine-tune matcher can find
+  # this template. aim-dummy:0.2.0's v1alpha1 discovery JSON does not
+  # carry top-level aim_id/model_id (those live in the on-disk profile
+  # YAMLs consumed by the v1alpha2 inspector); only real aim-build
+  # images emit them via the v1alpha1 dry-run path too. spec.precision
+  # and spec.metric are intentionally NOT set: this mirrors the
+  # production bug shape where a thin OCI label leaves spec sparse but
+  # discovery populates the full profile in status.
+  aimId: test/dummy-base
+  modelId: test/dummy-base
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X

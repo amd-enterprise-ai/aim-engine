@@ -242,9 +242,11 @@ func matchByModelId[T interface{ GetVersion() string }](
 // BuildFineTunedServiceTemplates creates namespace-scoped template copies from
 // match results. Each copy is stamped with the
 // constants.AnnotationDeploymentImageRef annotation resolved from its match's
-// source owner. Matches whose deployment image cannot be resolved yet (owner
-// not found, no baseImageRef and no semver tag to fall back to) are skipped
-// and logged; an owner update will trigger a retry on the next reconcile.
+// source owner. Matches are skipped (and logged) when the source isn't ready
+// yet — either because the deployment image can't be resolved (owner not
+// found, no baseImageRef and no semver tag to fall back to) or because the
+// source's discovery hasn't produced enough data to populate the cloned
+// spec. An owner / source update will trigger a retry on the next reconcile.
 func BuildFineTunedServiceTemplates(
 	ctx context.Context,
 	c client.Client,
@@ -262,15 +264,29 @@ func BuildFineTunedServiceTemplates(
 				"version", m.OriginalVersion, "reason", err.Error())
 			continue
 		}
-		t := buildFineTunedServiceTemplate(model.Name, model.Namespace, &model.Spec, m, image)
-		templates = append(templates, t)
+		spec, ok := buildFineTunedTemplateSpec(model.Name, &model.Spec, m)
+		if !ok {
+			logger.V(1).Info("deferring fine-tuned template copy: source profile not yet usable",
+				"aimId", m.OriginalAimId, "modelId", m.OriginalModelId,
+				"version", m.OriginalVersion)
+			continue
+		}
+		templates = append(templates, &aimv1alpha1.AIMServiceTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        generateFineTunedTemplateName(model.Name, m, spec),
+				Namespace:   model.Namespace,
+				Labels:      fineTunedTemplateLabels(model.Name),
+				Annotations: fineTunedTemplateAnnotations(image),
+			},
+			Spec: aimv1alpha1.AIMServiceTemplateSpec{AIMServiceTemplateSpecCommon: spec},
+		})
 	}
 	return templates
 }
 
 // BuildFineTunedClusterServiceTemplates creates cluster-scoped template copies
 // from match results. See BuildFineTunedServiceTemplates for the per-copy
-// image annotation rationale.
+// image annotation rationale and the deferral conditions.
 func BuildFineTunedClusterServiceTemplates(
 	ctx context.Context,
 	c client.Client,
@@ -288,72 +304,147 @@ func BuildFineTunedClusterServiceTemplates(
 				"version", m.OriginalVersion, "reason", err.Error())
 			continue
 		}
-		t := buildFineTunedClusterServiceTemplate(model.Name, &model.Spec, m, image)
-		templates = append(templates, t)
+		spec, ok := buildFineTunedTemplateSpec(model.Name, &model.Spec, m)
+		if !ok {
+			logger.V(1).Info("deferring fine-tuned cluster template copy: source profile not yet usable",
+				"aimId", m.OriginalAimId, "modelId", m.OriginalModelId,
+				"version", m.OriginalVersion)
+			continue
+		}
+		templates = append(templates, &aimv1alpha1.AIMClusterServiceTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        generateFineTunedTemplateName(model.Name, m, spec),
+				Labels:      fineTunedTemplateLabels(model.Name),
+				Annotations: fineTunedTemplateAnnotations(image),
+			},
+			Spec: aimv1alpha1.AIMClusterServiceTemplateSpec{AIMServiceTemplateSpecCommon: spec},
+		})
 	}
 	return templates
 }
 
-func buildFineTunedServiceTemplate(
-	modelName, namespace string,
-	modelSpec *aimv1alpha1.AIMModelSpec,
-	match TemplateMatchResult,
-	deploymentImage string,
-) *aimv1alpha1.AIMServiceTemplate {
-	spec := buildFineTunedTemplateSpec(modelName, modelSpec, match)
-	name := generateFineTunedTemplateName(modelName, match)
-
-	return &aimv1alpha1.AIMServiceTemplate{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        name,
-			Namespace:   namespace,
-			Labels:      fineTunedTemplateLabels(modelName),
-			Annotations: fineTunedTemplateAnnotations(deploymentImage),
-		},
-		Spec: aimv1alpha1.AIMServiceTemplateSpec{
-			AIMServiceTemplateSpecCommon: spec,
-		},
-	}
-}
-
-func buildFineTunedClusterServiceTemplate(
-	modelName string,
-	modelSpec *aimv1alpha1.AIMModelSpec,
-	match TemplateMatchResult,
-	deploymentImage string,
-) *aimv1alpha1.AIMClusterServiceTemplate {
-	spec := buildFineTunedTemplateSpec(modelName, modelSpec, match)
-	name := generateFineTunedTemplateName(modelName, match)
-
-	return &aimv1alpha1.AIMClusterServiceTemplate{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        name,
-			Labels:      fineTunedTemplateLabels(modelName),
-			Annotations: fineTunedTemplateAnnotations(deploymentImage),
-		},
-		Spec: aimv1alpha1.AIMClusterServiceTemplateSpec{
-			AIMServiceTemplateSpecCommon: spec,
-		},
-	}
-}
-
-// buildFineTunedTemplateSpec creates the common spec for a fine-tuned template copy.
-// The copy inherits hardware, profile, engine config from the original and overrides modelSources.
+// buildFineTunedTemplateSpec assembles the common spec for a fine-tuned
+// template copy from the source template's discovered profile
+// (status.profile) and the fine-tuned model's overrides. status.profile is
+// the authoritative output of the source's dry-run discovery and is the
+// single source we read for identity / shape / engine config — the
+// source's spec is intentionally not consulted for those fields because
+// catalog templates auto-populate spec from a thin OCI label that
+// routinely omits precision/metric.
+//
+// Discovery emits all metadata fields together (see aim-build's
+// ProfileMetadata pydantic schema where engine/precision/metric/
+// accelerator_count/aim_id/model_id are all required), so we treat
+// status.profile.metadata as a single atom: any populated field means
+// the data is as complete as it'll get; an entirely empty profile means
+// discovery hasn't run yet and we defer until the next reconcile (the
+// source's status update requeues us). The function also defers (as a
+// safeguard against a misbehaving discovery image) when it would stamp
+// a customProfile but metadata is missing one of the CEL-required
+// fields — emitting in that case would only produce an apply the
+// apiserver immediately rejects.
+//
+// customProfile is stamped only when discovery emitted engine config
+// (engineArgs / envVars). The rebased aim-base image has no baked-in
+// catalog so the runtime needs the engine config to resolve a profile;
+// for inline-modelSources sources (which never run discovery and have
+// no engine config in status), the rebased image is the same image
+// family and the runtime resolves the original profile against the
+// unchanged catalog — no customProfile needed.
+//
+// Non-discovery engine knobs (container resources, runtime config
+// selection, pull secrets, service account) have no analogue in
+// status.profile — they're operator-set on the source spec — so we
+// inherit them from match.Spec.
+//
+// Container-level env vars (spec.Env) layer the fine-tuned model's
+// spec.env on top of the source template's spec.env, with the
+// fine-tuned model winning on name collision. This matches the
+// "broader default, narrower scope wins" convention used by
+// buildAutoGeneratedCustomTemplate and buildCustomServiceTemplate
+// (where customTemplate.Env overrides model.Spec.Env), so a user
+// setting AIMModel.spec.env on a fine-tuned model gets the same
+// behavior as on a non-fine-tuned model: the vars reach both the
+// runtime container and the download / check-size pods (the latter
+// via AIMTemplateCache.spec.env in aimservice/caching.go and then
+// AIMArtifact.spec.env in aimtemplatecache/reconcile.go). Per-source
+// overrides (AIMModel.spec.modelSources[].env) carried in
+// match.MatchedModelSource still win at the downloader specifically
+// via the cache-env merge in aimtemplatecache/reconcile.go.
+//
+// Precedence note: the fine-tuned model's spec.env wins over the
+// source template's runtime env on name collision. This is deliberate
+// — the user's fine-tuned model is the more specific override — but
+// it does mean a user can clobber a vetted runtime knob (e.g.
+// VLLM_ROCM_USE_AITER) by setting the same name on AIMModel.spec.env.
+// For env intended only to reach the downloader (e.g. AWS_*
+// credentials for an s3:// source), prefer the per-source scope at
+// AIMModel.spec.modelSources[].env, which doesn't appear on the
+// runtime container at all.
 func buildFineTunedTemplateSpec(
 	modelName string,
 	modelSpec *aimv1alpha1.AIMModelSpec,
 	match TemplateMatchResult,
-) aimv1alpha1.AIMServiceTemplateSpecCommon {
-	spec := match.Spec
+) (aimv1alpha1.AIMServiceTemplateSpecCommon, bool) {
+	profile := match.SourceProfile
+	if !discoveryReady(profile) {
+		return aimv1alpha1.AIMServiceTemplateSpecCommon{}, false
+	}
+	meta := profile.Metadata
 
-	// Point to the fine-tuned model
-	spec.ModelName = modelName
+	// Identity falls back to match.Spec when discovery didn't emit it.
+	// aim-build images (the v1alpha2 source-of-truth path) emit
+	// metadata.aimId/modelId; older v1alpha1 dummy images and inline-
+	// modelSources sources don't, but always carry them on spec because
+	// the operator promoted them via maybePromoteDiscoveredIdentity or
+	// the user set them up-front.
+	aimID := meta.AimID
+	if aimID == "" {
+		aimID = match.Spec.AimId
+	}
+	modelID := meta.ModelID
+	if modelID == "" {
+		modelID = match.Spec.ModelId
+	}
+	spec := aimv1alpha1.AIMServiceTemplateSpecCommon{
+		ModelName:    modelName,
+		AimId:        aimID,
+		ModelId:      modelID,
+		ModelSources: []aimv1alpha1.AIMModelSource{match.MatchedModelSource},
+	}
+	if meta.GPU != "" || meta.GPUCount > 0 {
+		spec.Hardware = &aimv1alpha1.AIMHardwareRequirements{
+			GPU: &aimv1alpha1.AIMGpuRequirements{
+				Model:    meta.GPU,
+				Requests: meta.GPUCount,
+			},
+		}
+	}
+	if meta.Metric != "" {
+		m := meta.Metric
+		spec.Metric = &m
+	}
+	if meta.Precision != "" {
+		p := meta.Precision
+		spec.Precision = &p
+	}
+	if meta.Type != "" {
+		t := meta.Type
+		spec.Type = &t
+	}
 
-	// Override model sources with the custom weight source.
-	// Preserve the modelId so cache paths remain consistent.
-	spec.ModelSources = []aimv1alpha1.AIMModelSource{match.MatchedModelSource}
+	if profile.EngineArgs != nil || len(profile.EnvVars) > 0 {
+		spec.CustomProfile = &aimv1alpha1.AIMCustomProfile{
+			EngineArgs: profile.EngineArgs,
+			EnvVars:    profile.EnvVars,
+		}
+	}
 
-	// Propagate pull secrets and service account from the fine-tuned model
+	spec.Env = utils.MergeEnvVars(match.Spec.Env, modelSpec.Env)
+	spec.Resources = match.Spec.Resources
+	spec.RuntimeConfigRef = match.Spec.RuntimeConfigRef
+	spec.ImagePullSecrets = match.Spec.ImagePullSecrets
+	spec.ServiceAccountName = match.Spec.ServiceAccountName
 	if len(modelSpec.ImagePullSecrets) > 0 {
 		spec.ImagePullSecrets = modelSpec.ImagePullSecrets
 	}
@@ -361,33 +452,50 @@ func buildFineTunedTemplateSpec(
 		spec.ServiceAccountName = modelSpec.ServiceAccountName
 	}
 
-	// The fine-tuned deployment image is the base model's AIM_BASE_IMAGE_REF
-	// (a generic aim-base container), which has no baked-in profile catalog
-	// for this model family. Carry the source template's discovered profile
-	// across as spec.customProfile so the existing v1alpha1 custom
-	// profile infrastructure (ConfigMap mount at
-	// /workspace/aim-runtime/profiles/custom/{aimId}/) lets the base runtime
-	// resolve AIM_PROFILE_ID=custom/{aimId}/{filename}. spec.profileId is
-	// cleared because it refers to the built-in catalog that isn't present
-	// in the base image; keeping it would produce a conflicting
-	// AIM_PROFILE_ID env var on the serving pod.
+	// Belt-and-suspenders: if we'd stamp customProfile but discovery
+	// metadata was incomplete, defer rather than emit an apply the
+	// apiserver will reject on the CEL rule:
 	//
-	// Only materialize a customProfile when the source actually has engine
-	// args or env vars to carry. An empty customProfile adds no runtime
-	// value and would trip the CEL rule on AIMServiceTemplateSpecCommon
-	// that requires metric/precision whenever customProfile is present —
-	// source templates that declare identity via inline modelSources
-	// (e.g. aim-dummy-based fixtures) legitimately omit both.
-	if spec.CustomProfile == nil && match.SourceProfile != nil &&
-		(match.SourceProfile.EngineArgs != nil || len(match.SourceProfile.EnvVars) > 0) {
-		spec.CustomProfile = &aimv1alpha1.AIMCustomProfile{
-			EngineArgs: match.SourceProfile.EngineArgs,
-			EnvVars:    match.SourceProfile.EnvVars,
-		}
-		spec.ProfileId = ""
+	//   "when customProfile is set, aimId, modelId, hardware, metric,
+	//    and precision are required"
+	//
+	// aim-build's ProfileMetadata schema emits all required fields
+	// together (see godoc above), so this branch should not be reached
+	// in practice; it guards against a future / third-party discovery
+	// image that emits engineArgs alongside partial metadata. The
+	// deferral mechanism is identical to discoveryReady=false: a
+	// subsequent reconcile (triggered when the source's status
+	// updates) retries.
+	if spec.CustomProfile != nil &&
+		(spec.AimId == "" || spec.ModelId == "" ||
+			spec.Hardware == nil || spec.Metric == nil || spec.Precision == nil) {
+		return aimv1alpha1.AIMServiceTemplateSpecCommon{}, false
 	}
 
-	return spec
+	return spec, true
+}
+
+// discoveryReady reports whether the source template's status.profile has
+// produced any data yet. Metadata is treated as atomic per aim-build's
+// ProfileMetadata schema (all required fields are emitted together), so
+// any populated field — including engineArgs/envVars carried alongside
+// it — means the data is as complete as it'll be. An entirely empty
+// profile means discovery hasn't run / hasn't completed.
+func discoveryReady(p *aimv1alpha1.AIMDiscoveredProfile) bool {
+	if p == nil {
+		return false
+	}
+	m := p.Metadata
+	if m.AimID != "" || m.ModelID != "" || m.GPU != "" || m.Engine != "" {
+		return true
+	}
+	if m.Metric != "" || m.Precision != "" || m.Type != "" {
+		return true
+	}
+	if m.GPUCount > 0 {
+		return true
+	}
+	return p.EngineArgs != nil || len(p.EnvVars) > 0
 }
 
 func fineTunedTemplateLabels(modelName string) map[string]string {
@@ -408,19 +516,26 @@ func fineTunedTemplateAnnotations(deploymentImage string) map[string]string {
 	}
 }
 
-// generateFineTunedTemplateName creates a deterministic name for a fine-tuned template copy.
-// Format: {modelName}-ft-{version}-{precision}-{gpu}-{hash}
-func generateFineTunedTemplateName(modelName string, match TemplateMatchResult) string {
+// generateFineTunedTemplateName creates a deterministic name for a fine-tuned
+// template copy. Format: {modelName}-ft-{version}-{precision}-{gpu}-{hash}.
+// Identity / shape inputs come from the assembled spec (sourced from
+// status.profile.metadata) rather than match.Spec because catalog templates
+// routinely leave precision/metric unset on spec.
+func generateFineTunedTemplateName(
+	modelName string,
+	match TemplateMatchResult,
+	spec aimv1alpha1.AIMServiceTemplateSpecCommon,
+) string {
 	nameParts := []string{modelName, "ft"}
 
 	if match.OriginalVersion != "" {
 		nameParts = append(nameParts, match.OriginalVersion)
 	}
-	if match.Spec.Precision != nil {
-		nameParts = append(nameParts, string(*match.Spec.Precision))
+	if spec.Precision != nil {
+		nameParts = append(nameParts, string(*spec.Precision))
 	}
-	if match.Spec.Hardware != nil && match.Spec.Hardware.GPU != nil && match.Spec.Hardware.GPU.Model != "" {
-		nameParts = append(nameParts, match.Spec.Hardware.GPU.Model)
+	if spec.Hardware != nil && spec.Hardware.GPU != nil && spec.Hardware.GPU.Model != "" {
+		nameParts = append(nameParts, spec.Hardware.GPU.Model)
 	}
 
 	hashInputs := []any{
@@ -439,11 +554,11 @@ func generateFineTunedTemplateName(modelName string, match TemplateMatchResult) 
 		match.Spec.ModelName,
 		match.OwnerNamespace,
 	}
-	if match.Spec.Metric != nil {
-		hashInputs = append(hashInputs, string(*match.Spec.Metric))
+	if spec.Metric != nil {
+		hashInputs = append(hashInputs, string(*spec.Metric))
 	}
-	if match.Spec.Precision != nil {
-		hashInputs = append(hashInputs, string(*match.Spec.Precision))
+	if spec.Precision != nil {
+		hashInputs = append(hashInputs, string(*spec.Precision))
 	}
 
 	name, _ := utils.GenerateDerivedName(nameParts, utils.WithHashSource(hashInputs...))

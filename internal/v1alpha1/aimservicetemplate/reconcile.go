@@ -826,10 +826,12 @@ func decorateTemplateStatusCommon(
 // the status.Profile with GPU count and other metadata from the spec.
 func buildProfileFromSpec(spec *aimv1alpha1.AIMServiceTemplateSpecCommon) *aimv1alpha1.AIMDiscoveredProfile {
 	profile := &aimv1alpha1.AIMDiscoveredProfile{
-		Metadata: aimv1alpha1.AIMProfileMetadata{},
+		Metadata: aimv1alpha1.AIMProfileMetadata{
+			AimID:   spec.AimId,
+			ModelID: spec.ModelId,
+		},
 	}
 
-	// Set GPU info from spec
 	if spec.Hardware != nil && spec.Hardware.GPU != nil {
 		profile.Metadata.GPUCount = spec.Hardware.GPU.Requests
 		if spec.Hardware.GPU.Model != "" {
@@ -837,7 +839,6 @@ func buildProfileFromSpec(spec *aimv1alpha1.AIMServiceTemplateSpecCommon) *aimv1
 		}
 	}
 
-	// Set metric and precision from spec
 	if spec.Metric != nil {
 		profile.Metadata.Metric = *spec.Metric
 	}
@@ -845,7 +846,6 @@ func buildProfileFromSpec(spec *aimv1alpha1.AIMServiceTemplateSpecCommon) *aimv1
 		profile.Metadata.Precision = *spec.Precision
 	}
 
-	// Set type from spec if explicitly set
 	if spec.Type != nil {
 		profile.Metadata.Type = *spec.Type
 	}

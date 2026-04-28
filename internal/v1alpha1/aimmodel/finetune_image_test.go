@@ -26,6 +26,7 @@ import (
 	"context"
 	"testing"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -78,6 +79,20 @@ func match(ownerName, ownerNamespace, version string) TemplateMatchResult {
 			ModelName: ownerName,
 		},
 		OwnerNamespace: ownerNamespace,
+		// Discovery output the cloner needs to assemble a CEL-valid copy.
+		// Tests that exercise the deferral path should override this.
+		SourceProfile: &aimv1alpha1.AIMDiscoveredProfile{
+			EngineArgs: &apiextensionsv1.JSON{Raw: []byte(`{"tensor-parallel-size":1}`)},
+			Metadata: aimv1alpha1.AIMProfileMetadata{
+				AimID:     "qwen/qwen3-32b",
+				ModelID:   "qwen/qwen3-32b-fp8",
+				Engine:    "vllm",
+				GPU:       testGPUModel,
+				GPUCount:  1,
+				Metric:    aimv1alpha1.AIMMetric("latency"),
+				Precision: aimv1alpha1.AIMPrecision("fp8"),
+			},
+		},
 	}
 }
 

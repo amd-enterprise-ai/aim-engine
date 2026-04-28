@@ -1,0 +1,149 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMModel Test: Fine-Tuned Model Cloning a Discovery-Driven Source Template
+#
+# Reproduces the production bug observed against a real catalog
+# AIMServiceTemplate where:
+#   - spec.precision / spec.metric are nil because the source image's
+#     `model.recommendedDeployments` OCI label entry was thin (only
+#     `aimId`/`modelId`/`hardware`).
+#   - status.profile.metadata.precision / metric are populated because
+#     the discovery job parsed the real profile YAML inside the image.
+#   - The fine-tune cloner stamped customProfile from status.profile but
+#     copied the sparse spec, producing an apply that the API server
+#     rejected on CEL:
+#       "when customProfile is set, aimId, modelId, hardware, metric,
+#        and precision are required"
+#
+# This test exercises the discovery-driven path end-to-end:
+#   1. Apply a base AIMModel + AIMServiceTemplate (no inline
+#      modelSources → real discovery via aim-dummy:0.2.0). The dummy
+#      profiler emits engine_args/env_vars and metadata
+#      (engine/gpu/precision/metric/type) but leaves gpu_count=0 and
+#      doesn't carry top-level aim_id/model_id, which is enough to
+#      reproduce the bug surface.
+#   2. Wait for discovery to populate status.profile (engine_args /
+#      env_vars / metadata).
+#   3. Apply a fine-tune AIMModel matching by aimId.
+#   4. Assert the resulting fine-tune AIMServiceTemplate copy:
+#        - has customProfile populated from status.profile
+#        - has metric / precision / hardware.gpu.model backfilled from
+#          status.profile.metadata (not from the sparse source spec)
+#        - was actually accepted by the API server (so it shows up at
+#          all — the assertion implicitly proves CEL was satisfied)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: finetuned-aimid-discovered-profile
+spec:
+  description: >-
+    A fine-tuned AIMModel matched against a discovery-driven catalog
+    AIMServiceTemplate produces a clone with customProfile stamped from
+    status.profile.engineArgs/envVars and metric/precision/hardware
+    backfilled from status.profile.metadata. Reproduces the production
+    bug where a thin OCI label left source.spec.precision unset and the
+    apply was rejected by the apiserver CEL rule on
+    AIMServiceTemplateSpecCommon.
+  timeouts:
+    apply: 30s
+    assert: 180s
+  steps:
+    - name: Apply base model + discovery-driven template
+      try:
+        - apply:
+            file: base-model.yaml
+        - apply:
+            file: base-template.yaml
+
+    - name: Source template completes discovery (status.profile populated)
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: ft-discovered-base-template
+              status:
+                status: Ready
+                profile:
+                  metadata:
+                    gpu: MI300X
+                    precision: fp8
+                    metric: latency
+                  engine_args:
+                    tensor-parallel-size: 1
+                  env_vars:
+                    HIP_FORCE_DEV_KERNARG: "1"
+
+    - name: Source spec stays sparse — precision/metric live only in status.profile
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: ft-discovered-base-template
+              spec:
+                aimId: test/dummy-base
+                modelId: test/dummy-base
+                # precision / metric are intentionally absent on spec —
+                # this is the bug shape we're reproducing.
+
+    - name: Apply fine-tune AIMModel matching by aimId
+      try:
+        - apply:
+            file: finetuned-model.yaml
+
+    - name: Fine-tune copy is created with customProfile + CEL-required fields backfilled
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/model: ft-discovered-finetuned
+                  aim.eai.amd.com/origin: fine-tuned
+              spec:
+                modelName: ft-discovered-finetuned
+                aimId: test/dummy-base
+                modelId: test/dummy-base
+                metric: latency
+                precision: fp8
+                hardware:
+                  gpu:
+                    # requests is intentionally omitted from the assertion:
+                    # aim-dummy's v1alpha1 dry-run profiler hardcodes
+                    # gpu_count=0 in the discovery JSON (the per-profile
+                    # accelerator_count from the on-disk YAMLs is only read
+                    # by the v1alpha2 inspector). The cloner stamps
+                    # spec.hardware.gpu from status.profile.metadata, so
+                    # requests ends up at 0 and is omitempty-elided. The
+                    # CEL rule only requires hardware to be set, not a
+                    # specific request count.
+                    model: MI300X
+                modelSources:
+                  - modelId: test/dummy-base
+                    sourceUri: hf://my-org/finetuned-weights
+                    size: 200Mi
+                customProfile:
+                  engineArgs:
+                    tensor-parallel-size: 1
+                  envVars:
+                    HIP_FORCE_DEV_KERNARG: "1"
+
+    - name: Fine-tune AIMModel reaches Ready with Custom source type
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: ft-discovered-finetuned
+              status:
+                status: Ready
+                sourceType: Custom
