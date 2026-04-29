@@ -6,15 +6,10 @@ spec:
   registry: ghcr.io
   syncInterval: 1h
   maxModels: 10
-  
+
   # Reference to pull secret (must exist in operator namespace)
   imagePullSecrets:
     - name: ghcr-regcred
-  
-  # Global version constraint
-  versions:
-    - ">=0.8.5"
-  
-  filters:
-    # Exact repository - will fetch all tags and filter by version
-    - image: "silogen/aim-*"
+
+  images:
+    - "amdenterpriseai/aim-qwen-qwen3-32b:0.8.4"

@@ -1,11 +1,11 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
 #
-# AIMClusterModelSource Test: Wildcard Discovery with MaxModels
+# AIMClusterModelSource Test: Explicit List with MaxModels
 #
-# This test validates wildcard discovery from DockerHub with maxModels limits.
+# This test validates explicit-list discovery with maxModels limits.
 #
 # Tested behavior:
-# - Wildcard patterns match multiple repositories
+# - Explicit image entries are discovered
 # - maxModels limit is respected
 # - modelsLimitReached is set correctly when limit is hit
 # - Source reaches Ready status
@@ -14,11 +14,11 @@
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
-  name: wildcard-model-discovery
+  name: explicit-list-model-discovery
 spec:
-  description: Test AIMClusterModelSource wildcard discovery with maxModels limits
+  description: Test AIMClusterModelSource explicit list discovery with maxModels limits
   steps:
-    - name: Create DockerHub AIMClusterModelSource with maxModels limit
+    - name: Create DockerHub AIMClusterModelSource with explicit image list
       try:
         - apply:
             file: cluster-model-source-dockerhub.yaml
@@ -31,7 +31,7 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMClusterModelSource
               metadata:
-                name: dockerhub-wildcard
+                name: dockerhub-explicit-list
               status:
                 status: Ready
                 discoveredModels: 5
@@ -51,5 +51,5 @@ spec:
               kind: AIMClusterModel
               metadata:
                 labels:
-                  aim.eai.amd.com/model-source: dockerhub-wildcard
+                  aim.eai.amd.com/model-source: dockerhub-explicit-list
                   aim.eai.amd.com/origin: auto-generated

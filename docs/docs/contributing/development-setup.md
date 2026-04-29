@@ -111,6 +111,16 @@ The current environment is persisted to `.tmp/current-env` and shared across ter
 
 Pre-commit hooks auto-run `make generate` and `make manifests` when `api/` files change.
 
+### Lint Parity with CI
+
+Pre-commit and CI now run the same lint command for Go:
+
+```bash
+golangci-lint run
+```
+
+This avoids local/CI mismatches (for example, package-level `unused` checks that can be missed by diff-only lint modes).
+
 Generated files (don't edit manually):
 
 - `api/v1alpha1/zz_generated.deepcopy.go`

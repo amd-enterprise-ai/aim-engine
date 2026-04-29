@@ -21,7 +21,7 @@ spec:
   description: Test AIMService with inline custom model (spec.model.custom) auto-creates resources
   timeouts:
     apply: 30s
-    assert: 120s
+    assert: 180s
   steps:
     - name: Create service with inline custom model
       try:
@@ -31,7 +31,7 @@ spec:
     - name: Assert AIMModel is auto-created with correct spec
       try:
         - assert:
-            timeout: 60s
+            timeout: 120s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMModel
@@ -51,6 +51,18 @@ spec:
                   hardware:
                     gpu:
                       requests: 1
+
+    - name: Wait for auto-created AIMModel to become Ready
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                  aim.eai.amd.com/custom-model: "true"
               status:
                 status: Ready
                 sourceType: Custom

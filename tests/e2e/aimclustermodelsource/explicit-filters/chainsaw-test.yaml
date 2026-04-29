@@ -1,23 +1,23 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
 #
-# AIMClusterModelSource Test: Auto-Sourcing Cluster Models
+# AIMClusterModelSource Test: Explicit images via spec.filters
 #
-# This test validates that AIMClusterModelSource automatically discovers
-# and creates AIMClusterModel resources from a container registry.
+# Complements auto-sourcing (spec.images) by validating the same discovery path
+# when each image is declared as a ModelSourceFilter entry.
 #
 # Tested behavior:
-# - Models are created from explicit spec.images entries
+# - Models are created from explicit filter.image entries (tagged repos)
 # - Source reaches Ready status
 # - Models have correct labels (model-source, origin)
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
-  name: auto-sourcing-cluster-models
+  name: explicit-filters-cluster-models
 spec:
-  description: Test AIMClusterModelSource creates cluster models from registry
+  description: Test AIMClusterModelSource creates cluster models from spec.filters explicit images
   steps:
-    - name: Create AIMClusterModelSource
+    - name: Create AIMClusterModelSource with filters
       try:
         - apply:
             file: cluster-model-source.yaml
@@ -30,7 +30,7 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMClusterModelSource
               metadata:
-                name: test-auto-sourcing
+                name: test-explicit-filters
               status:
                 status: Ready
                 (conditions[?type == 'Ready']):
@@ -44,5 +44,5 @@ spec:
               kind: AIMClusterModel
               metadata:
                 labels:
-                  aim.eai.amd.com/model-source: test-auto-sourcing
+                  aim.eai.amd.com/model-source: test-explicit-filters
                   aim.eai.amd.com/origin: auto-generated

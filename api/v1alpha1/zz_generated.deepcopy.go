@@ -351,6 +351,11 @@ func (in *AIMClusterModelSourceSpec) DeepCopyInto(out *AIMClusterModelSourceSpec
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.Images != nil {
+		in, out := &in.Images, &out.Images
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	out.SyncInterval = in.SyncInterval
 	if in.Versions != nil {
 		in, out := &in.Versions, &out.Versions

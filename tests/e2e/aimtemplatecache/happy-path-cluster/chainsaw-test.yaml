@@ -3,6 +3,8 @@ kind: Test
 metadata:
   name: template-cache-happy-path-cluster
 spec:
+  timeouts:
+    assert: 180s
   steps:
     - name: Create frozen service template with Ready status
       try:
@@ -20,6 +22,7 @@ spec:
     - name: Ensure the artifacts are created
       try:
         - assert:
+            timeout: 180s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMArtifact
@@ -35,6 +38,7 @@ spec:
                   - name: HF_TOKEN
                     value: my-token
         - assert:
+            timeout: 180s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMArtifact

@@ -1,15 +1,17 @@
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModelSource
 metadata:
-  name: dockerhub-wildcard
+  name: dockerhub-explicit-list
 spec:
-  # DockerHub is the default registry
+  # DockerHub is the default registry.
+  # Explicit image list (no wildcard discovery).
   syncInterval: 1h
   maxModels: 5
-  filters:
-    - image: "amdenterpriseai/aim-*"
-      exclude:
-        - "amdenterpriseai/aim-base"
-  versions:
-    - "0.8.4"
+  images:
+    - "amdenterpriseai/aim-qwen-qwen3-32b:0.8.4"
+    - "amdenterpriseai/aim-meta-llama-llama-3-2-1b-instruct:0.8.4"
+    - "amdenterpriseai/aim-meta-llama-llama-3-2-3b-instruct:0.8.4"
+    - "amdenterpriseai/aim-phi-2:0.8.4"
+    - "amdenterpriseai/aim-deepseek-deepseek-r1:0.8.4"
+    - "amdenterpriseai/aim-google-gemma-3-1b-it:0.8.4"
 

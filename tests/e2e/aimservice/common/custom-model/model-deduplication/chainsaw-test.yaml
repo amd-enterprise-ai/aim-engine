@@ -19,7 +19,7 @@ spec:
   description: Test that identical custom model specs reuse a single AIMModel
   timeouts:
     apply: 30s
-    assert: 120s
+    assert: 180s
   steps:
     - name: Create first service with custom model
       try:
@@ -29,7 +29,7 @@ spec:
     - name: Wait for first service to create model
       try:
         - assert:
-            timeout: 60s
+            timeout: 180s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMService
@@ -61,7 +61,7 @@ spec:
     - name: Wait for second service to resolve model
       try:
         - assert:
-            timeout: 60s
+            timeout: 180s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMService

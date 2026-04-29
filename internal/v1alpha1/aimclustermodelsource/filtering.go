@@ -36,51 +36,47 @@ import (
 const (
 	DockerRegistry      = "docker.io"
 	dockerIndexRegistry = "index.docker.io"
-	GHCRRegistry        = "ghcr.io"
 )
 
 // parsedImageFilter represents a parsed image filter that may contain:
-// - Just a repository pattern (e.g., "silogen/aim-*")
+// - Just a repository name (e.g., "silogen/aim-llama")
 // - A full image URI with registry (e.g., "ghcr.io/silogen/aim-llama:1.0.0")
 // - A repository with tag (e.g., "silogen/aim-llama:1.0.0")
 type parsedImageFilter struct {
 	// registry override from the filter (e.g., "ghcr.io"), empty if not specified
 	registry string
-	// repository pattern for matching (e.g., "silogen/aim-*")
+	// repository to match (e.g., "silogen/aim-llama")
 	repository string
 	// tag override from the filter (e.g., "1.0.0"), empty if not specified
 	tag string
-	// hasWildcard indicates if the repository pattern contains wildcards
+	// hasWildcard indicates if the filter uses wildcard syntax.
+	// Wildcards are detected for validation but are not supported.
 	hasWildcard bool
 }
 
 // parseImageFilter parses an image filter string into its components.
 // Supports multiple formats:
-// - "repo/name" or "repo/name*" - repository pattern only
+// - "repo/name" - repository only
 // - "repo/name:tag" - repository with specific tag
 // - "registry.com/repo/name" - full URI with registry
 // - "registry.com/repo/name:tag" - full URI with registry and tag
-// - "registry.com/repo/name*" - registry with wildcard pattern
 func parseImageFilter(imageFilter string) parsedImageFilter {
 	parsed := parsedImageFilter{
 		hasWildcard: strings.Contains(imageFilter, "*"),
 	}
 
-	// If it contains wildcards, we still try to extract registry if present
-	// Check if it starts with a registry (contains a dot before first slash)
+	// Preserve registry extraction for wildcard-formatted filters so the caller
+	// can produce useful validation errors.
 	if parsed.hasWildcard {
-		// Try to extract registry from patterns like "ghcr.io/repo/*"
 		firstSlash := strings.Index(imageFilter, "/")
 		if firstSlash > 0 {
 			potentialRegistry := imageFilter[:firstSlash]
-			// If it looks like a registry (contains a dot), extract it
 			if strings.Contains(potentialRegistry, ".") {
 				parsed.registry = potentialRegistry
 				parsed.repository = imageFilter[firstSlash+1:]
 				return parsed
 			}
 		}
-		// No registry found, treat entire string as repository pattern
 		parsed.repository = imageFilter
 		return parsed
 	}
@@ -127,41 +123,6 @@ func parseImageFilter(imageFilter string) parsedImageFilter {
 	return parsed
 }
 
-// matchesWildcard checks if a string matches a pattern with * wildcard support.
-// Only * is supported (matches any sequence of characters).
-func matchesWildcard(pattern, str string) bool {
-	// Split pattern by *
-	parts := strings.Split(pattern, "*")
-
-	// If no wildcards, must be exact match
-	if len(parts) == 1 {
-		return pattern == str
-	}
-
-	// Check prefix (before first *)
-	if !strings.HasPrefix(str, parts[0]) {
-		return false
-	}
-	str = str[len(parts[0]):]
-
-	// Check suffix (after last *)
-	if !strings.HasSuffix(str, parts[len(parts)-1]) {
-		return false
-	}
-	str = str[:len(str)-len(parts[len(parts)-1])]
-
-	// Check middle parts appear in order
-	for i := 1; i < len(parts)-1; i++ {
-		idx := strings.Index(str, parts[i])
-		if idx == -1 {
-			return false
-		}
-		str = str[idx+len(parts[i]):]
-	}
-
-	return true
-}
-
 // MatchesFilters checks if an image matches any of the provided filters.
 // Filters are combined with OR logic - if any filter matches, the image is included.
 func MatchesFilters(
@@ -175,6 +136,19 @@ func MatchesFilters(
 		}
 	}
 	return false
+}
+
+// EffectiveFilters returns the normalized list of filters from the source spec.
+// spec.images entries are converted to simple filters and combined with spec.filters.
+func EffectiveFilters(spec aimv1alpha1.AIMClusterModelSourceSpec) []aimv1alpha1.ModelSourceFilter {
+	filters := make([]aimv1alpha1.ModelSourceFilter, 0, len(spec.Images)+len(spec.Filters))
+
+	for _, image := range spec.Images {
+		filters = append(filters, aimv1alpha1.ModelSourceFilter{Image: image})
+	}
+	filters = append(filters, spec.Filters...)
+
+	return filters
 }
 
 // matchesFilter checks if an image matches a single filter.
@@ -198,8 +172,8 @@ func matchesFilter(
 		return false
 	}
 
-	// 2. Wildcard pattern match on repository name (only * supported)
-	if !matchesWildcard(parsed.repository, img.Repository) {
+	// 2. Repository must match exactly (explicit lists only)
+	if parsed.repository != img.Repository {
 		return false
 	}
 
@@ -293,6 +267,7 @@ func normalizeConstraint(constraint string) string {
 }
 
 // FilterHasWildcard checks if a filter contains wildcard patterns.
+// Wildcards are currently rejected and should be replaced with explicit image names.
 func FilterHasWildcard(filter aimv1alpha1.ModelSourceFilter) bool {
 	return strings.Contains(filter.Image, "*")
 }
@@ -323,7 +298,7 @@ func isVersionConstraint(version string) bool {
 func ExtractStaticImages(spec aimv1alpha1.AIMClusterModelSourceSpec) []RegistryImage {
 	var images []RegistryImage
 
-	for _, filter := range spec.Filters {
+	for _, filter := range EffectiveFilters(spec) {
 		// Parse the filter to check if it's a static reference
 		parsed := parseImageFilter(filter.Image)
 

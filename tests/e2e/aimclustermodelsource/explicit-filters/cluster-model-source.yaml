@@ -1,0 +1,11 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModelSource
+metadata:
+  name: test-explicit-filters
+spec:
+  # DockerHub (default registry): same images as auto-sourcing, expressed as
+  # explicit per-entry filters instead of spec.images.
+  maxModels: 5
+  filters:
+    - image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.4
+    - image: amdenterpriseai/aim-meta-llama-llama-3-2-1b-instruct:0.8.4

@@ -22,7 +22,6 @@ Controller manager configuration
 | `manager.securityContext.allowPrivilegeEscalation` | Prevent privilege escalation | `false` |
 | `manager.securityContext.capabilities.drop` | Dropped Linux capabilities | `["ALL"]` |
 | `manager.securityContext.readOnlyRootFilesystem` | Read-only root filesystem | `true` |
-| `manager.resources.limits.cpu` | CPU limit | `500m` |
 | `manager.resources.limits.memory` | Memory limit | `4Gi` |
 | `manager.resources.requests.cpu` | CPU request | `100m` |
 | `manager.resources.requests.memory` | Memory request | `256Mi` |
@@ -78,17 +77,30 @@ Cluster-wide runtime configuration for AIM resources. Creates an AIMClusterRunti
 | `clusterRuntimeConfig.enable` | Enable creation of the AIMClusterRuntimeConfig resource | `false` |
 | `clusterRuntimeConfig.name` | Name of the AIMClusterRuntimeConfig resource | `default` |
 
-## Cluster Model Source
+## acceleratorDetector
 
-Cluster-wide model source for automatic model discovery from container registries. Creates an AIMClusterModelSource CR when enabled, installing latest AIM Container Images.
+AcceleratorDetector DaemonSets for hardware detection via NFD. Detects GPU and CPU accelerators on cluster nodes and writes NFD feature files so that AIM profiles can target specific hardware. Requires NFD (Node Feature Discovery) to be installed on the cluster.
 
 | Parameter | Description | Default |
 |-----------|-------------|----------|
-| `clusterModelSource.enable` | Enable creation of the AIMClusterModelSource resource | `false` |
-| `clusterModelSource.name` | Name of the AIMClusterModelSource resource | `amd-aim-model-source` |
-| `clusterModelSource.spec` | Spec fields for the AIMClusterModelSource |  |
-| `clusterModelSource.spec.registry` | Container registry to sync from (e.g., docker.io, ghcr.io, gcr.io) | `docker.io` |
-| `clusterModelSource.spec.filters` | Filters define which images to discover and sync. Each filter specifies an image pattern with optional version constraints. |  |
-| `clusterModelSource.spec.syncInterval` | How often to sync with the registry (minimum recommended: 15m) | `1h` |
-| `clusterModelSource.spec.maxModels` | Maximum number of AIMClusterModel resources to create (prevents runaway creation) | `500` |
+| `acceleratorDetector.enable` | Enable the AcceleratorDetector DaemonSets | `true` |
+| `acceleratorDetector.detectInterval` | Seconds between re-detection cycles | `300` |
+| `acceleratorDetector.gpu` | GPU node detection (uses aim-base image with ROCm/amdsmi). Detects AMD Instinct GPUs and writes NFD labels like feature.node.kubernetes.io/aim-accelerator.MI300X=8 Only scheduled on nodes with feature.node.kubernetes.io/amd-gpu=true (set by the AMD GPU Operator NFD rule). |  |
+| `acceleratorDetector.gpu.enable` | Enable GPU accelerator detection DaemonSet | `true` |
+| `acceleratorDetector.gpu.image.repository` | GPU detector image repository (aim-base) | `ghcr.io/silogen/aim-base` |
+| `acceleratorDetector.gpu.image.tag` | GPU detector image tag | `0.11-rc113` |
+| `acceleratorDetector.gpu.image.pullPolicy` | Image pull policy | `IfNotPresent` |
+| `acceleratorDetector.gpu.imagePullSecrets` | Secrets for pulling the GPU detector image from private registries | `[]` |
+| `acceleratorDetector.gpu.nodeSelector` | Node selector to target GPU nodes (requires AMD GPU Operator NFD rule) | `{feature.node.kubernetes.io/amd-gpu: "true"}` |
+| `acceleratorDetector.gpu.tolerations` | Tolerations for GPU nodes (defaults to tolerate all taints) | `[{operator: Exists}]` |
+| `acceleratorDetector.gpu.resources` | Resource limits and requests for GPU detector pods |  |
+| `acceleratorDetector.cpu` | CPU node detection (uses aim-epyc-base image, lighter, no ROCm). Detects AMD EPYC CPUs and writes NFD labels like feature.node.kubernetes.io/aim-accelerator.EPYC_9965=128 Only scheduled on nodes WITHOUT feature.node.kubernetes.io/amd-gpu label (i.e. CPU-only nodes). |  |
+| `acceleratorDetector.cpu.enable` | Enable CPU accelerator detection DaemonSet | `true` |
+| `acceleratorDetector.cpu.image.repository` | CPU detector image repository (aim-epyc-base) | `ghcr.io/silogen/aim-epyc-base` |
+| `acceleratorDetector.cpu.image.tag` | CPU detector image tag | `0.11-rc201` |
+| `acceleratorDetector.cpu.image.pullPolicy` | Image pull policy | `IfNotPresent` |
+| `acceleratorDetector.cpu.imagePullSecrets` | Secrets for pulling the CPU detector image from private registries | `[]` |
+| `acceleratorDetector.cpu.nodeSelector` | Node selector for CPU-only nodes (no additional selector needed; the DaemonSet uses nodeAffinity DoesNotExist on the amd-gpu label) | `{}` |
+| `acceleratorDetector.cpu.tolerations` | Tolerations for CPU detector pods (defaults to tolerate all taints) | `[{operator: Exists}]` |
+| `acceleratorDetector.cpu.resources` | Resource limits and requests for CPU detector pods |  |
 

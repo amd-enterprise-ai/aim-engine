@@ -8,9 +8,10 @@ Model sources eliminate the need to manually create model resources for every im
 
 Key features:
 
-- **Automatic discovery**: Continuously monitors registries for images matching your filters
-- **Flexible filtering**: Use wildcards, version constraints, and exclusions
-- **Multi-registry support**: Works with Docker Hub, GitHub Container Registry (ghcr.io), and more
+- **Automatic discovery**: Continuously monitors registries for configured repositories/tags
+- **Simple explicit lists**: Use `spec.images` for straightforward image declarations
+- **Advanced filtering**: Use `spec.filters` with per-filter version constraints and exclusions
+- **Multi-registry support**: Works with Docker Hub, GHCR, and other OCI registries via tags list API
 - **Periodic sync**: Configurable sync intervals to keep models up to date
 - **Private registries**: Supports authentication via imagePullSecrets
 
@@ -22,12 +23,13 @@ kind: AIMClusterModelSource
 metadata:
   name: amd-models
 spec:
-  filters:
-    - image: amdenterpriseai/aim-*
+  images:
+    - amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+    - amdenterpriseai/aim-deepseek-deepseek-r1:0.8.5
   syncInterval: 1h
 ```
 
-This source discovers all images matching `amdenterpriseai/aim-*` from Docker Hub and creates an AIMClusterModel for each.
+This source discovers the listed images from Docker Hub and creates an AIMClusterModel for each.
 
 ## Configuration
 
@@ -40,51 +42,51 @@ spec:
   registry: ghcr.io  # or docker.io, gcr.io, etc.
 ```
 
-### Filters
+### `images` (recommended)
 
-Filters define which images to discover. Each filter specifies a pattern with optional version constraints and exclusions. Multiple filters are combined with OR logic.
+`images` is the simplest way to define model sources. It accepts explicit image references.
 
-#### Repository Patterns
+```yaml
+spec:
+  images:
+    - amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+    - ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1
+```
 
-Match repositories using wildcards:
+Supported formats:
+
+- `org/repo:tag`
+- `org/repo` (uses `versions` constraints, if provided)
+- `registry/org/repo:tag`
+
+### `filters` (advanced)
+
+Filters define advanced matching behavior when you need per-filter options like custom version constraints or exclusions.
+
+Each filter is an explicit repository/image selector with optional `versions` and `exclude`.
+Multiple filters are combined with OR logic.
 
 ```yaml
 spec:
   filters:
-    - image: amdenterpriseai/aim-*
+    - image: amdenterpriseai/aim-qwen-qwen3-32b
+      versions:
+        - ">=0.8.5"
+    - image: ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1
 ```
 
-#### Repository with Specific Tag
+### Mutual Exclusivity: `images` vs `filters`
 
-Match a specific tag:
+You must set exactly one of `spec.images` or `spec.filters`.
 
 ```yaml
 spec:
-  filters:
-    - image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+  images:
+    - amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+  # filters: ...  # invalid when images is set
 ```
 
-#### Full URI
-
-Override the registry for specific filters:
-
-```yaml
-spec:
-  registry: docker.io
-  filters:
-    - image: docker.io/amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
-```
-
-#### Full URI with Wildcard
-
-Override registry and use wildcards:
-
-```yaml
-spec:
-  registry: ghcr.io
-  filters:
-    - image: amdenterpriseai/aim-*
-```
+The CRD validates this and rejects resources that set both (or neither).
 
 ### Version Constraints
 
@@ -97,9 +99,9 @@ Apply to all filters:
 ```yaml
 spec:
   registry: ghcr.io
-  filters:
-    - image: amdenterpriseai/aim-qwen-*
-    - image: amdenterpriseai/aim-deepseek-*
+  images:
+    - amdenterpriseai/aim-qwen-qwen3-32b
+    - amdenterpriseai/aim-deepseek-deepseek-r1
   versions:
     - ">=0.8.0"
     - "<1.0.0"
@@ -115,10 +117,10 @@ spec:
   versions:
     - ">=0.8.0"  # global default
   filters:
-    - image: amdenterpriseai/aim-qwen-*
+    - image: amdenterpriseai/aim-qwen-qwen3-32b
       versions:
         - ">=0.8.5"  # overrides global for this filter
-    - image: amdenterpriseai/aim-deepseek-*
+    - image: amdenterpriseai/aim-deepseek-deepseek-r1
       # uses global constraint
 ```
 
@@ -142,12 +144,12 @@ Non-semver tags (e.g., `latest`, `dev`) are silently skipped when version constr
 
 ### Exclusions
 
-Exclude specific repositories from matching:
+Exclude specific repositories from matching (advanced `filters` mode):
 
 ```yaml
 spec:
   filters:
-    - image: amdenterpriseai/aim-*
+    - image: amdenterpriseai/aim-qwen-qwen3-32b
       exclude:
         - amdenterpriseai/aim-base
         - amdenterpriseai/aim-experimental
@@ -188,8 +190,8 @@ spec:
   registry: ghcr.io
   imagePullSecrets:
     - name: ghcr-secret
-  filters:
-    - image: myorg/private-model-*
+  images:
+    - myorg/private-model:1.0.0
 ```
 
 Secrets must exist in the operator namespace (typically `aim-system`).
@@ -239,11 +241,12 @@ Control the maximum number of models created to prevent runaway resource creatio
 ```yaml
 spec:
   maxModels: 100  # CRD default: 100, range: 1-10000
-  filters:
-    - image: org/very-broad-pattern-*
+  images:
+    - org/model-a:1.0.0
+    - org/model-b:1.0.0
 ```
 
-When using the Helm chart's optional `clusterModelSource`, the chart default is `maxModels: 500` unless overridden.
+If you omit `maxModels`, the CRD default is `100` (valid range 1–10000).
 
 When the limit is reached:
 
@@ -289,9 +292,9 @@ amd-models   Ready    12       2025-01-15T10:30:00  2d
 
 - **Pending**: Waiting for initial sync
 - **Progressing**: Sync in progress
-- **Ready**: All filters succeeded
-- **Degraded**: Some filters failed, but others succeeded
-- **Failed**: All filters failed
+- **Ready**: All configured selectors succeeded
+- **Degraded**: Some selectors failed, but others succeeded
+- **Failed**: All selectors failed
 
 ### Detailed Status
 
@@ -310,7 +313,7 @@ Key status fields:
 
 ## Examples
 
-### Docker Hub with Wildcards
+### Docker Hub with Explicit Images
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -319,10 +322,9 @@ metadata:
   name: dockerhub-models
 spec:
   registry: docker.io
-  filters:
-    - image: amdenterpriseai/aim-*
-      exclude:
-        - amdenterpriseai/aim-base
+  images:
+    - amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+    - amdenterpriseai/aim-deepseek-deepseek-r1:0.8.5
   syncInterval: 2h
 ```
 
@@ -335,16 +337,16 @@ metadata:
   name: ghcr-stable-models
 spec:
   registry: ghcr.io
-  filters:
-    - image: amdenterpriseai/aim-qwen-*
-    - image: amdenterpriseai/aim-deepseek-*
+  images:
+    - amdenterpriseai/aim-qwen-qwen3-32b
+    - amdenterpriseai/aim-deepseek-deepseek-r1
   versions:
     - ">=0.8.0"
     - "<1.0.0"
   syncInterval: 1h
 ```
 
-### Multiple Registries
+### Multiple Registries (advanced filters)
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -354,8 +356,8 @@ metadata:
 spec:
   registry: docker.io  # default
   filters:
-    - image: amdenterpriseai/aim-*  # uses docker.io
-    - image: ghcr.io/amdenterpriseai/aim-*  # overrides to ghcr.io
+    - image: amdenterpriseai/aim-qwen-qwen3-32b  # uses docker.io
+    - image: ghcr.io/amdenterpriseai/aim-deepseek-deepseek-r1  # overrides to ghcr.io
   syncInterval: 1h
 ```
 
@@ -379,10 +381,11 @@ spec:
   registry: private.registry.io
   imagePullSecrets:
     - name: private-registry-creds
-  filters:
-    - image: myorg/model-*
-      versions:
-        - ">=1.0.0"
+  images:
+    - myorg/model-a
+    - myorg/model-b
+  versions:
+    - ">=1.0.0"
   syncInterval: 1h
 ```
 
@@ -428,6 +431,7 @@ This cascading deletion happens via Kubernetes garbage collection. To prevent ac
 If you need to stop tracking specific models:
 
 1. Update the source filters to exclude those models
+   (or remove entries from `images` if using explicit list mode)
 2. Delete the unwanted models manually:
 
 ```bash
@@ -448,33 +452,29 @@ kubectl get aimclustermodelsource <name> -o yaml
 
 Common causes:
 
-- No images match the filters
+- No images match configured `images` / `filters`
 - Registry is unreachable
 - Authentication failed (check imagePullSecrets)
 - Version constraints too restrictive
 
 ### Degraded Status
 
-Some filters failed while others succeeded. Check conditions:
+Some selectors failed while others succeeded. Check conditions:
 
 ```bash
 kubectl get aimclustermodelsource <name> -o jsonpath='{.status.conditions}'
 ```
 
-Look for error messages indicating which filters failed and why.
+Look for error messages indicating which selectors failed and why.
 
 ### Failed Status
 
-All filters failed. Common causes:
+All selectors failed. Common causes:
 
 - Invalid registry hostname
 - Missing or invalid imagePullSecrets
 - Network connectivity issues
-- Registry catalog API not supported (for wildcard filters)
-
-### Wildcard Filters Not Working
-
-Wildcard filters require registry catalog API support. GitHub Container Registry (`ghcr.io`) wildcard discovery is supported via GHCR's REST API.
+- Wildcard syntax (`*`) is unsupported; use explicit `images` or explicit `filters[].image`
 
 ## Related Documentation
 

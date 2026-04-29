@@ -49,6 +49,7 @@ type AIMClusterModelSource struct {
 }
 
 // AIMClusterModelSourceSpec defines the desired state of AIMClusterModelSource.
+// +kubebuilder:validation:XValidation:rule="(has(self.filters) && size(self.filters) > 0) != (has(self.images) && size(self.images) > 0)",message="set exactly one of spec.filters or spec.images"
 type AIMClusterModelSourceSpec struct {
 	// Registry to sync from (e.g., docker.io, ghcr.io, gcr.io).
 	// Defaults to docker.io if not specified.
@@ -63,11 +64,27 @@ type AIMClusterModelSourceSpec struct {
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 
 	// Filters define which images to discover and sync.
-	// Each filter specifies an image pattern with optional version constraints and exclusions.
+	// Each filter specifies an image selector with optional version constraints and exclusions.
 	// Multiple filters are combined with OR logic (any match includes the image).
+	// Use this field for advanced matching options. For simple explicit image lists, use Images instead.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=100
-	Filters []ModelSourceFilter `json:"filters"`
+	// +optional
+	Filters []ModelSourceFilter `json:"filters,omitempty"`
+
+	// Images defines a simple explicit list of images to discover and sync.
+	// Use this for straightforward static declarations without per-filter options.
+	//
+	// Supported image formats:
+	// - Repository with tag: "amdenterpriseai/aim-qwen-qwen3-32b:0.8.4"
+	// - Repository without tag: "amdenterpriseai/aim-qwen-qwen3-32b" (uses Versions if set)
+	// - Full URI with tag: "ghcr.io/silogen/aim-llama:1.0.0"
+	//
+	// Must not be set together with Filters.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=100
+	// +optional
+	Images []string `json:"images,omitempty"`
 
 	// SyncInterval defines how often to sync with the registry.
 	// Defaults to 1h. Minimum recommended interval is 15m to avoid rate limiting.
@@ -101,25 +118,25 @@ type AIMClusterModelSourceSpec struct {
 	MaxModels *int `json:"maxModels,omitempty"`
 }
 
-// ModelSourceFilter defines a pattern for discovering images.
+// ModelSourceFilter defines an explicit image selector for discovery.
 // Supports multiple formats:
-// - Repository patterns: "org/repo*" - matches repositories with wildcards
+// - Repository name: "org/repo" - exact repository match
 // - Repository with tag: "org/repo:1.0.0" - exact tag match
 // - Full URI: "ghcr.io/org/repo:1.0.0" - overrides registry and tag
-// - Full URI with wildcard: "ghcr.io/org/repo*" - overrides registry, matches pattern
+// - Full URI: "ghcr.io/org/repo" - exact repository on a specific registry
 type ModelSourceFilter struct {
-	// Image pattern with wildcard and full URI support.
+	// Image with explicit repository matching and full URI support.
 	//
 	// Supported formats:
-	// - Repository pattern: "amdenterpriseai/aim-*"
+	// - Repository name: "amdenterpriseai/aim-qwen-qwen3-32b"
 	// - Repository with tag: "silogen/aim-llama:1.0.0" (overrides versions field)
 	// - Full URI: "ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1" (overrides spec.registry and versions)
-	// - Full URI with wildcard: "ghcr.io/silogen/aim-*" (overrides spec.registry)
+	// - Full URI without tag: "ghcr.io/silogen/aim-google-gemma-3-1b-it" (overrides spec.registry)
 	//
 	// When a full URI is specified (including registry like ghcr.io), only images from that
 	// registry will match. When a tag is included, it takes precedence over the versions field.
 	//
-	// Wildcard: * matches any sequence of characters.
+	// Note: wildcard syntax (e.g., "*") is not supported; use explicit image list entries.
 	// +kubebuilder:validation:MaxLength=512
 	Image string `json:"image"`
 

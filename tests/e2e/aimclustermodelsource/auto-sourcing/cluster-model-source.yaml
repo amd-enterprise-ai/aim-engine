@@ -3,12 +3,9 @@ kind: AIMClusterModelSource
 metadata:
   name: test-auto-sourcing
 spec:
-  # Use DockerHub (default registry) for public images
+  # Use DockerHub (default registry) with explicit image entries.
   maxModels: 5
-  filters:
-    - image: amdenterpriseai/aim-*
-      exclude:
-        - amdenterpriseai/aim-base
-  versions:
-    - "0.8.4"
+  images:
+    - amdenterpriseai/aim-qwen-qwen3-32b:0.8.4
+    - amdenterpriseai/aim-meta-llama-llama-3-2-1b-instruct:0.8.4
 

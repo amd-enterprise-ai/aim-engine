@@ -50,8 +50,8 @@ repos:
 
   - id: golangci-lint
     name: golangci-lint
-    description: Fast linters runner for Go. Note that only modified files are linted, so linters like 'unused' that need to scan all files won't work as expected.
-    entry: mise exec -- golangci-lint run --new-from-rev=HEAD --timeout 10m
+    description: Run the full golangci-lint suite (matches CI behavior).
+    entry: mise exec -- golangci-lint run
     types: [ go ]
     language: system
     require_serial: true

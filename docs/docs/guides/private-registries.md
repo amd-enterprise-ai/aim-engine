@@ -36,8 +36,8 @@ spec:
   registry: ghcr.io
   imagePullSecrets:
     - name: ghcr-pull-secret
-  filters:
-    - image: "my-org/aim-*"
+  images:
+    - "my-org/private-model:1.2.3"
 ```
 
 ## HuggingFace Authentication

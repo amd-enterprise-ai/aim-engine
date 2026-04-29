@@ -39,30 +39,44 @@ metadata:
   name: amd-models
 spec:
   registry: docker.io
-  filters:
-    - image: "amdenterpriseai/aim-*"
-      versions:
-        - ">=0.8.4"
+  images:
+    - "amdenterpriseai/aim-qwen-qwen3-32b"
+    - "amdenterpriseai/aim-deepseek-deepseek-r1"
+  versions:
+    - ">=0.8.4"
   syncInterval: 1h
   maxModels: 500
 ```
 
-### Filtering Images
+### Selecting Images
 
-Use wildcards and version constraints to control which images are discovered:
+Use `images` for simple explicit lists, or `filters` for advanced per-filter controls.
+
+```yaml
+spec:
+  images:
+    - "amdenterpriseai/aim-qwen-qwen3-32b"
+    - "amdenterpriseai/aim-deepseek-deepseek-r1"
+  versions:
+    - ">=1.0.0"
+    - "<2.0.0"
+```
+
+Advanced example using `filters`:
 
 ```yaml
 spec:
   filters:
-    - image: "amdenterpriseai/aim-*"
-      exclude:
-        - "amdenterpriseai/aim-experimental"
+    - image: "amdenterpriseai/aim-qwen-qwen3-32b"
       versions:
         - ">=1.0.0"
         - "<2.0.0"
+      exclude:
+        - "amdenterpriseai/aim-experimental"
 ```
 
-`exclude` values are exact repository matches (wildcards are not supported in `exclude`).
+`exclude` values are exact repository matches.
+`spec.images` and `spec.filters` are mutually exclusive (set exactly one).
 
 ### Private Registries
 
@@ -73,8 +87,8 @@ spec:
   registry: ghcr.io
   imagePullSecrets:
     - name: ghcr-pull-secret
-  filters:
-    - image: "my-org/aim-*"
+  images:
+    - "my-org/private-model:1.2.3"
 ```
 
 The secret must exist in the operator namespace (typically `aim-system`).

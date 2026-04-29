@@ -258,7 +258,6 @@ var sectionNames = map[string]string{
 	"certManager":          "Cert-Manager",
 	"prometheus":           "Prometheus",
 	"clusterRuntimeConfig": "Cluster Runtime Configuration",
-	"clusterModelSource":   "Cluster Model Source",
 }
 
 func formatSectionName(key string) string {

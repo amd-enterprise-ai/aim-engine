@@ -25,6 +25,8 @@ SOFTWARE.
 package aimclustermodelsource
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -170,80 +172,6 @@ func TestMatchesSemver(t *testing.T) {
 	}
 }
 
-func TestMatchesWildcard(t *testing.T) {
-	tests := []struct {
-		name    string
-		pattern string
-		str     string
-		want    bool
-	}{
-		{
-			name:    "exact match no wildcard",
-			pattern: "silogen/aim-llama",
-			str:     "silogen/aim-llama",
-			want:    true,
-		},
-		{
-			name:    "exact no match",
-			pattern: "silogen/aim-llama",
-			str:     "silogen/aim-mistral",
-			want:    false,
-		},
-		{
-			name:    "suffix wildcard match",
-			pattern: "silogen/aim-*",
-			str:     "silogen/aim-llama",
-			want:    true,
-		},
-		{
-			name:    "suffix wildcard no match",
-			pattern: "silogen/aim-*",
-			str:     "otherorg/aim-llama",
-			want:    false,
-		},
-		{
-			name:    "prefix wildcard match",
-			pattern: "*/aim-llama",
-			str:     "silogen/aim-llama",
-			want:    true,
-		},
-		{
-			name:    "middle wildcard match",
-			pattern: "silogen/*-llama",
-			str:     "silogen/aim-llama",
-			want:    true,
-		},
-		{
-			name:    "multiple wildcards match",
-			pattern: "*/aim-*",
-			str:     "silogen/aim-llama",
-			want:    true,
-		},
-		{
-			name:    "wildcard matches empty string",
-			pattern: "silogen/aim-*",
-			str:     "silogen/aim-",
-			want:    true,
-		},
-		{
-			name:    "just wildcard matches anything",
-			pattern: "*",
-			str:     "anything",
-			want:    true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := matchesWildcard(tt.pattern, tt.str)
-			if got != tt.want {
-				t.Errorf("matchesWildcard(%q, %q) = %v, want %v",
-					tt.pattern, tt.str, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestParseImageFilter(t *testing.T) {
 	tests := []struct {
 		name string
@@ -362,7 +290,7 @@ func TestMatchesFilter(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "wildcard suffix match",
+			name: "repository mismatch is not a wildcard match",
 			img: RegistryImage{
 				Registry:   "docker.io",
 				Repository: "amdenterpriseai/aim-llama3",
@@ -371,17 +299,17 @@ func TestMatchesFilter(t *testing.T) {
 			filter: aimv1alpha1.ModelSourceFilter{
 				Image: "amdenterpriseai/aim-*",
 			},
-			want: true,
+			want: false,
 		},
 		{
-			name: "wildcard no match",
+			name: "exact mismatch",
 			img: RegistryImage{
 				Registry:   "docker.io",
 				Repository: "otherorg/model",
 				Tag:        "1.0.0",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image: "amdenterpriseai/aim-*",
+				Image: "amdenterpriseai/aim-llama3",
 			},
 			want: false,
 		},
@@ -393,7 +321,7 @@ func TestMatchesFilter(t *testing.T) {
 				Tag:        "1.0.0",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image:   "amdenterpriseai/aim-*",
+				Image:   "amdenterpriseai/aim-base",
 				Exclude: []string{"amdenterpriseai/aim-base"},
 			},
 			want: false,
@@ -406,7 +334,7 @@ func TestMatchesFilter(t *testing.T) {
 				Tag:        "1.0.0",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image:   "amdenterpriseai/aim-*",
+				Image:   "amdenterpriseai/aim-llama3",
 				Exclude: []string{"amdenterpriseai/aim-base"},
 			},
 			want: true,
@@ -419,7 +347,7 @@ func TestMatchesFilter(t *testing.T) {
 				Tag:        "1.5.0",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image:    "amdenterpriseai/aim-*",
+				Image:    "amdenterpriseai/aim-llama3",
 				Versions: []string{">=1.0.0", "<2.0.0"},
 			},
 			want: true,
@@ -432,7 +360,7 @@ func TestMatchesFilter(t *testing.T) {
 				Tag:        "2.5.0",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image:    "amdenterpriseai/aim-*",
+				Image:    "amdenterpriseai/aim-llama3",
 				Versions: []string{">=1.0.0", "<2.0.0"},
 			},
 			want: false,
@@ -445,7 +373,7 @@ func TestMatchesFilter(t *testing.T) {
 				Tag:        "1.5.0",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image: "amdenterpriseai/aim-*",
+				Image: "amdenterpriseai/aim-llama3",
 			},
 			globalVersions: []string{">=1.0.0"},
 			want:           true,
@@ -458,7 +386,7 @@ func TestMatchesFilter(t *testing.T) {
 				Tag:        "0.9.0",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image:    "amdenterpriseai/aim-*",
+				Image:    "amdenterpriseai/aim-llama3",
 				Versions: []string{">=0.8.0"},
 			},
 			globalVersions: []string{">=1.0.0"},
@@ -472,7 +400,7 @@ func TestMatchesFilter(t *testing.T) {
 				Tag:        "latest",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image:    "amdenterpriseai/aim-*",
+				Image:    "amdenterpriseai/aim-llama3",
 				Versions: []string{">=1.0.0"},
 			},
 			want: false, // Non-semver tags are skipped
@@ -545,26 +473,26 @@ func TestMatchesFilter_FullURISupport(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "registry override with wildcard repository",
+			name: "registry override exact repository",
 			img: RegistryImage{
 				Registry:   "ghcr.io",
 				Repository: "silogen/aim-llama3",
 				Tag:        "1.0.0",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image: "ghcr.io/silogen/aim-*",
+				Image: "ghcr.io/silogen/aim-llama3",
 			},
 			want: true,
 		},
 		{
-			name: "registry override with wildcard but wrong registry",
+			name: "registry override exact repository wrong registry",
 			img: RegistryImage{
 				Registry:   "docker.io",
 				Repository: "silogen/aim-llama3",
 				Tag:        "1.0.0",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image: "ghcr.io/silogen/aim-*",
+				Image: "ghcr.io/silogen/aim-llama3",
 			},
 			want: false,
 		},
@@ -596,8 +524,8 @@ func TestMatchesFilters(t *testing.T) {
 				Tag:        "1.0.0",
 			},
 			filters: []aimv1alpha1.ModelSourceFilter{
-				{Image: "amdenterpriseai/aim-*"},
-				{Image: "otherorg/*"},
+				{Image: "amdenterpriseai/aim-llama3"},
+				{Image: "otherorg/model"},
 			},
 			want: true,
 		},
@@ -609,8 +537,8 @@ func TestMatchesFilters(t *testing.T) {
 				Tag:        "1.0.0",
 			},
 			filters: []aimv1alpha1.ModelSourceFilter{
-				{Image: "amdenterpriseai/aim-*"},
-				{Image: "otherorg/*"},
+				{Image: "amdenterpriseai/aim-llama3"},
+				{Image: "otherorg/model"},
 			},
 			want: true,
 		},
@@ -622,8 +550,8 @@ func TestMatchesFilters(t *testing.T) {
 				Tag:        "1.0.0",
 			},
 			filters: []aimv1alpha1.ModelSourceFilter{
-				{Image: "amdenterpriseai/aim-*"},
-				{Image: "otherorg/*"},
+				{Image: "amdenterpriseai/aim-llama3"},
+				{Image: "otherorg/model"},
 			},
 			want: false,
 		},
@@ -636,11 +564,11 @@ func TestMatchesFilters(t *testing.T) {
 			},
 			filters: []aimv1alpha1.ModelSourceFilter{
 				{
-					Image:    "amdenterpriseai/aim-*",
+					Image:    "amdenterpriseai/aim-llama3",
 					Versions: []string{">=1.0.0"},
 				},
 				{
-					Image:    "amdenterpriseai/aim-*",
+					Image:    "amdenterpriseai/aim-llama3",
 					Versions: []string{">=0.8.0", "<1.0.0"},
 				},
 			},
@@ -879,5 +807,81 @@ func TestNormalizeConstraint(t *testing.T) {
 				t.Errorf("normalizeConstraint(%q) = %q, want %q", tt.constraint, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestEffectiveFilters(t *testing.T) {
+	spec := aimv1alpha1.AIMClusterModelSourceSpec{
+		Images: []string{
+			"amdenterpriseai/aim-qwen-qwen3-32b:0.8.4",
+			"amdenterpriseai/aim-meta-llama-llama-3-2-1b-instruct:0.8.4",
+		},
+		Filters: []aimv1alpha1.ModelSourceFilter{
+			{Image: "ghcr.io/silogen/aim-llama:1.0.0"},
+		},
+	}
+
+	got := EffectiveFilters(spec)
+	if len(got) != 3 {
+		t.Fatalf("EffectiveFilters() returned %d filters, want 3", len(got))
+	}
+	if got[0].Image != "amdenterpriseai/aim-qwen-qwen3-32b:0.8.4" {
+		t.Fatalf("first normalized filter image = %q", got[0].Image)
+	}
+	if got[1].Image != "amdenterpriseai/aim-meta-llama-llama-3-2-1b-instruct:0.8.4" {
+		t.Fatalf("second normalized filter image = %q", got[1].Image)
+	}
+	if got[2].Image != "ghcr.io/silogen/aim-llama:1.0.0" {
+		t.Fatalf("third normalized filter image = %q", got[2].Image)
+	}
+}
+
+func TestFetchFilter_RejectsWildcardFilters(t *testing.T) {
+	client := NewRegistryClient(nil, "")
+	spec := aimv1alpha1.AIMClusterModelSourceSpec{
+		Registry: "docker.io",
+	}
+	filter := aimv1alpha1.ModelSourceFilter{
+		Image: "amdenterpriseai/aim-*",
+	}
+
+	result := client.FetchFilter(context.Background(), spec, filter)
+
+	if result.Error == nil {
+		t.Fatalf("expected wildcard filter to be rejected")
+	}
+	if !strings.Contains(result.Error.Error(), "wildcard filters are not supported") {
+		t.Fatalf("unexpected error: %v", result.Error)
+	}
+}
+
+func TestExtractStaticImages_UsingImagesField(t *testing.T) {
+	spec := aimv1alpha1.AIMClusterModelSourceSpec{
+		Registry: "docker.io",
+		Images: []string{
+			"amdenterpriseai/aim-qwen-qwen3-32b:0.8.4",
+			"ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1",
+		},
+	}
+
+	got := ExtractStaticImages(spec)
+	if len(got) != 2 {
+		t.Fatalf("ExtractStaticImages() returned %d images, want 2", len(got))
+	}
+
+	if got[0] != (RegistryImage{
+		Registry:   "docker.io",
+		Repository: "amdenterpriseai/aim-qwen-qwen3-32b",
+		Tag:        "0.8.4",
+	}) {
+		t.Fatalf("first image = %+v", got[0])
+	}
+
+	if got[1] != (RegistryImage{
+		Registry:   "ghcr.io",
+		Repository: "silogen/aim-google-gemma-3-1b-it",
+		Tag:        "0.8.1-rc1",
+	}) {
+		t.Fatalf("second image = %+v", got[1])
 	}
 }

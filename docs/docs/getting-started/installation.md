@@ -50,18 +50,9 @@ helm install aim-engine oci://docker.io/amdenterpriseai/charts/aim-engine \
 
 See [Helm Chart Values](../reference/helm-values.md) for all configurable values (replicas, resources, metrics, CRD management, etc.).
 
-### 3. Enable Model Discovery (Recommended)
+### 3. Enable model discovery (optional)
 
-Automatically populate the model catalog from AMD's published AIM container images:
-
-```bash
-helm upgrade aim-engine oci://docker.io/amdenterpriseai/charts/aim-engine \
-  --version <version> \
-  --namespace aim-system \
-  --set clusterModelSource.enable=true
-```
-
-This creates an `AIMClusterModelSource` that discovers `amdenterpriseai/aim-*` images and registers them as `AIMClusterModel` resources. See [Model Catalog](../guides/model-catalog.md) for more details.
+The Helm chart does not create an `AIMClusterModelSource`. To populate cluster models from a registry, apply an `AIMClusterModelSource` manifest yourself (for example from the samples under `config/samples/` in this repository). See [Model Catalog](../guides/model-catalog.md) for details.
 
 ## Install from Source
 

@@ -81,7 +81,7 @@ func (r *ClusterModelSourceReconciler) FetchRemoteState(
 
 	// 2. Query registry for each filter
 	registryClient := NewRegistryClient(r.Clientset, r.OperatorNamespace)
-	for _, filter := range source.Spec.Filters {
+	for _, filter := range EffectiveFilters(source.Spec) {
 		result := registryClient.FetchFilter(ctx, source.Spec, filter)
 		fetch.filterResults = append(fetch.filterResults, result)
 	}

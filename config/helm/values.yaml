@@ -129,46 +129,6 @@ clusterRuntimeConfig:
   #     match:
   #       - "aim.eai.amd.com/*"
 
-# -- Cluster-wide model source for automatic model discovery from container registries.
-# Creates an AIMClusterModelSource CR when enabled, installing latest AIM Container Images.
-clusterModelSource:
-  # -- Enable creation of the AIMClusterModelSource resource
-  enable: false
-  # -- Name of the AIMClusterModelSource resource
-  name: amd-aim-model-source
-
-  # -- Spec fields for the AIMClusterModelSource
-  spec:
-    # -- Container registry to sync from (e.g., docker.io, ghcr.io, gcr.io)
-    registry: docker.io
-
-    # -- Secrets for authenticating to private registries (must exist in operator namespace)
-    # @default -- `[]`
-    # imagePullSecrets:
-    #   - name: ghcr-pull-secret
-
-    # -- Filters define which images to discover and sync.
-    # Each filter specifies an image pattern with optional version constraints.
-    filters:
-      - image: "amdenterpriseai/aim-*"
-        # exclude:
-        #   - "amdenterpriseai/aim-base"
-        #   - "amdenterpriseai/aim-experimental"
-        versions:
-          - ">=0.8.4"
-
-    # -- How often to sync with the registry (minimum recommended: 15m)
-    syncInterval: 1h
-
-    # -- Global semantic version constraints applied to all filters
-    # @default -- `[]`
-    # versions:
-    #   - ">=1.0.0"
-    #   - "<2.0.0"
-
-    # -- Maximum number of AIMClusterModel resources to create (prevents runaway creation)
-    maxModels: 500
-
 # -- AcceleratorDetector DaemonSets for hardware detection via NFD.
 # Detects GPU and CPU accelerators on cluster nodes and writes NFD feature
 # files so that AIM profiles can target specific hardware. Requires NFD
