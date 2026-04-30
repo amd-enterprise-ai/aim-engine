@@ -384,6 +384,7 @@ jobs:
             helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl && break
             echo "Attempt $i failed, retrying in 15s..."
             sleep 15
+          done
 
       # Match test-e2e.yml "Load images into Kind": pre-pull test model images so
       # template-cache and discovery jobs do not depend on GHCR latency during Chainsaw.
