@@ -147,7 +147,16 @@ jobs:
           kubectl delete namespace storage-smoke --wait=false
 
       - name: Install core dependencies
-        run: helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
+        run: |
+          # Use an isolated Helm registry/config cache to avoid stale GHCR
+          # credentials on self-hosted runners interfering with public OCI pulls.
+          export HELM_CACHE_HOME="${RUNNER_TEMP}/helm/cache"
+          export HELM_CONFIG_HOME="${RUNNER_TEMP}/helm/config"
+          export HELM_DATA_HOME="${RUNNER_TEMP}/helm/data"
+          export HELM_REGISTRY_CONFIG="${RUNNER_TEMP}/helm/registry/config.json"
+          mkdir -p "${HELM_CACHE_HOME}" "${HELM_CONFIG_HOME}" "${HELM_DATA_HOME}" "$(dirname "${HELM_REGISTRY_CONFIG}")"
+          echo '{}' > "${HELM_REGISTRY_CONFIG}"
+          helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

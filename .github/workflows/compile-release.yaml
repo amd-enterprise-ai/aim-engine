@@ -371,7 +371,19 @@ jobs:
           kubectl delete namespace storage-smoke --wait=false
 
       - name: Install core dependencies
-        run: helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
+        run: |
+          # Use an isolated Helm registry/config cache to avoid stale GHCR
+          # credentials on self-hosted runners interfering with public OCI pulls.
+          export HELM_CACHE_HOME="${RUNNER_TEMP}/helm/cache"
+          export HELM_CONFIG_HOME="${RUNNER_TEMP}/helm/config"
+          export HELM_DATA_HOME="${RUNNER_TEMP}/helm/data"
+          export HELM_REGISTRY_CONFIG="${RUNNER_TEMP}/helm/registry/config.json"
+          mkdir -p "${HELM_CACHE_HOME}" "${HELM_CONFIG_HOME}" "${HELM_DATA_HOME}" "$(dirname "${HELM_REGISTRY_CONFIG}")"
+          echo '{}' > "${HELM_REGISTRY_CONFIG}"
+          for i in 1 2 3; do
+            helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl && break
+            echo "Attempt $i failed, retrying in 15s..."
+            sleep 15
 
       # Match test-e2e.yml "Load images into Kind": pre-pull test model images so
       # template-cache and discovery jobs do not depend on GHCR latency during Chainsaw.
