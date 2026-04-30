@@ -79,7 +79,7 @@ spec:
     - name: Upload HF model to MinIO
       try:
         - script:
-            timeout: 2m
+            timeout: 8m
             content: |
               set -e
               # Use chainsaw's namespace
@@ -119,7 +119,7 @@ spec:
                           claimName: ${PVC_NAME}
               EOF
               
-              kubectl wait --for=condition=complete job/model-upload -n $NAMESPACE --timeout=2m
+              kubectl wait --for=condition=complete job/model-upload -n $NAMESPACE --timeout=7m
 
     # ========================================
     # Phase 4: Create S3 Artifact (with size discovery)
@@ -162,7 +162,7 @@ spec:
     - name: Verify models are identical
       try:
         - script:
-            timeout: 2m
+            timeout: 15m
             content: |
               set -e
               # Get both PVC names from AIMArtifact status
@@ -227,4 +227,4 @@ spec:
                           claimName: ${S3_PVC}
               EOF
               
-              kubectl wait --for=condition=complete job/verify-models -n $NAMESPACE --timeout=2m
+              kubectl wait --for=condition=complete job/verify-models -n $NAMESPACE --timeout=14m

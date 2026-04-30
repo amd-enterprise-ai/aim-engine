@@ -1,5 +1,6 @@
 # Chainsaw configuration for KIND in CI environment
-# Longer timeouts for slower CI runners
+# Longer timeouts for slower CI runners. delete/cleanup: namespace teardown with
+# AIM finalizers often exceeds 30s on GitHub-hosted Kind (context deadline exceeded).
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Configuration
 metadata:
@@ -8,8 +9,8 @@ spec:
   timeouts:
     apply: 10s
     assert: 60s
-    cleanup: 90s
-    delete: 30s
+    cleanup: 180s
+    delete: 120s
     error: 60s
     exec: 10s
   parallel: 2
