@@ -1,0 +1,210 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: servicetemplate-discovery-identity-rediscovery-with-promotion
+  labels:
+    requires: gpu
+spec:
+  description: |
+    Verify that the in-controller identity rediscovery mechanism re-runs
+    discovery on a Ready template that is missing aim_id/model_id and
+    successfully promotes the freshly-extracted identity into spec.
+
+    This simulates the operator-upgrade scenario:
+      1. An older operator (pre-31c754a) ran discovery. The image emitted
+         aim_id/model_id, but the old parser did not know about those fields
+         and silently dropped them - so neither status.profile.metadata nor
+         spec ever received aim_id/model_id, and identityCheckHash was never
+         recorded.
+      2. The operator is upgraded. On the next reconcile, the new code
+         observes (a) Ready template, (b) status.profile.metadata missing
+         aim_id/model_id, (c) empty identityCheckHash. It pops the template
+         out of Ready for one reconcile; the next reconcile takes the
+         normal (status != Ready) discovery flow, re-parses the existing
+         completed Job's logs (the inputs - and thus the Job name - have
+         not changed), writes the now-supported aim_id/model_id into
+         status.profile.metadata, and maybePromoteDiscoveredIdentity
+         late-binds them into spec.
+
+    We synthesize step 1 by patching, after the first natural Ready:
+      - spec.aimId / spec.modelId -> ""
+      - status.profile.metadata.aimId / modelId -> ""
+      - status.discovery.identityCheckHash -> ""
+      - status.discovery.lastIdentityCheckTime -> null
+    The status itself stays Ready, exactly as on a real legacy cluster.
+  timeouts:
+    assert: 600s
+  steps:
+    - name: Create model and template
+      try:
+        - apply: { file: model.yaml }
+        - apply: { file: template.yaml }
+
+    - name: Wait for template to become Ready (first discovery)
+      try:
+        - assert:
+            timeout: 600s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: id-rediscovery-promo-tpl
+              status:
+                status: Ready
+
+    - name: Confirm baseline - aim_id was promoted by first discovery
+      description: |
+        We assert aimId here only - modelId varies with the image's selected
+        profile (e.g. quantized variant). The point of this test is the
+        rediscovery flow, not the exact identity values.
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: id-rediscovery-promo-tpl
+              spec:
+                aimId: meta-llama/Llama-3.2-3B-Instruct
+
+    - name: Capture pre-rediscovery identity values
+      try:
+        - script:
+            content: |
+              set -eu
+              kubectl get aimservicetemplate -n "$NAMESPACE" \
+                id-rediscovery-promo-tpl \
+                -o jsonpath='{.spec.aimId} {.spec.modelId}'
+              echo
+
+    - name: Simulate stale pre-upgrade state (clear identity in spec, status.profile.metadata, and discovery state)
+      description: |
+        Patch spec.aimId/spec.modelId to "", status.profile.metadata.aimId/
+        modelId to "", and status.discovery.identityCheckHash/
+        lastIdentityCheckTime to empty/null. The Ready status itself is left
+        intact - this is exactly what a pre-31c754a operator leaves on the
+        cluster (the old parser dropped the fields silently in BOTH spec and
+        status.profile.metadata).
+      try:
+        - script:
+            content: |
+              set -eu
+
+              kubectl patch aimservicetemplate -n "$NAMESPACE" \
+                id-rediscovery-promo-tpl \
+                --type=json \
+                -p='[
+                  {"op":"replace","path":"/spec/aimId","value":""},
+                  {"op":"replace","path":"/spec/modelId","value":""}
+                ]'
+
+              kubectl patch aimservicetemplate -n "$NAMESPACE" \
+                id-rediscovery-promo-tpl \
+                --subresource=status --type=json \
+                -p='[
+                  {"op":"replace","path":"/status/profile/metadata/aimId","value":""},
+                  {"op":"replace","path":"/status/profile/metadata/modelId","value":""}
+                ]'
+
+              kubectl patch aimservicetemplate -n "$NAMESPACE" \
+                id-rediscovery-promo-tpl \
+                --subresource=status --type=merge \
+                -p='{"status":{"discovery":{"identityCheckHash":"","lastIdentityCheckTime":null}}}'
+
+              echo "Stale state injected. Current spec/status:"
+              kubectl get aimservicetemplate -n "$NAMESPACE" \
+                id-rediscovery-promo-tpl -o yaml | head -80
+
+    - name: Wait for controller to re-run discovery and re-promote aim_id
+      try:
+        - assert:
+            timeout: 600s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: id-rediscovery-promo-tpl
+              spec:
+                aimId: meta-llama/Llama-3.2-3B-Instruct
+              status:
+                status: Ready
+
+    - name: Verify identityCheckHash was recorded and modelId promoted after rediscovery
+      try:
+        - script:
+            content: |
+              set -eu
+              HASH=$(kubectl get aimservicetemplate -n "$NAMESPACE" \
+                id-rediscovery-promo-tpl \
+                -o jsonpath='{.status.discovery.identityCheckHash}')
+              if [ -z "$HASH" ]; then
+                echo "ERROR: status.discovery.identityCheckHash should be set after rediscovery"
+                kubectl get aimservicetemplate -n "$NAMESPACE" \
+                  id-rediscovery-promo-tpl -o yaml
+                exit 1
+              fi
+              echo "OK: identityCheckHash recorded: $HASH"
+
+              MODELID=$(kubectl get aimservicetemplate -n "$NAMESPACE" \
+                id-rediscovery-promo-tpl \
+                -o jsonpath='{.spec.modelId}')
+              if [ -z "$MODELID" ]; then
+                echo "ERROR: spec.modelId should be re-promoted after rediscovery"
+                exit 1
+              fi
+              echo "OK: spec.modelId re-promoted: $MODELID"
+
+    - name: Stability window - rediscovery should not loop
+      description: |
+        Capture the current generation, identityCheckHash, and discovery Job
+        count, sleep 20s, and assert nothing changed. Once aim_id is promoted
+        and identityCheckHash is recorded, the hash gate must short-circuit
+        any further rediscovery attempts.
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              set -eu
+
+              GEN_BEFORE=$(kubectl get aimservicetemplate -n "$NAMESPACE" \
+                id-rediscovery-promo-tpl \
+                -o jsonpath='{.metadata.generation}')
+              HASH_BEFORE=$(kubectl get aimservicetemplate -n "$NAMESPACE" \
+                id-rediscovery-promo-tpl \
+                -o jsonpath='{.status.discovery.identityCheckHash}')
+              JOBS_BEFORE=$(kubectl get jobs -n "$NAMESPACE" \
+                -l aim.eai.amd.com/template=id-rediscovery-promo-tpl \
+                --no-headers 2>/dev/null | wc -l)
+
+              echo "Before stability window: gen=$GEN_BEFORE hash=$HASH_BEFORE jobs=$JOBS_BEFORE"
+
+              sleep 20
+
+              GEN_AFTER=$(kubectl get aimservicetemplate -n "$NAMESPACE" \
+                id-rediscovery-promo-tpl \
+                -o jsonpath='{.metadata.generation}')
+              HASH_AFTER=$(kubectl get aimservicetemplate -n "$NAMESPACE" \
+                id-rediscovery-promo-tpl \
+                -o jsonpath='{.status.discovery.identityCheckHash}')
+              JOBS_AFTER=$(kubectl get jobs -n "$NAMESPACE" \
+                -l aim.eai.amd.com/template=id-rediscovery-promo-tpl \
+                --no-headers 2>/dev/null | wc -l)
+
+              echo "After stability window: gen=$GEN_AFTER hash=$HASH_AFTER jobs=$JOBS_AFTER"
+
+              if [ "$GEN_BEFORE" != "$GEN_AFTER" ]; then
+                echo "ERROR: generation changed during stability window ($GEN_BEFORE -> $GEN_AFTER)"
+                exit 1
+              fi
+              if [ "$HASH_BEFORE" != "$HASH_AFTER" ]; then
+                echo "ERROR: identityCheckHash changed during stability window"
+                exit 1
+              fi
+              if [ "$JOBS_BEFORE" != "$JOBS_AFTER" ]; then
+                echo "ERROR: discovery job count changed during stability window ($JOBS_BEFORE -> $JOBS_AFTER)"
+                kubectl get jobs -n "$NAMESPACE" \
+                  -l aim.eai.amd.com/template=id-rediscovery-promo-tpl
+                exit 1
+              fi
+              echo "OK: rediscovery converged and stayed stable"

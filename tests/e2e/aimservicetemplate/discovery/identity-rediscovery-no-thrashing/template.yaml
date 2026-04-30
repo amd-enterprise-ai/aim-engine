@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: test-tpl-id-rediscovery-no-thrash
+spec:
+  modelName: test-model-id-rediscovery-no-thrash
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X

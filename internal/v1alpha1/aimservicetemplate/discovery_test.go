@@ -28,6 +28,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -35,6 +36,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
 // ============================================================================
@@ -1071,6 +1073,47 @@ func TestBuildDiscoveryJob_DifferentForDifferentSpecs(t *testing.T) {
 	}
 }
 
+// TestBuildDiscoveryJob_DifferentForDifferentTemplateNames asserts that two
+// discovery Job specs that differ only in TemplateName produce distinct Job
+// names. This guards against the recommendedDeployments collision: an
+// auto-generated template and a recommendedDeployments-derived template can
+// end up with identical model / profileId / metric / precision / hardware
+// inputs - all of which feed BuildDiscoveryJob - so the only thing left to
+// distinguish their Jobs is the template name itself. Truncation of the
+// template name to fit the 63-char Kubernetes name limit means a long shared
+// prefix is not enough; the hash must include the full template name to
+// guarantee distinct Job names.
+func TestBuildDiscoveryJob_DifferentForDifferentTemplateNames(t *testing.T) {
+	common := DiscoveryJobSpec{
+		Namespace: "default",
+		ModelID:   "test-model",
+		Image:     "ghcr.io/test/image:latest",
+		TemplateSpec: aimv1alpha1.AIMServiceTemplateSpecCommon{
+			ModelName: "test-model",
+			AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+				Metric:    ptrTo(aimv1alpha1.AIMMetric("latency")),
+				Precision: ptrTo(aimv1alpha1.AIMPrecision("fp16")),
+			},
+			ProfileId: "vllm-mi300x-fp16-tp1-latency",
+		},
+	}
+
+	// Two real-world template names that share a 45-char prefix; both
+	// truncate to the same Job-name prefix, so distinct hashes are the only
+	// differentiator left.
+	spec1 := common
+	spec1.TemplateName = "amdenterpriseai-aim-meta-llama-llama-3-2-1b-1x-mi300x-lat-b119"
+	spec2 := common
+	spec2.TemplateName = "amdenterpriseai-aim-meta-llama-llama-3-2-1b-1x-ovr-latency-817c"
+
+	job1 := BuildDiscoveryJob(spec1)
+	job2 := BuildDiscoveryJob(spec2)
+
+	if job1.Name == job2.Name {
+		t.Fatalf("expected different job names for different template names; got %q == %q", job1.Name, job2.Name)
+	}
+}
+
 func TestBuildDiscoveryJob_DeterministicCustomProfileEnvVars(t *testing.T) {
 	engineArgsRaw, err := json.Marshal(map[string]any{
 		"dtype":                "fp16",
@@ -1176,4 +1219,216 @@ func TestComputeDiscoverySpecHash_DeterministicCustomProfileEnvVars(t *testing.T
 // Helper function for creating pointers
 func ptrTo[T any](v T) *T {
 	return &v
+}
+
+// ============================================================================
+// IDENTITY REDISCOVERY TESTS
+// ============================================================================
+
+func TestComputeIdentityCheckHash_Deterministic(t *testing.T) {
+	spec := aimv1alpha1.AIMServiceTemplateSpecCommon{
+		ModelName: "test-model",
+		ProfileId: "fp16-x1",
+	}
+	h1 := ComputeIdentityCheckHash(spec, "test-model", "ghcr.io/test/image:latest")
+	h2 := ComputeIdentityCheckHash(spec, "test-model", "ghcr.io/test/image:latest")
+	if h1 != h2 {
+		t.Fatalf("identity check hash not deterministic: %q != %q", h1, h2)
+	}
+	if h1 == "" {
+		t.Fatalf("identity check hash should not be empty")
+	}
+}
+
+func TestComputeIdentityCheckHash_DiffersOnImageChange(t *testing.T) {
+	spec := aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: "test-model"}
+	h1 := ComputeIdentityCheckHash(spec, "test-model", "ghcr.io/test/image:1.0")
+	h2 := ComputeIdentityCheckHash(spec, "test-model", "ghcr.io/test/image:2.0")
+	if h1 == h2 {
+		t.Fatalf("expected different hashes for different image tags")
+	}
+}
+
+func TestShouldRediscoverForIdentity(t *testing.T) {
+	const currentHash = "v1:deadbeefcafebabe"
+	now := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+
+	// Helper to construct a baseline Ready status (the only state in which
+	// ShouldRediscoverForIdentity is allowed to return true).
+	// profile lets a test inject a discovered profile (post-discovery state).
+	// d carries the DiscoveryState (hash / time gate).
+	readyStatus := func(profile *aimv1alpha1.AIMDiscoveredProfile, d *aimv1alpha1.DiscoveryState) aimv1alpha1.AIMServiceTemplateStatus {
+		return aimv1alpha1.AIMServiceTemplateStatus{
+			Status:    constants.AIMStatusReady,
+			Profile:   profile,
+			Discovery: d,
+		}
+	}
+
+	// Convenience builders for status.profile.metadata variants.
+	profileWithIdentity := &aimv1alpha1.AIMDiscoveredProfile{
+		Metadata: aimv1alpha1.AIMProfileMetadata{AimID: "a", ModelID: "b"},
+	}
+	profilePartialIdentity := &aimv1alpha1.AIMDiscoveredProfile{
+		Metadata: aimv1alpha1.AIMProfileMetadata{AimID: "a"},
+	}
+	profileEmptyIdentity := &aimv1alpha1.AIMDiscoveredProfile{}
+
+	cases := []struct {
+		name   string
+		spec   aimv1alpha1.AIMServiceTemplateSpecCommon
+		status aimv1alpha1.AIMServiceTemplateStatus
+		want   bool
+	}{
+		{
+			name:   "ready_template_missing_identity_no_prior_attempt_triggers",
+			spec:   aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: "m"},
+			status: readyStatus(nil, nil),
+			want:   true,
+		},
+		{
+			name:   "non_ready_template_no_op",
+			spec:   aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: "m"},
+			status: aimv1alpha1.AIMServiceTemplateStatus{Status: constants.AIMStatusProgressing},
+			want:   false,
+		},
+		{
+			name:   "empty_status_status_no_op",
+			spec:   aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: "m"},
+			status: aimv1alpha1.AIMServiceTemplateStatus{},
+			want:   false,
+		},
+		{
+			name:   "status_profile_has_full_identity_no_op",
+			spec:   aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: "m"},
+			status: readyStatus(profileWithIdentity, nil),
+			want:   false,
+		},
+		{
+			name:   "status_profile_partial_identity_triggers",
+			spec:   aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: "m"},
+			status: readyStatus(profilePartialIdentity, nil),
+			want:   true,
+		},
+		{
+			name:   "status_profile_with_empty_metadata_triggers",
+			spec:   aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: "m"},
+			status: readyStatus(profileEmptyIdentity, nil),
+			want:   true,
+		},
+		{
+			// Decoupling spec from the rediscovery decision: even when spec
+			// has been populated (e.g. by a user override), an empty
+			// status.profile.metadata still warrants a re-run so we capture
+			// what the image actually publishes. See package doc.
+			name:   "spec_has_identity_but_status_profile_empty_still_triggers",
+			spec:   aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: "m", AimId: "a", ModelId: "b"},
+			status: readyStatus(nil, nil),
+			want:   true,
+		},
+		{
+			name:   "custom_profile_no_op",
+			spec:   aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: "m", CustomProfile: &aimv1alpha1.AIMCustomProfile{}},
+			status: readyStatus(nil, nil),
+			want:   false,
+		},
+		{
+			name:   "inline_model_sources_no_op",
+			spec:   aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: "m", ModelSources: []aimv1alpha1.AIMModelSource{{}}},
+			status: readyStatus(nil, nil),
+			want:   false,
+		},
+		{
+			name:   "matching_hash_no_op",
+			spec:   aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: "m"},
+			status: readyStatus(nil, &aimv1alpha1.DiscoveryState{IdentityCheckHash: currentHash}),
+			want:   false,
+		},
+		{
+			name:   "stale_hash_triggers",
+			spec:   aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: "m"},
+			status: readyStatus(nil, &aimv1alpha1.DiscoveryState{IdentityCheckHash: "v0:olderhash"}),
+			want:   true,
+		},
+		{
+			name: "recent_attempt_blocked_by_time_gate",
+			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: "m"},
+			status: readyStatus(nil, &aimv1alpha1.DiscoveryState{
+				LastIdentityCheckTime: &metav1.Time{Time: now.Add(-1 * time.Minute)},
+			}),
+			want: false,
+		},
+		{
+			name: "old_attempt_passes_time_gate",
+			spec: aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: "m"},
+			status: readyStatus(nil, &aimv1alpha1.DiscoveryState{
+				LastIdentityCheckTime: &metav1.Time{Time: now.Add(-15 * time.Minute)},
+			}),
+			want: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ShouldRediscoverForIdentity(&tc.spec, &tc.status, currentHash, now)
+			if got != tc.want {
+				t.Fatalf("ShouldRediscoverForIdentity = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShouldRediscoverForIdentity_NilInputs(t *testing.T) {
+	if ShouldRediscoverForIdentity(nil, &aimv1alpha1.AIMServiceTemplateStatus{}, "h", time.Now()) {
+		t.Fatalf("nil spec should not trigger rediscovery")
+	}
+	if ShouldRediscoverForIdentity(&aimv1alpha1.AIMServiceTemplateSpecCommon{}, nil, "h", time.Now()) {
+		t.Fatalf("nil status should not trigger rediscovery")
+	}
+}
+
+func TestShouldCheckDiscoveryJob_IdentityRediscoveryOverride(t *testing.T) {
+	template := &aimv1alpha1.AIMServiceTemplate{
+		Status: aimv1alpha1.AIMServiceTemplateStatus{
+			Status: constants.AIMStatusReady,
+		},
+	}
+	if ShouldCheckDiscoveryJob(template, false) {
+		t.Fatalf("Ready template should not be checked when not forcing identity rediscovery")
+	}
+	if !ShouldCheckDiscoveryJob(template, true) {
+		t.Fatalf("Ready template should be checked when forcing identity rediscovery")
+	}
+
+	// NotAvailable should still short-circuit even when forcing.
+	template.Status.Status = constants.AIMStatusNotAvailable
+	if ShouldCheckDiscoveryJob(template, true) {
+		t.Fatalf("NotAvailable template should never be checked")
+	}
+
+	// Inline model sources should still short-circuit even when forcing.
+	template.Status.Status = constants.AIMStatusReady
+	template.Spec.ModelSources = []aimv1alpha1.AIMModelSource{{}}
+	if ShouldCheckDiscoveryJob(template, true) {
+		t.Fatalf("template with inline model sources should never be checked")
+	}
+}
+
+func TestShouldCheckClusterTemplateDiscoveryJob_IdentityRediscoveryOverride(t *testing.T) {
+	template := &aimv1alpha1.AIMClusterServiceTemplate{
+		Status: aimv1alpha1.AIMServiceTemplateStatus{
+			Status: constants.AIMStatusReady,
+		},
+	}
+	if ShouldCheckClusterTemplateDiscoveryJob(template, false) {
+		t.Fatalf("Ready cluster template should not be checked when not forcing identity rediscovery")
+	}
+	if !ShouldCheckClusterTemplateDiscoveryJob(template, true) {
+		t.Fatalf("Ready cluster template should be checked when forcing identity rediscovery")
+	}
+
+	template.Status.Status = constants.AIMStatusNotAvailable
+	if ShouldCheckClusterTemplateDiscoveryJob(template, true) {
+		t.Fatalf("NotAvailable cluster template should never be checked")
+	}
 }

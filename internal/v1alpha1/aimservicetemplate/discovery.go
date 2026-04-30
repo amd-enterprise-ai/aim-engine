@@ -96,8 +96,17 @@ type DiscoveryJobSpec struct {
 // BuildDiscoveryJob creates a Job that runs model discovery dry-run.
 func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 	// Create deterministic job name with hash of ALL parameters that affect the Job spec
-	// This ensures that any change to the spec results in a new Job instead of an update attempt
-	hashInput := spec.ModelID + spec.Image + spec.ServiceAccount
+	// This ensures that any change to the spec results in a new Job instead of an update attempt.
+	//
+	// The owning template name is part of the hash so that two templates that
+	// happen to share otherwise-identical discovery inputs (e.g. an
+	// auto-generated template and a recommendedDeployments-derived template
+	// with the same model/profileId/metric/precision/hardware) get distinct
+	// Job names. Without this, the truncated template name in the Job name
+	// can collide AND the hash can collide, causing the second template's
+	// apply to fail with `Job.spec.template: field is immutable` because the
+	// labels on the existing Job point at the first template.
+	hashInput := spec.TemplateName + spec.ModelID + spec.Image + spec.ServiceAccount
 
 	// Include env vars in hash (sorted for determinism)
 	for _, env := range spec.Env {
@@ -685,9 +694,14 @@ func ParseDiscoveryLogs(ctx context.Context, c client.Client, clientset kubernet
 // ShouldCheckDiscoveryJob returns true if we should check for discovery jobs.
 // We skip checking if the template is already ready or has inline model sources.
 // For inline model sources, size discovery happens via the Artifact check-size job.
-func ShouldCheckDiscoveryJob(template *aimv1alpha1.AIMServiceTemplate) bool {
-	// Don't check for discovery job if template is already ready
-	if template.Status.Status == constants.AIMStatusReady {
+//
+// needsIdentityRediscovery overrides the Ready short-circuit when the template
+// is Ready but missing aimId/modelId and the operator wants to re-run discovery
+// to backfill those fields. See ShouldRediscoverForIdentity.
+func ShouldCheckDiscoveryJob(template *aimv1alpha1.AIMServiceTemplate, needsIdentityRediscovery bool) bool {
+	// Don't check for discovery job if template is already ready, unless we
+	// are forcing an identity rediscovery pass.
+	if template.Status.Status == constants.AIMStatusReady && !needsIdentityRediscovery {
 		return false
 	}
 	// Don't check if inline model sources are provided - size discovery happens
@@ -704,8 +718,11 @@ func ShouldCheckDiscoveryJob(template *aimv1alpha1.AIMServiceTemplate) bool {
 
 // ShouldCheckClusterTemplateDiscoveryJob returns true if we should check for discovery jobs
 // for cluster-scoped templates.
-func ShouldCheckClusterTemplateDiscoveryJob(template *aimv1alpha1.AIMClusterServiceTemplate) bool {
-	if template.Status.Status == constants.AIMStatusReady {
+//
+// needsIdentityRediscovery overrides the Ready short-circuit. See
+// ShouldRediscoverForIdentity.
+func ShouldCheckClusterTemplateDiscoveryJob(template *aimv1alpha1.AIMClusterServiceTemplate, needsIdentityRediscovery bool) bool {
+	if template.Status.Status == constants.AIMStatusReady && !needsIdentityRediscovery {
 		return false
 	}
 	// Don't check if inline model sources are provided - size discovery happens
@@ -844,4 +861,111 @@ func ComputeDiscoverySpecHash(spec aimv1alpha1.AIMServiceTemplateSpecCommon, mod
 
 	hash := sha256.Sum256([]byte(hashInput))
 	return fmt.Sprintf("%x", hash[:8])
+}
+
+// identityCheckHashVersion is an operator-binary-controlled sentinel mixed
+// into ComputeIdentityCheckHash. Bumping this string invalidates every stored
+// DiscoveryState.IdentityCheckHash, which forces a one-shot identity
+// rediscovery pass across all eligible Ready templates the next time the
+// operator reconciles them. Bump this when the operator changes how it
+// extracts identity from discovery output (e.g. new fields, parser fix).
+const identityCheckHashVersion = "v1"
+
+// IdentityRediscoveryMinInterval is the hard floor between consecutive
+// identity rediscovery attempts on the same template, irrespective of hash
+// state. Acts as a safety net against bug-induced loops where
+// DiscoveryState.IdentityCheckHash fails to be recorded for some reason.
+const IdentityRediscoveryMinInterval = 10 * time.Minute
+
+// ComputeIdentityCheckHash hashes the inputs that determine what identity
+// (aimId/modelId) we would extract from a fresh discovery run, plus a version
+// sentinel chosen by the operator binary. The result is stored on
+// DiscoveryState.IdentityCheckHash after each identity rediscovery attempt;
+// when the current value differs from the stored value, the controller will
+// re-run discovery to backfill spec.aimId/spec.modelId on a Ready template.
+//
+// Rationale for a separate function from ComputeDiscoverySpecHash:
+//   - ComputeDiscoverySpecHash drives backoff-reset semantics and is only
+//     written on failure (see updateDiscoveryStateOnFailure).
+//   - ComputeIdentityCheckHash drives "have we attempted identity extraction
+//     against this spec yet" semantics and is written on success.
+//
+// Conflating them risks subtle bugs as either set of semantics evolves.
+func ComputeIdentityCheckHash(spec aimv1alpha1.AIMServiceTemplateSpecCommon, modelName, image string) string {
+	// Reuse the spec-derived inputs from ComputeDiscoverySpecHash so any
+	// change that would alter the discovery output also invalidates the
+	// identity check hash. The version sentinel is prepended so it is also
+	// part of the hashed bytes via the hash construction below.
+	inner := ComputeDiscoverySpecHash(spec, modelName, image)
+	hash := sha256.Sum256([]byte(identityCheckHashVersion + ":" + inner))
+	return identityCheckHashVersion + ":" + fmt.Sprintf("%x", hash[:8])
+}
+
+// ShouldRediscoverForIdentity returns true if the controller should pop a
+// Ready template out of the Ready short-circuit and re-run discovery to
+// backfill identity (aimId/modelId).
+//
+// The "do we already have identity?" signal is read from
+// status.profile.metadata, not spec. status.profile.metadata is the direct
+// output of a discovery run; spec.aimId/modelId is the result of the
+// controller subsequently promoting that output back into spec via
+// maybePromoteDiscoveredIdentity. Reading status decouples the rediscovery
+// decision from the spec-write side effect: a transient promote failure
+// (e.g. patch conflict) no longer triggers a wasteful re-discovery, and the
+// gate stays a function of pure discovery output.
+//
+// Eligibility (all required):
+//   - Template is currently Ready. This mechanism only exists to recover
+//     legacy / pre-upgrade Ready templates that completed discovery before
+//     identity-extraction support landed; fresh templates are handled by
+//     the normal discovery flow without help from this override.
+//   - Template is not using a custom profile (no discovery would run anyway).
+//   - Template has no inline model sources (no discovery would run anyway).
+//   - status.profile.metadata is missing aimId or modelId (nothing to do
+//     otherwise; if discovery already extracted identity, a stale spec is a
+//     promotion problem, not a discovery problem).
+//
+// Throttling (any one suffices to skip):
+//   - Hash gate: a previous attempt already ran with the current
+//     IdentityCheckHash. The image either does not publish identity or it has
+//     already been promoted; either way nothing new will happen.
+//   - Time gate: a previous attempt was initiated less than
+//     IdentityRediscoveryMinInterval ago. Belt-and-suspenders against bugs in
+//     the recording path.
+func ShouldRediscoverForIdentity(spec *aimv1alpha1.AIMServiceTemplateSpecCommon, status *aimv1alpha1.AIMServiceTemplateStatus, currentHash string, now time.Time) bool {
+	if spec == nil || status == nil {
+		return false
+	}
+	// Only Ready templates need the rediscovery override; templates still in
+	// their normal discovery cycle have ShouldCheckDiscoveryJob true already
+	// and will record IdentityCheckHash via the standard parsedDiscovery
+	// branch.
+	if status.Status != constants.AIMStatusReady {
+		return false
+	}
+	if spec.CustomProfile != nil {
+		return false
+	}
+	if len(spec.ModelSources) > 0 {
+		return false
+	}
+	// If discovery already extracted identity into status, there is nothing
+	// for a re-run to add. A stale spec.aimId/modelId in this state is a
+	// promotion concern, handled by maybePromoteDiscoveredIdentity on the
+	// normal reconcile path.
+	if status.Profile != nil &&
+		status.Profile.Metadata.AimID != "" &&
+		status.Profile.Metadata.ModelID != "" {
+		return false
+	}
+	if status.Discovery != nil {
+		if status.Discovery.IdentityCheckHash == currentHash && currentHash != "" {
+			return false
+		}
+		if status.Discovery.LastIdentityCheckTime != nil &&
+			now.Sub(status.Discovery.LastIdentityCheckTime.Time) < IdentityRediscoveryMinInterval {
+			return false
+		}
+	}
+	return true
 }

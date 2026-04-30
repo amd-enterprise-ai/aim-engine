@@ -2,6 +2,12 @@
 #
 # Force AIMServiceTemplate / AIMClusterServiceTemplate rediscovery.
 #
+# NOTE: Operators that include the in-controller identity rediscovery
+# mechanism (DiscoveryState.IdentityCheckHash / ShouldRediscoverForIdentity,
+# shipped in aim-engine v0.2.x and later) auto-recover from this scenario
+# without operator intervention. This script remains useful for forcing a
+# rediscovery sweep against older operator deployments.
+#
 # Why this exists:
 #   Templates created before finetune support (commit 31c754a) have
 #   status.status == Ready but empty spec.aimId / spec.modelId, which

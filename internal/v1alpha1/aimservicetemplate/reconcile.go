@@ -90,6 +90,14 @@ type ServiceTemplateFetchResult struct {
 	// GPU availability state
 	gpuResources map[string]utils.GPUResourceInfo
 	gpuFetchErr  error
+
+	// identityCheckHash is the hash of the inputs that determine identity
+	// extraction; populated once the model image is known.
+	identityCheckHash string
+	// needsIdentityRediscovery is true when a Ready template should be popped
+	// out of the Ready short-circuit to re-run discovery and backfill
+	// spec.aimId/modelId. See ShouldRediscoverForIdentity.
+	needsIdentityRediscovery bool
 }
 
 // FetchRemoteState fetches all required resources for namespace-scoped templates.
@@ -123,8 +131,25 @@ func (r *ServiceTemplateReconciler) FetchRemoteState(
 		result.gpuResources, result.gpuFetchErr = utils.GetClusterGPUResources(ctx, c)
 	}
 
+	// Compute identity-check hash and decide whether to force an identity
+	// rediscovery pass. We only do this when the model is fetched successfully
+	// (we need its image to compute the hash).
+	if result.model.OK() && result.model.Value != nil {
+		result.identityCheckHash = ComputeIdentityCheckHash(
+			template.Spec.AIMServiceTemplateSpecCommon,
+			template.Spec.ModelName,
+			result.model.Value.Spec.Image,
+		)
+		result.needsIdentityRediscovery = ShouldRediscoverForIdentity(
+			&template.Spec.AIMServiceTemplateSpecCommon,
+			&template.Status,
+			result.identityCheckHash,
+			time.Now(),
+		)
+	}
+
 	// Fetch discovery job if template is not yet ready and has no inline model sources
-	if ShouldCheckDiscoveryJob(template) {
+	if ShouldCheckDiscoveryJob(template, result.needsIdentityRediscovery) {
 		result.discoveryJob = FetchDiscoveryJob(ctx, c, template.Namespace, template.Name)
 
 		// Fetch discovery job pods for health inspection
@@ -174,14 +199,25 @@ func (result ServiceTemplateFetchResult) GetComponentHealth(ctx context.Context,
 		result.model.ToUpstreamComponentHealth("Model", GetModelHealth),
 	}
 
-	// Only check discovery job/pods while not yet ready
-	if ShouldCheckDiscoveryJob(result.template) {
-		// Discovery job health
-		health = append(health, result.discoveryJob.ToDownstreamComponentHealth("DiscoveryJob", GetDiscoveryJobHealth))
+	// Only check discovery job/pods while not yet ready (or while forcing
+	// identity rediscovery on a Ready template).
+	if ShouldCheckDiscoveryJob(result.template, result.needsIdentityRediscovery) {
+		if result.needsIdentityRediscovery {
+			// Override health: report DiscoveryJob as Progressing so the
+			// framework derives status=Progressing for this reconcile. The
+			// next reconcile then sees status!=Ready, runs the normal
+			// discovery flow (re-parsing the existing completed Job's logs,
+			// or creating a new Job if the inputs imply a different name),
+			// records IdentityCheckHash, and converges back to Ready.
+			health = append(health, identityRediscoveryDiscoveryJobHealth())
+		} else {
+			// Discovery job health
+			health = append(health, result.discoveryJob.ToDownstreamComponentHealth("DiscoveryJob", GetDiscoveryJobHealth))
 
-		// Discovery job pods health (for detailed error categorization from logs)
-		if result.discoveryJobPods.OK() && result.discoveryJobPods.Value != nil && len(result.discoveryJobPods.Value.Items) > 0 {
-			health = append(health, result.discoveryJobPods.ToComponentHealthWithContext(ctx, clientset, "DiscoveryPods", controllerutils.GetPodsHealth))
+			// Discovery job pods health (for detailed error categorization from logs)
+			if result.discoveryJobPods.OK() && result.discoveryJobPods.Value != nil && len(result.discoveryJobPods.Value.Items) > 0 {
+				health = append(health, result.discoveryJobPods.ToComponentHealthWithContext(ctx, clientset, "DiscoveryPods", controllerutils.GetPodsHealth))
+			}
 		}
 	}
 
@@ -192,6 +228,22 @@ func (result ServiceTemplateFetchResult) GetComponentHealth(ctx context.Context,
 	}
 
 	return health
+}
+
+// identityRediscoveryDiscoveryJobHealth returns a synthetic Progressing
+// DiscoveryJob component for the identity-rediscovery pass on a Ready
+// template. It pops the derived status out of Ready for one reconcile;
+// the subsequent reconcile takes the normal (status != Ready) path,
+// re-parses the existing Job's logs (or creates a new Job if the inputs
+// produce a different name), and records IdentityCheckHash.
+func identityRediscoveryDiscoveryJobHealth() controllerutils.ComponentHealth {
+	return controllerutils.ComponentHealth{
+		Component:      "DiscoveryJob",
+		State:          constants.AIMStatusProgressing,
+		Reason:         "ForceRediscovery",
+		Message:        "Forcing rediscovery to backfill aimId/modelId",
+		DependencyType: controllerutils.DependencyTypeDownstream,
+	}
 }
 
 // getGPUHealth returns the GPU availability health based on pre-fetched GPU resources.
@@ -222,6 +274,14 @@ type ClusterServiceTemplateFetchResult struct {
 	// GPU availability state
 	gpuResources map[string]utils.GPUResourceInfo
 	gpuFetchErr  error
+
+	// identityCheckHash is the hash of the inputs that determine identity
+	// extraction; populated once the model image is known.
+	identityCheckHash string
+	// needsIdentityRediscovery is true when a Ready template should be popped
+	// out of the Ready short-circuit to re-run discovery and backfill
+	// spec.aimId/modelId. See ShouldRediscoverForIdentity.
+	needsIdentityRediscovery bool
 }
 
 // FetchRemoteState fetches all required resources for cluster-scoped templates.
@@ -254,10 +314,27 @@ func (r *ClusterServiceTemplateReconciler) FetchRemoteState(
 		result.gpuResources, result.gpuFetchErr = utils.GetClusterGPUResources(ctx, c)
 	}
 
+	// Compute identity-check hash and decide whether to force an identity
+	// rediscovery pass. We only do this when the cluster model is fetched
+	// successfully (we need its image to compute the hash).
+	if result.clusterModel.OK() && result.clusterModel.Value != nil {
+		result.identityCheckHash = ComputeIdentityCheckHash(
+			template.Spec.AIMServiceTemplateSpecCommon,
+			template.Spec.ModelName,
+			result.clusterModel.Value.Spec.Image,
+		)
+		result.needsIdentityRediscovery = ShouldRediscoverForIdentity(
+			&template.Spec.AIMServiceTemplateSpecCommon,
+			&template.Status,
+			result.identityCheckHash,
+			time.Now(),
+		)
+	}
+
 	// Fetch discovery job if template is not yet ready and has no inline model sources
 	// Cluster templates run discovery jobs in the operator namespace
 	operatorNamespace := constants.GetOperatorNamespace()
-	if ShouldCheckClusterTemplateDiscoveryJob(template) {
+	if ShouldCheckClusterTemplateDiscoveryJob(template, result.needsIdentityRediscovery) {
 		result.discoveryJob = FetchDiscoveryJob(ctx, c, operatorNamespace, template.Name)
 
 		// Fetch discovery job pods for health inspection
@@ -300,14 +377,20 @@ func (result ClusterServiceTemplateFetchResult) GetComponentHealth(ctx context.C
 		result.clusterModel.ToUpstreamComponentHealth("ClusterModel", GetClusterModelHealth),
 	}
 
-	// Only check discovery job/pods while not yet ready
-	if ShouldCheckClusterTemplateDiscoveryJob(result.template) {
-		// Discovery job health
-		health = append(health, result.discoveryJob.ToDownstreamComponentHealth("DiscoveryJob", GetDiscoveryJobHealth))
+	// Only check discovery job/pods while not yet ready (or while forcing
+	// identity rediscovery on a Ready template).
+	if ShouldCheckClusterTemplateDiscoveryJob(result.template, result.needsIdentityRediscovery) {
+		if result.needsIdentityRediscovery {
+			// Override health: see identityRediscoveryDiscoveryJobHealth.
+			health = append(health, identityRediscoveryDiscoveryJobHealth())
+		} else {
+			// Discovery job health
+			health = append(health, result.discoveryJob.ToDownstreamComponentHealth("DiscoveryJob", GetDiscoveryJobHealth))
 
-		// Discovery job pods health (for detailed error categorization from logs)
-		if result.discoveryJobPods.OK() && result.discoveryJobPods.Value != nil && len(result.discoveryJobPods.Value.Items) > 0 {
-			health = append(health, result.discoveryJobPods.ToComponentHealthWithContext(ctx, clientset, "DiscoveryPods", controllerutils.GetPodsHealth))
+			// Discovery job pods health (for detailed error categorization from logs)
+			if result.discoveryJobPods.OK() && result.discoveryJobPods.Value != nil && len(result.discoveryJobPods.Value.Items) > 0 {
+				health = append(health, result.discoveryJobPods.ToComponentHealthWithContext(ctx, clientset, "DiscoveryPods", controllerutils.GetPodsHealth))
+			}
 		}
 	}
 
@@ -674,6 +757,7 @@ func (r *ServiceTemplateReconciler) DecorateStatus(
 	decorateTemplateStatusCommon(
 		status, cm, &obs.template.Spec.AIMServiceTemplateSpecCommon, obs.discoveryJob, obs.parsedDiscovery,
 		obs.template.Status.Discovery, specHash, obs.gpuResources,
+		obs.needsIdentityRediscovery, obs.identityCheckHash,
 	)
 
 	// Set resolved model reference and extract version from image tag
@@ -701,6 +785,7 @@ func (r *ClusterServiceTemplateReconciler) DecorateStatus(
 	decorateTemplateStatusCommon(
 		status, cm, &obs.template.Spec.AIMServiceTemplateSpecCommon, obs.discoveryJob, obs.parsedDiscovery,
 		obs.template.Status.Discovery, specHash, obs.gpuResources,
+		obs.needsIdentityRediscovery, obs.identityCheckHash,
 	)
 
 	// Set resolved model reference and extract version from image tag
@@ -748,6 +833,8 @@ func decorateTemplateStatusCommon(
 	currentDiscoveryState *aimv1alpha1.DiscoveryState,
 	specHash string,
 	gpuResources map[string]utils.GPUResourceInfo,
+	needsIdentityRediscovery bool,
+	identityCheckHash string,
 ) {
 	// Handle inline model sources - copy from spec to status
 	// This takes precedence over discovery results
@@ -762,6 +849,24 @@ func decorateTemplateStatusCommon(
 		status.ResolvedNodeAffinity = BuildNodeAffinityFromGPURequirements(*spec, gpuResources)
 		status.Discovery = nil // Clear stale discovery state
 		cm.MarkTrue(aimv1alpha1.AIMTemplateDiscoveryConditionType, "InlineModelSources", "Model sources provided in-line in spec")
+		return
+	}
+
+	// Identity rediscovery: stamp LastIdentityCheckTime now (the time gate is
+	// keyed off this) and flip Discovered=False so the next reconcile re-enters
+	// the discovery flow without being short-circuited by the "don't regress
+	// Discovered=True" guard below. The synthetic Progressing health from
+	// GetComponentHealth pops the derived status out of Ready in the same
+	// write; the next reconcile then takes the normal (non-Ready) path which
+	// re-parses the existing Job's logs and records IdentityCheckHash.
+	if needsIdentityRediscovery {
+		if status.Discovery == nil {
+			status.Discovery = &aimv1alpha1.DiscoveryState{}
+		}
+		now := metav1.NewTime(time.Now())
+		status.Discovery.LastIdentityCheckTime = &now
+		cm.MarkFalse(aimv1alpha1.AIMTemplateDiscoveryConditionType, "ForceRediscovery",
+			"Forcing rediscovery to backfill aimId/modelId")
 		return
 	}
 
@@ -813,6 +918,16 @@ func decorateTemplateStatusCommon(
 		status.HardwareSummary = formatHardwareSummary(status.ResolvedHardware)
 		// Compute node affinity from GPU requirements and cluster resources
 		status.ResolvedNodeAffinity = BuildNodeAffinityFromGPURequirements(*spec, gpuResources)
+		// Record the identity-check hash for THIS attempt, regardless of
+		// whether the image actually emitted aim_id/model_id. The hash is the
+		// throttle: if the same inputs produce the same "no identity" result
+		// next time, ShouldRediscoverForIdentity will short-circuit.
+		if identityCheckHash != "" {
+			if status.Discovery == nil {
+				status.Discovery = &aimv1alpha1.DiscoveryState{}
+			}
+			status.Discovery.IdentityCheckHash = identityCheckHash
+		}
 		cm.MarkTrue("Discovered", "DiscoveryComplete", "Discovery job completed successfully")
 	}
 

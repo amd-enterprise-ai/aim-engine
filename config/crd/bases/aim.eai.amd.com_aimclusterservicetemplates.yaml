@@ -809,6 +809,15 @@ spec:
                       This counter increments each time a new discovery job is created after a failure.
                     format: int32
                     type: integer
+                  identityCheckHash:
+                    description: |-
+                      IdentityCheckHash records the hash from the most recent identity
+                      rediscovery attempt for a Ready template. When the current hash matches
+                      this value, the controller will not invalidate a Ready template just to
+                      retry identity (aimId/modelId) extraction. Bumping the operator-internal
+                      hash version forces a one-shot revisit across all eligible templates
+                      without operator intervention.
+                    type: string
                   lastAttemptTime:
                     description: |-
                       LastAttemptTime is the timestamp of the most recent discovery job creation.
@@ -819,6 +828,14 @@ spec:
                     description: |-
                       LastFailureReason captures the reason for the most recent discovery failure.
                       Used to classify failures as terminal vs transient.
+                    type: string
+                  lastIdentityCheckTime:
+                    description: |-
+                      LastIdentityCheckTime is the timestamp of the most recent identity
+                      rediscovery attempt initiation. Acts as a hard floor against rediscovery
+                      thrashing in the presence of bugs that prevent IdentityCheckHash from
+                      being recorded.
+                    format: date-time
                     type: string
                   specHash:
                     description: |-

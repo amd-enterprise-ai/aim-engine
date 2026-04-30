@@ -1,0 +1,190 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: servicetemplate-discovery-identity-rediscovery-no-thrashing
+spec:
+  description: |
+    Verify that the in-controller identity rediscovery mechanism
+
+      (1) DOES fire once when a Ready template is missing the
+          identityCheckHash (e.g. legacy / pre-upgrade state), and
+      (2) DOES NOT loop forever when the underlying image does not publish
+          aim_id/model_id (e.g. aim-dummy:0.1.8).
+
+    Flow:
+
+      a. Apply model+template using aim-dummy:0.1.8.
+      b. Wait for Ready. The controller's normal first-pass discovery records
+         identityCheckHash; status.profile.metadata.aimId/modelId stay empty
+         because the image does not publish them.
+      c. Patch status.discovery.identityCheckHash to "" to simulate the
+         pre-upgrade state on a real cluster (Ready template, missing hash).
+      d. Assert the controller pops Discovered=False, takes one reconcile
+         through the non-Ready discovery path (re-parsing the existing Job's
+         logs), and converges back to Ready with a freshly recorded
+         identityCheckHash.
+      e. Stability window: no further churn (no new Jobs, no generation
+         bumps, no hash flips). The hash gate is what stops the loop -
+         absent that gate, this test would observe new Jobs every reconcile.
+
+    This test exercises both the rediscover-from-Ready path AND the no-churn
+    property without requiring a GPU cluster.
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Create namespace-scoped model and template
+      try:
+        - apply: { file: model.yaml }
+        - apply: { file: template.yaml }
+
+    - name: Wait for template to become Ready
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: test-tpl-id-rediscovery-no-thrash
+              status:
+                status: Ready
+
+    - name: Verify identityCheckHash was recorded on success
+      try:
+        - script:
+            content: |
+              set -eu
+              HASH=$(kubectl get aimservicetemplate -n "$NAMESPACE" \
+                test-tpl-id-rediscovery-no-thrash \
+                -o jsonpath='{.status.discovery.identityCheckHash}')
+              if [ -z "$HASH" ]; then
+                echo "ERROR: status.discovery.identityCheckHash should be set after first discovery"
+                kubectl get aimservicetemplate -n "$NAMESPACE" \
+                  test-tpl-id-rediscovery-no-thrash -o yaml
+                exit 1
+              fi
+              echo "OK: identityCheckHash recorded: $HASH"
+
+    - name: Verify spec.aimId stayed empty (image does not publish identity)
+      try:
+        - script:
+            content: |
+              set -eu
+              AIMID=$(kubectl get aimservicetemplate -n "$NAMESPACE" \
+                test-tpl-id-rediscovery-no-thrash \
+                -o jsonpath='{.spec.aimId}')
+              if [ -n "$AIMID" ]; then
+                echo "ERROR: aim-dummy:0.1.8 should not publish aim_id, got: $AIMID"
+                exit 1
+              fi
+              echo "OK: spec.aimId remains empty as expected"
+
+    - name: Force a rediscovery by clearing identityCheckHash
+      description: |
+        Simulates the pre-upgrade legacy state where status.profile.metadata
+        has no aimId/modelId AND status.discovery.identityCheckHash has never
+        been recorded. The controller should pop the template out of Ready,
+        re-enter the discovery flow on the next reconcile, and re-record the
+        hash once the parse completes.
+      try:
+        - script:
+            content: |
+              set -eu
+              kubectl patch aimservicetemplate -n "$NAMESPACE" \
+                test-tpl-id-rediscovery-no-thrash \
+                --subresource=status --type=merge \
+                -p '{"status":{"discovery":{"identityCheckHash":""}}}'
+              echo "Patched status.discovery.identityCheckHash to empty"
+
+    - name: Wait for template to converge back to Ready with re-recorded hash
+      description: |
+        After the patch, the controller flips Discovered=False and synthesises
+        a Progressing DiscoveryJob health for one reconcile (popping out of
+        Ready). The next reconcile takes the normal non-Ready discovery path,
+        re-parses the existing Job's logs, records identityCheckHash, and
+        converges back to Ready. We don't assert on Job UID/count here -
+        re-parsing the existing Job is the intended cheap path; a new Job is
+        only created when the inputs imply a different name.
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: test-tpl-id-rediscovery-no-thrash
+              status:
+                status: Ready
+        - script:
+            content: |
+              set -eu
+              HASH=$(kubectl get aimservicetemplate -n "$NAMESPACE" \
+                test-tpl-id-rediscovery-no-thrash \
+                -o jsonpath='{.status.discovery.identityCheckHash}')
+              if [ -z "$HASH" ]; then
+                echo "ERROR: identityCheckHash should have been re-recorded after rediscovery"
+                kubectl get aimservicetemplate -n "$NAMESPACE" \
+                  test-tpl-id-rediscovery-no-thrash -o yaml
+                exit 1
+              fi
+              echo "OK: identityCheckHash re-recorded: $HASH"
+
+    - name: Stability window - assert no thrashing over 30s
+      description: |
+        Capture the current generation, identityCheckHash, and discovery Job
+        count, sleep 30s, and assert nothing changed. Any churn (additional
+        Jobs, generation bumps, hash changes) would indicate the rediscovery
+        gate is misbehaving.
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              set -eu
+
+              GEN_BEFORE=$(kubectl get aimservicetemplate -n "$NAMESPACE" \
+                test-tpl-id-rediscovery-no-thrash \
+                -o jsonpath='{.metadata.generation}')
+              HASH_BEFORE=$(kubectl get aimservicetemplate -n "$NAMESPACE" \
+                test-tpl-id-rediscovery-no-thrash \
+                -o jsonpath='{.status.discovery.identityCheckHash}')
+              JOBS_BEFORE=$(kubectl get jobs -n "$NAMESPACE" \
+                -l aim.eai.amd.com/template=test-tpl-id-rediscovery-no-thrash \
+                --no-headers 2>/dev/null | wc -l)
+
+              echo "Before stability window:"
+              echo "  generation=$GEN_BEFORE"
+              echo "  identityCheckHash=$HASH_BEFORE"
+              echo "  discoveryJobs=$JOBS_BEFORE"
+
+              sleep 30
+
+              GEN_AFTER=$(kubectl get aimservicetemplate -n "$NAMESPACE" \
+                test-tpl-id-rediscovery-no-thrash \
+                -o jsonpath='{.metadata.generation}')
+              HASH_AFTER=$(kubectl get aimservicetemplate -n "$NAMESPACE" \
+                test-tpl-id-rediscovery-no-thrash \
+                -o jsonpath='{.status.discovery.identityCheckHash}')
+              JOBS_AFTER=$(kubectl get jobs -n "$NAMESPACE" \
+                -l aim.eai.amd.com/template=test-tpl-id-rediscovery-no-thrash \
+                --no-headers 2>/dev/null | wc -l)
+
+              echo "After stability window:"
+              echo "  generation=$GEN_AFTER"
+              echo "  identityCheckHash=$HASH_AFTER"
+              echo "  discoveryJobs=$JOBS_AFTER"
+
+              if [ "$GEN_BEFORE" != "$GEN_AFTER" ]; then
+                echo "ERROR: generation changed during stability window ($GEN_BEFORE -> $GEN_AFTER)"
+                exit 1
+              fi
+              if [ "$HASH_BEFORE" != "$HASH_AFTER" ]; then
+                echo "ERROR: identityCheckHash changed during stability window"
+                exit 1
+              fi
+              if [ "$JOBS_BEFORE" != "$JOBS_AFTER" ]; then
+                echo "ERROR: discovery job count changed during stability window ($JOBS_BEFORE -> $JOBS_AFTER)"
+                kubectl get jobs -n "$NAMESPACE" \
+                  -l aim.eai.amd.com/template=test-tpl-id-rediscovery-no-thrash
+                exit 1
+              fi
+              echo "OK: no thrashing observed"

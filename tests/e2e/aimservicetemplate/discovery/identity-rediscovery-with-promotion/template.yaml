@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: id-rediscovery-promo-tpl
+spec:
+  modelName: id-rediscovery-promo-model
+  hardware:
+    gpu:
+      requests: 1
+      model: MI300X

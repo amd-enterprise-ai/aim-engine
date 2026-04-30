@@ -268,6 +268,22 @@ type DiscoveryState struct {
 	// When the spec changes, the circuit breaker resets to allow fresh attempts.
 	// +optional
 	SpecHash string `json:"specHash,omitempty"`
+
+	// IdentityCheckHash records the hash from the most recent identity
+	// rediscovery attempt for a Ready template. When the current hash matches
+	// this value, the controller will not invalidate a Ready template just to
+	// retry identity (aimId/modelId) extraction. Bumping the operator-internal
+	// hash version forces a one-shot revisit across all eligible templates
+	// without operator intervention.
+	// +optional
+	IdentityCheckHash string `json:"identityCheckHash,omitempty"`
+
+	// LastIdentityCheckTime is the timestamp of the most recent identity
+	// rediscovery attempt initiation. Acts as a hard floor against rediscovery
+	// thrashing in the presence of bugs that prevent IdentityCheckHash from
+	// being recorded.
+	// +optional
+	LastIdentityCheckTime *metav1.Time `json:"lastIdentityCheckTime,omitempty"`
 }
 
 func (s *AIMServiceTemplateStatus) GetConditions() []metav1.Condition {
