@@ -100,6 +100,7 @@ var KnownAmdDevices = map[string]string{
 	"75a3": "MI355X",
 	"75b0": "MI350X", // MI350X VF
 	"75b3": "MI355X", // MI355X VF
+	"75a8": "MI350P",
 	// AMD Radeon Pro
 	"7460": "V710",
 	"7461": "V710", // Radeon Pro V710 MxGPU
@@ -128,6 +129,7 @@ var KnownGPUVRAM = map[string]string{
 	// AMD Instinct (AI/HPC accelerators)
 	"MI355X": "288G",
 	"MI350X": "288G",
+	"MI350P": "144G",
 	"MI325X": "256G",
 	"MI308X": "128G",
 	"MI300X": "192G",
