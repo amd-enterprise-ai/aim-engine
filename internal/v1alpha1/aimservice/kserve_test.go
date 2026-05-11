@@ -94,6 +94,36 @@ func TestGenerateInferenceServiceName_Deterministic(t *testing.T) {
 	}
 }
 
+// Long namespaces leave only a few chars for the visible serviceName prefix, so
+// the hash suffix has to carry the uniqueness. Two services in the same namespace
+// must still produce distinct names.
+func TestGenerateInferenceServiceName_NoCollisionInLongNamespace(t *testing.T) {
+	namespace := "qa-another-long-project-name-that-is-max" // 40 chars
+	result1, err1 := GenerateInferenceServiceName("wb-aim-c4b421e5", namespace)
+	result2, err2 := GenerateInferenceServiceName("wb-aim-7adf99e9", namespace)
+
+	if err1 != nil || err2 != nil {
+		t.Fatalf("unexpected errors: %v, %v", err1, err2)
+	}
+	if result1 == result2 {
+		t.Errorf("expected distinct InferenceService names for different AIMServices "+
+			"in the same namespace, both got %q", result1)
+	}
+}
+
+// Same serviceName in different namespaces must still yield different names.
+func TestGenerateInferenceServiceName_DistinctNamespaces(t *testing.T) {
+	result1, err1 := GenerateInferenceServiceName("svc", "ns-one")
+	result2, err2 := GenerateInferenceServiceName("svc", "ns-two")
+
+	if err1 != nil || err2 != nil {
+		t.Fatalf("unexpected errors: %v, %v", err1, err2)
+	}
+	if result1 == result2 {
+		t.Errorf("expected distinct InferenceService names across namespaces, both got %q", result1)
+	}
+}
+
 // ============================================================================
 // IS READY FOR INFERENCE SERVICE TESTS
 // ============================================================================

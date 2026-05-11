@@ -61,8 +61,10 @@ func GenerateInferenceServiceName(serviceName, namespace string) (string, error)
 		return "", fmt.Errorf("namespace %q is too long (%d chars); InferenceService hostname would exceed 63 characters", namespace, len(namespace))
 	}
 
+	// Hash on (namespace, serviceName) so the suffix stays unique per AIMService
+	// even when the visible name part is truncated to fit a long namespace.
 	return utils.GenerateDerivedName([]string{serviceName},
-		utils.WithHashSource(namespace),
+		utils.WithHashSource(namespace, serviceName),
 		utils.WithMaxLength(maxIsvcNameLength))
 }
 
