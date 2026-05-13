@@ -1,7 +1,8 @@
 # Image URL to use all building/pushing image targets
 TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "latest")
 GIT_ORG ?= $(shell git remote get-url origin 2>/dev/null | sed -n 's|.*github\.com[:/]\([^/]*\)/.*|\1|p')
-IMG ?= ghcr.io/$(GIT_ORG)/aim-engine:$(TAG)
+IMG_REPO ?= ghcr.io/$(GIT_ORG)/aim-engine
+IMG ?= $(IMG_REPO):$(TAG)
 ARTIFACT_DOWNLOADER_IMG ?= ghcr.io/silogen/aim-artifact-downloader:$(TAG)
 LDFLAGS ?= -X 'github.com/amd-enterprise-ai/aim-engine/api/v1alpha1.DefaultDownloadImage=$(ARTIFACT_DOWNLOADER_IMG)'
 
@@ -10,6 +11,17 @@ CHART_NAME ?= aim-engine-chart
 CRDS_CHART_NAME ?= aim-engine-crds-chart
 CHART_VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.1.0")
 APP_VERSION ?= $(TAG)
+# Image baked into the packaged chart's values.yaml. CI always overrides via
+# CHART_IMAGE_REPO. For local-dev runs of `make helm-package`, the silogen fork
+# builds and consumes from ghcr.io/silogen; everything else (notably the
+# amd-enterprise-ai official fork) defaults to the public docker.io mirror
+# that end users actually pull from.
+ifeq ($(GIT_ORG),silogen)
+CHART_IMAGE_REPO ?= ghcr.io/silogen/aim-engine
+else
+CHART_IMAGE_REPO ?= docker.io/amdenterpriseai/aim-engine
+endif
+CHART_IMAGE_TAG  ?= $(TAG)
 CHART_OCI_REGISTRY ?= ghcr.io
 CHART_OCI_OWNER ?= $(GIT_ORG)
 CHART_OCI_REPO ?= oci://$(CHART_OCI_REGISTRY)/$(CHART_OCI_OWNER)
@@ -401,7 +413,11 @@ crds: manifests ## Generate consolidated CRDs file for distribution.
 .PHONY: helm-package
 helm-package: helm ## Package the Helm chart into a .tgz file.
 	@command -v helm >/dev/null 2>&1 || { echo "Helm is not installed"; exit 1; }
+	@command -v yq >/dev/null 2>&1 || { echo "yq is not installed"; exit 1; }
 	@echo "Packaging Helm chart with version $(CHART_VERSION) and app version $(APP_VERSION)"
+	@echo "  - Setting manager.image.repository=$(CHART_IMAGE_REPO), manager.image.tag=$(CHART_IMAGE_TAG)"
+	@CHART_IMAGE_REPO='$(CHART_IMAGE_REPO)' CHART_IMAGE_TAG='$(CHART_IMAGE_TAG)' \
+		yq -i '.manager.image.repository = strenv(CHART_IMAGE_REPO) | .manager.image.tag = strenv(CHART_IMAGE_TAG)' dist/chart/values.yaml
 	@sed -i.bak 's/^name:.*/name: $(CHART_NAME)/' dist/chart/Chart.yaml
 	@sed -i.bak 's/^version:.*/version: $(CHART_VERSION)/' dist/chart/Chart.yaml
 	@sed -i.bak 's/^appVersion:.*/appVersion: "$(APP_VERSION)"/' dist/chart/Chart.yaml

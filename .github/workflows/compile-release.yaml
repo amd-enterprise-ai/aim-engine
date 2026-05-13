@@ -26,7 +26,12 @@ jobs:
       BUILD_IMAGES: ${{ vars.BUILD_IMAGES }}
       PUSH_IMAGE_REPO: ${{ vars.PUSH_IMAGE_REPO }}
       PULL_IMAGE_REPO: ${{ vars.PULL_IMAGE_REPO }}
-      CHART_IMAGE_REPO: ${{ vars.CHART_IMAGE_REPO || vars.PULL_IMAGE_REPO }}
+      # Image repo baked into the published Helm chart's values.yaml. Falls back
+      # to a fork-aware default so the workflow works without per-repo Actions
+      # vars: silogen builds reference ghcr.io/silogen (the public dev mirror);
+      # everything else (notably the amd-enterprise-ai official fork) references
+      # the docker.io/amdenterpriseai org that end users actually pull from.
+      CHART_IMAGE_REPO: ${{ vars.CHART_IMAGE_REPO || vars.PULL_IMAGE_REPO || (github.repository_owner == 'silogen' && 'ghcr.io/silogen/aim-engine' || 'docker.io/amdenterpriseai/aim-engine') }}
       CHART_OCI_REPO: ${{ vars.CHART_OCI_REPO || format('oci://ghcr.io/{0}', github.repository_owner) }}
       CHART_NAME: aim-engine-chart
       # Static OCI chart version for integration tests (operator image tag stays dynamic via values).
@@ -54,11 +59,20 @@ jobs:
             VERSION="${GITHUB_REF#refs/tags/}"
           fi
           CHART_VERSION="${VERSION#v}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          # Int-test charts have a static name (INT_TEST_CHART_VERSION) but need a
+          # unique image tag per build so kubelet's IfNotPresent re-pulls on upgrade
+          # even when the int-test git tag is reused. Real releases keep the bare
+          # VERSION as the image tag.
+          INT_TEST_IMAGE_TAG="${VERSION}-${SHORT_SHA}"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "CHART_VERSION=${CHART_VERSION}" >> "$GITHUB_ENV"
+          echo "SHORT_SHA=${SHORT_SHA}" >> "$GITHUB_ENV"
+          echo "INT_TEST_IMAGE_TAG=${INT_TEST_IMAGE_TAG}" >> "$GITHUB_ENV"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "chart_version=${CHART_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Using version: ${VERSION}, chart version: ${CHART_VERSION}"
+          echo "int_test_image_tag=${INT_TEST_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Using version: ${VERSION}, chart version: ${CHART_VERSION}, int-test image tag: ${INT_TEST_IMAGE_TAG}"
 
       - name: Log in to GHCR (Docker)
         if: env.BUILD_IMAGES == 'true'
@@ -69,6 +83,12 @@ jobs:
         run: |
           make docker-build IMG=${PUSH_IMAGE_REPO}:${VERSION} TAG=${VERSION}
           make docker-push IMG=${PUSH_IMAGE_REPO}:${VERSION}
+          # Also tag and push with a SHA-suffixed tag so the static-name
+          # int-test chart (packaged below) has an immutable image reference
+          # that changes on every build, even when the int-test git tag is
+          # reused.
+          docker tag ${PUSH_IMAGE_REPO}:${VERSION} ${PUSH_IMAGE_REPO}:${INT_TEST_IMAGE_TAG}
+          docker push ${PUSH_IMAGE_REPO}:${INT_TEST_IMAGE_TAG}
 
       - name: Verify image exists
         if: env.BUILD_IMAGES != 'true'
@@ -76,22 +96,16 @@ jobs:
           echo "Verifying image ${PULL_IMAGE_REPO}:${VERSION} is available..."
           docker pull ${PULL_IMAGE_REPO}:${VERSION}
 
-      - name: Update Helm values with image
-        env:
-          CHART_IMAGE_REPO: ${{ env.CHART_IMAGE_REPO }}
-          VERSION: ${{ env.VERSION }}
-        run: |
-          yq -i '
-            .manager.image.repository = strenv(CHART_IMAGE_REPO) |
-            .manager.image.tag = strenv(VERSION)
-          ' config/helm/values.yaml
-
       - name: Generate CRDs
         run: make crds
 
       - name: Package Helm chart
         run: |
-          make helm-package TAG=${VERSION} CHART_VERSION=${CHART_VERSION}
+          make helm-package \
+            CHART_VERSION=${CHART_VERSION} \
+            CHART_IMAGE_REPO=${CHART_IMAGE_REPO} \
+            CHART_IMAGE_TAG=${VERSION} \
+            TAG=${VERSION}
 
       - name: Validate chart with helm template
         run: helm template aim-engine ./dist/chart > /dev/null
@@ -124,8 +138,19 @@ jobs:
       - name: Push Helm and CRDs charts to OCI (${{ env.INT_TEST_CHART_VERSION }} for integration tests)
         if: env.BUILD_IMAGES == 'true'
         run: |
+          # The int-test chart has a static name so consumers can always
+          # `helm pull` the same version. To make `helm upgrade` actually roll
+          # the deployment, point the chart's image at the SHA-suffixed tag
+          # pushed alongside the bare VERSION tag in the build step.
+          # CHART_IMAGE_REPO is set to PUSH_IMAGE_REPO (where the image
+          # actually lives) rather than the public mirror used for real
+          # releases, since int-test images aren't mirrored.
           cp -a dist/chart "/tmp/aim-engine-dist-chart-${GITHUB_RUN_ID}"
-          make helm-package TAG=${VERSION} CHART_VERSION=${INT_TEST_CHART_VERSION}
+          make helm-package \
+            CHART_VERSION=${INT_TEST_CHART_VERSION} \
+            CHART_IMAGE_REPO=${PUSH_IMAGE_REPO} \
+            CHART_IMAGE_TAG=${INT_TEST_IMAGE_TAG} \
+            TAG=${VERSION}
           make helm-push-oci CHART_VERSION=${INT_TEST_CHART_VERSION} CHART_OCI_OWNER=${{ github.repository_owner }}
           make crds-package CHART_VERSION=${INT_TEST_CHART_VERSION} TAG=${VERSION}
           make crds-push-oci CHART_VERSION=${INT_TEST_CHART_VERSION} CHART_OCI_OWNER=${{ github.repository_owner }}
@@ -430,20 +455,14 @@ jobs:
       - name: Pre-warm S3 artifact cache
         run: make cache-warm
 
-      - name: Create GHCR image pull secret
-        if: env.BUILD_IMAGES == 'true'
-        run: |
-          kubectl create secret docker-registry ghcr-regcred \
-            --namespace aim-system \
-            --docker-server=ghcr.io \
-            --docker-username=$GITHUB_ACTOR \
-            --docker-password=${{ secrets.GITHUB_TOKEN }}
-
       - name: Install operator via Helm OCI
         run: |
+          # Override image.repository/tag to point at the just-pushed build,
+          # bypassing any public-mirror PULL_IMAGE_REPO baked into the chart.
+          # No imagePullSecrets needed: the GHCR images are public.
           HELM_SET_ARGS=""
           if [ "${BUILD_IMAGES}" = "true" ]; then
-            HELM_SET_ARGS="--set manager.image.repository=${PUSH_IMAGE_REPO} --set manager.image.tag=${VERSION} --set manager.imagePullSecrets[0].name=ghcr-regcred"
+            HELM_SET_ARGS="--set manager.image.repository=${PUSH_IMAGE_REPO} --set manager.image.tag=${VERSION}"
           fi
           helm install aim-engine ${CHART_OCI_REPO}/aim-engine-chart \
             --version ${CHART_VERSION} \
