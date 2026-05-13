@@ -618,9 +618,12 @@ func planProfileCache(
 
 // GenerateProfileCacheName creates a deterministic name for a profile cache.
 // Shared caches are scoped to the profile name and namespace for reuse.
+//
+// profileName is included in the hash so two long profile names that share
+// a prefix do not collide on the same cache resource after truncation.
 func GenerateProfileCacheName(profileName, namespace string) (string, error) {
 	return utils.GenerateDerivedName(
 		[]string{profileName, "cache"},
-		utils.WithHashSource(namespace),
+		utils.WithHashSource(namespace, profileName),
 	)
 }

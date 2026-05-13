@@ -51,20 +51,24 @@ const (
 // GenerateTemplateCacheName creates a deterministic name for a template cache.
 // For dedicated mode, serviceIdentity should be the service UID to avoid
 // conflicts when a service is deleted and recreated with the same name.
+//
+// templateName is included in the hash so two long template names that share
+// a prefix do not collide on the same cache resource after truncation.
 func GenerateTemplateCacheName(
 	templateName, namespace, serviceName, serviceIdentity string,
 	cachingMode aimv1alpha1.AIMCachingMode,
 ) (string, error) {
 	if cachingMode == aimv1alpha1.CachingModeDedicated {
-		// Keep the visible name readable while including service identity
-		// only in the hash input to guarantee per-instance uniqueness.
 		return utils.GenerateDerivedName(
 			[]string{templateName, serviceName},
-			utils.WithHashSource(serviceIdentity),
+			utils.WithHashSource(serviceIdentity, templateName),
 		)
 	}
 
-	return utils.GenerateDerivedName([]string{templateName}, utils.WithHashSource(namespace))
+	return utils.GenerateDerivedName(
+		[]string{templateName},
+		utils.WithHashSource(namespace, templateName),
+	)
 }
 
 // planTemplateCache creates a template cache for all caching modes.

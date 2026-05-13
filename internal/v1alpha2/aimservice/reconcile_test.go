@@ -66,6 +66,27 @@ func TestGenerateProfileCacheName_NamespaceScoped(t *testing.T) {
 	}
 }
 
+// Regression test: distinct long profile names that share a prefix must not
+// collide on the same cache resource after truncation.
+func TestGenerateProfileCacheName_NoTruncationCollision(t *testing.T) {
+	namespace := "qa-test-may12"
+	profileA := "amdenterpriseai-aim-meta-llama-llama-3-1x-mi300x-thr-fp16-e87a"
+	profileB := "amdenterpriseai-aim-meta-llama-llama-3-1x-mi300x-thr-fp16-db70"
+
+	nameA, err := GenerateProfileCacheName(profileA, namespace)
+	if err != nil {
+		t.Fatalf("generate A: %v", err)
+	}
+	nameB, err := GenerateProfileCacheName(profileB, namespace)
+	if err != nil {
+		t.Fatalf("generate B: %v", err)
+	}
+
+	if nameA == nameB {
+		t.Fatalf("profile cache names collided for distinct profiles: %q", nameA)
+	}
+}
+
 func TestComposeState_NoProfile(t *testing.T) {
 	r := &ProfileServiceReconciler{}
 	service := &aimv1alpha1.AIMService{

@@ -87,6 +87,52 @@ func TestGenerateTemplateCacheName(t *testing.T) {
 	}
 }
 
+// Regression test: distinct long template names that share a 54-char prefix
+// must not produce the same shared cache name after truncation. Without
+// templateName in the hash, both produced "amdent…thr-f-c4df61d8" and the
+// two AIMServices fought over a single AIMTemplateCache resource.
+func TestGenerateTemplateCacheName_SharedNoTruncationCollision(t *testing.T) {
+	namespace := "qa-test-may12"
+	templateA := "amdenterpriseai-aim-meta-llama-llama-3-1x-mi300x-thr-fp16-e87a"
+	templateB := "amdenterpriseai-aim-meta-llama-llama-3-1x-mi300x-thr-fp16-db70"
+
+	nameA, err := GenerateTemplateCacheName(templateA, namespace, "", "", aimv1alpha1.CachingModeShared)
+	if err != nil {
+		t.Fatalf("generate A: %v", err)
+	}
+	nameB, err := GenerateTemplateCacheName(templateB, namespace, "", "", aimv1alpha1.CachingModeShared)
+	if err != nil {
+		t.Fatalf("generate B: %v", err)
+	}
+
+	if nameA == nameB {
+		t.Fatalf("shared cache names collided for distinct templates: %q", nameA)
+	}
+}
+
+// Same regression for dedicated mode: two services owning distinct templates
+// with a shared 54-char prefix must get distinct cache names.
+func TestGenerateTemplateCacheName_DedicatedNoTruncationCollision(t *testing.T) {
+	namespace := "qa-test-may12"
+	serviceName := "svc"
+	serviceID := "uid-1"
+	templateA := "amdenterpriseai-aim-meta-llama-llama-3-1x-mi300x-thr-fp16-e87a"
+	templateB := "amdenterpriseai-aim-meta-llama-llama-3-1x-mi300x-thr-fp16-db70"
+
+	nameA, err := GenerateTemplateCacheName(templateA, namespace, serviceName, serviceID, aimv1alpha1.CachingModeDedicated)
+	if err != nil {
+		t.Fatalf("generate A: %v", err)
+	}
+	nameB, err := GenerateTemplateCacheName(templateB, namespace, serviceName, serviceID, aimv1alpha1.CachingModeDedicated)
+	if err != nil {
+		t.Fatalf("generate B: %v", err)
+	}
+
+	if nameA == nameB {
+		t.Fatalf("dedicated cache names collided for distinct templates: %q", nameA)
+	}
+}
+
 func TestGenerateTemplateCacheName_DedicatedDifferentUIDs(t *testing.T) {
 	templateName := "llama-template"
 	namespace := "my-namespace"
