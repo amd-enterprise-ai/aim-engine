@@ -7,6 +7,7 @@ This guide covers installing AIM Engine on a Kubernetes cluster.
 | Component | Minimum Version | Notes |
 |-----------|----------------|-------|
 | Kubernetes | 1.28+ | Cluster with AMD GPU nodes |
+| [AMD GPU Operator](https://github.com/ROCm/gpu-operator) | — | Advertises `amd.com/gpu` and the GPU node labels used for template selection |
 | KServe | v0.16.1 | See [KServe Configuration](../admin/kserve-configuration.md) |
 | Gateway API | v1.3.0 | Required for HTTP routing |
 | cert-manager | v1.16+ | Required by KServe and optional metrics TLS |
@@ -26,7 +27,7 @@ Optional components:
 CRDs are distributed separately from the Helm chart and must be installed first:
 
 ```bash
-helm install aim-engine-crds oci://docker.io/amdenterpriseai/charts/aim-engine-crds \
+helm install aim-engine-crds oci://docker.io/amdenterpriseai/aim-engine-crds-chart \
   --version <version> \
   --namespace aim-system \
   --create-namespace
@@ -42,7 +43,7 @@ kubectl wait --for=condition=Established crd --all --timeout=60s
 ### 2. Install the Operator
 
 ```bash
-helm install aim-engine oci://docker.io/amdenterpriseai/charts/aim-engine \
+helm install aim-engine oci://docker.io/amdenterpriseai/aim-engine-chart \
   --version <version> \
   --namespace aim-system \
   --create-namespace
@@ -86,7 +87,7 @@ helm install aim-engine ./dist/chart \
 Set up cluster-wide routing and storage defaults:
 
 ```bash
-helm upgrade aim-engine oci://docker.io/amdenterpriseai/charts/aim-engine \
+helm upgrade aim-engine oci://docker.io/amdenterpriseai/aim-engine-chart \
   --namespace aim-system \
   --set clusterRuntimeConfig.enable=true \
   --set clusterRuntimeConfig.spec.routing.enabled=true \

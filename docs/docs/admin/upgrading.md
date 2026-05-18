@@ -9,7 +9,7 @@ This guide covers upgrading AIM Engine to a new version.
 CRDs must be updated before the operator, as new operator versions may depend on new CRD fields:
 
 ```bash
-helm upgrade aim-engine-crds oci://docker.io/amdenterpriseai/charts/aim-engine-crds \
+helm upgrade aim-engine-crds oci://docker.io/amdenterpriseai/aim-engine-crds-chart \
   --version <new-version> \
   --namespace aim-system
 ```
@@ -17,7 +17,7 @@ helm upgrade aim-engine-crds oci://docker.io/amdenterpriseai/charts/aim-engine-c
 ### 2. Upgrade the Operator
 
 ```bash
-helm upgrade aim-engine oci://docker.io/amdenterpriseai/charts/aim-engine \
+helm upgrade aim-engine oci://docker.io/amdenterpriseai/aim-engine-chart \
   --version <new-version> \
   --namespace aim-system \
   --reuse-values
@@ -26,7 +26,7 @@ helm upgrade aim-engine oci://docker.io/amdenterpriseai/charts/aim-engine \
 Or with updated values:
 
 ```bash
-helm upgrade aim-engine oci://docker.io/amdenterpriseai/charts/aim-engine \
+helm upgrade aim-engine oci://docker.io/amdenterpriseai/aim-engine-chart \
   --version <new-version> \
   --namespace aim-system \
   --values my-values.yaml

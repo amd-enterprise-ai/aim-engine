@@ -56,7 +56,7 @@ manager:
 Or via command line:
 
 ```bash
-helm install aim-engine oci://docker.io/amdenterpriseai/charts/aim-engine \
+helm install aim-engine oci://docker.io/amdenterpriseai/aim-engine-chart \
   --version <version> \
   --set 'manager.args={--leader-elect,--zap-log-level=debug}'
 ```

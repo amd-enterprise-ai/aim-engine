@@ -18,7 +18,7 @@ The controller exposes metrics on port 8443 (HTTPS by default). Configure via He
 Enable automatic scraping with Prometheus:
 
 ```bash
-helm install aim-engine oci://docker.io/amdenterpriseai/charts/aim-engine \
+helm install aim-engine oci://docker.io/amdenterpriseai/aim-engine-chart \
   --version <version> \
   --namespace aim-system \
   --set prometheus.enable=true
@@ -64,7 +64,7 @@ Configure via operator flags:
 Enable debug logging in Helm:
 
 ```bash
-helm install aim-engine oci://docker.io/amdenterpriseai/charts/aim-engine \
+helm install aim-engine oci://docker.io/amdenterpriseai/aim-engine-chart \
   --version <version> \
   --namespace aim-system \
   --set 'manager.args={--leader-elect,--zap-log-level=debug}'

@@ -11,7 +11,7 @@ All configuration is done through Helm values. See [Helm Chart Values](../refere
 Adjust operator resource limits for larger clusters:
 
 ```bash
-helm install aim-engine oci://docker.io/amdenterpriseai/charts/aim-engine \
+helm install aim-engine oci://docker.io/amdenterpriseai/aim-engine-chart \
   --version <version> \
   --namespace aim-system \
   --create-namespace \
@@ -28,7 +28,7 @@ Leader election is enabled by default (`--leader-elect` in `manager.args`). This
 The metrics endpoint is enabled by default on port 8443 with TLS. To disable TLS for the metrics endpoint:
 
 ```bash
-helm install aim-engine oci://docker.io/amdenterpriseai/charts/aim-engine \
+helm install aim-engine oci://docker.io/amdenterpriseai/aim-engine-chart \
   --version <version> \
   --namespace aim-system \
   --set 'manager.args={--leader-elect,--metrics-secure=false}'
