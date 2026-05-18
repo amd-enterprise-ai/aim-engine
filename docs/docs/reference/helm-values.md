@@ -87,8 +87,8 @@ AcceleratorDetector DaemonSets for hardware detection via NFD. Detects GPU and C
 | `acceleratorDetector.detectInterval` | Seconds between re-detection cycles | `300` |
 | `acceleratorDetector.gpu` | GPU node detection (uses aim-base image with ROCm/amdsmi). Detects AMD Instinct GPUs and writes NFD labels like feature.node.kubernetes.io/aim-accelerator.MI300X=8 Only scheduled on nodes with feature.node.kubernetes.io/amd-gpu=true (set by the AMD GPU Operator NFD rule). |  |
 | `acceleratorDetector.gpu.enable` | Enable GPU accelerator detection DaemonSet | `true` |
-| `acceleratorDetector.gpu.image.repository` | GPU detector image repository (aim-base) | `ghcr.io/silogen/aim-base` |
-| `acceleratorDetector.gpu.image.tag` | GPU detector image tag | `0.11-rc113` |
+| `acceleratorDetector.gpu.image.repository` | GPU detector image repository (aim-base) | `docker.io/amdenterpriseai/aim-base` |
+| `acceleratorDetector.gpu.image.tag` | GPU detector image tag | `0.11` |
 | `acceleratorDetector.gpu.image.pullPolicy` | Image pull policy | `IfNotPresent` |
 | `acceleratorDetector.gpu.imagePullSecrets` | Secrets for pulling the GPU detector image from private registries | `[]` |
 | `acceleratorDetector.gpu.nodeSelector` | Node selector to target GPU nodes (requires AMD GPU Operator NFD rule) | `{feature.node.kubernetes.io/amd-gpu: "true"}` |
@@ -96,8 +96,8 @@ AcceleratorDetector DaemonSets for hardware detection via NFD. Detects GPU and C
 | `acceleratorDetector.gpu.resources` | Resource limits and requests for GPU detector pods |  |
 | `acceleratorDetector.cpu` | CPU node detection (uses aim-epyc-base image, lighter, no ROCm). Detects AMD EPYC CPUs and writes NFD labels like feature.node.kubernetes.io/aim-accelerator.EPYC_9965=128 Only scheduled on nodes WITHOUT feature.node.kubernetes.io/amd-gpu label (i.e. CPU-only nodes). |  |
 | `acceleratorDetector.cpu.enable` | Enable CPU accelerator detection DaemonSet | `true` |
-| `acceleratorDetector.cpu.image.repository` | CPU detector image repository (aim-epyc-base) | `ghcr.io/silogen/aim-epyc-base` |
-| `acceleratorDetector.cpu.image.tag` | CPU detector image tag | `0.11-rc201` |
+| `acceleratorDetector.cpu.image.repository` | CPU detector image repository (aim-epyc-base) | `docker.io/amdenterpriseai/aim-epyc-base` |
+| `acceleratorDetector.cpu.image.tag` | CPU detector image tag | `0.11` |
 | `acceleratorDetector.cpu.image.pullPolicy` | Image pull policy | `IfNotPresent` |
 | `acceleratorDetector.cpu.imagePullSecrets` | Secrets for pulling the CPU detector image from private registries | `[]` |
 | `acceleratorDetector.cpu.nodeSelector` | Node selector for CPU-only nodes (no additional selector needed; the DaemonSet uses nodeAffinity DoesNotExist on the amd-gpu label) | `{}` |

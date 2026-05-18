@@ -150,9 +150,9 @@ acceleratorDetector:
     enable: true
     image:
       # -- GPU detector image repository (aim-base)
-      repository: ghcr.io/silogen/aim-base
+      repository: docker.io/amdenterpriseai/aim-base
       # -- GPU detector image tag
-      tag: "0.11-rc113"
+      tag: "0.11"
       # -- Image pull policy
       pullPolicy: IfNotPresent
     # -- Secrets for pulling the GPU detector image from private registries
@@ -185,9 +185,9 @@ acceleratorDetector:
     enable: true
     image:
       # -- CPU detector image repository (aim-epyc-base)
-      repository: ghcr.io/silogen/aim-epyc-base
+      repository: docker.io/amdenterpriseai/aim-epyc-base
       # -- CPU detector image tag
-      tag: "0.11-rc201"
+      tag: "0.11"
       # -- Image pull policy
       pullPolicy: IfNotPresent
     # -- Secrets for pulling the CPU detector image from private registries
