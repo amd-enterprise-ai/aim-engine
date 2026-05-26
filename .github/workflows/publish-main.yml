@@ -25,7 +25,8 @@ jobs:
     env:
       PUSH_IMAGE_REPO: ${{ vars.PUSH_IMAGE_REPO }}
       PULL_IMAGE_REPO: ${{ vars.PULL_IMAGE_REPO }}
-      CHART_NAME: aim-engine
+      CHART_OCI_REPO: ${{ vars.CHART_OCI_REPO }}
+      CHART_NAME: aim-engine-chart
 
     steps:
       - name: Checkout main
@@ -53,11 +54,11 @@ jobs:
           echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "chart_version=${CHART_VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR (artifact-downloader)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
 
       - name: Build and push artifact-downloader image
         uses: docker/build-push-action@v6
@@ -70,6 +71,9 @@ jobs:
           cache-from: type=gha,scope=artifact-downloader
           cache-to: type=gha,scope=artifact-downloader,mode=max
 
+      - name: Log in to DockerHub (controller image)
+        run: echo "${{ secrets.DOCKER_HUB_PUSH }}" | docker login docker.io -u "${{ secrets.DOCKER_HUB_PUSH_USER }}" --password-stdin
+
       - name: Build and push Docker image
         run: |
           make docker-build IMG=${PUSH_IMAGE_REPO}:${IMAGE_TAG} TAG=${IMAGE_TAG}
@@ -80,12 +84,16 @@ jobs:
       - name: Resolve chart image repo
         run: echo "CHART_IMAGE_REPO=${PULL_IMAGE_REPO:-$PUSH_IMAGE_REPO}" >> "$GITHUB_ENV"
 
-      - name: Inject imagePullSecrets into Helm values
+      - name: Inject manager imagePullSecrets into Helm values
         run: |
+          # Only the manager image lives in the private silogenai DockerHub
+          # registry; acceleratorDetector images are publicly pullable and
+          # don't need a pull secret. Silogen-managed clusters carry a
+          # `dockerhub-regcred` secret in the install namespace, so baking
+          # it as the manager default makes the snapshot install with no
+          # extra setup.
           yq -i '
-            .manager.imagePullSecrets = [{"name": "regcred"}] |
-            .acceleratorDetector.gpu.imagePullSecrets = [{"name": "regcred"}] |
-            .acceleratorDetector.cpu.imagePullSecrets = [{"name": "regcred"}]
+            .manager.imagePullSecrets = [{"name": "dockerhub-regcred"}]
           ' config/helm/values.yaml
 
       - name: Generate CRDs
@@ -105,12 +113,12 @@ jobs:
       - name: Lint Helm chart
         run: helm lint ./dist/chart
 
-      - name: Log in to GHCR (Helm/OCI)
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u $GITHUB_ACTOR --password-stdin
+      - name: Log in to DockerHub (Helm/OCI)
+        run: echo "${{ secrets.DOCKER_HUB_PUSH }}" | helm registry login registry-1.docker.io -u "${{ secrets.DOCKER_HUB_PUSH_USER }}" --password-stdin
 
       - name: Push Helm chart to OCI registry
         run: |
-          make helm-push-oci CHART_VERSION=${CHART_VERSION} CHART_OCI_OWNER=${{ github.repository_owner }}
+          make helm-push-oci CHART_VERSION=${CHART_VERSION}
 
       - name: Create or update publish-main branch
         run: |
@@ -141,6 +149,26 @@ jobs:
 
           ## Installation
 
+          ### Prerequisite: image pull secret
+
+          The operator image is hosted on a private DockerHub registry. The
+          packaged chart's `values.yaml` defaults `manager.imagePullSecrets`
+          to a secret named `dockerhub-regcred`. Provision it in the install
+          namespace before installing the operator (skip if the secret is
+          already present):
+
+          ```bash
+          kubectl create namespace aim-system --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret docker-registry dockerhub-regcred \
+            --namespace aim-system \
+            --docker-server=https://index.docker.io/v1/ \
+            --docker-username=<your-dockerhub-username> \
+            --docker-password=<your-dockerhub-token>
+          ```
+
+          To use a different secret name, override at install time with
+          `--set manager.imagePullSecrets[0].name=...`.
+
           CRDs are distributed separately and must be installed first:
 
           ```bash
@@ -149,7 +177,7 @@ jobs:
           kubectl wait --for=condition=Established crd --all --timeout=60s
 
           # 2a. Install operator via Helm OCI (recommended)
-          helm install aim-engine oci://ghcr.io/${{ github.repository_owner }}/charts/aim-engine \
+          helm install aim-engine ${{ env.CHART_OCI_REPO }}/${{ env.CHART_NAME }} \
             --version ${{ steps.ver.outputs.chart_version }} \
             --namespace aim-system --create-namespace
 

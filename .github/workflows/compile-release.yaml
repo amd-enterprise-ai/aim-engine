@@ -26,13 +26,17 @@ jobs:
       BUILD_IMAGES: ${{ vars.BUILD_IMAGES }}
       PUSH_IMAGE_REPO: ${{ vars.PUSH_IMAGE_REPO }}
       PULL_IMAGE_REPO: ${{ vars.PULL_IMAGE_REPO }}
-      # Image repo baked into the published Helm chart's values.yaml. Falls back
-      # to a fork-aware default so the workflow works without per-repo Actions
-      # vars: silogen builds reference ghcr.io/silogen (the public dev mirror);
-      # everything else (notably the amd-enterprise-ai official fork) references
-      # the docker.io/amdenterpriseai org that end users actually pull from.
-      CHART_IMAGE_REPO: ${{ vars.CHART_IMAGE_REPO || vars.PULL_IMAGE_REPO || (github.repository_owner == 'silogen' && 'ghcr.io/silogen/aim-engine' || 'docker.io/amdenterpriseai/aim-engine') }}
-      CHART_OCI_REPO: ${{ vars.CHART_OCI_REPO || format('oci://ghcr.io/{0}', github.repository_owner) }}
+      # Image repo baked into the published Helm chart's values.yaml. Set to
+      # docker.io/amdenterpriseai/aim-engine on both forks: the chart pushed
+      # by silogen is destined for manual promotion to the public
+      # amdenterpriseai OCI repo, where end users pull it from. Silogen-team
+      # consumers installing the silogenai-OCI chart pre-promotion override
+      # via --set manager.image.repository=docker.io/silogenai/aim-engine
+      # plus a dockerhub-regcred pull secret (the release notes built below
+      # document this path). Both forks must set this var explicitly — no
+      # fallback.
+      CHART_IMAGE_REPO: ${{ vars.CHART_IMAGE_REPO }}
+      CHART_OCI_REPO: ${{ vars.CHART_OCI_REPO }}
       CHART_NAME: aim-engine-chart
       # Static OCI chart version for integration tests (operator image tag stays dynamic via values).
       INT_TEST_CHART_VERSION: "0.0.0-int-test"
@@ -74,9 +78,9 @@ jobs:
           echo "int_test_image_tag=${INT_TEST_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "Using version: ${VERSION}, chart version: ${CHART_VERSION}, int-test image tag: ${INT_TEST_IMAGE_TAG}"
 
-      - name: Log in to GHCR (Docker)
+      - name: Log in to DockerHub (Docker)
         if: env.BUILD_IMAGES == 'true'
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+        run: echo "${{ secrets.DOCKER_HUB_PUSH }}" | docker login docker.io -u "${{ secrets.DOCKER_HUB_PUSH_USER }}" --password-stdin
 
       - name: Build and push Docker image
         if: env.BUILD_IMAGES == 'true'
@@ -121,19 +125,19 @@ jobs:
         run: |
           make build-installer IMG=${PULL_IMAGE_REPO}:${VERSION}
 
-      - name: Log in to GHCR (Helm/OCI)
+      - name: Log in to DockerHub (Helm/OCI)
         if: env.BUILD_IMAGES == 'true'
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u $GITHUB_ACTOR --password-stdin
+        run: echo "${{ secrets.DOCKER_HUB_PUSH }}" | helm registry login registry-1.docker.io -u "${{ secrets.DOCKER_HUB_PUSH_USER }}" --password-stdin
 
       - name: Push Helm chart to OCI registry
         if: env.BUILD_IMAGES == 'true'
         run: |
-          make helm-push-oci CHART_VERSION=${CHART_VERSION} CHART_OCI_OWNER=${{ github.repository_owner }}
+          make helm-push-oci CHART_VERSION=${CHART_VERSION}
 
       - name: Push CRDs chart to OCI registry
         if: env.BUILD_IMAGES == 'true'
         run: |
-          make crds-push-oci CHART_VERSION=${CHART_VERSION} CHART_OCI_OWNER=${{ github.repository_owner }}
+          make crds-push-oci CHART_VERSION=${CHART_VERSION}
 
       - name: Push Helm and CRDs charts to OCI (${{ env.INT_TEST_CHART_VERSION }} for integration tests)
         if: env.BUILD_IMAGES == 'true'
@@ -151,9 +155,9 @@ jobs:
             CHART_IMAGE_REPO=${PUSH_IMAGE_REPO} \
             CHART_IMAGE_TAG=${INT_TEST_IMAGE_TAG} \
             TAG=${VERSION}
-          make helm-push-oci CHART_VERSION=${INT_TEST_CHART_VERSION} CHART_OCI_OWNER=${{ github.repository_owner }}
+          make helm-push-oci CHART_VERSION=${INT_TEST_CHART_VERSION}
           make crds-package CHART_VERSION=${INT_TEST_CHART_VERSION} TAG=${VERSION}
-          make crds-push-oci CHART_VERSION=${INT_TEST_CHART_VERSION} CHART_OCI_OWNER=${{ github.repository_owner }}
+          make crds-push-oci CHART_VERSION=${INT_TEST_CHART_VERSION}
           rm -rf dist/chart
           cp -a "/tmp/aim-engine-dist-chart-${GITHUB_RUN_ID}" dist/chart
           rm -rf "/tmp/aim-engine-dist-chart-${GITHUB_RUN_ID}"
@@ -182,6 +186,102 @@ jobs:
           name: crds-chart
           path: dist/aim-engine-crds-chart-${{ env.CHART_VERSION }}.tgz
 
+      - name: Build release notes
+        run: |
+          # Build the release body in two pieces: an optional silogen-only
+          # block explaining how to install the silogenai-OCI chart before
+          # manual image promotion has run, followed by the standard
+          # post-promotion install instructions. Quoted heredocs keep the
+          # markdown verbatim (backticks, `$`); env-driven values are
+          # substituted via sed afterwards.
+          {
+            if [ "${BUILD_IMAGES}" = "true" ]; then
+              cat <<'INNER_EOF'
+          ### Internal install (pre-promotion, silogenai)
+
+          The chart's baked-in `manager.image.repository` points at the public
+          `docker.io/amdenterpriseai/aim-engine`, which only carries this
+          version *after* the manual silogenai → amdenterpriseai image
+          promotion has run. To install **before** promotion, provision a
+          `dockerhub-regcred` pull secret in the install namespace (skip if
+          it is already present) and override the image to point at the
+          private silogenai org.
+
+          ```bash
+          kubectl create namespace aim-system --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret docker-registry dockerhub-regcred \
+            --namespace aim-system \
+            --docker-server=https://index.docker.io/v1/ \
+            --docker-username=<dockerhub-user> \
+            --docker-password=<dockerhub-token>
+
+          helm install aim-engine __CHART_OCI_REPO__/aim-engine-chart \
+            --version __CHART_VERSION__ \
+            --namespace aim-system --create-namespace \
+            --set manager.image.repository=docker.io/silogenai/aim-engine \
+            --set manager.imagePullSecrets[0].name=dockerhub-regcred
+          ```
+
+          The attached `install.yaml` already references
+          `docker.io/silogenai/aim-engine:__VERSION__` directly, so applying
+          it only requires `dockerhub-regcred` in the install namespace (no
+          override needed).
+
+          ---
+
+          INNER_EOF
+            fi
+
+            cat <<'INNER_EOF'
+          ## Installation
+
+          ### Quick Install (kubectl)
+          ```bash
+          kubectl apply -f https://github.com/__GITHUB_REPOSITORY__/releases/download/__VERSION__/install.yaml --server-side
+          ```
+
+          ### Helm Install
+
+          CRDs are distributed separately and must be installed first:
+
+          ```bash
+          # 1a. Install CRDs via Helm OCI (recommended)
+          helm install aim-engine-crds __CHART_OCI_REPO__/aim-engine-crds-chart \
+            --version __CHART_VERSION__
+          ```
+
+          ```bash
+          # 1b. Or install CRDs from manifest
+          kubectl apply -f https://github.com/__GITHUB_REPOSITORY__/releases/download/__VERSION__/crds.yaml
+          kubectl wait --for=condition=Established crd --all --timeout=60s
+          ```
+
+          ```bash
+          # 2a. Install operator via Helm OCI (recommended)
+          helm install aim-engine __CHART_OCI_REPO__/aim-engine-chart \
+            --version __CHART_VERSION__ \
+            --namespace aim-system --create-namespace
+          ```
+
+          ```bash
+          # 2b. Or install from GitHub Releases tarball
+          curl -L https://github.com/__GITHUB_REPOSITORY__/releases/download/__VERSION__/aim-engine-chart-__CHART_VERSION__.tgz -o aim-engine.tgz
+          helm install aim-engine aim-engine.tgz --namespace aim-system --create-namespace
+          ```
+
+          ### Docker Images
+          - Operator: `__CHART_IMAGE_REPO__:__VERSION__`
+          INNER_EOF
+          } > release-notes.template
+
+          sed \
+            -e "s|__VERSION__|${VERSION}|g" \
+            -e "s|__CHART_VERSION__|${CHART_VERSION}|g" \
+            -e "s|__CHART_OCI_REPO__|${CHART_OCI_REPO}|g" \
+            -e "s|__CHART_IMAGE_REPO__|${CHART_IMAGE_REPO}|g" \
+            -e "s|__GITHUB_REPOSITORY__|${{ github.repository }}|g" \
+            release-notes.template > release-notes.md
+
       - name: Create draft release and upload assets
         uses: softprops/action-gh-release@v2
         with:
@@ -193,45 +293,7 @@ jobs:
           token: '${{ secrets.GITHUB_TOKEN }}'
           draft: true
           prerelease: true
-          body: |
-            ## Installation
-
-            ### Quick Install (kubectl)
-            ```bash
-            kubectl apply -f https://github.com/${{ github.repository }}/releases/download/${{ env.VERSION }}/install.yaml --server-side
-            ```
-
-            ### Helm Install
-
-            CRDs are distributed separately and must be installed first:
-
-            ```bash
-            # 1a. Install CRDs via Helm OCI (recommended)
-            helm install aim-engine-crds ${{ env.CHART_OCI_REPO }}/aim-engine-crds-chart \
-              --version ${{ steps.ver.outputs.chart_version }}
-            ```
-
-            ```bash
-            # 1b. Or install CRDs from manifest
-            kubectl apply -f https://github.com/${{ github.repository }}/releases/download/${{ env.VERSION }}/crds.yaml
-            kubectl wait --for=condition=Established crd --all --timeout=60s
-            ```
-
-            ```bash
-            # 2a. Install operator via Helm OCI (recommended)
-            helm install aim-engine ${{ env.CHART_OCI_REPO }}/aim-engine-chart \
-              --version ${{ steps.ver.outputs.chart_version }} \
-              --namespace aim-system --create-namespace
-            ```
-
-            ```bash
-            # 2b. Or install from GitHub Releases tarball
-            curl -L https://github.com/${{ github.repository }}/releases/download/${{ env.VERSION }}/aim-engine-chart-${{ steps.ver.outputs.chart_version }}.tgz -o aim-engine.tgz
-            helm install aim-engine aim-engine.tgz --namespace aim-system --create-namespace
-            ```
-
-            ### Docker Images
-            - Operator: `${{ env.CHART_IMAGE_REPO }}:${{ env.VERSION }}`
+          body_path: release-notes.md
 
       - name: Create or update artifacts branch
         run: |
@@ -254,24 +316,60 @@ jobs:
           cp dist/crds.yaml crd/crds.yaml
           git add crd/crds.yaml
 
-          # Create a README for the branch
-          cat > README.md << 'EOF'
+          # Build the README in two pieces: an optional silogen-only block
+          # explaining the pre-promotion override, followed by the standard
+          # install instructions. Same template+sed pattern as release notes.
+          {
+            cat <<'INNER_EOF'
           # aim-engine
 
           This branch contains the auto-generated Helm chart and CRDs for aim-engine.
 
           ## Installation
 
+          INNER_EOF
+
+            if [ "${BUILD_IMAGES}" = "true" ]; then
+              cat <<'INNER_EOF'
+          ### Internal install (pre-promotion, silogenai)
+
+          The chart's `manager.image.repository` defaults to the public
+          `docker.io/amdenterpriseai/aim-engine`, populated only after the
+          manual silogenai → amdenterpriseai image promotion. To install
+          pre-promotion, provision a `dockerhub-regcred` pull secret in the
+          install namespace (skip if it is already present) and override
+          the image:
+
+          ```bash
+          kubectl create namespace aim-system --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret docker-registry dockerhub-regcred \
+            --namespace aim-system \
+            --docker-server=https://index.docker.io/v1/ \
+            --docker-username=<dockerhub-user> \
+            --docker-password=<dockerhub-token>
+
+          helm install aim-engine ./chart \
+            --namespace aim-system --create-namespace \
+            --set manager.image.repository=docker.io/silogenai/aim-engine \
+            --set manager.imagePullSecrets[0].name=dockerhub-regcred
+          ```
+
+          ---
+
+          INNER_EOF
+            fi
+
+            cat <<'INNER_EOF'
           CRDs are distributed separately and must be installed first:
 
           ```bash
           # 1. Install CRDs
-          kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/artifacts/crd/crds.yaml
+          kubectl apply -f https://raw.githubusercontent.com/__GITHUB_REPOSITORY__/artifacts/crd/crds.yaml
           kubectl wait --for=condition=Established crd --all --timeout=60s
 
           # 2a. Install operator via Helm OCI (recommended)
-          helm install aim-engine ${{ env.CHART_OCI_REPO }}/aim-engine-chart \
-            --version ${{ steps.ver.outputs.chart_version }} \
+          helm install aim-engine __CHART_OCI_REPO__/aim-engine-chart \
+            --version __CHART_VERSION__ \
             --namespace aim-system --create-namespace
 
           # 2b. Or install from this branch
@@ -281,7 +379,7 @@ jobs:
           Or clone this branch:
 
           ```bash
-          git clone -b artifacts https://github.com/${{ github.repository }}.git aim-engine
+          git clone -b artifacts https://github.com/__GITHUB_REPOSITORY__.git aim-engine
           cd aim-engine
 
           kubectl apply -f crd/crds.yaml
@@ -291,8 +389,18 @@ jobs:
 
           ## Source
 
-          Generated from tag: ${{ env.VERSION }} (commit: ${{ github.sha }})
-          EOF
+          Generated from tag: __VERSION__ (commit: __GITHUB_SHA__)
+          INNER_EOF
+          } > README.md.template
+
+          sed \
+            -e "s|__VERSION__|${VERSION}|g" \
+            -e "s|__CHART_VERSION__|${CHART_VERSION}|g" \
+            -e "s|__CHART_OCI_REPO__|${CHART_OCI_REPO}|g" \
+            -e "s|__GITHUB_REPOSITORY__|${{ github.repository }}|g" \
+            -e "s|__GITHUB_SHA__|${{ github.sha }}|g" \
+            README.md.template > README.md
+          rm -f README.md.template
           git add README.md
 
           # Commit
@@ -315,7 +423,7 @@ jobs:
       PULL_IMAGE_REPO: ${{ vars.PULL_IMAGE_REPO }}
       PUSH_IMAGE_REPO: ${{ vars.PUSH_IMAGE_REPO }}
       BUILD_IMAGES: ${{ vars.BUILD_IMAGES }}
-      CHART_OCI_REPO: ${{ vars.CHART_OCI_REPO || format('oci://ghcr.io/{0}', github.repository_owner) }}
+      CHART_OCI_REPO: ${{ vars.CHART_OCI_REPO }}
       KIND_CLUSTER: aim-release-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Free up disk space
@@ -397,8 +505,10 @@ jobs:
 
       - name: Install core dependencies
         run: |
-          # Use an isolated Helm registry/config cache to avoid stale GHCR
-          # credentials on self-hosted runners interfering with public OCI pulls.
+          # Use an isolated Helm registry/config cache to avoid stale registry
+          # credentials on self-hosted runners interfering with public OCI pulls
+          # made by helmfile here. The DockerHub login for the silogenai chart
+          # pull happens later, against the runner-default helm config.
           export HELM_CACHE_HOME="${RUNNER_TEMP}/helm/cache"
           export HELM_CONFIG_HOME="${RUNNER_TEMP}/helm/config"
           export HELM_DATA_HOME="${RUNNER_TEMP}/helm/data"
@@ -423,12 +533,28 @@ jobs:
       - name: Create aim-system namespace
         run: kubectl create namespace aim-system --dry-run=client -o yaml | kubectl apply -f -
 
+      - name: Create DockerHub dockerhub-regcred in aim-system
+        if: env.BUILD_IMAGES == 'true'
+        run: |
+          # The operator image lives in the private silogenai DockerHub org.
+          # Provision a dockerconfigjson secret so kubelet can actually pull
+          # what compile-release just pushed — exercising the full release
+          # artifact end-to-end rather than side-loading via kind. Named
+          # `dockerhub-regcred` to match the standard secret pre-provisioned
+          # on silogen-managed clusters.
+          kubectl create secret docker-registry dockerhub-regcred \
+            --namespace aim-system \
+            --docker-server=https://index.docker.io/v1/ \
+            --docker-username="${{ secrets.DOCKER_HUB_PULL_USER }}" \
+            --docker-password="${{ secrets.DOCKER_HUB_PULL }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
       - name: Initialize SeaweedFS bucket
         run: make seaweedfs-init-bucket
 
-      - name: Log in to GHCR (Helm/OCI)
+      - name: Log in to DockerHub (Helm/OCI)
         if: env.BUILD_IMAGES == 'true'
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u $GITHUB_ACTOR --password-stdin
+        run: echo "${{ secrets.DOCKER_HUB_PULL }}" | helm registry login registry-1.docker.io -u "${{ secrets.DOCKER_HUB_PULL_USER }}" --password-stdin
 
       - name: Install CRDs via Helm OCI
         run: |
@@ -459,10 +585,12 @@ jobs:
         run: |
           # Override image.repository/tag to point at the just-pushed build,
           # bypassing any public-mirror PULL_IMAGE_REPO baked into the chart.
-          # No imagePullSecrets needed: the GHCR images are public.
+          # silogenai/* images are private, so wire the dockerhub-regcred
+          # secret provisioned above through manager.imagePullSecrets — this
+          # proves the image really did land on DockerHub and is consumable.
           HELM_SET_ARGS=""
           if [ "${BUILD_IMAGES}" = "true" ]; then
-            HELM_SET_ARGS="--set manager.image.repository=${PUSH_IMAGE_REPO} --set manager.image.tag=${VERSION}"
+            HELM_SET_ARGS="--set manager.image.repository=${PUSH_IMAGE_REPO} --set manager.image.tag=${VERSION} --set manager.imagePullSecrets[0].name=dockerhub-regcred"
           fi
           helm install aim-engine ${CHART_OCI_REPO}/aim-engine-chart \
             --version ${CHART_VERSION} \

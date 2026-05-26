@@ -46,14 +46,28 @@ make docker-push IMG=docker.io/amdenterpriseai/aim-engine:v0.8.5
 
 ## Distribution
 
-The `publish-main` branch contains pre-built release artifacts:
+Tagged releases are produced by the `compile-release` workflow on every `v*`
+tag. The workflow:
 
-- `crds.yaml` — Consolidated CRDs
-- `chart/` — Helm chart ready for `helm install`
+- attaches `install.yaml`, `crds.yaml`, the Helm chart tarball, and the CRDs
+  chart tarball to a draft GitHub Release
+- pushes the `aim-engine-chart` and `aim-engine-crds-chart` charts to an OCI
+  registry
+- force-pushes the rendered chart and CRDs to the `artifacts` branch as a
+  browseable mirror
 
-### OCI Registry
+Between releases, the `publish-main` workflow snapshots `main` on every commit
+(when `vars.ACTIVATE_PUBLISH_MAIN_WORKFLOW == 'true'`). It pushes a chart
+versioned `0.0.0-publish-main.<sha>` to the same OCI registry under the
+`aim-engine-chart` name and force-pushes the rendered chart and CRDs to the
+`publish-main` branch. This is for previewing `main` against consumer
+integrations between releases — it is not a release channel.
 
-Push Helm charts to an OCI registry:
+The `publish-main` chart references a private DockerHub image and bakes
+`manager.imagePullSecrets = [{name: dockerhub-regcred}]` into `values.yaml`.
+Consumers must provision the secret themselves (the branch README has the details).
+
+### Pushing charts locally
 
 ```bash
 make helm-push-oci

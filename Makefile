@@ -1,7 +1,6 @@
 # Image URL to use all building/pushing image targets
 TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "latest")
-GIT_ORG ?= $(shell git remote get-url origin 2>/dev/null | sed -n 's|.*github\.com[:/]\([^/]*\)/.*|\1|p')
-IMG_REPO ?= ghcr.io/$(GIT_ORG)/aim-engine
+IMG_REPO ?= docker.io/silogenai/aim-engine
 IMG ?= $(IMG_REPO):$(TAG)
 ARTIFACT_DOWNLOADER_IMG ?= ghcr.io/silogen/aim-artifact-downloader:$(TAG)
 LDFLAGS ?= -X 'github.com/amd-enterprise-ai/aim-engine/api/v1alpha1.DefaultDownloadImage=$(ARTIFACT_DOWNLOADER_IMG)'
@@ -11,20 +10,14 @@ CHART_NAME ?= aim-engine-chart
 CRDS_CHART_NAME ?= aim-engine-crds-chart
 CHART_VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.1.0")
 APP_VERSION ?= $(TAG)
-# Image baked into the packaged chart's values.yaml. CI always overrides via
-# CHART_IMAGE_REPO. For local-dev runs of `make helm-package`, the silogen fork
-# builds and consumes from ghcr.io/silogen; everything else (notably the
-# amd-enterprise-ai official fork) defaults to the public docker.io mirror
-# that end users actually pull from.
-ifeq ($(GIT_ORG),silogen)
-CHART_IMAGE_REPO ?= ghcr.io/silogen/aim-engine
-else
+# Baked into the packaged chart's values.yaml as manager.image.repository.
+# Defaults to the public amdenterpriseai mirror so end users installing the
+# released chart don't need a pull secret; the int-test flow in
+# compile-release.yaml overrides this to PUSH_IMAGE_REPO (silogenai) at
+# packaging time so it can install the just-built pre-promotion image.
 CHART_IMAGE_REPO ?= docker.io/amdenterpriseai/aim-engine
-endif
 CHART_IMAGE_TAG  ?= $(TAG)
-CHART_OCI_REGISTRY ?= ghcr.io
-CHART_OCI_OWNER ?= $(GIT_ORG)
-CHART_OCI_REPO ?= oci://$(CHART_OCI_REGISTRY)/$(CHART_OCI_OWNER)
+CHART_OCI_REPO ?= oci://registry-1.docker.io/silogenai
 
 # Cluster environment configuration
 # ENV is auto-detected from kubectl context:
