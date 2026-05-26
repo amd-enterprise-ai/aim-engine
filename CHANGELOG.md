@@ -7,23 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+<!-- Populate this section during release-prep, then rename to the release version -->
+
+## [0.2.4] - 2026-05-26
+
 ### Added
 - `aimId`-based template matching for fine-tuned models — specify `spec.aimId` and `spec.modelSources` on an AIMModel and the controller automatically finds matching official templates, filters by version policy, and creates copies with custom weight sources baked in. No `customTemplates` or `custom.hardware` required.
-- `spec.aimId` field on AIMModelSpec for identifying the base model family when onboarding fine-tuned weights
-- `spec.custom.versionPolicy` field on AIMCustomModelSpec (`pinned`, `latest`, `any`) for controlling which template versions are matched
-- `status.version` field on AIMServiceTemplateStatus, populated from the owning model's image tag during reconciliation
-- E2E tests for fine-tuned model flows: pinned version matching, no-match negative case, and cluster-to-namespace cross-scope matching (`tests/e2e/aimmodel/fine-tuned/`)
-- Support for AMD Radeon Pro W7900 and Radeon AI Pro R9700 as first-class
-  GPU targets in AIMModel and AIMServiceTemplate, including device-ID node
-  affinity and GPU-preference ranking (ranked below all Instinct models).
-- Discovery jobs now also emit `AIM_ACCELERATOR_MODEL` / `AIM_ACCELERATOR_COUNT`
-  alongside the legacy `AIM_GPU_*` variables, and accept `accelerator_*`
-  fields in profile metadata, so v1alpha1 works against AIM images that use
-  the newer accelerator-oriented schema.
+- `spec.aimId` field on AIMModelSpec for identifying the base model family when onboarding fine-tuned weights.
+- `spec.custom.versionPolicy` field on AIMCustomModelSpec (`pinned`, `latest`, `any`) for controlling which template versions are matched.
+- `status.version` field on AIMServiceTemplateStatus, populated from the owning model's image tag during reconciliation.
+- E2E tests for fine-tuned model flows: pinned version matching, no-match negative case, and cluster-to-namespace cross-scope matching (`tests/e2e/aimmodel/fine-tuned/`).
+- Support for AMD Radeon Pro W7900 and Radeon AI Pro R9700 as first-class GPU targets in AIMModel and AIMServiceTemplate, including device-ID node affinity and GPU-preference ranking (ranked below all Instinct models).
+- Discovery jobs now also emit `AIM_ACCELERATOR_MODEL` / `AIM_ACCELERATOR_COUNT` alongside the legacy `AIM_GPU_*` variables, and accept `accelerator_*` fields in profile metadata, so v1alpha1 works against AIM images that use the newer accelerator-oriented schema.
+
+### Changed
+- Controller image and Helm/CRDs OCI charts now publish to `docker.io/amdenterpriseai/*` instead of `ghcr.io/silogen/*`; the chart's `manager.image.repository` defaults to `docker.io/amdenterpriseai/aim-engine` (#114).
+- `manager.imagePullSecrets` default renamed from `regcred` to `dockerhub-regcred`;
 
 ### Fixed
-- Tilt dev deployment uses `Recreate` strategy to prevent pod restart deadlocks caused by RWO PVC contention during rolling updates
-
+- Tilt dev deployment uses `Recreate` strategy to prevent pod restart deadlocks caused by RWO PVC contention during rolling updates.
 
 ## [0.2.2] - 2026-03-20
 
