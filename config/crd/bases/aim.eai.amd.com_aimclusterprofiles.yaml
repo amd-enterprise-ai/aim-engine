@@ -29,6 +29,9 @@ spec:
     - jsonPath: .status.status
       name: Status
       type: string
+    - jsonPath: .status.origin
+      name: Origin
+      type: string
     - jsonPath: .status.hardwareSummary
       name: Hardware
       type: string
@@ -38,6 +41,19 @@ spec:
     - jsonPath: .spec.precision
       name: Precision
       type: string
+    - jsonPath: .spec.type
+      name: Type
+      type: string
+    - jsonPath: .spec.primary
+      name: Primary
+      type: boolean
+    - jsonPath: .status.version
+      name: Version
+      type: string
+    - jsonPath: .spec.manualSelectionOnly
+      name: Manual
+      priority: 1
+      type: boolean
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -50,6 +66,11 @@ spec:
           or, in the future, automatically during model discovery by a v1alpha2 model controller.
           Unlike namespace-scoped AIMProfiles, cluster profiles do not support caching
           configuration since caches are namespace-scoped.
+
+          Deployable profiles have both aimId and modelSources populated; base
+          profiles (custom-model derivation source material) have neither. Mixed
+          (one of the two set) is rejected to keep status.deployable derivable from
+          spec.
         properties:
           apiVersion:
             description: |-
@@ -107,12 +128,19 @@ spec:
               aimId:
                 description: |-
                   AimId is the model architecture identifier (e.g., "qwen/qwen3-32b").
-                  Primary matching axis for profile selection and custom weight onboarding. Immutable.
-                minLength: 1
+                  Primary matching axis for profile selection and custom weight onboarding.
+
+                  AimId is required for deployable profiles. Iteration 1 producers always
+                  emit deployable profiles, so AimId is effectively required there. Empty
+                  AimId is reserved for base profiles emitted by base-image discovery
+                  (custom-model derivation source material), which are not deployable
+                  until derived.
+
+                  Once set, AimId is immutable.
                 type: string
                 x-kubernetes-validations:
-                - message: aimId is immutable
-                  rule: self == oldSelf
+                - message: aimId is immutable once set
+                  rule: oldSelf == '' || self == oldSelf
               containerEnv:
                 description: ContainerEnv specifies container-level env vars for the
                   AIM runtime process (K8s pod spec).
@@ -317,6 +345,12 @@ spec:
                   type: object
                   x-kubernetes-map-type: atomic
                 type: array
+              manualSelectionOnly:
+                default: false
+                description: |-
+                  ManualSelectionOnly excludes this profile from automatic AIMService selection.
+                  It remains addressable by explicit name and is preserved from aim-build profile YAMLs.
+                type: boolean
               metric:
                 allOf:
                 - enum:
@@ -338,12 +372,14 @@ spec:
                   ModelSources specifies model artifact sources for this profile.
                   Populated during discovery or set by user.
                 items:
-                  description: AIMModelSource describes a downloadable model artifact
-                    with optional credentials.
+                  description: |-
+                    AIMModelSource describes a model artifact that must be downloaded for inference.
+                    Discovery extracts these from the container's configuration to enable caching and validation.
                   properties:
                     env:
                       description: |-
                         Env specifies per-source credential overrides.
+                        These variables are used for authentication when downloading this specific source.
                         Takes precedence over base-level env for the same variable name.
                       items:
                         description: EnvVar represents an environment variable present
@@ -508,11 +544,14 @@ spec:
                       description: |-
                         ModelID is the canonical identifier in {org}/{name} format.
                         Determines the cache mount path: /workspace/cache/{modelId}
+                        For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
+                        For S3 sources, users define their own organizational structure.
                       pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                       type: string
                     precision:
                       allOf:
                       - enum:
+                        - auto
                         - fp4
                         - fp8
                         - fp16
@@ -538,13 +577,17 @@ spec:
                       - type: string
                       description: |-
                         Size is the expected storage space required for this model artifact.
-                        Optional — if not specified, the download job discovers the size automatically.
+                        Used for PVC sizing and capacity planning during cache creation.
+                        Optional - if not specified, the download job will discover the size automatically.
+                        Can be set explicitly to pre-allocate storage or override auto-discovery.
                       pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                       x-kubernetes-int-or-string: true
                     sourceUri:
                       description: |-
                         SourceURI is the location from which the model should be downloaded.
-                        Supported schemes: hf:// (Hugging Face Hub), s3:// (S3-compatible storage).
+                        Supported schemes:
+                        - hf://org/model - Hugging Face Hub model
+                        - s3://bucket/key - S3-compatible storage
                       pattern: ^(hf|s3)://[^ \t\r\n]+$
                       type: string
                   required:
@@ -555,6 +598,7 @@ spec:
               precision:
                 allOf:
                 - enum:
+                  - auto
                   - fp4
                   - fp8
                   - fp16
@@ -669,7 +713,6 @@ spec:
                   > general > preview > unoptimized.'
                 type: string
             required:
-            - aimId
             - image
             - primary
             type: object
@@ -677,6 +720,15 @@ spec:
             description: AIMProfileStatus defines the observed state of AIMProfile
               / AIMClusterProfile.
             properties:
+              baseImage:
+                description: |-
+                  BaseImage is the AIM_BASE_IMAGE_REF the inspector extracted from the
+                  source image when this profile was materialised by AIMModel discovery.
+                  Used by derivation flows (AIMService overlays, AIMProfileSet) to rebase
+                  the deployment image onto the source's base when overriding model
+                  sources, so private mirrors stay self-contained. Empty for
+                  user-authored profiles.
+                type: string
               conditions:
                 description: Conditions represent the latest observations of profile
                   state.
@@ -738,6 +790,16 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              deployable:
+                default: false
+                description: |-
+                  Deployable reports whether the profile is materialised enough to back an
+                  AIMService: true when spec.aimId and spec.modelSources are both
+                  populated, false for base profiles awaiting derivation.
+
+                  Iteration 1 producers always emit deployable profiles. Base-profile
+                  production (from base-image discovery) lands in iteration 2.
+                type: boolean
               hardwareSummary:
                 description: |-
                   HardwareSummary is a human-readable string describing the hardware requirements.
@@ -754,6 +816,21 @@ spec:
                   by the controller.
                 format: int64
                 type: integer
+              origin:
+                description: |-
+                  Origin classifies how this profile was produced:
+                    - discovered: emitted by image discovery (AIMModel.spec.image).
+                    - derived: emitted by an AIMProfileSet or
+                      AIMModel.spec.profiles.derivedFrom.
+                    - user-authored: created independently by a user.
+
+                  Backfilled by the AIMProfile reconciler when not stamped at creation
+                  time; user-authored profiles default to `user-authored`.
+                enum:
+                - discovered
+                - derived
+                - user-authored
+                type: string
               resolvedNodeAffinity:
                 description: |-
                   ResolvedNodeAffinity contains the computed node affinity rules derived from
@@ -1016,6 +1093,30 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              sourceModel:
+                description: |-
+                  SourceModel identifies the producing AIM(Cluster)Model for profiles
+                  owned by AIMModel reconcilers. Empty for user-authored profiles.
+                properties:
+                  kind:
+                    description: Kind is the producing model's kind ("AIMModel" or
+                      "AIMClusterModel").
+                    enum:
+                    - AIMModel
+                    - AIMClusterModel
+                    type: string
+                  name:
+                    description: Name is the producing model's name.
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace is the producing model's namespace. Empty when Kind is
+                      AIMClusterModel (cluster-scoped).
+                    type: string
+                required:
+                - kind
+                - name
+                type: object
               status:
                 default: Pending
                 description: |-
@@ -1034,8 +1135,15 @@ spec:
                 description: Version is extracted from the spec.image tag during reconciliation
                   (e.g., "0.8.5").
                 type: string
+            required:
+            - deployable
             type: object
         type: object
+        x-kubernetes-validations:
+        - message: spec.aimId and spec.modelSources must both be set (deployable profile)
+            or both be empty (base profile)
+          rule: (has(self.spec.aimId) && size(self.spec.aimId) > 0) == (has(self.spec.modelSources)
+            && size(self.spec.modelSources) > 0)
     served: true
     storage: true
     subresources:

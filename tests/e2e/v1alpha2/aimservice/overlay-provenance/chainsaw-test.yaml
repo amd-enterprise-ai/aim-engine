@@ -1,0 +1,71 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Overlay-provenance: the service-owned overlay AIMProfile must carry the
+# iteration-1 provenance labels (role=deployable, origin=derived) so it is
+# discoverable by AIMProfileSet and AIMService selector queries the same
+# way model-discovered or AIMProfileSet-derived profiles are.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-overlay-provenance
+spec:
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Apply the seed AIMProfile and a service that derives an overlay from it
+      try:
+        - apply:
+            file: profile-and-service.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: overlay-seed-profile
+              status:
+                deployable: true
+
+    - name: Wait for the overlay profile to be created and stamped with provenance
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              set -eu
+              PROFILE_GV=aimprofiles.v1alpha2.aim.eai.amd.com
+
+              # The overlay name is a deterministic hash; look it up by the
+              # service-overlay annotation the AIMService reconciler stamps.
+              for _ in $(seq 1 30); do
+                OVERLAY=$(kubectl get "$PROFILE_GV" -n "$NAMESPACE" -o json \
+                  | jq -r --arg svc "overlay-provenance-service" \
+                      '.items[]
+                        | select(.metadata.annotations["aim.eai.amd.com/overlay-service"] == $svc)
+                        | .metadata.name' \
+                  | head -1)
+                if [ -n "$OVERLAY" ]; then
+                  break
+                fi
+                sleep 2
+              done
+              if [ -z "$OVERLAY" ]; then
+                echo "ERROR: no overlay profile found for overlay-provenance-service"
+                kubectl get "$PROFILE_GV" -n "$NAMESPACE" -o yaml
+                exit 1
+              fi
+              echo "Overlay: $OVERLAY"
+
+              ROLE=$(kubectl get "$PROFILE_GV" -n "$NAMESPACE" "$OVERLAY" \
+                -o jsonpath='{.metadata.labels.aim\.eai\.amd\.com/profile-role}')
+              ORIGIN=$(kubectl get "$PROFILE_GV" -n "$NAMESPACE" "$OVERLAY" \
+                -o jsonpath='{.metadata.labels.aim\.eai\.amd\.com/profile-origin}')
+
+              if [ "$ROLE" != "deployable" ]; then
+                echo "ERROR: overlay profile-role = $ROLE; expected 'deployable'"
+                exit 1
+              fi
+              if [ "$ORIGIN" != "derived" ]; then
+                echo "ERROR: overlay profile-origin = $ORIGIN; expected 'derived'"
+                exit 1
+              fi
+              echo "Overlay provenance labels OK: role=$ROLE origin=$ORIGIN"

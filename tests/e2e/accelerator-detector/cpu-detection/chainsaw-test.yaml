@@ -44,7 +44,7 @@ spec:
             content: |
               # Wait for NFD to pick up the feature file and apply labels.
               for i in $(seq 1 30); do
-                for model in EPYC_9965 EPYC_9755 EPYC_9655 EPYC_9575F EPYC_9175F; do
+                for model in EPYC_9965 EPYC_9755 EPYC_9655 EPYC_9575F EPYC_9175F EPYC_ZEN5; do
                   NODES=$(kubectl get nodes -l "feature.node.kubernetes.io/aim-accelerator.${model}" -o name 2>/dev/null)
                   if [ -n "$NODES" ]; then
                     echo "Found CPU-labeled nodes ($model): $NODES"
@@ -55,6 +55,29 @@ spec:
                 sleep 6
               done
               echo "ERROR: No nodes found with aim-accelerator CPU labels after 180s"
+              kubectl get nodes --show-labels | grep aim-accelerator || true
+              exit 1
+
+    - name: Verify CPU family label is also present (generic AIM profiles target it)
+      description: |
+        AIM images whose embedded profile YAML declares accelerator_model: CPU
+        rely on the detector emitting a per-family label alongside the
+        per-model label. Without it, the v1alpha2 model matcher rejects all
+        CPU-only profiles as unsupported.
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              for i in $(seq 1 10); do
+                NODES=$(kubectl get nodes -l "feature.node.kubernetes.io/aim-accelerator.CPU" -o name 2>/dev/null)
+                if [ -n "$NODES" ]; then
+                  echo "Found CPU family-labeled nodes: $NODES"
+                  exit 0
+                fi
+                echo "Attempt $i/10: No aim-accelerator.CPU label yet, waiting 6s..."
+                sleep 6
+              done
+              echo "ERROR: No nodes carry the aim-accelerator.CPU family label"
               kubectl get nodes --show-labels | grep aim-accelerator || true
               exit 1
 

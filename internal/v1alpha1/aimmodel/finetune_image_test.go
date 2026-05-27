@@ -97,7 +97,7 @@ func match(ownerName, ownerNamespace, version string) TemplateMatchResult {
 }
 
 // Resolver returns the cluster owner's baseImageRef (rebased onto the owner's
-// registry+org) for a cluster-scoped match.
+// registry+org and normalised to MAJOR.MINOR) for a cluster-scoped match.
 func TestImageResolver_ClusterOwner_BaseImageRef(t *testing.T) {
 	owner := clusterOwner("qwen3-0.9.0",
 		"ghcr.io/silogen/qwen3:0.9.0",
@@ -117,8 +117,37 @@ func TestImageResolver_ClusterOwner_BaseImageRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if want := "ghcr.io/silogen/aim-base:0.9.0"; got != want {
+	// `0.9.0` truncates to MAJOR.MINOR `0.9`: the deployable aim-base
+	// image is always tagged with its MAJOR.MINOR rolling tag, never the
+	// patch-level tag baked into AIM_BASE_IMAGE_REF.
+	if want := "ghcr.io/silogen/aim-base:0.9"; got != want {
 		t.Errorf("Resolve = %q, want %q", got, want)
+	}
+}
+
+// Resolver normalises release-candidate AIM_BASE_IMAGE_REF tags
+// (e.g. `0.11-rc21`) onto the stable MAJOR.MINOR rolling tag that aim-base
+// actually publishes. Build pipelines stamp the RC tag during release prep,
+// but the deployable image is reachable only at `aim-base:0.11`.
+func TestImageResolver_NormalizesReleaseCandidateTag(t *testing.T) {
+	owner := clusterOwner("qwen3-32b",
+		"amdenterpriseai/aim-qwen-qwen3-32b:0.11.0",
+		"ghcr.io/silogen/aim-base:0.11-rc21",
+	)
+	c := newFakeClient(owner)
+
+	r := newImageResolver(c, &aimv1alpha1.AIMModelSpec{
+		AimId:        "qwen/qwen3-32b",
+		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
+		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyLatest},
+	})
+
+	got, err := r.Resolve(context.Background(), match("qwen3-32b", "", "0.11.0"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := "amdenterpriseai/aim-base:0.11"; got != want {
+		t.Errorf("Resolve = %q, want %q (rc tag must truncate to MAJOR.MINOR and rebase onto owner registry)", got, want)
 	}
 }
 
@@ -245,7 +274,7 @@ func TestImageResolver_NamespaceScopedOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if want := "ghcr.io/silogen/aim-base:0.9.0"; got != want {
+	if want := "ghcr.io/silogen/aim-base:0.9"; got != want {
 		t.Errorf("Resolve = %q, want %q", got, want)
 	}
 }
@@ -281,92 +310,15 @@ func TestImageResolver_PerMatchHeterogeneous(t *testing.T) {
 	}
 }
 
-// ============================================================================
-// HELPER UNIT TESTS
-// ============================================================================
-
-func TestRebaseImageRegistry(t *testing.T) {
-	tests := []struct {
-		name, source, base, want string
-	}{
-		{
-			name:   "cross-registry mirrors source org",
-			source: "ghcr.io/silogen/qwen3:0.11.0",
-			base:   "docker.io/amdenterpriseai/aim-base:0.11",
-			want:   "ghcr.io/silogen/aim-base:0.11",
-		},
-		{
-			name:   "docker-hub source without explicit registry",
-			source: "amdenterpriseai/qwen3:0.11.0",
-			base:   "ghcr.io/silogen/aim-base:0.11",
-			want:   "amdenterpriseai/aim-base:0.11",
-		},
-		{
-			name:   "same registry is a no-op",
-			source: "ghcr.io/silogen/qwen3:0.11",
-			base:   "ghcr.io/silogen/aim-base:0.11",
-			want:   "ghcr.io/silogen/aim-base:0.11",
-		},
-		{
-			name:   "port in registry is preserved",
-			source: "localhost:5000/myorg/qwen3:0.11",
-			base:   "ghcr.io/silogen/aim-base:0.11",
-			want:   "localhost:5000/myorg/aim-base:0.11",
-		},
-		{
-			name:   "multi-segment path keeps everything before the last slash",
-			source: "registry.example.com/team/models/qwen3:0.11",
-			base:   "ghcr.io/silogen/aim-base:0.11",
-			want:   "registry.example.com/team/models/aim-base:0.11",
-		},
-		{
-			name:   "empty source returns base unchanged",
-			source: "",
-			base:   "ghcr.io/silogen/aim-base:0.11",
-			want:   "ghcr.io/silogen/aim-base:0.11",
-		},
-		{
-			name:   "source without slash returns base unchanged",
-			source: "qwen3:0.11",
-			base:   "ghcr.io/silogen/aim-base:0.11",
-			want:   "ghcr.io/silogen/aim-base:0.11",
-		},
-		{
-			name:   "base without slash is grafted onto source prefix",
-			source: "ghcr.io/silogen/qwen3:0.11",
-			base:   "aim-base:0.11",
-			want:   "ghcr.io/silogen/aim-base:0.11",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := rebaseImageRegistry(tt.source, tt.base); got != tt.want {
-				t.Errorf("rebaseImageRegistry(%q, %q) = %q, want %q", tt.source, tt.base, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestLegacyBaseImageFromSource(t *testing.T) {
-	tests := []struct {
-		name, source, want string
-	}{
-		{name: "full semver truncates to major.minor", source: "ghcr.io/silogen/qwen3:0.11.0", want: "aim-base:0.11"},
-		{name: "major.minor tag is preserved", source: "ghcr.io/silogen/qwen3:0.11", want: "aim-base:0.11"},
-		{name: "v-prefixed semver is tolerated", source: "ghcr.io/silogen/qwen3:v0.11.0", want: "aim-base:0.11"},
-		{name: "semver with prerelease suffix is accepted", source: "ghcr.io/silogen/qwen3:0.11.0-rc1", want: "aim-base:0.11"},
-		{name: "registry with port keeps tag parsing correct", source: "localhost:5000/myorg/qwen3:0.11.0", want: "aim-base:0.11"},
-		{name: "non-semver tag (e.g. sha/latest) is skipped", source: "ghcr.io/silogen/qwen3:latest", want: ""},
-		{name: "no tag present returns empty", source: "ghcr.io/silogen/qwen3", want: ""},
-		{name: "trailing colon returns empty", source: "ghcr.io/silogen/qwen3:", want: ""},
-		{name: "registry-with-port but no image tag returns empty", source: "localhost:5000/myorg/qwen3", want: ""},
-		{name: "empty source returns empty", source: "", want: ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := legacyBaseImageFromSource(tt.source); got != tt.want {
-				t.Errorf("legacyBaseImageFromSource(%q) = %q, want %q", tt.source, got, tt.want)
-			}
-		})
-	}
-}
+// NOTE: rebaseImageRegistry / legacyBaseImageFromSource used to live in this
+// package as local helpers and had their own unit tests here. Both were
+// consolidated into internal/aimimage and the duplicated tests removed — see
+// internal/aimimage/rebase_test.go (TestRebaseRegistry,
+// TestLegacyBaseImageFromSource) for the canonical coverage, including the
+// extra edge cases (short-form RC tags, registry ports, multi-segment paths,
+// empty source) the v1alpha1 tests previously asserted.
+//
+// The integration-style TestImageResolver_* tests above stay because they
+// exercise the resolver end-to-end against a fake client and verify the
+// version-policy / owner-lookup / per-match-heterogeneous behaviour that's
+// specific to the v1alpha1 fine-tuned model flow.

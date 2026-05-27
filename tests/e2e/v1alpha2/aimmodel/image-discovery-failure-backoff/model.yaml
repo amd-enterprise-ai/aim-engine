@@ -1,0 +1,6 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: image-discovery-failure-backoff
+spec:
+  image: busybox:1.36.1

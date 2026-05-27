@@ -1,0 +1,14 @@
+# Namespace-scoped model that runs metadata extraction and creates
+# AIMServiceTemplate children. The clone-templates-for-gpu.sh script then
+# operates on those namespace-scoped templates (via --namespace) so the
+# whole test stays inside the chainsaw-managed namespace and cannot collide
+# with cluster-scoped templates left behind by parallel or prior runs.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: clone-templates-gpu-model
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.2.0
+  discovery:
+    extractMetadata: true
+    createServiceTemplates: true

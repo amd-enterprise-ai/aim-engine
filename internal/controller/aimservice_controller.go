@@ -197,13 +197,44 @@ func (r *AIMServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Dispatch based on which reference the user supplied. Mutual
-	// exclusivity between spec.profile and spec.template is enforced by
-	// CEL validation on the AIMService type.
-	if service.Spec.Profile != nil {
+	// Dispatch onto the v1alpha1 template pipeline or the v1alpha2 profile
+	// pipeline. The two API versions share a single storage schema (no
+	// conversion webhook, strategy: None), so we route on the *spec shape*
+	// the user authored rather than on apiVersion, which the API server
+	// rewrites per request.
+	//
+	// Default rule: spec.profile-shaped services use the v1alpha2 profile
+	// pipeline; everything else (spec.template-shaped, spec.model-shaped,
+	// including image and custom-model variants the v1alpha2 resolver does
+	// not implement yet) uses the v1alpha1 template pipeline.
+	//
+	// Escape hatch: AnnotationReconcilerPipeline forces a specific pipeline,
+	// e.g. for v1alpha2 callers who want the model→profile resolver shortcut
+	// when authoring with spec.model.name, or for the rare case where the
+	// owner of a profile-shaped service wants the legacy pipeline.
+	pipeline := selectPipeline(&service)
+	if pipeline == constants.ReconcilerPipelineProfile {
 		return r.profilePipeline.Run(ctx, &service)
 	}
 	return r.templatePipeline.Run(ctx, &service)
+}
+
+// selectPipeline returns ReconcilerPipelineProfile or
+// ReconcilerPipelineTemplate based on (1) the explicit
+// AnnotationReconcilerPipeline override when set to a recognised value,
+// otherwise (2) the spec shape the user authored. Unknown annotation
+// values fall through to spec-shape dispatch.
+func selectPipeline(service *aimv1alpha1.AIMService) string {
+	if override, ok := service.GetAnnotations()[constants.AnnotationReconcilerPipeline]; ok {
+		switch override {
+		case constants.ReconcilerPipelineTemplate, constants.ReconcilerPipelineProfile:
+			return override
+		}
+	}
+	if service.Spec.Profile != nil {
+		return constants.ReconcilerPipelineProfile
+	}
+	return constants.ReconcilerPipelineTemplate
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -242,7 +273,8 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	r.profileReconciler = &profileservice.ProfileServiceReconciler{
-		Scheme: r.Scheme,
+		Scheme:   r.Scheme,
+		Recorder: recorder,
 	}
 	r.profilePipeline = controllerutils.Pipeline[
 		*aimv1alpha1.AIMService,

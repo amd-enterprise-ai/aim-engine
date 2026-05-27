@@ -1,0 +1,10 @@
+# Base AIM image whose profile YAMLs under /workspace/aim-runtime/profiles/general/
+# emit base-profile entries that this test exercises. The native discovery
+# walker only scans `general/` when AIM_ID is empty (which is the case
+# for a base image).
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: image-discovery-base-image
+spec:
+  image: amdenterpriseai/aim-base:0.11

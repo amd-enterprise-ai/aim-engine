@@ -50,8 +50,11 @@ spec:
             content: |
               MODEL_NAME=$(kubectl get aimservice test-dedup-service-1 -n "$NAMESPACE" -o jsonpath='{.status.resolvedModel.name}')
               echo "First service resolved to model: $MODEL_NAME"
-              # Store for later comparison
-              echo "$MODEL_NAME" > /tmp/first-model-name
+              # Namespace-scoped temp file so concurrent / repeated runs on
+              # the same host don't collide on /tmp ownership (a global
+              # /tmp/first-model-name owned by a previous user trips
+              # permission-denied → silent sh exit 2).
+              echo "$MODEL_NAME" > "/tmp/${NAMESPACE}-first-model-name"
 
     - name: Create second service with identical custom model spec
       try:
@@ -80,7 +83,7 @@ spec:
               - name: NAMESPACE
                 value: ($namespace)
             content: |
-              FIRST_MODEL=$(cat /tmp/first-model-name)
+              FIRST_MODEL=$(cat "/tmp/${NAMESPACE}-first-model-name")
               SECOND_MODEL=$(kubectl get aimservice test-dedup-service-2 -n "$NAMESPACE" -o jsonpath='{.status.resolvedModel.name}')
               echo "First service model: $FIRST_MODEL"
               echo "Second service model: $SECOND_MODEL"

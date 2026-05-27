@@ -1,0 +1,7 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: reject-skeleton-service
+spec:
+  profile:
+    name: skeleton-profile

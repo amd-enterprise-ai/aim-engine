@@ -40,6 +40,75 @@ ROOT = "../.."
 # Image name - must match what kustomize outputs (see kustomize/kustomization.yaml images section)
 IMAGE_NAME = "ttl.sh/aim-placeholder/manager:tilt"
 
+VERSION = str(local(
+    'git describe --tags --abbrev=0 2>/dev/null || echo dev',
+    quiet=True,
+    dir=ROOT,
+)).strip()
+
+# ============================================================================
+# Artifact-downloader image
+# ============================================================================
+#
+# Build the downloader from local source every Tilt run so changes under
+# images/artifact-downloader/** ship to the cluster without manual rebuilds.
+# We compute a content-addressed tag (sha256 of the source tree) and:
+#   1. Build & push that exact tag to ttl.sh (registry shared with the
+#      operator image).
+#   2. Bake the same tag into the operator binary's DefaultDownloadImage
+#      via LDFLAGS so download Jobs pull THIS build, not the registry-side
+#      `:latest` (which is built only on releases and lags main).
+#
+# Content-addressing avoids the stale-cache trap entirely: if the source
+# changes, the tag changes, kubelet sees a never-pulled reference and
+# fetches it; if the source is identical, the same digest serves both
+# Tilt runs without a re-push. PullIfNotPresent is correct for these tags.
+DOWNLOADER_SRC = ROOT + '/images/artifact-downloader'
+
+# Register a watch on every file under DOWNLOADER_SRC so Tilt re-evaluates
+# this Tiltfile (and recomputes DOWNLOADER_HASH below) when any downloader
+# source file changes. Without this, the hash is frozen at the time Tilt
+# was first launched: the local_resource would still build & push fresh
+# content, but it would push it under a stale tag, and the operator's
+# LDFLAGS would point at that same stale tag forever — defeating the
+# whole point of content-addressing.
+_downloader_files = str(local(
+    "find . -type f -not -path './.*' | sort",
+    quiet=True,
+    dir=DOWNLOADER_SRC,
+)).strip().split("\n")
+for _f in _downloader_files:
+    if _f:
+        # Strip the leading "./" produced by find so we can rejoin against
+        # DOWNLOADER_SRC without doubling the prefix.
+        _rel = _f[2:] if _f.startswith("./") else _f
+        read_file(DOWNLOADER_SRC + "/" + _rel)
+
+DOWNLOADER_HASH = str(local(
+    "find . -type f -not -path './.*' | sort | xargs sha256sum | sha256sum | cut -c1-12",
+    quiet=True,
+    dir=DOWNLOADER_SRC,
+)).strip()
+DOWNLOADER_TAG = "tilt-" + DOWNLOADER_HASH
+DOWNLOAD_IMAGE = "ttl.sh/aim-placeholder/aim-artifact-downloader:" + DOWNLOADER_TAG
+print("Baking DefaultDownloadImage=%s into operator binary" % DOWNLOAD_IMAGE)
+
+# Tilt's docker_build only pushes images that some k8s resource references
+# (it scans Pod specs for matches). The downloader is referenced at runtime
+# by the operator binary via LDFLAGS, which Tilt can't see — so we drive the
+# build/push ourselves with a local_resource. The content hash above means
+# the build is a no-op when nothing changed (docker reuses cached layers,
+# the push is a no-op when ttl.sh already has the digest).
+local_resource(
+    'artifact-downloader-image',
+    cmd='docker build -t ' + DOWNLOAD_IMAGE + ' ' + DOWNLOADER_SRC + ' && docker push ' + DOWNLOAD_IMAGE,
+    deps=[DOWNLOADER_SRC],
+    labels=['setup'],
+    allow_parallel=True,
+)
+
+LDFLAGS = "-X 'github.com/amd-enterprise-ai/aim-engine/api/v1alpha1.DefaultDownloadImage=" + DOWNLOAD_IMAGE + "'"
+
 # ============================================================================
 # Build Configuration
 # ============================================================================
@@ -60,6 +129,7 @@ if DEBUG_MODE:
         context=ROOT,
         dockerfile='Dockerfile',
         target='debug',
+        build_args={'DOWNLOAD_IMAGE': DOWNLOAD_IMAGE},
         entrypoint=[
             '/go/bin/dlv', 'exec', '/manager',
             '--headless', '--listen=:2345',
@@ -75,7 +145,7 @@ if DEBUG_MODE:
             sync(ROOT + '/go.sum', '/workspace/go.sum'),
             # Rebuild binary with debug flags
             run(
-                'cd /workspace && CGO_ENABLED=0 go build -gcflags="all=-N -l" -o /manager ./cmd/main.go',
+                'cd /workspace && CGO_ENABLED=0 go build -gcflags="all=-N -l" -ldflags "' + LDFLAGS + '" -o /manager ./cmd/main.go',
                 trigger=[ROOT + '/cmd/', ROOT + '/internal/', ROOT + '/api/']
             ),
         ],
@@ -92,6 +162,7 @@ else:
         context=ROOT,
         dockerfile='Dockerfile',
         target='dev',
+        build_args={'DOWNLOAD_IMAGE': DOWNLOAD_IMAGE},
         entrypoint=['/manager'],
         live_update=[
             # Sync Go source files
@@ -102,7 +173,7 @@ else:
             sync(ROOT + '/go.sum', '/workspace/go.sum'),
             # Rebuild binary
             run(
-                'cd /workspace && CGO_ENABLED=0 go build -o /manager ./cmd/main.go',
+                'cd /workspace && CGO_ENABLED=0 go build -ldflags "' + LDFLAGS + '" -o /manager ./cmd/main.go',
                 trigger=[ROOT + '/cmd/', ROOT + '/internal/', ROOT + '/api/']
             ),
         ],
@@ -115,7 +186,11 @@ else:
 # Generate deployment with our customizations (PVC for build cache, image override)
 k8s_yaml(kustomize('kustomize'))
 
-# Configure the main deployment
+# Configure the main deployment. resource_deps ensures the downloader
+# image is pushed to ttl.sh BEFORE the operator pod tries to spawn any
+# download Job referencing it; without this, a race on first startup
+# could create download Jobs pointing at a tag that hasn't been pushed
+# yet, producing transient ImagePullBackOff loops.
 k8s_resource(
     'aim-engine-controller-manager',
     port_forwards=[
@@ -123,6 +198,7 @@ k8s_resource(
         port_forward(8080, 8080, name='metrics'),
     ] + ([port_forward(2345, 2345, name='delve')] if DEBUG_MODE else []),
     labels=['aim-engine'],
+    resource_deps=['artifact-downloader-image'],
 )
 
 # ============================================================================

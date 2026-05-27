@@ -703,6 +703,29 @@ spec:
                                 For S3 sources, users define their own organizational structure.
                               pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                               type: string
+                            precision:
+                              allOf:
+                              - enum:
+                                - auto
+                                - fp4
+                                - fp8
+                                - fp16
+                                - fp32
+                                - bf16
+                                - int4
+                                - int8
+                              - enum:
+                                - fp4
+                                - fp8
+                                - fp16
+                                - fp32
+                                - bf16
+                                - int4
+                                - int8
+                              description: |-
+                                Precision describes the runtime precision this source is compatible with.
+                                Used to match model sources to profiles during custom weight onboarding.
+                              type: string
                             size:
                               anyOf:
                               - type: integer
@@ -898,19 +921,159 @@ spec:
                     description: |-
                       Name is the name of the AIMProfile or AIMClusterProfile to use.
                       The controller looks for a namespace-scoped AIMProfile first, then falls back to AIMClusterProfile.
+                      Mutually exclusive with Selector.
                     minLength: 1
                     type: string
-                required:
-                - name
+                  selector:
+                    description: |-
+                      Selector narrows candidate AIMProfile / AIMClusterProfile objects via the
+                      shared provenance labels (role, source-model, origin) and spec filters
+                      (aimId, precision, acceleratorModel, ...). The controller forces
+                      `selector.role = Deployable` at evaluation time; user-supplied values
+                      for that field are rejected by CEL on v1alpha2.
+
+                      For every selector-driven AIMService the controller requires at least
+                      one of `selector.aimId` or `selector.modelRef.name` so the watch
+                      fan-out can reach the service via an O(1) index lookup. The top-level
+                      `spec.model.name` shortcut is treated as if the user had set
+                      `selector.modelRef.name` to the same value when not explicit.
+                    properties:
+                      acceleratorCount:
+                        description: AcceleratorCount filters by accelerator unit
+                          count.
+                        format: int32
+                        type: integer
+                      acceleratorModel:
+                        description: AcceleratorModel filters by accelerator identifier.
+                        type: string
+                      acceleratorType:
+                        description: AcceleratorType filters by accelerator resource
+                          type.
+                        enum:
+                        - gpu
+                        - cpu
+                        type: string
+                      aimId:
+                        description: AimId filters by model architecture identifier
+                          (e.g., "qwen/qwen3-32b").
+                        type: string
+                      engine:
+                        description: Engine filters by inference engine.
+                        type: string
+                      engineArgs:
+                        description: |-
+                          EngineArgs partially matches source engineArgs: every provided top-level key must
+                          exist in the source object with an equal value.
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                      metric:
+                        description: Metric filters by optimization target.
+                        enum:
+                        - latency
+                        - throughput
+                        type: string
+                      modelId:
+                        description: ModelId filters by the source profile's specific
+                          model identifier.
+                        type: string
+                      modelRef:
+                        description: |-
+                          ModelRef narrows candidates to those produced by a specific
+                          AIM(Cluster)Model, matched via the `aim.eai.amd.com/source-model[-scope]`
+                          labels stamped by the AIMModel reconcilers. Iteration 1 (v1alpha2 only).
+                        properties:
+                          name:
+                            description: Name is the owning AIM(Cluster)Model name.
+                              Required.
+                            minLength: 1
+                            type: string
+                          scope:
+                            default: Auto
+                            description: Scope controls how Name is resolved against
+                              AIMModel vs AIMClusterModel.
+                            enum:
+                            - Auto
+                            - Namespace
+                            - Cluster
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      origin:
+                        description: |-
+                          Origin filters by the `aim.eai.amd.com/profile-origin` label. When unset
+                          (empty) the selector does not filter by origin. Iteration 1 (v1alpha2
+                          only).
+                        enum:
+                        - discovered
+                        - derived
+                        - user-authored
+                        type: string
+                      precision:
+                        description: Precision filters by numeric precision.
+                        enum:
+                        - auto
+                        - fp4
+                        - fp8
+                        - fp16
+                        - fp32
+                        - bf16
+                        - int4
+                        - int8
+                        type: string
+                      profileId:
+                        description: ProfileId filters by the source profile's profile
+                          identifier.
+                        type: string
+                      role:
+                        default: deployable
+                        description: |-
+                          Role filters by the `aim.eai.amd.com/profile-role` label. Defaults to
+                          `deployable`. `base` filters to base profiles emitted by base-image
+                          discovery (custom-model derivation source material).
+                        enum:
+                        - base
+                        - deployable
+                        type: string
+                      type:
+                        description: Type filters by optimization level.
+                        enum:
+                        - optimized
+                        - general
+                        - preview
+                        - unoptimized
+                        type: string
+                    type: object
                 type: object
+                x-kubernetes-validations:
+                - message: spec.profile.name and spec.profile.selector are mutually
+                    exclusive
+                  rule: '!(has(self.name) && has(self.selector))'
+                - message: spec.profile must set name or selector
+                  rule: has(self.name) || has(self.selector)
               profileOverrides:
                 description: |-
                   ProfileOverrides allows overriding specific profile parameters for this service.
                   Only valid when Profile is set.
                 properties:
+                  acceleratorCount:
+                    description: AcceleratorCount replaces the referenced profile's
+                      acceleratorCount.
+                    format: int32
+                    type: integer
+                  acceleratorModel:
+                    description: |-
+                      AcceleratorModel replaces the referenced profile's acceleratorModel
+                      (e.g. "MI300X" -> "MI325X"). Validation against actual cluster
+                      availability is left to the AIMServiceTemplate / runtime layers.
+                    type: string
                   containerEnv:
-                    description: ContainerEnv overrides or extends the profile's container-level
-                      environment variables.
+                    description: |-
+                      ContainerEnv merges by env-var name on top of the profile's
+                      containerEnv. Matching names override; new names are appended.
+                      AIM framework variables (AIM_*) reserved for the controller are
+                      applied after the overlay's containerEnv and cannot be overridden
+                      here.
                     items:
                       description: EnvVar represents an environment variable present
                         in a Container.
@@ -1071,9 +1234,248 @@ spec:
                     - name
                     x-kubernetes-list-type: map
                   engineArgs:
-                    description: EngineArgs overrides or extends the profile's inference
-                      engine CLI arguments.
+                    description: |-
+                      EngineArgs shallow-merges on top of the profile's engineArgs,
+                      overriding matching top-level keys. Values are passed verbatim
+                      to the inference engine CLI.
                     x-kubernetes-preserve-unknown-fields: true
+                  engineEnv:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      EngineEnv merges by key on top of the profile's engineEnv. These
+                      variables flow into the inference engine's runtime configuration.
+                    type: object
+                  modelSources:
+                    description: |-
+                      ModelSources replaces the referenced profile's modelSources entirely.
+                      Use this to point a profile at user-supplied weights (e.g. a fine-tuned
+                      checkpoint) without forking the profile itself. The first source's
+                      modelId becomes the overlay profile's modelId.
+                    items:
+                      description: |-
+                        AIMModelSource describes a model artifact that must be downloaded for inference.
+                        Discovery extracts these from the container's configuration to enable caching and validation.
+                      properties:
+                        env:
+                          description: |-
+                            Env specifies per-source credential overrides.
+                            These variables are used for authentication when downloading this specific source.
+                            Takes precedence over base-level env for the same variable name.
+                          items:
+                            description: EnvVar represents an environment variable
+                              present in a Container.
+                            properties:
+                              name:
+                                description: |-
+                                  Name of the environment variable.
+                                  May consist of any printable ASCII characters except '='.
+                                type: string
+                              value:
+                                description: |-
+                                  Variable references $(VAR_NAME) are expanded
+                                  using the previously defined environment variables in the container and
+                                  any service environment variables. If a variable cannot be resolved,
+                                  the reference in the input string will be unchanged. Double $$ are reduced
+                                  to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                                  "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                                  Escaped references will never be expanded, regardless of whether the variable
+                                  exists or not.
+                                  Defaults to "".
+                                type: string
+                              valueFrom:
+                                description: Source for the environment variable's
+                                  value. Cannot be used if value is not empty.
+                                properties:
+                                  configMapKeyRef:
+                                    description: Selects a key of a ConfigMap.
+                                    properties:
+                                      key:
+                                        description: The key to select.
+                                        type: string
+                                      name:
+                                        default: ""
+                                        description: |-
+                                          Name of the referent.
+                                          This field is effectively required, but due to backwards compatibility is
+                                          allowed to be empty. Instances of this type with an empty value here are
+                                          almost certainly wrong.
+                                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                        type: string
+                                      optional:
+                                        description: Specify whether the ConfigMap
+                                          or its key must be defined
+                                        type: boolean
+                                    required:
+                                    - key
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                  fieldRef:
+                                    description: |-
+                                      Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                                      spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                                    properties:
+                                      apiVersion:
+                                        description: Version of the schema the FieldPath
+                                          is written in terms of, defaults to "v1".
+                                        type: string
+                                      fieldPath:
+                                        description: Path of the field to select in
+                                          the specified API version.
+                                        type: string
+                                    required:
+                                    - fieldPath
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                  fileKeyRef:
+                                    description: |-
+                                      FileKeyRef selects a key of the env file.
+                                      Requires the EnvFiles feature gate to be enabled.
+                                    properties:
+                                      key:
+                                        description: |-
+                                          The key within the env file. An invalid key will prevent the pod from starting.
+                                          The keys defined within a source may consist of any printable ASCII characters except '='.
+                                          During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
+                                        type: string
+                                      optional:
+                                        default: false
+                                        description: |-
+                                          Specify whether the file or its key must be defined. If the file or key
+                                          does not exist, then the env var is not published.
+                                          If optional is set to true and the specified key does not exist,
+                                          the environment variable will not be set in the Pod's containers.
+
+                                          If optional is set to false and the specified key does not exist,
+                                          an error will be returned during Pod creation.
+                                        type: boolean
+                                      path:
+                                        description: |-
+                                          The path within the volume from which to select the file.
+                                          Must be relative and may not contain the '..' path or start with '..'.
+                                        type: string
+                                      volumeName:
+                                        description: The name of the volume mount
+                                          containing the env file.
+                                        type: string
+                                    required:
+                                    - key
+                                    - path
+                                    - volumeName
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                  resourceFieldRef:
+                                    description: |-
+                                      Selects a resource of the container: only resources limits and requests
+                                      (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                                    properties:
+                                      containerName:
+                                        description: 'Container name: required for
+                                          volumes, optional for env vars'
+                                        type: string
+                                      divisor:
+                                        anyOf:
+                                        - type: integer
+                                        - type: string
+                                        description: Specifies the output format of
+                                          the exposed resources, defaults to "1"
+                                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                        x-kubernetes-int-or-string: true
+                                      resource:
+                                        description: 'Required: resource to select'
+                                        type: string
+                                    required:
+                                    - resource
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                  secretKeyRef:
+                                    description: Selects a key of a secret in the
+                                      pod's namespace
+                                    properties:
+                                      key:
+                                        description: The key of the secret to select
+                                          from.  Must be a valid secret key.
+                                        type: string
+                                      name:
+                                        default: ""
+                                        description: |-
+                                          Name of the referent.
+                                          This field is effectively required, but due to backwards compatibility is
+                                          allowed to be empty. Instances of this type with an empty value here are
+                                          almost certainly wrong.
+                                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                        type: string
+                                      optional:
+                                        description: Specify whether the Secret or
+                                          its key must be defined
+                                        type: boolean
+                                    required:
+                                    - key
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                type: object
+                            required:
+                            - name
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
+                        modelId:
+                          description: |-
+                            ModelID is the canonical identifier in {org}/{name} format.
+                            Determines the cache mount path: /workspace/cache/{modelId}
+                            For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
+                            For S3 sources, users define their own organizational structure.
+                          pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
+                          type: string
+                        precision:
+                          allOf:
+                          - enum:
+                            - auto
+                            - fp4
+                            - fp8
+                            - fp16
+                            - fp32
+                            - bf16
+                            - int4
+                            - int8
+                          - enum:
+                            - fp4
+                            - fp8
+                            - fp16
+                            - fp32
+                            - bf16
+                            - int4
+                            - int8
+                          description: |-
+                            Precision describes the runtime precision this source is compatible with.
+                            Used to match model sources to profiles during custom weight onboarding.
+                          type: string
+                        size:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          description: |-
+                            Size is the expected storage space required for this model artifact.
+                            Used for PVC sizing and capacity planning during cache creation.
+                            Optional - if not specified, the download job will discover the size automatically.
+                            Can be set explicitly to pre-allocate storage or override auto-discovery.
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        sourceUri:
+                          description: |-
+                            SourceURI is the location from which the model should be downloaded.
+                            Supported schemes:
+                            - hf://org/model - Hugging Face Hub model
+                            - s3://bucket/key - S3-compatible storage
+                          pattern: ^(hf|s3)://[^ \t\r\n]+$
+                          type: string
+                      required:
+                      - modelId
+                      - sourceUri
+                      type: object
+                    type: array
                 type: object
               replicas:
                 default: 1
@@ -1425,16 +1827,49 @@ spec:
               cache:
                 description: Cache captures cache-related status for this service.
                 properties:
+                  profileCacheRef:
+                    description: |-
+                      ProfileCacheRef references the AIMProfileCache being used, if any.
+                      Set by the v1alpha2 (profile-based) reconciliation path.
+                    properties:
+                      kind:
+                        description: Kind is the fully-qualified kind of the resolved
+                          reference, when known.
+                        type: string
+                      name:
+                        description: Name is the resource name that satisfied the
+                          reference.
+                        type: string
+                      namespace:
+                        description: |-
+                          Namespace identifies where the resource was found when namespace-scoped.
+                          Empty indicates a cluster-scoped resource.
+                        type: string
+                      scope:
+                        description: Scope indicates whether the resolved resource
+                          was namespace or cluster scoped.
+                        enum:
+                        - Namespace
+                        - Cluster
+                        - Merged
+                        - Unknown
+                        type: string
+                      uid:
+                        description: UID captures the unique identifier of the resolved
+                          reference, when known.
+                        type: string
+                    type: object
                   retryAttempts:
                     description: |-
                       RetryAttempts tracks how many times this service has attempted to retry a failed cache.
-                      Each service gets exactly one retry attempt. When a TemplateCache enters Failed state,
+                      Each service gets exactly one retry attempt. When a cache enters Failed state,
                       this counter is incremented from 0 to 1 after deleting failed Artifacts.
                       If the retry fails (cache enters Failed again with attempts == 1), the service degrades.
                     type: integer
                   templateCacheRef:
-                    description: TemplateCacheRef references the TemplateCache being
-                      used, if any.
+                    description: |-
+                      TemplateCacheRef references the AIMTemplateCache being used, if any.
+                      Set by the v1alpha1 (template-based) reconciliation path.
                     properties:
                       kind:
                         description: Kind is the fully-qualified kind of the resolved
@@ -1727,12 +2162,8 @@ spec:
     - jsonPath: .status.resolvedModel.name
       name: Model
       type: string
-    - jsonPath: .status.resolvedTemplate.name
-      name: Template
-      type: string
     - jsonPath: .status.resolvedProfile.name
       name: Profile
-      priority: 1
       type: string
     - jsonPath: .status.runtime.replicas
       name: Replicas
@@ -2400,6 +2831,29 @@ spec:
                                 For S3 sources, users define their own organizational structure.
                               pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                               type: string
+                            precision:
+                              allOf:
+                              - enum:
+                                - auto
+                                - fp4
+                                - fp8
+                                - fp16
+                                - fp32
+                                - bf16
+                                - int4
+                                - int8
+                              - enum:
+                                - fp4
+                                - fp8
+                                - fp16
+                                - fp32
+                                - bf16
+                                - int4
+                                - int8
+                              description: |-
+                                Precision describes the runtime precision this source is compatible with.
+                                Used to match model sources to profiles during custom weight onboarding.
+                              type: string
                             size:
                               anyOf:
                               - type: integer
@@ -2595,19 +3049,159 @@ spec:
                     description: |-
                       Name is the name of the AIMProfile or AIMClusterProfile to use.
                       The controller looks for a namespace-scoped AIMProfile first, then falls back to AIMClusterProfile.
+                      Mutually exclusive with Selector.
                     minLength: 1
                     type: string
-                required:
-                - name
+                  selector:
+                    description: |-
+                      Selector narrows candidate AIMProfile / AIMClusterProfile objects via the
+                      shared provenance labels (role, source-model, origin) and spec filters
+                      (aimId, precision, acceleratorModel, ...). The controller forces
+                      `selector.role = Deployable` at evaluation time; user-supplied values
+                      for that field are rejected by CEL on v1alpha2.
+
+                      For every selector-driven AIMService the controller requires at least
+                      one of `selector.aimId` or `selector.modelRef.name` so the watch
+                      fan-out can reach the service via an O(1) index lookup. The top-level
+                      `spec.model.name` shortcut is treated as if the user had set
+                      `selector.modelRef.name` to the same value when not explicit.
+                    properties:
+                      acceleratorCount:
+                        description: AcceleratorCount filters by accelerator unit
+                          count.
+                        format: int32
+                        type: integer
+                      acceleratorModel:
+                        description: AcceleratorModel filters by accelerator identifier.
+                        type: string
+                      acceleratorType:
+                        description: AcceleratorType filters by accelerator resource
+                          type.
+                        enum:
+                        - gpu
+                        - cpu
+                        type: string
+                      aimId:
+                        description: AimId filters by model architecture identifier
+                          (e.g., "qwen/qwen3-32b").
+                        type: string
+                      engine:
+                        description: Engine filters by inference engine.
+                        type: string
+                      engineArgs:
+                        description: |-
+                          EngineArgs partially matches source engineArgs: every provided top-level key must
+                          exist in the source object with an equal value.
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                      metric:
+                        description: Metric filters by optimization target.
+                        enum:
+                        - latency
+                        - throughput
+                        type: string
+                      modelId:
+                        description: ModelId filters by the source profile's specific
+                          model identifier.
+                        type: string
+                      modelRef:
+                        description: |-
+                          ModelRef narrows candidates to those produced by a specific
+                          AIM(Cluster)Model, matched via the `aim.eai.amd.com/source-model[-scope]`
+                          labels stamped by the AIMModel reconcilers. Iteration 1 (v1alpha2 only).
+                        properties:
+                          name:
+                            description: Name is the owning AIM(Cluster)Model name.
+                              Required.
+                            minLength: 1
+                            type: string
+                          scope:
+                            default: Auto
+                            description: Scope controls how Name is resolved against
+                              AIMModel vs AIMClusterModel.
+                            enum:
+                            - Auto
+                            - Namespace
+                            - Cluster
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      origin:
+                        description: |-
+                          Origin filters by the `aim.eai.amd.com/profile-origin` label. When unset
+                          (empty) the selector does not filter by origin. Iteration 1 (v1alpha2
+                          only).
+                        enum:
+                        - discovered
+                        - derived
+                        - user-authored
+                        type: string
+                      precision:
+                        description: Precision filters by numeric precision.
+                        enum:
+                        - auto
+                        - fp4
+                        - fp8
+                        - fp16
+                        - fp32
+                        - bf16
+                        - int4
+                        - int8
+                        type: string
+                      profileId:
+                        description: ProfileId filters by the source profile's profile
+                          identifier.
+                        type: string
+                      role:
+                        default: deployable
+                        description: |-
+                          Role filters by the `aim.eai.amd.com/profile-role` label. Defaults to
+                          `deployable`. `base` filters to base profiles emitted by base-image
+                          discovery (custom-model derivation source material).
+                        enum:
+                        - base
+                        - deployable
+                        type: string
+                      type:
+                        description: Type filters by optimization level.
+                        enum:
+                        - optimized
+                        - general
+                        - preview
+                        - unoptimized
+                        type: string
+                    type: object
                 type: object
+                x-kubernetes-validations:
+                - message: spec.profile.name and spec.profile.selector are mutually
+                    exclusive
+                  rule: '!(has(self.name) && has(self.selector))'
+                - message: spec.profile must set name or selector
+                  rule: has(self.name) || has(self.selector)
               profileOverrides:
                 description: |-
                   ProfileOverrides allows overriding specific profile parameters for this service.
                   Only valid when Profile is set.
                 properties:
+                  acceleratorCount:
+                    description: AcceleratorCount replaces the referenced profile's
+                      acceleratorCount.
+                    format: int32
+                    type: integer
+                  acceleratorModel:
+                    description: |-
+                      AcceleratorModel replaces the referenced profile's acceleratorModel
+                      (e.g. "MI300X" -> "MI325X"). Validation against actual cluster
+                      availability is left to the AIMServiceTemplate / runtime layers.
+                    type: string
                   containerEnv:
-                    description: ContainerEnv overrides or extends the profile's container-level
-                      environment variables.
+                    description: |-
+                      ContainerEnv merges by env-var name on top of the profile's
+                      containerEnv. Matching names override; new names are appended.
+                      AIM framework variables (AIM_*) reserved for the controller are
+                      applied after the overlay's containerEnv and cannot be overridden
+                      here.
                     items:
                       description: EnvVar represents an environment variable present
                         in a Container.
@@ -2768,9 +3362,248 @@ spec:
                     - name
                     x-kubernetes-list-type: map
                   engineArgs:
-                    description: EngineArgs overrides or extends the profile's inference
-                      engine CLI arguments.
+                    description: |-
+                      EngineArgs shallow-merges on top of the profile's engineArgs,
+                      overriding matching top-level keys. Values are passed verbatim
+                      to the inference engine CLI.
                     x-kubernetes-preserve-unknown-fields: true
+                  engineEnv:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      EngineEnv merges by key on top of the profile's engineEnv. These
+                      variables flow into the inference engine's runtime configuration.
+                    type: object
+                  modelSources:
+                    description: |-
+                      ModelSources replaces the referenced profile's modelSources entirely.
+                      Use this to point a profile at user-supplied weights (e.g. a fine-tuned
+                      checkpoint) without forking the profile itself. The first source's
+                      modelId becomes the overlay profile's modelId.
+                    items:
+                      description: |-
+                        AIMModelSource describes a model artifact that must be downloaded for inference.
+                        Discovery extracts these from the container's configuration to enable caching and validation.
+                      properties:
+                        env:
+                          description: |-
+                            Env specifies per-source credential overrides.
+                            These variables are used for authentication when downloading this specific source.
+                            Takes precedence over base-level env for the same variable name.
+                          items:
+                            description: EnvVar represents an environment variable
+                              present in a Container.
+                            properties:
+                              name:
+                                description: |-
+                                  Name of the environment variable.
+                                  May consist of any printable ASCII characters except '='.
+                                type: string
+                              value:
+                                description: |-
+                                  Variable references $(VAR_NAME) are expanded
+                                  using the previously defined environment variables in the container and
+                                  any service environment variables. If a variable cannot be resolved,
+                                  the reference in the input string will be unchanged. Double $$ are reduced
+                                  to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                                  "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                                  Escaped references will never be expanded, regardless of whether the variable
+                                  exists or not.
+                                  Defaults to "".
+                                type: string
+                              valueFrom:
+                                description: Source for the environment variable's
+                                  value. Cannot be used if value is not empty.
+                                properties:
+                                  configMapKeyRef:
+                                    description: Selects a key of a ConfigMap.
+                                    properties:
+                                      key:
+                                        description: The key to select.
+                                        type: string
+                                      name:
+                                        default: ""
+                                        description: |-
+                                          Name of the referent.
+                                          This field is effectively required, but due to backwards compatibility is
+                                          allowed to be empty. Instances of this type with an empty value here are
+                                          almost certainly wrong.
+                                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                        type: string
+                                      optional:
+                                        description: Specify whether the ConfigMap
+                                          or its key must be defined
+                                        type: boolean
+                                    required:
+                                    - key
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                  fieldRef:
+                                    description: |-
+                                      Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                                      spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                                    properties:
+                                      apiVersion:
+                                        description: Version of the schema the FieldPath
+                                          is written in terms of, defaults to "v1".
+                                        type: string
+                                      fieldPath:
+                                        description: Path of the field to select in
+                                          the specified API version.
+                                        type: string
+                                    required:
+                                    - fieldPath
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                  fileKeyRef:
+                                    description: |-
+                                      FileKeyRef selects a key of the env file.
+                                      Requires the EnvFiles feature gate to be enabled.
+                                    properties:
+                                      key:
+                                        description: |-
+                                          The key within the env file. An invalid key will prevent the pod from starting.
+                                          The keys defined within a source may consist of any printable ASCII characters except '='.
+                                          During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
+                                        type: string
+                                      optional:
+                                        default: false
+                                        description: |-
+                                          Specify whether the file or its key must be defined. If the file or key
+                                          does not exist, then the env var is not published.
+                                          If optional is set to true and the specified key does not exist,
+                                          the environment variable will not be set in the Pod's containers.
+
+                                          If optional is set to false and the specified key does not exist,
+                                          an error will be returned during Pod creation.
+                                        type: boolean
+                                      path:
+                                        description: |-
+                                          The path within the volume from which to select the file.
+                                          Must be relative and may not contain the '..' path or start with '..'.
+                                        type: string
+                                      volumeName:
+                                        description: The name of the volume mount
+                                          containing the env file.
+                                        type: string
+                                    required:
+                                    - key
+                                    - path
+                                    - volumeName
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                  resourceFieldRef:
+                                    description: |-
+                                      Selects a resource of the container: only resources limits and requests
+                                      (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                                    properties:
+                                      containerName:
+                                        description: 'Container name: required for
+                                          volumes, optional for env vars'
+                                        type: string
+                                      divisor:
+                                        anyOf:
+                                        - type: integer
+                                        - type: string
+                                        description: Specifies the output format of
+                                          the exposed resources, defaults to "1"
+                                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                        x-kubernetes-int-or-string: true
+                                      resource:
+                                        description: 'Required: resource to select'
+                                        type: string
+                                    required:
+                                    - resource
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                  secretKeyRef:
+                                    description: Selects a key of a secret in the
+                                      pod's namespace
+                                    properties:
+                                      key:
+                                        description: The key of the secret to select
+                                          from.  Must be a valid secret key.
+                                        type: string
+                                      name:
+                                        default: ""
+                                        description: |-
+                                          Name of the referent.
+                                          This field is effectively required, but due to backwards compatibility is
+                                          allowed to be empty. Instances of this type with an empty value here are
+                                          almost certainly wrong.
+                                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                        type: string
+                                      optional:
+                                        description: Specify whether the Secret or
+                                          its key must be defined
+                                        type: boolean
+                                    required:
+                                    - key
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                type: object
+                            required:
+                            - name
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
+                        modelId:
+                          description: |-
+                            ModelID is the canonical identifier in {org}/{name} format.
+                            Determines the cache mount path: /workspace/cache/{modelId}
+                            For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
+                            For S3 sources, users define their own organizational structure.
+                          pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
+                          type: string
+                        precision:
+                          allOf:
+                          - enum:
+                            - auto
+                            - fp4
+                            - fp8
+                            - fp16
+                            - fp32
+                            - bf16
+                            - int4
+                            - int8
+                          - enum:
+                            - fp4
+                            - fp8
+                            - fp16
+                            - fp32
+                            - bf16
+                            - int4
+                            - int8
+                          description: |-
+                            Precision describes the runtime precision this source is compatible with.
+                            Used to match model sources to profiles during custom weight onboarding.
+                          type: string
+                        size:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          description: |-
+                            Size is the expected storage space required for this model artifact.
+                            Used for PVC sizing and capacity planning during cache creation.
+                            Optional - if not specified, the download job will discover the size automatically.
+                            Can be set explicitly to pre-allocate storage or override auto-discovery.
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        sourceUri:
+                          description: |-
+                            SourceURI is the location from which the model should be downloaded.
+                            Supported schemes:
+                            - hf://org/model - Hugging Face Hub model
+                            - s3://bucket/key - S3-compatible storage
+                          pattern: ^(hf|s3)://[^ \t\r\n]+$
+                          type: string
+                      required:
+                      - modelId
+                      - sourceUri
+                      type: object
+                    type: array
                 type: object
               replicas:
                 default: 1
@@ -3122,16 +3955,49 @@ spec:
               cache:
                 description: Cache captures cache-related status for this service.
                 properties:
+                  profileCacheRef:
+                    description: |-
+                      ProfileCacheRef references the AIMProfileCache being used, if any.
+                      Set by the v1alpha2 (profile-based) reconciliation path.
+                    properties:
+                      kind:
+                        description: Kind is the fully-qualified kind of the resolved
+                          reference, when known.
+                        type: string
+                      name:
+                        description: Name is the resource name that satisfied the
+                          reference.
+                        type: string
+                      namespace:
+                        description: |-
+                          Namespace identifies where the resource was found when namespace-scoped.
+                          Empty indicates a cluster-scoped resource.
+                        type: string
+                      scope:
+                        description: Scope indicates whether the resolved resource
+                          was namespace or cluster scoped.
+                        enum:
+                        - Namespace
+                        - Cluster
+                        - Merged
+                        - Unknown
+                        type: string
+                      uid:
+                        description: UID captures the unique identifier of the resolved
+                          reference, when known.
+                        type: string
+                    type: object
                   retryAttempts:
                     description: |-
                       RetryAttempts tracks how many times this service has attempted to retry a failed cache.
-                      Each service gets exactly one retry attempt. When a TemplateCache enters Failed state,
+                      Each service gets exactly one retry attempt. When a cache enters Failed state,
                       this counter is incremented from 0 to 1 after deleting failed Artifacts.
                       If the retry fails (cache enters Failed again with attempts == 1), the service degrades.
                     type: integer
                   templateCacheRef:
-                    description: TemplateCacheRef references the TemplateCache being
-                      used, if any.
+                    description: |-
+                      TemplateCacheRef references the AIMTemplateCache being used, if any.
+                      Set by the v1alpha1 (template-based) reconciliation path.
                     properties:
                       kind:
                         description: Kind is the fully-qualified kind of the resolved
@@ -3409,10 +4275,21 @@ spec:
         x-kubernetes-validations:
         - message: spec.profileOverrides requires spec.profile to be set
           rule: '!has(self.spec.profileOverrides) || has(self.spec.profile)'
-        - message: spec.profile and spec.template are mutually exclusive
-          rule: '!(has(self.spec.profile) && has(self.spec.template))'
+        - message: spec.template is not supported on v1alpha2; use spec.profile or
+            spec.model
+          rule: '!has(self.spec.template)'
+        - message: spec.overrides is not supported on v1alpha2; use spec.profileOverrides
+          rule: '!has(self.spec.overrides)'
         - message: one of spec.model or spec.profile must be specified
           rule: has(self.spec.model) || has(self.spec.profile)
+        - message: spec.profile.selector.role on v1alpha2 may only be omitted or set
+            to deployable; base is reserved for AIMProfileSet selectors
+          rule: '!has(self.spec.profile) || !has(self.spec.profile.selector) || !has(self.spec.profile.selector.role)
+            || self.spec.profile.selector.role == ''deployable'''
+        - message: spec.profile.selector must narrow on aimId, modelRef.name, or be
+            paired with spec.model.name
+          rule: '!has(self.spec.profile) || !has(self.spec.profile.selector) || has(self.spec.profile.selector.aimId)
+            || has(self.spec.profile.selector.modelRef) || has(self.spec.model)'
     served: true
     storage: true
     subresources:

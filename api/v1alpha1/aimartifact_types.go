@@ -31,8 +31,14 @@ import (
 )
 
 // DefaultDownloadImage is the container image used for artifact downloads when
-// not overridden per-resource. Set at build time via ldflags to match the release tag.
-var DefaultDownloadImage = "ghcr.io/silogen/aim-artifact-downloader:latest"
+// not overridden per-resource. MUST be set at build time via ldflags to match
+// the release tag (see the Makefile's LDFLAGS or the Dockerfile). An empty
+// default is intentional: a binary built without that ldflag would otherwise
+// silently fall back to a rolling `:latest` tag, which on nodes with
+// `imagePullPolicy: IfNotPresent` can resolve to an arbitrarily stale cached
+// layer. The operator startup validation in cmd/main.go refuses to run when
+// this value is empty so the misconfiguration is caught immediately.
+var DefaultDownloadImage = ""
 
 const (
 	// ArtifactSourceURIIndexKey is the field index key for AIMArtifact.Spec.SourceURI

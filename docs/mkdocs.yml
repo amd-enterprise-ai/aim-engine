@@ -73,6 +73,8 @@ nav:
   - Guides:
       - Deploying Services: guides/deploying-services.md
       - Model Catalog: guides/model-catalog.md
+      - Fine-Tuned Models: guides/fine-tuned-models.md
+      - Custom Models: guides/custom-models.md
       - Scaling and Autoscaling: guides/scaling-and-autoscaling.md
       - Model Caching: guides/model-caching.md
       - Routing and Ingress: guides/routing-and-ingress.md
@@ -90,9 +92,9 @@ nav:
   - Concepts:
       - AIM Services: concepts/services.md
       - AIM Models: concepts/models.md
-      - Model Sources: concepts/model-sources.md
-      - Profiles: concepts/profiles.md
-      - Service Templates (v1alpha1): concepts/templates.md
+      - AIM Profiles: concepts/profiles.md
+      - AIM Profile Sets: concepts/profilesets.md
+      - AIM Model Sources: concepts/model-sources.md
       - Runtime Configuration: concepts/runtime-config.md
       - Model Caching: concepts/caching.md
       - Accelerator Detection: concepts/accelerator-detection.md
@@ -105,6 +107,13 @@ nav:
       - Environment Variables: reference/environment-variables.md
       - Naming and Labels: reference/naming-and-labels.md
       - Conditions: reference/conditions.md
+  - Legacy (v1alpha1):
+      - Overview: legacy/index.md
+      - Migrating to v1alpha2: legacy/migrating.md
+      - AIMService (v1alpha1): legacy/aimservice-v1alpha1.md
+      - AIMModel (v1alpha1): legacy/aimmodel-v1alpha1.md
+      - Service Templates: legacy/service-templates.md
+      - Conditions (v1alpha1): legacy/conditions-v1alpha1.md
   # - Contributing:
   #     - Development Setup: contributing/development-setup.md
   #     - Controller Patterns: contributing/controller-patterns.md

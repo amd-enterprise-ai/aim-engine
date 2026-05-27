@@ -1,0 +1,84 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMProfile E2E Test: Profile-Driven Cache (Path A)
+#
+# Validates the AIMProfile -> AIMProfileCache path that mirrors v1alpha1's
+# AIMServiceTemplate -> AIMTemplateCache pattern: a namespace-scoped profile
+# that opts into caching via spec.caching.enabled produces a 1:1
+# AIMProfileCache, owner-ref'd back to the profile so deleting the profile
+# garbage-collects the cache (and transitively any dedicated artifacts).
+#
+# The cluster-scoped equivalent (AIMClusterProfile) deliberately does NOT do
+# this — it has no target namespace — so consumers in any namespace drive
+# cache creation via the service-side path instead. That asymmetry is pinned
+# at the unit level (TestClusterProfilePlanResources_NeverEmitsCache).
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-driven-cache
+spec:
+  description: |
+    Pins the AIMProfile -> AIMProfileCache materialisation contract:
+    1:1 cache named after the profile, owner-ref'd by the profile, Shared
+    mode, with caching.env propagated. Deleting the profile cascades the
+    cache deletion via owner reference, leaving artifacts that other caches
+    may still reuse untouched (artifact deletion is owner-ref'd to the cache,
+    not the profile).
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create AIMProfile with caching.enabled and modelSources
+      try:
+        - apply:
+            file: profile.yaml
+
+    - name: Assert AIMProfileCache is materialised by the profile reconciler
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                # 1:1 naming: cache name == profile name. Mirrors
+                # v1alpha1's BuildTemplateCache(template).Name = template.Name.
+                name: test-profile-driven-cache
+                namespace: ($namespace)
+                # Owner reference is the source profile, NOT the AIMService
+                # (which doesn't exist in this test). This is the lifecycle
+                # contract: cache lives and dies with the profile.
+                (ownerReferences[?kind == 'AIMProfile']):
+                  - name: test-profile-driven-cache
+                    controller: true
+              spec:
+                profileName: test-profile-driven-cache
+                profileScope: Namespace
+                # Profile-driven caches always run in Shared mode so the
+                # downstream artifacts dedupe by SourceURI hash and can be
+                # reused by service-driven caches that target the same
+                # weights.
+                mode: Shared
+                # caching.env on the profile must propagate to the cache so
+                # the artifact downloader has the auth tokens it needs.
+                (env[?name == 'HF_TOKEN']):
+                  - value: profile-token-from-spec
+
+    - name: Delete the profile
+      try:
+        - delete:
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              name: test-profile-driven-cache
+
+    - name: Assert the cache is garbage-collected with the profile
+      try:
+        - error:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                name: test-profile-driven-cache
+                namespace: ($namespace)

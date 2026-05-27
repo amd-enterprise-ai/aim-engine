@@ -13,6 +13,7 @@
 !cmd/
 !internal/
 !api/
+!pkg/
 
 # But exclude certain files within allowed directories
 **/*_test.go

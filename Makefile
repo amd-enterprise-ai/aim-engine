@@ -5,6 +5,12 @@ IMG ?= $(IMG_REPO):$(TAG)
 ARTIFACT_DOWNLOADER_IMG ?= ghcr.io/silogen/aim-artifact-downloader:$(TAG)
 LDFLAGS ?= -X 'github.com/amd-enterprise-ai/aim-engine/api/v1alpha1.DefaultDownloadImage=$(ARTIFACT_DOWNLOADER_IMG)'
 
+# AIM_DUMMY_TAG pins the kind-runnable test image used by BYO base-image and
+# custom-model fixtures. Bumping it here also requires updating the CI
+# AIM_DUMMY_TAG env var in .github/workflows/test-e2e.yml so dev / CI stay in
+# sync.
+AIM_DUMMY_TAG ?= 0.2.0
+
 # Helm chart configuration
 CHART_NAME ?= aim-engine-chart
 CRDS_CHART_NAME ?= aim-engine-crds-chart
@@ -137,12 +143,15 @@ kind-create: manifests ## Create kind cluster with all dependencies for local de
 	@$(MAKE) seaweedfs-init-bucket
 	@$(MAKE) seaweedfs-default-config
 	@$(MAKE) cache-warm
-	@# Pre-load test images for faster e2e tests
-	@echo "Pre-loading test images..."
-	@for tag in 0.1.8 0.1.9 0.1.10; do \
-		docker pull ghcr.io/silogen/aim-dummy:$$tag 2>/dev/null || true; \
-		kind load docker-image ghcr.io/silogen/aim-dummy:$$tag --name aim-engine 2>/dev/null || true; \
-	done
+	@# Pre-load test images for faster e2e tests. AIM_DUMMY_TAG is the
+	@# kind-runnable test image used by BYO base-image / custom-model
+	@# fixtures; pinning the tag here mirrors the CI workflow so dev /
+	@# CI behaviour stays in sync.
+	@echo "Pre-loading test images (aim-dummy:$(AIM_DUMMY_TAG))..."
+	@if ! docker image inspect ghcr.io/silogen/aim-dummy:$(AIM_DUMMY_TAG) >/dev/null 2>&1; then \
+		docker pull ghcr.io/silogen/aim-dummy:$(AIM_DUMMY_TAG); \
+	fi
+	@kind load docker-image ghcr.io/silogen/aim-dummy:$(AIM_DUMMY_TAG) --name aim-engine
 	@echo ""
 	@echo "=== Kind cluster setup complete ==="
 	@echo "Run 'make watch' to start the operator with live reload."
@@ -187,15 +196,22 @@ CHAINSAW_TEST_DIR := tests/e2e
 CHAINSAW_REPORT_DIR := .tmp/chainsaw-reports
 CHAINSAW_CONFIG_DIR := tests/chainsaw/config
 
+# needs-secret tags tests with environmental credential prerequisites
+# (HF token in aim-system, GHCR pull-secret manifest on the runner, etc.)
+# that aren't universally provisioned. Excluded from both default selectors;
+# opt-in by overriding the selector or pointing CHAINSAW_TEST_DIR at the
+# specific test directory.
+CHAINSAW_NEEDS_SECRET_EXCLUDE := needs-secret notin (hf_token,ghcr_pull_secret)
+
 # Kind environment: exclude tests requiring GPU, longhorn storage, or external
 # network. `tier notin (manual)` excludes expensive / operator-gated tests that
 # shouldn't run by default (e.g. multi-hundred-GiB live model downloads).
-CHAINSAW_SELECTOR_KIND := requires notin (gpu,longhorn,hf_token,nfd),tier notin (manual)
+CHAINSAW_SELECTOR_KIND := requires notin (gpu,longhorn,hf_token,nfd),tier notin (manual),$(CHAINSAW_NEEDS_SECRET_EXCLUDE)
 
 # GPU environment: exclude tests that only work on Kind (mocked node labels).
 # `tier notin (manual)` excludes expensive tests — run those explicitly by
 # pointing CHAINSAW_TEST_DIR at the specific test directory.
-CHAINSAW_SELECTOR_GPU := requires notin (kind,hf_token,nfd),tier notin (manual)
+CHAINSAW_SELECTOR_GPU := requires notin (kind,hf_token,nfd),tier notin (manual),$(CHAINSAW_NEEDS_SECRET_EXCLUDE)
 
 # Select appropriate config based on ENV and CI detection
 # CI is detected via CI env var (set by GitHub Actions, GitLab CI, etc.)
@@ -328,11 +344,11 @@ build: manifests generate fmt vet ## Build manager binary.
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./cmd/main.go
+	go run -ldflags "$(LDFLAGS)" ./cmd/main.go
 
 .PHONY: run-debug
 run-debug: manifests generate fmt vet ## Run a controller with debug logging enabled.
-	go run ./cmd/main.go --zap-log-level=debug
+	go run -ldflags "$(LDFLAGS)" ./cmd/main.go --zap-log-level=debug
 
 .PHONY: watch
 watch: manifests generate install ## Run controller with live reload on file changes.

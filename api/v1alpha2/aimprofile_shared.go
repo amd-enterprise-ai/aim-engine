@@ -27,7 +27,8 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/pkg/aimstatus"
 )
 
 const (
@@ -41,10 +42,18 @@ const (
 // runtime config (engineArgs, engineEnv), and container image (image).
 type AIMProfileSpecCommon struct {
 	// AimId is the model architecture identifier (e.g., "qwen/qwen3-32b").
-	// Primary matching axis for profile selection and custom weight onboarding. Immutable.
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="aimId is immutable"
-	AimId string `json:"aimId"`
+	// Primary matching axis for profile selection and custom weight onboarding.
+	//
+	// AimId is required for deployable profiles. Iteration 1 producers always
+	// emit deployable profiles, so AimId is effectively required there. Empty
+	// AimId is reserved for base profiles emitted by base-image discovery
+	// (custom-model derivation source material), which are not deployable
+	// until derived.
+	//
+	// Once set, AimId is immutable.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="oldSelf == '' || self == oldSelf",message="aimId is immutable once set"
+	AimId string `json:"aimId,omitempty"`
 
 	// ModelId is the specific model / HuggingFace URI (e.g., "qwen/qwen3-32b-fp8").
 	// Determines the cache path (/workspace/cache/{modelId}) and serves as a secondary
@@ -83,6 +92,11 @@ type AIMProfileSpecCommon struct {
 	// Defaults to false when not specified.
 	// +kubebuilder:default=false
 	Primary bool `json:"primary"`
+
+	// ManualSelectionOnly excludes this profile from automatic AIMService selection.
+	// It remains addressable by explicit name and is preserved from aim-build profile YAMLs.
+	// +kubebuilder:default=false
+	ManualSelectionOnly bool `json:"manualSelectionOnly,omitempty"`
 
 	// EngineArgs contains inference engine CLI arguments as a free-form JSON object.
 	// Passed to the inference engine (e.g., vLLM) at startup.
@@ -168,6 +182,32 @@ type AIMProfileCachingConfig struct {
 	Env []corev1.EnvVar `json:"env,omitempty"`
 }
 
+// ProfileSourceModelKind identifies whether a profile's source model is
+// namespace-scoped (AIMModel) or cluster-scoped (AIMClusterModel).
+// +kubebuilder:validation:Enum=AIMModel;AIMClusterModel
+type ProfileSourceModelKind string
+
+const (
+	ProfileSourceModelKindAIMModel        ProfileSourceModelKind = "AIMModel"
+	ProfileSourceModelKindAIMClusterModel ProfileSourceModelKind = "AIMClusterModel"
+)
+
+// ProfileSourceModel identifies the producing AIM(Cluster)Model for a
+// reconciler-produced profile. Stamped from owner references during
+// reconciliation; left unset for user-authored profiles.
+type ProfileSourceModel struct {
+	// Name is the producing model's name.
+	Name string `json:"name"`
+
+	// Kind is the producing model's kind ("AIMModel" or "AIMClusterModel").
+	Kind ProfileSourceModelKind `json:"kind"`
+
+	// Namespace is the producing model's namespace. Empty when Kind is
+	// AIMClusterModel (cluster-scoped).
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+}
+
 // AIMProfileStatus defines the observed state of AIMProfile / AIMClusterProfile.
 type AIMProfileStatus struct {
 	// ObservedGeneration is the most recent generation observed by the controller.
@@ -178,11 +218,45 @@ type AIMProfileStatus struct {
 	// NotAvailable: no matching nodes found.
 	// +kubebuilder:default=Pending
 	// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Degraded;Failed;NotAvailable
-	Status constants.AIMStatus `json:"status,omitempty"`
+	Status aimstatus.AIMStatus `json:"status,omitempty"`
+
+	// Deployable reports whether the profile is materialised enough to back an
+	// AIMService: true when spec.aimId and spec.modelSources are both
+	// populated, false for base profiles awaiting derivation.
+	//
+	// Iteration 1 producers always emit deployable profiles. Base-profile
+	// production (from base-image discovery) lands in iteration 2.
+	// +kubebuilder:default=false
+	Deployable bool `json:"deployable"`
+
+	// SourceModel identifies the producing AIM(Cluster)Model for profiles
+	// owned by AIMModel reconcilers. Empty for user-authored profiles.
+	// +optional
+	SourceModel *ProfileSourceModel `json:"sourceModel,omitempty"`
+
+	// Origin classifies how this profile was produced:
+	//   - discovered: emitted by image discovery (AIMModel.spec.image).
+	//   - derived: emitted by an AIMProfileSet or
+	//     AIMModel.spec.profiles.derivedFrom.
+	//   - user-authored: created independently by a user.
+	//
+	// Backfilled by the AIMProfile reconciler when not stamped at creation
+	// time; user-authored profiles default to `user-authored`.
+	// +optional
+	Origin aimv1alpha1.ProfileOrigin `json:"origin,omitempty"`
 
 	// Version is extracted from the spec.image tag during reconciliation (e.g., "0.8.5").
 	// +optional
 	Version string `json:"version,omitempty"`
+
+	// BaseImage is the AIM_BASE_IMAGE_REF the inspector extracted from the
+	// source image when this profile was materialised by AIMModel discovery.
+	// Used by derivation flows (AIMService overlays, AIMProfileSet) to rebase
+	// the deployment image onto the source's base when overriding model
+	// sources, so private mirrors stay self-contained. Empty for
+	// user-authored profiles.
+	// +optional
+	BaseImage string `json:"baseImage,omitempty"`
 
 	// MatchingNodes is the count of cluster nodes matching both the accelerator
 	// model label and status.resources requests. Zero means NotAvailable.
@@ -220,10 +294,10 @@ func (s *AIMProfileStatus) SetConditions(conditions []metav1.Condition) {
 }
 
 func (s *AIMProfileStatus) SetStatus(status string) {
-	s.Status = constants.AIMStatus(status)
+	s.Status = sanitizeAIMStatus(status)
 }
 
-func (s *AIMProfileStatus) GetAIMStatus() constants.AIMStatus {
+func (s *AIMProfileStatus) GetAIMStatus() aimstatus.AIMStatus {
 	return s.Status
 }
 
@@ -232,6 +306,11 @@ const (
 	// AIMProfileConditionHardwareAvailable is True when at least one node matches the profile's
 	// accelerator labels and has capacity for the requested resources.
 	AIMProfileConditionHardwareAvailable = "HardwareAvailable"
+
+	// AIMProfileConditionDeployable is True when the profile is materialised
+	// enough to back an AIMService (spec.aimId and spec.modelSources both
+	// populated). False on base profiles awaiting derivation.
+	AIMProfileConditionDeployable = "Deployable"
 )
 
 // Profile condition reasons.
@@ -239,4 +318,14 @@ const (
 	AIMProfileReasonHardwareAvailable    = "HardwareAvailable"
 	AIMProfileReasonHardwareNotAvailable = "HardwareNotAvailable"
 	AIMProfileReasonNoAccelerator        = "NoAcceleratorSpecified"
+
+	// AIMProfileReasonDeployable indicates the profile is fully materialised
+	// (aimId + modelSources both populated). Iteration 1 producers always
+	// reach this state.
+	AIMProfileReasonDeployable = "Deployable"
+
+	// AIMProfileReasonBaseProfile indicates the profile is a base-image
+	// profile awaiting derivation (missing aimId or modelSources). Reserved
+	// for base-image producers (custom-model derivation source material).
+	AIMProfileReasonBaseProfile = "BaseProfile"
 )

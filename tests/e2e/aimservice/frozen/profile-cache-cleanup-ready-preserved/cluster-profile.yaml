@@ -14,6 +14,9 @@ spec:
   type: optimized
   primary: true
   image: registry.example.com/test-image:1.0.0
+  modelSources:
+    - modelId: test/cleanup-ready-fp8
+      sourceUri: hf://test/cleanup-ready
 status:
   status: Ready
   version: 1.0.0

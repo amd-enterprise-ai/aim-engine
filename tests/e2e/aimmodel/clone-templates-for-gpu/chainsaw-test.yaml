@@ -3,40 +3,47 @@ kind: Test
 metadata:
   name: clone-templates-for-gpu
 spec:
+  # The whole test runs in the chainsaw-managed namespace and operates on
+  # namespace-scoped AIMServiceTemplate resources, so it cannot collide with
+  # cluster-scoped templates left behind by parallel or earlier runs. The
+  # cluster-scoped path of clone-templates-for-gpu.sh is the user-facing
+  # default and is exercised manually rather than from CI.
   concurrent: false
 
   steps:
-    - name: Create cluster model with dummy image
+    - name: Create namespace-scoped model with dummy image
       try:
         - apply:
-            file: cluster-model.yaml
+            file: model.yaml
 
-    - name: Wait for cluster model to be ready
+    - name: Wait for model to be ready
       try:
         - assert:
             timeout: 90s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMClusterModel
+              kind: AIMModel
               metadata:
                 name: clone-templates-gpu-model
               status:
                 status: Ready
 
-    - name: Clone templates to MI308X
+    - name: Clone namespace-scoped templates from MI300X to MI308X
       try:
         - script:
             timeout: 60s
             content: |
-              bash ../../../../hack/clone-templates-for-gpu.sh MI300X MI308X | kubectl apply -f -
+              bash ../../../../hack/clone-templates-for-gpu.sh \
+                --namespace "$NAMESPACE" MI300X MI308X \
+                | kubectl apply -n "$NAMESPACE" -f -
 
-    - name: Verify cloned MI308X templates exist
+    - name: Verify cloned MI308X templates exist in this namespace
       try:
         - assert:
             timeout: 60s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMClusterServiceTemplate
+              kind: AIMServiceTemplate
               metadata:
                 labels:
                   aim.eai.amd.com/origin: auto-generated

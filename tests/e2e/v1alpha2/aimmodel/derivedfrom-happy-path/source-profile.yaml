@@ -1,0 +1,24 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: derivedfrom-source
+  annotations:
+    aim.eai.amd.com/base-image: ghcr.io/silogen/aim-base:0.1.10
+    aim.eai.amd.com/profile-copyable: "true"
+  labels:
+    # Source-model labels stand in for what the AIMModel reconciler stamps
+    # when it materialises profiles via image discovery. The selector below
+    # uses these to narrow candidates.
+    aim.eai.amd.com/profile-role: deployable
+    aim.eai.amd.com/profile-origin: discovered
+    aim.eai.amd.com/source-model: derivedfrom-source-model
+    aim.eai.amd.com/source-model-scope: namespace
+spec:
+  aimId: derived-org/derived-model
+  modelId: derived-org/derived-model
+  profileId: cpu-default
+  image: ghcr.io/silogen/aim-dummy:0.2.0
+  primary: true
+  modelSources:
+    - modelId: derived-org/derived-model
+      sourceUri: hf://derived-org/derived-model

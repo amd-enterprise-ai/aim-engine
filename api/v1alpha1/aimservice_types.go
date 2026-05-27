@@ -161,29 +161,94 @@ type AIMServiceOverrides struct {
 
 // AIMServiceProfileConfig contains profile selection configuration for AIMService v1alpha2.
 // When set, the service uses a profile-based reconciliation path instead of the template path.
+//
+// Exactly one of Name and Selector must be set. Name resolves an AIMProfile /
+// AIMClusterProfile directly; Selector lists candidates by provenance and spec
+// fields (typically combined with `spec.model.name`, which the controller
+// treats as a shortcut for `selector.modelRef.name`).
+// +kubebuilder:validation:XValidation:rule="!(has(self.name) && has(self.selector))",message="spec.profile.name and spec.profile.selector are mutually exclusive"
+// +kubebuilder:validation:XValidation:rule="has(self.name) || has(self.selector)",message="spec.profile must set name or selector"
 type AIMServiceProfileConfig struct {
 	// Name is the name of the AIMProfile or AIMClusterProfile to use.
 	// The controller looks for a namespace-scoped AIMProfile first, then falls back to AIMClusterProfile.
-	// +required
+	// Mutually exclusive with Selector.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
-	Name string `json:"name"`
+	Name string `json:"name,omitempty"`
+
+	// Selector narrows candidate AIMProfile / AIMClusterProfile objects via the
+	// shared provenance labels (role, source-model, origin) and spec filters
+	// (aimId, precision, acceleratorModel, ...). The controller forces
+	// `selector.role = Deployable` at evaluation time; user-supplied values
+	// for that field are rejected by CEL on v1alpha2.
+	//
+	// For every selector-driven AIMService the controller requires at least
+	// one of `selector.aimId` or `selector.modelRef.name` so the watch
+	// fan-out can reach the service via an O(1) index lookup. The top-level
+	// `spec.model.name` shortcut is treated as if the user had set
+	// `selector.modelRef.name` to the same value when not explicit.
+	// +optional
+	Selector *ProfileSelector `json:"selector,omitempty"`
 }
 
 // AIMServiceProfileOverrides allows overriding profile parameters at the service level.
-// When specified, the controller creates a service-owned copy of the profile configuration
-// with these overrides applied. The original profile is not modified.
+// When specified, the controller materialises a service-owned overlay AIMProfile
+// derived from the referenced profile with these overrides applied; the original
+// profile is not modified. The downstream AIMProfileCache and InferenceService are
+// then resolved from the overlay, so the override participates in cache key
+// computation as well as inference-pod env wiring.
+//
+// This type is a SUBSET of `aimv1alpha1.ProfileOverrides` (the type
+// AIMProfileSet derivation uses). Both go through the same internal apply
+// primitive (`internal/v1alpha2/aimprofile.ApplyProfileCopyOverrides`) so
+// the merge semantics match, but the service-level overlay intentionally
+// omits the `Image` override that AIMProfileSet's overrides expose:
+// changing the runtime container image per-service belongs at the profile
+// level (via spec.profiles.overrides.image on the source AIMModel /
+// AIMProfileSet), not at the consumer. Restricting the field set here
+// keeps the per-service overlay focused on workload-shape changes
+// (weights, env, args, hardware count) where service-level overrides are
+// the right tool.
 type AIMServiceProfileOverrides struct {
-	// EngineArgs overrides or extends the profile's inference engine CLI arguments.
-	// +kubebuilder:pruning:PreserveUnknownFields
-	// +kubebuilder:validation:Schemaless
+	// ModelSources replaces the referenced profile's modelSources entirely.
+	// Use this to point a profile at user-supplied weights (e.g. a fine-tuned
+	// checkpoint) without forking the profile itself. The first source's
+	// modelId becomes the overlay profile's modelId.
 	// +optional
-	EngineArgs *apiextensionsv1.JSON `json:"engineArgs,omitempty"`
+	ModelSources []AIMModelSource `json:"modelSources,omitempty"`
 
-	// ContainerEnv overrides or extends the profile's container-level environment variables.
+	// AcceleratorModel replaces the referenced profile's acceleratorModel
+	// (e.g. "MI300X" -> "MI325X"). Validation against actual cluster
+	// availability is left to the AIMServiceTemplate / runtime layers.
+	// +optional
+	AcceleratorModel string `json:"acceleratorModel,omitempty"`
+
+	// AcceleratorCount replaces the referenced profile's acceleratorCount.
+	// +optional
+	AcceleratorCount *int32 `json:"acceleratorCount,omitempty"`
+
+	// ContainerEnv merges by env-var name on top of the profile's
+	// containerEnv. Matching names override; new names are appended.
+	// AIM framework variables (AIM_*) reserved for the controller are
+	// applied after the overlay's containerEnv and cannot be overridden
+	// here.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
 	ContainerEnv []corev1.EnvVar `json:"containerEnv,omitempty"`
+
+	// EngineEnv merges by key on top of the profile's engineEnv. These
+	// variables flow into the inference engine's runtime configuration.
+	// +optional
+	EngineEnv map[string]string `json:"engineEnv,omitempty"`
+
+	// EngineArgs shallow-merges on top of the profile's engineArgs,
+	// overriding matching top-level keys. Values are passed verbatim
+	// to the inference engine CLI.
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	// +optional
+	EngineArgs *apiextensionsv1.JSON `json:"engineArgs,omitempty"`
 }
 
 // AIMServiceSpec defines the desired state of AIMService.
@@ -339,13 +404,26 @@ type AIMServiceStatus struct {
 }
 
 // AIMServiceCacheStatus captures cache-related status for an AIMService.
+//
+// Exactly one of TemplateCacheRef / ProfileCacheRef is populated, depending on
+// which reconciliation path produced the cache:
+//   - TemplateCacheRef is set by the v1alpha1 (template-based) path and points
+//     to an AIMTemplateCache.
+//   - ProfileCacheRef is set by the v1alpha2 (profile-based) path and points to
+//     an AIMProfileCache.
 type AIMServiceCacheStatus struct {
-	// TemplateCacheRef references the TemplateCache being used, if any.
+	// TemplateCacheRef references the AIMTemplateCache being used, if any.
+	// Set by the v1alpha1 (template-based) reconciliation path.
 	// +optional
 	TemplateCacheRef *AIMResolvedReference `json:"templateCacheRef,omitempty"`
 
+	// ProfileCacheRef references the AIMProfileCache being used, if any.
+	// Set by the v1alpha2 (profile-based) reconciliation path.
+	// +optional
+	ProfileCacheRef *AIMResolvedReference `json:"profileCacheRef,omitempty"`
+
 	// RetryAttempts tracks how many times this service has attempted to retry a failed cache.
-	// Each service gets exactly one retry attempt. When a TemplateCache enters Failed state,
+	// Each service gets exactly one retry attempt. When a cache enters Failed state,
 	// this counter is incremented from 0 to 1 after deleting failed Artifacts.
 	// If the retry fails (cache enters Failed again with attempts == 1), the service degrades.
 	// +optional
@@ -442,9 +520,22 @@ const (
 	AIMServiceReasonPathTemplateInvalid = "PathTemplateInvalid"
 
 	// Profile Resolution (v1alpha2)
-	AIMServiceReasonProfileNotFound = "ProfileNotFound"
-	AIMServiceReasonProfileNotReady = "ProfileNotReady"
-	AIMServiceReasonProfileResolved = "ProfileResolved"
+	AIMServiceReasonProfileNotFound          = "ProfileNotFound"
+	AIMServiceReasonProfileNotReady          = "ProfileNotReady"
+	AIMServiceReasonProfileResolved          = "ProfileResolved"
+	AIMServiceReasonBaseProfile              = "BaseProfile"
+	AIMServiceReasonProfileSelectorAmbiguous = "ProfileSelectorAmbiguous"
+	// AIMServiceReasonProfileRebound is emitted (Normal severity) when the
+	// resolver picks a different profile than the one currently recorded
+	// in status.resolvedProfile. Carries the previous and new profile
+	// names plus the trigger reason in the event message.
+	AIMServiceReasonProfileRebound = "ProfileRebound"
+	// AIMServiceReasonProfileBindingStuck is emitted (Normal severity) at
+	// most once per binding when the resolver honours the existing
+	// status.resolvedProfile despite the candidate set having changed.
+	// Surfaces the "sticky binding" behavior so operators understand why
+	// a newly-added higher-ranked profile is not being adopted.
+	AIMServiceReasonProfileBindingStuck = "ProfileBindingStuck"
 )
 
 // AIMService manages a KServe-based AIM inference service for the selected model and template.

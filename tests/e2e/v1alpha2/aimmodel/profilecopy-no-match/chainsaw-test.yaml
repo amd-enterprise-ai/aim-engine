@@ -1,0 +1,63 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimmodel-profilecopy-no-match
+spec:
+  description: |
+    Verifies that a profileCopy AIMModel whose synthesized AIMProfileSet matches
+    zero profiles reports NotAvailable instead of treating 0 ready / 0 total as Ready.
+  timeouts:
+    assert: 90s
+  steps:
+    - name: Seed a non-matching copyable profile
+      try:
+        - apply:
+            file: candidate-profile.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: profilecopy-no-match-source
+              status:
+                status: Ready
+                version: 0.2.0
+
+    - name: Create the profileCopy AIMModel with a selector that matches nothing
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert the synthesized child AIMProfileSet reports zero managed profiles
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileSet
+              metadata:
+                name: profilecopy-no-match-model-profiles-d2b69d38
+              status:
+                status: NotAvailable
+                managedProfiles:
+                  total: 0
+                  ready: 0
+
+    - name: Assert the AIMModel is not Ready on zero profileCopy matches
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: profilecopy-no-match-model
+              status:
+                status: NotAvailable
+                aimId: profilecopy/missing-source
+                profileSetRef:
+                  name: profilecopy-no-match-model-profiles-d2b69d38
+                managedProfiles:
+                  total: 0
+                  ready: 0

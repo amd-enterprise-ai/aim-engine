@@ -48,7 +48,7 @@ spec:
               metadata:
                 name: ft-official-template-pinned
               status:
-                version: "0.1.10"
+                version: "0.2.0"
 
     - name: Create fine-tuned model with matching aimId
       try:

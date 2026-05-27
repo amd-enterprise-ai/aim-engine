@@ -6,11 +6,13 @@ resources:
 - bases/aim.eai.amd.com_aimclustermodels.yaml
 - bases/aim.eai.amd.com_aimclustermodelsources.yaml
 - bases/aim.eai.amd.com_aimclusterprofiles.yaml
+- bases/aim.eai.amd.com_aimclusterprofilesets.yaml
 - bases/aim.eai.amd.com_aimclusterruntimeconfigs.yaml
 - bases/aim.eai.amd.com_aimclusterservicetemplates.yaml
 - bases/aim.eai.amd.com_aimmodels.yaml
 - bases/aim.eai.amd.com_aimprofilecaches.yaml
 - bases/aim.eai.amd.com_aimprofiles.yaml
+- bases/aim.eai.amd.com_aimprofilesets.yaml
 - bases/aim.eai.amd.com_aimruntimeconfigs.yaml
 - bases/aim.eai.amd.com_aimservices.yaml
 - bases/aim.eai.amd.com_aimservicetemplates.yaml

@@ -3,16 +3,20 @@ kind: Test
 metadata:
   name: aimprofile-basic-lifecycle
   labels:
-    # The NotAvailable scenario asserts that requesting MI300X yields 0 matching
-    # nodes. That's only true on kind (no real hardware); on GPU clusters with
-    # actual MI300X nodes the profile legitimately becomes Ready. Pin to kind.
+    # The NotAvailable scenario asserts that requesting a specific GPU model
+    # yields 0 matching nodes. hack/kind/config.yaml advertises MI300X and
+    # MI350X on the kind workers, so the test requests MI355X — a model
+    # neither labelled in kind nor present on the current GPU vcluster. On
+    # any cluster that does light up MI355X this test would legitimately
+    # become Ready; pin to kind so the assertion stays deterministic.
     requires: kind
 spec:
   description: |
     Tests the basic lifecycle of AIMClusterProfile for both Ready and NotAvailable paths.
     1. A profile WITHOUT spec.accelerator becomes Ready (no hardware constraints).
        Verifies status fields: status, version, hardwareSummary, primary default, and conditions.
-    2. A profile WITH spec.accelerator (requesting a GPU not present in kind) becomes NotAvailable.
+    2. A profile WITH spec.accelerator (requesting MI355X, a GPU not labelled
+       on kind workers — see hack/kind/config.yaml) becomes NotAvailable.
        Verifies matchingNodes=0 and HardwareNotAvailable condition.
   timeouts:
     assert: 60s
@@ -53,7 +57,7 @@ spec:
                   - status: "True"
                     reason: NoAcceleratorSpecified
 
-    - name: Verify GPU profile becomes NotAvailable (no MI300X in kind cluster)
+    - name: Verify GPU profile becomes NotAvailable (no MI355X in kind cluster)
       try:
         - assert:
             timeout: 30s
@@ -65,7 +69,7 @@ spec:
               status:
                 status: NotAvailable
                 matchingNodes: 0
-                hardwareSummary: 1 x MI300X
+                hardwareSummary: 1 x MI355X
 
     - name: Verify GPU profile HardwareNotAvailable condition
       try:

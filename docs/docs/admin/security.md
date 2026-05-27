@@ -39,7 +39,7 @@ When `rbacHelpers.enable` is `true` (default), the chart creates admin/editor/vi
 | `{crd}-editor` | Create, update, delete |
 | `{crd}-viewer` | Read-only |
 
-Available for: `aimservice`, `aimmodel`, `aimclustermodel`, `aimartifact`, `aimtemplatecache`, `aimservicetemplate`, `aimclusterservicetemplate`, `aimruntimeconfig`, `aimclusterruntimeconfig`.
+Available for: `aimservice`, `aimmodel`, `aimclustermodel`, `aimartifact`, `aimtemplatecache`, `aimprofile`, `aimclusterprofile`, `aimprofileset`, `aimclusterprofileset`, `aimprofilecache`, `aimservicetemplate`, `aimclusterservicetemplate`, `aimruntimeconfig`, `aimclusterruntimeconfig`.
 
 ### Example: Team RBAC
 

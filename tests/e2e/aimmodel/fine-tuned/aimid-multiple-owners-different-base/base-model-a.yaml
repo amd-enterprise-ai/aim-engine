@@ -1,9 +1,15 @@
-# Cluster base model representing one base-image family (e.g. aim-base on
-# MI300). spec.imageMetadata is provided directly so no registry fetch is
-# attempted; baseImageRef is what the fine-tuned image resolver reads when
-# stamping the deployment-image-ref annotation on each generated copy.
+# Namespace-scoped base model representing one base-image family (e.g.
+# aim-base on MI300). spec.imageMetadata is provided directly so no registry
+# fetch is attempted; baseImageRef is what the fine-tuned image resolver
+# reads when stamping the deployment-image-ref annotation on each generated
+# copy.
+#
+# This test is intentionally namespace-scoped end-to-end so the chainsaw
+# namespace fully isolates it from other tests on the cluster. The
+# cross-scope path (namespace-scoped fine-tuned model matching cluster-scoped
+# templates) is covered by the sibling test `aimid-cluster-template-match`.
 apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMClusterModel
+kind: AIMModel
 metadata:
   name: ft-multi-base-a
 spec:

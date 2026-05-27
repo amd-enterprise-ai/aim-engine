@@ -26,6 +26,11 @@ metadata:
   name: profile-cache-cpu-live
   labels:
     requires: gpu
+    # Mounts a GHCR pull-secret manifest from a local path on the test
+    # runner (see GHCR_PULL_SECRET_FILE) plus an HF token secret. Both
+    # are environmental prerequisites that the default selectors strip
+    # out; opt-in by pointing CHAINSAW_TEST_DIR at this directory.
+    needs-secret: ghcr_pull_secret
 spec:
   description: Full profile cache pipeline with real CPU inference and endpoint validation
   timeouts:
@@ -92,7 +97,15 @@ spec:
         - apply:
             file: service.yaml
 
-    - name: Verify AIMProfileCache is created
+    # The profile sets spec.caching.enabled=true, so the AIMProfile reconciler
+    # materialises a profile-owned AIMProfileCache named after the profile
+    # itself (1:1 with the profile, owner-ref'd to it). The AIMService's
+    # fetchProfileCache picks this up via the Shared-mode list-by-profile-name
+    # search and reuses it instead of creating its own service-driven cache.
+    # This mirrors v1alpha1's AIMServiceTemplate -> AIMTemplateCache pattern
+    # where a template-driven cache is preferred over a service-driven one
+    # when both could match.
+    - name: Verify the profile-driven AIMProfileCache is materialised and reused
       try:
         - assert:
             timeout: 60s
@@ -100,13 +113,37 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfileCache
               metadata:
+                name: qwen3-0-6b-cpu-live
                 namespace: ($namespace)
-                labels:
-                  aim.eai.amd.com/service: test-profile-cache-cpu
+                # 1:1 ownership: profile owns the cache, GCs it on delete.
+                (ownerReferences[?kind == 'AIMProfile']):
+                  - name: qwen3-0-6b-cpu-live
+                    controller: true
               spec:
                 profileName: qwen3-0-6b-cpu-live
                 profileScope: Namespace
                 mode: Shared
+
+    # Authoritative check that there is exactly ONE AIMProfileCache in the
+    # namespace — the AIMService must NOT create a second service-driven
+    # cache when a profile-driven one already exists. Two caches downloading
+    # the same weights would race on the AIMArtifact's profile-cache-name
+    # label and the second cache would never reach Ready.
+    - name: Assert AIMService does not create a duplicate service-driven cache
+      try:
+        - script:
+            timeout: 30s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              count=$(kubectl -n "$NAMESPACE" get aimprofilecache -o name | wc -l)
+              if [ "$count" -ne 1 ]; then
+                echo "FAIL: expected exactly 1 AIMProfileCache (profile-owned), got $count"
+                kubectl -n "$NAMESPACE" get aimprofilecache -o yaml >&2
+                exit 1
+              fi
 
     - name: Verify AIMArtifact is created for the model
       try:
@@ -130,9 +167,12 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfileCache
               metadata:
+                # Profile-driven cache: name == profile name (1:1 with profile).
+                # See above; the AIMService reuses this cache via the Shared
+                # list-by-profile-name fetch path, so no service-labelled cache
+                # exists.
+                name: qwen3-0-6b-cpu-live
                 namespace: ($namespace)
-                labels:
-                  aim.eai.amd.com/service: test-profile-cache-cpu
               status:
                 status: Ready
 

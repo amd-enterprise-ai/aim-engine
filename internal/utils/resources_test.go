@@ -429,9 +429,6 @@ func TestGetAMDDeviceIDsForModel_IsDeterministicallySorted(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Call many times — if the impl iterates the KnownAmdDevices map
-			// without sorting, one of these calls will return a different order
-			// and catch the regression.
 			var first []string
 			for i := 0; i < 50; i++ {
 				got := GetAMDDeviceIDsForModel(tt.model)

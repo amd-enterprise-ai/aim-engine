@@ -1,0 +1,43 @@
+# Derivation AIMModel that promotes the seeded base AIMProfile into a
+# deployable AIMProfile via the BYO identity + weights overlay.
+#
+# This is the kind-runnable mirror of ../end-to-end/derivation-model.yaml.
+# The mechanics are identical:
+#   - selector.role: base narrows the source pool to base profiles
+#     (CEL rejects selector.aimId/modelId/profileId when role=base —
+#     selector is FILTER-only, target identity lives in overrides).
+#   - acceleratorType / acceleratorCount narrow to the seeded base's shape.
+#   - overrides.aimId / overrides.modelId supply the TARGET identity for
+#     the derived profile (required by CEL when role=base — base profiles
+#     ship with empty identity by design).
+#   - overrides.modelSources supplies the BYO weights that complete the
+#     base into a deployable profile.
+#
+# Notably absent compared to the GPU sibling: selector.modelRef.
+# In production the base profile is produced by image discovery on a
+# base AIMModel, so it has an AIMModel owner and the AIMProfile
+# reconciler keeps the `aim.eai.amd.com/source-model[-scope]` labels
+# in sync via SourceModelFromOwnerRefs. Hand-authored seeds have no
+# owner ref, so StampProfileProvenance deliberately strips those labels
+# every reconcile (see internal/v1alpha2/aimprofile/provenance.go).
+# Including modelRef in the selector here would therefore drop the
+# only candidate on the very first reconcile. The test namespace is
+# isolated, so role + accelerator shape uniquely identifies the seed.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: byo-derived
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        role: base
+        acceleratorType: cpu
+        acceleratorCount: 1
+    versionPolicy: all
+    overrides:
+      aimId: acme/byo-transformer
+      modelId: acme/byo-transformer
+      modelSources:
+        - modelId: acme/byo-transformer
+          sourceUri: hf://acme/byo-transformer

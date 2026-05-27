@@ -1,0 +1,22 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: llama-3-8b-finetune
+  namespace: default
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        aimId: meta-llama/Llama-3-8B-Instruct
+        acceleratorModel: MI300X
+        engineArgs:
+          tensor-parallel-size: 1
+    versionPolicy: pinned
+    version: "0.9.0"
+    overrides:
+      modelSources:
+        - modelId: acme/llama-3-8b-finetune
+          sourceUri: hf://acme/llama-3-8b-finetune
+  imagePullSecrets:
+    - name: hf-creds
+  serviceAccountName: aim-runtime

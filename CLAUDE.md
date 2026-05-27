@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Tools are managed via mise. Use `mise exec --` prefix for all commands requiring mise-managed tools (go, controller-gen, chainsaw, kubectl, helm, etc.):
 
 ```bash
-mise install                      # Install all tools (Go, controller-gen, chainsaw, etc.)
+mise install                      # Install all tools (Go, controller-gen, chainsaw, pre-commit, etc.)
+mise exec -- pre-commit install   # One-time: wire .git/hooks/pre-commit (lint, make generate, manifests, crd-docs)
 
 mise exec -- make generate        # Generate DeepCopy methods (after editing api/v1alpha1/)
 mise exec -- make manifests       # Generate CRDs and RBAC (after editing api/v1alpha1/)
@@ -81,6 +82,15 @@ mise exec -- make test-chainsaw                # Run tests for current ENV (alwa
 ```
 
 Chainsaw tests are declarative YAML in `tests/e2e/*/chainsaw-test.yaml`. When `ENV=kind`, tests requiring special infrastructure (e.g., `requires=longhorn`) are excluded automatically. JSON reports are always written to `.tmp/chainsaw-reports/chainsaw-report.json`.
+
+### v1alpha2 test conventions
+
+v1alpha2 and v1alpha1 have different resolution models. Keep test fixtures version-pure:
+
+- **v1alpha2 `AIMService` resolves via profiles, not templates.** New v1alpha2 tests MUST NOT use `AIMServiceTemplate` / `AIMClusterServiceTemplate` (v1alpha1 concepts). v1alpha2 services use `spec.profile.name` referencing an `AIMProfile` or `AIMClusterProfile`.
+- **Produce profiles the real way.** Either apply an `AIMProfile` / `AIMClusterProfile` directly, or derive one from an `AIMModel` / `AIMClusterModel` via `profileCopy` (or `AIMProfileSet` / `AIMClusterProfileSet`). Do not use `AIMServiceTemplate` as a scaffold to produce profiles in v1alpha2 tests.
+- **Prefer `apiVersion: aim.eai.amd.com/v1alpha2`** for every new fixture under `tests/e2e/aimservice/**/profile-*` and `tests/e2e/v1alpha2/**`. The v1alpha1 `AIMService`/`AIMServiceTemplate` tests under `tests/e2e/aimservice/common/{basic-lifecycle,custom-model,custom-profiles,auto-template-selection}` stay v1alpha1 for now.
+- **Full-chain over frozen when feasible.** The frozen-status tests (`tests/e2e/aimservice/frozen/*`) exercise AIMService behaviour against fabricated profile/cache states. New tests that can reach Ready naturally in kind should do so (see `profile-cpu-via-model/` for the seed→model→derived-profile→service pattern).
 
 ### Diagnosing Chainsaw Test Failures
 

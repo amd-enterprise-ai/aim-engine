@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
@@ -113,6 +114,32 @@ func (r *ClusterModelReconciler) FetchRemoteState(
 	return result
 }
 
+// ImageMetadata exposes the OCI image metadata so cross-version consumers
+// — notably the v1alpha2 AIMClusterModel reconciler — can read the
+// RecommendedDeployments label inside the same reconcile pass that produced
+// the catalog, without waiting for the next reconcile's status snapshot.
+//
+// Returns the freshly-fetched value when available, and falls back to the
+// previously-cached value in `status.imageMetadata` when the fetch was
+// skipped because the cache was still warm (see fetchImageMetadata Case 4).
+// That fallback is the common case during steady-state reconciliation: the
+// initial fetch populates status, every subsequent reconcile's
+// FetchResult.Value is nil-by-design, and consumers that don't look at
+// status would silently see no recommendedDeployments.
+//
+// Returns nil only when the fetch failed AND status has nothing cached
+// (initial-state-without-success), in which case downstream RD-dependent
+// logic safely no-ops.
+func (result ClusterModelFetchResult) ImageMetadata() *aimv1alpha1.ImageMetadata {
+	if result.imageMetadata.Value != nil {
+		return result.imageMetadata.Value
+	}
+	if result.model != nil {
+		return result.model.Status.ImageMetadata
+	}
+	return nil
+}
+
 func (result ClusterModelFetchResult) GetComponentHealth() []controllerutils.ComponentHealth {
 	// RuntimeConfig is optional for models - they can operate without one
 	runtimeConfigHealth := result.mergedRuntimeConfig.ToUpstreamComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth)
@@ -153,6 +180,20 @@ type ModelFetchResult struct {
 	// These are fetched across the namespace and cluster scopes for matching.
 	aimIdTemplates        controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplateList]
 	aimIdClusterTemplates controllerutils.FetchResult[*aimv1alpha1.AIMClusterServiceTemplateList]
+}
+
+// ImageMetadata exposes the OCI image metadata. See
+// ClusterModelFetchResult.ImageMetadata for the rationale and the
+// fetched-then-cached fallback semantics; this namespace-scoped twin is
+// consumed by the v1alpha2 AIMModel reconciler and behaves identically.
+func (result ModelFetchResult) ImageMetadata() *aimv1alpha1.ImageMetadata {
+	if result.imageMetadata.Value != nil {
+		return result.imageMetadata.Value
+	}
+	if result.model != nil {
+		return result.model.Status.ImageMetadata
+	}
+	return nil
 }
 
 func (result ModelFetchResult) GetComponentHealth() []controllerutils.ComponentHealth {
@@ -357,7 +398,7 @@ func fetchImageMetadata(
 	secretNamespace string,
 ) controllerutils.FetchResult[*aimv1alpha1.ImageMetadata] {
 	// Case 1: Extraction explicitly disabled - skip fetch entirely
-	if spec.Discovery != nil && !spec.Discovery.ExtractMetadata {
+	if !spec.Discovery.IsExtractMetadataEnabled() {
 		log.FromContext(ctx).V(1).Info("metadata extraction disabled in spec")
 		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{}
 	}
@@ -478,10 +519,19 @@ func (r *ClusterModelReconciler) PlanResources(
 		return planResult
 	}
 
-	// For image-based models, build from discovery
+	// For image-based models, build from discovery. Skip CPU-shaped entries:
+	// the v1alpha1 deployment surface only models GPU accelerators, so a
+	// CPU entry would create a template that immediately reports
+	// GPUNotAvailable. The v1alpha2 native discovery pipeline materialises
+	// CPU profiles as AIMProfiles instead.
 	metadata := model.Spec.GetEffectiveImageMetadata(&model.Status)
 	if metadata != nil && metadata.Model != nil {
 		for _, deployment := range metadata.Model.RecommendedDeployments {
+			if !deployment.IsGPUDeployment() {
+				logger.V(1).Info("skipping non-GPU recommended deployment for cluster model",
+					"gpuModel", deployment.GPUModel, "metric", deployment.Metric)
+				continue
+			}
 			template := buildClusterServiceTemplate(model, deployment)
 			planResult.Apply(template)
 		}
@@ -555,10 +605,19 @@ func (r *ModelReconciler) PlanResources(
 		return planResult
 	}
 
-	// For image-based models, build from discovery
+	// For image-based models, build from discovery. Skip CPU-shaped entries:
+	// the v1alpha1 deployment surface only models GPU accelerators, so a
+	// CPU entry would create a template that immediately reports
+	// GPUNotAvailable. The v1alpha2 native discovery pipeline materialises
+	// CPU profiles as AIMProfiles instead.
 	metadata := model.Spec.GetEffectiveImageMetadata(&model.Status)
 	if metadata != nil && metadata.Model != nil {
 		for _, deployment := range metadata.Model.RecommendedDeployments {
+			if !deployment.IsGPUDeployment() {
+				logger.V(1).Info("skipping non-GPU recommended deployment for model",
+					"gpuModel", deployment.GPUModel, "metric", deployment.Metric)
+				continue
+			}
 			template := buildServiceTemplate(model, deployment)
 			planResult.Apply(template)
 		}
@@ -603,7 +662,6 @@ func decorateModelStatus(
 	spec *aimv1alpha1.AIMModelSpec,
 	imageMetadataResult controllerutils.FetchResult[*aimv1alpha1.ImageMetadata],
 ) {
-	// Set source type
 	if spec.IsFineTunedModel() {
 		status.SourceType = aimv1alpha1.AIMModelSourceTypeCustom
 	} else if IsCustomModel(spec) {
@@ -612,8 +670,14 @@ func decorateModelStatus(
 		status.SourceType = aimv1alpha1.AIMModelSourceTypeImage
 	}
 
-	// Copy extracted imageMetadata to status (only for image-based models)
 	if imageMetadataResult.OK() && imageMetadataResult.Value != nil {
 		status.ImageMetadata = imageMetadataResult.Value
 	}
+
+	// Surface an effective image version on status (denormalised for the
+	// kubectl printcolumn). Tag-derived: see AIMModelStatus.Version
+	// docstring for the rationale. Fine-tuned / custom models without a
+	// spec.image leave this empty, matching how AIMProfile.Status.Version
+	// behaves for derived profiles.
+	status.Version = aimimage.ExtractTag(spec.Image)
 }

@@ -39,9 +39,6 @@ import (
 const (
 	// LabelValueOriginFineTuned marks template copies created by aimId-based matching.
 	LabelValueOriginFineTuned = "fine-tuned"
-
-	// EnvAIMBaseImageRef is the env var baked into AIM model images recording the base image.
-	EnvAIMBaseImageRef = "AIM_BASE_IMAGE_REF"
 )
 
 // TemplateMatchResult holds a matched template and the model source it was matched against.

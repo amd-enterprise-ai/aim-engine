@@ -1,0 +1,28 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: resolve-by-name-profile
+spec:
+  aimId: resolve-by-name/model
+  modelId: resolve-by-name/model
+  profileId: cpu-default
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  primary: true
+  acceleratorModel: EPYC_ZEN5
+  acceleratorType: cpu
+  acceleratorCount: 1
+  image: registry.example.com/aim-cpu-base:0.12.0
+  modelSources:
+    - modelId: resolve-by-name/model
+      sourceUri: hf://resolve-by-name/model
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: resolve-by-name-service
+spec:
+  profile:
+    name: resolve-by-name-profile

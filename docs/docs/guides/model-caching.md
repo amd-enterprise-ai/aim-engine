@@ -2,23 +2,26 @@
 
 Model caching pre-downloads model artifacts to shared persistent volumes, reducing startup time and bandwidth usage across service replicas and restarts.
 
+!!! info "v1alpha2"
+    Examples on this page use `aim.eai.amd.com/v1alpha2`. Caching is keyed by the **resolved profile** (via `AIMProfileCache`) instead of the v1alpha1 template (`AIMTemplateCache`). The `spec.caching.mode` field and its semantics are unchanged across versions. For the legacy template-based cache, see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+
 ## Caching Modes
 
 Control caching behavior with `spec.caching.mode`:
 
 | Mode | Behavior |
 |------|----------|
-| `Shared` | Reuses shared cache assets across services that use the same template. This is the **default**. |
+| `Shared` | Reuses shared cache assets across services that resolve to the same profile. This is the **default**. |
 | `Dedicated` | Creates service-owned dedicated cache assets, isolated from other services. |
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: qwen-chat
 spec:
   model:
-    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+    name: qwen-qwen3-32b
   caching:
     mode: Shared
 ```
@@ -30,11 +33,11 @@ spec:
 
 When caching is active, AIM Engine creates a hierarchy of resources:
 
-1. **AIMTemplateCache** — Groups all model artifacts for a specific template on a shared PVC
+1. **AIMProfileCache** (v1alpha2) — Groups all model artifacts for a specific resolved profile on a shared PVC. (v1alpha1 used `AIMTemplateCache`, keyed by template.)
 2. **AIMArtifact** — Manages the download of individual model sources
 3. **PVC + Download Job** — The actual storage and download execution
 
-The template cache is owned by the template (not the service), so multiple services sharing the same template reuse the same cache.
+The profile cache is owned by the profile (not the service), so multiple services sharing the same profile reuse the same cache. With `caching.mode: Dedicated`, the cache is owned by the service and is garbage-collected with it.
 
 ## Download Protocols
 
@@ -85,11 +88,11 @@ For details on how verification works, see [Download Verification](../concepts/c
 
 ## Monitoring Cache Status
 
-Check the status of template caches and artifacts:
+Check the status of profile caches and artifacts:
 
 ```bash
-# List template caches
-kubectl get aimtemplatecache -n <namespace>
+# List profile caches (v1alpha2)
+kubectl get aimprofilecache -n <namespace>
 
 # List artifacts
 kubectl get aimartifact -n <namespace>
@@ -97,6 +100,8 @@ kubectl get aimartifact -n <namespace>
 # Check artifact download progress
 kubectl get aimartifact <name> -n <namespace> -o jsonpath='{.status}' | jq
 ```
+
+For services still managed by the v1alpha1 template pipeline, list caches with `kubectl get aimtemplatecache -n <namespace>` instead.
 
 ## Next Steps
 

@@ -1,0 +1,175 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: CPU Profile via real AIMModel (v1alpha2)
+#
+# Full-chain sibling of profile-cpu-basic. Instead of applying an
+# AIMClusterProfile directly, this test seeds a copyable source AIMProfile,
+# creates an AIMModel whose profileCopy selector matches the seed, and then
+# consumes the model-derived AIMProfile from a v1alpha2 AIMService.
+#
+# Nothing is frozen or stubbed: the profile controller, profile-set controller,
+# model controller, and service controller all reconcile naturally end-to-end.
+#
+# Gated on `requires: nfd` for the same reason as profile-cpu-basic - the
+# derived profile inherits acceleratorModel=EPYC_ZEN5 from the seed, which
+# needs the feature.node.kubernetes.io/aim-accelerator.EPYC_ZEN5 node label
+# produced by the AcceleratorDetector.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-cpu-via-model
+  labels:
+    requires: nfd
+spec:
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Seed the copyable source AIMProfile
+      try:
+        - apply:
+            file: seed-profile.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: test-cpu-via-model-seed
+              status:
+                status: Ready
+                version: 0.12.0
+                (conditions[?type == 'HardwareAvailable']):
+                  - status: "True"
+                    reason: HardwareAvailable
+
+    - name: Create the AIMModel that copies the seed
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for the model to publish its profile set and derived profile
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: test-cpu-via-model
+              status:
+                status: Ready
+                aimId: Qwen/Qwen3-0.6B
+                (profileSetRef.name != ""): true
+                managedProfiles:
+                  total: 1
+                  ready: 1
+
+    - name: Resolve the derived profile name and create the service
+      description: |
+        The derived profile's name is a deterministic hash of the profile-set
+        name plus the candidate identity; rather than hardcoding the hash we
+        look it up via the aim.eai.amd.com/profile-set-name annotation the
+        profile-set controller stamps on its managed profiles.
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              set -eu
+
+              # Always target v1alpha2 explicitly. kubectl defaults to the first
+              # served version for a CRD, which currently resolves to v1alpha1
+              # and strips v1alpha2-only status fields (profileSetRef, etc.) via
+              # the conversion webhook.
+              MODEL_GV=aimmodels.v1alpha2.aim.eai.amd.com
+              PROFILE_GV=aimprofiles.v1alpha2.aim.eai.amd.com
+
+              PROFILE_SET=$(kubectl get "$MODEL_GV" -n "$NAMESPACE" test-cpu-via-model \
+                -o jsonpath='{.status.profileSetRef.name}')
+              if [ -z "$PROFILE_SET" ]; then
+                echo "ERROR: model.status.profileSetRef.name is empty"
+                kubectl get "$MODEL_GV" -n "$NAMESPACE" test-cpu-via-model -o yaml
+                exit 1
+              fi
+              echo "ProfileSet: $PROFILE_SET"
+
+              DERIVED=$(kubectl get "$PROFILE_GV" -n "$NAMESPACE" -o json \
+                | jq -r --arg set "$PROFILE_SET" \
+                    '.items[]
+                      | select(.metadata.annotations["aim.eai.amd.com/profile-set-name"] == $set)
+                      | .metadata.name' \
+                | head -1)
+              if [ -z "$DERIVED" ]; then
+                echo "ERROR: no AIMProfile found with profile-set-name annotation $PROFILE_SET"
+                kubectl get "$PROFILE_GV" -n "$NAMESPACE" -o yaml
+                exit 1
+              fi
+              echo "Derived profile: $DERIVED"
+
+              kubectl wait --for=jsonpath='{.status.status}'=Ready \
+                --timeout=60s \
+                -n "$NAMESPACE" "$PROFILE_GV/$DERIVED"
+
+              cat <<EOF | kubectl apply -n "$NAMESPACE" -f -
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-cpu-via-model-service
+              spec:
+                profile:
+                  name: $DERIVED
+                replicas: 1
+              EOF
+
+    - name: Assert the service resolves the derived profile
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cpu-via-model-service
+              status:
+                (conditions[?type == 'ProfileReady']):
+                  - status: "True"
+                    reason: ProfileResolved
+                resolvedProfile:
+                  scope: Namespace
+
+    - name: Assert the profile ConfigMap is created
+      try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-cpu-via-model-service
+                  app.kubernetes.io/managed-by: aim-engine
+                  app.kubernetes.io/component: inference
+
+    - name: Assert the InferenceService is created with the seed's base image
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-cpu-via-model-service
+              spec:
+                predictor:
+                  containers:
+                    - name: kserve-container
+                      image: registry.example.com/aim-cpu-base:0.12.0
+
+    - name: Assert the service reaches Starting status
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cpu-via-model-service
+              status:
+                status: Starting

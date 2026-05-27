@@ -1,0 +1,32 @@
+# Namespace-scoped AIMProfile that opts into caching via spec.caching.enabled.
+# The AIMProfile reconciler should emit a single AIMProfileCache (1:1 with the
+# profile, owner-ref'd back to it) so deleting the profile garbage-collects
+# the cache. The profile carries modelSources so there's something to cache,
+# and a download-time env var (HF_TOKEN) that must be inherited onto the
+# cache spec.
+#
+# Hardware constraints are intentionally absent so the test runs anywhere
+# without an accelerator detector — caching wiring is independent of
+# hardware availability.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: test-profile-driven-cache
+spec:
+  aimId: test/profile-driven-cache
+  modelId: test/profile-driven-cache-fp8
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: general
+  primary: true
+  image: registry.example.com/test-image:1.0.0
+  modelSources:
+    - modelId: test/profile-driven-cache-fp8
+      sourceUri: hf://test-org/profile-driven-cache-weights
+      size: 2Gi
+  caching:
+    enabled: true
+    env:
+      - name: HF_TOKEN
+        value: profile-token-from-spec

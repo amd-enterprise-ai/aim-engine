@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: seeded-derivative-model
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        aimId: seeded-org/seeded-model
+        modelId: seeded-org/seeded-model
+    versionPolicy: pinned
+    version: 0.2.0
+    overrides:
+      modelSources:
+        - modelId: seeded-org/seeded-model
+          sourceUri: s3://models/seeded-model

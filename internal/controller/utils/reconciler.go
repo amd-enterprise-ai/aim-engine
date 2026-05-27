@@ -139,6 +139,22 @@ func (pr *PlanResult) GetToDelete() []client.Object {
 	return pr.toDelete
 }
 
+// Merge appends every object queued in `other` into this plan. RequeueAfter
+// adopts the smaller non-zero of the two values so the controller wakes up
+// as soon as either contributing pipeline asks to.
+//
+// Used by composite reconcilers that drive several independent sub-plans on
+// the same parent object (e.g. v1alpha1 + v1alpha2 AIMModel pipelines that
+// both produce children).
+func (pr *PlanResult) Merge(other PlanResult) {
+	pr.toApply = append(pr.toApply, other.toApply...)
+	pr.toApplyWithoutOwnerRef = append(pr.toApplyWithoutOwnerRef, other.toApplyWithoutOwnerRef...)
+	pr.toDelete = append(pr.toDelete, other.toDelete...)
+	if other.RequeueAfter > 0 && (pr.RequeueAfter == 0 || other.RequeueAfter < pr.RequeueAfter) {
+		pr.RequeueAfter = other.RequeueAfter
+	}
+}
+
 // StateEngineDecision contains the state engine's analysis and reconciliation directives.
 type StateEngineDecision struct {
 	// ShouldApply is false if ConfigValid/AuthValid/DependenciesReachable is False
@@ -296,10 +312,21 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) (ctrl.Result, e
 	// === Phase 5: Delete ===
 	// Delete objects before applying new state (only if decision allows apply).
 	// Aggregate errors to avoid silent failures.
+	//
+	// Always pass an explicit Background propagation policy. Kubernetes' default
+	// policy varies per resource: most kinds default to background cascading
+	// delete, but Jobs default to Orphan, which leaves their pods owner-less and
+	// uncollected. The v1alpha2 discovery state machine deletes completed
+	// AIMModel / AIMClusterModel discovery Jobs through this path; without an
+	// explicit policy those Jobs would orphan their (already-Succeeded) pods in
+	// the operator namespace and they would accumulate forever. Background is
+	// also the right default for every other kind we delete here, so we set it
+	// once for all callers.
+	deletePropagation := client.PropagationPolicy(metav1.DeletePropagationBackground)
 	var deleteErrs []error
 	if decision.ShouldApply && len(planResult.toDelete) > 0 {
 		for _, objToDelete := range planResult.toDelete {
-			if err := p.Client.Delete(ctx, objToDelete); client.IgnoreNotFound(err) != nil {
+			if err := p.Client.Delete(ctx, objToDelete, deletePropagation); client.IgnoreNotFound(err) != nil {
 				gvk := objToDelete.GetObjectKind().GroupVersionKind()
 				key := client.ObjectKeyFromObject(objToDelete)
 				deleteErrs = append(deleteErrs, fmt.Errorf("delete failed for %s %s/%s: %w", gvk.Kind, key.Namespace, key.Name, err))
@@ -350,7 +377,14 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) (ctrl.Result, e
 	var phaseErr error
 	if len(deleteErrs) > 0 {
 		phaseErr = InfrastructureError{Count: len(deleteErrs), Errors: deleteErrs}
-		cm.Set(ConditionTypeDependenciesReachable, metav1.ConditionFalse, ReasonDependenciesNotReachable, fmt.Sprintf("Failed to delete resources: %v", deleteErrs[0]), AsError())
+		// Summarise additional failures so the condition message doesn't
+		// drop "N-1 errors" silently. The full set is preserved on the
+		// returned InfrastructureError via Errors and surfaces in logs.
+		msg := fmt.Sprintf("Failed to delete resources: %v", deleteErrs[0])
+		if extra := len(deleteErrs) - 1; extra > 0 {
+			msg = fmt.Sprintf("%s (+%d more)", msg, extra)
+		}
+		cm.Set(ConditionTypeDependenciesReachable, metav1.ConditionFalse, ReasonDependenciesNotReachable, msg, AsError())
 	} else if applyErr != nil {
 		phaseErr = InfrastructureError{Count: 1, Errors: []error{applyErr}}
 		cm.Set(ConditionTypeDependenciesReachable, metav1.ConditionFalse, ReasonDependenciesNotReachable, fmt.Sprintf("Failed to apply resources: %v", applyErr), AsError())

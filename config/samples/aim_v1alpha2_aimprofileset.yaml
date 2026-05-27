@@ -1,0 +1,35 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfileSet
+metadata:
+  name: mi308x-variants
+  namespace: default
+spec:
+  selector:
+    # Iteration 1 producers stamp aim.eai.amd.com/profile-role=deployable on
+    # every profile; the default selector.role=Deployable is implemented as
+    # `role != base` so already-deployable profiles match even before the
+    # AIMProfile reconciler backfills the label.
+    role: deployable
+    # Narrow candidates to those produced by a specific AIM(Cluster)Model via
+    # the aim.eai.amd.com/source-model[-scope] labels. scope: Auto tries the
+    # namespace AIMProfile owned by AIMModel/llama-3-8b first and falls back
+    # to AIMClusterProfiles owned by AIMClusterModel/llama-3-8b.
+    modelRef:
+      name: llama-3-8b
+      scope: Auto
+    # `origin` is the same axis as status.origin on AIMProfile — restrict to
+    # discovery-produced profiles here (omit to accept all origins). Note
+    # that profiles derived by AIMProfileSet are always classified as Derived
+    # regardless of their source profile's origin.
+    origin: discovered
+    acceleratorModel: MI300X
+    engineArgs:
+      tensor-parallel-size: 2
+  versionPolicy: latest
+  image: quay.io/acme/aim-base-vllm:0.9.0
+  overrides:
+    acceleratorModel: MI308X
+    acceleratorCount: 4
+    engineArgs:
+      tensor-parallel-size: 4
+      max-model-len: 32768

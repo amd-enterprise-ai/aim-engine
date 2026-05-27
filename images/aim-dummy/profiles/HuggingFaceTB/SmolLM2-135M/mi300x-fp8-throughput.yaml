@@ -1,0 +1,20 @@
+# Optimized for throughput on MI300X using fp8 precision.
+# Matches recommendedDeployments by fields, so primary=true via label fallback.
+aim_id: HuggingFaceTB/SmolLM2-135M
+model_id: HuggingFaceTB/SmolLM2-135M
+metadata:
+  engine: vllm
+  accelerator_type: gpu
+  accelerator_model: MI300X
+  accelerator_count: 1
+  metric: throughput
+  precision: fp8
+  type: optimized
+  manual_selection_only: false
+engine_args:
+  tensor-parallel-size: 1
+  max-num-seqs: 256
+  gpu-memory-utilization: 0.95
+env_vars:
+  HIP_FORCE_DEV_KERNARG: "1"
+  VLLM_DO_NOT_TRACK: "1"

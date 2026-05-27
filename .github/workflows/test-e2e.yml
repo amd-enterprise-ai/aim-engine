@@ -7,6 +7,9 @@ on:
       - 'cmd/**'
       - 'internal/**'
       - 'images/artifact-downloader/**'
+      # aim-dummy is the kind-runnable test image for BYO base-image / custom-model
+      # e2e fixtures. Changes to it can break those tests, so re-run e2e too.
+      - 'images/aim-dummy/**'
       - 'config/**'
       - 'go.mod'
       - 'go.sum'
@@ -19,6 +22,14 @@ on:
 
 permissions:
   contents: read
+  packages: read
+
+# Opt JavaScript actions (checkout, cache, upload-artifact, docker/*, mise-action,
+# etc.) onto Node 24 ahead of GitHub's June 16, 2026 default flip. Without this
+# they run on the deprecated Node 20 runtime and the runner emits a warning. See
+# https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   test-unit:
@@ -59,6 +70,11 @@ jobs:
       OPERATOR_IMAGE_REPOSITORY: aim-engine
       OPERATOR_IMAGE_TAG: ${{ github.run_id }}-${{ github.run_attempt }}
       OPERATOR_IMAGE: aim-engine:${{ github.run_id }}-${{ github.run_attempt }}
+      # AIM_DUMMY_TAG is the version of the published `aim-dummy` image that
+      # serves as the kind-runnable test image (BYO base-image, custom-model
+      # fixtures). Pinned to a specific tag so test-fixture changes pulling
+      # `:latest` do not silently mutate behaviour mid-CI run.
+      AIM_DUMMY_TAG: "0.2.0"
     steps:
       - name: Free up disk space
         run: |
@@ -146,6 +162,12 @@ jobs:
           kubectl wait --for=jsonpath='{.status.phase}'=Bound --timeout=180s pvc/nfs-smoke-pvc -n storage-smoke
           kubectl delete namespace storage-smoke --wait=false
 
+      - name: Login to GHCR
+        # Authenticate helm to ghcr.io so OCI chart pulls aren't subject to
+        # GHCR's anonymous-pull rate limit (the shared self-hosted runner's IP
+        # gets denied with a 403 on the anonymous token endpoint under load).
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
       - name: Install core dependencies
         run: |
           # Use an isolated Helm registry/config cache to avoid stale GHCR
@@ -181,14 +203,30 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Build the aim-dummy image from the PR's images/aim-dummy/ directory
+      # so test fixtures referencing it cover both the published-tag baseline
+      # AND any in-PR changes. We tag the local build with the same
+      # AIM_DUMMY_TAG used by fixtures, then load it into Kind. The Kind
+      # cache already containing a same-tagged image is fine — the second
+      # `kind load` overlays the local build deterministically.
+      - name: Build aim-dummy image (local override)
+        uses: docker/build-push-action@v6
+        with:
+          context: images/aim-dummy
+          load: true
+          tags: ghcr.io/silogen/aim-dummy:${{ env.AIM_DUMMY_TAG }}
+          cache-from: type=gha,scope=aim-dummy
+          cache-to: type=gha,scope=aim-dummy,mode=max
+
       - name: Load images into Kind
         run: |
+          set -euo pipefail
           kind load docker-image "${ARTIFACT_DOWNLOADER_IMAGE}" --name "${KIND_CLUSTER}"
           kind load docker-image "${OPERATOR_IMAGE}" --name "${KIND_CLUSTER}"
-          for tag in 0.1.8 0.1.9 0.1.10; do
-            docker pull "ghcr.io/silogen/aim-dummy:${tag}" || true
-            kind load docker-image "ghcr.io/silogen/aim-dummy:${tag}" --name "${KIND_CLUSTER}" || true
-          done
+          # AIM_DUMMY_TAG is required — fail loudly rather than silently
+          # falling back to a missing image, which used to surface as
+          # opaque ImagePullBackOff in e2e Pods.
+          kind load docker-image "ghcr.io/silogen/aim-dummy:${AIM_DUMMY_TAG}" --name "${KIND_CLUSTER}"
 
       - name: Generate CRDs
         run: make crds
@@ -233,6 +271,15 @@ jobs:
 
       - name: Run Chainsaw tests
         run: make test-chainsaw-kind
+
+      - name: Upload Chainsaw report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chainsaw-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/chainsaw-reports/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Debug on failure
         if: failure()

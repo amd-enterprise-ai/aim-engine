@@ -1,9 +1,10 @@
-# Official template owned by base-model-b. Identical to template-a in every
-# matchable dimension; the only thing that differs is its source owner —
-# which the fine-tuned image resolver uses to stamp a different
-# deployment-image-ref annotation on the copy derived from this template.
+# Namespace-scoped official template owned by base-model-b. Identical to
+# template-a in every matchable dimension; the only thing that differs is
+# its source owner — which the fine-tuned image resolver uses to stamp a
+# different deployment-image-ref annotation on the copy derived from this
+# template.
 apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMClusterServiceTemplate
+kind: AIMServiceTemplate
 metadata:
   name: ft-multi-template-b
 spec:

@@ -11,6 +11,12 @@ spec:
   type: optimized
   primary: false
   image: registry.example.com/test-gpu-image:1.0.0
-  acceleratorModel: MI300X
+  modelSources:
+    - modelId: test/gpu-model-fp8
+      sourceUri: hf://test/gpu-model
+  # MI355X is intentionally NOT in hack/kind/config.yaml (the kind workers
+  # carry MI300X and MI350X labels). The test asserts the NotAvailable code
+  # path, so we need a model the kind cluster definitely does not advertise.
+  acceleratorModel: MI355X
   acceleratorType: gpu
   acceleratorCount: 1

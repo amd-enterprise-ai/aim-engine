@@ -2,6 +2,9 @@
 
 AIM Engine uses the Kubernetes [Gateway API](https://gateway-api.sigs.k8s.io/) to expose inference services via HTTP. When routing is enabled, AIM Engine creates `HTTPRoute` resources that route traffic through a configured Gateway to the KServe predictor service.
 
+!!! info "v1alpha2"
+    Routing fields (`spec.routing.*`) are identical across versions. Examples on this page use `aim.eai.amd.com/v1alpha2`. For the legacy template-shaped service, see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+
 ## Enabling Routing
 
 ### Per-Service Routing
@@ -9,14 +12,14 @@ AIM Engine uses the Kubernetes [Gateway API](https://gateway-api.sigs.k8s.io/) t
 Enable routing on an individual service:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: qwen-chat
   namespace: ml-team
 spec:
   model:
-    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+    name: qwen-qwen3-32b
   routing:
     enabled: true
     gatewayRef:

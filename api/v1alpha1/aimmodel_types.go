@@ -41,12 +41,16 @@ const (
 // AIMModel is the Schema for namespace-scoped AIM model catalog entries.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:deprecatedversion:warning="v1alpha1 AIMModel is deprecated; use v1alpha2 AIMModel"
 // +kubebuilder:resource:shortName=aimmdl,categories=aim;all
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 // +kubebuilder:printcolumn:name="Source",type=string,JSONPath=`.status.sourceType`
 // +kubebuilder:printcolumn:name="Image",type=string,JSONPath=`.spec.image`
+// +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.status.version`
 // +kubebuilder:printcolumn:name="Model",type=string,JSONPath=`.status.imageMetadata.model.canonicalName`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.derivedFrom)",message="spec.derivedFrom is only supported on v1alpha2; use spec.profileCopy on v1alpha1"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.profiles)",message="spec.profiles is only supported on v1alpha2; use spec.profileCopy on v1alpha1"
 type AIMModel struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

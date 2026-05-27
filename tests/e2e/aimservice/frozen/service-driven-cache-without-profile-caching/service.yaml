@@ -1,0 +1,12 @@
+# v1alpha2 AIMService with no spec.caching block — relies on the schema
+# default of caching.mode=Shared. Because the referenced profile does not
+# opt into caching, the service-driven Path B is the only path that can
+# produce an AIMProfileCache for this profile.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: test-no-profile-caching-svc
+spec:
+  profile:
+    name: test-no-profile-caching
+  replicas: 1

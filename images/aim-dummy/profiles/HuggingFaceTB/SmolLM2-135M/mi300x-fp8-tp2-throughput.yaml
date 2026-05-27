@@ -1,0 +1,19 @@
+# 2-GPU MI300X preview throughput profile.
+# Not in recommendedDeployments, so primary=false and manual_selection_only=true.
+# Exercises the "unmatched profile" branch of primary resolution.
+aim_id: HuggingFaceTB/SmolLM2-135M
+model_id: HuggingFaceTB/SmolLM2-135M
+metadata:
+  engine: vllm
+  accelerator_type: gpu
+  accelerator_model: MI300X
+  accelerator_count: 2
+  metric: throughput
+  precision: fp8
+  type: preview
+  manual_selection_only: true
+engine_args:
+  tensor-parallel-size: 2
+  max-num-seqs: 512
+env_vars:
+  VLLM_DO_NOT_TRACK: "1"

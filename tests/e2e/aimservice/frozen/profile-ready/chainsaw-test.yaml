@@ -29,6 +29,105 @@ spec:
         - apply:
             file: service.yaml
 
+    - name: Freeze profile cache and artifact to Ready
+      # The profile carries a fake hf:// source, so the AIMArtifact controller
+      # would otherwise mark the artifact InvalidSpec (Repository Not Found)
+      # and the AIMProfileCache would never reach Ready, blocking ISVC
+      # creation. We pause reconciliation on both and patch them to Ready,
+      # the same approach used by profile-cache-ready.
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+
+              for _ in $(seq 1 30); do
+                PC_NAME=$(kubectl get aimprofilecache -n "$NAMESPACE" \
+                  -l aim.eai.amd.com/service=test-service \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                ART_NAME=$(kubectl get aimartifact -n "$NAMESPACE" \
+                  -l aim.eai.amd.com/profile.name=test-profile-ready \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                if [ -n "$PC_NAME" ] && [ -n "$ART_NAME" ]; then
+                  break
+                fi
+                sleep 1
+              done
+
+              if [ -z "$PC_NAME" ] || [ -z "$ART_NAME" ]; then
+                echo "ERROR: profile cache or artifact not found in time"
+                kubectl get aimprofilecache,aimartifact -n "$NAMESPACE" -o wide || true
+                exit 1
+              fi
+              echo "Found AIMProfileCache=$PC_NAME AIMArtifact=$ART_NAME"
+
+              kubectl annotate aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+              kubectl annotate aimartifact "$ART_NAME" -n "$NAMESPACE" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+
+              kubectl patch aimartifact "$ART_NAME" -n "$NAMESPACE" \
+                --type=merge --subresource=status \
+                -p '{
+                  "status": {
+                    "status": "Ready",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True",
+                        "reason": "Ready",
+                        "message": "Artifact frozen Ready by chainsaw test",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      }
+                    ],
+                    "persistentVolumeClaim": "'"$ART_NAME"'-pvc"
+                  }
+                }'
+
+              kubectl patch aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                --type=merge --subresource=status \
+                -p '{
+                  "status": {
+                    "status": "Ready",
+                    "conditions": [
+                      {
+                        "type": "ProfileFound",
+                        "status": "True",
+                        "reason": "ProfileResolved",
+                        "message": "Profile resolved",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      },
+                      {
+                        "type": "ArtifactsReady",
+                        "status": "True",
+                        "reason": "AllCachesReady",
+                        "message": "All artifacts are ready",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      },
+                      {
+                        "type": "Ready",
+                        "status": "True",
+                        "reason": "Ready",
+                        "message": "Profile cache frozen Ready by chainsaw test",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      }
+                    ],
+                    "artifacts": {
+                      "'"$ART_NAME"'": {
+                        "name": "'"$ART_NAME"'",
+                        "model": "test/profile-model",
+                        "status": "Ready",
+                        "persistentVolumeClaim": "'"$ART_NAME"'-pvc",
+                        "mountPoint": "/workspace/cache/test/profile-model"
+                      }
+                    }
+                  }
+                }'
+
+              echo "Patched $PC_NAME and $ART_NAME to Ready"
+
     - name: Assert service resolves profile and has ProfileReady condition
       try:
         - assert:

@@ -1,0 +1,47 @@
+# Custom-model derivation AIMModel (ADR 0006b iteration 2, Appendix Example 2).
+#
+# Reuses the base AIMProfiles emitted by a base-image AIMModel (see
+# aim_v1alpha2_aimmodel_base_image.yaml) and converts them into deployable
+# AIMProfiles by overlaying target identity + model weights.
+#
+# Selector is FILTER-only — it narrows source candidates and writes
+# nothing onto the derived profile:
+#   role: base               only base profiles match (excludes anything
+#                            already deployable)
+#   modelRef.name            pins the derivation to one specific base
+#                            AIMModel via the source-model label
+#
+# CEL on AIMModelProfilesSpec rejects selector.aimId/modelId/profileId
+# when role=base (base profiles have no source identity to filter on)
+# and requires overrides.{aimId,modelId} in the same case. Target
+# identity for the derived profile lives in overrides:
+#   aimId                    the target architecture identifier (required
+#                            by CEL when role=base)
+#   modelId                  the specific model id (required by CEL when
+#                            role=base; would otherwise auto-derive from
+#                            modelSources[0].modelId when unset)
+#   modelSources             the BYO weights that complete the base into
+#                            a deployable profile
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: acme-custom-transformer
+  namespace: default
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        role: base
+        modelRef:
+          name: aim-base-vllm
+          scope: Namespace
+    versionPolicy: all
+    overrides:
+      aimId: acme/custom-transformer
+      modelId: acme/custom-transformer
+      modelSources:
+        - modelId: acme/custom-transformer
+          sourceUri: s3://acme-models/custom-transformer
+  imagePullSecrets:
+    - name: registry-creds
+  serviceAccountName: aim-runtime

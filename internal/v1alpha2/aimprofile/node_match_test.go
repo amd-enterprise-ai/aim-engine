@@ -29,7 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 )
 
 func makeNode(name string, labels map[string]string, allocatable corev1.ResourceList) corev1.Node {
@@ -80,7 +80,7 @@ func TestMatchNodes(t *testing.T) {
 			name:              "MI300X with count=1 matches one node",
 			nodes:             []corev1.Node{mi300xNode, mi325xNode, cpuNode},
 			accelModel:        "MI300X",
-			resolvedResources: ResolveResources(aimv1alpha2.AcceleratorTypeGPU, 1, nil),
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 1, nil),
 			wantMatching:      1,
 			wantAffinity:      true,
 		},
@@ -88,7 +88,7 @@ func TestMatchNodes(t *testing.T) {
 			name:              "MI325X with count=8 matches one node",
 			nodes:             []corev1.Node{mi300xNode, mi325xNode},
 			accelModel:        "MI325X",
-			resolvedResources: ResolveResources(aimv1alpha2.AcceleratorTypeGPU, 8, nil),
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 8, nil),
 			wantMatching:      1,
 			wantAffinity:      true,
 		},
@@ -96,15 +96,36 @@ func TestMatchNodes(t *testing.T) {
 			name:              "count exceeds node capacity matches zero",
 			nodes:             []corev1.Node{mi300xNode},
 			accelModel:        "MI300X",
-			resolvedResources: ResolveResources(aimv1alpha2.AcceleratorTypeGPU, 8, nil),
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 8, nil),
 			wantMatching:      0,
+			wantAffinity:      true,
+		},
+		{
+			// Kind / labels-only path: node carries the accelerator label but
+			// no device plugin is reporting amd.com/gpu in Allocatable. The
+			// label is treated as authoritative so the profile can still go
+			// Ready; kubelet would reject pod admission for real if the label
+			// were lying.
+			name: "label present but resource missing from Allocatable still matches",
+			nodes: []corev1.Node{
+				makeNode("kind-gpu-node",
+					map[string]string{AcceleratorLabelPrefix + "MI300X": "8"},
+					corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("16"),
+						corev1.ResourceMemory: resource.MustParse("32Gi"),
+					},
+				),
+			},
+			accelModel:        "MI300X",
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 1, nil),
+			wantMatching:      1,
 			wantAffinity:      true,
 		},
 		{
 			name:       "explicit resource override takes precedence",
 			nodes:      []corev1.Node{mi300xNode, mi325xNode, cpuNode},
 			accelModel: "MI300X",
-			resolvedResources: ResolveResources(aimv1alpha2.AcceleratorTypeGPU, 2, &corev1.ResourceRequirements{
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 2, &corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{"amd.com/gpu": resource.MustParse("1")},
 			}),
 			wantMatching: 1,
@@ -261,6 +282,14 @@ func TestExtractVersionFromImage(t *testing.T) {
 		{"registry.io/aim-qwen", ""},
 		{"registry.io:5000/aim-qwen:1.2.3", "1.2.3"},
 		{"registry.io/aim-qwen@sha256:abc123", ""},
+		// Pre-release / build-metadata suffixes survive unchanged — the
+		// profile Version column must reflect what's actually deployed,
+		// not a MAJOR.MINOR normalisation (that's a base-image concern,
+		// see aimimage.NormalizeBaseImageTag).
+		{"registry.io/aim-qwen:0.11.0-rc1", "0.11.0-rc1"},
+		{"registry.io/aim-qwen:0.11-rc21", "0.11-rc21"},
+		{"registry.io/aim-qwen:0.11.0+build123", "0.11.0+build123"},
+		{"registry.io/aim-qwen:v0.11.2", "v0.11.2"},
 	}
 
 	for _, tt := range tests {
@@ -344,7 +373,7 @@ func TestMatchNodes_NilLabelsNode(t *testing.T) {
 func TestResolveResources(t *testing.T) {
 	tests := []struct {
 		name       string
-		accelType  aimv1alpha2.AcceleratorType
+		accelType  aimv1alpha1.AcceleratorType
 		accelCount int32
 		resources  *corev1.ResourceRequirements
 		wantNil    bool
@@ -354,19 +383,19 @@ func TestResolveResources(t *testing.T) {
 	}{
 		{
 			name:       "GPU count injected",
-			accelType:  aimv1alpha2.AcceleratorTypeGPU,
+			accelType:  aimv1alpha1.AcceleratorTypeGPU,
 			accelCount: 4,
 			wantGPU:    "4",
 		},
 		{
 			name:       "CPU count injected",
-			accelType:  aimv1alpha2.AcceleratorTypeCPU,
+			accelType:  aimv1alpha1.AcceleratorTypeCPU,
 			accelCount: 96,
 			wantCPU:    "96",
 		},
 		{
 			name:       "explicit resources override derived count",
-			accelType:  aimv1alpha2.AcceleratorTypeGPU,
+			accelType:  aimv1alpha1.AcceleratorTypeGPU,
 			accelCount: 4,
 			resources: &corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{"amd.com/gpu": resource.MustParse("2")},
@@ -375,7 +404,7 @@ func TestResolveResources(t *testing.T) {
 		},
 		{
 			name:       "count merged with cpu/memory resources",
-			accelType:  aimv1alpha2.AcceleratorTypeGPU,
+			accelType:  aimv1alpha1.AcceleratorTypeGPU,
 			accelCount: 1,
 			resources: &corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{
@@ -400,7 +429,7 @@ func TestResolveResources(t *testing.T) {
 		},
 		{
 			name:       "zero count with no resources returns nil",
-			accelType:  aimv1alpha2.AcceleratorTypeGPU,
+			accelType:  aimv1alpha1.AcceleratorTypeGPU,
 			accelCount: 0,
 			wantNil:    true,
 		},

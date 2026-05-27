@@ -26,7 +26,6 @@ import (
 	"context"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
@@ -34,13 +33,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimmodel"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofileset"
 )
 
 const (
@@ -72,20 +72,24 @@ type AIMClusterProfileReconciler struct {
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterprofiles/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterprofiles/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 func (r *AIMClusterProfileReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	var profile aimv1alpha2.AIMClusterProfile
-	if err := r.Get(ctx, req.NamespacedName, &profile); err != nil {
-		if apierrors.IsNotFound(err) {
-			return ctrl.Result{}, nil
+	return runTypedReconcile(ctx, r.Client, req, &aimv1alpha2.AIMClusterProfile{}, "Failed to fetch AIMClusterProfile", func(ctx context.Context, profile *aimv1alpha2.AIMClusterProfile) (ctrl.Result, error) {
+		// Ensure the role / origin / source-model labels are stamped (or
+		// backfilled for user-authored profiles) before the pipeline runs,
+		// so AIMProfileSet selectors that filter on these labels see a
+		// consistent view at the next event.
+		if _, err := aimprofile.EnsureProfileProvenanceLabels(
+			ctx, r.Client, profile,
+			aimprofile.ProfileRoleLabelValue(profile.Spec.AIMProfileSpecCommon),
+			aimprofile.DeriveProfileOrigin(profile),
+			aimprofile.SourceModelFromOwnerRefs(profile, ""),
+		); err != nil {
+			return ctrl.Result{}, err
 		}
-		logger.Error(err, "Failed to fetch AIMClusterProfile")
-		return ctrl.Result{}, err
-	}
-
-	return r.pipeline.Run(ctx, &profile)
+		return r.pipeline.Run(ctx, profile)
+	})
 }
 
 func (r *AIMClusterProfileReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -113,14 +117,19 @@ func (r *AIMClusterProfileReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorderFor(r.pipeline.GetFullName())
 	r.pipeline.Recorder = r.Recorder
 
-	// Index AIMClusterProfile by aimId for efficient profile selection lookups.
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha2.AIMClusterProfile{}, aimv1alpha2.ProfileAimIdIndexKey, func(obj client.Object) []string {
-		profile, ok := obj.(*aimv1alpha2.AIMClusterProfile)
-		if !ok {
-			return nil
-		}
-		return []string{profile.Spec.AimId}
-	}); err != nil {
+	// Index AIMClusterProfile by aimId and ownership annotations for efficient lookups.
+	if err := registerProfileCommonIndexes(
+		ctx,
+		mgr,
+		&aimv1alpha2.AIMClusterProfile{},
+		func(profile *aimv1alpha2.AIMClusterProfile) string { return profile.Spec.AimId },
+		func(profile *aimv1alpha2.AIMClusterProfile) string {
+			return profile.GetAnnotations()[aimprofileset.AnnotationProfileSetUID()]
+		},
+		func(profile *aimv1alpha2.AIMClusterProfile) string {
+			return profile.GetAnnotations()[aimmodel.AnnotationModelUID()]
+		},
+	); err != nil {
 		return err
 	}
 
@@ -128,21 +137,24 @@ func (r *AIMClusterProfileReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// TODO: This enqueues all cluster profiles with accelerator requirements on any GPU node
 	// change. For clusters with many profiles, consider indexing by accelerator label values.
 	nodeHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, _ client.Object) []reconcile.Request {
-		var profiles aimv1alpha2.AIMClusterProfileList
-		if err := r.List(ctx, &profiles); err != nil {
-			log.FromContext(ctx).Error(err, "failed to list AIMClusterProfiles for Node event")
-			return nil
-		}
-
-		requests := make([]reconcile.Request, 0, len(profiles.Items))
-		for _, p := range profiles.Items {
-			if aimprofile.HasAcceleratorRequirement(p.Spec.AcceleratorModel, p.Spec.AcceleratorCount, p.Spec.Resources) {
-				requests = append(requests, reconcile.Request{
-					NamespacedName: client.ObjectKeyFromObject(&p),
-				})
-			}
-		}
-		return requests
+		return enqueueRequestsForFilteredObjects(
+			ctx,
+			func(ctx context.Context) ([]*aimv1alpha2.AIMClusterProfile, error) {
+				var profiles aimv1alpha2.AIMClusterProfileList
+				if err := r.List(ctx, &profiles); err != nil {
+					return nil, err
+				}
+				items := make([]*aimv1alpha2.AIMClusterProfile, 0, len(profiles.Items))
+				for i := range profiles.Items {
+					items = append(items, &profiles.Items[i])
+				}
+				return items, nil
+			},
+			"failed to list AIMClusterProfiles for Node event",
+			func(profile *aimv1alpha2.AIMClusterProfile) bool {
+				return aimprofile.HasAcceleratorRequirement(profile.Spec.AcceleratorModel, profile.Spec.AcceleratorCount, profile.Spec.Resources)
+			},
+		)
 	})
 
 	return ctrl.NewControllerManagedBy(mgr).

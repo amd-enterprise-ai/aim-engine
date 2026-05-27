@@ -241,6 +241,31 @@ func TestBothJobsGetSameFilterEnvVars(t *testing.T) {
 	}
 }
 
+func TestPullPolicyForImage(t *testing.T) {
+	tests := []struct {
+		name  string
+		image string
+		want  corev1.PullPolicy
+	}{
+		{name: "empty defaults to always", image: "", want: corev1.PullAlways},
+		{name: "tagless reference defaults to always", image: "ghcr.io/example/downloader", want: corev1.PullAlways},
+		{name: "explicit :latest is always", image: "ghcr.io/example/downloader:latest", want: corev1.PullAlways},
+		{name: "semver tag is if-not-present", image: "ghcr.io/example/downloader:v0.2.2", want: corev1.PullIfNotPresent},
+		{name: "non-latest moving tag is if-not-present", image: "ghcr.io/example/downloader:main", want: corev1.PullIfNotPresent},
+		{name: "digest reference is if-not-present", image: "ghcr.io/example/downloader@sha256:c0ffee", want: corev1.PullIfNotPresent},
+		{name: "port-qualified registry with semver", image: "registry.local:5000/example/downloader:v1.2.3", want: corev1.PullIfNotPresent},
+		{name: "port-qualified registry without tag is always", image: "registry.local:5000/example/downloader", want: corev1.PullAlways},
+		{name: "port-qualified registry with :latest is always", image: "registry.local:5000/example/downloader:latest", want: corev1.PullAlways},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := pullPolicyForImage(tt.image); got != tt.want {
+				t.Errorf("pullPolicyForImage(%q) = %q, want %q", tt.image, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveDownloadImage(t *testing.T) {
 	const (
 		artifactImage = "ghcr.io/example/downloader:artifact"

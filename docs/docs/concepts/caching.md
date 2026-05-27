@@ -1,114 +1,148 @@
 # Model Caching
 
-AIM provides a hierarchical caching system that allows model artifacts to be pre-downloaded and shared across services in the same namespace. This document explains the caching architecture, resource lifecycle, and deletion behavior.
+AIM Engine pre-downloads model artifacts to persistent volumes so inference services can start without waiting on registry pulls. The caching system is hierarchical, deduplicates downloads within a namespace, and is driven from each `AIMService`'s resolved profile.
 
-## Overview
+!!! info "v1alpha2"
+    This page documents the `AIMProfileCache` flow used by v1alpha2 services. For the v1alpha1 `AIMTemplateCache` shape, see [Service Templates (v1alpha1)](../legacy/service-templates.md). Both flows coexist in the same cluster.
 
-Model caching in AIM uses three resource types:
+## Resources
 
-1. **AIMArtifact**: Manages the model artifacts download process onto a PVC
-2. **AIMTemplateCache**: Groups `AIMArtifacts` for a specific template and allows caching a cluster-scoped `AIMClusterServiceTemplate` into a specific namespace.
-3. **AIMService**: Can trigger template cache creation via `spec.caching.mode: Shared|Dedicated`. See [AIM Services](./services.md) for more information.
+The cache hierarchy uses three v1alpha2 resources plus the underlying Kubernetes objects:
 
-### Shared and dedicated mode
-
-An **AIMTemplateCache** can run in two modes, which differ by who creates it and how `AIMArtifacts` are owned:
-
-- **Shared mode** (`spec.mode: Shared`, default): **AIMArtifact**s created by the template cache have **no** owner references. They persist independently and can be reused by other template caches or services. Used when the template creates the cache (template caching enabled; that template cache is template-owned) or when the service uses `spec.caching.mode: Shared` (service creates or reuses shared caches).
-- **Dedicated mode** (`spec.mode: Dedicated`): **AIMArtifact**s are **owned** by the template cache. When the template cache is deleted, its artifacts are garbage-collected. Used when the service uses `spec.caching.mode: Dedicated`; the template cache is then owned by the service and cleaned up with it. Dedicated template caches and artifacts are only used by a single service and never shared.
-
-## Caching Hierarchy
-
-### Ownership Structure
-
-**AIMTemplateCache** may be owned by an `AIMServiceTemplate`, by an `AIMService`, or by nothing (unowned). `AIMArtifact` are owned by the template cache only in Dedicated mode; in Shared mode they have no owner.
+| Resource | Scope | Role |
+|---|---|---|
+| `AIMService` | Namespace | Triggers cache creation via `spec.caching.mode`. Resolves a profile, then creates or reuses an `AIMProfileCache` for it. |
+| `AIMProfileCache` | Namespace | Groups one `AIMArtifact` per `modelSources[]` entry on the referenced profile. |
+| `AIMArtifact` | Namespace | Manages the actual download — a `Job` writing to a `PVC`. |
 
 ```
-Who owns AIMTemplateCache (one of):
-  • AIMServiceTemplate   (template-created, Shared)
-  • AIMService           (service-created, Dedicated)
-  • (none)               (service-created with Shared)
-
-Resource hierarchy:
-  AIMTemplateCache (Shared or Dedicated mode)
-      └── AIMArtifact(s)  [created by template, owned by TemplateCache only if Dedicated]
-              └── PVC(s) + Download Job(s) (owned by model cache)
+AIMService
+   └── AIMProfileCache    (created or reused)
+          └── AIMArtifact(s)    (created or reused)
+                 └── PVC + Download Job
 ```
 
-### Creation Flow
+`AIMProfileCache.spec.profileName` + `profileScope` identifies which profile's `modelSources` to materialise. The cache controller looks up the namespace `AIMProfile` first when `profileScope: Namespace`, or directly the cluster `AIMClusterProfile` when `profileScope: Cluster`.
 
-An **AIMTemplateCache** is created by an **AIMServiceTemplate** (when the template has caching enabled and is ready), by an **AIMService** (when the service has caching enabled and no suitable cache exists), or **manually**. Ownership depends on the creator and mode: template-owned (template-created), service-owned (service-created with Dedicated), unowned (service-created with Shared), or no owner (manually created).
+## Caching modes
 
-For each needed model (matching `sourceURI` and storage class), the **AIMTemplateCache** uses an existing artifact when possible, otherwise creates one. A **shared** template cache reuses any matching **shared** artifact in the namespace; a **dedicated** template cache uses its own dedicated artifact. New artifacts are created shared or dedicated according to the template cache's mode. The **AIMArtifact** handles the download.
+`AIMProfileCache` runs in one of two modes, controlling artifact ownership:
 
-## Cache Status Values
+| Mode | Artifact ownerReferences | Sharing | Set by |
+|---|---|---|---|
+| `Shared` (default) | None (orphan) | Reused across services and caches in the namespace | `AIMService.spec.caching.mode: Shared` (default) |
+| `Dedicated` | Owned by the `AIMProfileCache` | Exclusive to this service | `AIMService.spec.caching.mode: Dedicated` |
 
-**AIMTemplateCache** and **AIMArtifact** use the same status values. The template cache's status is typically derived from its artifacts.
+### Shared mode
 
-| Status | Description |
-| ------ | ----------- |
-| `Pending` | Created, waiting for processing |
-| `Progressing` | Download or provisioning in progress |
-| `Ready` | Ready and can be used |
-| `Degraded` | Partially available or limited (e.g. some artifacts failed) |
-| `NotAvailable` | Dependencies not available. **AIMTemplateCache** may report this when its template is not available (e.g. GPU not ready); **AIMArtifact** never sets this. |
-| `Failed` | Creation failed (download error, storage issue, etc.) |
+The cache and its artifacts persist independently of any single service. When a service is deleted, the shared cache stays around so subsequent services that resolve to the same profile reuse it immediately.
 
-A `Failed` `AIMArtifact` retries the download periodically, so its status may change over time.
+The deduplication boundary is per-namespace:
 
-## Deletion Behavior
+- The cache controller finds an existing shared `AIMProfileCache` for the same profile and reuses it (no new cache resource).
+- If a new cache is created, the artifact controller finds existing shared `AIMArtifact`s for the same `sourceUri` (+ storage class + downloader env) and reuses them.
 
-Deletion follows Kubernetes ownership: owned resources are garbage-collected when the owner is deleted. AIM finalizers additionally delete non-Ready caches so that Failed/Pending caches do not block recreation. Manually created AIMTemplateCaches and AIMArtifact (no owner) are never garbage-collected.
+Result: multiple services that share a profile fan in onto a single set of `AIMArtifact`s, one download per artifact per namespace.
 
-### When AIMService is deleted
+### Dedicated mode
 
-- **Template caches owned by the service** (Dedicated, service-created): Garbage-collected with the service.
-- **Service finalizer**: Deletes any template caches created by this service (by label) that are **not Ready**, so stuck Pending/Progressing/Failed caches do not block a future service from creating a new cache.
-- **Template caches not owned by the service** (template-owned or unowned Shared): Unchanged; they persist and can be reused by other services.
+The cache is owner-referenced by the service; its artifacts are owner-referenced by the cache. Deleting the service triggers Kubernetes garbage collection of both the cache and its artifacts (including their PVCs).
 
-### When AIMServiceTemplate is deleted
+Useful when:
 
-- **Template caches owned by the template**: When a template creates a cache, the cache is automatically deleted when the template is deleted via Kubernetes garbage collection. Template-created caches use Shared mode by default, so the cached artifacts themselves persist even after the cache is removed.
+- You want a guaranteed, exclusive copy of the model — no risk of a quota-eviction round freeing a PVC out from under a long-running workload.
+- You want all storage cleaned up automatically when the service is deleted.
 
-### When AIMTemplateCache is deleted
+Dedicated caches never share artifacts across caches. Two dedicated services on the same profile each get their own full download.
 
-- **Template cache finalizer**: Ensure that **artifacts** created by this template cache (by label) that are **not Ready** are deleted. **Ready** model caches are left in place so they can be reused by other template caches.
-- The template cache is then removed.
+## Creation flow
 
-If a service with caching enabled was using this template cache, a new template cache will be created automatically, provided the template itself is still healthy and ready.
+When an `AIMService` reaches the cache step in its reconcile pipeline:
 
-### When AIMArtifact is deleted
+1. **Resolve profile.** The service has already produced `status.resolvedProfile`. The cache controller reads `spec.modelSources` from that profile.
+2. **Lookup or create cache.**
+    - `Shared` mode: list shared `AIMProfileCache` objects in the namespace by profile name + scope. Reuse if one exists; otherwise create a new one with `mode: Shared` and no owner.
+    - `Dedicated` mode: create a new `AIMProfileCache` owned by the service, with `mode: Dedicated`.
+3. **Lookup or create artifacts.** For each `modelSources[]` entry, the cache builds an `AIMArtifact` keyed on the source URI (and env / storage class). In shared mode the artifact controller reuses existing shared artifacts; in dedicated mode it always creates its own.
+4. **Wait for `Ready`.** The cache's `ArtifactsReady` condition flips `True` when every constituent artifact is `Ready`.
+5. **Mount.** The service mounts the underlying PVCs into the `InferenceService` pod spec.
 
-- The **PVC** and any **download Job** owned by the artifact is marked for garbage-collection.
-- Any AIMService pod still using that cache keeps the PVC mounted until the pod is gone.
+The service's `ProfileCacheReady` condition mirrors the cache's `ArtifactsReady` until everything's downloaded.
 
-## Cache Reuse
+## Profile-level caching
 
-**Shared** artifacts are **deduplicated per namespace**: if two **shared** template caches request the same source (e.g. same `sourceURI` and storage class), the download runs once and both use the same artifact and PVC. Dedicated template caches only reuse artifacts they already own, so they do not share artifacts across caches.
+Namespace-scoped `AIMProfile` resources can themselves request caching:
 
-### Automatic Reuse
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: qwen-qwen3-32b-mi300x-fp8-latency
+  namespace: ml-team
+spec:
+  # ...
+  caching:
+    enabled: true
+```
 
-Services automatically detect and use existing caches:
+When `spec.caching.enabled: true`, the profile controller creates a shared `AIMProfileCache` for that profile on its own — no service required. This is the standalone pre-warm pattern: the cache is in place before any service references the profile.
 
-1. Service resolves its template
-2. Controller looks for `AIMTemplateCache` matching the template. If `AIMTemplateCache` isn't available, the service waits until it is.
-3. PVCs from the AIMArtifacts linked in the AIMTemplateCache are mounted into the InferenceService.
-4. No re-download is needed
+Cluster-scoped `AIMClusterProfile` resources cannot enable caching directly (cluster-scoped caches not yet implemented). They get cached only when a service in some namespace resolves to them.
 
-### Cross-Service Sharing
+## Cache status
 
-Multiple services can share the same cached models:
+`AIMProfileCache` uses the standard AIM status values:
 
-- Services using the same template reference the same `AIMTemplateCache`
-- artifacts are identified by `sourceURI`, enabling reuse across templates
+| Status | Meaning |
+|---|---|
+| `Pending` | Cache created; lookup or reconciliation pending |
+| `Progressing` | One or more artifacts are still downloading |
+| `Ready` | All artifacts are `Ready` |
+| `Degraded` | At least one artifact failed but others are usable |
+| `NotAvailable` | Referenced profile not found or not ready |
+| `Failed` | Cache build failed (config error, missing dependency) |
 
-## Storage Quota and Eviction
+### Conditions
 
-AIM Engine supports storage quotas that limit the total PVC space consumed by AIMArtifacts. When a new artifact would exceed the configured limit, the controller either evicts lower-priority artifacts to free space or blocks the new artifact until capacity is available.
+| Condition | Reasons |
+|---|---|
+| `ProfileFound` | `ProfileResolved`, `ProfileNotFound` |
+| `ArtifactsReady` | `AllCachesReady`, `CreatingCaches`, `CachesNotReady`, `NoCaches` |
 
-### How Eviction Works
+`status.artifacts` is a map from logical artifact name to the resolved `AIMArtifact` reference (`name`, `uid`).
 
-Eviction only applies to **Shared**, **Ready** artifacts that have a retention priority (either from `spec.retentionPriority` or a `defaultRetentionPriority` in the runtime config). The controller evicts the minimum number of artifacts needed, starting with the lowest priority. Artifacts in use by an `AIMTemplateCache` are never evicted.
+## Deletion behaviour
+
+Deletion follows Kubernetes ownership. AIM finalizers also delete **non-Ready** caches and artifacts so a Failed/Pending cache never blocks recreation.
+
+### When an AIMService is deleted
+
+- **Dedicated cache** owned by the service: garbage-collected with the service. Artifacts and PVCs go too.
+- **Shared cache** referenced by the service: untouched. Other services may still use it.
+- **Service finalizer**: deletes any caches the service created (by label) that are **not Ready**, so stuck Pending/Progressing/Failed caches don't block a future service from creating a new one.
+
+### When an AIMProfile is deleted
+
+- Profile-owned caches (created via `spec.caching.enabled: true`) are garbage-collected with the profile.
+- Service-created shared caches that referenced this profile go `NotAvailable` (`ProfileFound=False / ProfileNotFound`) but are not deleted automatically; clean them up manually if you want to free the PVCs.
+
+### When an AIMProfileCache is deleted
+
+- **Dedicated**: artifacts are GC'd with the cache.
+- **Shared**: the cache finalizer deletes any **not-Ready** artifacts it created (by label). **Ready** shared artifacts persist so other caches can reuse them.
+
+### When an AIMArtifact is deleted
+
+- Its PVC and any download `Job` are garbage-collected (they're owned by the artifact).
+- Any inference pod still mounted on the PVC keeps it bound until the pod terminates.
+
+## Storage quota and eviction
+
+AIM Engine supports storage quotas that cap total PVC space consumed by AIMArtifacts. When a new artifact would exceed the configured limit, the controller either evicts lower-priority artifacts to free space or blocks the new artifact until capacity is available.
+
+### How eviction works
+
+Only **Shared**, **Ready** artifacts with a `retentionPriority` (set on the artifact or via `defaultRetentionPriority` in runtime config) are evictable. The controller evicts the minimum needed, starting with the lowest priority. Artifacts referenced by an active `AIMProfileCache` are never evicted.
 
 ```
 Eviction order:
@@ -116,90 +150,90 @@ Eviction order:
   2. Among equal priorities, oldest creationTimestamp first
 ```
 
-When no evictable candidates can free enough space, the new artifact is blocked with a `StorageQuotaExceeded` condition. This condition propagates up through `AIMTemplateCache` and `AIMService` status, so users can see the root cause at any level.
+When nothing evictable can free enough space, the new artifact is blocked with a `StorageQuotaExceeded` condition. That condition propagates up through `AIMProfileCache` and `AIMService` so users see the root cause at the layer they look at.
 
-### Dedicated vs Shared Eviction
+### Dedicated vs shared
 
-Only **Shared** artifacts are eligible for eviction. **Dedicated** artifacts (owned by a specific template cache) are never evicted because they belong to a single service and removing them would break that service.
+Only **Shared** artifacts are eligible for eviction. **Dedicated** artifacts belong to a single service — removing them would break it, so the eviction routine skips them.
 
 For configuration details, see [Storage Quotas](../admin/storage-configuration.md#storage-quotas).
 
-## Manual Cache Management
+## Manual cache management
 
-* To manually make sure a model is available create an AIMArtifact for that model.
-* To make sure all models that belong to a AIMServiceTemplate or AIMClusterServiceTemplate is available, create an AIMTemplateCache with correctly set templateName in the namespace.
-* **Cleanup**: `Ready` AIMArtifacts that have **no owner** (Shared, or manually created) are not garbage-collected; delete them manually if you want to free space. Artifacts owned by a template cache (Dedicated) are removed when that template cache is deleted.
+Most caching is implicit (services drive it via `spec.caching`). Manual entry points:
 
-### AIMService with cache enabled
+- **Pre-warm a profile** by setting `AIMProfile.spec.caching.enabled: true` and applying the profile before any service.
+- **Create an `AIMArtifact` directly** to materialise a single source URI; it's deduplicated against existing shared artifacts.
+- **Cleanup**: Ready shared artifacts have no owner and are not GC'd. Delete them manually to free space.
 
-```
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMService
+### Pre-warm with `AIMProfile.spec.caching.enabled`
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
 metadata:
-  name: qwen-chat
+  name: qwen-qwen3-32b-mi300x-fp8-latency
   namespace: ml-team
-  labels:
-    project: conversational-ai
 spec:
-  model:
-    ref: qwen-qwen3-32b
+  aimId: qwen/qwen3-32b
+  modelId: qwen/qwen3-32b-fp8
+  image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+  acceleratorModel: MI300X
+  acceleratorType: gpu
+  acceleratorCount: 1
+  precision: fp8
+  metric: latency
+  engine: vllm
+  modelSources:
+    - modelId: qwen/qwen3-32b-fp8
+      sourceUri: hf://qwen/qwen3-32b-fp8
   caching:
-    mode: Shared   # default; use Dedicated for service-owned caches
+    enabled: true
 ```
 
-#### AIMTemplateCache to prepopulate the namespace with caches for a AIMServiceTemplate
+### Direct `AIMArtifact` (kserve downloader, XET disabled)
 
-```
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMTemplateCache
-metadata:
-  name: template-cache
-spec:
-  templateName: name-of-service-template
-```
-
-#### AIMArtifact that uses the kserve downloader with XET disabled
-
-```
+```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMArtifact
 metadata:
-  name: kserve-smollm2-135mx
+  name: kserve-smollm2-135m
+  namespace: ml-team
 spec:
   modelDownloadImage: kserve/storage-initializer:v0.16.0
   env:
     - name: HF_HUB_DISABLE_XET
       value: "1"
-  sourceUri: hf://HuggingFaceTB/SmolLM2-135Mx
+  sourceUri: hf://HuggingFaceTB/SmolLM2-135M
   size: 500M
   storageClassName: rwx-nfs
 ```
 
-## Download Protocol Strategy
+## Download protocol strategy
 
-AIMArtifact downloads from HuggingFace support multiple download protocols. The operator automatically tries protocols in a configurable sequence, falling back to the next protocol if the current one fails. The main reason for this approach is that some models require XET for parts of the download, while XET seems to have a hard time handling network instability in certain environments. A mixed protocol approach where different protocols are tried in sequence is default to alliviate this, but the default behavior can be changed by setting the AIM_DOWNLOADER_PROTOCOL in the default AIMClusterRuntimeConfig.
+`AIMArtifact` downloads from HuggingFace support multiple protocols with automatic fallback. The operator tries each protocol in a configurable sequence, cleaning incomplete files between attempts. The motivation: some models require XET for parts of the download, but XET struggles with network instability in certain environments. A mixed-protocol fallback chain is the default to keep downloads robust.
 
-### Supported Protocols
+### Supported protocols
 
 | Protocol | Description |
-| -------- | ----------- |
-| `XET` | HuggingFace's content-addressable chunk-based protocol. Default in `huggingface_hub` >= 0.32. Efficient for large files with deduplication. |
-| `HF_TRANSFER` | Rust-based parallel HTTP downloader (deprecated by HuggingFace in favor of XET). |
-| `HTTP` | Standard HTTP range-request downloads. Most compatible, no extra dependencies. |
+|---|---|
+| `XET` | HuggingFace content-addressable chunk protocol. Default in `huggingface_hub >= 0.32`. Efficient for large files with deduplication. |
+| `HF_TRANSFER` | Rust-based parallel HTTP downloader (deprecated upstream in favour of XET). |
+| `HTTP` | Plain HTTP range requests. Most compatible, no extra dependencies. |
 
 ### Configuration
 
-The download strategy is controlled by the `AIM_DOWNLOADER_PROTOCOL` environment variable, which specifies a comma-separated sequence of protocols to try in order.
+Controlled by the `AIM_DOWNLOADER_PROTOCOL` environment variable — a comma-separated sequence of protocols to try in order.
 
 **Default**: `XET,HF_TRANSFER`
 
-This can be overridden at three levels (highest precedence first):
+Overrides apply at three layers (highest precedence first):
 
-1. **Per-artifact** via `AIMArtifact.spec.env`
-2. **Per-namespace** via `AIMRuntimeConfig.spec.env`
-3. **Cluster-wide** via `AIMClusterRuntimeConfig.spec.env`
+1. **Per-artifact** via `AIMArtifact.spec.env`.
+2. **Per-namespace** via `AIMRuntimeConfig.spec.env`.
+3. **Cluster-wide** via `AIMClusterRuntimeConfig.spec.env`.
 
-#### Example: Override per artifact
+#### Example: override per artifact
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -213,7 +247,7 @@ spec:
       value: "HTTP"
 ```
 
-#### Example: Cluster-wide default
+#### Example: cluster-wide default
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -226,48 +260,77 @@ spec:
       value: "XET,XET,HTTP"
 ```
 
-### Observing Download Status
+### Observing download status
 
-During downloads, the artifact's `status.download` field is updated by the downloader pod with protocol attempt metadata:
+During downloads, `status.download` on the artifact is updated by the downloader pod with attempt metadata:
 
 ```yaml
 status:
   download:
-    protocol: HTTP          # Currently active protocol
-    attempt: 2              # Current attempt number (1-based)
-    totalAttempts: 3        # Total attempts in the sequence
+    protocol: HTTP
+    attempt: 2
+    totalAttempts: 3
     protocolSequence: "XET,XET,HTTP"
-    message: Complete       # Human-readable status
+    message: Complete
 ```
-
-View these fields with:
 
 ```bash
-kubectl get aimart -o wide          # Protocol and Attempt columns (priority=1)
-kubectl get aimart my-model -o yaml # Full status.download details
+kubectl get aimart -o wide
+kubectl get aimart my-model -o yaml
 ```
 
-### How Protocol Switching Works
+### How protocol switching works
 
-1. The downloader iterates through the protocol sequence left to right
-2. For each protocol, the appropriate HuggingFace environment variables are set (`HF_HUB_DISABLE_XET`, `HF_HUB_ENABLE_HF_TRANSFER`)
-3. If a protocol fails, any `.incomplete` files are cleaned before switching to the next protocol
-4. Already-completed files are skipped regardless of protocol (metadata-based)
-5. If all protocols are exhausted, the Job fails and Kubernetes retries via `backoffLimit`
+1. The downloader iterates through the protocol sequence left to right.
+2. For each protocol, the appropriate HuggingFace environment variables are set (`HF_HUB_DISABLE_XET`, `HF_HUB_ENABLE_HF_TRANSFER`).
+3. If a protocol fails, any `.incomplete` files are cleaned before switching to the next protocol.
+4. Already-completed files are skipped regardless of protocol (metadata-based).
+5. If all protocols are exhausted, the Job fails and Kubernetes retries via `backoffLimit`.
 
-## Download Verification
+## Download verification
 
-After each download, AIM Engine performs a two-stage verification to ensure all model files are correctly persisted:
+After each download, AIM Engine performs a two-stage verification:
 
-1. **File presence check** — The downloader independently queries HuggingFace for the expected file list (respecting any download filters), then verifies that every expected file exists on disk. Each verified file is explicitly fsynced to ensure it has been written to the underlying storage, which is particularly important on network filesystems. If any files are missing, the download job fails, triggering a retry.
+1. **File presence check** — the downloader independently queries HuggingFace for the expected file list (honouring any download filters), then verifies every expected file exists on disk. Each verified file is explicitly `fsync`ed so it's been written to underlying storage — particularly important on network filesystems. Missing files fail the Job and trigger a retry.
+2. **Integrity verification** — `hf cache verify` validates checksums against HuggingFace metadata. On failure, the local metadata cache is cleared by default so the retry performs a full fresh download rather than skipping files based on stale metadata.
 
-2. **Integrity verification** — The downloader runs `hf cache verify` to validate file checksums against HuggingFace metadata. If integrity verification fails, the local metadata cache is cleared by default so that the retry performs a full fresh download rather than skipping files based on stale metadata.
+Set `AIM_KEEP_METADATA_ON_FAILURE` to preserve the metadata cache on failure for debugging. See [Environment Variables](../reference/environment-variables.md).
 
-To preserve the metadata cache on failure (e.g., for debugging), set the `AIM_KEEP_METADATA_ON_FAILURE` environment variable. See [Environment Variables](../reference/environment-variables.md) for details.
+## Troubleshooting
 
-## Related Documentation
+### Service stuck at `ProfileCacheReady=False / CachesNotReady`
 
-- [Templates](templates.md) - Understanding ServiceTemplates and discovery
-- [Services](../guides/deploying-services.md) - Deploying services with caching
-- [Runtime Configuration](runtime-config.md) - Cluster-wide and namespace-scoped configuration
+One or more artifacts are still downloading or have failed. Drill down:
 
+```bash
+kubectl get aimprofilecache -l aim.eai.amd.com/service.name=<service-name> -n <namespace>
+kubectl get aimartifact -l aim.eai.amd.com/profile-cache.name=<cache-name> -n <namespace>
+kubectl get aimartifact <name> -o jsonpath='{.status.download}' | jq
+```
+
+Common causes:
+
+- Registry authentication missing or invalid → check `spec.env` and any referenced secrets.
+- Download size exceeds the artifact's declared `spec.size` → adjust.
+- Network instability → the protocol fallback chain should handle it; check `status.download.protocolSequence`.
+
+### Storage quota blocks a new artifact
+
+```bash
+kubectl get aimartifact <name> -o jsonpath='{.status.conditions[?(@.type=="Ready")]}' | jq
+```
+
+A reason of `StorageQuotaExceeded` means no evictable artifacts could free enough space. Free space by deleting unused artifacts, raising the quota, or lowering retention priorities so existing artifacts become evictable.
+
+### Cache stuck `NotAvailable / ProfileNotFound`
+
+The profile the cache references has been deleted. If the service is also gone, delete the cache manually; otherwise check why the profile isn't reconciling.
+
+## Related documentation
+
+- [Profiles](profiles.md) — Self-contained runtime configurations (v1alpha2)
+- [Services](services.md) — How `AIMService` triggers caching
+- [Deploying Services](../guides/deploying-services.md) — Service-level caching configuration
+- [Service Templates (v1alpha1)](../legacy/service-templates.md) — Legacy `AIMTemplateCache` flow
+- [Runtime Configuration](runtime-config.md) — Cluster-wide downloader defaults
+- [Storage Configuration](../admin/storage-configuration.md) — Storage classes, quotas, PVC sizing

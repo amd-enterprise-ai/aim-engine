@@ -1,0 +1,109 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimmodel-seeded-derivatives
+spec:
+  description: |
+    Verifies that v1alpha2 AIMModel profileCopy synthesizes a child AIMProfileSet and that
+    model status reports only the direct managed derivatives from that child profile set.
+    An unrelated matching AIMProfile in the namespace is ignored by the model status.
+  timeouts:
+    assert: 90s
+  steps:
+    - name: Seed the source namespace profile
+      try:
+        - apply:
+            file: candidate-profile.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: seeded-derivative-source
+              status:
+                status: Ready
+                version: 0.2.0
+
+    - name: Create the profileCopy AIMModel
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert the synthesized child AIMProfileSet and derived profile exist
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileSet
+              metadata:
+                name: seeded-derivative-model-profiles-bd5d8c17
+              status:
+                status: Ready
+                managedProfiles:
+                  total: 1
+                  ready: 1
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: seeded-derivative-model-profiles-bd5d8c17-cpu-default-3fc64d5a
+              status:
+                status: Ready
+
+    - name: Seed an unrelated matching namespace profile
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: unrelated-matching-profile
+              spec:
+                aimId: seeded-org/seeded-model
+                modelId: seeded-org/seeded-model
+                profileId: gpu-ignored
+                image: ghcr.io/silogen/aim-dummy:0.2.0
+                acceleratorModel: MI300X
+                acceleratorCount: 1
+                # Both aimId and modelSources are required by the v1alpha2
+                # CRD invariant ("deployable XOR base"); this profile is
+                # intentionally deployable but not owned by the AIMModel.
+                modelSources:
+                  - modelId: seeded-org/seeded-model
+                    sourceUri: hf://seeded-org/seeded-model
+
+    - name: Assert only direct managed derivatives contribute to status
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: seeded-derivative-model
+              status:
+                status: Ready
+                aimId: seeded-org/seeded-model
+                profileSetRef:
+                  name: seeded-derivative-model-profiles-bd5d8c17
+                managedProfiles:
+                  total: 1
+                  ready: 1
+
+    - name: Assert the unrelated profile exists but is not counted
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: unrelated-matching-profile
+              spec:
+                aimId: seeded-org/seeded-model
+                modelId: seeded-org/seeded-model
+                profileId: gpu-ignored

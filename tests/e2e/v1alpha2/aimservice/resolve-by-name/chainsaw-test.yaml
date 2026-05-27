@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Resolve-by-name: the most direct AIMService resolution shape. The user
+# applies a deployable AIMProfile, then a service that references it by name.
+# The resolver must surface ProfileResolved and Cache resources keyed against
+# the named profile.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-resolve-by-name
+spec:
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Apply a deployable AIMProfile and a service that references it by name
+      try:
+        - apply:
+            file: profile-and-service.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: resolve-by-name-profile
+              status:
+                deployable: true
+    - name: Assert the service resolves to the named profile
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: resolve-by-name-service
+              status:
+                (conditions[?type == 'ProfileReady']):
+                  - status: "True"
+                    reason: ProfileResolved
+                resolvedProfile:
+                  name: resolve-by-name-profile
+                  scope: Namespace

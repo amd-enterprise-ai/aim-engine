@@ -1,0 +1,29 @@
+# Base-image AIMModel (ADR 0006b iteration 2).
+#
+# When spec.image points at a "base" AIM image (one whose profile YAMLs
+# omit model_id and model_sources), native discovery materialises the
+# resulting AIMProfiles as BASE PROFILES:
+#   - aim.eai.amd.com/profile-role: base
+#   - status.deployable: false
+#
+# Base profiles cannot back an AIMService directly. They exist as source
+# material for a custom-model derivation AIMModel
+# (see aim_v1alpha2_aimmodel_custom.yaml) that overlays the custom
+# weights via overrides.modelSources.
+#
+# The base image MUST place its base-profile YAMLs under
+# /workspace/aim-runtime/profiles/general/ — when AIM_ID is empty the
+# discovery walker only scans general/, not $AIM_ID/. Each YAML may
+# leave aim_id, model_id, and model_sources empty; the custom-model
+# derivation supplies the target identity (selector.aimId) and the
+# overridden modelSources.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: aim-base-vllm
+  namespace: default
+spec:
+  image: amdenterpriseai/aim-base:0.11
+  imagePullSecrets:
+    - name: registry-creds
+  serviceAccountName: aim-runtime

@@ -1,0 +1,11 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: resolve-by-model-model
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        aimId: Qwen/Qwen3-0.6B
+        modelId: Qwen/Qwen3-0.6B
+    versionPolicy: latest

@@ -1,0 +1,16 @@
+# Global selector resolution: no model anchor, just provenance + spec filters.
+# v1alpha2 CEL requires aimId or modelRef so every selector-driven service is
+# reachable through the field indexes that the watch fan-out uses.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  labels:
+    app.kubernetes.io/name: aim-engine
+    app.kubernetes.io/managed-by: kustomize
+  name: aimservice-by-selector-sample
+spec:
+  profile:
+    selector:
+      aimId: qwen/qwen3-32b
+      precision: fp8
+      acceleratorModel: MI300X

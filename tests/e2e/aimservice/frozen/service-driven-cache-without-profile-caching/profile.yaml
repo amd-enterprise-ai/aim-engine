@@ -1,0 +1,40 @@
+# Frozen namespace-scoped AIMProfile with modelSources but NO caching block.
+# This is the symmetric negative case to profile-driven-cache: the profile
+# has weights to download but does not opt into caching at the profile level,
+# so the AIMProfile reconciler must NOT materialise an owner-ref'd cache.
+# The AIMService that consumes this profile is what drives cache creation.
+#
+# Status is patched to Ready via apply-with-status.sh so the AIMService
+# proceeds past its profile-readiness gate without depending on a real
+# AIMProfile reconcile (which would still produce the same outcome —
+# Caching is unset, Path A is a no-op).
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: test-no-profile-caching
+  annotations:
+    aim.eai.amd.com/reconciliation-paused: "true"
+spec:
+  aimId: test/no-profile-caching
+  modelId: test/no-profile-caching-fp8
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: optimized
+  primary: true
+  image: registry.example.com/test-image:1.0.0
+  modelSources:
+    - modelId: test-org/no-profile-caching-weights
+      sourceUri: hf://test-org/no-profile-caching-weights
+      size: 2Gi
+status:
+  status: Ready
+  version: 1.0.0
+  hardwareSummary: CPU
+  matchingNodes: 1
+  conditions:
+    - type: HardwareAvailable
+      status: "True"
+      reason: NoAcceleratorSpecified
+      message: No accelerator specified, profile is available on any node
+      lastTransitionTime: "2025-01-01T00:00:00Z"

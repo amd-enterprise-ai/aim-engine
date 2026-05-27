@@ -1,0 +1,16 @@
+# General fallback profile (no aim_id / model_id, no specific hardware).
+# Located under /workspace/aim-runtime/profiles/general/, which the v1alpha2
+# inspector always considers regardless of the image's canonical aim_id.
+# No accelerator_model / accelerator_count: this profile is a generic catch-all
+# that does not pin to a specific accelerator. manual_selection_only keeps it
+# out of auto-selection regardless.
+metadata:
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: general
+  manual_selection_only: true
+engine_args:
+  tensor-parallel-size: 1
+env_vars:
+  VLLM_DO_NOT_TRACK: "1"

@@ -1,0 +1,107 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# v1alpha2 quick-start: a service authored with spec.model.image and
+# routed onto the profile pipeline via the reconciler-pipeline annotation
+# must auto-create a dedicated v1alpha2 AIMModel, drive native discovery
+# on it, and resolve to a deployable AIMProfile produced by that model.
+#
+# This is the canonical "image + annotation" flow documented in
+# admin/upgrading.md (Migration window) and concepts/services.md.
+# Asserting all five outcomes (auto-model exists, has the right labels,
+# is owned by the service, profile resolves, service reports
+# ProfileReady=True) guards against silent regressions in any one of the
+# resolver/plan/watch wiring pieces that together make this work.
+#
+# Service readiness (InferenceService Ready) is intentionally NOT asserted
+# because the aim-dummy image's predictor lifecycle depends on cache
+# warm-up that other GPU tests already cover end-to-end (see
+# tests/e2e/v1alpha2/custom-model/end-to-end). This test focuses on the
+# image -> auto-model -> profile-resolution chain that's net-new in
+# v1alpha2.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-resolve-by-image
+spec:
+  description: |
+    Authors an AIMService with spec.model.image + the reconciler-pipeline
+    annotation, then asserts the v1alpha2 profile pipeline (a) creates a
+    dedicated AIMModel owned by the service, (b) labels it origin=auto-
+    generated with the spec.model.image provenance annotation, (c) lets
+    the model controller discover profiles from the image, and (d) the
+    AIMService resolves to one of the discovered deployable profiles.
+  timeouts:
+    assert: 300s
+  steps:
+    - name: Apply the image-shape service with the reconciler-pipeline annotation
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert the controller auto-created a dedicated AIMModel for the service
+      description: |
+        The auto-create plan step (see internal/v1alpha2/aimservice/automodel.go)
+        names the model `<svcName>-auto-<6charHash(image)>`, stamps
+        origin=auto-generated, annotates the provenance, and the
+        framework's ApplyDesiredState attaches an AIMService ownerRef.
+        Asserting the label + annotation + ownerRef together guards
+        against either piece silently regressing.
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                annotations:
+                  aim.eai.amd.com/auto-source: spec.model.image
+                (ownerReferences[?kind == 'AIMService' && name == 'resolve-by-image-service']):
+                  - controller: true
+              spec:
+                image: ghcr.io/silogen/aim-dummy:0.2.0
+
+    - name: Wait for the auto-created model to publish discovered AIMProfiles
+      description: |
+        aim-dummy discovers HuggingFaceTB/SmolLM2-135M (see
+        tests/e2e/v1alpha2/aimmodel/image-discovery-happy-path), so the
+        auto-created model emits AIMProfiles tagged with that aimId.
+        Waiting on `managedProfiles.deployable > 0` keeps the assertion
+        version-agnostic (any deployable profile from this discovery is
+        enough to satisfy the resolver downstream).
+      try:
+        - assert:
+            timeout: 240s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+              status:
+                aimId: HuggingFaceTB/SmolLM2-135M
+                managedProfiles:
+                  (deployable > `0`): true
+
+    - name: Assert the AIMService resolves to a profile produced by the auto-created model
+      description: |
+        Once the model controller stamps a deployable AIMProfile, the
+        v1alpha2 service resolver desugars spec.model.image to the
+        auto-model's name, runs the by-selector path, and lands on the
+        discovered profile. ProfileReady=True with reason=ProfileResolved
+        proves the full image -> auto-model -> profile resolution chain
+        executed.
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: resolve-by-image-service
+              status:
+                (conditions[?type == 'ProfileReady']):
+                  - status: "True"
+                    reason: ProfileResolved
+                (resolvedProfile.name != ""): true

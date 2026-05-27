@@ -59,6 +59,31 @@ func resolveDownloadImage(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1a
 	return aimv1alpha1.DefaultDownloadImage
 }
 
+// pullPolicyForImage mirrors kubelet's own default-policy heuristic: when the
+// image reference has no tag or carries the rolling `:latest` tag, opt into
+// `PullAlways` so we never reuse an arbitrarily stale cached layer on a node.
+// Versioned tags (e.g. `:v0.2.2`) are immutable enough in practice to keep
+// `IfNotPresent`, which avoids hitting the registry on every Job. Digest
+// references (`@sha256:...`) are also treated as immutable. This is the same
+// rule the K8s controller-manager applies when ImagePullPolicy is omitted; we
+// just have to do it ourselves because the Job builder sets it explicitly.
+func pullPolicyForImage(image string) corev1.PullPolicy {
+	switch {
+	case image == "":
+		return corev1.PullAlways
+	case strings.Contains(image, "@sha256:"):
+		return corev1.PullIfNotPresent
+	}
+	tag := ""
+	if idx := strings.LastIndex(image, ":"); idx >= 0 && !strings.Contains(image[idx:], "/") {
+		tag = image[idx+1:]
+	}
+	if tag == "" || tag == "latest" {
+		return corev1.PullAlways
+	}
+	return corev1.PullIfNotPresent
+}
+
 func buildRoleBinding(mc *aimv1alpha1.AIMArtifact) *rbacv1.RoleBinding {
 	return &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
@@ -190,7 +215,7 @@ func buildDownloadJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha
 						{
 							Name:            "model-download",
 							Image:           downloadImage,
-							ImagePullPolicy: corev1.PullIfNotPresent,
+							ImagePullPolicy: pullPolicyForImage(downloadImage),
 							SecurityContext: &corev1.SecurityContext{
 								RunAsUser:  ptr.To(int64(1000)),
 								RunAsGroup: ptr.To(int64(1000)),
@@ -265,7 +290,7 @@ func buildCheckSizeJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alph
 						{
 							Name:            "check-size",
 							Image:           downloadImage,
-							ImagePullPolicy: corev1.PullIfNotPresent,
+							ImagePullPolicy: pullPolicyForImage(downloadImage),
 							Command:         []string{"/check-size.sh"},
 							Args:            []string{sourceURI},
 							Env:             envVars,

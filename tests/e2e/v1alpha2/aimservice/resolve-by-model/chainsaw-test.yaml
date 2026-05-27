@@ -1,0 +1,60 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Resolve-by-model: AIMService with spec.model.name only must auto-select the
+# model's best deployable AIMProfile. The resolver desugars spec.model.name to
+# selector.modelRef.name and matches by the source-model label that the
+# AIMModel reconciler stamps on its derived profiles.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-resolve-by-model
+spec:
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Seed the copyable source AIMProfile
+      try:
+        - apply:
+            file: seed-profile.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: resolve-by-model-seed
+              status:
+                deployable: true
+
+    - name: Apply the AIMModel that derives a profile from the seed
+      try:
+        - apply:
+            file: model.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: resolve-by-model-model
+              status:
+                aimId: Qwen/Qwen3-0.6B
+                managedProfiles:
+                  total: 1
+                  ready: 1
+
+    - name: Apply a service that resolves by model name
+      try:
+        - apply:
+            file: service.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: resolve-by-model-service
+              status:
+                (conditions[?type == 'ProfileReady']):
+                  - status: "True"
+                    reason: ProfileResolved

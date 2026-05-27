@@ -1,0 +1,18 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+	      {
+		"name": "Debug operator",
+		"type": "go",
+		"request": "launch",
+		"mode": "debug",
+		"program": "${workspaceFolder}/cmd/main.go",
+		"args": ["--zap-log-level=info"],
+		"env": {
+		  "GO111MODULE": "on"
+		},
+		"envFile": "${workspaceFolder}/.env",
+		"buildFlags": "-tags=debug"
+	      }
+	]
+      }

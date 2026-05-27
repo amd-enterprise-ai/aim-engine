@@ -1,0 +1,222 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimmodel-invalid-version-contract
+spec:
+  description: |
+    Verifies that the v1alpha2 AIMModel onboarding contract is enforced by CRD
+    validation: only spec.image XOR spec.profiles is accepted; legacy
+    onboarding fields (profileCopy, custom, customTemplates, top-level
+    modelSources) are rejected; spec.derivedFrom is rejected on new v1alpha2
+    objects (deprecated flat shape); spec.profiles cannot be combined with
+    image / aimId / etc.; profiles version contract is enforced; and
+    v1alpha1 keeps rejecting spec.derivedFrom and spec.profiles.
+  timeouts:
+    assert: 30s
+  steps:
+    - name: Reject profiles latest policy with explicit version
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: invalid-profiles-latest-with-version
+              spec:
+                profiles:
+                  derivedFrom:
+                    selector:
+                      aimId: invalid-org/invalid-model
+                  versionPolicy: latest
+                  version: 0.1.10
+
+    - name: Reject profiles pinned policy without version
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: invalid-profiles-pinned-no-version
+              spec:
+                profiles:
+                  derivedFrom:
+                    selector:
+                      aimId: invalid-org/invalid-model
+                  versionPolicy: pinned
+
+    - name: Reject v1alpha2 spec.profileCopy
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: invalid-profilecopy-v1alpha2
+              spec:
+                profileCopy:
+                  selector:
+                    aimId: invalid-org/invalid-model
+                  versionPolicy: pinned
+                  version: 0.1.0
+
+    - name: Reject v1alpha2 spec.derivedFrom (deprecated flat shape)
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: invalid-derivedfrom-v1alpha2
+              spec:
+                derivedFrom:
+                  selector:
+                    aimId: invalid-org/invalid-model
+                  versionPolicy: pinned
+                  version: 0.1.0
+
+    - name: Reject v1alpha2 spec.custom
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: invalid-custom-v1alpha2
+              spec:
+                image: quay.io/amd/aim-invalid:0.1.0
+                # Well-typed spec.custom (cpu.requests is a Quantity, hardware
+                # is an object) so the v1alpha2 forbidden-CEL fires instead of
+                # type validation rejecting first. Pre-F2 fixture set
+                # `hardware.cpu: "4"` directly, which violated AIMHardwareRequirements
+                # (cpu is *AIMCpuRequirements, an object) and made this case
+                # never reach the rule it claimed to test.
+                custom:
+                  hardware:
+                    cpu:
+                      requests: "4"
+
+    - name: Reject v1alpha2 spec.customTemplates
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: invalid-custom-templates-v1alpha2
+              spec:
+                image: quay.io/amd/aim-invalid:0.1.0
+                customTemplates:
+                  - name: tpl
+
+    - name: Reject v1alpha2 top-level spec.modelSources
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: invalid-top-level-modelsources-v1alpha2
+              spec:
+                image: quay.io/amd/aim-invalid:0.1.0
+                modelSources:
+                  - modelId: invalid-org/invalid-model
+                    sourceUri: hf://invalid-org/invalid-model
+
+    - name: Reject profiles combined with image
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: invalid-image-plus-profiles
+              spec:
+                image: quay.io/amd/aim-invalid:0.1.0
+                profiles:
+                  derivedFrom:
+                    selector:
+                      aimId: invalid-org/invalid-model
+                  versionPolicy: pinned
+                  version: 0.1.0
+
+    - name: Reject profiles combined with aimId
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: invalid-aimid-plus-profiles
+              spec:
+                aimId: invalid-org/invalid-model
+                profiles:
+                  derivedFrom:
+                    selector:
+                      aimId: invalid-org/invalid-model
+                  versionPolicy: pinned
+                  version: 0.1.0
+
+    - name: Reject v1alpha1 spec.derivedFrom
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: invalid-derivedfrom-v1alpha1
+              spec:
+                derivedFrom:
+                  selector:
+                    aimId: invalid-org/invalid-model
+                  versionPolicy: pinned
+                  version: 0.1.0
+
+    - name: Reject v1alpha1 spec.profiles
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: invalid-profiles-v1alpha1
+              spec:
+                profiles:
+                  derivedFrom:
+                    selector:
+                      aimId: invalid-org/invalid-model
+                  versionPolicy: pinned
+                  version: 0.1.0

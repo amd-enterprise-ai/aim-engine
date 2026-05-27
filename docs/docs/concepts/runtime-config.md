@@ -1,32 +1,40 @@
-# Runtime Configuration Architecture
+# Runtime Configuration
 
-Runtime configurations provide storage defaults and routing parameters. This document explains the resolution algorithm, inheritance model, and status tracking.
+Runtime configurations provide storage defaults, routing parameters, environment variables, and label-propagation rules that apply to AIM workloads. They're optional — workloads run without them — but most production deployments set at least a cluster-scoped `default`.
 
-## Resolution Model
+## Resources
 
-The AIM operator resolves runtime settings from two Custom Resource Definitions:
+| Resource | Scope | Typical contents |
+|---|---|---|
+| `AIMClusterRuntimeConfig` | Cluster | Non-secret defaults shared across all namespaces |
+| `AIMRuntimeConfig` | Namespace | Namespace overrides, registry credentials, routing policy |
 
-- **`AIMClusterRuntimeConfig`**: Cluster-wide defaults that apply across namespaces, useful for single-tenant clusters
-- **`AIMRuntimeConfig`**: Namespace-scoped configuration including authentication secrets, useful for multi-tenant clusters
+Both resources are part of `aim.eai.amd.com/v1alpha1`. They continue unchanged in v1alpha2 — services, profiles, models, and caches all consume them through the same `runtimeConfigName` field.
 
-### Resolution Algorithm
+## Resolution algorithm
 
 When a workload references `runtimeConfigName: my-config`:
 
-1. The controller first looks for `AIMRuntimeConfig` named `my-config` in the workload's namespace
-2. If both namespace and cluster configs exist, they are **merged** (namespace values take precedence). Note also that any runtimeconfig embedded in AIMService takes precedence over namespaced runtimeconfig values.
-3. If not found, the controller falls back to `AIMClusterRuntimeConfig` named `my-config`
-4. The resolved configuration is published in the consumer's `status.resolvedRuntimeConfig`
+1. The controller looks for `AIMRuntimeConfig` named `my-config` in the workload's namespace.
+2. If found, it also looks for `AIMClusterRuntimeConfig` with the same name. If both exist, they are **merged** — namespace values override cluster values field-by-field.
+3. If no namespace config exists, the controller falls back to the cluster config alone.
+4. The resolved configuration is published in `status.resolvedRuntimeConfig`.
 
-When `runtimeConfigName` is omitted, the controller resolves a config named `default`. If this is not found, no error is raised. However, if a config that is not named `default` is specified, it must exist, otherwise an error is raised.
+When `runtimeConfigName` is omitted, the controller resolves a config named `default`. If `default` doesn't exist, **no error is raised** and reconciliation continues without runtime-config overrides. By contrast, an explicitly-referenced name that doesn't exist is a hard error.
 
-## Resolved Runtime Config Tracking
+### Inline runtime config on AIMService
 
-The resolved configuration is published in `status.resolvedRuntimeConfig` with:
-- Reference to the source object (namespace or cluster scope)
-- UID of the resolved config for identity tracking
+`AIMService` accepts an inline `runtimeConfig` block on its spec. Inline values take precedence over any referenced runtime config:
 
-### Namespace Config Status
+```
+inline (spec.runtimeConfig)  >  namespace AIMRuntimeConfig  >  cluster AIMClusterRuntimeConfig  >  operator defaults
+```
+
+This lets a service override one or two fields without copying the whole config.
+
+## Status tracking
+
+The resolved runtime config is published in `status.resolvedRuntimeConfig` with a typed reference:
 
 ```yaml
 status:
@@ -38,7 +46,7 @@ status:
     uid: abc123-def456-...
 ```
 
-### Cluster Config Status
+For cluster-scope resolutions:
 
 ```yaml
 status:
@@ -50,24 +58,25 @@ status:
     uid: xyz123-uvw123-...
 ```
 
-Only one ref (namespace or cluster) is present, never both.
+Only one reference is present — namespace or cluster, never both. When the two are merged, `scope: Namespace` and the namespace ref is recorded (it's the more specific source).
 
-## Resources Supporting Runtime Config
+## Resources that consume runtime config
 
-The following AIM resources accept `runtimeConfigName`:
+| Resource | v1alpha2 path | v1alpha1 path |
+|---|---|---|
+| `AIMService` | Yes (resolved per service) | Yes |
+| `AIMModel` / `AIMClusterModel` | Yes (used by discovery Job) | Yes |
+| `AIMProfile` / `AIMClusterProfile` | Yes (used when caching is enabled) | n/a |
+| `AIMProfileCache` | Yes (downloader env, storage defaults) | n/a |
+| `AIMServiceTemplate` / `AIMClusterServiceTemplate` | n/a | Yes (legacy) |
+| `AIMTemplateCache` | n/a | Yes (legacy) |
+| `AIMArtifact` | Yes (downloader env) | Yes |
 
-- `AIMModel` / `AIMClusterModel`
-- `AIMServiceTemplate` / `AIMClusterServiceTemplate`
-- `AIMService`
-- `AIMTemplateCache`
+Each resource independently resolves its runtime config and publishes the result.
 
-Each resource independently resolves its runtime config and publishes the result in status.
+## Storage defaults
 
-## Configuration Scoping
-
-### Cluster Runtime Configuration
-
-`AIMClusterRuntimeConfig` captures non-secret defaults shared across namespaces:
+The most common reason to apply a runtime config: pin the storage class used for cache PVCs.
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -78,16 +87,7 @@ spec:
   defaultStorageClassName: fast-nvme
 ```
 
-**Use cases**:
-- Platform-wide storage class defaults
-- Shared routing configurations for clusters without multi-tenancy
-
-**Limitations**:
-- Cannot enforce namespace-specific policies
-
-### Namespace Runtime Configuration
-
-`AIMRuntimeConfig` provides namespace-specific configuration including authentication:
+Override per namespace:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -97,69 +97,60 @@ metadata:
   namespace: ml-team
 spec:
   defaultStorageClassName: team-ssd
+```
+
+Profiles, caches, and artifacts pick this up unless they set `spec.storageClassName` directly.
+
+## Routing defaults
+
+`spec.routing` carries default routing parameters that `AIMService` inherits when its own `spec.routing` is unset (or partially set).
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+  namespace: ml-team
+spec:
   routing:
     enabled: true
     gatewayRef:
-      name: kserve-gateway
-      namespace: kgateway-system
+      name: inference-gateway
+      namespace: gateways
     pathTemplate: "/{.metadata.namespace}/{.metadata.labels['team']}"
 ```
 
-**Use cases**:
-- Namespace-level routing policies
-- Custom storage classes per team
+### Path templates
 
-## Routing Templates
+The runtime config (and any service) can supply an HTTP path template. The template is rendered against the `AIMService` object using JSONPath expressions.
 
-Runtime configs can supply a reusable HTTP route template via `spec.routing.pathTemplate`. The template is rendered against the `AIMService` object using JSONPath expressions.
-
-### Template Syntax
+#### Syntax
 
 ```yaml
 spec:
   routing:
-    pathTemplate: "/{.metadata.namespace}/{.metadata.labels['team']}/{.spec.aimImageName}/"
+    pathTemplate: "/{.metadata.namespace}/{.metadata.labels['team']}/{.metadata.name}"
 ```
 
-### Rendering Process
+#### Rendering
 
-During reconciliation:
+1. **Evaluation** — each placeholder is evaluated with JSONPath against the service object.
+2. **Validation** — missing fields, invalid expressions, or multi-value results fail the render.
+3. **Normalisation** — each path segment is lowercased, RFC 3986 URL-encoded, and consecutive slashes are collapsed.
+4. **Length check** — the final path must be ≤ 200 characters.
+5. **Trailing slash** — removed.
 
-1. **Evaluation**: Each placeholder (e.g., `{.metadata.namespace}`) is evaluated with JSONPath
-2. **Validation**: Missing fields, invalid expressions, or multi-value results fail the render
-3. **Normalization**: Each path segment is:
-   - Lowercased
-   - RFC 3986 encoded
-   - De-duplicated (multiple slashes collapsed)
-4. **Length Check**: Final path must be ≤ 200 characters
-5. **Trailing Slash**: Removed
+A path that exceeds 200 characters, contains invalid JSONPath, or references missing labels/fields degrades the service with reason `PathTemplateInvalid` and skips `HTTPRoute` creation. The `InferenceService` remains intact.
 
-### Rendering Failures
+#### Precedence
 
-A rendered path that:
+```
+AIMService.spec.routing.pathTemplate  >  Runtime config spec.routing.pathTemplate  >  Default "/<namespace>/<service-uid>"
+```
 
-- Exceeds 200 characters
-- Contains invalid JSONPath
-- References missing labels/fields
+#### Example
 
-...degrades the `AIMService` with reason `PathTemplateInvalid` and skips HTTPRoute creation. The InferenceService remains intact.
-
-### Precedence
-
-Services evaluate path templates in this order:
-
-1. `AIMService.spec.routing.pathTemplate` (highest precedence)
-2. Runtime config's `spec.routing.pathTemplate`
-3. Default: `/<namespace>/<service-uid>`
-
-This allows:
-
-- **Runtime configs**: Set namespace-wide path conventions
-- **Services**: Override with specific paths when needed
-
-### Example
-
-Runtime config with path template:
+Runtime config:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -176,10 +167,10 @@ spec:
     pathTemplate: "/ml/{.metadata.namespace}/{.metadata.labels['project']}"
 ```
 
-Service using template:
+Service that inherits it (v1alpha2):
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: qwen-chat
@@ -189,56 +180,74 @@ metadata:
 spec:
   model:
     name: qwen-qwen3-32b
-  # routing.pathTemplate omitted - uses runtime config template
 ```
 
-Rendered path: `/ml/ml-team/conversational-ai`
+Rendered path: `/ml/ml-team/conversational-ai`.
 
-Service with override:
+Service overriding the template:
 
 ```yaml
 spec:
   model:
-    ref: qwen-qwen3-32b
+    name: qwen-qwen3-32b
   routing:
     pathTemplate: "/custom/{.metadata.name}"
 ```
 
-Rendered path: `/custom/qwen-chat` (runtime config template ignored)
+Rendered path: `/custom/qwen-chat` — the runtime config template is ignored.
 
-## Error and Warning Behavior
+## Environment variable overrides
 
-### Missing Explicit Config
+`spec.env` injects environment variables into managed workloads. Most commonly used to set the HuggingFace downloader fallback chain.
 
-When a workload explicitly references a non-existent config:
+### Download protocol strategy
+
+`AIM_DOWNLOADER_PROTOCOL` controls the sequence of protocols tried when downloading HuggingFace models. See [Model Caching — Download Protocol Strategy](caching.md#download-protocol-strategy) for the full mechanism.
+
+Cluster default for environments where XET is unreliable:
 
 ```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: default
 spec:
-  runtimeConfigName: non-existent
+  env:
+    - name: AIM_DOWNLOADER_PROTOCOL
+      value: "HTTP,XET"
 ```
 
-Result:
-- Reconciliation fails
-- Workload enters `Failed` or `Degraded` state with reason `ConfigNotFound`
-- Reconciliation retries until the config appears
+Namespace override preferring plain HTTP:
 
-### Missing Default Config
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+  namespace: ml-team
+spec:
+  env:
+    - name: AIM_DOWNLOADER_PROTOCOL
+      value: "HTTP"
+```
 
-When the implicit `default` config doesn't exist:
+### Merge precedence
 
-- A `RuntimeConfigReady` condition is set to `True` with reason `DefaultConfigNotFound`
-- A Normal event is emitted on the first reconcile with reason `DefaultConfigNotFound`
-- Reconciliation continues without runtime config overrides
-- Workloads relying on private registries may fail later unless a namespace config supplies credentials
-This allows workloads without special requirements to proceed even when no default config exists.
+```
+AIMArtifact.spec.env (per-artifact)
+  > AIMProfile.spec.containerEnv / engineEnv  (per-profile, where applicable)
+  > AIMRuntimeConfig.spec.env  (namespace)
+  > AIMClusterRuntimeConfig.spec.env  (cluster)
+  > Operator defaults  (e.g. AIM_DOWNLOADER_PROTOCOL=XET,HF_TRANSFER)
+```
 
-## Label Propagation
+An individual artifact or profile can always override an org-wide default when needed.
 
-Runtime configurations support automatic label propagation from parent AIM resources to their child Kubernetes resources. This feature helps maintain consistent metadata across the resource hierarchy for tracking, cost allocation, and compliance purposes.
+## Label propagation
+
+Runtime configs can propagate labels from parent AIM resources to their child Kubernetes resources. Useful for cost allocation, ownership tracking, and compliance.
 
 ### Configuration
-
-Label propagation is configured in the runtime config's `labelPropagation` section:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -252,37 +261,40 @@ spec:
     match:
       - "org.example/cost-center"
       - "org.example/team"
-      - "compliance.example/*"  # Wildcard matches any label with this prefix
+      - "compliance.example/*"
 ```
 
-### Propagation Behavior
+### Propagation graph
 
-When enabled, labels matching the specified patterns are automatically copied from parent resources to child resources:
+When enabled, labels matching the `match` patterns are automatically copied:
 
-- **AIMService** → InferenceService, HTTPRoute, PVCs, auto-created AIMModel
-- **AIMTemplateCache** → AIMArtifact resources
-- **AIMArtifact** → PVCs, download Jobs
-- **AIMModel/AIMClusterModel** → auto-created AIMServiceTemplates
-- **AIMServiceTemplate** → AIMTemplateCache
-- **AIMClusterModelSource** → auto-created AIMClusterModel resources
+- **AIMService** → `InferenceService`, `HTTPRoute`, PVCs, auto-created `AIMModel` (v1alpha1 image path), `AIMProfileCache`
+- **AIMProfileCache** → `AIMArtifact` resources
+- **AIMArtifact** → PVCs, download `Job`s
+- **AIMModel** / **AIMClusterModel** → auto-created `AIMServiceTemplate` (v1alpha1), `AIMProfile` (v1alpha2 discovery), child `AIMProfileSet` (v1alpha2 derivation)
+- **AIMProfileSet** → derived `AIMProfile`s
+- **AIMServiceTemplate** → `AIMTemplateCache` (legacy)
+- **AIMTemplateCache** → `AIMArtifact` (legacy)
+- **AIMClusterModelSource** → auto-discovered `AIMClusterModel`s
 
-### Pattern Matching
+### Pattern matching
 
-The `match` field accepts exact label keys or wildcard patterns:
+| Pattern | Matches |
+|---|---|
+| `"org.example/team"` | Exactly this label key |
+| `"org.example/*"` | Any label whose key starts with `org.example/` |
+| `"compliance.*/severity"` | Labels like `compliance.sec/severity`, `compliance.audit/severity` |
 
-- `"org.example/team"` - Matches exactly this label key
-- `"org.example/*"` - Matches any label with the prefix `org.example/`
-- `"compliance.*/severity"` - Matches labels like `compliance.sec/severity`, `compliance.audit/severity`
+### Job-specific handling
 
-### Special Handling
+For `Job` resources, propagated labels are applied to **both**:
 
-For Job resources, propagated labels are applied to both:
-1. The Job's metadata labels
-2. The Job's PodTemplateSpec labels (enabling pod-level tracking)
+1. The `Job`'s metadata labels.
+2. The `Job`'s `PodTemplateSpec` labels.
 
-### Example Use Case
+This enables pod-level tracking, so discovery and download pods inherit the same cost-allocation labels as the parent service.
 
-A typical configuration for multi-tenant cost tracking:
+### Example: multi-tenant cost tracking
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -298,10 +310,8 @@ spec:
       - "org.example/project"
 ```
 
-When users create an AIMService with these labels:
-
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: qwen-chat
@@ -312,71 +322,50 @@ metadata:
     org.example/project: "chatbot-v2"
 spec:
   model:
-    ref: qwen-qwen3-32b
+    name: qwen-qwen3-32b
 ```
 
-The operator propagates these labels to the InferenceService, HTTPRoute, and any PVCs created for the service, enabling cost tracking and chargeback at the infrastructure level.
+The operator propagates these labels to the `InferenceService`, `HTTPRoute`, `AIMProfileCache`, `AIMArtifact`s, PVCs, and download Jobs, enabling cost tracking and chargeback at the infrastructure level.
 
-## Environment Variable Overrides
+## Error and warning behaviour
 
-Runtime configurations can inject environment variables into managed workloads via `spec.env`. This is useful for setting defaults across an entire namespace or cluster, such as the download protocol strategy for model artifacts.
+### Missing explicit config
 
-### Download Protocol Strategy
-
-The `AIM_DOWNLOADER_PROTOCOL` environment variable controls the sequence of protocols tried when downloading HuggingFace models. See [Model Caching – Download Protocol Strategy](caching.md#download-protocol-strategy) for full details.
-
-#### Example: Cluster default for environments where XET is unreliable
+A workload that explicitly references a non-existent config:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMClusterRuntimeConfig
-metadata:
-  name: default
 spec:
-  env:
-    - name: AIM_DOWNLOADER_PROTOCOL
-      value: "HTTP,XET"
+  runtimeConfigName: non-existent
 ```
 
-#### Example: Namespace override preferring plain HTTP
+Results in:
 
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMRuntimeConfig
-metadata:
-  name: default
-  namespace: ml-team
-spec:
-  env:
-    - name: AIM_DOWNLOADER_PROTOCOL
-      value: "HTTP"
-```
+- Reconciliation fails.
+- `ConfigValid=False / ReferenceNotFound`.
+- Status goes to `Failed` or `Degraded`.
+- Reconciliation retries until the config appears.
 
-### Merge Precedence
+### Missing default config
 
-Environment variables are merged with the following precedence (highest first):
+When the implicit `default` config doesn't exist:
 
-1. `AIMArtifact.spec.env` (per-artifact)
-2. `AIMRuntimeConfig.spec.env` (namespace-scoped)
-3. `AIMClusterRuntimeConfig.spec.env` (cluster-scoped)
-4. Operator defaults (e.g., `AIM_DOWNLOADER_PROTOCOL=XET,HF_TRANSFER`)
+- `RuntimeConfigReady=True / DefaultConfigNotFound`.
+- A `Normal` event is emitted on the first reconcile with reason `DefaultConfigNotFound`.
+- Reconciliation continues without runtime-config overrides.
+- Workloads relying on private registries may fail later unless a namespace config supplies credentials.
 
-This means an individual artifact can always override any runtime config setting when needed.
+This lets workloads without special requirements run on a fresh cluster without a `default` config.
 
-## Operator Namespace
+## Operator namespace
 
-The AIM controllers determine the operator namespace from the `AIM_SYSTEM_NAMESPACE` environment variable (default: `aim-system`).
+The AIM controllers determine the operator namespace from the `AIM_SYSTEM_NAMESPACE` environment variable (default: `aim-system`). Cluster-scoped workflows — cluster template discovery, cluster image inspection, auto-generated cluster templates — run auxiliary pods in this namespace and resolve namespaced runtime configs there.
 
-Cluster-scoped workflows such as:
-- Cluster template discovery
-- Cluster image inspection
-- Auto-generated cluster templates
+## Related documentation
 
-...run auxiliary pods in this namespace and resolve namespaced runtime configs there.
-
-## Related Documentation
-
-- [Models](models.md) - How models use runtime configs for discovery and auto-creation
-- [Templates](templates.md) - Template discovery and runtime config resolution
-- [Services Usage](../guides/deploying-services.md) - Practical service configuration
-- [Model Caching](caching.md) - Download protocol strategy and cache architecture
+- [Models](models.md) — How models use runtime configs for discovery
+- [Profiles](profiles.md) — Self-contained runtime configurations (v1alpha2)
+- [Services](services.md) — How services consume runtime config
+- [Service Templates (v1alpha1)](../legacy/service-templates.md) — Legacy template-driven path
+- [Deploying Services](../guides/deploying-services.md) — Practical service configuration
+- [Model Caching](caching.md) — Download protocol strategy and cache architecture
+- [Storage Configuration](../admin/storage-configuration.md) — Storage classes, PVCs, quotas

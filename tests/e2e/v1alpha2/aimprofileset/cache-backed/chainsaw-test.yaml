@@ -1,0 +1,55 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimprofileset-cache-backed
+spec:
+  description: |
+    Verifies that AIMProfileSet can derive profiles from a seeded discovery-cache
+    ConfigMap source and applies overrides to the copied AIMProfile.
+  timeouts:
+    assert: 90s
+  steps:
+    - name: Seed the discovery cache
+      try:
+        - apply:
+            file: discovery-configmap.yaml
+
+    - name: Create the cache-backed AIMProfileSet
+      try:
+        - apply:
+            file: profileset.yaml
+
+    - name: Assert the derived AIMProfile is created from the cache source
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: cache-backed-profiles-cpu-default-cb1e6105
+              spec:
+                aimId: cached-org/cached-model
+                modelId: cached-org/custom-model
+                profileId: cpu-default
+                image: quay.io/acme/aim-base-vllm:0.9.0
+                modelSources:
+                  - modelId: cached-org/custom-model
+                    sourceUri: s3://models/cached-model
+              status:
+                status: Ready
+
+    - name: Assert AIMProfileSet status reports direct managed counts
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileSet
+              metadata:
+                name: cache-backed-profiles
+              status:
+                status: Ready
+                managedProfiles:
+                  total: 1
+                  ready: 1

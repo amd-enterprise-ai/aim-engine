@@ -13,6 +13,9 @@ spec:
   type: optimized
   primary: true
   image: registry.example.com/test-image:1.0.0
+  modelSources:
+    - modelId: test/finalizer-migration-fp8
+      sourceUri: hf://test/finalizer-migration
 status:
   status: Ready
   version: 1.0.0

@@ -1,0 +1,18 @@
+# v1alpha2 AIMModel that exercises the in-cluster image-discovery pipeline
+# against a real CPU AIM image. Discovery extracts profiles from the image's
+# embedded profile YAML and synthesizes one AIMProfile per supported entry,
+# owned by this model and matched to the cluster's accelerator family labels
+# (CPU here).
+#
+# No profileCopy, no seed AIMProfile, no AIMServiceTemplate - this is the
+# minimum custom-resource shape that exercises the
+# AIMModel v1alpha2 → AIMProfile → AIMService v1alpha2 → /v1/chat/completions
+# chain.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: via-model-cpu
+spec:
+  image: ghcr.io/silogen/aim-cpu-qwen-qwen3-0-6b:0.12.0-rc16
+  imagePullSecrets:
+    - name: ghcr-regcred

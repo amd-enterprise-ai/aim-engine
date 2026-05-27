@@ -157,7 +157,7 @@ type ProfileCacheObservation struct {
 	ProfileCacheFetchResult
 
 	AllCachesAvailable bool
-	MissingCaches      []aimv1alpha2.AIMModelSource
+	MissingCaches      []aimv1alpha1.AIMModelSource
 	BestArtifacts      map[string]aimv1alpha1.AIMArtifact
 }
 
@@ -200,7 +200,7 @@ func (r *ProfileCacheReconciler) ComposeState(
 
 	pc := fetch.profileCache
 
-	var modelSources []aimv1alpha2.AIMModelSource
+	var modelSources []aimv1alpha1.AIMModelSource
 	if fetch.profile.OK() && fetch.profile.Value != nil {
 		modelSources = fetch.profile.Value.Spec.ModelSources
 	} else if fetch.clusterProfile.OK() && fetch.clusterProfile.Value != nil {
@@ -371,7 +371,7 @@ func (r *ProfileCacheReconciler) DecorateStatus(
 // generateArtifactName returns a deterministic artifact name.
 // Shared caches omit the profile cache name to allow cross-cache reuse.
 // Dedicated caches scope names to the profile cache.
-func generateArtifactName(pc *aimv1alpha2.AIMProfileCache, modelSource aimv1alpha2.AIMModelSource) (string, error) {
+func generateArtifactName(pc *aimv1alpha2.AIMProfileCache, modelSource aimv1alpha1.AIMModelSource) (string, error) {
 	nameWithoutDots := strings.ReplaceAll(modelSource.SourceURI, ".", "-")
 	hashInputs := []any{
 		modelSource.SourceURI,

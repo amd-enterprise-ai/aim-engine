@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: derivedfrom-finetune
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        aimId: derived-org/derived-model
+        modelId: derived-org/derived-model
+    versionPolicy: pinned
+    version: 0.2.0
+    overrides:
+      modelSources:
+        - modelId: derived-org/derived-finetune
+          sourceUri: s3://models/derived-finetune

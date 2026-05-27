@@ -22,9 +22,14 @@
 
 package v1alpha1
 
+import "strings"
+
 // RecommendedDeployment describes a recommended deployment configuration for a model.
 type RecommendedDeployment struct {
-	// GPUModel is the GPU model name (e.g., MI300X, MI325X)
+	// GPUModel is the GPU model name (e.g., MI300X, MI325X).
+	// The legacy v1alpha1 schema only models GPU accelerators; CPU profiles
+	// emitted via OCI labels (gpuModel="CPU") are not first-class here and
+	// are handled exclusively by the v1alpha2 native discovery pipeline.
 	// +optional
 	GPUModel string `json:"gpuModel,omitempty"`
 
@@ -49,6 +54,29 @@ type RecommendedDeployment struct {
 	// Description provides additional context about this deployment configuration
 	// +optional
 	Description string `json:"description,omitempty"`
+}
+
+// IsGPUDeployment reports whether this recommended deployment targets a GPU
+// accelerator (the only kind v1alpha1 AIMServiceTemplates can deploy).
+//
+// Returns false when the OCI label encodes a CPU profile via gpuModel="CPU"
+// (case-insensitive). Such entries are surfaced verbatim in
+// status.imageMetadata.model.recommendedDeployments for transparency, but
+// the v1alpha1 template builder skips them: the legacy GPU-availability
+// check has no notion of CPU "GPU models" and would mark the resulting
+// AIMServiceTemplate NotAvailable. CPU profiles are produced as
+// AIMProfiles by the v1alpha2 native discovery pipeline.
+func (d *RecommendedDeployment) IsGPUDeployment() bool {
+	if d == nil {
+		return false
+	}
+	// An empty gpuModel with a non-zero gpuCount is "any GPU is fine"
+	// (the GPU readiness check accepts the first available model). That
+	// is still a GPU deployment, so only an explicit "CPU" string disqualifies.
+	if strings.EqualFold(strings.TrimSpace(d.GPUModel), "CPU") {
+		return false
+	}
+	return true
 }
 
 // ImageMetadata contains metadata extracted from or provided for a container image.

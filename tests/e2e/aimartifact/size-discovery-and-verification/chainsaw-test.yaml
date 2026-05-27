@@ -1,10 +1,32 @@
 # tests/e2e/aimartifact/size-discovery-and-verification/chainsaw-test.yaml
+#
+# Gated on `requires: longhorn` (excluded by the kind selector but not by GPU).
+#
+# The test creates two AIMArtifacts (one HF, one S3) and then a verify Job that
+# mounts BOTH cache PVCs. On a multi-worker kind cluster this is unreliable:
+# the operator's download Jobs are scheduled independently, and with the default
+# local-path-provisioner StorageClass (volumeBindingMode: WaitForFirstConsumer)
+# each PVC binds to whichever node first consumes it. When the two download
+# Jobs land on different workers, the PVCs bind to different nodes and the
+# verify Job can never schedule (a single Pod cannot mount RWO/node-local
+# volumes from two different nodes). The PVC names embed a hash of the
+# AIMArtifact UID, so the test cannot pre-create them with a shared
+# nodeAffinity, and the AIMArtifact CRD has no nodeSelector field today.
+#
+# On the GPU/vcluster environment the cluster uses real RWX-capable storage
+# (Longhorn), so cross-node mounts work and the test exercises end-to-end size
+# discovery and content-equivalence between HF and S3 artifacts as intended.
+#
+# Follow-up to re-enable on kind: either add `spec.nodeSelector` (and matching
+# Job nodeSelector) to AIMArtifact so the test can pin both downloads to the
+# same worker, or arrange a kind StorageClass that provides genuine RWX
+# semantics.
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
   name: size-discovery-and-verification
   labels:
-    requires: external-network
+    requires: longhorn
 spec:
   steps:
     # ========================================

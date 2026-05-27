@@ -1,0 +1,64 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# v1alpha2 AIMModel base-image discovery for custom-model derivation (GPU-only).
+#
+# Applies a base-image AIMModel whose container only ships base
+# profile YAMLs (no aim_id / model_id / model_sources). Asserts that
+# native discovery materialises AIMProfiles in the test namespace
+# labelled role=base with status.deployable=false, and that the model's
+# status.managedProfiles reports base > 0 / deployable = 0 while
+# status.aimId stays empty.
+#
+# Author-only test: tagged `requires: gpu` because the base image is too
+# large to host in CI. The Makefile selector for kind excludes it
+# automatically (requires notin (gpu,...)).
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimmodel-image-discovery-base-image
+  labels:
+    requires: gpu
+spec:
+  description: |
+    Validates that a base-image AIMModel emits base AIMProfiles
+    (role=base, status.deployable=false) and that AIMModel.status
+    surfaces non-zero managedProfiles.base with managedProfiles.deployable=0.
+  timeouts:
+    assert: 300s
+  steps:
+    - name: Create the base-image AIMModel
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for discovery to complete and base profiles to be materialised
+      try:
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: image-discovery-base-image
+              status:
+                (discoveryCacheRef.name != ""): true
+                (discoveredProfiles.total > `0`): true
+                (aimId == null): true
+                managedProfiles:
+                  deployable: 0
+                  (base > `0`): true
+
+    - name: Assert at least one AIMProfile owned by this model carries role=base
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                labels:
+                  aim.eai.amd.com/profile-role: base
+                  aim.eai.amd.com/source-model: image-discovery-base-image
+                  aim.eai.amd.com/source-model-scope: namespace
+              status:
+                deployable: false

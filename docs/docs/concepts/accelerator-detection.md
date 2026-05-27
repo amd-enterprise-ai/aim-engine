@@ -2,6 +2,11 @@
 
 The AcceleratorDetector automatically detects hardware accelerators on cluster nodes and publishes the results as Kubernetes node labels via [Node Feature Discovery (NFD)](https://nfd.sigs.k8s.io/). AIM Engine uses these labels to schedule inference workloads onto appropriate hardware. The AcceleratorDetector is enabled by default.
 
+The labels feed two different consumers depending on API version:
+
+- **v1alpha2** — `AIMProfile.spec.acceleratorModel` is matched against the `feature.node.kubernetes.io/aim-accelerator.<model>` labels using the `Exists` operator. The match drives both profile `HardwareAvailable` reporting and inference-pod node affinity.
+- **v1alpha1** — `AIMServiceTemplate.spec.hardware.gpu.model` feeds the same label system. Existing templates continue to work.
+
 ## How It Works
 
 Two DaemonSets run `aim-runtime detect-hardware` on each node, write the results to NFD's local feature file directory, and NFD publishes them as node labels.
@@ -13,7 +18,7 @@ Node boots
   → Writes feature file to /etc/kubernetes/node-feature-discovery/features.d/
   → NFD publishes node labels:
       feature.node.kubernetes.io/aim-accelerator.MI300X=8
-  → AIM Engine matches profiles to nodes via label affinity
+  → AIM Engine matches profiles (or v1alpha1 templates) to nodes via label affinity
 ```
 
 Detection runs periodically (default: every 5 minutes) to ensure labels stay current.
@@ -41,7 +46,7 @@ feature.node.kubernetes.io/aim-accelerator.EPYC_9965: "128"
 | AMD EPYC 9965 (192 cores) | `aim-accelerator.EPYC_9965=192` |
 | AMD EPYC 9575F (64 cores) | `aim-accelerator.EPYC_9575F=64` |
 
-AIM Engine constructs node affinity from a profile's `accelerator_model` field using the `Exists` operator, without requiring any knowledge of hardware specifics.
+AIM Engine constructs node affinity from `AIMProfile.spec.acceleratorModel` (or v1alpha1 `AIMServiceTemplate.spec.hardware.gpu.model`) using the `Exists` operator, without requiring any knowledge of hardware specifics. The label value (accelerator count) is informational only; actual capacity is enforced via the computed device resource request — see [Profiles — Accelerator and node affinity](profiles.md#accelerator-and-node-affinity).
 
 !!! note
     Architecture-level labels for fallback profile matching (e.g. `aim-accelerator.CDNA3`, `aim-accelerator.EPYC_ZEN5`) will be supported once `aim-runtime` returns the full identifier hierarchy.
@@ -131,5 +136,7 @@ kubectl get nodes --show-labels | grep aim-accelerator
 
 ## See Also
 
+- [Profiles — Accelerator and node affinity](profiles.md#accelerator-and-node-affinity) — How profiles consume detector labels
+- [Service Templates (v1alpha1)](../legacy/service-templates.md) — Hardware-resolution path for legacy templates
 - [Naming and Labels](../reference/naming-and-labels.md) — Label reference
 - [GPU Management](../admin/gpu-management.md) — Existing GPU label system

@@ -1,0 +1,112 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimmodel-image-discovery-spec-change
+spec:
+  description: |
+    Verifies that changing a discovery-relevant spec field invalidates the existing
+    cache and drives a fresh discovery run. This test changes only serviceAccountName,
+    which participates in the discovery spec hash without changing the image content.
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create service accounts used by the discovery Job
+      try:
+        - apply:
+            file: serviceaccounts.yaml
+
+    - name: Create the native-mode AIMModel
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for the first discovery run to complete
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: image-discovery-spec-change
+              status:
+                aimId: HuggingFaceTB/SmolLM2-135M
+                (discovery.specHash != ""): true
+                (discoveryCacheRef.name != ""): true
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: Change serviceAccountName and wait for a new discovery spec hash
+      try:
+        - script:
+            timeout: 120s
+            content: |
+              set -eu
+
+              OLD_HASH=$(kubectl get aimmodel -n "$NAMESPACE" image-discovery-spec-change \
+                -o jsonpath='{.status.discovery.specHash}')
+              CACHE_NAME=$(kubectl get aimmodel -n "$NAMESPACE" image-discovery-spec-change \
+                -o jsonpath='{.status.discoveryCacheRef.name}')
+              OLD_CACHE_HASH=$(kubectl get configmap -n "$NAMESPACE" "$CACHE_NAME" \
+                -o jsonpath='{.metadata.annotations.aim\.eai\.amd\.com/discovery-spec-hash}')
+
+              if [ -z "$OLD_HASH" ] || [ -z "$CACHE_NAME" ] || [ -z "$OLD_CACHE_HASH" ]; then
+                echo "ERROR: initial discovery state is incomplete"
+                exit 1
+              fi
+              echo "Old model spec hash: $OLD_HASH"
+              echo "Old cache spec hash: $OLD_CACHE_HASH"
+
+              kubectl patch aimmodel -n "$NAMESPACE" image-discovery-spec-change --type merge \
+                -p '{"spec":{"serviceAccountName":"discovery-sa-b"}}'
+
+              i=0
+              while [ "$i" -lt 60 ]; do
+                NEW_HASH=$(kubectl get aimmodel -n "$NAMESPACE" image-discovery-spec-change \
+                  -o jsonpath='{.status.discovery.specHash}')
+                NEW_CACHE_NAME=$(kubectl get aimmodel -n "$NAMESPACE" image-discovery-spec-change \
+                  -o jsonpath='{.status.discoveryCacheRef.name}')
+                READY=$(kubectl get aimmodel -n "$NAMESPACE" image-discovery-spec-change -o json \
+                  | jq -r '[.status.conditions[]? | select(.type == "Ready")][0].status // ""')
+
+                if [ -n "$NEW_CACHE_NAME" ]; then
+                  NEW_CACHE_HASH=$(kubectl get configmap -n "$NAMESPACE" "$NEW_CACHE_NAME" \
+                    -o jsonpath='{.metadata.annotations.aim\.eai\.amd\.com/discovery-spec-hash}')
+                else
+                  NEW_CACHE_HASH=""
+                fi
+
+                if [ -n "$NEW_HASH" ] && [ "$NEW_HASH" != "$OLD_HASH" ] \
+                  && [ -n "$NEW_CACHE_HASH" ] && [ "$NEW_CACHE_HASH" = "$NEW_HASH" ] \
+                  && [ "$READY" = "True" ]; then
+                  echo "New model spec hash: $NEW_HASH"
+                  echo "New cache spec hash: $NEW_CACHE_HASH"
+                  exit 0
+                fi
+
+                sleep 2
+                i=$((i + 1))
+              done
+
+              echo "ERROR: spec hash did not change after serviceAccountName update"
+              kubectl get aimmodel -n "$NAMESPACE" image-discovery-spec-change -o yaml
+              if [ -n "${NEW_CACHE_NAME:-}" ]; then
+                kubectl get configmap -n "$NAMESPACE" "$NEW_CACHE_NAME" -o yaml || true
+              fi
+              exit 1
+
+    - name: Assert the updated model remains Ready
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: image-discovery-spec-change
+              spec:
+                serviceAccountName: discovery-sa-b
+              status:
+                (discovery.specHash != ""): true
+                (conditions[?type == 'Ready']):
+                  - status: "True"

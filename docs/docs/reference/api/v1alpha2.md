@@ -9,15 +9,63 @@
 Package v1alpha2 contains API Schema definitions for the aim v1alpha2 API group.
 
 ### Resource Types
+- [AIMClusterModel](#aimclustermodel)
+- [AIMClusterModelList](#aimclustermodellist)
 - [AIMClusterProfile](#aimclusterprofile)
 - [AIMClusterProfileList](#aimclusterprofilelist)
+- [AIMClusterProfileSet](#aimclusterprofileset)
+- [AIMClusterProfileSetList](#aimclusterprofilesetlist)
+- [AIMModel](#aimmodel)
+- [AIMModelList](#aimmodellist)
 - [AIMProfile](#aimprofile)
 - [AIMProfileCache](#aimprofilecache)
 - [AIMProfileCacheList](#aimprofilecachelist)
 - [AIMProfileList](#aimprofilelist)
+- [AIMProfileSet](#aimprofileset)
+- [AIMProfileSetList](#aimprofilesetlist)
 - [AIMService](#aimservice)
 - [AIMServiceList](#aimservicelist)
 
+
+
+#### AIMClusterModel
+
+
+
+AIMClusterModel is the Schema for cluster-scoped v1alpha2 AIM model resources.
+See AIMModel (api/v1alpha2/aimmodel_types.go) for the rationale of the
+CEL rules below — AIMClusterModel mirrors the namespace-scoped contract.
+
+
+
+_Appears in:_
+- [AIMClusterModelList](#aimclustermodellist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMClusterModel` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMModelSpec](#aimmodelspec)_ |  |  |  |
+| `status` _[AIMModelStatus](#aimmodelstatus)_ |  |  |  |
+
+
+#### AIMClusterModelList
+
+
+
+AIMClusterModelList contains a list of AIMClusterModel.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMClusterModelList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMClusterModel](#aimclustermodel) array_ |  |  |  |
 
 
 #### AIMClusterProfile
@@ -29,6 +77,11 @@ Cluster profiles are visible across all namespaces. They can be created manually
 or, in the future, automatically during model discovery by a v1alpha2 model controller.
 Unlike namespace-scoped AIMProfiles, cluster profiles do not support caching
 configuration since caches are namespace-scoped.
+
+Deployable profiles have both aimId and modelSources populated; base
+profiles (custom-model derivation source material) have neither. Mixed
+(one of the two set) is rejected to keep status.deployable derivable from
+spec.
 
 
 
@@ -62,6 +115,44 @@ AIMClusterProfileList contains a list of AIMClusterProfile.
 | `items` _[AIMClusterProfile](#aimclusterprofile) array_ |  |  |  |
 
 
+#### AIMClusterProfileSet
+
+
+
+AIMClusterProfileSet is the Schema for cluster-scoped profile derivation resources.
+
+
+
+_Appears in:_
+- [AIMClusterProfileSetList](#aimclusterprofilesetlist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMClusterProfileSet` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMProfileSetSpec](#aimprofilesetspec)_ |  |  |  |
+| `status` _[AIMProfileSetStatus](#aimprofilesetstatus)_ |  |  |  |
+
+
+#### AIMClusterProfileSetList
+
+
+
+AIMClusterProfileSetList contains a list of AIMClusterProfileSet.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMClusterProfileSetList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMClusterProfileSet](#aimclusterprofileset) array_ |  |  |  |
+
+
 #### AIMClusterProfileSpec
 
 
@@ -75,7 +166,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `aimId` _string_ | AimId is the model architecture identifier (e.g., "qwen/qwen3-32b").<br />Primary matching axis for profile selection and custom weight onboarding. Immutable. |  | MinLength: 1 <br /> |
+| `aimId` _string_ | AimId is the model architecture identifier (e.g., "qwen/qwen3-32b").<br />Primary matching axis for profile selection and custom weight onboarding.<br />AimId is required for deployable profiles. Iteration 1 producers always<br />emit deployable profiles, so AimId is effectively required there. Empty<br />AimId is reserved for base profiles emitted by base-image discovery<br />(custom-model derivation source material), which are not deployable<br />until derived.<br />Once set, AimId is immutable. |  | Optional: \{\} <br /> |
 | `modelId` _string_ | ModelId is the specific model / HuggingFace URI (e.g., "qwen/qwen3-32b-fp8").<br />Determines the cache path (/workspace/cache/\{modelId\}) and serves as a secondary<br />discriminator for custom weight matching. |  | Optional: \{\} <br /> |
 | `profileId` _string_ | ProfileId is the on-disk profile identifier from the AIM image<br />(e.g., "vllm-mi300x-fp8-tp1-latency"). Populated during discovery to link this<br />CRD back to the profile YAML inside the container. Not required for manually<br />created profiles. |  | Optional: \{\} <br /> |
 | `engine` _string_ | Engine identifies the inference engine (e.g., "vllm", "tgi"). |  | Optional: \{\} <br /> |
@@ -83,6 +174,7 @@ _Appears in:_
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision is the numeric precision used by this profile. |  | Enum: [fp4 fp8 fp16 fp32 bf16 int4 int8] <br />Optional: \{\} <br /> |
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type indicates the optimization level. Hierarchy: optimized > general > preview > unoptimized. |  | Enum: [optimized general preview unoptimized] <br />Optional: \{\} <br /> |
 | `primary` _boolean_ | Primary marks this as a default/recommended profile. When true, the profile is<br />advertised for standard deployment and copied automatically for custom weight models.<br />Defaults to false when not specified. | false |  |
+| `manualSelectionOnly` _boolean_ | ManualSelectionOnly excludes this profile from automatic AIMService selection.<br />It remains addressable by explicit name and is preserved from aim-build profile YAMLs. | false |  |
 | `engineArgs` _[JSON](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#json-v1-apiextensions-k8s-io)_ | EngineArgs contains inference engine CLI arguments as a free-form JSON object.<br />Passed to the inference engine (e.g., vLLM) at startup. |  | Schemaless: \{\} <br />Optional: \{\} <br /> |
 | `engineEnv` _object (keys:string, values:string)_ | EngineEnv contains environment variables for the inference engine subprocess.<br />Applied via os.execv, distinct from container-level ContainerEnv. |  | Optional: \{\} <br /> |
 | `acceleratorModel` _string_ | AcceleratorModel is the accelerator identifier for node selection.<br />Maps to a node label key using the Exists operator:<br />  feature.node.kubernetes.io/aim-accelerator.\{value\}: Exists<br />Supports both specific models (e.g., "MI300X") and architecture-level<br />fallbacks (e.g., "EPYC_ZEN5") — the AcceleratorDetector labels nodes<br />with all applicable identifiers. |  | MaxLength: 63 <br />Pattern: `^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$` <br />Optional: \{\} <br /> |
@@ -96,72 +188,66 @@ _Appears in:_
 | `serviceAccountName` _string_ | ServiceAccountName specifies the service account for workloads. |  | Optional: \{\} <br /> |
 
 
-#### AIMMetric
 
-_Underlying type:_ _string_
 
-AIMMetric enumerates supported optimization targets.
+#### AIMModel
 
-_Validation:_
-- Enum: [latency throughput]
+
+
+AIMModel is the Schema for the v1alpha2 AIMModel API.
+
+AIMModel mirrors AIMService: the canonical Spec/Status types live in
+v1alpha1 and the v1alpha2 wrapper is a thin re-export so JSON wire format
+is identical between versions and the None conversion strategy works
+without a webhook.
+
+v1alpha2 onboarding contract: exactly one of spec.image (official
+discovery) or spec.profiles (fine-tune / custom-model derivation); legacy
+v1alpha1 onboarding fields and the deprecated flat spec.derivedFrom shape
+are forbidden on NEW v1alpha2 objects. Each "forbidden" rule uses
+optionalOldSelf so that objects originally created via v1alpha1 (which
+legally carry spec.custom, spec.modelSources, spec.customTemplates,
+spec.profileCopy) and the early-iteration v1alpha2 objects (carrying
+spec.derivedFrom) can still be updated through the v1alpha2 surface — the
+reconciler must be able to add finalizers and patch the spec of
+legacy-shaped objects without being blocked by the v1alpha2 schema. Adding
+a legacy/deprecated field to an object that did not previously have it is
+still rejected.
+
+
 
 _Appears in:_
-- [AIMClusterProfileSpec](#aimclusterprofilespec)
-- [AIMProfileSpec](#aimprofilespec)
-- [AIMProfileSpecCommon](#aimprofilespeccommon)
-
-| Field | Description |
-| --- | --- |
-| `latency` |  |
-| `throughput` |  |
-
-
-#### AIMModelSource
-
-
-
-AIMModelSource describes a downloadable model artifact with optional credentials.
-
-
-
-_Appears in:_
-- [AIMClusterProfileSpec](#aimclusterprofilespec)
-- [AIMProfileSpec](#aimprofilespec)
-- [AIMProfileSpecCommon](#aimprofilespeccommon)
+- [AIMModelList](#aimmodellist)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `modelId` _string_ | ModelID is the canonical identifier in \{org\}/\{name\} format.<br />Determines the cache mount path: /workspace/cache/\{modelId\} |  | Pattern: `^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$` <br />Required: \{\} <br /> |
-| `sourceUri` _string_ | SourceURI is the location from which the model should be downloaded.<br />Supported schemes: hf:// (Hugging Face Hub), s3:// (S3-compatible storage). |  | Pattern: `^(hf\|s3)://[^ \t\r\n]+$` <br /> |
-| `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Size is the expected storage space required for this model artifact.<br />Optional — if not specified, the download job discovers the size automatically. |  | Optional: \{\} <br /> |
-| `precision` _[AIMPrecision](#aimprecision)_ | Precision describes the runtime precision this source is compatible with.<br />Used to match model sources to profiles during custom weight onboarding. |  | Enum: [fp4 fp8 fp16 fp32 bf16 int4 int8] <br />Optional: \{\} <br /> |
-| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies per-source credential overrides.<br />Takes precedence over base-level env for the same variable name. |  | Optional: \{\} <br /> |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMModel` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMModelSpec](#aimmodelspec)_ |  |  |  |
+| `status` _[AIMModelStatus](#aimmodelstatus)_ |  |  |  |
 
 
-#### AIMPrecision
+#### AIMModelList
 
-_Underlying type:_ _string_
 
-AIMPrecision enumerates supported numeric precisions.
 
-_Validation:_
-- Enum: [fp4 fp8 fp16 fp32 bf16 int4 int8]
+AIMModelList contains a list of AIMModel.
 
-_Appears in:_
-- [AIMClusterProfileSpec](#aimclusterprofilespec)
-- [AIMModelSource](#aimmodelsource)
-- [AIMProfileSpec](#aimprofilespec)
-- [AIMProfileSpecCommon](#aimprofilespeccommon)
 
-| Field | Description |
-| --- | --- |
-| `fp4` |  |
-| `fp8` |  |
-| `fp16` |  |
-| `fp32` |  |
-| `bf16` |  |
-| `int4` |  |
-| `int8` |  |
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMModelList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMModel](#aimmodel) array_ |  |  |  |
+
+
+
+
 
 
 #### AIMProfile
@@ -172,6 +258,11 @@ AIMProfile is the Schema for namespace-scoped AIM profiles.
 A profile is a self-contained runtime configuration that answers five questions without
 consulting any other resource: model architecture, accelerator, K8s resources, runtime
 config, and container image.
+
+Deployable profiles have both aimId and modelSources populated; base
+profiles (custom-model derivation source material) have neither. Mixed
+(one of the two set) is rejected to keep status.deployable derivable from
+spec.
 
 
 
@@ -317,6 +408,48 @@ AIMProfileList contains a list of AIMProfile.
 | `items` _[AIMProfile](#aimprofile) array_ |  |  |  |
 
 
+#### AIMProfileSet
+
+
+
+AIMProfileSet is the Schema for namespace-scoped profile derivation resources.
+
+
+
+_Appears in:_
+- [AIMProfileSetList](#aimprofilesetlist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMProfileSet` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMProfileSetSpec](#aimprofilesetspec)_ |  |  |  |
+| `status` _[AIMProfileSetStatus](#aimprofilesetstatus)_ |  |  |  |
+
+
+#### AIMProfileSetList
+
+
+
+AIMProfileSetList contains a list of AIMProfileSet.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMProfileSetList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMProfileSet](#aimprofileset) array_ |  |  |  |
+
+
+
+
+
+
 #### AIMProfileSpec
 
 
@@ -330,7 +463,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `aimId` _string_ | AimId is the model architecture identifier (e.g., "qwen/qwen3-32b").<br />Primary matching axis for profile selection and custom weight onboarding. Immutable. |  | MinLength: 1 <br /> |
+| `aimId` _string_ | AimId is the model architecture identifier (e.g., "qwen/qwen3-32b").<br />Primary matching axis for profile selection and custom weight onboarding.<br />AimId is required for deployable profiles. Iteration 1 producers always<br />emit deployable profiles, so AimId is effectively required there. Empty<br />AimId is reserved for base profiles emitted by base-image discovery<br />(custom-model derivation source material), which are not deployable<br />until derived.<br />Once set, AimId is immutable. |  | Optional: \{\} <br /> |
 | `modelId` _string_ | ModelId is the specific model / HuggingFace URI (e.g., "qwen/qwen3-32b-fp8").<br />Determines the cache path (/workspace/cache/\{modelId\}) and serves as a secondary<br />discriminator for custom weight matching. |  | Optional: \{\} <br /> |
 | `profileId` _string_ | ProfileId is the on-disk profile identifier from the AIM image<br />(e.g., "vllm-mi300x-fp8-tp1-latency"). Populated during discovery to link this<br />CRD back to the profile YAML inside the container. Not required for manually<br />created profiles. |  | Optional: \{\} <br /> |
 | `engine` _string_ | Engine identifies the inference engine (e.g., "vllm", "tgi"). |  | Optional: \{\} <br /> |
@@ -338,6 +471,7 @@ _Appears in:_
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision is the numeric precision used by this profile. |  | Enum: [fp4 fp8 fp16 fp32 bf16 int4 int8] <br />Optional: \{\} <br /> |
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type indicates the optimization level. Hierarchy: optimized > general > preview > unoptimized. |  | Enum: [optimized general preview unoptimized] <br />Optional: \{\} <br /> |
 | `primary` _boolean_ | Primary marks this as a default/recommended profile. When true, the profile is<br />advertised for standard deployment and copied automatically for custom weight models.<br />Defaults to false when not specified. | false |  |
+| `manualSelectionOnly` _boolean_ | ManualSelectionOnly excludes this profile from automatic AIMService selection.<br />It remains addressable by explicit name and is preserved from aim-build profile YAMLs. | false |  |
 | `engineArgs` _[JSON](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#json-v1-apiextensions-k8s-io)_ | EngineArgs contains inference engine CLI arguments as a free-form JSON object.<br />Passed to the inference engine (e.g., vLLM) at startup. |  | Schemaless: \{\} <br />Optional: \{\} <br /> |
 | `engineEnv` _object (keys:string, values:string)_ | EngineEnv contains environment variables for the inference engine subprocess.<br />Applied via os.execv, distinct from container-level ContainerEnv. |  | Optional: \{\} <br /> |
 | `acceleratorModel` _string_ | AcceleratorModel is the accelerator identifier for node selection.<br />Maps to a node label key using the Exists operator:<br />  feature.node.kubernetes.io/aim-accelerator.\{value\}: Exists<br />Supports both specific models (e.g., "MI300X") and architecture-level<br />fallbacks (e.g., "EPYC_ZEN5") — the AcceleratorDetector labels nodes<br />with all applicable identifiers. |  | MaxLength: 63 <br />Pattern: `^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$` <br />Optional: \{\} <br /> |
@@ -369,7 +503,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `aimId` _string_ | AimId is the model architecture identifier (e.g., "qwen/qwen3-32b").<br />Primary matching axis for profile selection and custom weight onboarding. Immutable. |  | MinLength: 1 <br /> |
+| `aimId` _string_ | AimId is the model architecture identifier (e.g., "qwen/qwen3-32b").<br />Primary matching axis for profile selection and custom weight onboarding.<br />AimId is required for deployable profiles. Iteration 1 producers always<br />emit deployable profiles, so AimId is effectively required there. Empty<br />AimId is reserved for base profiles emitted by base-image discovery<br />(custom-model derivation source material), which are not deployable<br />until derived.<br />Once set, AimId is immutable. |  | Optional: \{\} <br /> |
 | `modelId` _string_ | ModelId is the specific model / HuggingFace URI (e.g., "qwen/qwen3-32b-fp8").<br />Determines the cache path (/workspace/cache/\{modelId\}) and serves as a secondary<br />discriminator for custom weight matching. |  | Optional: \{\} <br /> |
 | `profileId` _string_ | ProfileId is the on-disk profile identifier from the AIM image<br />(e.g., "vllm-mi300x-fp8-tp1-latency"). Populated during discovery to link this<br />CRD back to the profile YAML inside the container. Not required for manually<br />created profiles. |  | Optional: \{\} <br /> |
 | `engine` _string_ | Engine identifies the inference engine (e.g., "vllm", "tgi"). |  | Optional: \{\} <br /> |
@@ -377,6 +511,7 @@ _Appears in:_
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision is the numeric precision used by this profile. |  | Enum: [fp4 fp8 fp16 fp32 bf16 int4 int8] <br />Optional: \{\} <br /> |
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type indicates the optimization level. Hierarchy: optimized > general > preview > unoptimized. |  | Enum: [optimized general preview unoptimized] <br />Optional: \{\} <br /> |
 | `primary` _boolean_ | Primary marks this as a default/recommended profile. When true, the profile is<br />advertised for standard deployment and copied automatically for custom weight models.<br />Defaults to false when not specified. | false |  |
+| `manualSelectionOnly` _boolean_ | ManualSelectionOnly excludes this profile from automatic AIMService selection.<br />It remains addressable by explicit name and is preserved from aim-build profile YAMLs. | false |  |
 | `engineArgs` _[JSON](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#json-v1-apiextensions-k8s-io)_ | EngineArgs contains inference engine CLI arguments as a free-form JSON object.<br />Passed to the inference engine (e.g., vLLM) at startup. |  | Schemaless: \{\} <br />Optional: \{\} <br /> |
 | `engineEnv` _object (keys:string, values:string)_ | EngineEnv contains environment variables for the inference engine subprocess.<br />Applied via os.execv, distinct from container-level ContainerEnv. |  | Optional: \{\} <br /> |
 | `acceleratorModel` _string_ | AcceleratorModel is the accelerator identifier for node selection.<br />Maps to a node label key using the Exists operator:<br />  feature.node.kubernetes.io/aim-accelerator.\{value\}: Exists<br />Supports both specific models (e.g., "MI300X") and architecture-level<br />fallbacks (e.g., "EPYC_ZEN5") — the AcceleratorDetector labels nodes<br />with all applicable identifiers. |  | MaxLength: 63 <br />Pattern: `^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$` <br />Optional: \{\} <br /> |
@@ -406,7 +541,11 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `observedGeneration` _integer_ | ObservedGeneration is the most recent generation observed by the controller. |  |  |
 | `status` _[AIMStatus](#aimstatus)_ | Status represents the current high-level status of this profile.<br />Ready: at least one cluster node matches the profile's accelerator labels and resource requests.<br />NotAvailable: no matching nodes found. | Pending | Enum: [Pending Progressing Ready Degraded Failed NotAvailable] <br /> |
+| `deployable` _boolean_ | Deployable reports whether the profile is materialised enough to back an<br />AIMService: true when spec.aimId and spec.modelSources are both<br />populated, false for base profiles awaiting derivation.<br />Iteration 1 producers always emit deployable profiles. Base-profile<br />production (from base-image discovery) lands in iteration 2. | false |  |
+| `sourceModel` _[ProfileSourceModel](#profilesourcemodel)_ | SourceModel identifies the producing AIM(Cluster)Model for profiles<br />owned by AIMModel reconcilers. Empty for user-authored profiles. |  | Optional: \{\} <br /> |
+| `origin` _[ProfileOrigin](#profileorigin)_ | Origin classifies how this profile was produced:<br />  - discovered: emitted by image discovery (AIMModel.spec.image).<br />  - derived: emitted by an AIMProfileSet or<br />    AIMModel.spec.profiles.derivedFrom.<br />  - user-authored: created independently by a user.<br />Backfilled by the AIMProfile reconciler when not stamped at creation<br />time; user-authored profiles default to `user-authored`. |  | Enum: [discovered derived user-authored] <br />Optional: \{\} <br /> |
 | `version` _string_ | Version is extracted from the spec.image tag during reconciliation (e.g., "0.8.5"). |  | Optional: \{\} <br /> |
+| `baseImage` _string_ | BaseImage is the AIM_BASE_IMAGE_REF the inspector extracted from the<br />source image when this profile was materialised by AIMModel discovery.<br />Used by derivation flows (AIMService overlays, AIMProfileSet) to rebase<br />the deployment image onto the source's base when overriding model<br />sources, so private mirrors stay self-contained. Empty for<br />user-authored profiles. |  | Optional: \{\} <br /> |
 | `matchingNodes` _integer_ | MatchingNodes is the count of cluster nodes matching both the accelerator<br />model label and status.resources requests. Zero means NotAvailable. |  | Optional: \{\} <br /> |
 | `hardwareSummary` _string_ | HardwareSummary is a human-readable string describing the hardware requirements.<br />Format: "\{count\} x \{model\}" for GPU (e.g., "1 x MI300X") or "CPU" for CPU-only. |  | Optional: \{\} <br /> |
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#resourcerequirements-v1-core)_ | Resources contains the definitive K8s resource requests/limits used for deployment.<br />Computed by AIM Engine from AcceleratorType, AcceleratorCount, and cluster-level<br />configuration, then merged with any spec.resources override. |  | Optional: \{\} <br /> |
@@ -414,27 +553,6 @@ _Appears in:_
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#condition-v1-meta) array_ | Conditions represent the latest observations of profile state. |  |  |
 
 
-#### AIMProfileType
-
-_Underlying type:_ _string_
-
-AIMProfileType indicates the optimization level of a profile.
-Hierarchy: optimized > general > preview > unoptimized.
-
-_Validation:_
-- Enum: [optimized general preview unoptimized]
-
-_Appears in:_
-- [AIMClusterProfileSpec](#aimclusterprofilespec)
-- [AIMProfileSpec](#aimprofilespec)
-- [AIMProfileSpecCommon](#aimprofilespeccommon)
-
-| Field | Description |
-| --- | --- |
-| `optimized` |  |
-| `general` |  |
-| `preview` |  |
-| `unoptimized` |  |
 
 
 #### AIMService
@@ -477,25 +595,62 @@ AIMServiceList contains a list of AIMService.
 | `items` _[AIMService](#aimservice) array_ |  |  |  |
 
 
-#### AcceleratorType
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#### ProfileSourceModel
+
+
+
+ProfileSourceModel identifies the producing AIM(Cluster)Model for a
+reconciler-produced profile. Stamped from owner references during
+reconciliation; left unset for user-authored profiles.
+
+
+
+_Appears in:_
+- [AIMProfileStatus](#aimprofilestatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name is the producing model's name. |  |  |
+| `kind` _[ProfileSourceModelKind](#profilesourcemodelkind)_ | Kind is the producing model's kind ("AIMModel" or "AIMClusterModel"). |  | Enum: [AIMModel AIMClusterModel] <br /> |
+| `namespace` _string_ | Namespace is the producing model's namespace. Empty when Kind is<br />AIMClusterModel (cluster-scoped). |  | Optional: \{\} <br /> |
+
+
+#### ProfileSourceModelKind
 
 _Underlying type:_ _string_
 
-AcceleratorType distinguishes CPU from GPU accelerators.
-Used by AIM Engine to determine the resource derivation strategy
-(e.g., gpu → amd.com/gpu, cpu → cpu).
+ProfileSourceModelKind identifies whether a profile's source model is
+namespace-scoped (AIMModel) or cluster-scoped (AIMClusterModel).
 
 _Validation:_
-- Enum: [gpu cpu]
+- Enum: [AIMModel AIMClusterModel]
 
 _Appears in:_
-- [AIMClusterProfileSpec](#aimclusterprofilespec)
-- [AIMProfileSpec](#aimprofilespec)
-- [AIMProfileSpecCommon](#aimprofilespeccommon)
+- [ProfileSourceModel](#profilesourcemodel)
 
 | Field | Description |
 | --- | --- |
-| `cpu` |  |
-| `gpu` |  |
+| `AIMModel` |  |
+| `AIMClusterModel` |  |
+
+
+
+
 
 

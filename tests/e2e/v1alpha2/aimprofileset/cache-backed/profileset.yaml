@@ -1,0 +1,17 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfileSet
+metadata:
+  name: cache-backed-profiles
+spec:
+  sourceRef:
+    name: cache-backed-discovery
+  selector:
+    aimId: cached-org/cached-model
+    modelId: cached-org/cached-model
+  versionPolicy: pinned
+  version: 0.9.0
+  image: quay.io/acme/aim-base-vllm:0.9.0
+  overrides:
+    modelSources:
+      - modelId: cached-org/custom-model
+        sourceUri: s3://models/cached-model

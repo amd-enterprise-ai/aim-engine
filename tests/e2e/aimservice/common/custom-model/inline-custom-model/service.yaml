@@ -8,7 +8,7 @@ spec:
   model:
     # Inline custom model - controller will auto-create AIMModel
     custom:
-      baseImage: ghcr.io/silogen/aim-dummy:0.1.10
+      baseImage: ghcr.io/silogen/aim-dummy:0.2.0
       modelSources:
         - modelId: inline/test-model
           sourceUri: hf://sshleifer/tiny-gpt2

@@ -11,7 +11,7 @@
 # 3. Template status.profile.metadata has correct values
 # 4. Service runs successfully with custom env vars
 #
-# Uses: ghcr.io/silogen/aim-dummy:0.1.10 (lightweight, fast startup)
+# Uses: ghcr.io/silogen/aim-dummy:0.2.0 (lightweight, fast startup)
 # Requires: GPU infrastructure
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1

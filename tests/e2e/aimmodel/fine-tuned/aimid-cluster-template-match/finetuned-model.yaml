@@ -3,7 +3,7 @@ kind: AIMModel
 metadata:
   name: ft-finetuned-from-cluster
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.1.10
+  image: ghcr.io/silogen/aim-dummy:0.2.0
   aimId: test/cluster-base-model
   modelSources:
     - modelId: test/model-fp8

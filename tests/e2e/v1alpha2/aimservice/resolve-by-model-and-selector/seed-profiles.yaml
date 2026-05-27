@@ -1,0 +1,47 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: resolve-by-model-and-selector-seed-bf16
+  annotations:
+    aim.eai.amd.com/base-image: registry.example.com/aim-cpu-base:0.12.0
+    aim.eai.amd.com/profile-copyable: "true"
+spec:
+  aimId: model-selector/qwen
+  modelId: model-selector/qwen
+  profileId: cpu-bf16
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  primary: true
+  acceleratorModel: EPYC_ZEN5
+  acceleratorType: cpu
+  acceleratorCount: 1
+  image: registry.example.com/aim-cpu-base:0.12.0
+  modelSources:
+    - modelId: model-selector/qwen
+      sourceUri: hf://model-selector/qwen
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: resolve-by-model-and-selector-seed-fp8
+  annotations:
+    aim.eai.amd.com/base-image: registry.example.com/aim-cpu-base:0.12.0
+    aim.eai.amd.com/profile-copyable: "true"
+spec:
+  aimId: model-selector/qwen
+  modelId: model-selector/qwen
+  profileId: cpu-fp8
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: optimized
+  primary: true
+  acceleratorModel: EPYC_ZEN5
+  acceleratorType: cpu
+  acceleratorCount: 1
+  image: registry.example.com/aim-cpu-base:0.12.0
+  modelSources:
+    - modelId: model-selector/qwen
+      sourceUri: hf://model-selector/qwen

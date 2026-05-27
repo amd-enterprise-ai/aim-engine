@@ -24,6 +24,7 @@ package controllerutils
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -77,7 +78,12 @@ func ApplyDesiredState(
 	// Sort deterministically
 	sorted := sortObjects(desired)
 
-	// Apply each object via SSA
+	// Apply each object via SSA. We accumulate errors across all objects
+	// rather than returning on the first failure: a single transient
+	// conflict on one resource should not hide a real misconfiguration
+	// on a sibling, and the framework's InfrastructureError unwrap
+	// surfaces every collected error to the categorizer.
+	var applyErrs []error
 	for _, obj := range sorted {
 		gvk := obj.GetObjectKind().GroupVersionKind()
 		key := client.ObjectKeyFromObject(obj)
@@ -93,8 +99,14 @@ func ApplyDesiredState(
 			client.Apply,
 			client.FieldOwner(fieldOwner),
 		); err != nil {
-			return fmt.Errorf("failed to apply %s %s: %w", gvk.Kind, key.Name, err)
+			applyErrs = append(applyErrs, fmt.Errorf("failed to apply %s %s/%s: %w", gvk.Kind, key.Namespace, key.Name, err))
 		}
+	}
+	if len(applyErrs) == 1 {
+		return applyErrs[0]
+	}
+	if len(applyErrs) > 1 {
+		return fmt.Errorf("%d apply errors: %w", len(applyErrs), errors.Join(applyErrs...))
 	}
 
 	return nil

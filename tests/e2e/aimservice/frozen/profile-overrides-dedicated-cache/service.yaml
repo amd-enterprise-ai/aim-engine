@@ -1,0 +1,26 @@
+# v1alpha2 AIMService that exercises both new code paths in a single resource:
+#
+#   1. spec.profileOverrides.modelSources points the runtime at user-supplied
+#      weights (a fine-tuned checkpoint) without forking the seed profile.
+#      The controller materialises a service-owned overlay AIMProfile and
+#      switches all downstream resolution onto it.
+#
+#   2. spec.caching.mode=Dedicated puts the AIMProfileCache in
+#      per-service-Dedicated mode (mirroring v1alpha1's AIMService -> dedicated
+#      AIMTemplateCache pattern). The cache must be owner-ref'd by the
+#      AIMService so it (and its dedicated artifacts) GC with the service.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: test-overlay-service
+spec:
+  profile:
+    name: test-overlay-seed
+  profileOverrides:
+    modelSources:
+      - modelId: user/finetune-weights
+        sourceUri: hf://user/finetune-weights
+        size: 4Gi
+  caching:
+    mode: Dedicated
+  replicas: 1

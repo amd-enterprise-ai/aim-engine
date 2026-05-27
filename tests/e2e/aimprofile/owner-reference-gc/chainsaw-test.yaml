@@ -35,6 +35,9 @@ spec:
               spec:
                 aimId: test/gc-model
                 image: registry.example.com/test-image:1.0.0
+                modelSources:
+                  - modelId: test/gc-model
+                    sourceUri: hf://test/gc-model
               EOF
 
     - name: Verify profile exists and becomes Ready

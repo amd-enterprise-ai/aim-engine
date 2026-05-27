@@ -3,7 +3,14 @@ tmp_dir = "tmp"
 
 [build]
 # Build command
-cmd = "go build -o ./.tmp/manager ./cmd/main.go"
+#
+# LDFLAGS mirror the `make build` target so dev binaries bake the same
+# git-described downloader image tag (e.g. v0.2.2) into
+# api/v1alpha1.DefaultDownloadImage. Without this, the operator falls back
+# to the empty default in source, which trips the explicit guard in
+# cmd/main.go and refuses to start. Falling back to a rolling `:latest`
+# tag here would let download Jobs reuse stale cached layers on the node.
+cmd = "go build -ldflags \"-X 'github.com/amd-enterprise-ai/aim-engine/api/v1alpha1.DefaultDownloadImage=ghcr.io/silogen/aim-artifact-downloader:$(git describe --tags --abbrev=0 2>/dev/null || echo dev)'\" -o ./.tmp/manager ./cmd/main.go"
 # Entrypoint: wrapper script with log rotation (keeps 10 most recent in .tmp/logs/)
 entrypoint = ["./hack/run-manager.sh"]
 # Watch these extensions

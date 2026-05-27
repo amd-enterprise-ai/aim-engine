@@ -120,10 +120,11 @@ type AIMServiceTemplateSpecCommon struct {
 	// Type indicates the optimization level of this template.
 	// - optimized: Template has been tuned for performance
 	// - preview: Template is experimental/pre-release
+	// - general: General-purpose tuning between optimized and preview
 	// - unoptimized: Default, no specific optimizations applied
 	// When nil, the type is determined by discovery. When set, overrides discovery.
 	// +optional
-	// +kubebuilder:validation:Enum=optimized;preview;unoptimized
+	// +kubebuilder:validation:Enum=optimized;general;preview;unoptimized
 	Type *AIMProfileType `json:"type,omitempty"`
 
 	// Env specifies environment variables for inference containers.
@@ -338,12 +339,15 @@ type AIMDiscoveredProfile struct {
 }
 
 // AIMProfileType indicates the optimization level of a deployment profile.
-// +kubebuilder:validation:Enum=optimized;preview;unoptimized
+// Hierarchy: optimized > general > preview > unoptimized.
+// +kubebuilder:validation:Enum=optimized;general;preview;unoptimized
 type AIMProfileType string
 
 const (
 	// AIMProfileTypeOptimized indicates the profile has been fully optimized.
 	AIMProfileTypeOptimized AIMProfileType = "optimized"
+	// AIMProfileTypeGeneral indicates a general-purpose profile (between optimized and preview).
+	AIMProfileTypeGeneral AIMProfileType = "general"
 	// AIMProfileTypePreview indicates the profile is in preview/beta state.
 	AIMProfileTypePreview AIMProfileType = "preview"
 	// AIMProfileTypeUnoptimized indicates the profile has not been optimized.

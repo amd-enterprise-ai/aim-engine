@@ -1,5 +1,19 @@
 # Kind cluster configuration for e2e testing
 # Used by both CI and local development via: kind create cluster --config config.yaml
+#
+# Node labels here stand in for what the AcceleratorDetector DaemonSet would
+# write at runtime. Kind CI installs the operator with
+# --set acceleratorDetector.enable=false (no privileged DaemonSets in CI), so
+# the labels would otherwise be absent and AIMProfile.MatchNodes would never
+# find a match. Profile readiness in v1alpha2 keys on the
+# feature.node.kubernetes.io/aim-accelerator.<MODEL> label; capacity gating
+# was softened to trust the label when device-plugin Allocatable is missing
+# (see internal/v1alpha2/aimprofile/node_match.go), so labels alone are
+# sufficient on kind.
+#
+# Both worker nodes carry the EPYC_ZEN5 CPU label because that is what the
+# AcceleratorDetector emits in production for AMD EPYC hosts that also house
+# Instinct accelerators (CPU and GPU labels co-exist on the same node).
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: aim-engine
@@ -11,9 +25,15 @@ nodes:
       amd.com/gpu.device-id: "74a1"
       # VRAM capacity for MI300X
       amd.com/gpu.vram: "192G"
+      # v1alpha2 accelerator labels (would be written by AcceleratorDetector at runtime)
+      feature.node.kubernetes.io/aim-accelerator.MI300X: "8"
+      feature.node.kubernetes.io/aim-accelerator.EPYC_ZEN5: "128"
   - role: worker
     labels:
       # AMD Instinct MI350X (device ID without 0x prefix, matching k8s-device-plugin format)
       amd.com/gpu.device-id: "75a0"
       # VRAM capacity for MI350X
       amd.com/gpu.vram: "288G"
+      # v1alpha2 accelerator labels (would be written by AcceleratorDetector at runtime)
+      feature.node.kubernetes.io/aim-accelerator.MI350X: "8"
+      feature.node.kubernetes.io/aim-accelerator.EPYC_ZEN5: "128"

@@ -1,0 +1,141 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# v1alpha2 custom-model end-to-end (kind-runnable).
+#
+# Kind-runnable sibling of ../end-to-end. Exercises the BYO base-image
+# derivation flow purely through CRDs:
+#
+#   seeded base AIMProfile (role=base)
+#                       │
+#                       ▼
+#   derivation AIMModel (spec.profiles.derivedFrom with selector.role=base +
+#                        overrides.modelSources for BYO weights)
+#                       │
+#                       ▼
+#   derived deployable AIMProfile (role=deployable, aimId + modelId +
+#                                   modelSources stamped from overrides)
+#                       │
+#                       ▼
+#   AIMService (spec.profile.selector pointing at the derived profile)
+#               status.ResolvedProfile populated
+#
+# The base profile is seeded rather than produced by a discovery Job
+# because the discovery image is GPU-only and too large to host on the
+# CI kind cluster. The label set on the seed matches what image-discovery
+# would stamp (profile-role=base, source-model[-scope]) so the selector
+# path resolves identically.
+#
+# Service readiness is NOT asserted: the aim-dummy image emulates the
+# AIM HTTP server shape but its full predictor lifecycle on kind depends
+# on external dependencies (artifact-downloader, S3 cache) that other
+# kind tests already cover end-to-end. This test focuses on the BYO
+# derivation chain.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-custom-model-end-to-end-kind
+spec:
+  description: |
+    Kind-runnable BYO base-image custom-model derivation. Validates that
+    a seeded base AIMProfile + spec.profiles.derivedFrom + BYO
+    overrides.modelSources produce a deployable AIMProfile that an
+    AIMService can resolve.
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Seed the base AIMProfile
+      try:
+        - apply:
+            file: base-profile.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: byo-base-seed
+                labels:
+                  aim.eai.amd.com/profile-role: base
+              status:
+                deployable: false
+
+    - name: Apply the derivation AIMModel
+      try:
+        - apply:
+            file: derivation-model.yaml
+
+    - name: Wait for the derivation model to publish its profile set
+      try:
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: byo-derived
+              status:
+                (profileSetRef.name != ""): true
+                managedProfiles:
+                  (deployable > `0`): true
+
+    - name: Assert at least one derived deployable AIMProfile carries the BYO weights
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                labels:
+                  aim.eai.amd.com/profile-role: deployable
+                  aim.eai.amd.com/source-model: byo-derived
+              spec:
+                aimId: acme/byo-transformer
+                # BYO custom-model regression guard: the derived profile
+                # must deploy on the base AIMProfile's image (aim-dummy),
+                # not on a rebased AIM_BASE_IMAGE_REF. Base sources have
+                # no meaningful "lighter runtime" to peel back to —
+                # source.Image IS the runtime image.
+                image: ghcr.io/silogen/aim-dummy:0.2.0
+                modelSources:
+                  - modelId: acme/byo-transformer
+                    sourceUri: hf://acme/byo-transformer
+              status:
+                deployable: true
+
+    - name: Create an AIMService that resolves the derived profile via selector
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              set -eu
+              cat <<EOF | kubectl apply -n "$NAMESPACE" -f -
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: byo-service
+              spec:
+                profile:
+                  selector:
+                    aimId: acme/byo-transformer
+                    modelRef:
+                      name: byo-derived
+                      scope: Namespace
+              EOF
+
+    - name: Assert the AIMService resolved the derived profile
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: byo-service
+              status:
+                (resolvedProfile.name != ""): true
+                resolvedProfile:
+                  scope: Namespace
+                (conditions[?type == 'ProfileReady']):
+                  - status: "True"
+                    reason: ProfileResolved

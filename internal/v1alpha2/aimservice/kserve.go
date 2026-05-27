@@ -99,14 +99,14 @@ func buildInferenceServiceFromProfile(
 	}
 
 	// Build environment variables. Order of precedence (last wins on conflict):
-	//   profileSpec.ContainerEnv (author defaults)
-	//     -> framework AIM_* vars (must not be overridable from the profile)
-	//     -> service.Spec.ProfileOverrides.ContainerEnv (explicit user override)
+	//   profileSpec.ContainerEnv (author defaults, with any user overrides
+	//     from spec.profileOverrides.containerEnv already merged in by the
+	//     overlay materialisation step in ComposeState)
+	//     -> framework AIM_* vars (controller-owned; user cannot override
+	//        these — AIM_* identity-of-the-profile semantics belong to the
+	//        framework, not to the user)
 	envVars := upsertEnvVars(nil, profileSpec.ContainerEnv)
 	envVars = upsertEnvVars(envVars, buildFrameworkEnvVars(profileSpec, obs.profileYAMLName))
-	if service.Spec.ProfileOverrides != nil {
-		envVars = upsertEnvVars(envVars, service.Spec.ProfileOverrides.ContainerEnv)
-	}
 
 	resources := resolveResourcesFromProfile(service, profileSpec, profileStatus)
 
@@ -256,9 +256,11 @@ func addProfileCacheVolumes(isvc *servingv1beta1.InferenceService, obs ServiceOb
 // locate the projected profile and, when model caching is active, to redirect
 // model loading to the PVC-backed local path.
 //
-// These vars are treated as framework-owned: profile.ContainerEnv cannot
-// override them (we layer them on top), but service.Spec.ProfileOverrides
-// still can since user intent wins.
+// These vars are framework-owned: neither profile.ContainerEnv nor user
+// spec.profileOverrides.containerEnv can override them. The AIMService
+// reconciler layers them on top of the resolved profile's containerEnv (which
+// already carries user overrides via the materialised overlay AIMProfile), so
+// AIM_* identity vars cannot be reshaped from outside the controller.
 func buildFrameworkEnvVars(profileSpec *aimv1alpha2.AIMProfileSpecCommon, profileYAMLFilename string) []corev1.EnvVar {
 	profileName := strings.TrimSuffix(profileYAMLFilename, ".yaml")
 	aimProfileID := fmt.Sprintf("custom/%s/%s", profileSpec.AimId, profileName)

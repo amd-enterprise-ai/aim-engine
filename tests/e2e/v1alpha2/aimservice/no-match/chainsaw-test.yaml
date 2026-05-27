@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# No-match: a selector-driven AIMService whose selector does not match any
+# AIMProfile or AIMClusterProfile must report ProfileNotFound and not create
+# any downstream resources.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-no-match
+spec:
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Apply a service with a selector that matches no profiles
+      try:
+        - apply:
+            file: service.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: no-match-service
+              status:
+                (conditions[?type == 'ProfileReady']):
+                  - status: "False"
+                    reason: ProfileNotFound
+        - error:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: no-match-service

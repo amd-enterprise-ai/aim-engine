@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: resolve-by-global-selector-service
+spec:
+  profile:
+    selector:
+      aimId: selector-test/model
+      precision: fp8

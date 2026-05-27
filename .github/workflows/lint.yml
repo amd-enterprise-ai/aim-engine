@@ -6,6 +6,11 @@ on:
 permissions:
   contents: read
 
+# Opt JavaScript actions onto Node 24 ahead of GitHub's June 16, 2026 default
+# flip. See https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   lint:
     name: lint

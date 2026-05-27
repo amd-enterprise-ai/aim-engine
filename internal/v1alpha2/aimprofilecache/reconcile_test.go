@@ -73,7 +73,7 @@ func makeArtifact(name, sourceURI, modelID string, status constants.AIMStatus, s
 	return a
 }
 
-func makeProfile(name string, modelSources []aimv1alpha2.AIMModelSource) *aimv1alpha2.AIMProfile {
+func makeProfile(name string, modelSources []aimv1alpha1.AIMModelSource) *aimv1alpha2.AIMProfile {
 	return &aimv1alpha2.AIMProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
 		Spec: aimv1alpha2.AIMProfileSpec{
@@ -89,7 +89,7 @@ func makeProfile(name string, modelSources []aimv1alpha2.AIMModelSource) *aimv1a
 func TestComposeState_MatchesArtifactBySourceURI(t *testing.T) {
 	r := &ProfileCacheReconciler{}
 	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")
-	profile := makeProfile("my-profile", []aimv1alpha2.AIMModelSource{
+	profile := makeProfile("my-profile", []aimv1alpha1.AIMModelSource{
 		{ModelID: "org/model-a", SourceURI: "hf://org/model-a"},
 	})
 
@@ -121,7 +121,7 @@ func TestComposeState_MatchesArtifactBySourceURI(t *testing.T) {
 func TestComposeState_MissingArtifact(t *testing.T) {
 	r := &ProfileCacheReconciler{}
 	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")
-	profile := makeProfile("my-profile", []aimv1alpha2.AIMModelSource{
+	profile := makeProfile("my-profile", []aimv1alpha1.AIMModelSource{
 		{ModelID: "org/model-a", SourceURI: "hf://org/model-a"},
 	})
 
@@ -151,7 +151,7 @@ func TestComposeState_MissingArtifact(t *testing.T) {
 func TestComposeState_SharedModeSkipsOwnedArtifacts(t *testing.T) {
 	r := &ProfileCacheReconciler{}
 	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")
-	profile := makeProfile("my-profile", []aimv1alpha2.AIMModelSource{
+	profile := makeProfile("my-profile", []aimv1alpha1.AIMModelSource{
 		{ModelID: "org/model-a", SourceURI: "hf://org/model-a"},
 	})
 
@@ -181,7 +181,7 @@ func TestComposeState_SharedModeSkipsOwnedArtifacts(t *testing.T) {
 func TestComposeState_DedicatedModeOnlyUsesOwnedArtifacts(t *testing.T) {
 	r := &ProfileCacheReconciler{}
 	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeDedicated, "")
-	profile := makeProfile("my-profile", []aimv1alpha2.AIMModelSource{
+	profile := makeProfile("my-profile", []aimv1alpha1.AIMModelSource{
 		{ModelID: "org/model-a", SourceURI: "hf://org/model-a"},
 	})
 
@@ -211,7 +211,7 @@ func TestComposeState_DedicatedModeOnlyUsesOwnedArtifacts(t *testing.T) {
 func TestComposeState_StorageClassFiltering(t *testing.T) {
 	r := &ProfileCacheReconciler{}
 	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "fast-ssd")
-	profile := makeProfile("my-profile", []aimv1alpha2.AIMModelSource{
+	profile := makeProfile("my-profile", []aimv1alpha1.AIMModelSource{
 		{ModelID: "org/model-a", SourceURI: "hf://org/model-a"},
 	})
 
@@ -241,7 +241,7 @@ func TestComposeState_StorageClassFiltering(t *testing.T) {
 func TestComposeState_SelectsBestStatus(t *testing.T) {
 	r := &ProfileCacheReconciler{}
 	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")
-	profile := makeProfile("my-profile", []aimv1alpha2.AIMModelSource{
+	profile := makeProfile("my-profile", []aimv1alpha1.AIMModelSource{
 		{ModelID: "org/model-a", SourceURI: "hf://org/model-a"},
 	})
 
@@ -302,7 +302,7 @@ func TestComposeState_ClusterProfile(t *testing.T) {
 			AIMProfileSpecCommon: aimv1alpha2.AIMProfileSpecCommon{
 				AimId: "test/model",
 				Image: "test:latest",
-				ModelSources: []aimv1alpha2.AIMModelSource{
+				ModelSources: []aimv1alpha1.AIMModelSource{
 					{ModelID: "org/model-b", SourceURI: "hf://org/model-b"},
 				},
 			},
@@ -359,7 +359,7 @@ func TestComposeState_EmptyModelSources(t *testing.T) {
 func TestComposeState_SkipsEmptyStatusArtifacts(t *testing.T) {
 	r := &ProfileCacheReconciler{}
 	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")
-	profile := makeProfile("my-profile", []aimv1alpha2.AIMModelSource{
+	profile := makeProfile("my-profile", []aimv1alpha1.AIMModelSource{
 		{ModelID: "org/model-a", SourceURI: "hf://org/model-a"},
 	})
 
@@ -391,7 +391,7 @@ func TestPlanResources_CreatesArtifactsForMissing(t *testing.T) {
 
 	obs := ProfileCacheObservation{
 		ProfileCacheFetchResult: ProfileCacheFetchResult{profileCache: pc},
-		MissingCaches: []aimv1alpha2.AIMModelSource{
+		MissingCaches: []aimv1alpha1.AIMModelSource{
 			{ModelID: "org/model-a", SourceURI: "hf://org/model-a"},
 			{ModelID: "org/model-b", SourceURI: "hf://org/model-b"},
 		},
@@ -413,7 +413,7 @@ func TestPlanResources_DedicatedModeUsesApply(t *testing.T) {
 
 	obs := ProfileCacheObservation{
 		ProfileCacheFetchResult: ProfileCacheFetchResult{profileCache: pc},
-		MissingCaches: []aimv1alpha2.AIMModelSource{
+		MissingCaches: []aimv1alpha1.AIMModelSource{
 			{ModelID: "org/model-a", SourceURI: "hf://org/model-a"},
 		},
 	}

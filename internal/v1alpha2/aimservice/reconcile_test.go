@@ -29,8 +29,10 @@ import (
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/utils/ptr"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -42,27 +44,82 @@ import (
 const (
 	testProfileA    = "profile-a"
 	testServiceName = "svc"
+
+	componentNameInferenceService = "InferenceService"
+	componentNameHTTPRoute        = "HTTPRoute"
+	componentNameProfileCache     = "ProfileCache"
 )
 
-func TestGenerateProfileCacheName_Deterministic(t *testing.T) {
-	a, err := GenerateProfileCacheName("my-profile", "ns-alpha")
+func TestGenerateProfileCacheName_SharedDeterministic(t *testing.T) {
+	a, err := GenerateProfileCacheName("my-profile", "ns-alpha", "svc-a", "uid-a", aimv1alpha1.CachingModeShared, aimv1alpha1.AIMResolutionScopeNamespace)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
-	b, err := GenerateProfileCacheName("my-profile", "ns-alpha")
+	b, err := GenerateProfileCacheName("my-profile", "ns-alpha", "svc-b", "uid-b", aimv1alpha1.CachingModeShared, aimv1alpha1.AIMResolutionScopeNamespace)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 	if a != b {
-		t.Fatalf("cache name should be deterministic: %q vs %q", a, b)
+		t.Fatalf("Shared cache name must depend only on (profile, namespace, scope) so services in the same namespace converge: %q vs %q", a, b)
 	}
 }
 
-func TestGenerateProfileCacheName_NamespaceScoped(t *testing.T) {
-	same, _ := GenerateProfileCacheName("profile-x", "ns-a")
-	other, _ := GenerateProfileCacheName("profile-x", "ns-b")
+func TestGenerateProfileCacheName_SharedNamespaceScoped(t *testing.T) {
+	same, _ := GenerateProfileCacheName("profile-x", "ns-a", "", "", aimv1alpha1.CachingModeShared, aimv1alpha1.AIMResolutionScopeNamespace)
+	other, _ := GenerateProfileCacheName("profile-x", "ns-b", "", "", aimv1alpha1.CachingModeShared, aimv1alpha1.AIMResolutionScopeNamespace)
 	if same == other {
-		t.Fatalf("profile cache names should differ when namespace differs")
+		t.Fatalf("Shared cache names must differ across namespaces")
+	}
+}
+
+// TestGenerateProfileCacheName_SharedScopeIsolation guards against the
+// pre-fix collision where a namespace AIMProfile and a cluster
+// AIMClusterProfile with the same name in the same service namespace shared
+// a single AIMProfileCache and could service the wrong workload.
+func TestGenerateProfileCacheName_SharedScopeIsolation(t *testing.T) {
+	ns, _ := GenerateProfileCacheName("collides", "ns-alpha", "", "", aimv1alpha1.CachingModeShared, aimv1alpha1.AIMResolutionScopeNamespace)
+	cluster, _ := GenerateProfileCacheName("collides", "ns-alpha", "", "", aimv1alpha1.CachingModeShared, aimv1alpha1.AIMResolutionScopeCluster)
+	if ns == cluster {
+		t.Fatalf("Shared cache names must differ across profile scopes for the same profile name + namespace: %q == %q", ns, cluster)
+	}
+}
+
+func TestGenerateProfileCacheName_DedicatedPerService(t *testing.T) {
+	a, err := GenerateProfileCacheName("my-profile", "ns-alpha", "svc-a", "uid-a", aimv1alpha1.CachingModeDedicated, aimv1alpha1.AIMResolutionScopeNamespace)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	b, err := GenerateProfileCacheName("my-profile", "ns-alpha", "svc-b", "uid-b", aimv1alpha1.CachingModeDedicated, aimv1alpha1.AIMResolutionScopeNamespace)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if a == b {
+		t.Fatalf("Dedicated cache names must differ across services on the same profile: %q vs %q", a, b)
+	}
+}
+
+func TestGenerateProfileCacheName_DedicatedSurvivesRecreate(t *testing.T) {
+	// Same service name but different UIDs (delete-and-recreate) must
+	// produce different cache names so the new instance does not pick up
+	// the old cache before the previous one is GC'd.
+	a, err := GenerateProfileCacheName("my-profile", "ns-alpha", "svc", "uid-old", aimv1alpha1.CachingModeDedicated, aimv1alpha1.AIMResolutionScopeNamespace)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	b, err := GenerateProfileCacheName("my-profile", "ns-alpha", "svc", "uid-new", aimv1alpha1.CachingModeDedicated, aimv1alpha1.AIMResolutionScopeNamespace)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if a == b {
+		t.Fatalf("Dedicated cache names must include service UID to survive delete-and-recreate: %q vs %q", a, b)
+	}
+}
+
+func TestGenerateProfileCacheName_SharedAndDedicatedDiffer(t *testing.T) {
+	shared, _ := GenerateProfileCacheName("my-profile", "ns-alpha", "svc", "uid", aimv1alpha1.CachingModeShared, aimv1alpha1.AIMResolutionScopeNamespace)
+	dedicated, _ := GenerateProfileCacheName("my-profile", "ns-alpha", "svc", "uid", aimv1alpha1.CachingModeDedicated, aimv1alpha1.AIMResolutionScopeNamespace)
+	if shared == dedicated {
+		t.Fatalf("Shared and Dedicated caches must never collide: %q == %q", shared, dedicated)
 	}
 }
 
@@ -73,11 +130,11 @@ func TestGenerateProfileCacheName_NoTruncationCollision(t *testing.T) {
 	profileA := "amdenterpriseai-aim-meta-llama-llama-3-1x-mi300x-thr-fp16-e87a"
 	profileB := "amdenterpriseai-aim-meta-llama-llama-3-1x-mi300x-thr-fp16-db70"
 
-	nameA, err := GenerateProfileCacheName(profileA, namespace)
+	nameA, err := GenerateProfileCacheName(profileA, namespace, "", "", aimv1alpha1.CachingModeShared, aimv1alpha1.AIMResolutionScopeNamespace)
 	if err != nil {
 		t.Fatalf("generate A: %v", err)
 	}
-	nameB, err := GenerateProfileCacheName(profileB, namespace)
+	nameB, err := GenerateProfileCacheName(profileB, namespace, "", "", aimv1alpha1.CachingModeShared, aimv1alpha1.AIMResolutionScopeNamespace)
 	if err != nil {
 		t.Fatalf("generate B: %v", err)
 	}
@@ -326,12 +383,137 @@ func TestGetComponentHealth_IncludesConfigAndRouteEntries(t *testing.T) {
 		if e.Component == "ProfileConfig" {
 			haveConfig = true
 		}
-		if e.Component == "HTTPRoute" {
+		if e.Component == componentNameHTTPRoute {
 			t.Errorf("HTTPRoute entry should be suppressed when routing is disabled")
 		}
 	}
 	if !haveConfig {
 		t.Errorf("expected ProfileConfig entry to be emitted when configErr is set")
+	}
+}
+
+// TestGetComponentHealth_ProfileNotFound_SuppressesDownstream pins F13 part 1:
+// when no profile resolves, the planner intentionally skips creating ISVC
+// and HTTPRoute, so reporting them as "Creating"/"not found" would mislead
+// users. Only the gating Profile (and RuntimeConfig if observed) component
+// should be reported.
+func TestGetComponentHealth_ProfileNotFound_SuppressesDownstream(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+	}
+	notFound := apierrors.NewNotFound(schema.GroupResource{}, "missing-isvc")
+	obs := ServiceObservation{
+		ServiceFetchResult: ServiceFetchResult{
+			service:          service,
+			inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{Error: notFound},
+		},
+	}
+
+	entries := obs.GetComponentHealth(context.Background(), nil)
+
+	var profileHealth *controllerutils.ComponentHealth
+	for i, e := range entries {
+		switch e.Component {
+		case "Profile":
+			profileHealth = &entries[i]
+		case componentNameInferenceService, componentNameHTTPRoute, componentNameProfileCache:
+			t.Errorf("downstream component %q should be suppressed when no profile resolved; got %+v", e.Component, e)
+		}
+	}
+	if profileHealth == nil {
+		t.Fatalf("expected a Profile component health entry")
+	}
+	if profileHealth.State != constants.AIMStatusFailed {
+		t.Errorf("ProfileNotFound state = %q, want Failed (so the framework rolls it up to Ready=False/ProfileNotFound)", profileHealth.State)
+	}
+	if profileHealth.Reason != aimv1alpha1.AIMServiceReasonProfileNotFound {
+		t.Errorf("ProfileNotFound reason = %q, want %q", profileHealth.Reason, aimv1alpha1.AIMServiceReasonProfileNotFound)
+	}
+}
+
+// TestGetComponentHealth_BaseProfile_SuppressesDownstream pins F13 part 1
+// for the base-profile path: the resolved profile exists but is missing
+// aimId or modelSources. The planner skips downstream creation and the user
+// must fix the profile before anything can progress.
+func TestGetComponentHealth_BaseProfile_SuppressesDownstream(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+	}
+	baseProfileSpec := &aimv1alpha2.AIMProfileSpecCommon{
+		Image:            "registry.example.com/base:0.1",
+		AcceleratorModel: "EPYC_ZEN5",
+		AcceleratorType:  "cpu",
+		AcceleratorCount: 1,
+	}
+	baseProfileStatus := &aimv1alpha2.AIMProfileStatus{
+		Status:     constants.AIMStatusReady,
+		Deployable: false,
+	}
+	notFound := apierrors.NewNotFound(schema.GroupResource{}, "missing-isvc")
+	obs := ServiceObservation{
+		ServiceFetchResult: ServiceFetchResult{
+			service:          service,
+			inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{Error: notFound},
+		},
+		profileName:           "base-profile",
+		profileScope:          aimv1alpha1.AIMResolutionScopeNamespace,
+		resolvedProfileSpec:   baseProfileSpec,
+		resolvedProfileStatus: baseProfileStatus,
+	}
+
+	entries := obs.GetComponentHealth(context.Background(), nil)
+
+	var profileHealth *controllerutils.ComponentHealth
+	for i, e := range entries {
+		switch e.Component {
+		case "Profile":
+			profileHealth = &entries[i]
+		case componentNameInferenceService, componentNameHTTPRoute, componentNameProfileCache:
+			t.Errorf("downstream component %q should be suppressed when profile is a base profile; got %+v", e.Component, e)
+		}
+	}
+	if profileHealth == nil {
+		t.Fatalf("expected a Profile component health entry")
+	}
+	if profileHealth.State != constants.AIMStatusFailed {
+		t.Errorf("base profile state = %q, want Failed", profileHealth.State)
+	}
+	if profileHealth.Reason != aimv1alpha1.AIMServiceReasonBaseProfile {
+		t.Errorf("base profile reason = %q, want %q", profileHealth.Reason, aimv1alpha1.AIMServiceReasonBaseProfile)
+	}
+}
+
+// TestGetComponentHealth_ResolvedProfile_KeepsDownstream confirms the
+// suppression in F13 only fires for terminal-by-default Profile failures
+// (base profile / not-found). When the profile resolves to a real spec —
+// even if it's still progressing — downstream conditions remain visible
+// so users can watch cache / ISVC progress.
+func TestGetComponentHealth_ResolvedProfile_KeepsDownstream(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+	}
+	notFound := apierrors.NewNotFound(schema.GroupResource{}, "missing-isvc")
+	obs := ServiceObservation{
+		ServiceFetchResult: ServiceFetchResult{
+			service:          service,
+			inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{Error: notFound},
+		},
+		profileName:           testProfileA,
+		profileScope:          aimv1alpha1.AIMResolutionScopeNamespace,
+		resolvedProfileSpec:   sampleProfileSpec(),
+		resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady, Deployable: true},
+	}
+
+	entries := obs.GetComponentHealth(context.Background(), nil)
+
+	var sawISVC bool
+	for _, e := range entries {
+		if e.Component == componentNameInferenceService {
+			sawISVC = true
+		}
+	}
+	if !sawISVC {
+		t.Errorf("expected InferenceService entry for a deployable resolved profile; got %+v", entries)
 	}
 }
 
@@ -479,24 +661,36 @@ func TestBuildInferenceServiceFromProfile_FrameworkEnvVarsWinOverProfile(t *test
 	}
 }
 
-// TestBuildInferenceServiceFromProfile_UserOverridesWinOverFramework verifies
-// the final layer of precedence: service.Spec.ProfileOverrides.ContainerEnv
-// is explicit user intent and is allowed to replace framework values.
-func TestBuildInferenceServiceFromProfile_UserOverridesWinOverFramework(t *testing.T) {
+// TestBuildInferenceServiceFromProfile_FrameworkBeatsOverlayContainerEnv pins
+// the v1alpha2 precedence rule: user-supplied ContainerEnv flows through the
+// overlay's ContainerEnv (already merged by ApplyProfileCopyOverrides in
+// ComposeState) and is then overlaid by framework AIM_* vars. AIM_* identity
+// variables belong to the controller; the user cannot reshape them via
+// spec.profileOverrides.containerEnv.
+//
+// This is a deliberate behaviour change from the inline-override era where
+// service-level overrides were re-applied after framework vars. It is the
+// natural consequence of moving overrides into a real overlay AIMProfile —
+// the AIMService never re-applies overrides at deploy time.
+func TestBuildInferenceServiceFromProfile_FrameworkBeatsOverlayContainerEnv(t *testing.T) {
+	// Simulate the post-overlay state: the overlay's spec.containerEnv
+	// already carries the user's containerEnv override. The reconciler
+	// must NOT let that hijack a framework AIM_* var.
+	overlaySpec := sampleProfileSpec()
+	overlaySpec.ContainerEnv = []corev1.EnvVar{
+		{Name: constants.EnvAIMProfileID, Value: "user-attempt-via-overlay"},
+		{Name: "USER_FLAG", Value: "kept"},
+	}
+
 	service := &aimv1alpha1.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
-			ProfileOverrides: &aimv1alpha1.AIMServiceProfileOverrides{
-				ContainerEnv: []corev1.EnvVar{
-					{Name: constants.EnvAIMProfileID, Value: "user-override"},
-				},
-			},
 		},
 	}
 	obs := ServiceObservation{
 		ServiceFetchResult:    ServiceFetchResult{service: service},
-		resolvedProfileSpec:   sampleProfileSpec(),
+		resolvedProfileSpec:   overlaySpec,
 		resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady},
 		profileName:           testProfileA,
 		profileScope:          aimv1alpha1.AIMResolutionScopeNamespace,
@@ -509,8 +703,14 @@ func TestBuildInferenceServiceFromProfile_UserOverridesWinOverFramework(t *testi
 	}
 	env := envMap(isvc.Spec.Predictor.Containers[0].Env)
 
-	if got := env[constants.EnvAIMProfileID]; got != "user-override" {
-		t.Errorf("ProfileOverrides.ContainerEnv should take precedence over framework var, got %q", got)
+	if env[constants.EnvAIMProfileID] == "user-attempt-via-overlay" {
+		t.Errorf("framework %s must win over overlay containerEnv, got user value", constants.EnvAIMProfileID)
+	}
+	if env[constants.EnvAIMProfileID] == "" {
+		t.Errorf("framework %s must be present", constants.EnvAIMProfileID)
+	}
+	if env["USER_FLAG"] != "kept" {
+		t.Errorf("non-AIM_* user containerEnv via the overlay should survive, got %q", env["USER_FLAG"])
 	}
 }
 
@@ -530,7 +730,7 @@ func TestPlanProfileCache_CreatesSharedCache(t *testing.T) {
 		},
 	}
 	profileSpec := sampleProfileSpec()
-	profileSpec.ModelSources = []aimv1alpha2.AIMModelSource{{
+	profileSpec.ModelSources = []aimv1alpha1.AIMModelSource{{
 		ModelID:   "org/model",
 		SourceURI: "hf://org/model",
 	}}
@@ -557,5 +757,52 @@ func TestPlanProfileCache_CreatesSharedCache(t *testing.T) {
 	}
 	if cache.Labels[constants.LabelService] != testServiceName {
 		t.Errorf("expected service label on cache, got %v", cache.Labels)
+	}
+}
+
+func TestPlanProfileCache_DedicatedHonorsServiceCachingMode(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      testServiceName,
+			Namespace: "ns",
+			UID:       "service-uid-123",
+		},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			Caching: &aimv1alpha1.AIMServiceCachingConfig{
+				Mode: aimv1alpha1.CachingModeDedicated,
+			},
+		},
+	}
+	profileSpec := sampleProfileSpec()
+	profileSpec.ModelSources = []aimv1alpha1.AIMModelSource{{
+		ModelID:   "org/model",
+		SourceURI: "hf://org/model",
+	}}
+
+	obs := ServiceObservation{
+		ServiceFetchResult:  ServiceFetchResult{service: service},
+		profileName:         testProfileA,
+		profileScope:        aimv1alpha1.AIMResolutionScopeNamespace,
+		resolvedProfileSpec: profileSpec,
+	}
+
+	cache := planProfileCache(service, obs)
+	if cache == nil {
+		t.Fatalf("expected profile cache to be planned for Dedicated service")
+	}
+	if cache.Spec.Mode != aimv1alpha2.ProfileCacheModeDedicated {
+		t.Fatalf("Dedicated AIMService caching must produce a Dedicated AIMProfileCache, got %q", cache.Spec.Mode)
+	}
+
+	// And the planned cache name must match what the dedicated lookup
+	// pathway expects, so a follow-up reconcile finds the exact same
+	// cache without listing.
+	expected, err := GenerateProfileCacheName(testProfileA, "ns", testServiceName, "service-uid-123", aimv1alpha1.CachingModeDedicated, aimv1alpha1.AIMResolutionScopeNamespace)
+	if err != nil {
+		t.Fatalf("generate expected name: %v", err)
+	}
+	if cache.Name != expected {
+		t.Fatalf("Dedicated cache name does not match deterministic-lookup formula: got %q, want %q", cache.Name, expected)
 	}
 }

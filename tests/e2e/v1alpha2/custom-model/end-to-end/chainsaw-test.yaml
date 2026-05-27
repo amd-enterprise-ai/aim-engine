@@ -1,0 +1,119 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# v1alpha2 custom-model end-to-end (GPU-only).
+#
+# Drives the full custom-model chain from ADR 0006b iteration 2:
+#   base-image AIMModel  -> base AIMProfiles (role=base)
+#   derivation AIMModel  -> deployable AIMProfiles (role=deployable)
+#   AIMService           -> InferenceService Ready
+#
+# The base image is expected to emit profile YAMLs under
+# /workspace/aim-runtime/profiles/general/ that leave aim_id, model_id,
+# and model_sources empty. The derivation model supplies the target
+# identity via selector.aimId and the custom weights via
+# overrides.modelSources; ApplyProfileCopyOverrides auto-fills modelId
+# from modelSources[0].modelId, completing the base profile into a
+# deployable profile.
+#
+# Author-only test: tagged `requires: gpu` because the base image is too
+# large to host in CI. The Makefile selector for kind auto-excludes it
+# (requires notin (gpu,...)).
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-custom-model-end-to-end
+  labels:
+    requires: gpu
+spec:
+  # Custom models that declare a base image (BYO custom-model flow) now
+  # deploy on that base image directly: ResolveDerivedProfileImage skips
+  # the AIM_BASE_IMAGE_REF rebase when the source profile is a `base`-role
+  # candidate, because in that case source.Image IS already the runtime
+  # image and the recorded base image ref is the FROM line of aim-base
+  # itself (e.g. docker.io/vllm/vllm-openai-rocm:v0.16.0), not a
+  # deployable AIM image. Previously the rebase grafted that FROM line
+  # onto the source registry+org and produced a nonexistent
+  # `amdenterpriseai/vllm-openai-rocm:v0.16.0`, breaking the predictor.
+  description: |
+    Drives the full custom-model chain end-to-end: base image discovery
+    emits base AIMProfiles; a derivation AIMModel converts them into
+    deployable AIMProfiles via overrides.modelSources; an AIMService
+    backed by the derivation model reaches Ready. The derived profile's
+    spec.image equals the base AIMModel's image (no rebase peel-back),
+    so the test exercises the real BYO custom-model deployment shape.
+  timeouts:
+    assert: 900s
+  steps:
+    - name: Apply the base-image AIMModel
+      try:
+        - apply:
+            file: base-model.yaml
+
+    - name: Wait for base AIMProfiles owned by the base model
+      try:
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: custom-base
+              status:
+                managedProfiles:
+                  deployable: 0
+                  (base > `0`): true
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                labels:
+                  aim.eai.amd.com/profile-role: base
+                  aim.eai.amd.com/source-model: custom-base
+              status:
+                deployable: false
+
+    - name: Apply the derivation AIMModel that completes the base profiles with custom weights
+      try:
+        - apply:
+            file: derivation-model.yaml
+
+    - name: Wait for the derivation model's deployable AIMProfiles
+      try:
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                labels:
+                  aim.eai.amd.com/profile-role: deployable
+                  aim.eai.amd.com/source-model: custom-derived
+              spec:
+                acceleratorCount: 2
+                # BYO custom-model regression guard: the derived profile
+                # must deploy on the base AIMModel's image as-is, not on
+                # a rebased AIM_BASE_IMAGE_REF of the base image's own
+                # FROM line.
+                image: amdenterpriseai/aim-base:0.11
+              status:
+                deployable: true
+
+    - name: Apply the AIMService backed by the derivation model
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert the AIMService reaches Ready
+      try:
+        - assert:
+            timeout: 600s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: custom-service
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"

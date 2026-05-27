@@ -26,6 +26,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/amd-enterprise-ai/aim-engine/pkg/aimstatus"
 )
 
 const (
@@ -112,17 +114,17 @@ const (
 	ReasonFailed       = "Failed"
 )
 
-type AIMStatus string
+type AIMStatus = aimstatus.AIMStatus
 
 const (
-	AIMStatusPending      AIMStatus = "Pending"
-	AIMStatusStarting     AIMStatus = "Starting"
-	AIMStatusProgressing  AIMStatus = "Progressing"
-	AIMStatusReady        AIMStatus = "Ready"
-	AIMStatusRunning      AIMStatus = "Running"
-	AIMStatusDegraded     AIMStatus = "Degraded"
-	AIMStatusNotAvailable AIMStatus = "NotAvailable"
-	AIMStatusFailed       AIMStatus = "Failed"
+	AIMStatusPending      AIMStatus = aimstatus.AIMStatusPending
+	AIMStatusStarting     AIMStatus = aimstatus.AIMStatusStarting
+	AIMStatusProgressing  AIMStatus = aimstatus.AIMStatusProgressing
+	AIMStatusReady        AIMStatus = aimstatus.AIMStatusReady
+	AIMStatusRunning      AIMStatus = aimstatus.AIMStatusRunning
+	AIMStatusDegraded     AIMStatus = aimstatus.AIMStatusDegraded
+	AIMStatusNotAvailable AIMStatus = aimstatus.AIMStatusNotAvailable
+	AIMStatusFailed       AIMStatus = aimstatus.AIMStatusFailed
 )
 
 // StatusProvider is implemented by status types that expose their AIMStatus.
@@ -249,6 +251,8 @@ const (
 	EnvAIMProfileID = "AIM_PROFILE_ID"
 	// EnvVLLMEnableMetrics enables vLLM metrics
 	EnvVLLMEnableMetrics = "VLLM_ENABLE_METRICS"
+	// EnvAIMBaseImageRef is the env var baked into AIM model images recording the base image.
+	EnvAIMBaseImageRef = "AIM_BASE_IMAGE_REF"
 )
 
 // KServe annotation and label keys
@@ -285,6 +289,55 @@ const (
 	// (versionPolicy=any). When present, AIMService prefers this annotation
 	// over the resolved AIMModel's spec.image.
 	AnnotationDeploymentImageRef = AimLabelDomain + "/deployment-image-ref"
+
+	// AnnotationReconcilerPipeline forces an AIMService onto a specific
+	// reconciliation pipeline, bypassing the default spec-shape dispatch.
+	// Recognised values are ReconcilerPipelineTemplate (v1alpha1 template
+	// pipeline) and ReconcilerPipelineProfile (v1alpha2 profile pipeline).
+	// Unknown values and the absence of the annotation both fall through
+	// to spec-shape dispatch. Used as an escape hatch for users that want
+	// the v1alpha2 model→profile resolver shortcut on a service whose spec
+	// shape would otherwise route to the v1alpha1 pipeline, and vice versa.
+	AnnotationReconcilerPipeline = AimLabelDomain + "/reconciler-pipeline"
+
+	// ReconcilerPipelineTemplate is the AnnotationReconcilerPipeline value
+	// that forces the v1alpha1 template-based pipeline.
+	ReconcilerPipelineTemplate = "template"
+
+	// ReconcilerPipelineProfile is the AnnotationReconcilerPipeline value
+	// that forces the v1alpha2 profile-based pipeline.
+	ReconcilerPipelineProfile = "profile"
+
+	// AnnotationForceRebind, when present (any non-empty value), forces
+	// the v1alpha2 AIMService profile resolver to ignore the current
+	// status.resolvedProfile sticky binding and re-rank candidates from
+	// scratch on the next reconcile.
+	//
+	// The default binding model is sticky-once-bound: once the resolver
+	// commits to a profile, subsequent reconciles keep that binding even
+	// if a higher-ranked candidate appears (e.g. when a new AIMModel is
+	// added with the same aimId). This protects running services from
+	// silently switching weights / precision when unrelated resources
+	// land in the same namespace.
+	//
+	// To opt out for a single rebind (e.g. to adopt a newly-published
+	// profile from an image upgrade), set this annotation to any
+	// non-empty value:
+	//
+	//	kubectl annotate aimservice my-svc \
+	//	  aim.eai.amd.com/force-rebind=now --overwrite
+	//
+	// The resolver does NOT clear the annotation; remove it manually
+	// once the desired rebind is complete to return to sticky behavior:
+	//
+	//	kubectl annotate aimservice my-svc \
+	//	  aim.eai.amd.com/force-rebind-
+	//
+	// Leaving the annotation in place keeps the resolver in "always
+	// re-rank" mode. This is safe (the ranker is deterministic and the
+	// ProfileRebound event only fires when the winner actually changes)
+	// but it forgoes the stability guarantee of the sticky default.
+	AnnotationForceRebind = AimLabelDomain + "/force-rebind"
 )
 
 // Template-related constants

@@ -5,11 +5,11 @@
 # Validates that profileId from a model's recommendedDeployments OCI labels
 # is propagated through the template spec to the InferenceService container env.
 #
-# The aim-dummy:0.1.10 image has profileId: mi300x-fp16-latency-unopt on the
+# The aim-dummy:0.2.0 image has profileId: mi300x-fp16-latency-unopt on the
 # MI300X/fp16/latency recommendedDeployment. This test verifies AIM_PROFILE_ID
 # appears on the InferenceService container with the correct value.
 #
-# Uses: ghcr.io/silogen/aim-dummy:0.1.10 (lightweight test image)
+# Uses: ghcr.io/silogen/aim-dummy:0.2.0 (lightweight test image)
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test

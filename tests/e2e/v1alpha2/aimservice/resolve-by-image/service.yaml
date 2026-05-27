@@ -1,0 +1,18 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: resolve-by-image-service
+  annotations:
+    # v1alpha2 quick-start: spec.model.image alone defaults to the
+    # v1alpha1 template pipeline. The reconciler-pipeline annotation
+    # opts this service into the v1alpha2 profile pipeline, where the
+    # resolver looks up AIMModels by spec.image and auto-creates a
+    # dedicated AIMModel owned by this service when no match exists.
+    #
+    # Once v1alpha1 is removed the annotation becomes unnecessary; this
+    # test continues to assert the annotation-driven path because that
+    # is the documented migration-window flow today.
+    aim.eai.amd.com/reconciler-pipeline: profile
+spec:
+  model:
+    image: ghcr.io/silogen/aim-dummy:0.2.0

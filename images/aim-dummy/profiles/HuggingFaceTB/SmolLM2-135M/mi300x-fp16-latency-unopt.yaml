@@ -1,0 +1,18 @@
+# Unoptimized fp16 latency profile on MI300X.
+# Matches recommendedDeployments[1] by explicit profileId, so primary=true.
+aim_id: HuggingFaceTB/SmolLM2-135M
+model_id: HuggingFaceTB/SmolLM2-135M
+metadata:
+  engine: vllm
+  accelerator_type: gpu
+  accelerator_model: MI300X
+  accelerator_count: 1
+  metric: latency
+  precision: fp16
+  type: unoptimized
+  manual_selection_only: false
+engine_args:
+  tensor-parallel-size: 1
+  dtype: float16
+env_vars:
+  VLLM_DO_NOT_TRACK: "1"

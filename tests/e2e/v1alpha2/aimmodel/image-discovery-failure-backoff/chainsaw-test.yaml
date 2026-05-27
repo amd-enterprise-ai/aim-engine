@@ -1,0 +1,60 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimmodel-image-discovery-failure-backoff
+spec:
+  description: |
+    Verifies that a discovery run which completes without emitting any profile
+    records drives the model into the backoff state instead of tight-looping.
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create the native-mode AIMModel backed by a non-AIM image
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for discovery to enter backoff after the failed parse
+      try:
+        - script:
+            timeout: 120s
+            content: |
+              set -eu
+
+              i=0
+              while [ "$i" -lt 60 ]; do
+                STATUS_JSON=$(kubectl get aimmodel -n "$NAMESPACE" image-discovery-failure-backoff -o json)
+                ATTEMPTS=$(echo "$STATUS_JSON" | jq -r '.status.discovery.attempts // 0')
+                CACHE_NAME=$(echo "$STATUS_JSON" | jq -r '.status.discoveryCacheRef.name // ""')
+                REASON=$(echo "$STATUS_JSON" | jq -r '[.status.conditions[]? | select(.type == "DiscoveryReady")][0].reason // ""')
+                MESSAGE=$(echo "$STATUS_JSON" | jq -r '[.status.conditions[]? | select(.type == "DiscoveryReady")][0].message // ""')
+
+                if [ "$ATTEMPTS" -ge 1 ] && [ -z "$CACHE_NAME" ] \
+                  && [ "$REASON" = "AwaitingDiscovery" ] \
+                  && echo "$MESSAGE" | grep -q '^Waiting '; then
+                  echo "Attempts: $ATTEMPTS"
+                  echo "Reason: $REASON"
+                  echo "Message: $MESSAGE"
+                  exit 0
+                fi
+
+                sleep 2
+                i=$((i + 1))
+              done
+
+              echo "ERROR: discovery never entered the expected backoff state"
+              kubectl get aimmodel -n "$NAMESPACE" image-discovery-failure-backoff -o yaml
+              kubectl get jobs -n "$NAMESPACE" -l aim.eai.amd.com/discovery-target=image-discovery-failure-backoff -o yaml || true
+              exit 1
+
+    - name: Assert no discovery cache was published
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: image-discovery-failure-backoff
+              status:
+                (discoveryCacheRef.name == ""): true

@@ -1,0 +1,9 @@
+# Cluster-scoped counterpart of the namespace base-image discovery test.
+# See tests/e2e/v1alpha2/aimmodel/image-discovery-base-image/model.yaml
+# for the on-image profile layout requirement (general/*.yaml).
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterModel
+metadata:
+  name: image-discovery-base-image
+spec:
+  image: amdenterpriseai/aim-base:0.11

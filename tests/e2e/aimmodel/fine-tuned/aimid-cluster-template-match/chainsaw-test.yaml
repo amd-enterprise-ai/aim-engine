@@ -46,7 +46,7 @@ spec:
               metadata:
                 name: ft-cluster-official-template
               status:
-                version: "0.1.10"
+                version: "0.2.0"
 
     - name: Create namespace-scoped fine-tuned model with matching aimId
       try:

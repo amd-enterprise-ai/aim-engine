@@ -15,7 +15,13 @@ USER 65532:65532
 FROM base AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
-ARG VERSION=latest
+# VERSION must be supplied by the caller (CI pipeline, Tiltfile, etc.). We
+# deliberately do not default to `latest` here because that tag's contents
+# rotate on every release, and `imagePullPolicy: IfNotPresent` on the
+# download Job would then resolve to an arbitrarily stale cached layer on
+# the node. Building without --build-arg VERSION=... will fail the explicit
+# guard in cmd/main.go at operator startup so the misconfiguration is loud.
+ARG VERSION=""
 
 # Build as root to use cache mounts (final image is non-root)
 USER root
@@ -25,6 +31,10 @@ COPY . .
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    if [ -z "${VERSION}" ]; then \
+        echo "ERROR: --build-arg VERSION=... must be supplied (e.g. v0.2.2)" >&2; \
+        exit 1; \
+    fi && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -a \
     -ldflags "-X 'github.com/amd-enterprise-ai/aim-engine/api/v1alpha1.DefaultDownloadImage=ghcr.io/silogen/aim-artifact-downloader:${VERSION}'" \

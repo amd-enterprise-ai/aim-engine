@@ -1,0 +1,34 @@
+# Frozen seed AIMClusterProfile, Ready, used as the base that the AIMService
+# overlays. modelSources here are the seed's defaults; the test then sets
+# spec.profileOverrides.modelSources on the service to redirect the cache to
+# a different SourceURI without touching this profile.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterProfile
+metadata:
+  name: test-overlay-seed
+  annotations:
+    aim.eai.amd.com/reconciliation-paused: "true"
+spec:
+  aimId: test/overlay-seed
+  modelId: test/overlay-seed-fp8
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: optimized
+  primary: true
+  image: registry.example.com/test-image:1.0.0
+  modelSources:
+    - modelId: test-org/seed-weights
+      sourceUri: hf://test-org/seed-weights
+      size: 2Gi
+status:
+  status: Ready
+  version: 1.0.0
+  hardwareSummary: CPU
+  matchingNodes: 1
+  conditions:
+    - type: HardwareAvailable
+      status: "True"
+      reason: NoAcceleratorSpecified
+      message: No accelerator specified, profile is available on any node
+      lastTransitionTime: "2025-01-01T00:00:00Z"

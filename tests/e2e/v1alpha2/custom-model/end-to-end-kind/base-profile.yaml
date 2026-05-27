@@ -1,0 +1,46 @@
+# Seeded base AIMProfile (role=base) that stands in for the output of a
+# real base-image discovery Job. We seed directly rather than running
+# discovery because the GPU sibling at ../end-to-end pulls a multi-GB
+# AIM base image that cannot be hosted on the CI kind cluster.
+#
+# Identity fields are intentionally empty (no aimId / modelId /
+# modelSources) so this profile is structurally non-deployable on its
+# own (status.deployable=false). The derivation AIMModel below supplies
+# the target identity via overrides.aimId / overrides.modelId and the
+# weights via overrides.modelSources, which together promote the base
+# into a deployable profile. CEL on AIMModelProfilesSpec requires
+# overrides.{aimId,modelId} whenever selector.role=base since base
+# profiles ship with no identity to inherit.
+#
+# The profile carries the iteration-1 provenance labels stamped by the
+# image-discovery pipeline so the derivation selector (role=base +
+# modelRef.name) matches it identically to a real discovery-produced
+# base profile.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: byo-base-seed
+  annotations:
+    # AIMProfileSet candidate listing filters by this annotation
+    # (listNamespaceProfileCandidatesWithLabels → IsProfileCopyable).
+    # Image-discovery profiles get it stamped automatically; hand-authored
+    # seeds (this one) must opt in explicitly or they are silently skipped.
+    aim.eai.amd.com/profile-copyable: "true"
+  labels:
+    aim.eai.amd.com/profile-role: base
+    aim.eai.amd.com/profile-origin: discovered
+    aim.eai.amd.com/source-model: byo-base
+    aim.eai.amd.com/source-model-scope: namespace
+spec:
+  # No aimId / modelId / modelSources by design — this is what makes
+  # the profile base rather than deployable.
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  acceleratorType: cpu
+  acceleratorCount: 1
+  image: ghcr.io/silogen/aim-dummy:0.2.0
+  containerEnv:
+    - name: VLLM_TARGET_DEVICE
+      value: cpu

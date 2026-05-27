@@ -2,6 +2,9 @@
 
 This guide covers configuring authentication for private container registries, HuggingFace Hub, and S3-compatible storage.
 
+!!! info "v1alpha2"
+    `AIMService` examples use `aim.eai.amd.com/v1alpha2`. `AIMRuntimeConfig` / `AIMClusterRuntimeConfig` remain `aim.eai.amd.com/v1alpha1` resources — both pipelines consume them unchanged. `spec.imagePullSecrets`, `spec.serviceAccountName`, and the runtime-config env fields are identical regardless of pipeline.
+
 ## Container Image Pull Secrets
 
 ### Per-Service Secrets
@@ -9,14 +12,14 @@ This guide covers configuring authentication for private container registries, H
 Provide image pull secrets directly on the service:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: qwen-chat
   namespace: ml-team
 spec:
   model:
-    image: my-registry.example.com/aim-qwen3:latest
+    name: qwen-qwen3-32b
   imagePullSecrets:
     - name: my-registry-creds
 ```

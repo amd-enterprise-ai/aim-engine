@@ -1,46 +1,79 @@
-# Profiles
+# AIM Profiles
 
-Profiles are self-contained runtime configurations for AI inference workloads. A profile carries everything needed to deploy a model — accelerator requirements, resource requests, engine arguments, and the container image — without referencing any other resource.
-
-!!! info "API Version"
-    Profiles are part of the `aim.eai.amd.com/v1alpha2` API. They replace [Service Templates](templates.md) (`v1alpha1`), which are deprecated and will be removed in a future release. New deployments should use profiles.
-
-## Overview
-
-An AIMProfile answers five questions about a deployment without consulting any other resource:
+An **AIM profile** is a self-contained runtime configuration for an inference workload. It answers five questions about a deployment without consulting any other resource:
 
 1. **Model architecture** — What model family does this serve? (`aimId`)
-2. **Accelerator** — What hardware is required? (`accelerator`: type, model, count)
-3. **Engine configuration** — How should the inference engine be configured? (`engineArgs`, `engineEnv`)
+2. **Accelerator** — What hardware is required? (`acceleratorType`, `acceleratorModel`, `acceleratorCount`)
+3. **Engine** — How is the inference engine configured? (`engineArgs`, `engineEnv`)
 4. **Container image** — What image runs the workload? (`image`)
-5. **Optimization target** — Latency or throughput? At what precision? (`metric`, `precision`, `type`)
+5. **Optimization target** — What was this profile tuned for? (`metric`, `precision`, `type`)
 
-## Cluster vs Namespace Scope
+`AIMProfile` and `AIMClusterProfile` carry this configuration. An `AIMService` resolves to exactly one of them and deploys it.
 
-### AIMClusterProfile
+!!! info "v1alpha2"
+    Profiles are part of `aim.eai.amd.com/v1alpha2`. They replace v1alpha1 [Service Templates](../legacy/service-templates.md), which are deprecated.
 
-Cluster-scoped profiles are installed by administrators, typically created during model discovery from AIM container images. They are visible across all namespaces.
+## Where profiles come from
 
-**Key characteristics:**
+Most profiles aren't hand-authored. They're produced by `AIMModel` reconcilers in one of three flows:
 
-- Shared across all namespaces
-- Provide validated, production-ready runtime configurations
-- Can be created manually or, in the future, automatically during model discovery by a v1alpha2 model controller
+| Source | Profile origin | Typical labels |
+|---|---|---|
+| Image discovery on an official AIM image | `origin: Discovered`, `role: deployable` | `source-model=<official-model>` |
+| Image discovery on a base AIM image | `origin: Discovered`, `role: base` | `source-model=<base-model>` |
+| `AIMProfileSet` derivation (fine-tune or custom-model) | `origin: Derived`, `role: deployable` | `source-model=<derivation-model>` |
+| Hand-authored by a user | `origin: UserAuthored`, `role: deployable` | (none of the `source-model*` labels) |
 
-### AIMProfile
+See [AIM Models](models.md) for the three model flows that produce these profiles.
 
-Namespace-scoped profiles are created by ML engineers for custom configurations, fine-tuned models, or team-specific overrides.
+## Cluster vs namespace scope
 
-**Key characteristics:**
+| Resource | Scope | Caching support |
+|---|---|---|
+| `AIMClusterProfile` | Cluster | No `spec.caching` field (cluster-scoped caches not yet implemented) |
+| `AIMProfile` | Namespace | `spec.caching.enabled` triggers an `AIMProfileCache` |
 
-- Visible only within their namespace
-- Support namespace-specific secrets and authentication
-- Can enable model caching via `spec.caching.enabled`
-- Used for custom weight deployments and per-team overrides
+When both a namespace-scoped and cluster-scoped profile match a service's selector, the namespace-scoped profile takes precedence.
 
-When both a namespace-scoped and cluster-scoped profile match, the namespace-scoped profile takes precedence.
+## Deployable vs base
 
-## Profile Specification
+A profile is **deployable** when it carries both `spec.aimId` and a non-empty `spec.modelSources`. The model controller stamps this onto `status.deployable: true` and labels the profile `aim.eai.amd.com/profile-role=deployable`.
+
+A profile is a **base profile** when both `aimId` and `modelSources` are empty. Base profiles carry `status.deployable: false` and `profile-role=base`. They exist only as derivation sources for custom-model AIMModels — they cannot back an `AIMService` directly.
+
+Mixed spec (one of `aimId` / `modelSources` set, the other empty) is rejected at admission so `status.deployable` is always derivable from spec.
+
+## Provenance labels
+
+v1alpha2 stamps a small set of canonical labels on every operator-produced profile. These are the labels selectors key off, both inside the AIMService resolver and inside AIMProfileSet derivation.
+
+| Label | Values |
+|---|---|
+| `aim.eai.amd.com/profile-role` | `base`, `deployable` |
+| `aim.eai.amd.com/profile-origin` | `discovered`, `derived`, `user-authored` |
+| `aim.eai.amd.com/source-model` | Name of the owning `AIMModel` / `AIMClusterModel` |
+| `aim.eai.amd.com/source-model-scope` | `namespace`, `cluster` |
+| `aim.eai.amd.com/profile-source` | `copy` (AIMProfileSet derivation marker) |
+| `aim.eai.amd.com/profile-copyable` | `"true"` (eligible to be a derivation source) |
+
+The matching `status` fields mirror the labels for kubectl-friendly access:
+
+- `status.origin` mirrors `profile-origin`
+- `status.sourceModel.{name,kind,namespace}` mirrors `source-model` + `source-model-scope`
+- `status.deployable` derives from spec (also implicit from `profile-role`)
+
+See [Naming and Labels → Profile labels](../reference/naming-and-labels.md#profile-labels) for the canonical list (including label setters and selector recipes).
+
+### Hand-authored profiles cannot fake provenance
+
+Hand-stamping `aim.eai.amd.com/source-model` (or `-scope`) labels on a user-authored AIMProfile does **not** work — the operator strips them on every reconcile. The labels are derived from the profile's controller ownerReferences (or from propagated labels for AIMProfileSet-owned profiles), so a profile with no AIM-controller owner ends up labeled `profile-origin: user-authored` with no `source-model` labels.
+
+This is intentional: it protects against stale labels when a user-authored profile loses its owning model. The user-facing consequence is:
+
+- A hand-authored profile is **not reachable** through `selector.modelRef.name` (which queries by `source-model`).
+- To make a hand-authored profile reachable, either match via `aimId`/`modelId` (spec fields, not labels), or onboard it through an `AIMModel`/`AIMProfileSet` that becomes the profile's owner.
+
+## Profile specification
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
@@ -59,7 +92,7 @@ spec:
   acceleratorModel: MI300X
   acceleratorType: gpu
   acceleratorCount: 1
-  resources:                          # optional override: cpu/memory requests
+  resources:
     requests:
       cpu: "4"
       memory: 32Gi
@@ -76,147 +109,131 @@ spec:
       sourceUri: hf://qwen/qwen3-32b-fp8
 ```
 
-### Spec Fields
+### Spec fields
 
 | Field | Description |
-| ----- | ----------- |
-| `aimId` | Model architecture identifier (e.g., `qwen/qwen3-32b`). Used to match profiles to models during automatic selection. **Immutable** after creation. |
-| `modelId` | Specific model variant or HuggingFace URI (e.g., `qwen/qwen3-32b-fp8`). Determines the cache path and is used to match profiles to specific model weights. |
-| `profileId` | Unique identifier for the source profile within an AIM container image (e.g., `vllm-mi300x-fp8-tp1-latency`). Set during discovery to trace this profile back to its origin in the container. Not required for manually created profiles. |
-| `engine` | Inference engine identifier (e.g., `vllm`, `tgi`). |
-| `metric` | Optimization target: `latency` (interactive) or `throughput` (batch processing). |
+|---|---|
+| `aimId` | Model architecture identifier (e.g. `qwen/qwen3-32b`). Primary matching axis for selection. **Immutable** once set. |
+| `modelId` | Specific model variant or weights identifier (e.g. `qwen/qwen3-32b-fp8`). Determines cache path. |
+| `profileId` | On-disk profile identifier from the AIM image (e.g. `vllm-mi300x-fp8-tp1-latency`). Set during discovery; not required for hand-authored profiles. |
+| `engine` | Inference engine (`vllm`, `tgi`, ...). |
+| `metric` | Optimization target: `latency` or `throughput`. |
 | `precision` | Numeric precision: `fp4`, `fp8`, `fp16`, `fp32`, `bf16`, `int4`, `int8`. |
-| `type` | Optimization level. Hierarchy: `optimized` > `general` > `preview` > `unoptimized`. |
-| `primary` | Marks this as the recommended profile for its model and configuration. See [Primary Profiles](#primary-profiles). Defaults to `false`. |
-| `acceleratorModel` | Accelerator identifier for node selection (e.g., `MI300X`, `CDNA3`, `EPYC_9965`). See [Accelerator and Node Affinity](#accelerator-and-node-affinity). |
-| `acceleratorType` | `gpu` or `cpu`. Determines resource derivation strategy. AIM Engine computes default resource requests from this field combined with `acceleratorCount` and cluster-level configuration. |
-| `acceleratorCount` | Number of accelerator units required. Combined with `acceleratorType` and cluster config to compute default resource requests in `status.resources`. |
-| `resources` | Optional override for Kubernetes [`ResourceRequirements`](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/). When set, merged on top of the defaults that AIM Engine computes. The resolved result is in `status.resources`. |
-| `image` | **Required.** Deployment container image. For purpose-built profiles: the full AIM image. For custom weight profiles: the base image. |
-| `engineArgs` | Inference engine CLI arguments as a free-form JSON object. Supports typed values (integers, floats, booleans, strings). Converted to `--key value` flags by the AIM runtime. |
-| `engineEnv` | Environment variables passed directly to the inference engine process. These are distinct from `containerEnv`, which sets variables on the outer container. |
-| `modelSources` | Model artifact sources with download URIs. Populated during discovery or set manually. |
-| `containerEnv` | Container-level environment variables for the AIM runtime process (K8s pod spec). |
-| `imagePullSecrets` | Secrets for pulling container images. |
-| `serviceAccountName` | Service account for workloads. |
+| `type` | Optimization level. Hierarchy: `optimized > general > preview > unoptimized`. |
+| `primary` | Marks the recommended default for this model + hardware combination. Boosts ranking during automatic selection. Default `false`. |
+| `manualSelectionOnly` | Excludes this profile from automatic selection. Still addressable by explicit `spec.profile.name`. Used by aim-build for preview / experimental profiles. Default `false`. |
+| `acceleratorModel` | Accelerator identifier for node selection (e.g. `MI300X`, `CDNA3`, `EPYC_ZEN5`). Maps to a `feature.node.kubernetes.io/aim-accelerator.<value>` node label with the `Exists` operator. |
+| `acceleratorType` | `gpu` or `cpu`. Determines resource derivation strategy. |
+| `acceleratorCount` | Number of accelerator units required. Combined with `acceleratorType` and cluster config to compute default resource requests. |
+| `resources` | Optional override for K8s `ResourceRequirements`. Merged on top of computed defaults; result lands in `status.resources`. |
+| `image` | **Required.** Deployment container image. For purpose-built profiles: the full AIM image. For overlay-produced custom-model profiles: the base image. |
+| `engineArgs` | Inference engine CLI arguments as a free-form JSON object. Typed values (ints, floats, booleans, strings) preserved; converted to `--key value` flags by the runtime. |
+| `engineEnv` | Environment variables passed to the inference engine subprocess (distinct from `containerEnv`). |
+| `modelSources` | Model artifact sources with download URIs. |
+| `containerEnv` | Container-level env vars on the pod spec. |
+| `imagePullSecrets` | Secrets for pulling the deployment image. |
+| `serviceAccountName` | Workload service account. |
 
-### Namespace-Specific Fields
-
-These fields are only available on namespace-scoped `AIMProfile`, not on `AIMClusterProfile`.
-
-| Field | Description |
-| ----- | ----------- |
-| `caching` | Caching configuration. When `caching.enabled` is `true`, model artifacts are pre-downloaded to a PVC on startup. |
-
-!!! note "Caching for cluster profiles"
-    Cluster-scoped profiles do not have a `caching` field. Caching support for `AIMClusterProfile` via a dedicated `AIMProfileCache` resource is planned.
-
-## Accelerator and Node Affinity
-
-Three flat spec fields describe the hardware accelerator:
+Namespace-scoped `AIMProfile` adds one more field:
 
 | Field | Description |
-|-------|-------------|
-| `acceleratorModel` | Accelerator identifier for node selection (e.g., `MI300X`, `CDNA3`, `EPYC_ZEN5`). Maps to a node label key with an `Exists` selector. |
-| `acceleratorType` | `gpu` or `cpu`. Determines how AIM Engine derives Kubernetes resource requests. |
-| `acceleratorCount` | Number of accelerator units required (e.g., GPU count or CPU core count). |
+|---|---|
+| `caching` | When `caching.enabled: true`, an `AIMProfileCache` pre-downloads `modelSources` to a PVC on profile creation. |
 
-### Node selection
+## Accelerator and node affinity
 
-The profile specifies a single `acceleratorModel` string. AIM Engine constructs one label key and uses the `Exists` operator for node affinity:
+The three accelerator fields jointly describe the hardware AIM Engine schedules onto.
 
 ```
-acceleratorModel: MI300X  →  feature.node.kubernetes.io/aim-accelerator.MI300X  (Exists)
+spec.acceleratorModel: MI300X
+  → feature.node.kubernetes.io/aim-accelerator.MI300X  (Exists)
+
+spec.acceleratorType: gpu
+spec.acceleratorCount: 1
+  → AIM Engine computes the default device request (e.g. amd.com/gpu: "1")
 ```
 
-The **AcceleratorDetector** (DaemonSet) labels each node with all applicable identifiers. For example, a node with an MI300X GPU and EPYC 9575F CPU gets:
+The [AcceleratorDetector](accelerator-detection.md) DaemonSet labels each node with all applicable identifiers (specific GPU model, CPU architecture). A profile with `acceleratorModel: MI300X` matches exactly that GPU model; a fallback profile with `acceleratorModel: EPYC_ZEN5` matches any Zen5 EPYC node.
 
-```
-feature.node.kubernetes.io/aim-accelerator.MI300X: "8"      # GPU model + count
-feature.node.kubernetes.io/aim-accelerator.EPYC_ZEN5: "128" # CPU arch + core count
-```
-
-A profile targeting `MI300X` matches that node (exact). A fallback profile targeting `EPYC_ZEN5` also matches any Zen5 EPYC node. AIM Engine is fully blind — it constructs one label key from `acceleratorModel` and sets `operator: Exists`; the label value (accelerator count) is informational only.
-
-### Resource derivation
-
-AIM Engine computes default `ResourceRequirements` from `acceleratorType`, `acceleratorCount`, and cluster-level configuration (e.g., DCM ConfigMap for GPU partitioning modes, vendor-specific resource names), then merges any `spec.resources` override on top. The result is written to `status.resources` — the definitive resource requirements used for deployment.
-
-```yaml
-spec:
-  acceleratorModel: MI300X
-  acceleratorType: gpu
-  acceleratorCount: 1        # engine computes: amd.com/gpu: "1"
-  resources:                  # optional override: cpu/memory
-    requests:
-      cpu: "4"
-      memory: 32Gi
-```
-
-The operator checks cluster nodes against both the accelerator model label and `status.resources` capacity. If no node matches, the profile status becomes `NotAvailable`.
+The label value (count) is informational only — the selector operator is `Exists`. Actual capacity is enforced via the computed device resource request.
 
 ### Partitioned GPUs
 
-For partitioned GPU configurations (e.g., CPX-NPS4, MIG), override the derived device resource in `spec.resources`:
+For partitioned GPU configurations (CPX-NPS4, MIG, etc.), override the derived device resource in `spec.resources`:
 
 ```yaml
 spec:
   acceleratorModel: MI300X
   acceleratorType: gpu
-  acceleratorCount: 0             # suppresses default amd.com/gpu derivation
+  acceleratorCount: 0
   resources:
     requests:
-      amd.com/cpx-nps4: "4"      # partition-specific device resource
+      amd.com/cpx-nps4: "4"
 ```
 
-## Profile Status
+`acceleratorCount: 0` suppresses the default `amd.com/gpu` derivation so the override stands alone.
 
-### Status Fields
+### CPU-only profiles
 
-| Field | Type | Description |
-| ----- | ---- | ----------- |
-| `status` | enum | `Pending`, `Progressing`, `Ready`, `Degraded`, `Failed`, `NotAvailable` |
-| `version` | string | Extracted from `spec.image` tag (e.g., `0.8.5`) |
-| `matchingNodes` | int32 | Count of cluster nodes matching accelerator labels and resource requests |
-| `hardwareSummary` | string | Human-readable summary (e.g., `1 x MI300X`, `CPU`) |
-| `resources` | ResourceRequirements | Definitive resource requirements used for deployment: defaults computed from accelerator fields + cluster config, merged with any spec.resources override |
-| `resolvedNodeAffinity` | NodeAffinity | Computed node affinity rules for pod scheduling |
-| `conditions` | []Condition | Standard Kubernetes conditions |
+Profiles without accelerator fields are treated as CPU-only and are always `Ready` (no node-affinity gating).
 
-### Status Lifecycle
+```yaml
+spec:
+  aimId: microsoft/phi-2
+  image: amdenterpriseai/aim-phi-2:0.8.5
+  engine: vllm
+  metric: latency
+  precision: fp32
+```
 
-- **Pending** — Profile created, not yet reconciled
-- **Ready** — At least one cluster node matches the accelerator labels and has sufficient resource capacity. For profiles without accelerator requirements (CPU-only), the profile is always `Ready`.
-- **Degraded** — The controller encountered a transient error (e.g., failed to list cluster nodes). The profile will be re-evaluated automatically.
-- **NotAvailable** — No cluster nodes match the profile's hardware requirements. The profile becomes `Ready` automatically when matching nodes are added to the cluster.
+## Profile status
+
+| Field | Description |
+|---|---|
+| `status` | `Pending`, `Progressing`, `Ready`, `Degraded`, `Failed`, `NotAvailable` |
+| `deployable` | `true` when `spec.aimId` and `spec.modelSources` are both populated; `false` for base profiles |
+| `origin` | `discovered`, `derived`, `user-authored` (mirrors the `profile-origin` label) |
+| `baseImage` | Base image reference extracted from the discovery-cache metadata (`AIM_BASE_IMAGE_REF`). Empty for image-derived profiles whose own `spec.image` is the runtime image. |
+| `sourceModel` | `{name, kind, namespace}` of the producing AIM(Cluster)Model. Empty for user-authored profiles. |
+| `version` | Extracted from `spec.image` tag (e.g. `0.8.5`) |
+| `matchingNodes` | Count of cluster nodes matching the accelerator label and resource requests |
+| `hardwareSummary` | Human-readable summary (`1 x MI300X`, `CPU`) |
+| `resources` | Definitive `ResourceRequirements` used for deployment — defaults plus any `spec.resources` override |
+| `resolvedNodeAffinity` | Computed node affinity rules |
+| `conditions` | Standard Kubernetes conditions |
+
+### Status lifecycle
+
+- **Pending** — profile created, not yet reconciled
+- **Ready** — at least one cluster node matches the accelerator label and has sufficient resource capacity. CPU-only profiles are always `Ready`.
+- **Degraded** — transient error (e.g. failed to list nodes); will be retried.
+- **NotAvailable** — no cluster nodes match the requirements. Auto-recovers when matching nodes are added.
 
 ### Conditions
 
-**HardwareAvailable**: Reports whether the cluster has nodes matching the profile's requirements.
+`HardwareAvailable` reports whether the cluster has nodes matching the profile's requirements:
 
 | Status | Reason | Description |
-|--------|--------|-------------|
-| `True` | `HardwareAvailable` | Matching nodes found in cluster |
+|---|---|---|
+| `True` | `HardwareAvailable` | Matching nodes present |
 | `True` | `NoAcceleratorSpecified` | No accelerator requirements — always available |
-| `False` | `HardwareNotAvailable` | No cluster nodes match accelerator labels and resource requests |
+| `False` | `HardwareNotAvailable` | No matching nodes |
 
-The profile controller watches node events and re-evaluates hardware availability when nodes are added, removed, or their GPU labels change.
+The profile controller watches node events and re-evaluates hardware availability whenever node labels change.
 
-## Primary Profiles
+## Primary profiles
 
-AIM container images are built by **profile authors** — the team that benchmarks models on specific hardware and publishes validated runtime configurations. A single image may contain many profiles covering different precisions, optimization targets, and GPU configurations. The `primary` field marks the profile that the authors recommend as the default for a given model and hardware combination.
+`spec.primary: true` marks a profile as the **recommended default** for its (model + accelerator + precision + metric) combination. AIM image authors stamp this on the profile they consider the production sweet spot for the hardware.
 
-When `primary: true`:
+When a service uses `spec.model.name` resolution (which produces multiple candidate profiles), primaries are ranked above non-primaries during selection. Non-primary profiles remain addressable by explicit name.
 
-- The profile is selected by default when [deploying a service](services.md) without an explicit profile or template reference
-- The profile is used as the base configuration when onboarding custom model weights that match the same `aimId` and `precision`
-- The profile is preferred when multiple candidates match during automatic selection
+## `manualSelectionOnly` profiles
 
-Non-primary profiles remain available for explicit selection but are not considered during automatic selection by default.
+`spec.manualSelectionOnly: true` excludes a profile from automatic selection entirely. The profile remains addressable by explicit `spec.profile.name` but is never returned by the model-driven ranker. aim-build uses this for preview / experimental tunings that ship in the image but shouldn't be picked by default.
 
 ## Examples
 
-### Cluster Profile — Latency Optimized
+### Cluster profile — latency-tuned
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
@@ -239,7 +256,7 @@ spec:
     gpu-memory-utilization: "0.95"
 ```
 
-### Namespace Profile — Custom Weights
+### Namespace profile — custom weights with caching
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
@@ -254,7 +271,6 @@ spec:
   metric: latency
   precision: fp8
   type: general
-  primary: false
   acceleratorModel: MI300X
   acceleratorType: gpu
   acceleratorCount: 2
@@ -264,85 +280,50 @@ spec:
       memory: 64Gi
   image: amdenterpriseai/aim-base:0.8.5
   engineArgs:
-    distributed_executor_backend: mp
-    gpu-memory-utilization: "0.90"
     tensor-parallel-size: "2"
   modelSources:
     - modelId: my-org/qwen-finetuned-fp8
       sourceUri: s3://my-bucket/fp8-weights/
-      precision: fp8
+  caching:
+    enabled: true
 ```
-
-### CPU-Only Profile
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha2
-kind: AIMProfile
-metadata:
-  name: small-model-cpu
-  namespace: dev-team
-spec:
-  aimId: microsoft/phi-2
-  engine: vllm
-  metric: latency
-  precision: fp32
-  type: general
-  primary: false
-  image: amdenterpriseai/aim-phi-2:0.8.5
-```
-
-Profiles without accelerator fields (`acceleratorModel`, `acceleratorType`, `acceleratorCount`) and without extended device resource requests are treated as CPU-only and are always `Ready`.
 
 ## Troubleshooting
 
-### Profile Stuck in NotAvailable
+### Profile stuck in `NotAvailable`
 
-The profile's accelerator requirements don't match any cluster node:
+The profile's accelerator requirements don't match any cluster node.
 
 ```bash
-# Check which nodes the profile expects
 kubectl get aimclusterprofile <name> -o jsonpath='{.status.resolvedNodeAffinity}' | jq
-# Check resolved resources
 kubectl get aimclusterprofile <name> -o jsonpath='{.status.resources}' | jq
-
-# Check matching node count
 kubectl get aimclusterprofile <name> -o jsonpath='{.status.matchingNodes}'
 
-# List nodes with accelerator labels
+# Nodes carrying the expected accelerator label
 kubectl get nodes -l feature.node.kubernetes.io/aim-accelerator.MI300X
 ```
 
-Common causes:
+Common causes: GPU nodes not yet added, AcceleratorDetector not labeling nodes, wrong `acceleratorModel` value.
 
-- GPU nodes not yet added to the cluster
-- AcceleratorDetector not labeling nodes
-- Wrong accelerator model name in the profile
+### `source-model` label disappears after reconcile
 
-### Profile Shows Wrong Hardware Summary
+Expected for user-authored profiles. See [Hand-authored profiles cannot fake provenance](#hand-authored-profiles-cannot-fake-provenance) above.
 
-The hardware summary is derived from `acceleratorModel` and `acceleratorCount`. Verify the accelerator fields:
+### Profile is `Ready` but a service can't resolve to it
 
-```bash
-kubectl get aimclusterprofile <name> -o yaml | grep -E 'accelerator(Model|Type|Count)'
-```
+If the service uses `spec.profile.selector` or `spec.model.name`, the selector may not match this profile. Check:
 
-## Migration from Service Templates
+- The profile's `status.deployable` is `true` (base profiles are never returned).
+- The profile carries `profile-role: deployable`.
+- For `modelRef.name` selectors, the profile carries `source-model: <model-name>`. User-authored profiles don't carry this label — they're reachable only by `aimId` / `modelId`.
 
-Profiles (`v1alpha2`) replace Service Templates (`v1alpha1`). Both API versions coexist during the transition period — existing v1alpha1 Service Templates continue to work. New deployments should use profiles.
+## Related documentation
 
-Key differences for migrating users:
-
-- Profiles carry their own container image (`spec.image`), removing the dependency on model lookups
-- Hardware requirements use flat accelerator fields (`acceleratorModel`, `acceleratorType`, `acceleratorCount`). The controller derives Kubernetes device resource requests from the accelerator count. Partitioned GPUs (e.g., `amd.com/cpx-nps4`) are supported via explicit `resources` overrides
-- Precision is always explicit — there is no `auto` value
-- A `general` optimization tier is available between `optimized` and `preview`
-
-See the [Service Templates](templates.md) documentation for v1alpha1 usage.
-
-## Related Documentation
-
-- [Service Templates](templates.md) — v1alpha1 templates (deprecated)
-- [AIM Services](services.md) — Deploying inference endpoints
+- [AIM Models](models.md) — Three model flows that produce profiles
+- [AIM Profile Sets](profilesets.md) — Derivation machinery
+- [Services](services.md) — How services resolve and rank profiles
 - [Model Caching](caching.md) — Cache lifecycle and configuration
-- [CRD API Reference (v1alpha2)](../reference/api/v1alpha2.md) — Full field reference
-- [Conditions Reference](../reference/conditions.md) — All conditions and reasons
+- [Naming and Labels](../reference/naming-and-labels.md) — Full label catalogue
+- [CRD API Reference (v1alpha2)](../reference/api/v1alpha2.md) — Full schema
+- [Conditions Reference](../reference/conditions.md) — Condition catalogue
+- [Legacy Service Templates](../legacy/service-templates.md) — The deprecated v1alpha1 equivalent

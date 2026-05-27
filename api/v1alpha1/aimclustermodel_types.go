@@ -47,12 +47,16 @@ const (
 // use the namespace-scoped AIMModel when referenced by image URI.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:deprecatedversion:warning="AIMClusterModel v1alpha1 is deprecated; use aim.eai.amd.com/v1alpha2"
 // +kubebuilder:resource:scope=Cluster,shortName=aimclmdl,categories=aim;all
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 // +kubebuilder:printcolumn:name="Source",type=string,JSONPath=`.status.sourceType`
 // +kubebuilder:printcolumn:name="Image",type=string,JSONPath=`.spec.image`
+// +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.status.version`
 // +kubebuilder:printcolumn:name="Model",type=string,JSONPath=`.status.imageMetadata.model.canonicalName`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.derivedFrom)",message="spec.derivedFrom is only supported on v1alpha2; use spec.profileCopy on v1alpha1"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.profiles)",message="spec.profiles is only supported on v1alpha2; use spec.profileCopy on v1alpha1"
 type AIMClusterModel struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

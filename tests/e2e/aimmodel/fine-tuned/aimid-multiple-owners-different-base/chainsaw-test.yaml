@@ -3,10 +3,16 @@
 # AIMModel Test: Fine-Tuned Model with Multiple Owners / Different Base Images
 #
 # Validates the per-copy deployment-image-ref annotation behavior under the
-# scenario that motivated the per-copy refactor: two AIMClusterModels with
-# the SAME aimId but DIFFERENT base-image families (e.g. aim-base vs
-# aim-cpu-base) each contribute an "official" template under the same
-# (aimId, modelId, version, precision, gpu) tuple.
+# scenario that motivated the per-copy refactor: two namespace-scoped base
+# AIMModels with the SAME aimId but DIFFERENT base-image families (e.g.
+# aim-base vs aim-cpu-base) each contribute an "official" template under the
+# same (aimId, modelId, version, precision, gpu) tuple.
+#
+# The whole test runs in the chainsaw-managed namespace so it does not
+# accumulate cluster-scoped state between runs (and does not interfere with
+# parallel tests on the same cluster). The cross-scope path — namespace
+# fine-tuned model matching cluster-scoped templates owned by a cluster
+# model — is covered separately by `aimid-cluster-template-match`.
 #
 # Tested behavior:
 #   1. The fine-tuned model (no spec.image, versionPolicy=any) matches both
@@ -29,14 +35,14 @@ spec:
     apply: 30s
     assert: 120s
   steps:
-    - name: Create both base cluster models (different base-image families, same aimId in their templates)
+    - name: Create both base models (different base-image families, same aimId in their templates)
       try:
         - apply:
             file: base-model-a.yaml
         - apply:
             file: base-model-b.yaml
 
-    - name: Create both official cluster templates (matching) and one unrelated cluster template (non-matching modelId)
+    - name: Create both official templates (matching) and one unrelated template (non-matching modelId)
       try:
         - apply:
             file: template-a.yaml
@@ -51,7 +57,7 @@ spec:
             timeout: 120s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMClusterServiceTemplate
+              kind: AIMServiceTemplate
               metadata:
                 name: ft-multi-template-a
               status:
@@ -60,13 +66,13 @@ spec:
             timeout: 120s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMClusterServiceTemplate
+              kind: AIMServiceTemplate
               metadata:
                 name: ft-multi-template-b
               status:
                 status: Ready
 
-    - name: Create the namespace-scoped fine-tuned model (no spec.image, versionPolicy=any)
+    - name: Create the fine-tuned model (no spec.image, versionPolicy=any)
       try:
         - apply:
             file: finetuned-model.yaml

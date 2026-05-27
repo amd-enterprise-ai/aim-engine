@@ -540,22 +540,25 @@ func choosePreferredTemplate(candidates []TemplateCandidate) (*TemplateCandidate
 		return &candidates[0], 1
 	}
 
-	// Build preference maps: lower index = higher preference
-	gpuPref := makePreferenceMap(gpuPreferenceOrder)
-	metricPref := makePreferenceMap(metricPreferenceOrder)
-	precisionPref := makePreferenceMap(precisionPreferenceOrder)
+	// Build preference maps: lower index = higher preference. The GPU,
+	// metric, and precision orders live in internal/utils so v1alpha1
+	// (template scoring) and v1alpha2 (AIMProfile resolver) share one
+	// canonical source — see utils.AcceleratorModelPreferenceOrder.
+	gpuPref := utils.MakePreferenceMap(utils.AcceleratorModelPreferenceOrder)
+	metricPref := utils.MakePreferenceMap(utils.MetricPreferenceOrder)
+	precisionPref := utils.MakePreferenceMap(utils.PrecisionPreferenceOrder)
 	profileTypePref := makePreferenceMap(profileTypePreferenceOrder)
 
 	bestIdx := 0
-	bestGPU := getPreferenceScore(candidateGPUModel(candidates[0]), gpuPref)
-	bestMetric := getPreferenceScore(candidateMetric(candidates[0]), metricPref)
-	bestPrecision := getPreferenceScore(candidatePrecision(candidates[0]), precisionPref)
+	bestGPU := utils.PreferenceScore(candidateGPUModel(candidates[0]), gpuPref)
+	bestMetric := utils.PreferenceScore(candidateMetric(candidates[0]), metricPref)
+	bestPrecision := utils.PreferenceScore(candidatePrecision(candidates[0]), precisionPref)
 	bestProfileType := getPreferenceScore(candidateProfileType(candidates[0]), profileTypePref)
 
 	for i := 1; i < len(candidates); i++ {
-		gpu := getPreferenceScore(candidateGPUModel(candidates[i]), gpuPref)
-		metric := getPreferenceScore(candidateMetric(candidates[i]), metricPref)
-		precision := getPreferenceScore(candidatePrecision(candidates[i]), precisionPref)
+		gpu := utils.PreferenceScore(candidateGPUModel(candidates[i]), gpuPref)
+		metric := utils.PreferenceScore(candidateMetric(candidates[i]), metricPref)
+		precision := utils.PreferenceScore(candidatePrecision(candidates[i]), precisionPref)
 		profileType := getPreferenceScore(candidateProfileType(candidates[i]), profileTypePref)
 
 		// Compare using lexicographic ordering: profile type > GPU > metric > precision
@@ -577,9 +580,9 @@ func choosePreferredTemplate(candidates []TemplateCandidate) (*TemplateCandidate
 	identicalCount := 0
 	for i := range candidates {
 		profileType := getPreferenceScore(candidateProfileType(candidates[i]), profileTypePref)
-		gpu := getPreferenceScore(candidateGPUModel(candidates[i]), gpuPref)
-		metric := getPreferenceScore(candidateMetric(candidates[i]), metricPref)
-		precision := getPreferenceScore(candidatePrecision(candidates[i]), precisionPref)
+		gpu := utils.PreferenceScore(candidateGPUModel(candidates[i]), gpuPref)
+		metric := utils.PreferenceScore(candidateMetric(candidates[i]), metricPref)
+		precision := utils.PreferenceScore(candidatePrecision(candidates[i]), precisionPref)
 		if profileType == bestProfileType && gpu == bestGPU && metric == bestMetric && precision == bestPrecision {
 			identicalCount++
 		}
@@ -657,44 +660,23 @@ func candidateProfileType(c TemplateCandidate) string {
 	return ""
 }
 
-// Preference orders for template selection
-var (
-	// gpuPreferenceOrder ranks GPU models when scoring template candidates.
-	// Earlier entries are preferred. Instinct data-center accelerators are
-	// ranked above Radeon workstation GPUs; models not listed tie at the
-	// bottom via getPreferenceScore's fallback.
-	gpuPreferenceOrder = []string{
-		"MI325X", "MI300X", "MI250X", "MI210",
-		"R9700", "W7900",
-	}
-	metricPreferenceOrder = []string{
-		"latency", "throughput",
-	}
-	// Precision preference: primary ordering by bit-width (smaller preferred for performance).
-	// Secondary ordering by type: fp > bf > int (floating point preferred for accuracy).
-	precisionPreferenceOrder = []string{
-		"fp4", "int4", "fp8", "int8", "fp16", "bf16", "fp32",
-	}
-	profileTypePreferenceOrder = []string{
-		string(aimv1alpha1.AIMProfileTypeOptimized),
-		string(aimv1alpha1.AIMProfileTypePreview),
-		string(aimv1alpha1.AIMProfileTypeUnoptimized),
-	}
-)
+// profileTypePreferenceOrder is v1alpha1-specific because v1alpha1 has
+// no `general` profile type. GPU / metric / precision orders are shared
+// via internal/utils (AcceleratorModelPreferenceOrder,
+// MetricPreferenceOrder, PrecisionPreferenceOrder) so v1alpha2 ranks
+// the same way.
+var profileTypePreferenceOrder = []string{
+	string(aimv1alpha1.AIMProfileTypeOptimized),
+	string(aimv1alpha1.AIMProfileTypePreview),
+	string(aimv1alpha1.AIMProfileTypeUnoptimized),
+}
 
 func makePreferenceMap(prefs []string) map[string]int {
-	m := make(map[string]int)
-	for i, p := range prefs {
-		m[strings.ToUpper(p)] = i
-	}
-	return m
+	return utils.MakePreferenceMap(prefs)
 }
 
 func getPreferenceScore(value string, prefMap map[string]int) int {
-	if score, ok := prefMap[strings.ToUpper(value)]; ok {
-		return score
-	}
-	return len(prefMap) + 1000
+	return utils.PreferenceScore(value, prefMap)
 }
 
 func convertToTemplateMatchingResults(evaluations []CandidateEvaluation) []aimv1alpha1.AIMTemplateCandidateResult {

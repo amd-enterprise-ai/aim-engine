@@ -1,0 +1,52 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Reject base profile: a hand-authored base AIMProfile (no aimId or
+# modelSources) referenced by name must be rejected with reason
+# BaseProfile, and no InferenceService gets created.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-reject-skeleton
+spec:
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Apply a base AIMProfile (no aimId, no modelSources)
+      try:
+        - apply:
+            file: skeleton-profile.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: skeleton-profile
+              status:
+                deployable: false
+
+    - name: Apply a service that references the base profile by name
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert the service reports BaseProfile and does not create an ISVC
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: reject-skeleton-service
+              status:
+                (conditions[?type == 'ProfileReady']):
+                  - status: "False"
+                    reason: BaseProfile
+        - error:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: reject-skeleton-service

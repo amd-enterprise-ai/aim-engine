@@ -147,5 +147,66 @@ const (
 	LabelValueCacheTypeTemplate = "template-cache"
 
 	LabelValueCacheTypeTemplateCache = "template-cache"
-	LabelKeySourceModel              = AimLabelDomain + "/source-model"
+
+	// ==========================================================================
+	// AIMProfile provenance labels (v1alpha2 iteration 1)
+	//
+	// These labels are stamped on every AIMProfile / AIMClusterProfile so
+	// AIMProfileSet selectors can filter by role, origin, and source model
+	// without re-reading the producing object.
+	// ==========================================================================
+
+	// LabelKeyProfileRole marks an AIMProfile as `deployable` (has aimId +
+	// modelSources, ready for AIMService) or `base` (awaiting derivation).
+	// Iteration 1 emits only `deployable`; base-image discovery (iteration 2)
+	// emits `base` for custom-model derivation source material.
+	LabelKeyProfileRole = AimLabelDomain + "/profile-role"
+
+	// LabelKeyProfileOrigin classifies how the profile was produced:
+	// `discovered` (image discovery), `derived` (AIMProfileSet or
+	// AIMModel.spec.profiles.derivedFrom), or `user-authored` (no AIM owner).
+	LabelKeyProfileOrigin = AimLabelDomain + "/profile-origin"
+
+	// LabelKeySourceModel names the producing AIM(Cluster)Model. Stamped on
+	// profiles produced via image discovery or derivation. Used by
+	// AIMProfileSet `selector.modelRef`.
+	LabelKeySourceModel = AimLabelDomain + "/source-model"
+
+	// LabelKeySourceModelScope records whether the producing model was
+	// namespace-scoped (`namespace`) or cluster-scoped (`cluster`). Used by
+	// AIMProfileSet `selector.modelRef.scope`.
+	LabelKeySourceModelScope = AimLabelDomain + "/source-model-scope"
+
+	// ==========================================================================
+	// AIMProfile provenance label values
+	// ==========================================================================
+
+	// LabelValueProfileRoleBase is the `aim.eai.amd.com/profile-role` value
+	// stamped on base profiles (no aimId/modelSources). Emitted by base-image
+	// discovery for custom-model derivation source material.
+	LabelValueProfileRoleBase = "base"
+
+	// LabelValueProfileRoleDeployable is the `aim.eai.amd.com/profile-role`
+	// value stamped on fully deployable profiles (with aimId and modelSources).
+	LabelValueProfileRoleDeployable = "deployable"
+
+	// LabelValueProfileOriginDiscovered marks profiles produced by image
+	// discovery (AIMModel.spec.image native discovery path).
+	LabelValueProfileOriginDiscovered = "discovered"
+
+	// LabelValueProfileOriginDerived marks profiles produced by an
+	// AIMProfileSet or AIMModel.spec.profiles.derivedFrom flow.
+	LabelValueProfileOriginDerived = "derived"
+
+	// LabelValueProfileOriginUserAuthored marks profiles created independently
+	// by a user (no AIM controller owner reference).
+	LabelValueProfileOriginUserAuthored = "user-authored"
+
+	// LabelValueSourceModelScopeNamespace identifies a namespace-scoped
+	// producing AIMModel.
+	LabelValueSourceModelScopeNamespace = "namespace"
+
+	// LabelValueSourceModelScopeCluster identifies a cluster-scoped producing
+	// AIMClusterModel.
+	LabelValueSourceModelScopeCluster = "cluster"
 )

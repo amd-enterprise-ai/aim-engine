@@ -1,0 +1,21 @@
+# CPU-only profile. Requests 1 CPU via accelerator_count, which resolves to a
+# corev1.ResourceCPU request and trivially satisfies nodeHasResourceCapacity on
+# any kind node. No accelerator_model means no node affinity constraint, so the
+# profile stays supported on GPU-less clusters. Useful for deterministic
+# managedProfiles assertions in chainsaw tests.
+aim_id: HuggingFaceTB/SmolLM2-135M
+model_id: HuggingFaceTB/SmolLM2-135M
+metadata:
+  engine: vllm
+  accelerator_type: cpu
+  accelerator_count: 1
+  metric: latency
+  precision: bf16
+  type: unoptimized
+  manual_selection_only: true
+engine_args:
+  dtype: bfloat16
+  disable-log-requests: true
+env_vars:
+  OMP_NUM_THREADS: "8"
+  VLLM_CPU_KVCACHE_SPACE: "4"

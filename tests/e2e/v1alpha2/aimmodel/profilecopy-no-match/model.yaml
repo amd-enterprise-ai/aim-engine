@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: profilecopy-no-match-model
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        aimId: profilecopy/missing-source
+        modelId: profilecopy/missing-source
+    versionPolicy: pinned
+    version: 0.2.0
+    overrides:
+      modelSources:
+        - modelId: profilecopy/no-match-model
+          sourceUri: s3://models/profilecopy-no-match

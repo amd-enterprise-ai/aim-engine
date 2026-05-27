@@ -1,4 +1,11 @@
-# Frozen AIMClusterProfile: Ready status (no accelerator → CPU-only)
+# Frozen AIMClusterProfile: Ready status (no accelerator → CPU-only).
+#
+# The profile carries spec.modelSources because the CRD requires aimId and
+# modelSources to either both be set (deployable) or both be empty (base),
+# and AIMService can only resolve deployable profiles. The referenced
+# Hugging Face repo is fake on purpose — the chainsaw test freezes the
+# AIMProfileCache and AIMArtifact created by the controller to Ready so the
+# fake source is never actually fetched.
 apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterProfile
 metadata:
@@ -14,6 +21,9 @@ spec:
   type: optimized
   primary: true
   image: registry.example.com/test-image:1.0.0
+  modelSources:
+    - modelId: test/profile-model-fp8
+      sourceUri: hf://test/profile-model
 status:
   status: Ready
   version: 1.0.0

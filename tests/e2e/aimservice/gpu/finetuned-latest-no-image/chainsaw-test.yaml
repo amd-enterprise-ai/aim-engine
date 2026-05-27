@@ -37,6 +37,11 @@ metadata:
   name: aimservice-gpu-finetuned-latest-no-image
   labels:
     requires: gpu
+    # Copies an hf-token secret from aim-system at runtime so the
+    # downloader can fetch gated meta-llama weights. Excluded from
+    # default selectors; opt-in by overriding the selector or pointing
+    # CHAINSAW_TEST_DIR at this directory.
+    needs-secret: hf_token
 spec:
   description: >-
     Validate that a fine-tuned AIMModel with empty spec.image and

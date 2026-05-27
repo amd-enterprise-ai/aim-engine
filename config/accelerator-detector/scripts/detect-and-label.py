@@ -75,17 +75,44 @@ def build_feature_lines(detections: list) -> list:
     """Convert detection results into NFD feature file lines.
 
     Each detection dict has: accelerator_type, accelerator_model, accelerator_count.
-    We produce one label per detection with the accelerator count as value.
+    We emit two layers of labels so AIMProfiles can target either a specific
+    model or a generic family:
+
+      - Per-model:  feature.node.kubernetes.io/aim-accelerator.{MODEL}={count}
+                    e.g. aim-accelerator.MI300X=8, aim-accelerator.EPYC_ZEN5=1
+      - Per-family: feature.node.kubernetes.io/aim-accelerator.{TYPE}={count}
+                    e.g. aim-accelerator.GPU=8,    aim-accelerator.CPU=1
+
+    Family labels are required for AIM images whose embedded profile YAML
+    declares accelerator_model: CPU / GPU (the family name) rather than a
+    specific architecture. Without the family label, the v1alpha2 model
+    matcher (internal/v1alpha2/aimprofile/node_match.go) finds no nodes for
+    such profiles and reports them as unsupported.
+
+    Family counts sum across all model entries of the same type (e.g. a
+    hypothetical mixed MI300X+MI325X node aggregates to GPU=12).
     """
-    lines = []
-    seen = set()
+    seen_models = set()
+    family_counts: dict[str, int] = {}
+    model_lines: list[str] = []
+
     for det in detections:
         model = det.get("accelerator_model")
+        family = det.get("accelerator_type")
         count = det.get("accelerator_count", 0)
-        if not model or model in seen:
+        if not model:
             continue
-        seen.add(model)
-        lines.append(f"{LABEL_PREFIX}.{model}={count}")
+        if model not in seen_models:
+            seen_models.add(model)
+            model_lines.append(f"{LABEL_PREFIX}.{model}={count}")
+        if family:
+            family_counts[family] = family_counts.get(family, 0) + count
+
+    family_lines = [
+        f"{LABEL_PREFIX}.{family}={count}"
+        for family, count in sorted(family_counts.items())
+    ]
+    lines = model_lines + family_lines
 
     if lines:
         logger.info("Labels: %s", ", ".join(lines))

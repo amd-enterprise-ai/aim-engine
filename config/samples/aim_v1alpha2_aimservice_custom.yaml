@@ -1,0 +1,15 @@
+# Custom-model AIMService (ADR 0006b iteration 2, Appendix Example).
+#
+# Consumes the deployable AIMProfiles produced by the custom-model
+# derivation AIMModel (see aim_v1alpha2_aimmodel_custom.yaml). Resolution
+# is the standard model-only path: the controller desugars
+# spec.model.name into selector.modelRef.name + role=Deployable
+# internally and ranks the resulting candidates by primary > type > version.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: acme-custom-transformer-service
+  namespace: default
+spec:
+  model:
+    name: acme-custom-transformer

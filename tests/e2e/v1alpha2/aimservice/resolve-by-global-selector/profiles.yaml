@@ -1,0 +1,41 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: selector-fp8-profile
+spec:
+  aimId: selector-test/model
+  modelId: selector-test/model
+  profileId: cpu-fp8
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: optimized
+  primary: true
+  acceleratorModel: EPYC_ZEN5
+  acceleratorType: cpu
+  acceleratorCount: 1
+  image: registry.example.com/aim-cpu-base:0.12.0
+  modelSources:
+    - modelId: selector-test/model
+      sourceUri: hf://selector-test/model
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: selector-bf16-profile
+spec:
+  aimId: selector-test/model
+  modelId: selector-test/model
+  profileId: cpu-bf16
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  primary: false
+  acceleratorModel: EPYC_ZEN5
+  acceleratorType: cpu
+  acceleratorCount: 1
+  image: registry.example.com/aim-cpu-base:0.12.0
+  modelSources:
+    - modelId: selector-test/model
+      sourceUri: hf://selector-test/model

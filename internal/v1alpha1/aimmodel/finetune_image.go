@@ -54,12 +54,11 @@ package aimmodel
 import (
 	"context"
 	"fmt"
-	"strings"
 
-	"github.com/blang/semver/v4"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 )
 
 // imageResolver resolves the deployment image for fine-tuned template copies.
@@ -115,17 +114,26 @@ func (r *imageResolver) Resolve(ctx context.Context, match TemplateMatchResult) 
 		// Legacy fallback: status.imageMetadata was cached before
 		// AIM_BASE_IMAGE_REF extraction existed and we don't re-inspect a
 		// model that already has metadata. Synthesize aim-base:MAJOR.MINOR
-		// from the owner's spec.image tag and let rebaseImageRegistry graft
-		// the registry+org back on. When the tag isn't semver-parseable we
-		// can't synthesize anything sensible — fail and let the caller defer.
-		baseRef = legacyBaseImageFromSource(owner.specImage)
+		// from the owner's spec.image tag and let aimimage.RebaseRegistry
+		// graft the registry+org back on. When the tag isn't semver-shaped
+		// we can't synthesize anything sensible — fail and let the caller
+		// defer.
+		baseRef = aimimage.LegacyBaseImageFromSource(owner.specImage)
 		if baseRef == "" {
 			return "", fmt.Errorf("source owner %s/%s has no baseImageRef and no semver tag to fall back to",
 				match.OwnerNamespace, match.Spec.ModelName)
 		}
+	} else {
+		// Normalise AIM_BASE_IMAGE_REF tags to MAJOR.MINOR (e.g.
+		// `aim-base:0.11-rc21` → `aim-base:0.11`). Build pipelines bake
+		// release-candidate tags into the image but the deployable
+		// aim-base image is always tagged with its MAJOR.MINOR rolling
+		// tag; without this rewrite the rebased reference points at a
+		// non-existent registry coordinate.
+		baseRef = aimimage.NormalizeBaseImageTag(baseRef)
 	}
 
-	return rebaseImageRegistry(owner.specImage, baseRef), nil
+	return aimimage.RebaseRegistry(owner.specImage, baseRef), nil
 }
 
 func (r *imageResolver) lookupOwner(ctx context.Context, namespace, name string) (ownerInfo, error) {
@@ -169,64 +177,4 @@ func (r *imageResolver) lookupOwner(ctx context.Context, namespace, name string)
 	}
 	r.cache[key] = info
 	return info, nil
-}
-
-// rebaseImageRegistry rewrites baseImageRef so its registry+org prefix matches
-// sourceImage while preserving baseImageRef's image name and tag. This lets a
-// fine-tuned deployment pull aim-base from the same registry/org as the source
-// base model — so mirroring the base model to a private registry automatically
-// covers the aim-base deployment too.
-//
-// Examples:
-//
-//	rebaseImageRegistry("ghcr.io/silogen/qwen3:0.11",
-//	                    "docker.io/amdenterpriseai/aim-base:0.11")
-//	  → "ghcr.io/silogen/aim-base:0.11"
-//	rebaseImageRegistry("docker.io/amdenterpriseai/qwen3:0.11",
-//	                    "ghcr.io/silogen/aim-base:0.11")
-//	  → "docker.io/amdenterpriseai/aim-base:0.11"
-//
-// When sourceImage lacks a "/" (no registry+org to graft on) or is empty,
-// baseImageRef is returned unchanged.
-func rebaseImageRegistry(sourceImage, baseImageRef string) string {
-	srcSlash := strings.LastIndex(sourceImage, "/")
-	if srcSlash <= 0 {
-		return baseImageRef
-	}
-	prefix := sourceImage[:srcSlash]
-
-	baseSlash := strings.LastIndex(baseImageRef, "/")
-	if baseSlash < 0 {
-		return prefix + "/" + baseImageRef
-	}
-	return prefix + baseImageRef[baseSlash:]
-}
-
-// legacyBaseImageFromSource synthesizes an aim-base reference for AIMModels
-// whose status.imageMetadata was populated before AIM_BASE_IMAGE_REF extraction
-// existed. It returns `aim-base:MAJOR.MINOR` derived from the source image's
-// tag, or "" when the tag isn't parseable as semver. The result has no
-// registry+org prefix on purpose — rebaseImageRegistry grafts that on from
-// the source image so the fallback inherits the same mirror the base model
-// already uses.
-//
-// Truncating to MAJOR.MINOR matches how the aim-base image is actually
-// published (e.g. `aim-base:0.11`, not `aim-base:0.11.0`).
-func legacyBaseImageFromSource(sourceImage string) string {
-	colon := strings.LastIndex(sourceImage, ":")
-	if colon < 0 || colon == len(sourceImage)-1 {
-		return ""
-	}
-	// Guard against registry ports like `registry.local:5000/image` by only
-	// treating the last `:` as the tag separator when the part after it has
-	// no `/`.
-	tag := sourceImage[colon+1:]
-	if strings.Contains(tag, "/") {
-		return ""
-	}
-	v, err := semver.ParseTolerant(tag)
-	if err != nil {
-		return ""
-	}
-	return fmt.Sprintf("aim-base:%d.%d", v.Major, v.Minor)
 }

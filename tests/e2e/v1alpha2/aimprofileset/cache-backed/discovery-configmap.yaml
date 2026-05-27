@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cache-backed-discovery
+  annotations:
+    aim.eai.amd.com/discovery-source-image: quay.io/amd/aim-cached:0.9.0
+data:
+  metadata.json: |
+    {
+      "aimId": "cached-org/cached-model",
+      "sourceImage": "quay.io/amd/aim-cached:0.9.0",
+      "baseImage": "quay.io/amd/aim-base-vllm:0.9.0",
+      "discoveryCommandVersion": "v1",
+      "profileIds": ["cpu-default"]
+    }
+  # Flattened from in-image path "cached-org/cached-model/cpu-default.yaml".
+  # "/" is not allowed in ConfigMap keys, so directory separators become "__".
+  profiles.cached-org__cached-model__cpu-default.yaml: |
+    aim_id: cached-org/cached-model
+    model_id: cached-org/cached-model
+    metadata:
+      engine: vllm
+      accelerator_type: cpu
+      accelerator_count: 1
+      metric: latency
+      precision: fp16
+      type: general
+    engine_args:
+      dtype: float16

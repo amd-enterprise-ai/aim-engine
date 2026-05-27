@@ -22,89 +22,49 @@
 
 package v1alpha2
 
-// Types in this file (AIMMetric, AIMPrecision, AIMProfileType, AIMModelSource) mirror
-// v1alpha1 equivalents with v1alpha2-specific changes (e.g., AIMProfileType adds "general").
-// Each API version is self-contained per Kubernetes convention.
-
 import (
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 )
+
+// Aliases for shared types now hosted in v1alpha1. v1alpha1 owns the canonical
+// definition (along with AIMServiceSpec, AIMModelSpec etc.) and v1alpha2 re-
+// exports them as aliases so v1alpha2-package code stays terse. v1alpha2
+// cannot import v1alpha1 cyclically because v1alpha1 does not import v1alpha2.
 
 // AIMMetric enumerates supported optimization targets.
-// +kubebuilder:validation:Enum=latency;throughput
-type AIMMetric string
-
-const (
-	AIMMetricLatency    AIMMetric = "latency"
-	AIMMetricThroughput AIMMetric = "throughput"
-)
+type AIMMetric = aimv1alpha1.AIMMetric
 
 // AIMPrecision enumerates supported numeric precisions.
-// +kubebuilder:validation:Enum=fp4;fp8;fp16;fp32;bf16;int4;int8
-type AIMPrecision string
-
-const (
-	AIMPrecisionFP4  AIMPrecision = "fp4"
-	AIMPrecisionFP8  AIMPrecision = "fp8"
-	AIMPrecisionFP16 AIMPrecision = "fp16"
-	AIMPrecisionFP32 AIMPrecision = "fp32"
-	AIMPrecisionBF16 AIMPrecision = "bf16"
-	AIMPrecisionInt4 AIMPrecision = "int4"
-	AIMPrecisionInt8 AIMPrecision = "int8"
-)
+type AIMPrecision = aimv1alpha1.AIMPrecision
 
 // AIMProfileType indicates the optimization level of a profile.
-// Hierarchy: optimized > general > preview > unoptimized.
-// +kubebuilder:validation:Enum=optimized;general;preview;unoptimized
-type AIMProfileType string
-
-const (
-	AIMProfileTypeOptimized   AIMProfileType = "optimized"
-	AIMProfileTypeGeneral     AIMProfileType = "general"
-	AIMProfileTypePreview     AIMProfileType = "preview"
-	AIMProfileTypeUnoptimized AIMProfileType = "unoptimized"
-)
+type AIMProfileType = aimv1alpha1.AIMProfileType
 
 // AcceleratorType distinguishes CPU from GPU accelerators.
-// Used by AIM Engine to determine the resource derivation strategy
-// (e.g., gpu → amd.com/gpu, cpu → cpu).
-// +kubebuilder:validation:Enum=gpu;cpu
-type AcceleratorType string
-
-const (
-	AcceleratorTypeCPU AcceleratorType = "cpu"
-	AcceleratorTypeGPU AcceleratorType = "gpu"
-)
+type AcceleratorType = aimv1alpha1.AcceleratorType
 
 // AIMModelSource describes a downloadable model artifact with optional credentials.
-type AIMModelSource struct {
-	// ModelID is the canonical identifier in {org}/{name} format.
-	// Determines the cache mount path: /workspace/cache/{modelId}
-	// +required
-	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$`
-	ModelID string `json:"modelId"`
+type AIMModelSource = aimv1alpha1.AIMModelSource
 
-	// SourceURI is the location from which the model should be downloaded.
-	// Supported schemes: hf:// (Hugging Face Hub), s3:// (S3-compatible storage).
-	// +kubebuilder:validation:Pattern=`^(hf|s3)://[^ \t\r\n]+$`
-	SourceURI string `json:"sourceUri"`
+// Re-exported enum constants for convenience.
+const (
+	AIMMetricLatency    = aimv1alpha1.AIMMetricLatency
+	AIMMetricThroughput = aimv1alpha1.AIMMetricThroughput
 
-	// Size is the expected storage space required for this model artifact.
-	// Optional — if not specified, the download job discovers the size automatically.
-	// +optional
-	Size *resource.Quantity `json:"size,omitempty"`
+	AIMPrecisionAuto = aimv1alpha1.AIMPrecisionAuto
+	AIMPrecisionFP4  = aimv1alpha1.AIMPrecisionFP4
+	AIMPrecisionFP8  = aimv1alpha1.AIMPrecisionFP8
+	AIMPrecisionFP16 = aimv1alpha1.AIMPrecisionFP16
+	AIMPrecisionFP32 = aimv1alpha1.AIMPrecisionFP32
+	AIMPrecisionBF16 = aimv1alpha1.AIMPrecisionBF16
+	AIMPrecisionInt4 = aimv1alpha1.AIMPrecisionInt4
+	AIMPrecisionInt8 = aimv1alpha1.AIMPrecisionInt8
 
-	// Precision describes the runtime precision this source is compatible with.
-	// Used to match model sources to profiles during custom weight onboarding.
-	// +optional
-	// +kubebuilder:validation:Enum=fp4;fp8;fp16;fp32;bf16;int4;int8
-	Precision AIMPrecision `json:"precision,omitempty"`
+	AIMProfileTypeOptimized   = aimv1alpha1.AIMProfileTypeOptimized
+	AIMProfileTypeGeneral     = aimv1alpha1.AIMProfileTypeGeneral
+	AIMProfileTypePreview     = aimv1alpha1.AIMProfileTypePreview
+	AIMProfileTypeUnoptimized = aimv1alpha1.AIMProfileTypeUnoptimized
 
-	// Env specifies per-source credential overrides.
-	// Takes precedence over base-level env for the same variable name.
-	// +optional
-	// +listType=map
-	// +listMapKey=name
-	Env []corev1.EnvVar `json:"env,omitempty"`
-}
+	AcceleratorTypeCPU = aimv1alpha1.AcceleratorTypeCPU
+	AcceleratorTypeGPU = aimv1alpha1.AcceleratorTypeGPU
+)

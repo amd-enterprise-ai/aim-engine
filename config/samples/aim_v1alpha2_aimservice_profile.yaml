@@ -1,0 +1,13 @@
+# By-name resolution: AIMService references an AIMProfile (or AIMClusterProfile)
+# directly via spec.profile.name. This is the lowest-friction shape — the user
+# already knows which profile they want.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  labels:
+    app.kubernetes.io/name: aim-engine
+    app.kubernetes.io/managed-by: kustomize
+  name: aimservice-by-name-sample
+spec:
+  profile:
+    name: qwen-qwen3-32b-fp8-mi300x

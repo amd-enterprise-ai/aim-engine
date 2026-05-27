@@ -1,781 +1,292 @@
 # AIM Models
 
-AIM Model resources form a catalog that maps model identifiers to specific container images. This document explains the model resource types, discovery mechanism, and lifecycle.
+`AIMModel` and `AIMClusterModel` are the entry point for getting a model onto the cluster. Each resource describes one model and produces a set of `AIMProfile` resources that `AIMService` can deploy.
 
-## Overview
+!!! info "v1alpha2"
+    This page documents the `aim.eai.amd.com/v1alpha2` API. For the v1alpha1 `AIMModel` shape (with `spec.custom`, `spec.modelSources`, `spec.discovery`, etc.) see [Legacy AIMModel](../legacy/aimmodel-v1alpha1.md).
 
-Model resources serve two purposes:
+## Three flows
 
-1. **Registry**: Translate abstract model references into concrete container images
-2. **Version control**: Update which container serves a model without changing service configurations
+Every v1alpha2 AIMModel uses one of three flows. The flow is determined by which field you populate on the spec:
 
-## Cluster vs Namespace Scope
+| Flow | When to use | Spec shape | Source of profiles | `status.kind` |
+|---|---|---|---|---|
+| **Official** | Deploying a published AMD-supported AIM model unmodified | `spec.image` set | The AIM container image itself (discovery) | `Image` |
+| **Fine-tuned** | Deploying a fine-tune of a published architecture | `spec.profiles.derivedFrom` selecting deployable profiles | A previously-applied official AIMModel | `Derived` |
+| **Custom** | Deploying a model whose architecture isn't in the catalog | `spec.profiles.derivedFrom` selecting base-image base profiles | A previously-applied base-image AIMModel | `Custom` |
 
-### AIMClusterModel
+The onboarding contract is enforced by CRD validation: **exactly one** of `spec.image` or `spec.profiles` must be set. Mixing them — or setting neither — is rejected at admission.
 
-Cluster-scoped models are typically installed by administrators through GitOps workflows or Helm charts. They represent curated model catalogs maintained by platform teams or model publishers.
+The flow you used is surfaced as `status.kind` and shown as the `KIND` column in `kubectl get aimmodel`. Note that **base-image AIMModels classify as `Image`** (they're a sub-case of the Official flow with a generic image, not a fourth flow). To filter for base-image models specifically, combine `status.kind=Image` with `status.managedProfiles.base > 0` — see [Base-image models](#base-image-models) below.
 
-Cluster models provide a consistent baseline across all namespaces. Any namespace can reference a cluster model unless it defines a namespace-scoped model with the same name, which takes precedence.
+End-to-end guides for the two derivation flows:
 
-**Discovery for cluster models** runs in the operator namespace (default: `aim-system`). Auto-generated templates are created as cluster-scoped resources. When a cluster model uses the `v1alpha2` API, discovery also creates [AIMClusterProfiles](profiles.md).
+- [Fine-Tuned Models](../guides/fine-tuned-models.md)
+- [Custom Models](../guides/custom-models.md)
 
-### AIMModel
+## Cluster vs namespace scope
 
-Namespace-scoped models allow teams to:
+| Resource | Scope | Typical owner | Produces |
+|---|---|---|---|
+| `AIMModel` | Namespace | Application / ML team | `AIMProfile` in the same namespace |
+| `AIMClusterModel` | Cluster | Platform team | `AIMClusterProfile` across the cluster |
 
-- Define team-specific model variants
-- Override cluster-level definitions for testing
-- Control model access at the namespace level
+When an `AIMService` references a model by name, AIM Engine looks for a namespace-scoped `AIMModel` first, then falls back to a cluster-scoped `AIMClusterModel` with the same name. This lets teams override a cluster default without affecting other namespaces.
 
-When both cluster and namespace models exist with the same `metadata.name`, the namespace resource takes precedence within that namespace.
+The two kinds share the same `spec` and `status` shape — every spec example below applies to both unless noted.
 
-**Discovery for namespace models** runs in the model's namespace. Auto-generated templates are created as namespace-scoped resources. When a namespace model uses the `v1alpha2` API, discovery also creates [AIMProfiles](profiles.md).
+## Flow 1 — Official AIM model
 
-## Model Specification
-
-An AIM Model uses `metadata.name` as the canonical model identifier:
+Use this when AMD publishes an AIM image for the exact model you want to deploy.
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMClusterModel
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
 metadata:
-  name: qwen-qwen3-32b
+  name: llama-3-8b-official
+  namespace: ml-team
 spec:
-  image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
-  discovery:
-    extractMetadata: true
-    createServiceTemplates: true
-  resources:
-    limits:
-      cpu: "8"
-      memory: 64Gi
-    requests:
-      cpu: "4"
-      memory: 32Gi
+  image: quay.io/amd/aim-llama-3-8b-instruct:0.9.0
+  imagePullSecrets:
+    - name: registry-creds
+  serviceAccountName: aim-runtime
 ```
 
-### Fields
+The controller:
 
-| Field | Purpose                                                                                                                                                           |
-| ----- |-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `image` | Container image URI implementing this model. The operator inspects this image during discovery.                                                                   |
-| `discovery` | Controls metadata extraction and automatic template generation. Discovery is attempted automatically.                                                             |
-| `discovery.createServiceTemplates` | When true (default), creates ServiceTemplates from recommended deployments published by the image.                                                                |
-| `defaultServiceTemplate` | Default template name to use when services reference this model without specifying a template. Optional.                                                          |
-| `imagePullSecrets` | Secrets for pulling the container image during discovery and inference. Must exist in the same namespace as the model (or operator namespace for cluster models). |
-| `serviceAccountName` | Service account to use for discovery jobs and metadata extraction. If empty, uses the default service account.                                                    |
-| `resources` | Default resource requirements. These serve as baseline values that templates and services can override.                                                           |
+1. Runs an in-cluster **discovery Job** that inspects the image's profile YAMLs (`/workspace/aim-runtime/profiles/<aim_id>/*.yaml`) and writes a normalised catalog into a `ConfigMap` (`status.discoveryCacheRef`).
+2. Evaluates each discovered profile against the cluster's nodes — GPU model, accelerator count, resource capacity.
+3. Materialises one `AIMProfile` per supported entry. Unsupported entries (no matching nodes) are counted in `status.discoveredProfiles.unsupported` but not materialised.
+4. Watches node events and re-evaluates the catalog when nodes are added or removed.
 
-## Discovery Mechanism
+The resulting profiles are **deployable** (carry `aimId` and `modelSources`) and labelled `aim.eai.amd.com/profile-role=deployable`, `aim.eai.amd.com/profile-origin=discovered`.
 
-Discovery is an automatic process that extracts metadata from container images and creates templates.
-
-### Discovery Process
-
-When discovery is enabled:
-
-1. **Registry Inspection**: The controller directly queries the container registry
-   using the operator's network context and any configured imagePullSecrets
-
-2. **Image Metadata Fetch**: Using go-containerregistry, the controller pulls
-   image metadata (labels) without downloading the full image
-
-3. **Metadata Storage**: Extracted metadata is written to `status.imageMetadata`
-
-4. **Template Generation**: If `createServiceTemplates: true`, the controller examines the image's recommended deployments and creates corresponding ServiceTemplate resources
-
-### Expected Labels
-
-AIM discovery looks for container image labels with the following prefix:
-- `com.amd.aim.model.canonicalName`
-- `com.amd.aim.model.deployments`
-Images without these labels will have minimal metadata. If `createServiceTemplates: true`
-but no `recommendedDeployments` are found, no templates are created.
-
-## Lifecycle and Status
-
-### Status Field
-
-The `status` field tracks discovery progress:
-
-| Field | Description |
-| ----- | ----------- |
-| `status` | Enum: `Pending`, `Progressing`, `Ready`, `Degraded`, `Failed` |
-| `conditions` | Detailed conditions including `RuntimeConfigReady`, `ImageMetadataReady`, and `ServiceTemplatesReady` |
-| `resolvedRuntimeConfig` | Metadata about the runtime config that was resolved (name, namespace, scope, UID) |
-| `imageMetadata` | Extracted metadata from the container image including model info, OCI metadata, and `baseImageRef` (the base image the AIM image was built from). |
-
-### Status Values
-
-- **Pending**: Initial state, waiting for reconciliation
-- **Progressing**: Discovery job running or templates being created
-- **Ready**: Discovery succeeded and all auto-generated templates are healthy
-- **Degraded**: Discovery succeeded but some templates have issues
-- **Failed**: Discovery failed or required labels missing
-
-### Conditions
-
-**RuntimeConfigReady**: Reports runtime config resolution status. Common reasons:
-
-- `ConfigFound`: Runtime configuration was successfully resolved
-- `DefaultConfigNotFound`: No default runtime config found (non-fatal)
-- `ConfigNotFound`: Explicitly referenced runtime config not found
-
-**ImageMetadataReady**: Reports image inspection status. Common reasons:
-
-- `ImageMetadataFound`: Metadata extraction succeeded
-- `ImageFound`: Image is reachable, but metadata labels are missing
-- `MetadataExtractionFailed`: Failed to extract metadata from the image
-
-### Toggling Discovery
-
-You can enable discovery after image creation:
+### Status signal
 
 ```bash
-kubectl edit aimclustermodel qwen-qwen3-32b
-# Set spec.discovery.extractMetadata: true
+kubectl get aimmodel llama-3-8b-official -o jsonpath='{.status}' | jq
 ```
 
-The controller runs extraction on the next reconciliation and updates status accordingly.
-
-Disabling discovery after templates exist leaves templates in place. Existing templates are not deleted automatically.
-
-## Resource Resolution
-
-When services reference a model, the controller merges resources from multiple sources:
-
-1. Service-level: `AIMService.spec.resources` (highest precedence)
-2. Template-level: `AIMServiceTemplate.spec.resources`
-3. Model-level: `AIMModel.spec.resources` (baseline)
-
-If GPU quantities remain unset after merging, the controller copies them from discovery metadata recorded on the template (`status.profile.metadata.gpu_count`).
-
-## Model Lookup
-
-For namespace-scoped lookups (from templates or services in a namespace):
-
-1. Check for `AIMModel` in the same namespace
-2. Fall back to `AIMClusterModel` with the same name
-
-This allows namespace models to override cluster baselines.
-
-## Examples
-
-### Cluster Model with Discovery
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMClusterModel
-metadata:
-  name: qwen-qwen3-32b
-spec:
-  image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
-  runtimeConfigName: platform-default
-  discovery:
-    extractMetadata: true
-    createServiceTemplates: true
-  resources:
-    limits:
-      cpu: "8"
-      memory: 64Gi
-    requests:
-      cpu: "4"
-      memory: 32Gi
+```json
+{
+  "status": "Ready",
+  "aimId": "meta-llama/Llama-3-8B-Instruct",
+  "baseImage": "ghcr.io/silogen/aim-base:0.11",
+  "discoveryCacheRef": { "name": "llama-3-8b-official-discovery-5e8ad928" },
+  "discoveredProfiles": { "total": 7, "supported": 5, "unsupported": 2 },
+  "managedProfiles": { "total": 5, "ready": 5, "deployable": 5, "base": 0, "notAvailable": 0 }
+}
 ```
 
-### Namespace Model Without Discovery
+## Flow 2 — Fine-tuned model
+
+Use this when you have your own fine-tune of a model whose architecture **is** in the catalog. The official AIMModel's profiles already carry the tuned engine arguments and accelerator pairings — you reuse them and override only the model sources.
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMModel
 metadata:
-  name: qwen-qwen3-32b-dev
+  name: llama-3-8b-finetune-acme
   namespace: ml-team
 spec:
-  image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
-  runtimeConfigName: ml-team
-  defaultServiceTemplate: custom-template-name
-  discovery:
-    extractMetadata: false  # skip image metadata extraction
-    createServiceTemplates: false
-  resources:
-    limits:
-      cpu: "6"
-      memory: 48Gi
+  profiles:
+    derivedFrom:
+      selector:
+        aimId: meta-llama/Llama-3-8B-Instruct
+        acceleratorModel: MI300X
+    versionPolicy: pinned
+    version: "0.9.0"
+    overrides:
+      modelSources:
+        - modelId: acme/llama-3-8b-finetune
+          sourceUri: hf://acme/llama-3-8b-finetune
 ```
 
-### Enabling Discovery for Private Container Images
+`selector.aimId` matches source profiles by their existing `spec.aimId`. The derived profile inherits `aimId` from the source and only `modelSources` and `modelId` change.
+
+See [Fine-Tuned Models](../guides/fine-tuned-models.md) for the full walkthrough, version-policy semantics, and override merge rules.
+
+## Flow 3 — Custom model
+
+Use this when your model's architecture isn't in the catalog. You apply a **base-image AIMModel** first to produce base profiles (generic runtime configs with no model identity), then a custom-model AIMModel that overlays your weights and identity on top.
 
 ```yaml
-# Secret in namespace
-apiVersion: v1
-kind: Secret
-metadata:
-  name: private-registry
-  namespace: ml-team
-type: kubernetes.io/dockerconfigjson
-data:
-  .dockerconfigjson: BASE64_CONFIG
----
-# Runtime config in namespace
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMRuntimeConfig
-metadata:
-  name: default
-  namespace: ml-team
-spec:
-  serviceAccountName: aim-runtime
-  imagePullSecrets:
-    - name: private-registry
----
-# Model with discovery
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMModel
 metadata:
-  name: proprietary-model
+  name: aim-base-vllm
   namespace: ml-team
 spec:
-  image: private.registry/models/proprietary:v1
-  runtimeConfigName: default  # uses config above
-  discovery:
-    extractMetadata: true
-    createServiceTemplates: true
+  image: amdenterpriseai/aim-base:0.11
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: acme-custom-transformer
+  namespace: ml-team
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        role: base
+        modelRef:
+          name: aim-base-vllm
+          scope: Namespace
+    versionPolicy: all
+    overrides:
+      aimId: acme/custom-transformer
+      modelId: acme/custom-transformer
+      modelSources:
+        - modelId: acme/custom-transformer
+          sourceUri: s3://acme-models/custom-transformer
 ```
+
+The shape differs from fine-tunes in two ways:
+
+- `selector.role: base` matches only base profiles; `selector.modelRef.name` pins to a specific base-image AIMModel.
+- Target identity for the derived profile lives on `overrides.{aimId,modelId}` (required by CEL when `role: base` — base profiles ship with no identity to inherit).
+
+See [Custom Models](../guides/custom-models.md) for the full walkthrough, the identity-stamping semantics, and base-image requirements.
+
+## Base-image models
+
+A **base-image AIMModel** is just an official-flow AIMModel whose image happens to be a generic AIM base image — one whose profile YAMLs declare runtime/engine/accelerator settings but leave `model_id` and `model_sources` empty. The controller materialises those entries as **base** AIMProfiles:
+
+- `status.deployable: false`
+- `aim.eai.amd.com/profile-role: base`
+- `aim.eai.amd.com/profile-origin: discovered`
+
+Base profiles cannot back an `AIMService` directly. They exist as source material for a custom-model derivation (see [Flow 3](#flow-3-custom-model)).
+
+A model is a base-image AIMModel when `status.managedProfiles.base > 0` and `status.managedProfiles.deployable == 0` (with `status.kind: Image`). The `kind` is `Image` rather than its own value because — mechanically — a base image is just a regular image whose profile YAMLs happen to leave the model identity fields blank; the image-discovery flow is the same. The `managedProfiles.base > 0` count is what flags the profiles as base-only.
+
+## Discovery cache
+
+For both official and base-image flows, the discovery Job writes its output into a `ConfigMap` that the controller treats as the normalised catalog. The cache stores:
+
+- Parsed profile YAMLs from the image
+- Normalised metadata in the same shape that real `AIMProfile` resources use
+- The base image extracted from `AIM_BASE_IMAGE_REF` when available
+
+`status.discoveryCacheRef` points at this `ConfigMap`. `status.discovery` tracks the job lifecycle:
+
+| Field | Description |
+|---|---|
+| `discovery.attempts` | Number of discovery Job attempts so far |
+| `discovery.lastAttemptTime` | Timestamp of the most recent attempt |
+| `discovery.lastFailureReason` | Reason the most recent attempt failed (e.g. `LogParseFailed`, `ImagePullBackOff`) |
+| `discovery.specHash` | Hash of the inputs that invalidate the cache (image, imagePullSecrets, serviceAccountName, discovery command version) |
+
+When `specHash` changes — for example, you rotate `serviceAccountName` or upgrade the image tag — the operator drops the cache and re-runs discovery.
+
+## Profile-set delegation
+
+For derivation flows (fine-tuned and custom), the controller synthesises a child `AIMProfileSet` (or `AIMClusterProfileSet`) named `<model>-profiles-<hash>` and lets it produce the derived profiles. The model summarises the profile-set output back onto its own status; see [AIM Profile Sets](profilesets.md) for the mechanics.
+
+`status.profileSetRef` points at the child resource:
+
+```bash
+kubectl get aimmodel acme-custom-transformer \
+  -o jsonpath='{.status.profileSetRef.name}'
+# acme-custom-transformer-profiles-2be25a47
+```
+
+Official-flow models do not create a child profile set — `status.profileSetRef` is empty.
+
+## Spec fields
+
+The unified `spec` shape used by all three flows:
+
+| Field | Used by | Description |
+|---|---|---|
+| `image` | Official, Base | Source image to inspect for discovery. Mutually exclusive with `derivedFrom`. |
+| `derivedFrom` | Fine-tuned, Custom | Derivation spec — selector, version policy, overrides. Mutually exclusive with `image`. Reuses [`AIMProfileSetSpec`](profilesets.md#spec-shape). |
+| `imagePullSecrets` | All | Secrets used for image inspection and propagated to derived runtime profiles. |
+| `serviceAccountName` | All | Service account propagated to managed child resources. |
+
+The v1alpha2 CRD explicitly forbids the legacy v1alpha1 fields (`spec.aimId`, `spec.modelSources`, `spec.custom`, `spec.customTemplates`, `spec.discovery`, `spec.defaultServiceTemplate`, `spec.runtimeConfigName`, `spec.env`, `spec.imageMetadata`, `spec.profileCopy`) — admission rejects them with a targeted error message.
+
+## Status fields
+
+| Field | Description |
+|---|---|
+| `status` | Overall status (`Pending`, `Progressing`, `Ready`, `Degraded`, `Failed`, `NotAvailable`) |
+| `conditions` | Detailed reconciliation conditions (see [Conditions Reference](../reference/conditions.md)) |
+| `kind` | Discriminator for the onboarding flow that produced this model's profiles: `Image` (Flow 1 — discovered from `spec.image`, including base-image AIMs), `Derived` (Flow 2 — fine-tune-style overlay on another deployable model), or `Custom` (Flow 3 — BYO weights overlaid on a base image's base profiles). Populated by the v1alpha2 controller from the spec shape; the deprecated `sourceType` field is a v1alpha1-only two-way variant that conflates Derived and Custom — read `kind` instead. |
+| `aimId` | Resolved architecture identifier — populated by discovery for `Image` models, inherited from `profiles.derivedFrom.overrides.aimId` for `Custom`/`Derived` models |
+| `baseImage` | Extracted `AIM_BASE_IMAGE_REF` when available |
+| `discoveryCacheRef` | Reference to the normalised discovery cache `ConfigMap` (official and base-image flows only) |
+| `discoveredProfiles` | Counts: `total`, `supported`, `unsupported`, plus `byHardware[]` listing each discovered hardware footprint with the `{metric, precision}` profiles shipped under it (so unsupported profiles surface explicitly). |
+| `discovery` | Discovery Job state: `attempts`, `lastAttemptTime`, `lastFailureReason`, `specHash` |
+| `profileSetRef` | Reference to the synthesised child profile set (derivation flows only) |
+| `managedProfiles` | Counts: `total`, `ready`, `notAvailable`, `deployable`, `base` |
+
+The `managedProfiles` counts always serialise zero values explicitly (no `omitempty`), so `kubectl` printcolumns and assertions on `.status.managedProfiles.{total,ready,...}` are stable.
+
+## Resolution and precedence
+
+When an `AIMService` references a model by name, AIM Engine resolves it in this order:
+
+1. Namespace-scoped `AIMModel` with that name.
+2. Cluster-scoped `AIMClusterModel` with that name.
+
+Namespace wins. The resolved scope is recorded in the service's `status.resolvedModel.scope`.
 
 ## Troubleshooting
 
-### Discovery Fails
+### Discovery fails
 
-Check the operator logs for registry access errors:
+Check operator logs for image-inspection errors:
 
 ```bash
-kubectl -n aim-system logs -l app.kubernetes.io/name=aim-engine --tail=100 | grep -i "<model-name>"
+kubectl -n aim-system logs -l app.kubernetes.io/name=aim-engine --tail=100 \
+  | grep -i "<model-name>"
+```
+
+Inspect the discovery Job directly:
+
+```bash
+kubectl -n <namespace> get jobs -l aim.eai.amd.com/model=<model-name>
+kubectl -n <namespace> logs job/<discovery-job>
 ```
 
 Common causes:
-- Missing or invalid imagePullSecrets (secrets must exist in operator namespace for cluster models)
-- Image doesn't exist or tag is invalid
-- Network connectivity issues to the registry
 
-### Templates Not Auto-Created
+- Missing or invalid `imagePullSecrets`
+- Image reference not found at the registry
+- `LogParseFailed` — the container is not an AIM-compatible image
+- Registry authentication or connectivity failures
 
-Check the model status:
+`status.discovery.lastFailureReason` captures the most recent reason, and `status.conditions[?(@.type=='DiscoveryReady')]` carries the human-readable message including the next retry interval.
 
-```bash
-kubectl get aimclustermodel <name> -o yaml
-# or
-kubectl -n <namespace> get aimmodel <name> -o yaml
-```
+### Model is `Ready` but no profiles materialised
 
-Look for:
-
-- `discovery.extractMetadata: false` - metadata extraction is disabled
-- `discovery.createServiceTemplates: false` - auto-template creation is disabled
-- Model condition reasons such as `NoTemplatesExpected` or `CreatingTemplates`
-
-### ImageMetadataReady Condition False
-
-The container image is missing required labels or the discovery job failed. Check:
+`status.managedProfiles.total == 0` and `status.discoveredProfiles.unsupported > 0` means discovery succeeded but none of the discovered profiles are compatible with the cluster's hardware. Compare the cluster's accelerator labels:
 
 ```bash
-kubectl get aimclustermodel <name> -o jsonpath='{.status.conditions[?(@.type=="ImageMetadataReady")]}'
+kubectl get nodes -o jsonpath='{.items[*].metadata.labels}' \
+  | tr ',' '\n' | grep aim-accelerator
 ```
 
-Inspect the container image labels:
+against the accelerator requirements in the discovery cache `ConfigMap`. Add matching nodes or, if the discovered profiles are wrong, fix the source image.
+
+### Derivation produces no profiles
+
+`status.profileSetRef` points at the child `AIMProfileSet`. Inspect it:
 
 ```bash
-docker pull <image>
-docker inspect <image> --format='{{json .Config.Labels}}'
+kubectl get aimprofileset $(kubectl get aimmodel <name> \
+  -o jsonpath='{.status.profileSetRef.name}') -o yaml
 ```
 
-## Auto-Creation from Services
-
-When a service uses `spec.model.image` directly (instead of `spec.model.name`), AIM automatically creates a model resource if one doesn't already exist with that image URI. Auto-created models are namespace-scoped.
-
-### Discovery for Auto-Created Models
-
-The runtime config's `spec.model.autoDiscovery` field controls whether auto-created models run discovery:
-
-```yaml
-spec:
-  model:
-    autoDiscovery: true  # auto-created models run discovery and create templates
-```
-
-### Example
-
-Service using direct image reference:
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMService
-metadata:
-  name: my-service
-  namespace: ml-team
-spec:
-  model:
-    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
-  runtimeConfigName: default
-```
-
-If the runtime config has `autoDiscovery: true`, AIM creates a namespace-scoped model and discovery runs automatically:
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMModel
-metadata:
-  name: auto-<hash-of-image>
-  namespace: ml-team
-spec:
-  image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
-  discovery:
-    extractMetadata: true
-    createServiceTemplates: true
-```
-
-## Custom Models
-
-Custom models allow you to deploy models from external sources (S3, HuggingFace) without requiring a pre-built AIM container image. The AIM operator uses a generic base container that downloads model weights at runtime.
-
-### Overview
-
-Unlike image-based models where model weights are embedded in the container image, custom models:
-
-- Download weights from external sources (S3 or HuggingFace)
-- Use the `amdenterpriseai/aim-base` container for inference
-- Skip discovery (no image metadata extraction needed)
-- Require explicit hardware specifications
-
-### Creating Custom Models
-
-There are two ways to create custom models:
-
-#### 1. Direct AIMModel with modelSources
-
-Create an AIMModel or AIMClusterModel with `modelSources` instead of relying on image discovery:
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMModel
-metadata:
-  name: my-custom-qwen
-  namespace: ml-team
-spec:
-  image: amdenterpriseai/aim-base:latest
-  modelSources:
-    - modelId: Qwen/Qwen3-32B
-      sourceUri: s3://my-bucket/models/qwen3-32b
-      # size: 16Gi  # Optional - auto-discovered by download job if omitted
-  custom:
-    hardware:
-      gpu:
-        requests: 1
-        models:
-          - MI300X
-```
-
-#### 2. Inline Custom Model in AIMService
-
-Create an AIMService with `spec.model.custom` to auto-create a custom model:
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMService
-metadata:
-  name: my-qwen-service
-  namespace: ml-team
-spec:
-  model:
-    custom:
-      baseImage: amdenterpriseai/aim-base:latest
-      modelSources:
-        - modelId: Qwen/Qwen3-32B
-          sourceUri: hf://Qwen/Qwen3-32B
-          # size is optional - auto-discovered by download job
-      hardware:
-        gpu:
-          requests: 1
-  template:
-    allowUnoptimized: true  # Required - custom models default to unoptimized
-```
-
-The service automatically creates a namespace-scoped AIMModel. Custom models are shared resources that persist independently of the service, allowing them to be reused by other services or manually managed.
-
-### Model Sources
-
-Each model source specifies:
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `modelId` | Yes | Canonical identifier in `{org}/{name}` format. Determines the cache mount path. |
-| `sourceUri` | Yes | Download location. Schemes: `hf://org/model` (HuggingFace) or `s3://bucket/key` (S3). For S3, use the bucket name directly without the service hostname (e.g., `s3://my-bucket/models/qwen3-32b`). |
-| `size` | No | Storage size for PVC provisioning. If omitted, the download job automatically discovers the size. Can be set explicitly to pre-allocate storage. |
-| `env` | No | Per-source credential overrides (e.g., `HF_TOKEN`, `AWS_ACCESS_KEY_ID`) |
-
-### Hardware Requirements
-
-Custom models require explicit hardware specifications since discovery doesn't run.
-These go under `spec.custom.hardware` for AIMModel, or `spec.model.custom.hardware` for inline AIMService:
-
-```yaml
-# For AIMModel:
-spec:
-  custom:
-    hardware:
-      gpu:
-        requests: 2          # Number of GPUs required
-        models:              # Optional: specific GPU models for node affinity
-          - MI300X
-          - MI250
-        minVram: 64Gi        # Optional: minimum VRAM per GPU for capacity planning
-      cpu:
-        requests: "4"        # Required if cpu field is specified: CPU requests
-        limits: "8"          # Optional: CPU limits
-```
-
-If no `models` are specified, the workload can run on any available GPU. The `minVram` field is used for capacity planning when the model size is known.
-
-### Template Generation
-
-When `modelSources` is specified:
-
-1. **Without custom.templates**: A single template is auto-generated using `custom.hardware`
-2. **With custom.templates**: Templates are created per entry, each inheriting from `custom.hardware` unless overridden
-
-Templates also inherit the `type` field from `spec.custom.type`, which defaults to `unoptimized`. This can be overridden per-template via `customTemplates[].type`.
-
-```yaml
-spec:
-  modelSources:
-    - modelId: Qwen/Qwen3-32B
-      sourceUri: s3://bucket/model
-  custom:
-    type: unoptimized  # Default - can be omitted
-    hardware:
-      gpu:
-        requests: 1
-    templates:
-      - name: high-memory  # Generated as {modelName}-custom-[{name}][-{precision}][-{gpu}]-{hash}
-        hardware:
-          gpu:
-            requests: 2  # Override
-        env:
-          - name: VLLM_GPU_MEMORY_UTILIZATION
-            value: "0.95"
-      - name: standard
-        # Inherits hardware and type from custom.*
-```
-
-### Custom Profiles on Custom Templates
-
-Custom templates can include a `customProfile` to tune inference engine behavior. When `customProfile` is set, `aimId`, `modelId`, `hardware`, `profile.metric`, and `profile.precision` are all required:
-
-```yaml
-spec:
-  image: amdenterpriseai/aim-vllm-base:0.10.0
-  modelSources:
-    - modelId: my-org/llama-finetuned
-      sourceUri: s3://my-bucket/weights/
-      size: 16Gi
-  customTemplates:
-    - name: llama-custom-tuned
-      aimId: meta-llama/Llama-3-8B
-      modelId: meta-llama/Llama-3-8B
-      hardware:
-        gpu:
-          model: MI300X
-          requests: 1
-      profile:
-        metric: latency
-        precision: fp16
-      customProfile:
-        engineArgs:
-          dtype: float16
-          gpu-memory-utilization: 0.95
-        envVars:
-          PYTORCH_TUNABLEOP_ENABLED: "1"
-```
-
-The model controller creates an `AIMServiceTemplate` with the custom profile data. The template goes through the standard discovery flow and becomes available for services. See [Custom Profiles](templates.md#custom-profiles) for details on the lifecycle and configuration layers.
-
-#### Unoptimized Templates and allowUnoptimized
-
-Custom models generate templates with `type: unoptimized` by default because no discovery job runs to validate performance characteristics. This has an important implication:
-
-**Services will not auto-select unoptimized templates unless explicitly allowed.**
-
-When creating an AIMService that uses a custom model, you must either:
-
-1. **Set `allowUnoptimized: true`** on the service's template selector:
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMService
-metadata:
-  name: my-service
-spec:
-  model:
-    name: my-custom-model
-  template:
-    allowUnoptimized: true  # Required for custom model templates
-```
-
-2. **Explicitly specify the template name** to bypass auto-selection:
-
-```yaml
-spec:
-  template:
-    name: my-custom-model-custom-abc123  # Explicit template name
-```
-
-This safety mechanism prevents accidentally deploying unoptimized configurations in production. See [Template Resolution](services.md#template-resolution) for more details on how templates are selected and the role of optimization levels.
-
-### Authentication
-
-Configure credentials for private sources:
-
-#### HuggingFace
-
-```yaml
-spec:
-  modelSources:
-    - modelId: Qwen/Qwen3-32B
-      sourceUri: hf://Qwen/Qwen3-32B
-      size: 16Gi
-      env:
-        - name: HF_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: hf-credentials
-              key: token
-```
-
-#### S3-Compatible Storage
-
-```yaml
-spec:
-  modelSources:
-    - modelId: my-org/custom-model
-      sourceUri: s3://my-bucket/models/custom
-      size: 32Gi
-      env:
-        - name: AWS_ACCESS_KEY_ID
-          valueFrom:
-            secretKeyRef:
-              name: s3-credentials
-              key: access-key
-        - name: AWS_SECRET_ACCESS_KEY
-          valueFrom:
-            secretKeyRef:
-              name: s3-credentials
-              key: secret-key
-        - name: AWS_ENDPOINT_URL
-          value: "https://s3.my-provider.com"
-```
-
-### Lifecycle Differences
-
-| Aspect | Image-Based Models | Custom Models |
-|--------|-------------------|---------------|
-| Model weights | source URI embedded in image | source URI in spec |
-| Discovery | Runs to extract metadata | Skipped |
-| Hardware | Optional (from discovery) | Required |
-| Templates | Auto-generated from image labels | Auto-generated from spec |
-| Caching | Uses shared template cache | Uses dedicated template cache |
-
-### Status
-
-Custom models report `sourceType: Custom` in their status:
-
-```yaml
-status:
-  status: Ready
-  sourceType: Custom
-  conditions:
-    - type: Ready
-      status: "True"
-```
-
-### Example: Full Custom Model Deployment
-
-```yaml
-# Secret for HuggingFace access
-apiVersion: v1
-kind: Secret
-metadata:
-  name: hf-token
-  namespace: ml-team
-type: Opaque
-stringData:
-  token: hf_xxxxxxxxxxxxx
----
-# Custom model service
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMService
-metadata:
-  name: qwen-custom
-  namespace: ml-team
-spec:
-  model:
-    custom:
-      modelSources:
-        - modelId: Qwen/Qwen3-32B
-          sourceUri: hf://Qwen/Qwen3-32B
-          # size is optional - auto-discovered by download job
-          env:
-            - name: HF_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: hf-token
-                  key: token
-      hardware:
-        gpu:
-          requests: 1
-          models:
-            - MI300X
-  template:
-    allowUnoptimized: true  # Required - custom models default to unoptimized
-  replicas: 1
-```
-
-## Fine-Tuned Models
-
-Fine-tuned models are a specialization of custom models where the user has custom weights for a known base model. Instead of requiring explicit hardware specifications and `customTemplates`, fine-tuned models use `aimId`-based template matching to automatically inherit runtime configuration from existing official templates.
-
-### Overview
-
-When an AIMModel specifies `spec.aimId` together with `spec.modelSources`, the controller treats it as a fine-tuned model and performs automatic template matching:
-
-1. Finds official templates whose `spec.aimId` matches the model's `spec.aimId`
-2. Filters by version according to `spec.custom.versionPolicy`
-3. Matches by `modelId` — the template's `spec.modelId` must equal one of the model's `modelSources[].modelId`
-4. Creates template copies with hardware, engine args, and profile inherited from the official template, but with the custom weight source baked in. The controller stamps the resolved deployment image onto **each copy** as the `aim.eai.amd.com/deployment-image-ref` annotation, so different copies can target different base images when matched templates span owners with different versions or base families (see [Deployment Image Resolution](#deployment-image-resolution) below)
-
-### Fine-Tuned vs Fully Custom
-
-| | Fine-Tuned Model | Fully Custom Model |
-|---|---|---|
-| `spec.aimId` | Set — identifies the base model family | Not set |
-| `spec.modelSources[].modelId` | Matches an official template's `modelId` | Arbitrary identifier |
-| Hardware | Inherited from matched template | Declared via `spec.custom.hardware` |
-| `customTemplates` | Not required | Required (or `custom.hardware` for auto-generation) |
-
-### Example: Pinned Version
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMModel
-metadata:
-  name: my-finetuned-qwen
-  namespace: ml-team
-spec:
-  image: amdenterpriseai/aim-base:0.8.5
-  aimId: qwen/qwen3-32b
-  modelSources:
-    - modelId: qwen/qwen3-32b-fp8
-      sourceUri: s3://my-bucket/weights/
-```
-
-The controller finds official templates for `qwen/qwen3-32b`, filters to those at version `0.8.5` (extracted from the image tag), matches the one whose `modelId` is `qwen/qwen3-32b-fp8`, and creates a copy with the custom `sourceUri`.
-
-### Example: Latest Version
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMModel
-metadata:
-  name: my-finetuned-qwen-latest
-  namespace: ml-team
-spec:
-  aimId: qwen/qwen3-32b
-  modelSources:
-    - modelId: qwen/qwen3-32b-fp8
-      sourceUri: s3://my-bucket/weights/
-  custom:
-    versionPolicy: latest
-```
-
-With `versionPolicy: latest`, `spec.image` can be omitted. The controller resolves the deployment image per matched template — from the matched template's owning model — and stamps it onto each generated copy.
-
-### Version Policy
-
-The `spec.custom.versionPolicy` field controls version filtering during template matching:
-
-| Policy | `spec.image` | Version Filter | Deployment Image |
-|---|---|---|---|
-| `pinned` (default) | Required | `status.version` == image tag | `spec.image` (stamped on each copy) |
-| `latest` | Optional | Newest `status.version` only | Resolved per-copy from the matched template owner's `baseImageRef` |
-| `any` | Optional | All versions accepted | Resolved per-copy from the matched template owner's `baseImageRef` |
-
-### Deployment Image Resolution
-
-Every official AIM model image declares the base image it was built from (e.g. `ghcr.io/silogen/aim-base:0.11`). The AIM image inspector reads the `AIM_BASE_IMAGE_REF` environment variable from the image's OCI config at build time and records it on the owning model's `status.imageMetadata.baseImageRef`.
-
-The fine-tuned model's `spec.image` is **never** patched. Instead, the controller resolves a deployment image **once per matched template** and stamps it onto the generated `AIMServiceTemplate` / `AIMClusterServiceTemplate` copy as the `aim.eai.amd.com/deployment-image-ref` annotation. `AIMService` reads this annotation when constructing the KServe `InferenceService`, falling back to `AIMModel.spec.image` only when the annotation is absent.
-
-This per-copy resolution is necessary because matched templates may span owners with different base images — different architectures (e.g. `aim-base` vs `aim-epyc-base`) for the same `aimId`, or different versions under `versionPolicy: any`. Pinning a single image on the fine-tuned model would force every copy to share that image; annotating each copy individually keeps the deployments precisely aligned with the source they were derived from.
-
-For each matched template, the controller:
-
-1. Takes the matched template's owning model (`AIMModel` or `AIMClusterModel`).
-2. Reads the owner's `status.imageMetadata.baseImageRef`.
-3. Rebases that reference onto the owner's `spec.image` registry+org so the fine-tuned deployment pulls `aim-base` from the same place the base model was pulled from (see below).
-4. Stamps the result onto the generated copy as `aim.eai.amd.com/deployment-image-ref`.
-
-For `versionPolicy: pinned` with an explicit `spec.image`, the resolver short-circuits and stamps `spec.image` on every copy.
-
-**Registry rebasing.** Official AIM images bake a `docker.io/amdenterpriseai/aim-base:…` reference into their OCI config, but operators frequently mirror both the base model *and* `aim-base` into a private registry. Rather than force fine-tuned deployments to reach back to Docker Hub, the resolver swaps the registry+org prefix of `baseImageRef` with the prefix of the source owner's `spec.image`. Concretely:
-
-| Source owner `spec.image` | Owner's `status.imageMetadata.baseImageRef` | Resolved annotation on copy |
-|---|---|---|
-| `ghcr.io/silogen/qwen3:0.11.0` | `docker.io/amdenterpriseai/aim-base:0.11` | `ghcr.io/silogen/aim-base:0.11` |
-| `docker.io/amdenterpriseai/qwen3:0.11.0` | `ghcr.io/silogen/aim-base:0.11` | `docker.io/amdenterpriseai/aim-base:0.11` |
-| `registry.example.com/team/models/qwen3:0.11` | `ghcr.io/silogen/aim-base:0.11` | `registry.example.com/team/models/aim-base:0.11` |
-
-This means mirroring `aim-base` into the same org as the base model is sufficient — no cluster-wide configuration, no registry rewriting rules.
-
-If a matched template's owner has no resolvable image (no `baseImageRef`, no legacy fallback, owner not yet fetchable), the controller skips that copy and retries on the next reconcile. Image inspection is skipped on the fine-tuned model itself — it inherits its deployment plumbing from the matched templates' owners, not from its own image metadata.
-
-**Legacy installs.** `baseImageRef` is extracted from the base model's image during metadata inspection, but inspection is skipped once `status.imageMetadata` is cached. Operators who upgraded past this feature therefore have existing base models with populated metadata but `baseImageRef == ""`. For those owners the resolver falls back to synthesizing `aim-base:MAJOR.MINOR` from the owner's `spec.image` tag (rebased onto its registry+org as above) so fine-tuned models keep working without a manual re-inspection. When the tag isn't semver-shaped the fallback is skipped and that copy is omitted — clear the base model's `status.imageMetadata` to force a fresh inspection if you need the real, image-declared reference.
-
-### Template Copies
-
-For each matched template, the controller creates a copy scoped to the owning model:
-
-- **AIMModel** (namespace-scoped) creates **AIMServiceTemplate** copies in the same namespace
-- **AIMClusterModel** (cluster-scoped) creates **AIMClusterServiceTemplate** copies
-
-Copies inherit all configuration from the original template (hardware, profile, engine args, environment) and override:
-
-- `spec.modelName` — points to the fine-tuned model
-- `spec.modelSources` — uses the custom weight source from the fine-tuned model
-- Labels: `aim.eai.amd.com/model: <model-name>`, `aim.eai.amd.com/origin: fine-tuned`
-- Annotation: `aim.eai.amd.com/deployment-image-ref: <resolved-image>` — the image `AIMService` will deploy for this copy
-
-Each copy carries its own deployment image annotation, so heterogeneous matches (different versions under `versionPolicy: any`, or different base families under the same `aimId`) deploy with the correct image per copy.
-
-Copies are owned by the model and garbage-collected when the model is deleted. The controller watches for new or deleted matching templates and reconciles copies accordingly.
-
-### Status
-
-Fine-tuned models report `sourceType: Custom` in their status, the same as fully custom models:
-
-```yaml
-status:
-  status: Ready
-  sourceType: Custom
-```
-
-Inspect the generated `AIMServiceTemplate` copies (`kubectl get aimservicetemplate -l aim.eai.amd.com/model=<model-name> -o=jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.aim\.eai\.amd\.com/deployment-image-ref}{"\n"}{end}'`) to see the per-copy deployment image.
-
-## Related Documentation
-
-- [Profiles](profiles.md) - Self-contained runtime configurations (v1alpha2)
-- [Templates](templates.md) - ServiceTemplates and discovery (v1alpha1, deprecated)
-- [Runtime Config Concepts](runtime-config.md) - Resolution details including model creation
-- [Services Usage](../guides/deploying-services.md) - Deploying services
-- [Caching](caching.md) - Model caching and download architecture
-
-## Note on Terminology
-
-AIM Model resources (`AIMModel` and `AIMClusterModel`) define the mapping between model identifiers and container images. While we sometimes refer to the "model catalog" conceptually, the Kubernetes resources are always `AIMModel` and `AIMClusterModel`.
+`DerivationReady=False / NoMatchingProfiles` means the selector matched zero source candidates. See the troubleshooting sections in [Fine-Tuned Models](../guides/fine-tuned-models.md#troubleshooting) and [Custom Models](../guides/custom-models.md#troubleshooting).
+
+## Related documentation
+
+- [Fine-Tuned Models](../guides/fine-tuned-models.md) — End-to-end walkthrough for flow 2
+- [Custom Models](../guides/custom-models.md) — End-to-end walkthrough for flow 3
+- [Profiles](profiles.md) — Base vs deployable, provenance labels, status fields
+- [AIM Profile Sets](profilesets.md) — Derivation machinery underneath `spec.profiles`
+- [Services](services.md) — How `AIMService` resolves models and profiles
+- [CRD API Reference (v1alpha2)](../reference/api/v1alpha2.md) — Full schema
+- [Legacy AIMModel (v1alpha1)](../legacy/aimmodel-v1alpha1.md) — The deprecated v1alpha1 shape

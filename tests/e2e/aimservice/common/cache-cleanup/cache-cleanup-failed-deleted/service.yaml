@@ -6,7 +6,7 @@ metadata:
   name: cache-cleanup-fail-service
 spec:
   model:
-    image: ghcr.io/silogen/aim-dummy:0.1.10
+    image: ghcr.io/silogen/aim-dummy:0.2.0
   caching:
     mode: Shared
   runtimeConfigName: cache-cleanup-fail-config

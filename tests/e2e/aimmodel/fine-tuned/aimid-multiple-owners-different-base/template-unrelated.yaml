@@ -2,7 +2,7 @@
 # modelId. The fine-tuned model's modelSources[].modelId does not include
 # this id, so the controller must NOT produce a copy from this template.
 apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMClusterServiceTemplate
+kind: AIMServiceTemplate
 metadata:
   name: ft-multi-template-unrelated
 spec:

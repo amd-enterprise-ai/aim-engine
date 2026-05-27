@@ -1,0 +1,125 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimclustermodel-image-discovery-happy-path
+spec:
+  description: |
+    Verifies the end-to-end Job-based image discovery path for v1alpha2 native-mode
+    AIMClusterModels. Applies a cluster model that points at the aim-dummy image,
+    then asserts that the operator creates a discovery Job in aim-system, captures
+    its logs into a raw-YAML cache ConfigMap (profiles.*.yaml + metadata.json), and
+    surfaces the resulting catalog in AIMClusterModel.status.
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create the native-mode AIMClusterModel backed by aim-dummy
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert the operator created a discovery Job for this cluster model
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                namespace: aim-system
+                labels:
+                  aim.eai.amd.com/discovery-kind: aimclustermodel
+                  aim.eai.amd.com/discovery-target: image-discovery-happy-path
+                  app.kubernetes.io/name: aim-discovery
+
+    - name: Wait for discovery to surface the catalog in AIMClusterModel status
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterModel
+              metadata:
+                name: image-discovery-happy-path
+              status:
+                aimId: HuggingFaceTB/SmolLM2-135M
+                baseImage: ghcr.io/silogen/aim-base:dummy
+                discoveryCacheRef:
+                  namespace: aim-system
+                (discoveryCacheRef.name != ""): true
+                (discoveredProfiles.total > `0`): true
+
+    - name: Verify the discovery cache ConfigMap has the raw-YAML format
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              set -eu
+
+              CACHE_NAME=$(kubectl get aimclustermodel image-discovery-happy-path \
+                -o jsonpath='{.status.discoveryCacheRef.name}')
+              CACHE_NAMESPACE=$(kubectl get aimclustermodel image-discovery-happy-path \
+                -o jsonpath='{.status.discoveryCacheRef.namespace}')
+              if [ -z "$CACHE_NAME" ] || [ -z "$CACHE_NAMESPACE" ]; then
+                echo "ERROR: cluster model status.discoveryCacheRef is incomplete"
+                exit 1
+              fi
+              echo "Cache ConfigMap: $CACHE_NAMESPACE/$CACHE_NAME"
+
+              METADATA=$(kubectl get configmap -n "$CACHE_NAMESPACE" "$CACHE_NAME" \
+                -o jsonpath='{.data.metadata\.json}')
+              if [ -z "$METADATA" ]; then
+                echo "ERROR: metadata.json is missing from $CACHE_NAME"
+                kubectl get configmap -n "$CACHE_NAMESPACE" "$CACHE_NAME" -o yaml
+                exit 1
+              fi
+              echo "$METADATA" | jq -e '.aimId == "HuggingFaceTB/SmolLM2-135M"' >/dev/null \
+                || { echo "ERROR: metadata.aimId mismatch"; echo "$METADATA"; exit 1; }
+              echo "$METADATA" | jq -e '.sourceImage == "ghcr.io/silogen/aim-dummy:0.2.0"' >/dev/null \
+                || { echo "ERROR: metadata.sourceImage mismatch"; echo "$METADATA"; exit 1; }
+              echo "$METADATA" | jq -e '.profileIds | length >= 1' >/dev/null \
+                || { echo "ERROR: metadata.profileIds is empty"; echo "$METADATA"; exit 1; }
+
+              PROFILE_KEYS=$(kubectl get configmap -n "$CACHE_NAMESPACE" "$CACHE_NAME" -o json \
+                | jq '[.data | keys[] | select(test("^profiles\\..*\\.yaml$"))] | length')
+              PROFILE_KEYS=${PROFILE_KEYS:-0}
+              if [ "$PROFILE_KEYS" -lt 1 ]; then
+                echo "ERROR: cache has no profiles.*.yaml data keys"
+                kubectl get configmap -n "$CACHE_NAMESPACE" "$CACHE_NAME" -o json \
+                  | jq -r '.data | keys'
+                exit 1
+              fi
+              echo "Found $PROFILE_KEYS profile data key(s)"
+
+              SPEC_HASH=$(kubectl get configmap -n "$CACHE_NAMESPACE" "$CACHE_NAME" \
+                -o jsonpath='{.metadata.annotations.aim\.eai\.amd\.com/discovery-spec-hash}')
+              if [ -z "$SPEC_HASH" ]; then
+                echo "ERROR: cache is missing discovery-spec-hash annotation"
+                exit 1
+              fi
+              echo "Discovery spec hash: $SPEC_HASH"
+
+              OWNER_KIND=$(kubectl get configmap -n "$CACHE_NAMESPACE" "$CACHE_NAME" \
+                -o jsonpath='{.metadata.ownerReferences[0].kind}')
+              OWNER_NAME=$(kubectl get configmap -n "$CACHE_NAMESPACE" "$CACHE_NAME" \
+                -o jsonpath='{.metadata.ownerReferences[0].name}')
+              if [ "$OWNER_KIND" != "AIMClusterModel" ] || [ "$OWNER_NAME" != "image-discovery-happy-path" ]; then
+                echo "ERROR: cache ownerReference is incorrect"
+                kubectl get configmap -n "$CACHE_NAMESPACE" "$CACHE_NAME" -o yaml
+                exit 1
+              fi
+              echo "Owner reference: $OWNER_KIND/$OWNER_NAME"
+
+              echo "SUCCESS: discovery cache ConfigMap is well-formed"
+
+    - name: Assert the cluster model reports Ready on the discovery subsystem
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterModel
+              metadata:
+                name: image-discovery-happy-path
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"

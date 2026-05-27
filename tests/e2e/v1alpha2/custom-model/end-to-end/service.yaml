@@ -1,0 +1,13 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: custom-service
+  annotations:
+    # v1alpha2 spec.model.name needs the profile pipeline so the resolver
+    # picks deployable AIMProfiles owned by the derivation model. The
+    # default spec-shape dispatch routes spec.model to the v1alpha1
+    # template pipeline, which doesn't understand spec.derivedFrom chains.
+    aim.eai.amd.com/reconciler-pipeline: profile
+spec:
+  model:
+    name: custom-derived

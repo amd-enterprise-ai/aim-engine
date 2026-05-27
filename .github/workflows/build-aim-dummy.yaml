@@ -1,0 +1,74 @@
+name: build-aim-dummy
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    paths:
+      - "images/aim-dummy/**"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag for the image (e.g. 1.2.3). Leave empty to use ref/sha only.'
+        required: false
+        type: string
+      push_latest:
+        description: 'Also push as :latest'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+# Opt JavaScript actions onto Node 24 ahead of GitHub's June 16, 2026 default
+# flip. See https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build:
+    if: vars.ACTIVATE_AIM_DUMMY_WORKFLOW == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/silogen/aim-dummy
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ inputs.push_latest == true || startsWith(github.ref, 'refs/tags/v') }}
+            type=sha,prefix=
+            type=raw,value=${{ inputs.version }},enable=${{ inputs.version != '' }}
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: images/aim-dummy
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=aim-dummy
+          cache-to: type=gha,scope=aim-dummy,mode=max
+
+      - name: Summary
+        run: |
+          echo "### AIM Dummy Image Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tags pushed:**" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

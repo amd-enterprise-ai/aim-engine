@@ -5,7 +5,7 @@ metadata:
 spec:
   model:
     custom:
-      baseImage: ghcr.io/silogen/aim-dummy:0.1.10
+      baseImage: ghcr.io/silogen/aim-dummy:0.2.0
       modelSources:
         - modelId: shared/s3-endpoint-model
           sourceUri: s3://test-bucket/model

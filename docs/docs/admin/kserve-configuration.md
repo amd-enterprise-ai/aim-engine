@@ -47,7 +47,7 @@ helm install kserve oci://ghcr.io/kserve/charts/kserve \
 
 KServe applies default CPU and memory limits (`cpu: 1`, `memory: 2Gi`) to all InferenceService containers. AIM Engine sets CPU requests based on GPU count (4 CPUs per GPU) but intentionally does not set CPU limits, allowing inference workloads to burst and fully utilize available CPU for optimal throughput. KServe's default limit of `1` conflicts with the calculated request, causing Kubernetes to reject the pod.
 
-For GPU workloads, AIM Engine also sets memory defaults per GPU (`requests.memory: 32Gi`, `limits.memory: 48Gi`), unless overridden by template/service resources. Clearing KServe defaults avoids accidental request/limit mismatches and hidden caps when resources are omitted or partially overridden.
+For GPU workloads, AIM Engine also sets memory defaults per GPU (`requests.memory: 32Gi`, `limits.memory: 48Gi`), unless overridden by profile/template/service resources. Clearing KServe defaults avoids accidental request/limit mismatches and hidden caps when resources are omitted or partially overridden.
 
 Setting limits and requests to `""` removes the defaults so AIM Engine controls per-workload CPU/memory behavior.
 
@@ -57,7 +57,7 @@ AIM Engine uses KServe in Standard mode (without Knative) to support KEDA-based 
 
 ### Local Model Cache
 
-AIM Engine manages model caching independently via AIMArtifact and AIMTemplateCache resources. KServe's built-in local model feature must be disabled to avoid conflicts.
+AIM Engine manages model caching independently via `AIMArtifact` and `AIMProfileCache` (v1alpha2) / `AIMTemplateCache` (v1alpha1) resources. KServe's built-in local model feature must be disabled to avoid conflicts.
 
 This is already configured in the values snippet above via `kserve.localmodel.enabled: false` (and in the repository's local dependency Helmfile).
 

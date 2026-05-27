@@ -11,3 +11,6 @@ spec:
   type: optimized
   primary: true
   image: registry.example.com/test-image:1.0.0
+  modelSources:
+    - modelId: test/basic-lifecycle-model-fp8
+      sourceUri: hf://test/basic-lifecycle-model

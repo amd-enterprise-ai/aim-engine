@@ -1,6 +1,9 @@
-# Model Sources
+# AIM Model Sources
 
-AIMClusterModelSource automatically discovers and syncs AI model images from container registries, creating AIMClusterModel resources for matched images.
+`AIMClusterModelSource` automatically discovers and syncs AI model images from container registries, creating `AIMClusterModel` resources for matched images.
+
+!!! note "API version"
+    `AIMClusterModelSource` remains under `aim.eai.amd.com/v1alpha1`. The `AIMClusterModel` resources it creates use the v1alpha2 shape (`spec.image` set) so they participate in v1alpha2 discovery and produce `AIMProfile` resources. This deliberately decouples discovery from the v1alpha1 → v1alpha2 migration window.
 
 ## Overview
 
@@ -8,12 +11,12 @@ Model sources eliminate the need to manually create model resources for every im
 
 Key features:
 
-- **Automatic discovery**: Continuously monitors registries for configured repositories/tags
-- **Simple explicit lists**: Use `spec.images` for straightforward image declarations
-- **Advanced filtering**: Use `spec.filters` with per-filter version constraints and exclusions
-- **Multi-registry support**: Works with Docker Hub, GHCR, and other OCI registries via tags list API
-- **Periodic sync**: Configurable sync intervals to keep models up to date
-- **Private registries**: Supports authentication via imagePullSecrets
+- **Automatic discovery** — continuously monitors registries for configured repositories/tags
+- **Simple explicit lists** — `spec.images` for straightforward image declarations
+- **Advanced filtering** — `spec.filters` with per-filter version constraints and exclusions
+- **Multi-registry support** — Docker Hub, GHCR, and other OCI registries via the tags list API
+- **Periodic sync** — configurable sync intervals
+- **Private registries** — supports authentication via `imagePullSecrets`
 
 ## Basic Example
 
@@ -409,9 +412,13 @@ spec:
 
 ### Created Models
 
-Model sources create AIMClusterModel resources with auto-generated names based on the image URI. These models are owned by the source via an owner reference.
+Model sources create `AIMClusterModel` resources with auto-generated names based on the image URI. These models are owned by the source via an owner reference.
 
-Created models have discovery enabled by default and will automatically create service templates if the image includes recommended deployment metadata.
+Created models use the v1alpha2 shape (`spec.image` set) and immediately enter the **official flow** — the model controller runs in-cluster image discovery and materialises one `AIMClusterProfile` per supported (accelerator, precision, metric) combination. See [AIM Models — Flow 1](models.md#flow-1-official-aim-model) for the lifecycle.
+
+During the v1alpha1 → v1alpha2 migration window the same model **also runs the legacy OCI-discovery path** in parallel, emitting one `AIMClusterServiceTemplate` per `RecommendedDeployment` from the image's metadata so v1alpha1-shaped services still resolve. The two output sets (profiles and templates) coexist and describe the same image — pick the one that matches the consumer pipeline. To suppress the legacy template emission on a per-model basis, set `spec.discovery.createServiceTemplates: false`. See [Migration window](../admin/upgrading.md#migration-window) for the dispatch story.
+
+If a discovered image is actually a generic AIM base image (its profile YAMLs leave `model_id` and `model_sources` empty), the resulting model produces base profiles instead — see [Base-image models](models.md#base-image-models) for how to spot one (`status.managedProfiles.base > 0`).
 
 ### Append-Only
 
@@ -478,6 +485,8 @@ All selectors failed. Common causes:
 
 ## Related Documentation
 
-- [Models](models.md) - Understanding AIMClusterModel and AIMModel resources
-- [Templates](templates.md) - Auto-generated service templates
-- [Runtime Config](runtime-config.md) - Authentication and discovery configuration
+- [AIM Models](models.md) — The three model onboarding flows (v1alpha2)
+- [Profiles](profiles.md) — What gets produced by discovery of a source-created model
+- [Model Catalog](../guides/model-catalog.md) — Browse and apply discovered models
+- [Runtime Configuration](runtime-config.md) — Authentication and downloader defaults
+- [Service Templates (v1alpha1)](../legacy/service-templates.md) — The legacy template path that source-created models also emit during the deprecation window

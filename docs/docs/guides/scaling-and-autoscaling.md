@@ -2,20 +2,32 @@
 
 AIM Engine supports static replica scaling and KEDA-based autoscaling with OpenTelemetry metrics.
 
+!!! info "v1alpha2"
+    Examples on this page use `aim.eai.amd.com/v1alpha2`. The `spec.replicas`, `spec.minReplicas`, `spec.maxReplicas`, and `spec.autoScaling` fields are identical across versions — only the resolution shape differs (`spec.profile` and `spec.model` instead of `spec.template`). For the legacy template-shaped service, see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+
 ## Static Scaling
 
 Set a fixed number of replicas:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: qwen-chat
+  annotations:
+    # Migration window: spec.model.image alone routes to the legacy
+    # template pipeline by default. The annotation opts in to the
+    # v1alpha2 profile pipeline, which auto-creates a dedicated AIMModel
+    # for this image. See admin/upgrading.md#migration-window.
+    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   replicas: 3
 ```
+
+!!! note "Migration window"
+    Until v1alpha1 is removed, the `aim.eai.amd.com/reconciler-pipeline: profile` annotation is required on `spec.model.image` services that should be reconciled by the v1alpha2 profile pipeline. See [Migration window](../admin/upgrading.md#migration-window). To skip the annotation, reference an existing AIMProfile (`spec.profile.name`) or AIMModel (`spec.model.name`) instead.
 
 ## Autoscaling with KEDA
 
@@ -32,10 +44,12 @@ Install KEDA and the OpenTelemetry integration:
 ### Basic Autoscaling
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: qwen-chat
+  annotations:
+    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
@@ -54,10 +68,12 @@ AIM Engine automatically:
 Override the default scaling behavior with custom metrics:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: qwen-chat
+  annotations:
+    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5

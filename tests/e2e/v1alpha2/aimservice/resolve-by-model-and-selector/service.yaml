@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: resolve-by-model-and-selector-service
+spec:
+  model:
+    name: resolve-by-model-and-selector-model
+  profile:
+    selector:
+      precision: bf16

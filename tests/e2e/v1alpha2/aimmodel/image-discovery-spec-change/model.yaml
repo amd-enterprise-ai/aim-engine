@@ -1,0 +1,7 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: image-discovery-spec-change
+spec:
+  image: ghcr.io/silogen/aim-dummy:0.2.0
+  serviceAccountName: discovery-sa-a

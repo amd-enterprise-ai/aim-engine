@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
@@ -121,6 +122,10 @@ type ProfileObservation struct {
 	ProfileFetchResult
 	matchResult       NodeMatchResult
 	resolvedResources *corev1.ResourceRequirements
+	deployable        bool
+	sourceModel       *aimv1alpha2.ProfileSourceModel
+	origin            aimv1alpha1.ProfileOrigin
+	baseImage         string
 }
 
 // GetComponentHealth returns health of all components for automatic status management.
@@ -139,6 +144,10 @@ type ClusterProfileObservation struct {
 	ClusterProfileFetchResult
 	matchResult       NodeMatchResult
 	resolvedResources *corev1.ResourceRequirements
+	deployable        bool
+	sourceModel       *aimv1alpha2.ProfileSourceModel
+	origin            aimv1alpha1.ProfileOrigin
+	baseImage         string
 }
 
 // GetComponentHealth returns health of all components for automatic status management.
@@ -163,6 +172,10 @@ func (r *ProfileReconciler) ComposeState(
 	if HasAcceleratorRequirement(spec.AcceleratorModel, spec.AcceleratorCount, spec.Resources) {
 		obs.matchResult = MatchNodes(fetch.nodes, spec.AcceleratorModel, obs.resolvedResources)
 	}
+	obs.deployable = IsProfileDeployable(spec)
+	obs.sourceModel = SourceModelFromOwnerRefs(fetch.profile, fetch.profile.Namespace)
+	obs.origin = DeriveProfileOrigin(fetch.profile)
+	obs.baseImage = BaseImageFromProfile(fetch.profile, fetch.profile.Status.BaseImage)
 	return obs
 }
 
@@ -177,6 +190,13 @@ func (r *ClusterProfileReconciler) ComposeState(
 	if HasAcceleratorRequirement(spec.AcceleratorModel, spec.AcceleratorCount, spec.Resources) {
 		obs.matchResult = MatchNodes(fetch.nodes, spec.AcceleratorModel, obs.resolvedResources)
 	}
+	obs.deployable = IsProfileDeployable(spec)
+	// Cluster profiles have no namespace by definition; SourceModelFromOwnerRefs
+	// only writes Namespace for AIMModel owners (which a cluster profile cannot
+	// legitimately have), so the empty string is correct.
+	obs.sourceModel = SourceModelFromOwnerRefs(fetch.profile, "")
+	obs.origin = DeriveProfileOrigin(fetch.profile)
+	obs.baseImage = BaseImageFromProfile(fetch.profile, fetch.profile.Status.BaseImage)
 	return obs
 }
 
@@ -184,14 +204,45 @@ func (r *ClusterProfileReconciler) ComposeState(
 // PLAN — Profiles don't create child resources
 // ============================================================================
 
+// PlanResources for namespace-scoped AIMProfile materialises a Profile-owned
+// AIMProfileCache when the profile opts into caching via spec.caching.enabled.
+// The cache is named after the profile, owner-ref'd by the profile, and lives
+// in the same namespace, so it is garbage-collected when the profile is
+// deleted. This mirrors v1alpha1's AIMServiceTemplate -> AIMTemplateCache
+// path (see internal/v1alpha1/aimservicetemplate/cache.go::BuildTemplateCache).
+//
+// AIMService-driven caches (set via service.Spec.Caching.Mode) coexist with
+// Profile-owned caches: the two paths produce caches under different names
+// and the underlying AIMArtifacts dedupe by SourceURI hash regardless. Users
+// pick the lifecycle that matches their intent — Profile-owned for
+// "cache lives with the model definition", AIMService-owned for "cache is
+// per-service workload".
 func (r *ProfileReconciler) PlanResources(
 	_ context.Context,
-	_ controllerutils.ReconcileContext[*aimv1alpha2.AIMProfile],
+	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha2.AIMProfile],
 	_ ProfileObservation,
 ) controllerutils.PlanResult {
-	return controllerutils.PlanResult{}
+	plan := controllerutils.PlanResult{}
+	profile := reconcileCtx.Object
+	if profile == nil {
+		return plan
+	}
+	if profile.Spec.Caching == nil || !profile.Spec.Caching.Enabled {
+		return plan
+	}
+	if len(profile.Spec.ModelSources) == 0 {
+		return plan
+	}
+	plan.Apply(buildProfileOwnedCache(profile))
+	return plan
 }
 
+// PlanResources for cluster-scoped AIMClusterProfile is intentionally a no-op
+// for caching: a cluster-scoped profile does not own a target namespace, so
+// it cannot directly create a namespaced AIMProfileCache. Consumers in any
+// namespace (e.g. an AIMService that targets the cluster profile) drive cache
+// creation via the service-side path; that cache then references the
+// cluster-scoped profile via spec.profileScope=Cluster.
 func (r *ClusterProfileReconciler) PlanResources(
 	_ context.Context,
 	_ controllerutils.ReconcileContext[*aimv1alpha2.AIMClusterProfile],
@@ -209,7 +260,12 @@ func (r *ProfileReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ProfileObservation,
 ) {
-	decorateProfileStatus(status, cm, obs.profile.Spec.AIMProfileSpecCommon, obs.resolvedResources, obs.nodeErr, obs.matchResult)
+	decorateProfileStatus(
+		status, cm,
+		obs.profile.Spec.AIMProfileSpecCommon,
+		obs.resolvedResources, obs.nodeErr, obs.matchResult,
+		obs.deployable, obs.sourceModel, obs.origin, obs.baseImage,
+	)
 }
 
 func (r *ClusterProfileReconciler) DecorateStatus(
@@ -217,7 +273,12 @@ func (r *ClusterProfileReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ClusterProfileObservation,
 ) {
-	decorateProfileStatus(status, cm, obs.profile.Spec.AIMProfileSpecCommon, obs.resolvedResources, obs.nodeErr, obs.matchResult)
+	decorateProfileStatus(
+		status, cm,
+		obs.profile.Spec.AIMProfileSpecCommon,
+		obs.resolvedResources, obs.nodeErr, obs.matchResult,
+		obs.deployable, obs.sourceModel, obs.origin, obs.baseImage,
+	)
 }
 
 func decorateProfileStatus(
@@ -227,12 +288,34 @@ func decorateProfileStatus(
 	resolvedResources *corev1.ResourceRequirements,
 	nodeErr error,
 	matchResult NodeMatchResult,
+	deployable bool,
+	sourceModel *aimv1alpha2.ProfileSourceModel,
+	origin aimv1alpha1.ProfileOrigin,
+	baseImage string,
 ) {
 	status.Version = ExtractVersionFromImage(spec.Image)
 	status.HardwareSummary = FormatHardwareSummary(spec.AcceleratorModel, spec.AcceleratorCount)
 	status.Resources = resolvedResources
 	status.ResolvedNodeAffinity = matchResult.NodeAffinity
 	status.MatchingNodes = matchResult.MatchingNodes
+	status.Deployable = deployable
+	status.SourceModel = sourceModel
+	status.Origin = origin
+	status.BaseImage = baseImage
+
+	if deployable {
+		cm.MarkTrue(
+			aimv1alpha2.AIMProfileConditionDeployable,
+			aimv1alpha2.AIMProfileReasonDeployable,
+			"Profile has aimId and modelSources populated",
+		)
+	} else {
+		cm.MarkFalse(
+			aimv1alpha2.AIMProfileConditionDeployable,
+			aimv1alpha2.AIMProfileReasonBaseProfile,
+			"Profile is a base profile awaiting derivation (missing aimId or modelSources)",
+		)
+	}
 
 	if !HasAcceleratorRequirement(spec.AcceleratorModel, spec.AcceleratorCount, spec.Resources) {
 		cm.MarkTrue(

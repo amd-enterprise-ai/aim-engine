@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: profilecopy-no-match-source
+  annotations:
+    aim.eai.amd.com/base-image: ghcr.io/silogen/aim-base:0.1.10
+    aim.eai.amd.com/profile-copyable: "true"
+spec:
+  aimId: profilecopy/org-source
+  modelId: profilecopy/org-source
+  profileId: cpu-default
+  image: ghcr.io/silogen/aim-dummy:0.2.0
+  primary: true
+  modelSources:
+    - modelId: profilecopy/org-source
+      sourceUri: hf://profilecopy/org-source

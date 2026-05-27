@@ -1,9 +1,9 @@
-# Official template owned by base-model-a. Same (aimId, modelId, version,
-# precision, gpu) as template-b — only the source owner differs. Without
-# owner identity in the fine-tuned copy name hash, this template's copy
-# would collide with template-b's on apply.
+# Namespace-scoped official template owned by base-model-a. Same (aimId,
+# modelId, version, precision, gpu) as template-b — only the source owner
+# differs. Without owner identity in the fine-tuned copy name hash, this
+# template's copy would collide with template-b's on apply.
 apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMClusterServiceTemplate
+kind: AIMServiceTemplate
 metadata:
   name: ft-multi-template-a
 spec:

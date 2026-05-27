@@ -29,9 +29,12 @@ import (
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -43,6 +46,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	aimruntimeconfig "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 	v1alpha1service "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservice"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 )
 
 // ProfileServiceReconciler implements the domain logic for profile-based
@@ -50,7 +54,8 @@ import (
 // is the storage version; the profile-specific spec fields live on
 // aimv1alpha1.AIMService while the referenced profile is defined in v1alpha2.
 type ProfileServiceReconciler struct {
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // GetApplyOptions returns apply options derived from the merged runtime
@@ -67,6 +72,13 @@ type ServiceFetchResult struct {
 
 	profile        controllerutils.FetchResult[*aimv1alpha2.AIMProfile]
 	clusterProfile controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]
+	overlayProfile controllerutils.FetchResult[*aimv1alpha2.AIMProfile]
+
+	// resolution carries the outcome of the multi-mode resolver: which
+	// shape was used, the candidates considered (for ambiguity reporting),
+	// and any non-fatal note (e.g. "selector matched 3 profiles; picked
+	// alphabetical winner") to surface through getProfileHealth.
+	resolution profileResolution
 
 	profileCache controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]
 
@@ -87,6 +99,14 @@ type ServiceObservation struct {
 	resolvedProfileStatus *aimv1alpha2.AIMProfileStatus
 	profileName           string
 	profileScope          aimv1alpha1.AIMResolutionScope
+
+	// desiredOverlayProfile, when non-nil, is a service-owned AIMProfile
+	// materialised from the resolved seed profile with
+	// service.Spec.ProfileOverrides applied. It is the AIMProfile every
+	// downstream resource (cache, ConfigMap, InferenceService) is keyed
+	// against — profileName/profileScope/resolvedProfileSpec all already
+	// point at it once the overlay path is taken in ComposeState.
+	desiredOverlayProfile *aimv1alpha2.AIMProfile
 
 	hasModelSources   bool
 	profileCacheReady bool
@@ -134,6 +154,20 @@ func (obs ServiceObservation) GetComponentHealth(_ context.Context, _ kubernetes
 				}
 			},
 		))
+	}
+
+	// When the profile is in a terminal non-ready state (unresolved or
+	// base profile), the planner intentionally skips creating the ProfileCache,
+	// InferenceService, and HTTPRoute (see PlanResources). Reporting those
+	// downstream components as "Creating"/"not found" in that case is
+	// misleading — the controller is not creating anything. Surface only
+	// the gating Profile condition so the user sees a single, accurate
+	// reason (ProfileNotFound or BaseProfile) on both ProfileReady and
+	// the aggregate Ready condition. Profile health is still
+	// progressing-aware: a resolved-but-not-yet-ready profile keeps
+	// downstream conditions visible so users see cache / ISVC progress.
+	if obs.resolvedProfileSpec == nil || !obs.isDeployable() {
+		return health
 	}
 
 	if obs.hasModelSources {
@@ -216,13 +250,41 @@ func (obs ServiceObservation) getProfileHealth() controllerutils.ComponentHealth
 		DependencyType: controllerutils.DependencyTypeUpstream,
 	}
 
+	// Resolver list failures (transient infra/RBAC issues) populate
+	// Error on the relevant FetchResult; surface them as infrastructure
+	// errors so the framework lights up DependenciesReachable=False
+	// rather than the terminal ProfileNotFound user-config reason.
 	if obs.profile.Error != nil && !obs.profile.IsNotFound() {
 		health.State = constants.AIMStatusFailed
 		health.Errors = []error{obs.profile.Error}
 		return health
 	}
+	if obs.clusterProfile.Error != nil && !obs.clusterProfile.IsNotFound() {
+		health.State = constants.AIMStatusFailed
+		health.Errors = []error{obs.clusterProfile.Error}
+		return health
+	}
 
 	if obs.resolvedProfileSpec != nil {
+		// Base-profile rejection: a profile that has not yet been derived
+		// (no aimId or no modelSources) cannot back an AIMService. Selector
+		// path label-filtering already excludes role=base profiles, but
+		// the resolved profile's own `status.deployable` is the source of
+		// truth — defensively check it for the by-name path where a user
+		// can target a base profile directly. We accept a spec-based
+		// fallback for the (rare) transient state where the AIMProfile
+		// reconciler hasn't yet stamped `status.deployable=true` on a
+		// structurally-deployable profile, so we don't briefly degrade
+		// healthy services.
+		if !obs.isDeployable() {
+			health.State = constants.AIMStatusFailed
+			health.Reason = aimv1alpha1.AIMServiceReasonBaseProfile
+			health.Message = fmt.Sprintf(
+				"Profile %s is not deployable (base profile); set spec.aimId and spec.modelSources or use a different profile",
+				obs.profileName,
+			)
+			return health
+		}
 		if obs.resolvedProfileStatus != nil && obs.resolvedProfileStatus.Status == constants.AIMStatusReady {
 			health.State = constants.AIMStatusReady
 			health.Reason = aimv1alpha1.AIMServiceReasonProfileResolved
@@ -235,9 +297,22 @@ func (obs ServiceObservation) getProfileHealth() controllerutils.ComponentHealth
 		return health
 	}
 
-	health.State = constants.AIMStatusPending
+	// ProfileNotFound is terminal until the user changes the spec or
+	// creates a matching profile, so emit a Failed state (not Pending).
+	// This makes the framework's Ready aggregator surface
+	// reason=ProfileNotFound on the aggregate Ready condition, matching
+	// the BaseProfile path. A Pending state would otherwise be
+	// rolled up as the generic "Progressing" reason because the
+	// framework's firstErrorComponent picker only considers Failed/
+	// Degraded/NotAvailable states (see processComponentStatus in
+	// internal/controller/utils/reconciler.go).
+	health.State = constants.AIMStatusFailed
 	health.Reason = aimv1alpha1.AIMServiceReasonProfileNotFound
-	health.Message = "No profile found for service"
+	if msg := obs.resolution.notFoundMessage; msg != "" {
+		health.Message = msg
+	} else {
+		health.Message = "No profile found for service"
+	}
 	return health
 }
 
@@ -302,24 +377,37 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 		result.hpa = v1alpha1service.FetchHPA(ctx, c, result.inferenceService.Value)
 	}
 
-	// Fetch the profile (namespace-scoped takes precedence, cluster-scoped is
-	// the fallback when the namespaced profile is not found).
-	if service.Spec.Profile != nil {
-		profileName := service.Spec.Profile.Name
+	// Resolve the profile using whichever of the four ADR 0006b shapes the
+	// AIMService spec authored (name, model, model+selector, selector). The
+	// resolver desugars spec.model.name into selector.modelRef.name, forces
+	// role=Deployable, and emits a ProfileSelectorAmbiguous event when more
+	// than one candidate tied under ranking.
+	result.profile, result.clusterProfile, result.resolution = resolveProfileCandidates(ctx, c, r.Recorder, service)
 
-		result.profile = controllerutils.Fetch(ctx, c, client.ObjectKey{
-			Namespace: service.Namespace,
-			Name:      profileName,
-		}, &aimv1alpha2.AIMProfile{})
-
-		if result.profile.IsNotFound() {
-			result.clusterProfile = controllerutils.Fetch(ctx, c, client.ObjectKey{
-				Name: profileName,
-			}, &aimv1alpha2.AIMClusterProfile{})
+	// If the resolver picked a candidate, fetch any service-owned overlay
+	// derived from it (so ComposeState can switch downstream resolution
+	// onto the overlay) and the AIMProfileCache feeding the runtime.
+	seedObs := ServiceObservation{ServiceFetchResult: result}
+	seedObs.resolveFetchedProfile()
+	if seedObs.resolvedProfileSpec != nil {
+		cacheProfileName := seedObs.profileName
+		cacheProfileScope := seedObs.profileScope
+		if hasProfileOverrides(service.Spec.ProfileOverrides) {
+			overlay, _, err := buildServiceOverlayProfile(service, seedObs)
+			if err == nil {
+				cacheProfileName = overlay.Name
+				// Overlays are always namespace-scoped AIMProfiles in
+				// the service's own namespace, regardless of the
+				// underlying seed's scope.
+				cacheProfileScope = aimv1alpha1.AIMResolutionScopeNamespace
+				result.overlayProfile = controllerutils.Fetch(ctx, c, client.ObjectKey{
+					Namespace: service.Namespace,
+					Name:      overlay.Name,
+				}, &aimv1alpha2.AIMProfile{})
+			}
 		}
+		result.profileCache = fetchProfileCache(ctx, c, service, cacheProfileName, cacheProfileScope)
 	}
-
-	result.profileCache = fetchProfileCache(ctx, c, service)
 
 	// Fetch merged runtime config. Needed for routing (HTTPRoute) and label
 	// propagation. FetchMergedRuntimeConfig falls back to the default
@@ -351,16 +439,31 @@ func (r *ProfileServiceReconciler) ComposeState(
 ) ServiceObservation {
 	obs := ServiceObservation{ServiceFetchResult: fetch}
 
-	if fetch.profile.OK() && fetch.profile.Value != nil {
-		obs.resolvedProfileSpec = &fetch.profile.Value.Spec.AIMProfileSpecCommon
-		obs.resolvedProfileStatus = &fetch.profile.Value.Status
-		obs.profileName = fetch.profile.Value.Name
-		obs.profileScope = aimv1alpha1.AIMResolutionScopeNamespace
-	} else if fetch.clusterProfile.OK() && fetch.clusterProfile.Value != nil {
-		obs.resolvedProfileSpec = &fetch.clusterProfile.Value.Spec.AIMProfileSpecCommon
-		obs.resolvedProfileStatus = &fetch.clusterProfile.Value.Status
-		obs.profileName = fetch.clusterProfile.Value.Name
-		obs.profileScope = aimv1alpha1.AIMResolutionScopeCluster
+	obs.resolveFetchedProfile()
+
+	// If the AIMService declared spec.ProfileOverrides, build a service-owned
+	// overlay AIMProfile from the resolved seed and switch every downstream
+	// resolution (cache name, ConfigMap, KServe env wiring) onto the overlay.
+	// Doing this before hasModelSources ensures the cache is sized against
+	// the overlay's modelSources, not the seed's. Failures in override
+	// application surface through configErr so the AIMService gets a clean
+	// ConfigValid=False condition rather than silently stalling.
+	if obs.resolvedProfileSpec != nil && hasProfileOverrides(fetch.service.Spec.ProfileOverrides) {
+		overlay, overlaySpec, err := buildServiceOverlayProfile(fetch.service, obs)
+		if err != nil {
+			obs.configErr = fmt.Errorf("apply service profile overrides: %w", err)
+		} else {
+			obs.desiredOverlayProfile = overlay
+			obs.profileName = overlay.Name
+			obs.profileScope = aimv1alpha1.AIMResolutionScopeNamespace
+			if fetch.overlayProfile.OK() && fetch.overlayProfile.Value != nil {
+				obs.resolvedProfileSpec = &fetch.overlayProfile.Value.Spec.AIMProfileSpecCommon
+				obs.resolvedProfileStatus = &fetch.overlayProfile.Value.Status
+			} else {
+				obs.resolvedProfileSpec = &overlaySpec
+				obs.resolvedProfileStatus = nil
+			}
+		}
 	}
 
 	if obs.resolvedProfileSpec != nil {
@@ -378,6 +481,36 @@ func (r *ProfileServiceReconciler) ComposeState(
 	obs.runtimeStatus = v1alpha1service.ComputeRuntimeStatus(fetch.service, fetch.hpa)
 
 	return obs
+}
+
+// isDeployable reports whether the resolved profile is allowed to back an
+// AIMService. Trusts `status.deployable` when the producer has stamped it
+// and falls back to the structural definition (aimId + modelSources both
+// populated) to ride out the brief window where a fresh AIMProfile has
+// not yet been observed by its own reconciler. Returns false when no
+// profile has been resolved so callers can branch on the same predicate.
+func (obs *ServiceObservation) isDeployable() bool {
+	if obs.resolvedProfileSpec == nil {
+		return false
+	}
+	if obs.resolvedProfileStatus != nil && obs.resolvedProfileStatus.Deployable {
+		return true
+	}
+	return aimprofile.IsProfileDeployable(*obs.resolvedProfileSpec)
+}
+
+func (obs *ServiceObservation) resolveFetchedProfile() {
+	if obs.profile.OK() && obs.profile.Value != nil {
+		obs.resolvedProfileSpec = &obs.profile.Value.Spec.AIMProfileSpecCommon
+		obs.resolvedProfileStatus = &obs.profile.Value.Status
+		obs.profileName = obs.profile.Value.Name
+		obs.profileScope = aimv1alpha1.AIMResolutionScopeNamespace
+	} else if obs.clusterProfile.OK() && obs.clusterProfile.Value != nil {
+		obs.resolvedProfileSpec = &obs.clusterProfile.Value.Spec.AIMProfileSpecCommon
+		obs.resolvedProfileStatus = &obs.clusterProfile.Value.Status
+		obs.profileName = obs.clusterProfile.Value.Name
+		obs.profileScope = aimv1alpha1.AIMResolutionScopeCluster
+	}
 }
 
 // composeDerivedNames assembles the ISVC name, profile ConfigMap name, and the
@@ -408,7 +541,7 @@ func (r *ProfileServiceReconciler) composeDerivedNames(ctx context.Context, obs 
 		return
 	}
 
-	yamlBytes, filename, err := assembleProfileYAML(obs.resolvedProfileSpec, service.Spec.ProfileOverrides)
+	yamlBytes, filename, err := assembleProfileYAML(obs.resolvedProfileSpec)
 	if err != nil {
 		logger.Error(err, "failed to assemble profile YAML",
 			"service", service.Name, "profile", obs.profileName)
@@ -437,9 +570,44 @@ func (r *ProfileServiceReconciler) PlanResources(
 		return planResult
 	}
 
+	// v1alpha2 quick-start: a service authored with spec.model.image and
+	// dispatched onto the profile pipeline via the reconciler-pipeline
+	// annotation has no AIMModel yet. Plant the seed (dedicated, owned
+	// by this service) so the v1alpha2 model controller runs discovery
+	// and the next reconcile resolves via the standard model-ref path.
+	// Skip everything else this pass — there is nothing to apply until
+	// the model materialises a Ready AIMProfile.
+	if shouldPlanAutoCreatedModel(obs) {
+		autoModel, err := buildAutoCreatedAIMModel(service, obs.resolution.autoModelImage)
+		if err != nil {
+			logger.Error(err, "failed to build auto-created AIMModel",
+				"image", obs.resolution.autoModelImage)
+			return planResult
+		}
+		logger.V(1).Info("planning dedicated auto-created AIMModel for image-shape service",
+			"image", obs.resolution.autoModelImage, "name", autoModel.Name)
+		planResult.Apply(autoModel)
+		return planResult
+	}
+
 	if obs.resolvedProfileSpec == nil {
 		logger.V(1).Info("No profile resolved, skipping resource planning")
 		return planResult
+	}
+
+	// Reject base profiles up-front: status.deployable=false means the
+	// profile is missing aimId or modelSources and cannot back a runtime.
+	// getProfileHealth already surfaces the condition; the explicit gate
+	// here keeps cache / overlay / ISVC from being applied against an
+	// unfinished spec.
+	if !obs.isDeployable() {
+		logger.V(1).Info("Profile is a base profile (status.deployable=false); skipping resource planning",
+			"profile", obs.profileName)
+		return planResult
+	}
+
+	if obs.desiredOverlayProfile != nil {
+		planResult.Apply(obs.desiredOverlayProfile)
 	}
 
 	if obs.resolvedProfileStatus == nil || obs.resolvedProfileStatus.Status != constants.AIMStatusReady {
@@ -447,10 +615,28 @@ func (r *ProfileServiceReconciler) PlanResources(
 		return planResult
 	}
 
-	// 1. Plan AIMProfileCache if the profile has model sources.
+	// 1. Plan the service-owned overlay AIMProfile, if spec.profileOverrides
+	// asked us to materialise one. Always service-owned (Apply, not
+	// ApplyWithoutOwnerRef) so the overlay GCs with the AIMService — every
+	// downstream resource (cache, ConfigMap, ISVC) is now keyed against the
+	// overlay's name via obs.profileName, so leaving an orphan overlay
+	// behind would leave a stale, cache-eligible profile in the namespace.
+	// 2. Plan AIMProfileCache if the profile has model sources.
+	//
+	// Cache ownership tracks the service's caching mode, mirroring v1alpha1:
+	//   - Shared: applied without an owner reference so the cache persists
+	//     across service deletions and is shared by every service in the
+	//     namespace that resolves to the same AIMProfile.
+	//   - Dedicated: applied with the AIMService as owner so the cache (and
+	//     transitively its Artifacts/PVC) is garbage-collected when the
+	//     service is deleted.
 	if obs.hasModelSources {
 		if pc := planProfileCache(service, obs); pc != nil {
-			planResult.ApplyWithoutOwnerRef(pc)
+			if service.Spec.GetCachingMode() == aimv1alpha1.CachingModeShared {
+				planResult.ApplyWithoutOwnerRef(pc)
+			} else {
+				planResult.Apply(pc)
+			}
 		}
 
 		if !obs.profileCacheReady {
@@ -501,7 +687,10 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 		// single source of truth.
 		switch obs.profileScope {
 		case aimv1alpha1.AIMResolutionScopeNamespace:
-			if obs.profile.OK() && obs.profile.Value != nil {
+			if obs.overlayProfile.OK() && obs.overlayProfile.Value != nil {
+				status.ResolvedProfile.UID = obs.overlayProfile.Value.UID
+				status.ResolvedProfile.Namespace = obs.overlayProfile.Value.Namespace
+			} else if obs.desiredOverlayProfile == nil && obs.profile.OK() && obs.profile.Value != nil {
 				status.ResolvedProfile.UID = obs.profile.Value.UID
 				status.ResolvedProfile.Namespace = obs.profile.Value.Namespace
 			}
@@ -523,7 +712,7 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 
 	if obs.profileCache.Value != nil && obs.profileCache.Value.Status.Status == constants.AIMStatusReady {
 		status.Cache = &aimv1alpha1.AIMServiceCacheStatus{
-			TemplateCacheRef: &aimv1alpha1.AIMResolvedReference{
+			ProfileCacheRef: &aimv1alpha1.AIMResolvedReference{
 				Name:      obs.profileCache.Value.Name,
 				Namespace: obs.profileCache.Value.Namespace,
 				UID:       obs.profileCache.Value.UID,
@@ -540,28 +729,122 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 	}
 }
 
-// fetchProfileCache searches for an AIMProfileCache matching the service's profile reference.
+// fetchProfileCache resolves the AIMProfileCache the AIMService should consume,
+// honouring the service's caching mode and reusing any existing Shared cache
+// that already references the same profile (e.g. one materialised by the
+// AIMProfile reconciler when the profile opts into caching via
+// spec.caching.enabled).
+//
+// Shared mode: list AIMProfileCaches in the namespace whose
+// spec.profileName matches the resolved profile and spec.mode is Shared, and
+// pick the healthiest. This is the v1alpha1 pattern (see
+// internal/v1alpha1/aimservice/caching.go::searchTemplateCaches) and is what
+// guarantees that a profile-driven cache and a service-driven cache cannot
+// coexist for the same profile in the same namespace — one cache owns the
+// downstream artifact, eliminating the watch-handler ambiguity that exists
+// when two caches both create artifacts under the deterministic-by-weights
+// name scheme.
+//
+// Dedicated mode: deterministic lookup by the per-service name. Dedicated is
+// explicit per-service ownership, so we never reuse a Shared cache here.
+//
+// profileScope must match the scope the resolver settled on (Namespace or
+// Cluster) so a namespace AIMProfile and a same-named cluster
+// AIMClusterProfile in the same service namespace don't collide on a
+// single cache. Empty scope is treated as Namespace for backwards
+// compatibility with callers that haven't been updated.
 func fetchProfileCache(
 	ctx context.Context,
 	c client.Client,
 	service *aimv1alpha1.AIMService,
+	profileName string,
+	profileScope aimv1alpha1.AIMResolutionScope,
 ) controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache] {
-	if service.Spec.Profile == nil {
+	if profileName == "" {
 		return controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{}
 	}
 
-	cacheName, err := GenerateProfileCacheName(service.Spec.Profile.Name, service.Namespace)
-	if err != nil {
-		return controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: err}
+	cachingMode := service.Spec.GetCachingMode()
+
+	if cachingMode == aimv1alpha1.CachingModeDedicated {
+		cacheName, err := GenerateProfileCacheName(
+			profileName,
+			service.Namespace,
+			service.Name,
+			string(service.UID),
+			cachingMode,
+			profileScope,
+		)
+		if err != nil {
+			return controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: err}
+		}
+
+		return controllerutils.Fetch(ctx, c, client.ObjectKey{
+			Namespace: service.Namespace,
+			Name:      cacheName,
+		}, &aimv1alpha2.AIMProfileCache{})
 	}
 
-	return controllerutils.Fetch(ctx, c, client.ObjectKey{
-		Namespace: service.Namespace,
-		Name:      cacheName,
-	}, &aimv1alpha2.AIMProfileCache{})
+	// Shared: search the namespace for any cache that already references this
+	// profile in Shared mode and prefer the healthiest. Mirrors v1alpha1's
+	// AIMTemplateCache resolution. ProfileScope must also match so we don't
+	// reuse a cache that was created for a different scope's same-named
+	// profile.
+	cacheList := controllerutils.FetchList(ctx, c, &aimv1alpha2.AIMProfileCacheList{}, client.InNamespace(service.Namespace))
+	if cacheList.Error != nil {
+		return controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: cacheList.Error}
+	}
+
+	wantScope := profileScope
+	if wantScope == "" {
+		wantScope = aimv1alpha1.AIMResolutionScopeNamespace
+	}
+	matching := make([]aimv1alpha2.AIMProfileCache, 0)
+	for _, cache := range cacheList.Value.Items {
+		if cache.Spec.ProfileName != profileName {
+			continue
+		}
+		if cache.Spec.Mode != aimv1alpha2.ProfileCacheModeShared {
+			continue
+		}
+		gotScope := cache.Spec.ProfileScope
+		if gotScope == "" {
+			gotScope = aimv1alpha1.AIMResolutionScopeNamespace
+		}
+		if gotScope != wantScope {
+			continue
+		}
+		matching = append(matching, cache)
+	}
+	if len(matching) == 0 {
+		// Return a not-found result so downstream callers (and the
+		// component-health logic) treat this as "cache not yet created"
+		// — same semantics as a deterministic-name Fetch that 404s.
+		// Without this, FetchResult{} with both Value and Error nil would
+		// trip getProfileCacheHealth's `OK() == true → Value != nil`
+		// invariant and panic.
+		gvk := schema.GroupResource{Group: aimv1alpha2.GroupVersion.Group, Resource: "aimprofilecaches"}
+		return controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: apierrors.NewNotFound(gvk, profileName)}
+	}
+
+	best := utils.SelectBestPtr(matching, func(cache *aimv1alpha2.AIMProfileCache) constants.AIMStatus {
+		return cache.Status.GetAIMStatus()
+	})
+	if best == nil {
+		gvk := schema.GroupResource{Group: aimv1alpha2.GroupVersion.Group, Resource: "aimprofilecaches"}
+		return controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: apierrors.NewNotFound(gvk, profileName)}
+	}
+	return controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Value: best}
 }
 
-// planProfileCache creates an AIMProfileCache for the resolved profile's model sources.
+// planProfileCache builds the desired AIMProfileCache for the resolved profile
+// when the profile actually carries model sources. Caching mode is honored
+// here so the v1alpha2 chain (AIMService → AIMProfile → AIMProfileCache →
+// AIMArtifact) mirrors v1alpha1's (AIMService → AIMServiceTemplate →
+// AIMTemplateCache → AIMArtifact) Shared/Dedicated semantics. The caller is
+// responsible for routing the result through Apply vs ApplyWithoutOwnerRef
+// based on the same mode (see PlanResources) so Shared caches persist
+// independently of any one service.
 func planProfileCache(
 	service *aimv1alpha1.AIMService,
 	obs ServiceObservation,
@@ -574,7 +857,15 @@ func planProfileCache(
 		return nil
 	}
 
-	cacheName, err := GenerateProfileCacheName(obs.profileName, service.Namespace)
+	cachingMode := service.Spec.GetCachingMode()
+	cacheName, err := GenerateProfileCacheName(
+		obs.profileName,
+		service.Namespace,
+		service.Name,
+		string(service.UID),
+		cachingMode,
+		obs.profileScope,
+	)
 	if err != nil {
 		return nil
 	}
@@ -610,20 +901,62 @@ func planProfileCache(
 			ProfileName:      obs.profileName,
 			ProfileScope:     obs.profileScope,
 			StorageClassName: storageClassName,
-			Mode:             aimv1alpha2.ProfileCacheModeShared,
+			Mode:             profileCacheModeFor(cachingMode),
 			Env:              cacheEnv,
 		},
 	}
 }
 
-// GenerateProfileCacheName creates a deterministic name for a profile cache.
-// Shared caches are scoped to the profile name and namespace for reuse.
+// profileCacheModeFor maps the canonical AIMService caching mode (Shared or
+// Dedicated, with legacy aliases already collapsed by GetCachingMode) onto
+// the AIMProfileCache mode enum.
+func profileCacheModeFor(cachingMode aimv1alpha1.AIMCachingMode) aimv1alpha2.AIMProfileCacheMode {
+	if cachingMode == aimv1alpha1.CachingModeDedicated {
+		return aimv1alpha2.ProfileCacheModeDedicated
+	}
+	return aimv1alpha2.ProfileCacheModeShared
+}
+
+// GenerateProfileCacheName creates a deterministic name for an AIMProfileCache.
+// The naming scheme mirrors v1alpha1's GenerateTemplateCacheName so the two
+// pipelines share their Shared/Dedicated identity model:
 //
-// profileName is included in the hash so two long profile names that share
-// a prefix do not collide on the same cache resource after truncation.
-func GenerateProfileCacheName(profileName, namespace string) (string, error) {
+//   - Shared (default): name is derived from (profileName) hashed against
+//     (namespace+"|"+profileScope, profileName). Two services in the same
+//     namespace pointing at the same profile (same scope) converge on the
+//     same cache and reuse it; same-named namespace and cluster profiles
+//     get distinct caches because profileScope contributes to the hash. The
+//     profile name is also included in the hash so two long profile names
+//     that share a prefix do not collide on the same cache resource after
+//     truncation.
+//   - Dedicated: name is derived from (profileName, serviceName) hashed
+//     against the service UID and profileScope. This keeps the visible
+//     name readable while guaranteeing uniqueness across delete-and-recreate
+//     of the same service name. Per-service-instance caches.
+//
+// serviceName / serviceUID are ignored for Shared mode and may be empty.
+// profileScope must match the scope the resolver produced (Namespace or
+// Cluster) so cache identity tracks the chosen profile.
+func GenerateProfileCacheName(
+	profileName, namespace, serviceName, serviceUID string,
+	cachingMode aimv1alpha1.AIMCachingMode,
+	profileScope aimv1alpha1.AIMResolutionScope,
+) (string, error) {
+	scope := string(profileScope)
+	if scope == "" {
+		// Treat empty as Namespace to keep cache names stable for
+		// callers (tests, legacy migrations) that don't yet specify a
+		// scope and would otherwise rotate cache identity.
+		scope = string(aimv1alpha1.AIMResolutionScopeNamespace)
+	}
+	if cachingMode == aimv1alpha1.CachingModeDedicated {
+		return utils.GenerateDerivedName(
+			[]string{profileName, serviceName, "cache"},
+			utils.WithHashSource(serviceUID+"|"+scope),
+		)
+	}
 	return utils.GenerateDerivedName(
 		[]string{profileName, "cache"},
-		utils.WithHashSource(namespace, profileName),
+		utils.WithHashSource(namespace+"|"+scope, profileName),
 	)
 }

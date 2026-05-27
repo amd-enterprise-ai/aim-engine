@@ -5,7 +5,7 @@ kind: AIMModel
 metadata:
   name: auto-gen-template-test
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.1.10
+  image: ghcr.io/silogen/aim-dummy:0.2.0
 
   # Model sources - triggers custom model path
   modelSources:

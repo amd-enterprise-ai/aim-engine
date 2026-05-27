@@ -58,10 +58,23 @@ type profileYAML struct {
 }
 
 // profileMetadata matches the AIM runtime's ProfileMetadata schema.
-// Uses the v1alpha2 accelerator naming (accelerator_model, accelerator_type, accelerator_count).
-// The runtime also accepts the legacy names (gpu, gpu_count) via Pydantic AliasChoices.
+//
+// We emit BOTH naming conventions so the assembled YAML is valid against
+// every aim-runtime version we ship today:
+//
+//   - Legacy `gpu` / `gpu_count` are still REQUIRED by the runtime baked into
+//     amdenterpriseai/aim-base:0.11 (and earlier). The runtime's Pydantic
+//     ProfileMetadata schema validates `metadata.gpu` and `metadata.gpu_count`
+//     as required fields; omitting them causes the predictor pod to crash
+//     before opening port 8000.
+//   - New `accelerator_model` / `accelerator_type` / `accelerator_count` are
+//     the v1alpha2 vocabulary. Runtimes that don't know them ignore the
+//     extras (Pydantic extras are not forbidden); runtimes that do can
+//     consume them directly.
 type profileMetadata struct {
 	Engine              string `json:"engine"`
+	GPU                 string `json:"gpu"`
+	GPUCount            int32  `json:"gpu_count"`
 	AcceleratorModel    string `json:"accelerator_model"`
 	AcceleratorType     string `json:"accelerator_type"`
 	AcceleratorCount    int32  `json:"accelerator_count"`
@@ -80,7 +93,12 @@ func profileConfigMapName(serviceName string) (string, error) {
 }
 
 // assembleProfileYAML builds a complete profile YAML from an AIMProfileSpecCommon.
-func assembleProfileYAML(spec *aimv1alpha2.AIMProfileSpecCommon, overrides *aimv1alpha1.AIMServiceProfileOverrides) ([]byte, string, error) {
+//
+// The spec is expected to already reflect the effective profile configuration:
+// when the AIMService declared spec.profileOverrides, the controller has
+// materialised an overlay AIMProfile and points obs.resolvedProfileSpec at it,
+// so this function does not need to re-merge user overrides on top.
+func assembleProfileYAML(spec *aimv1alpha2.AIMProfileSpecCommon) ([]byte, string, error) {
 	if spec == nil {
 		return nil, "", fmt.Errorf("profile spec is nil")
 	}
@@ -89,17 +107,6 @@ func assembleProfileYAML(spec *aimv1alpha2.AIMProfileSpecCommon, overrides *aimv
 	if spec.EngineArgs != nil && len(spec.EngineArgs.Raw) > 0 {
 		if err := json.Unmarshal(spec.EngineArgs.Raw, &engineArgs); err != nil {
 			return nil, "", fmt.Errorf("failed to unmarshal engineArgs: %w", err)
-		}
-	}
-
-	// Apply overrides if present
-	if overrides != nil && overrides.EngineArgs != nil && len(overrides.EngineArgs.Raw) > 0 {
-		overrideArgs := make(map[string]any)
-		if err := json.Unmarshal(overrides.EngineArgs.Raw, &overrideArgs); err != nil {
-			return nil, "", fmt.Errorf("failed to unmarshal override engineArgs: %w", err)
-		}
-		for k, v := range overrideArgs {
-			engineArgs[k] = v
 		}
 	}
 
@@ -119,6 +126,8 @@ func assembleProfileYAML(spec *aimv1alpha2.AIMProfileSpecCommon, overrides *aimv
 		ModelID: spec.ModelId,
 		Metadata: profileMetadata{
 			Engine:              spec.Engine,
+			GPU:                 accModel,
+			GPUCount:            accCount,
 			AcceleratorModel:    accModel,
 			AcceleratorType:     accType,
 			AcceleratorCount:    accCount,

@@ -1,0 +1,14 @@
+# Model-only resolution: the user knows which model to deploy but lets the
+# controller pick the best matching deployable AIMProfile. The controller
+# desugars spec.model.name into selector.modelRef.name and forces
+# role=Deployable internally, then ranks candidates by primary > type > version.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  labels:
+    app.kubernetes.io/name: aim-engine
+    app.kubernetes.io/managed-by: kustomize
+  name: aimservice-by-model-sample
+spec:
+  model:
+    name: qwen-qwen3-32b

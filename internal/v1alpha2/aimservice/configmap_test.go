@@ -50,11 +50,11 @@ func sampleProfileSpec() *aimv1alpha2.AIMProfileSpecCommon {
 		AimId:            "qwen/qwen3-32b",
 		ModelId:          "qwen/qwen3-32b-fp8",
 		Engine:           "vllm",
-		Metric:           aimv1alpha2.AIMMetric("latency"),
-		Precision:        aimv1alpha2.AIMPrecision("fp8"),
-		Type:             aimv1alpha2.AIMProfileType("optimized"),
+		Metric:           aimv1alpha1.AIMMetric("latency"),
+		Precision:        aimv1alpha1.AIMPrecision("fp8"),
+		Type:             aimv1alpha1.AIMProfileType("optimized"),
 		AcceleratorModel: "MI300X",
-		AcceleratorType:  aimv1alpha2.AcceleratorType("gpu"),
+		AcceleratorType:  aimv1alpha1.AcceleratorType("gpu"),
 		AcceleratorCount: 1,
 		Image:            "ghcr.io/aim/qwen3-32b:1.0.0",
 	}
@@ -105,7 +105,7 @@ func TestProfileFilename(t *testing.T) {
 }
 
 func TestAssembleProfileYAML_NilSpec(t *testing.T) {
-	if _, _, err := assembleProfileYAML(nil, nil); err == nil {
+	if _, _, err := assembleProfileYAML(nil); err == nil {
 		t.Fatalf("expected error for nil spec")
 	}
 }
@@ -118,7 +118,7 @@ func TestAssembleProfileYAML_RoundTrip(t *testing.T) {
 	})
 	spec.EngineEnv = map[string]string{"VLLM_FOO": "bar"}
 
-	yamlBytes, filename, err := assembleProfileYAML(spec, nil)
+	yamlBytes, filename, err := assembleProfileYAML(spec)
 	if err != nil {
 		t.Fatalf("assembleProfileYAML error: %v", err)
 	}
@@ -146,6 +146,15 @@ func TestAssembleProfileYAML_RoundTrip(t *testing.T) {
 	if parsed.Metadata.AcceleratorCount != 1 {
 		t.Errorf("accelerator_count mismatch: %d", parsed.Metadata.AcceleratorCount)
 	}
+	// Legacy aliases must mirror the accelerator fields so the runtime in
+	// amdenterpriseai/aim-base:0.11 (which requires `gpu` / `gpu_count`)
+	// validates the assembled profile.
+	if parsed.Metadata.GPU != "MI300X" {
+		t.Errorf("gpu mismatch: %q", parsed.Metadata.GPU)
+	}
+	if parsed.Metadata.GPUCount != 1 {
+		t.Errorf("gpu_count mismatch: %d", parsed.Metadata.GPUCount)
+	}
 	if parsed.Metadata.Engine != "vllm" {
 		t.Errorf("engine mismatch: %q", parsed.Metadata.Engine)
 	}
@@ -157,21 +166,22 @@ func TestAssembleProfileYAML_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestAssembleProfileYAML_OverridesMerge(t *testing.T) {
+// TestAssembleProfileYAML_RendersResolvedSpec asserts that assembleProfileYAML
+// is a pure renderer of the spec it is given — it must not re-apply user
+// overrides. With the overlay-materialisation flow, ComposeState already
+// hands assembleProfileYAML the resolved (post-overrides) spec, so the
+// function's job is only to project that spec into the runtime profile YAML.
+// Override-merge correctness lives in the aimprofile package's
+// ApplyProfileCopyOverrides tests.
+func TestAssembleProfileYAML_RendersResolvedSpec(t *testing.T) {
 	spec := sampleProfileSpec()
 	spec.EngineArgs = mustJSON(t, map[string]any{
-		"max-model-len": 8192.0,
-		"dtype":         "auto",
+		"max-model-len":        8192.0,
+		"dtype":                "float16",
+		"tensor-parallel-size": 2.0,
 	})
 
-	overrides := &aimv1alpha1.AIMServiceProfileOverrides{
-		EngineArgs: mustJSON(t, map[string]any{
-			"dtype":                "float16",
-			"tensor-parallel-size": 2.0,
-		}),
-	}
-
-	yamlBytes, _, err := assembleProfileYAML(spec, overrides)
+	yamlBytes, _, err := assembleProfileYAML(spec)
 	if err != nil {
 		t.Fatalf("assembleProfileYAML error: %v", err)
 	}
@@ -182,13 +192,13 @@ func TestAssembleProfileYAML_OverridesMerge(t *testing.T) {
 	}
 
 	if got := parsed.EngineArgs["dtype"]; got != "float16" {
-		t.Errorf("override did not replace dtype: got %v", got)
+		t.Errorf("dtype mismatch: got %v", got)
 	}
 	if _, ok := parsed.EngineArgs["max-model-len"]; !ok {
-		t.Errorf("base max-model-len should be preserved when overrides do not set it")
+		t.Errorf("max-model-len should round-trip from spec")
 	}
 	if _, ok := parsed.EngineArgs["tensor-parallel-size"]; !ok {
-		t.Errorf("override should add tensor-parallel-size")
+		t.Errorf("tensor-parallel-size should round-trip from spec")
 	}
 }
 
@@ -202,7 +212,7 @@ func TestBuildProfileConfigMap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("profileConfigMapName returned error: %v", err)
 	}
-	yamlBytes, filename, err := assembleProfileYAML(spec, nil)
+	yamlBytes, filename, err := assembleProfileYAML(spec)
 	if err != nil {
 		t.Fatalf("assembleProfileYAML returned error: %v", err)
 	}

@@ -440,6 +440,29 @@ spec:
                         For S3 sources, users define their own organizational structure.
                       pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                       type: string
+                    precision:
+                      allOf:
+                      - enum:
+                        - auto
+                        - fp4
+                        - fp8
+                        - fp16
+                        - fp32
+                        - bf16
+                        - int4
+                        - int8
+                      - enum:
+                        - fp4
+                        - fp8
+                        - fp16
+                        - fp32
+                        - bf16
+                        - int4
+                        - int8
+                      description: |-
+                        Precision describes the runtime precision this source is compatible with.
+                        Used to match model sources to profiles during custom weight onboarding.
+                      type: string
                     size:
                       anyOf:
                       - type: integer

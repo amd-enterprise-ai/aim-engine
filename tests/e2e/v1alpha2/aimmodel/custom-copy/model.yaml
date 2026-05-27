@@ -1,0 +1,28 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: custom-copy-model
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        aimId: custom-org/custom-model
+        modelId: copied-org/copied-model
+        engineArgs:
+          tensor-parallel-size: 2
+    versionPolicy: pinned
+    version: 0.2.0
+    overrides:
+      modelSources:
+        - modelId: custom-org/custom-copy-model
+          sourceUri: s3://models/custom-copy-model
+      containerEnv:
+        - name: OVERRIDE
+          value: new
+        - name: ADDED
+          value: "2"
+      engineEnv:
+        OVERRIDE: new
+        ADDED: "2"
+      engineArgs:
+        tensor-parallel-size: 4

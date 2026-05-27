@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: no-match-service
+spec:
+  profile:
+    selector:
+      aimId: nonexistent/model
+      precision: fp8

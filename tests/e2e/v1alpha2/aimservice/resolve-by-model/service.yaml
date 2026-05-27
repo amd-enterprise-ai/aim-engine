@@ -1,0 +1,14 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: resolve-by-model-service
+  annotations:
+    # v1alpha2 spec.model.name only — no spec.profile to drive the
+    # spec-shape dispatch rule into the profile pipeline. Force it via
+    # the annotation override; without this the controller routes to
+    # the v1alpha1 template pipeline which doesn't understand v1alpha2
+    # model-driven resolution (no managed templates on this AIMModel).
+    aim.eai.amd.com/reconciler-pipeline: profile
+spec:
+  model:
+    name: resolve-by-model-model

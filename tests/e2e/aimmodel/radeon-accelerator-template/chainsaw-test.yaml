@@ -19,6 +19,11 @@ metadata:
   name: aimmodel-radeon-accelerator-template
   labels:
     requires: gpu
+    # Copies a ghcr-regcred secret from the default namespace at runtime
+    # to authenticate against ghcr.io/silogen. Excluded from default
+    # selectors via needs-secret notin (...); opt-in by overriding the
+    # selector or running the test dir directly.
+    needs-secret: ghcr_pull_secret
 spec:
   description: |
     Verify AIMModel auto-creates W7900 and R9700 AIMServiceTemplates with the

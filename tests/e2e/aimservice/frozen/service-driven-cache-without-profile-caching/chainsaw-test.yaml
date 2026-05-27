@@ -1,0 +1,108 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Service-Driven Cache Without Profile Caching (Path B)
+#
+# This is the symmetric negative case to tests/e2e/aimprofile/profile-driven-cache.
+# Together they pin both halves of the cache-ownership state machine:
+#
+#   profile.spec.caching.enabled = true  -> Path A (profile-owned cache).
+#                                            See tests/e2e/aimprofile/profile-driven-cache.
+#   profile.spec.caching unset / disabled -> Path B (service-owned cache, this test).
+#                                            AIMService is the only producer; cache is
+#                                            keyed by service identity and owner-ref'd
+#                                            back to the AIMService.
+#   both -> Path A wins (one-cache-per-profile invariant).
+#                                            See tests/e2e/aimservice/gpu/profile-cache-cpu-live.
+#
+# Frozen profile so the test does not depend on a real AIMProfile reconcile;
+# the cache-resolution logic we are pinning runs entirely on the AIMService
+# side.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: service-driven-cache-without-profile-caching
+spec:
+  description: |
+    Pins Path B service-driven cache materialisation when the referenced
+    AIMProfile does not opt into caching. AIMProfileCache must be created
+    by the AIMService reconciler (NOT the AIMProfile reconciler), bear the
+    service-driven naming pattern, run in Shared mode, and be owner-ref'd
+    by the AIMService so it GCs with the service.
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create frozen namespace AIMProfile (Ready, modelSources, no caching)
+      try:
+        - apply:
+            file: profile.yaml
+        - script:
+            # AIMProfile is namespace-scoped and chainsaw injects the
+            # ephemeral namespace at apply time; the YAML on disk has no
+            # metadata.namespace, so apply-with-status.sh needs the
+            # namespace passed explicitly to find the resource for the
+            # status patch.
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh profile.yaml --status-only -n "$NAMESPACE"
+
+    - name: Create v1alpha2 service referencing the profile
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert AIMProfileCache is materialised by the AIMService (Path B)
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                namespace: ($namespace)
+                # Service-driven caches carry the AIMService back-reference
+                # label; profile-driven caches do not. Asserting on the
+                # label disambiguates which path produced this cache.
+                labels:
+                  aim.eai.amd.com/service: test-no-profile-caching-svc
+              spec:
+                profileName: test-no-profile-caching
+                profileScope: Namespace
+                mode: Shared
+
+    - name: Assert exactly one AIMProfileCache exists and is unowned (Shared persists across service deletes)
+      try:
+        - script:
+            timeout: 30s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              # AIMProfile reconciler must not have created a cache; only
+              # the AIMService should have one. Two caches downloading the
+              # same weights would race on the AIMArtifact label and the
+              # second cache would never reach Ready (see history of the
+              # one-cache-per-profile invariant).
+              count=$(kubectl -n "$NAMESPACE" get aimprofilecache -o name | wc -l)
+              if [ "$count" -ne 1 ]; then
+                echo "FAIL: expected exactly 1 AIMProfileCache (service-driven Path B), got $count"
+                kubectl -n "$NAMESPACE" get aimprofilecache -o yaml >&2
+                exit 1
+              fi
+
+              CACHE=$(kubectl -n "$NAMESPACE" get aimprofilecache -o jsonpath='{.items[0].metadata.name}')
+
+              # Path B Shared caches are intentionally unowned: they
+              # persist across service deletions so a follow-up service
+              # against the same profile reuses the warmed cache. Asserting
+              # zero owner references doubles as proof that Path A
+              # (AIMProfile-owned cache) did NOT fire — there is no
+              # AIMProfile owner reference here.
+              OWNER_COUNT=$(kubectl -n "$NAMESPACE" get aimprofilecache "$CACHE" -o jsonpath='{range .metadata.ownerReferences[*]}{.kind}/{.name} {end}')
+              if [ -n "$OWNER_COUNT" ]; then
+                echo "FAIL: Shared Path B cache must be unowned (persists across service deletes), got owner refs: $OWNER_COUNT"
+                exit 1
+              fi

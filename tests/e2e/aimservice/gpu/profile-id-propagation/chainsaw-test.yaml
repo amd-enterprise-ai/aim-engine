@@ -19,6 +19,11 @@ metadata:
   name: aimservice-gpu-profile-id-propagation
   labels:
     requires: gpu
+    # Copies an hf-token secret from the aim-system namespace at runtime
+    # to authenticate against gated HF repos. Excluded from default
+    # selectors; opt-in by overriding the selector or pointing
+    # CHAINSAW_TEST_DIR here.
+    needs-secret: hf_token
 spec:
   description: Test that profileId from recommendedDeployments propagates to inference containers
   timeouts:

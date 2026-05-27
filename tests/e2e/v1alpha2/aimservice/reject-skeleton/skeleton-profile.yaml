@@ -1,0 +1,12 @@
+# Base profile: missing aimId and modelSources. The v1alpha2 AIMProfile
+# CRD CEL allows this (both must be set or both empty); the AIMProfile
+# reconciler stamps role=base and status.deployable=false.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: skeleton-profile
+spec:
+  image: registry.example.com/aim-cpu-base:0.12.0
+  acceleratorModel: EPYC_ZEN5
+  acceleratorType: cpu
+  acceleratorCount: 1

@@ -40,6 +40,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
@@ -191,7 +192,7 @@ func inspectImage(
 	// into AIM model images at build time and records the base image the model
 	// image was built from. It is consumed by the AIMModel controller to resolve
 	// spec.image for fine-tuned models whose spec.image is omitted.
-	metadata.BaseImageRef = extractEnvValue(configFile.Config.Env, EnvAIMBaseImageRef)
+	metadata.BaseImageRef = extractEnvValue(configFile.Config.Env, constants.EnvAIMBaseImageRef)
 
 	logger.V(1).Info("Successfully extracted image metadata", "imageURI", imageURI,
 		"canonicalName", metadata.Model.CanonicalName,

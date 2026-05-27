@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: llama-3-8b-official
+  namespace: default
+spec:
+  image: quay.io/amd/aim-llama-3-8b-instruct:0.9.0
+  imagePullSecrets:
+    - name: registry-creds
+  serviceAccountName: aim-runtime

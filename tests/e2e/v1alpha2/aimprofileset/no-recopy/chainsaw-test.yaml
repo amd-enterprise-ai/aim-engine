@@ -1,0 +1,107 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimprofileset-no-recopy
+spec:
+  description: |
+    Verifies that AIMProfileSet ignores profiles already derived by another
+    AIMProfileSet. A native AIMModel discovers the source AIMProfile, the first
+    AIMProfileSet copies it, and a second AIMProfileSet with the same selector
+    must still manage exactly one profile rather than re-copying the first set's
+    derived profile.
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create the source AIMModel
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for the source AIMProfile discovered from the image
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: profileset-no-recopy-model-cpu-bf16-latency-ad005fe9
+                annotations:
+                  aim.eai.amd.com/profile-source: image
+                  aim.eai.amd.com/profile-copyable: "true"
+              spec:
+                aimId: HuggingFaceTB/SmolLM2-135M
+                modelId: HuggingFaceTB/SmolLM2-135M
+                profileId: cpu-bf16-latency
+              status:
+                status: Ready
+
+    - name: Create the first AIMProfileSet
+      try:
+        - apply:
+            file: first-profileset.yaml
+
+    - name: Assert the first set copies exactly one profile
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileSet
+              metadata:
+                name: first-copy-profiles
+              status:
+                status: Ready
+                managedProfiles:
+                  total: 1
+                  ready: 1
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: first-copy-profiles-cpu-bf16-latency-0e72a7cd
+                annotations:
+                  aim.eai.amd.com/profile-source: copy
+              spec:
+                aimId: HuggingFaceTB/SmolLM2-135M
+                modelId: HuggingFaceTB/SmolLM2-135M
+                profileId: cpu-bf16-latency
+              status:
+                status: Ready
+
+    - name: Create the second AIMProfileSet with the same selector
+      try:
+        - apply:
+            file: second-profileset.yaml
+
+    - name: Assert the second set also copies exactly one profile
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileSet
+              metadata:
+                name: second-copy-profiles
+              status:
+                status: Ready
+                managedProfiles:
+                  total: 1
+                  ready: 1
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: second-copy-profiles-cpu-bf16-latency-305360f3
+                annotations:
+                  aim.eai.amd.com/profile-source: copy
+              spec:
+                aimId: HuggingFaceTB/SmolLM2-135M
+                modelId: HuggingFaceTB/SmolLM2-135M
+                profileId: cpu-bf16-latency
+              status:
+                status: Ready

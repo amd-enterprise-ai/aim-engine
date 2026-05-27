@@ -1,0 +1,29 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: custom-copy-source
+  annotations:
+    aim.eai.amd.com/base-image: ghcr.io/silogen/aim-base:0.1.10
+    aim.eai.amd.com/profile-copyable: "true"
+spec:
+  aimId: custom-org/custom-model
+  modelId: copied-org/copied-model
+  profileId: cpu-latency
+  image: ghcr.io/silogen/aim-dummy:0.2.0
+  primary: true
+  manualSelectionOnly: true
+  engine: vllm
+  containerEnv:
+    - name: KEEP
+      value: "1"
+    - name: OVERRIDE
+      value: old
+  engineEnv:
+    KEEP: "1"
+    OVERRIDE: old
+  engineArgs:
+    tensor-parallel-size: 2
+    max-model-len: 8192
+  modelSources:
+    - modelId: copied-org/copied-model
+      sourceUri: hf://copied-org/copied-model

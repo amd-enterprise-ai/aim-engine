@@ -1,0 +1,105 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimmodel-custom-copy
+spec:
+  description: |
+    Verifies that a profileCopy v1alpha2 AIMModel synthesizes a child AIMProfileSet,
+    which derives only matching direct profiles and applies selector plus override
+    semantics on the copied AIMProfile.
+  timeouts:
+    assert: 90s
+  steps:
+    - name: Seed the source namespace profile
+      try:
+        - apply:
+            file: source-profile.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: custom-copy-source
+              status:
+                status: Ready
+                version: 0.2.0
+
+    - name: Create the profileCopy AIMModel
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert the synthesized AIMProfileSet exists
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileSet
+              metadata:
+                name: custom-copy-model-profiles-2be25a47
+              spec:
+                selector:
+                  aimId: custom-org/custom-model
+                  modelId: copied-org/copied-model
+                versionPolicy: pinned
+                version: 0.2.0
+
+    - name: Assert the copied AIMProfile preserves direct-derivative fields
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: custom-copy-model-profiles-2be25a47-cpu-latency-c02fe2fa
+              spec:
+                aimId: custom-org/custom-model
+                modelId: custom-org/custom-copy-model
+                profileId: cpu-latency
+                primary: true
+                manualSelectionOnly: true
+                # source-profile.yaml's base-image annotation is `aim-base:0.1.10`;
+                # the rebase intentionally truncates SemVer-shaped tags to MAJOR.MINOR
+                # (aimimage.NormalizeBaseImageTag) because aim-base is published only
+                # at its rolling MAJOR.MINOR tag.
+                image: ghcr.io/silogen/aim-base:0.1
+                modelSources:
+                  - modelId: custom-org/custom-copy-model
+                    sourceUri: s3://models/custom-copy-model
+                containerEnv:
+                  - name: KEEP
+                    value: "1"
+                  - name: OVERRIDE
+                    value: new
+                  - name: ADDED
+                    value: "2"
+                engineEnv:
+                  KEEP: "1"
+                  OVERRIDE: new
+                  ADDED: "2"
+                engineArgs:
+                  tensor-parallel-size: 4
+                  max-model-len: 8192
+              status:
+                status: Ready
+
+    - name: Assert AIMModel status summarizes child profile-set counts only
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: custom-copy-model
+              status:
+                status: Ready
+                aimId: custom-org/custom-model
+                profileSetRef:
+                  name: custom-copy-model-profiles-2be25a47
+                managedProfiles:
+                  total: 1
+                  ready: 1

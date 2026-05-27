@@ -1,0 +1,47 @@
+# Derivation AIMModel that turns the base image's base AIMProfiles into
+# deployable ones by overlaying target identity + model weights.
+#
+# selector is FILTER-only — it narrows source candidates and writes
+# nothing onto the derived profile:
+#   - role: base                Filter to base profiles only.
+#   - modelRef.name: custom-base
+#                               Pin to OUR base AIMModel so we don't
+#                               accidentally derive from other base
+#                               profiles in the namespace.
+#   - acceleratorCount: 2       Narrow to the desired TP shape.
+#
+# CEL on AIMModelProfilesSpec rejects selector.aimId / selector.modelId /
+# selector.profileId when role=base — base profiles have no source
+# identity to filter on. Target identity for the derived profile lives
+# in overrides:
+#   - overrides.aimId           Required by CEL when role=base.
+#   - overrides.modelId         Required by CEL when role=base.
+#   - overrides.modelSources    Supplies the BYO weights; modelSources[0]
+#                               .modelId would auto-derive overrides.modelId
+#                               if it weren't set explicitly, but the
+#                               explicit form is required for role=base.
+#
+# Source weights are pulled from Hugging Face. The original draft used an
+# s3:// URI against a fake bucket, but this test's purpose is the
+# base → deployable derivation flow, not the s3 protocol — there's a
+# dedicated s3 fixture under tests/e2e/aimservice/gpu/custom-model-s3.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: custom-derived
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        role: base
+        modelRef:
+          name: custom-base
+          scope: Namespace
+        acceleratorCount: 2
+    versionPolicy: all
+    overrides:
+      aimId: acme/custom-transformer
+      modelId: Qwen/Qwen3-0.6B
+      modelSources:
+        - modelId: Qwen/Qwen3-0.6B
+          sourceUri: hf://Qwen/Qwen3-0.6B

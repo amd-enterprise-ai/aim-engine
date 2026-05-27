@@ -1,0 +1,29 @@
+# Overlay demonstration: profileOverrides materialise a service-owned
+# AIMProfile derived from the seed (here qwen-qwen3-32b-fp8-mi300x) with the
+# override closure applied. The overlay carries:
+#
+#   labels:
+#     aim.eai.amd.com/profile-role: deployable
+#     aim.eai.amd.com/profile-origin: derived
+#     aim.eai.amd.com/source-model: <seed's source model when present>
+#
+# The overlay is owner-referenced by the AIMService so it is garbage-collected
+# on service deletion. Downstream (cache, ConfigMap, KServe wiring) keys off
+# the overlay so the override participates in cache-key computation.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  labels:
+    app.kubernetes.io/name: aim-engine
+    app.kubernetes.io/managed-by: kustomize
+  name: aimservice-overlay-sample
+spec:
+  profile:
+    name: qwen-qwen3-32b-fp8-mi300x
+  profileOverrides:
+    modelSources:
+      - modelId: my-org/qwen3-32b-finetune
+        sourceURI: hf://my-org/qwen3-32b-finetune
+    containerEnv:
+      - name: AIM_OVERRIDE_NOTE
+        value: "service overlay rebases the seed profile onto custom weights"

@@ -90,7 +90,12 @@ spec:
         - apply:
             file: service.yaml
 
-    - name: Verify AIMProfileCache is created
+    # The profile sets spec.caching.enabled=true, so the AIMProfile reconciler
+    # materialises a profile-owned AIMProfileCache named after the profile
+    # itself (1:1, owner-ref'd to it). The AIMService's fetchProfileCache
+    # picks this up via the Shared-mode list-by-profile-name search and
+    # reuses it instead of creating its own service-driven cache.
+    - name: Verify the profile-driven AIMProfileCache is materialised and reused
       try:
         - assert:
             timeout: 60s
@@ -98,9 +103,11 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfileCache
               metadata:
+                name: glm-4-7-mi300x-live
                 namespace: ($namespace)
-                labels:
-                  aim.eai.amd.com/service: test-profile-cache-gpu
+                (ownerReferences[?kind == 'AIMProfile']):
+                  - name: glm-4-7-mi300x-live
+                    controller: true
               spec:
                 profileName: glm-4-7-mi300x-live
                 profileScope: Namespace
@@ -130,9 +137,8 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfileCache
               metadata:
+                name: glm-4-7-mi300x-live
                 namespace: ($namespace)
-                labels:
-                  aim.eai.amd.com/service: test-profile-cache-gpu
               status:
                 status: Ready
 

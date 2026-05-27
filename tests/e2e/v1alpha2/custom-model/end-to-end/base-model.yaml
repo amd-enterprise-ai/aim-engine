@@ -1,0 +1,11 @@
+# Base AIM image whose profile YAMLs under /workspace/aim-runtime/profiles/general/
+# leave `aim_id`, `model_id`, and `model_sources` empty, so the
+# materialised AIMProfiles surface as `role=base` base profiles that the
+# derivation AIMModel below converts into deployable profiles by
+# overriding modelSources with the custom weights.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: custom-base
+spec:
+  image: amdenterpriseai/aim-base:0.11

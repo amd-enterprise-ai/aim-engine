@@ -10,6 +10,7 @@ on:
       - 'cmd/**'
       - 'config/**'
       - 'images/artifact-downloader/**'
+      - 'images/aim-dummy/**'
       - 'Makefile'
       - 'Dockerfile'
       - '.github/workflows/publish-main.yml'
@@ -17,6 +18,11 @@ on:
 permissions:
   contents: write
   packages: write
+
+# Opt JavaScript actions onto Node 24 ahead of GitHub's June 16, 2026 default
+# flip. See https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   publish:
@@ -70,6 +76,17 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/aim-artifact-downloader:publish-main
           cache-from: type=gha,scope=artifact-downloader
           cache-to: type=gha,scope=artifact-downloader,mode=max
+
+      - name: Build and push aim-dummy image
+        uses: docker/build-push-action@v6
+        with:
+          context: images/aim-dummy
+          push: true
+          tags: |
+            ghcr.io/silogen/aim-dummy:${{ env.IMAGE_TAG }}
+            ghcr.io/silogen/aim-dummy:publish-main
+          cache-from: type=gha,scope=aim-dummy
+          cache-to: type=gha,scope=aim-dummy,mode=max
 
       - name: Log in to DockerHub (controller image)
         run: echo "${{ secrets.DOCKER_HUB_PUSH }}" | docker login docker.io -u "${{ secrets.DOCKER_HUB_PUSH_USER }}" --password-stdin

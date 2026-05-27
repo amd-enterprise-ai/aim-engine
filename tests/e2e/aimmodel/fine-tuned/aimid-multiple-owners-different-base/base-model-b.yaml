@@ -1,8 +1,8 @@
-# Cluster base model representing a different base-image family (e.g.
-# aim-cpu-base) for the same canonical aimId as base-model-a. The deployment
-# image resolver must produce a *different* deployment-image-ref annotation
-# for the copy derived from this owner — which is the behavior this test
-# exercises.
+# Namespace-scoped base model representing a different base-image family
+# (e.g. aim-cpu-base) for the same canonical aimId as base-model-a. The
+# deployment image resolver must produce a *different* deployment-image-ref
+# annotation for the copy derived from this owner — which is the behavior
+# this test exercises.
 #
 # Owner B deliberately uses a Docker Hub spec.image (no registry prefix means
 # docker.io/amdenterpriseai/...) while keeping baseImageRef on
@@ -14,7 +14,7 @@
 # across *different registry hosts*, not just different repo paths under
 # the same host.
 apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMClusterModel
+kind: AIMModel
 metadata:
   name: ft-multi-base-b
 spec:

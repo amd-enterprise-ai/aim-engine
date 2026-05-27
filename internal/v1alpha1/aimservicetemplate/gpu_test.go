@@ -553,3 +553,43 @@ func TestBuildNodeAffinityFromGPURequirements_NoAffinity(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildNodeAffinityFromGPURequirements_SortsDeviceIDs(t *testing.T) {
+	spec := aimv1alpha1.AIMServiceTemplateSpecCommon{
+		ModelName: "test-model",
+		AIMRuntimeParameters: aimv1alpha1.AIMRuntimeParameters{
+			Hardware: &aimv1alpha1.AIMHardwareRequirements{GPU: &aimv1alpha1.AIMGpuRequirements{
+				Model:    "MI300X",
+				Requests: 1,
+			}},
+		},
+	}
+
+	affinity := BuildNodeAffinityFromGPURequirements(spec, nil)
+	if affinity == nil || affinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		t.Fatal("BuildNodeAffinityFromGPURequirements() returned nil affinity")
+	}
+
+	terms := affinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	if len(terms) != 1 || len(terms[0].MatchExpressions) != 1 {
+		t.Fatalf("unexpected node affinity shape: %#v", affinity)
+	}
+
+	expr := terms[0].MatchExpressions[0]
+	if expr.Key != utils.LabelAMDGPUDeviceID {
+		t.Fatalf("match expression key = %q, want %q", expr.Key, utils.LabelAMDGPUDeviceID)
+	}
+	if expr.Operator != corev1.NodeSelectorOpIn {
+		t.Fatalf("match expression operator = %q, want %q", expr.Operator, corev1.NodeSelectorOpIn)
+	}
+
+	want := []string{"74a1", "74a9", "74b5", "74bd"}
+	if len(expr.Values) != len(want) {
+		t.Fatalf("match expression values len = %d, want %d (%v)", len(expr.Values), len(want), expr.Values)
+	}
+	for i := range want {
+		if expr.Values[i] != want[i] {
+			t.Fatalf("match expression values = %v, want %v", expr.Values, want)
+		}
+	}
+}

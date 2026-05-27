@@ -1,0 +1,147 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Profile Overrides + Dedicated Cache
+#
+# Combines the two service-side caching invariants in a single test so we get
+# end-to-end coverage of both new behaviours without spinning up two separate
+# fixtures:
+#
+#   1. spec.profileOverrides.modelSources materialises a service-owned overlay
+#      AIMProfile derived from the referenced seed profile. Every downstream
+#      resource (cache, ConfigMap, eventually InferenceService) is keyed
+#      against the overlay, not the seed — so the user's weights flow into
+#      the cache without forking the seed.
+#
+#   2. spec.caching.mode=Dedicated routes the AIMProfileCache through the
+#      service-driven path with a per-service Dedicated cache that is
+#      owner-ref'd by the AIMService. This mirrors v1alpha1's AIMService ->
+#      AIMTemplateCache (mode=Dedicated, owned by service) pattern so the
+#      cache and its dedicated artifacts GC with the service.
+#
+# The test runs against a frozen seed profile (status patched directly in
+# the manifest) so it does not depend on a real AIMProfile reconciler run or
+# a real artifact download — we are pinning the AIMService -> overlay ->
+# cache wiring, not the artifact lifecycle.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-overrides-dedicated-cache
+spec:
+  description: |
+    Pins service-driven cache + overlay materialisation:
+    - Overlay AIMProfile is created in the test namespace, annotated with
+      the service back-reference, with the user's modelSources merged in.
+    - AIMProfileCache references the overlay (NOT the seed), is in Dedicated
+      mode, and is owner-ref'd by the AIMService.
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create frozen seed cluster profile (Ready)
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-profile.yaml --status-only
+
+    - name: Create v1alpha2 service with profile overrides + Dedicated caching
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert overlay AIMProfile is materialised, Ready, namespace-scoped, owned by the service
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                namespace: ($namespace)
+                # The service back-reference annotation is what makes the
+                # overlay self-describing in the cluster — kubectl get
+                # aimprofile -o yaml shows you which AIMService produced it.
+                annotations:
+                  aim.eai.amd.com/overlay-service: test-overlay-service
+                # Owner reference is the AIMService — overlay GCs with the
+                # service so we don't leak per-service profiles.
+                (ownerReferences[?kind == 'AIMService']):
+                  - name: test-overlay-service
+                    controller: true
+              spec:
+                # Identity-replacing override: spec.modelSources comes
+                # entirely from spec.profileOverrides.modelSources, NOT from
+                # the seed.
+                aimId: test/overlay-seed
+                modelId: user/finetune-weights
+                (modelSources[?modelId == 'user/finetune-weights']):
+                  - sourceUri: hf://user/finetune-weights
+                    size: 4Gi
+              status:
+                status: Ready
+
+    - name: Assert AIMProfileCache references the overlay and is in Dedicated mode
+      try:
+        - script:
+            timeout: 30s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              # Find the overlay by its annotation. Its name is hashed (seed
+              # + service + UID) so we can't predict it; the annotation +
+              # owner reference are the stable identifiers.
+              OVERLAY=$(kubectl get aimprofile -n "$NAMESPACE" \
+                -l '' \
+                -o jsonpath='{.items[?(@.metadata.annotations.aim\.eai\.amd\.com/overlay-service=="test-overlay-service")].metadata.name}')
+              if [ -z "$OVERLAY" ]; then
+                echo "FAIL: no overlay AIMProfile found with overlay-service=test-overlay-service annotation"
+                kubectl get aimprofile -n "$NAMESPACE" -o yaml >&2
+                exit 1
+              fi
+              echo "Overlay AIMProfile: $OVERLAY"
+
+              # The cache must reference the overlay's name, NOT the seed's.
+              # This is the critical wiring assertion — without it, the
+              # cache would still download the seed's modelSources and the
+              # user's overrides would be silently dropped.
+              CACHE=$(kubectl get aimprofilecache -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=test-overlay-service \
+                -o jsonpath='{.items[0].metadata.name}')
+              if [ -z "$CACHE" ]; then
+                echo "FAIL: no AIMProfileCache labelled for test-overlay-service"
+                kubectl get aimprofilecache -n "$NAMESPACE" -o yaml >&2
+                exit 1
+              fi
+              echo "AIMProfileCache: $CACHE"
+
+              CACHE_PROFILE=$(kubectl get aimprofilecache "$CACHE" -n "$NAMESPACE" -o jsonpath='{.spec.profileName}')
+              if [ "$CACHE_PROFILE" != "$OVERLAY" ]; then
+                echo "FAIL: cache.spec.profileName=$CACHE_PROFILE, expected overlay $OVERLAY"
+                exit 1
+              fi
+
+              CACHE_SCOPE=$(kubectl get aimprofilecache "$CACHE" -n "$NAMESPACE" -o jsonpath='{.spec.profileScope}')
+              if [ "$CACHE_SCOPE" != "Namespace" ]; then
+                echo "FAIL: cache.spec.profileScope=$CACHE_SCOPE, expected Namespace (overlay is namespace-scoped)"
+                exit 1
+              fi
+
+              CACHE_MODE=$(kubectl get aimprofilecache "$CACHE" -n "$NAMESPACE" -o jsonpath='{.spec.mode}')
+              if [ "$CACHE_MODE" != "Dedicated" ]; then
+                echo "FAIL: cache.spec.mode=$CACHE_MODE, expected Dedicated"
+                exit 1
+              fi
+
+              # In Dedicated mode the cache must be owner-ref'd by the
+              # AIMService so it GCs with the service.
+              OWNER_KIND=$(kubectl get aimprofilecache "$CACHE" -n "$NAMESPACE" -o jsonpath='{.metadata.ownerReferences[0].kind}')
+              OWNER_NAME=$(kubectl get aimprofilecache "$CACHE" -n "$NAMESPACE" -o jsonpath='{.metadata.ownerReferences[0].name}')
+              if [ "$OWNER_KIND" != "AIMService" ] || [ "$OWNER_NAME" != "test-overlay-service" ]; then
+                echo "FAIL: Dedicated cache must be owner-ref'd by AIMService test-overlay-service, got $OWNER_KIND/$OWNER_NAME"
+                exit 1
+              fi
+
+              echo "All cache wiring assertions passed."

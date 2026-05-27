@@ -41,7 +41,7 @@ spec:
                   aim.eai.amd.com/custom-model: "true"
               spec:
                 # Image from custom.baseImage
-                image: ghcr.io/silogen/aim-dummy:0.1.10
+                image: ghcr.io/silogen/aim-dummy:0.2.0
                 # ModelSources from custom.modelSources
                 modelSources:
                   - modelId: inline/test-model

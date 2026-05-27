@@ -1,0 +1,15 @@
+# Runtime config with routing for inference endpoint testing.
+# Path template matches the HTTP_BASE_PATH the chainsaw-test passes to
+# validate-http.sh.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: v1alpha2-via-model-cpu-live
+spec:
+  routing:
+    enabled: true
+    gatewayRef:
+      name: kserve-ingress-gateway
+      namespace: kgateway-system
+    pathTemplate: "/integration/v1alpha2-via-model-cpu-live/{.metadata.namespace}/{.metadata.name}"
+    requestTimeout: "180s"

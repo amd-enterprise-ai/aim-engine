@@ -45,7 +45,7 @@ spec:
                 name: shared-followup-service
               spec:
                 model:
-                  image: ghcr.io/silogen/aim-dummy:0.1.10
+                  image: ghcr.io/silogen/aim-dummy:0.2.0
                 template:
                   name: ${TEMPLATE_NAME}
                 caching:

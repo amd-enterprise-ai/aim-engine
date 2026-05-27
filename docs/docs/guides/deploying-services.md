@@ -1,64 +1,192 @@
 # Deploying Inference Services
 
-`AIMService` is the primary resource for deploying inference endpoints. It combines a model image, optional runtime configuration, and HTTP routing to produce a production-ready inference service.
+`AIMService` is the primary resource for deploying inference endpoints. This guide covers the common patterns — picking a profile, configuring scaling and routing, and verifying the deployment.
 
-## Quick Start
+!!! info "v1alpha2"
+    All examples on this page use `aim.eai.amd.com/v1alpha2`. For the deprecated v1alpha1 shape (`spec.template`), see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
 
-The minimal service requires just an AIM container image:
+## Quick start
+
+The shortest path: name a model, let the controller pick a profile.
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: qwen-chat
   namespace: ml-team
 spec:
   model:
-    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+    name: qwen-qwen3-32b
 ```
 
-This creates an inference service using the default runtime configuration and automatically selected profile.
+This works when an `AIMModel` (or `AIMClusterModel`) named `qwen-qwen3-32b` exists and has produced at least one deployable `AIMProfile`. The controller treats `spec.model.name` as a shortcut for "every deployable profile produced by this model", then ranks the candidates (see [Ranking](#ranking)) and resolves to a single profile.
 
+If you haven't applied a model yet, see [Model Catalog](model-catalog.md) for browsing and creating models.
 
-## Common Configuration
+## Resolution shapes
 
-### Scaling
+v1alpha2 supports five ways to reach an `AIMProfile`. Pick the shape that matches what you know.
 
-Control the number of replicas:
+| Shape | Spec | Use when |
+|---|---|---|
+| [By name](#by-name) | `spec.profile.name` | You know the exact profile to deploy |
+| [By model name](#by-model) | `spec.model.name` | You know the model; let the controller pick |
+| [Model + selector](#model--selector) | `spec.model.name` + `spec.profile.selector` | Narrow a model's pool by hardware or precision |
+| [Global selector](#global-selector) | `spec.profile.selector` | Reach profiles via labels alone |
+| [By image](#by-image) | `spec.model.image` + annotation | One-shot deploy from just an AIM container image |
+
+See [Services concept](../concepts/services.md#resolution-shapes) for the full mechanics.
+
+### Ranking
+
+Every shape except **By name** produces a candidate pool that the controller filters and ranks. The pipeline:
+
+1. **Selector filter** — keep only candidates that match every field set on `spec.profile.selector` (`aimId`, `modelRef`, `precision`, `metric`, `acceleratorModel`, `acceleratorCount`, `acceleratorType`, `engine`, `engineArgs`). The selector is an AND — every field provided must match the candidate exactly.
+2. **Hardware filter** — drop candidates whose `acceleratorModel` is not present in the cluster (via the AcceleratorDetector node labels).
+3. **Deployable filter** — drop profiles with `status.deployable=false` (base profiles).
+4. **Scope preference** — namespace `AIMProfile` outranks cluster `AIMClusterProfile` when both match.
+5. **Rank** — order the survivors by `primary > type > version > name`, where:
+    - `primary: true` beats `primary: false`.
+    - `type` ranks `optimized > general > preview > unoptimized`.
+    - `version` is the highest semver from the profile's container-image tag.
+    - Alphabetical name is the final, deterministic tiebreaker.
+
+A single winner is selected. If two profiles tie on every ranking axis, the alphabetical name tiebreak makes the choice deterministic. The fields a user typically narrows on (`metric`, `precision`, `acceleratorModel`, `acceleratorCount`) are **filters**, not ranking axes — the way to influence the choice is to constrain the selector until exactly the desired profile survives, then let ranking pick among any remaining ties.
+
+The v1alpha1 template selector performs the same filtering (availability → unoptimized → service overrides → GPU availability → namespace-over-cluster) and applies an analogous tier-based preference. The v1alpha2 ranking just centralises it on profile primary/type/version metadata.
+
+### By name
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: qwen-chat
+  namespace: ml-team
+spec:
+  profile:
+    name: qwen-qwen3-32b-mi300x-fp8-latency
+```
+
+Resolution checks namespace-scoped `AIMProfile` first, then cluster-scoped `AIMClusterProfile`.
+
+### By model
 
 ```yaml
 spec:
   model:
+    name: qwen-qwen3-32b
+```
+
+The candidate pool is every deployable profile produced by `AIMModel/qwen-qwen3-32b` (or `AIMClusterModel` of the same name). Ranking picks the best.
+
+### Model + selector
+
+```yaml
+spec:
+  model:
+    name: qwen-qwen3-32b
+  profile:
+    selector:
+      precision: fp8
+      acceleratorModel: MI300X
+      metric: latency
+```
+
+Use this when a model ships multiple profiles and you want to pin precision, accelerator, or metric.
+
+### Global selector
+
+```yaml
+spec:
+  profile:
+    selector:
+      aimId: qwen/qwen3-32b
+      precision: fp8
+      acceleratorModel: MI300X
+```
+
+At least one of `aimId` or `modelRef` is required so the controller can fan out watches efficiently. Note `selector.role` is reserved — see the [services concept page](../concepts/services.md#reserved-selector-fields).
+
+### By image
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: qwen-chat
+  namespace: ml-team
+  annotations:
+    aim.eai.amd.com/reconciler-pipeline: profile
+spec:
+  model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+```
+
+The shortest path when you only have a container image. With the annotation, the v1alpha2 profile pipeline reuses an existing `AIMModel`/`AIMClusterModel` for that image if one is present, or creates a dedicated, service-owned `AIMModel` if not. Discovery runs against the model and the service then resolves to one of its profiles.
+
+If you plan to share the image across many services, apply a long-lived `AIMModel`/`AIMClusterModel` once and reference it via `spec.model.name` instead — the same profiles back every service and the cache works in `Shared` mode without extra owner chains.
+
+!!! warning "Migration window"
+    Without `aim.eai.amd.com/reconciler-pipeline: profile`, `spec.model.image` is reconciled by the **legacy v1alpha1 template pipeline**. The annotation will be removed (and the profile pipeline made the default) when v1alpha1 is dropped. See [Migration window](../admin/upgrading.md#migration-window) for the full mechanics, including the auto-created `AIMModel` naming convention, labels, and GC behaviour.
+
+## Profile overlays
+
+To tweak a published profile for one service — typically to point it at fine-tune weights or override engine args — use `spec.profileOverrides`:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: qwen-finetune
+  namespace: ml-team
+spec:
+  profile:
+    name: qwen-qwen3-32b-mi300x-fp8-latency
+  profileOverrides:
+    modelSources:
+      - modelId: acme/qwen3-32b-finetune
+        sourceUri: hf://acme/qwen3-32b-finetune
+    engineEnv:
+      VLLM_LOG_LEVEL: DEBUG
+```
+
+The controller materialises a service-owned overlay `AIMProfile` named `<seed>-<service>-overlay-<hash>` with the override applied, then resolves the service to the overlay. The overlay is garbage-collected with the service.
+
+`spec.profileOverrides` lives at the top level of the AIMService spec, **not under `spec.profile`**, because it is a separate concern: `spec.profile` describes *which* profile to resolve, `spec.profileOverrides` describes *how to mutate* the resolved profile into a service-owned overlay. The CRD only allows `profileOverrides` together with `spec.profile.name` (it can't combine with a selector — the overlay needs a single, named seed), and keeping it at the top level mirrors the v1alpha1 `spec.overrides` shape that did the same job for templates.
+
+When you have many services that share the same override shape, build a fine-tune `AIMModel` instead — see [Fine-Tuned Models](fine-tuned-models.md).
+
+## Scaling
+
+### Fixed replicas
+
+```yaml
+spec:
+  model:
+    name: qwen-qwen3-32b
   replicas: 3
 ```
 
 ### Autoscaling
 
-AIMService supports automatic scaling based on custom metrics using [KEDA](https://keda.sh/) (Kubernetes Event-driven Autoscaling). This enables your inference services to scale dynamically based on real-time demand.
-
-#### Basic Autoscaling
-
-Enable autoscaling by specifying minimum and maximum replica counts:
-
 ```yaml
 spec:
   model:
-    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+    name: qwen-qwen3-32b
   minReplicas: 1
   maxReplicas: 5
 ```
 
-This configures KEDA to manage scaling between 1 and 5 replicas. Without custom metrics, KEDA uses default scaling behavior.
+When `minReplicas` and `maxReplicas` are set, the controller annotates the InferenceService for KEDA-managed autoscaling. Without custom metrics, KEDA uses default scaling behavior.
 
-#### Custom Metrics with OpenTelemetry
-
-For precise control over scaling behavior, configure custom metrics from the inference runtime. vLLM exposes metrics via OpenTelemetry that can drive scaling decisions:
+For custom metrics (e.g. vLLM OpenTelemetry counters):
 
 ```yaml
 spec:
   model:
-    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+    name: qwen-qwen3-32b
   minReplicas: 1
   maxReplicas: 3
   autoScaling:
@@ -66,131 +194,57 @@ spec:
       - type: PodMetric
         podmetric:
           metric:
-            backend: "opentelemetry"
+            backend: opentelemetry
             metricNames:
               - vllm:num_requests_running
             query: "vllm:num_requests_running"
-            operationOverTime: "avg"
+            operationOverTime: avg
           target:
             type: Value
             value: "1"
 ```
 
-This configuration scales based on the average number of running requests across pods. When the average exceeds 1, KEDA scales up; when it drops below, KEDA scales down.
+See [Scaling and Autoscaling](scaling-and-autoscaling.md) for the full metric reference and monitoring commands.
 
-#### Metric Configuration Options
-
-| Field | Description | Default |
-|-------|-------------|---------|
-| `backend` | Metrics backend to use | `opentelemetry` |
-| `serverAddress` | Address of the metrics server | `keda-otel-scaler.keda.svc:4317` |
-| `metricNames` | List of metrics to collect from pods | - |
-| `query` | Query to retrieve metrics from the backend | - |
-| `operationOverTime` | Aggregation operation: `last_one`, `avg`, `max`, `min`, `rate`, `count` | `last_one` |
-
-#### Target Types
-
-| Type | Description | Field |
-|------|-------------|-------|
-| `Value` | Scale based on absolute metric value | `value` |
-| `AverageValue` | Scale based on average value across pods | `averageValue` |
-| `Utilization` | Scale based on percentage utilization (resource metrics only) | `averageUtilization` |
-
-#### Common vLLM Metrics
-
-These metrics are commonly used for autoscaling vLLM-based inference services:
-
-| Metric | Description | Scaling Use Case |
-|--------|-------------|------------------|
-| `vllm:num_requests_running` | Number of requests currently being processed | Scale based on concurrent load |
-| `vllm:num_requests_waiting` | Number of requests waiting in queue | Scale based on queue depth |
-
-
-#### How It Works
-
-When autoscaling is configured, AIMService:
-
-1. Creates a KServe InferenceService with the `serving.kserve.io/autoscalerClass: keda` annotation
-2. KEDA creates a `ScaledObject` that monitors the specified metrics
-3. KEDA creates and manages an `HorizontalPodAutoscaler` (HPA) based on the ScaledObject
-4. The HPA scales the deployment between `minReplicas` and `maxReplicas` based on metric values
-
-#### Monitoring Autoscaling
-
-First, get the derived KServe InferenceService name for the AIMService:
-
-```bash
-kubectl -n <namespace> get inferenceservice -l aim.eai.amd.com/service.name=<service-name>
-```
-
-KEDA resources are named from the InferenceService name (`<isvc-name>`), not the AIMService name:
-
-```bash
-kubectl -n <namespace> get scaledobject <isvc-name>-predictor -o yaml
-kubectl -n <namespace> get hpa keda-hpa-<isvc-name>-predictor
-```
-
-Watch scaling events in real-time:
-
-```bash
-kubectl -n <namespace> get hpa keda-hpa-<isvc-name>-predictor -w
-```
-
-View current metrics:
-
-```bash
-kubectl -n <namespace> describe hpa keda-hpa-<isvc-name>-predictor
-```
-
-#### Prerequisites
-
-Autoscaling requires:
-
-- **KEDA** installed in the cluster
-- **KEDA OpenTelemetry Scaler** (`keda-otel-scaler`) deployed if using OpenTelemetry metrics
-- **OpenTelemetry Collector** configured to scrape metrics from inference pods
-
-### Resource Limits
-
-Override default resource allocations:
+## Resource overrides
 
 ```yaml
 spec:
   model:
-    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+    name: qwen-qwen3-32b
   resources:
-    limits:
+    requests:
       cpu: "8"
       memory: 64Gi
-    requests:
-      cpu: "4"
-      memory: 32Gi
+    limits:
+      cpu: "16"
+      memory: 128Gi
 ```
 
-## Runtime Configuration
+Service-level resources are merged on top of the resolved profile's `status.resources`. Service values win where both set the same key.
 
-Reference a specific runtime configuration for credentials and defaults:
+## Image pull secrets
+
+For private registries:
 
 ```yaml
 spec:
   model:
-    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
-  runtimeConfigName: team-config  # defaults to 'default' if omitted
+    name: qwen-qwen3-32b
+  imagePullSecrets:
+    - name: registry-credentials
 ```
 
-Runtime configurations provide:
-- Routing defaults
+Merged with the resolved profile's `spec.imagePullSecrets` and `serviceAccountName`-derived secrets.
 
-See [Runtime Configuration](../concepts/runtime-config.md) for details.
+## HTTP routing
 
-## HTTP Routing
-
-Enable external HTTP access through Gateway API:
+Expose the service through Gateway API:
 
 ```yaml
 spec:
   model:
-    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+    name: qwen-qwen3-32b
   routing:
     enabled: true
     gatewayRef:
@@ -198,14 +252,10 @@ spec:
       namespace: gateways
 ```
 
-### Custom Paths
-
-Override the default path using templates:
+### Custom paths
 
 ```yaml
 spec:
-  model:
-    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   routing:
     enabled: true
     gatewayRef:
@@ -214,145 +264,111 @@ spec:
     pathTemplate: "/{.metadata.namespace}/chat/{.metadata.name}"
 ```
 
-Templates use JSONPath expressions wrapped in `{...}`:
-- `{.metadata.namespace}` - service namespace
-- `{.metadata.name}` - service name
-- `{.metadata.labels['team']}` - label value (label must exist)
+`pathTemplate` accepts JSONPath expressions wrapped in `{...}` referencing service metadata. The rendered path is lowercased, URL-encoded, and capped at 200 characters. If a referenced field doesn't exist, the service goes `Degraded` — make sure every JSONPath reference resolves.
 
-The final path is lowercased, URL-encoded, and limited to 200 characters.
-
-**Note**: If a label or field doesn't exist, the service will enter a degraded state. Ensure all referenced fields are present.
+See [Routing and Ingress](routing-and-ingress.md) for the full Gateway API integration story.
 
 ## Authentication
 
-For models requiring authentication (e.g., gated Hugging Face models):
+For models behind gated registries (HuggingFace tokens, private S3, etc.), credentials live on the profile's `modelSources[].env` and are applied during cache pre-warm. See [Private Registries](private-registries.md).
+
+## Caching
+
+Caching is on by default in `Shared` mode (one cache PVC per profile, reused across services). Switch to `Dedicated` for per-service isolation:
 
 ```yaml
 spec:
   model:
-    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
-  env:
-    - name: HF_TOKEN
-      valueFrom:
-        secretKeyRef:
-          name: huggingface-creds
-          key: token
+    name: qwen-qwen3-32b
+  caching:
+    mode: Dedicated
 ```
 
-For private container registries:
+See [Model Caching](model-caching.md) for the full cache lifecycle, including the protocol-switching downloader for HuggingFace.
 
-```yaml
-spec:
-  model:
-    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
-  imagePullSecrets:
-    - name: registry-credentials
-```
-
-## Monitoring Service Status
-
-Check service readiness:
+## Monitoring service status
 
 ```bash
-kubectl -n <namespace> get aimservice <name>
+kubectl -n ml-team get aimservice qwen-chat
+# NAME        STATUS    MODEL              PROFILE                                AGE
+# qwen-chat   Running   qwen-qwen3-32b     qwen-qwen3-32b-mi300x-fp8-latency      2m
+
+kubectl -n ml-team describe aimservice qwen-chat
 ```
 
-View detailed status:
+### Status values
 
-```bash
-kubectl -n <namespace> describe aimservice <name>
-```
+| Status | Meaning |
+|---|---|
+| `Pending` | Resolving the profile or waiting on dependencies |
+| `Starting` | Profile resolved; creating cache and InferenceService |
+| `Running` | InferenceService is ready and serving traffic |
+| `Degraded` | Partially functional (e.g. routing failed, cache degraded) |
+| `Failed` | Terminal error |
 
-### Status Values
-
-The `status` field shows the overall service state:
-
-- **Pending**: Initial state, resolving model and template references
-- **Starting**: Creating infrastructure (InferenceService, routing, caches)
-- **Running**: Service is ready and serving traffic
-- **Degraded**: Service is running but has warnings (e.g., routing issues, template not optimal)
-- **Failed**: Service cannot start due to terminal errors
-
-### Status Fields
+### Status fields
 
 | Field | Description |
-| ----- | ----------- |
-| `status` | Overall service status (Pending, Starting, Running, Degraded, Failed) |
-| `observedGeneration` | Most recent generation observed by the controller |
-| `conditions` | Detailed conditions tracking different aspects of service lifecycle |
-| `resolvedRuntimeConfig` | Metadata about the runtime config that was resolved (name, namespace, scope, UID) |
-| `resolvedModel` | Metadata about the model image that was resolved (name, namespace, scope, UID) |
-| `resolvedTemplate` | Metadata about the template that was selected (name, namespace, scope, UID) |
-| `routing` | Observed routing configuration including the rendered HTTP path |
+|---|---|
+| `resolvedProfile` | The profile the service is using (`name`, `scope`, `kind`, `uid`) |
+| `resolvedRuntimeConfig` | The runtime config (if any) that contributed defaults |
+| `cache` | Cache status — `profileCacheRef` (v1alpha2) or `templateCacheRef` (v1alpha1), `retryAttempts` |
+| `runtime` | Replica counts when autoscaling is active |
+| `routing` | Observed routing including the rendered path |
+| `conditions` | Per-component conditions |
 
 ### Conditions
 
-Services track detailed conditions to help diagnose issues:
+The key v1alpha2 conditions:
 
-- **Framework conditions**: `DependenciesReachable`, `AuthValid`, `ConfigValid`, `Ready`
-- **Component conditions**: `ModelReady`, `TemplateReady`, `RuntimeConfigReady`, `CacheReady`, `InferenceServiceReady`, `InferenceServicePodsReady`, `HTTPRouteReady`, `HPAReady`
-- **Common reasons**:
-  - Model/template resolution: `ModelNotFound`, `ModelNotReady`, `Resolved`, `TemplateNotFound`, `TemplateSelectionAmbiguous`
-  - Runtime and cache lifecycle: `CreatingRuntime`, `RuntimeReady`, `CacheCreating`, `CacheReady`, `CacheFailed`
-  - Routing and autoscaling: `PathTemplateInvalid`, `HTTPRouteAccepted`, `HTTPRoutePending`, `HPAOperational`
+- `ProfileReady` — profile resolution (`ProfileResolved`, `ProfileNotFound`, `BaseProfile`)
+- `ProfileCacheReady` — `AIMProfileCache` artifact downloads
+- `InferenceServiceReady` — KServe runtime
+- `HTTPRouteReady` — Gateway API route acceptance (only when routing is enabled)
+- `HPAReady` — KEDA autoscaler health (only when autoscaling is enabled)
+- `Ready` — aggregate of all above
 
-### Example Status
+When `ProfileReady=False`, the controller suppresses the downstream `InferenceServiceReady` / `HTTPRouteReady` entries — those resources aren't being created until the profile resolves.
 
-```bash
-$ kubectl -n ml-team get aimservice qwen-chat -o yaml
-```
+### Example status
 
 ```yaml
 status:
   status: Running
-  observedGeneration: 1
+  resolvedProfile:
+    name: qwen-qwen3-32b-mi300x-fp8-latency
+    scope: Cluster
+    kind: aim.eai.amd.com/v1alpha2/AIMClusterProfile
+    uid: 6d8f...
+  resolvedModel:
+    name: qwen-qwen3-32b
+    scope: Cluster
+    kind: aim.eai.amd.com/v1alpha2/AIMClusterModel
+    uid: 4b2a...
+  routing:
+    path: /ml-team/qwen-chat
   conditions:
-    - type: ModelReady
+    - type: ProfileReady
       status: "True"
-      reason: ModelResolved
-      message: "AIMModel qwen-qwen3-32b is ready"
-    - type: TemplateReady
-      status: "True"
-      reason: Resolved
-      message: "AIMClusterServiceTemplate qwen3-32b-latency is ready"
-    - type: CacheReady
+      reason: ProfileResolved
+    - type: ProfileCacheReady
       status: "True"
       reason: CacheReady
-      message: "Template cache is ready"
     - type: InferenceServiceReady
       status: "True"
       reason: RuntimeReady
-      message: "InferenceService is ready"
     - type: HTTPRouteReady
       status: "True"
       reason: HTTPRouteAccepted
-      message: "HTTPRoute is accepted by gateway"
     - type: Ready
       status: "True"
       reason: AllComponentsReady
-      message: "All components are ready"
-  resolvedRuntimeConfig:
-    name: default
-    namespace: ml-team
-    scope: Namespace
-    kind: aim.eai.amd.com/v1alpha1/AIMRuntimeConfig
-  resolvedModel:
-    name: qwen-qwen3-32b
-    namespace: ml-team
-    scope: Namespace
-    kind: aim.eai.amd.com/v1alpha1/AIMModel
-  resolvedTemplate:
-    name: qwen3-32b-latency
-    scope: Cluster
-    kind: aim.eai.amd.com/v1alpha1/AIMClusterServiceTemplate
-  routing:
-    path: /ml-team/qwen-chat
 ```
 
-## Complete Example
+## Complete example
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: qwen-chat
@@ -362,207 +378,82 @@ metadata:
 spec:
   model:
     name: qwen-qwen3-32b
-  template:
-    name: qwen3-32b-latency
-  runtimeConfigName: team-config
-  replicas: 2
+  profile:
+    selector:
+      precision: fp8
+      acceleratorModel: MI300X
+      metric: latency
+  minReplicas: 1
+  maxReplicas: 3
   resources:
     limits:
-      cpu: "6"
-      memory: 48Gi
+      cpu: "16"
+      memory: 128Gi
   routing:
     enabled: true
     gatewayRef:
       name: inference-gateway
       namespace: gateways
     pathTemplate: "/team/{.metadata.labels['team']}/chat"
-  env:
-    - name: HF_TOKEN
-      valueFrom:
-        secretKeyRef:
-          name: huggingface-creds
-          key: token
-```
-
-## Custom Profiles
-
-Custom profiles let you tune inference engine behavior (engine args and environment variables) directly on a service template, without building custom container images.
-
-### Deploying with a Custom Profile Template
-
-First, create a template with `customProfile`:
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMServiceTemplate
-metadata:
-  name: llama-3-8b-custom
-  namespace: ml-team
-spec:
-  aimId: meta-llama/Llama-3-8B
-  modelId: meta-llama/Llama-3-8B
-  modelName: my-llama-model
-  metric: latency
-  precision: fp16
-  hardware:
-    gpu:
-      model: MI300X
-      requests: 1
-  customProfile:
-    engineArgs:
-      dtype: float16
-      gpu-memory-utilization: 0.95
-    envVars:
-      PYTORCH_TUNABLEOP_ENABLED: "1"
-```
-
-Wait for the template to become `Ready` (discovery must complete):
-
-```bash
-kubectl -n ml-team get aimservicetemplate llama-3-8b-custom
-```
-
-Then deploy a service that references the template:
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMService
-metadata:
-  name: llama-custom
-  namespace: ml-team
-spec:
-  model:
-    name: my-llama-model
-  template:
-    name: llama-3-8b-custom
-```
-
-The controller creates a ConfigMap with the custom profile YAML and mounts it into the inference container. The `AIM_PROFILE_ID` environment variable is set automatically to select the custom profile.
-
-### Custom Profile via AIMModel
-
-Alternatively, define custom profiles on `AIMModel.spec.customTemplates[]`. The model controller creates `AIMServiceTemplate` resources automatically:
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMModel
-metadata:
-  name: my-finetuned-llama
-  namespace: ml-team
-spec:
-  image: amdenterpriseai/aim-vllm-base:0.10.0
-  modelSources:
-    - modelId: my-org/llama-finetuned
-      sourceUri: s3://my-bucket/weights/
-      size: 16Gi
-  customTemplates:
-    - name: llama-custom-tp1
-      aimId: meta-llama/Llama-3-8B
-      modelId: meta-llama/Llama-3-8B
-      hardware:
-        gpu:
-          model: MI300X
-          requests: 1
-      profile:
-        metric: latency
-        precision: fp16
-      customProfile:
-        engineArgs:
-          dtype: float16
-          gpu-memory-utilization: 0.95
-        envVars:
-          HIP_FORCE_DEV_KERNARG: "1"
-```
-
-Then deploy a service referencing the model. The auto-created template is selected automatically or can be referenced by name.
-
-### Verifying Custom Profile Deployment
-
-Check that the ConfigMap and environment variables are present on the inference container:
-
-```bash
-# Check ConfigMaps in the service namespace
-kubectl -n ml-team get configmap -l aim.eai.amd.com/service.name=llama-custom
-
-# Inspect the InferenceService for the custom profile volume and env vars
-kubectl -n ml-team get inferenceservice -l aim.eai.amd.com/service.name=llama-custom -o yaml
-```
-
-Look for:
-- A volume mount at `/workspace/aim-runtime/profiles/custom/`
-- `AIM_ID` and `AIM_PROFILE_ID` environment variables on the container
-
-See [Custom Profiles](../concepts/templates.md#custom-profiles) for a detailed explanation of the feature, including the three configuration layers and lifecycle management.
-
-## Model Caching
-
-Model caching is enabled by default in `Shared` mode, pre-downloading model artifacts so they are ready when the inference service starts. To use a dedicated cache owned by the service instead:
-
-```yaml
-spec:
-  model:
-    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   caching:
-    mode: Dedicated
+    mode: Shared
 ```
-
-How caching works:
-
-1. An `AIMTemplateCache` is created for the service's template, if it doesn't already exist
-2. `AIMArtifact` resources download model artifacts to PVCs
-3. The service waits for caches to become available before starting
-4. Cached models are mounted directly into the inference container
-
-### Cache Preservation on Deletion
-
-Cache behavior on service deletion depends on the mode:
-
-- **Shared** (default): Caches persist independently and can be reused by future services
-- **Dedicated**: Caches are garbage-collected with the service
-
-See [Model Caching](../concepts/caching.md) for detailed information on cache lifecycle and management.
 
 ## Troubleshooting
 
-### Service stuck in Pending
+### Service stuck in `Pending` / `ProfileNotFound`
 
-Check if the runtime config exists:
+The resolver found no candidates.
+
 ```bash
-kubectl -n <namespace> get aimruntimeconfig
+kubectl get aimservice <name> -o jsonpath='{.status.conditions[?(@.type=="ProfileReady")].message}'
 ```
 
-Check if templates are available:
+Common causes:
+
+- `spec.profile.name` typo (or wrong scope — namespace vs cluster).
+- `spec.model.name` doesn't match any AIMModel that has produced deployable profiles. Check `kubectl get aimmodel <name> -o jsonpath='{.status.managedProfiles}'`.
+- Selector is too restrictive — relax `precision` / `acceleratorModel` / `acceleratorCount`.
+
+### `BaseProfile`
+
+`spec.profile.name` points at a base profile (`status.deployable: false`). Reference a deployable profile instead, or run a custom-model derivation to produce one — see [Custom Models](custom-models.md).
+
+### Service stuck in `Starting`
+
+Either the cache is still warming up, or KServe is still creating the InferenceService.
+
 ```bash
-kubectl -n <namespace> get aimservicetemplate
-kubectl get aimclusterservicetemplate
+# Cache progress
+kubectl get aimprofilecache -l aim.eai.amd.com/service.name=<service-name>
+kubectl get aimartifact -l aim.eai.amd.com/service.name=<service-name>
+
+# KServe InferenceService
+kubectl get inferenceservice -l aim.eai.amd.com/service.name=<service-name>
+kubectl get pods -l serving.kserve.io/inferenceservice=<isvc-name>
 ```
+
+Image pull errors, GPU/memory unavailability, and PVC binding failures all show up at the pod level.
 
 ### Routing not working
 
-Verify the HTTPRoute was created:
 ```bash
-kubectl -n <namespace> get httproute -l aim.eai.amd.com/service.name=<service-name>
+kubectl get httproute -l aim.eai.amd.com/service.name=<service-name>
+kubectl get aimservice <name> -o jsonpath='{.status.conditions[?(@.type=="HTTPRouteReady")]}'
 ```
 
-Check for path template errors in status:
-```bash
-kubectl -n <namespace> get aimservice <name> -o jsonpath='{.status.conditions[?(@.type=="HTTPRouteReady")]}'
-```
+`PathTemplateInvalid` means a JSONPath expression in `pathTemplate` referenced a field that doesn't exist on the service.
 
-### Model not found
+### Wrong profile selected
 
-Verify the model exists:
-```bash
-kubectl -n <namespace> get aimmodel <model-name>
-kubectl get aimclustermodel <model-name>
-```
+Check `status.resolvedProfile.name`. If it's not the profile you expected, narrow `spec.profile.selector` to disambiguate — or pin with `spec.profile.name`.
 
-If using `spec.model.image` directly, verify the image URI is accessible and the runtime config is properly configured for model creation.
+## Next steps
 
-## Related Documentation
-
-- [Runtime Configuration](../concepts/runtime-config.md) - Configure runtime settings and credentials
-- [Models](../concepts/models.md) - Understanding the model catalog
-- [Profiles](../concepts/profiles.md) - Self-contained runtime configurations (v1alpha2, recommended)
-- [Templates](../concepts/templates.md) - Templates and discovery (v1alpha1, deprecated)
-- [Model Caching](../concepts/caching.md) - Cache lifecycle and deletion behavior
+- [Scaling and Autoscaling](scaling-and-autoscaling.md) — KEDA, OpenTelemetry metrics, monitoring
+- [Routing and Ingress](routing-and-ingress.md) — Gateway API integration
+- [Model Caching](model-caching.md) — Cache lifecycle and download protocols
+- [Private Registries](private-registries.md) — Authentication for HF / S3 / OCI
+- [Multi-Tenancy](multi-tenancy.md) — Namespace isolation patterns
+- [Fine-Tuned Models](fine-tuned-models.md) — Derive profiles for a fine-tune of a published model
+- [Custom Models](custom-models.md) — Derive profiles for your own model architecture

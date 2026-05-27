@@ -8,7 +8,7 @@ metadata:
 spec:
   # Regular AIM image with recommended deployments in labels
   # This will create discovered templates via image metadata extraction
-  image: ghcr.io/silogen/aim-dummy:0.1.10
+  image: ghcr.io/silogen/aim-dummy:0.2.0
 
   # NO modelSources - this is NOT a custom model
   # customTemplates should be ADDITIVE to discovered templates

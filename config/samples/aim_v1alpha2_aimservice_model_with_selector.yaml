@@ -1,0 +1,19 @@
+# Model + selector resolution: narrow the model's profile pool by precision /
+# accelerator / engine criteria. spec.model.name desugars to
+# selector.modelRef.name; the additional selector fields filter the pool
+# before the SelectBestPtr ranking step.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  labels:
+    app.kubernetes.io/name: aim-engine
+    app.kubernetes.io/managed-by: kustomize
+  name: aimservice-by-model-and-selector-sample
+spec:
+  model:
+    name: qwen-qwen3-32b
+  profile:
+    selector:
+      precision: fp8
+      acceleratorModel: MI300X
+      metric: latency

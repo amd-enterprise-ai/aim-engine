@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfileSet
+metadata:
+  name: second-copy-profiles
+spec:
+  selector:
+    aimId: HuggingFaceTB/SmolLM2-135M
+    modelId: HuggingFaceTB/SmolLM2-135M
+    profileId: cpu-bf16-latency
+  versionPolicy: all
