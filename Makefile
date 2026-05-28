@@ -383,8 +383,31 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx rm aim-engine-builder
 	rm Dockerfile.cross
 
+.PHONY: sync-detector-images
+sync-detector-images: ## Sync accelerator-detector image refs in config/accelerator-detector/kustomization.yaml from config/helm/values.yaml.
+	@# Keeps the kustomize image transformers in lockstep with the Helm chart's
+	@# acceleratorDetector.{gpu,cpu}.image values. Without this, install.yaml
+	@# ships with placeholder accelerator-detector-{gpu,cpu}:latest refs that
+	@# don't resolve anywhere. Wired into build-installer (release builds) and
+	@# the sync-detector-images pre-commit hook (drift detection).
+	@command -v yq >/dev/null 2>&1 || { echo "yq is not installed"; exit 1; }
+	@DETECTOR_GPU_REPO="$$(yq '.acceleratorDetector.gpu.image.repository' config/helm/values.yaml)"; \
+	 DETECTOR_GPU_TAG="$$(yq '.acceleratorDetector.gpu.image.tag' config/helm/values.yaml)"; \
+	 DETECTOR_CPU_REPO="$$(yq '.acceleratorDetector.cpu.image.repository' config/helm/values.yaml)"; \
+	 DETECTOR_CPU_TAG="$$(yq '.acceleratorDetector.cpu.image.tag' config/helm/values.yaml)"; \
+	 for v in "$${DETECTOR_GPU_REPO}" "$${DETECTOR_GPU_TAG}" "$${DETECTOR_CPU_REPO}" "$${DETECTOR_CPU_TAG}"; do \
+	   if [ -z "$${v}" ] || [ "$${v}" = "null" ]; then \
+	     echo "ERROR: missing acceleratorDetector image value in config/helm/values.yaml"; exit 1; \
+	   fi; \
+	 done; \
+	 echo "  - GPU detector image: $${DETECTOR_GPU_REPO}:$${DETECTOR_GPU_TAG}"; \
+	 echo "  - CPU detector image: $${DETECTOR_CPU_REPO}:$${DETECTOR_CPU_TAG}"; \
+	 cd config/accelerator-detector && \
+	   kustomize edit set image accelerator-detector-gpu="$${DETECTOR_GPU_REPO}:$${DETECTOR_GPU_TAG}" && \
+	   kustomize edit set image accelerator-detector-cpu="$${DETECTOR_CPU_REPO}:$${DETECTOR_CPU_TAG}"
+
 .PHONY: build-installer
-build-installer: manifests generate ## Generate a consolidated YAML with CRDs and deployment.
+build-installer: manifests generate sync-detector-images ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
 	cd config/manager && kustomize edit set image controller=${IMG}
 	kustomize build config/default > dist/install.yaml

@@ -2,11 +2,18 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 configMapGenerator:
-- name: accelerator-detector-script
-  files:
+- files:
   - detect-and-label.py=scripts/detect-and-label.py
+  name: accelerator-detector-script
 
 resources:
-  - service_account.yaml
-  - gpu-daemonset.yaml
-  - cpu-daemonset.yaml
+- service_account.yaml
+- gpu-daemonset.yaml
+- cpu-daemonset.yaml
+images:
+- name: accelerator-detector-cpu
+  newName: docker.io/amdenterpriseai/aim-epyc-base
+  newTag: "0.11"
+- name: accelerator-detector-gpu
+  newName: docker.io/amdenterpriseai/aim-base
+  newTag: "0.11"
