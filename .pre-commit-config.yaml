@@ -36,6 +36,13 @@ repos:
     pass_filenames: false
     files: ^go\.(mod|sum)$
 
+  - id: sync-detector-images
+    name: Sync accelerator-detector image refs from values.yaml
+    entry: mise exec -- make sync-detector-images
+    language: system
+    pass_filenames: false
+    files: ^config/(helm/values\.yaml|accelerator-detector/kustomization\.yaml)$
+
   # - id: build-crds
   #   name: Build CRDs for Helm chart
   #   entry: bash -lc 'kubectl kustomize config/crd/ > crd/crds.yaml'
