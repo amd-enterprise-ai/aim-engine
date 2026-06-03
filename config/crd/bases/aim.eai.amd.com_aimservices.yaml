@@ -4277,9 +4277,11 @@ spec:
           rule: '!has(self.spec.profileOverrides) || has(self.spec.profile)'
         - message: spec.template is not supported on v1alpha2; use spec.profile or
             spec.model
-          rule: '!has(self.spec.template)'
+          optionalOldSelf: true
+          rule: '!has(self.spec.template) || (oldSelf.hasValue() && has(oldSelf.value().spec.template))'
         - message: spec.overrides is not supported on v1alpha2; use spec.profileOverrides
-          rule: '!has(self.spec.overrides)'
+          optionalOldSelf: true
+          rule: '!has(self.spec.overrides) || (oldSelf.hasValue() && has(oldSelf.value().spec.overrides))'
         - message: one of spec.model or spec.profile must be specified
           rule: has(self.spec.model) || has(self.spec.profile)
         - message: spec.profile.selector.role on v1alpha2 may only be omitted or set

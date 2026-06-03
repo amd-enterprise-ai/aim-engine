@@ -41,8 +41,8 @@ import (
 // +kubebuilder:printcolumn:name="Replicas",type=string,JSONPath=`.status.runtime.replicas`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.profileOverrides) || has(self.spec.profile)",message="spec.profileOverrides requires spec.profile to be set"
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.template)",message="spec.template is not supported on v1alpha2; use spec.profile or spec.model"
-// +kubebuilder:validation:XValidation:rule="!has(self.spec.overrides)",message="spec.overrides is not supported on v1alpha2; use spec.profileOverrides"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.template) || (oldSelf.hasValue() && has(oldSelf.value().spec.template))",message="spec.template is not supported on v1alpha2; use spec.profile or spec.model",optionalOldSelf=true
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.overrides) || (oldSelf.hasValue() && has(oldSelf.value().spec.overrides))",message="spec.overrides is not supported on v1alpha2; use spec.profileOverrides",optionalOldSelf=true
 // +kubebuilder:validation:XValidation:rule="has(self.spec.model) || has(self.spec.profile)",message="one of spec.model or spec.profile must be specified"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.profile) || !has(self.spec.profile.selector) || !has(self.spec.profile.selector.role) || self.spec.profile.selector.role == 'deployable'",message="spec.profile.selector.role on v1alpha2 may only be omitted or set to deployable; base is reserved for AIMProfileSet selectors"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.profile) || !has(self.spec.profile.selector) || has(self.spec.profile.selector.aimId) || has(self.spec.profile.selector.modelRef) || has(self.spec.model)",message="spec.profile.selector must narrow on aimId, modelRef.name, or be paired with spec.model.name"

@@ -11,6 +11,12 @@
 # - v1alpha1 can use spec.profile (no version gating)
 # - v1alpha2 can use spec.model (no version gating)
 #
+# And validates the ratcheting behaviour of the v1alpha2-only field guards
+# (optionalOldSelf): a stored object that still carries the legacy
+# spec.template must remain updatable through the v1alpha2 endpoint (e.g.
+# finalizer removal so GC can complete), while introducing spec.template via
+# the v1alpha2 endpoint stays rejected.
+#
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -91,6 +97,26 @@ spec:
                   name: some-template
                 replicas: 1
 
+    # spec.model satisfies the model-or-profile rule and there is no
+    # spec.profile, so the only rule that can reject this create is the
+    # template guard: supplying spec.template on a v1alpha2 create is rejected.
+    - name: Reject v1alpha2 service supplying template on create
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-cel-v1a2-model-template
+              spec:
+                model:
+                  name: some-model
+                template:
+                  name: some-template
+
     # --- Acceptance cases ---
 
     - name: Accept v1alpha2 service with profile only
@@ -170,3 +196,52 @@ spec:
               kind: AIMService
               metadata:
                 name: test-cel-v1a2-model
+
+    # --- Ratcheting cases (optionalOldSelf) ---
+
+    # A stored object still carrying the legacy spec.template (authored via
+    # v1alpha1) must stay updatable through the v1alpha2 endpoint. CEL runs
+    # against the full post-patch object, so pre-ratchet even finalizer
+    # removal was rejected, trapping the object and blocking GC.
+    - name: Ratchet - legacy template-bearing service is updatable via v1alpha2
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-ratchet-legacy
+                finalizers:
+                  - chainsaw.test/ratchet-probe
+              spec:
+                model:
+                  name: some-model
+                template:
+                  name: some-template
+        - script:
+            content: |
+              set -eu
+              kubectl patch aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" \
+                test-ratchet-legacy --type merge -p '{"metadata":{"finalizers":[]}}'
+
+    # The ratchet only tolerates a pre-existing spec.template; introducing it
+    # via the v1alpha2 endpoint (oldSelf has none) must still be rejected.
+    - name: Ratchet - introducing template via v1alpha2 update is still rejected
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-ratchet-clean
+              spec:
+                profile:
+                  name: some-profile
+        - script:
+            content: |
+              set -eu
+              if kubectl patch aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" \
+                  test-ratchet-clean --type merge -p '{"spec":{"template":{"name":"x"}}}' 2>/dev/null; then
+                echo "ERROR: introducing spec.template via v1alpha2 was accepted"
+                exit 1
+              fi
