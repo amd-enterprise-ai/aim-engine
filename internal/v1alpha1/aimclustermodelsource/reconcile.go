@@ -260,9 +260,13 @@ func (r *ClusterModelSourceReconciler) DecorateStatus(
 	status.AvailableModels = obs.totalFiltered
 	status.ModelsLimitReached = obs.totalFiltered > obs.totalDiscovered
 
-	// Update sync time
+	// Record the sync attempt so the controller's syncDue gate can throttle the
+	// next registry listing and detect spec changes.
 	now := metav1.Now()
 	status.LastSyncTime = &now
+	if obs.source != nil {
+		status.ObservedGeneration = obs.source.Generation
+	}
 
 	// Add MaxModelsLimitReached condition (optional, informational)
 	if status.ModelsLimitReached {

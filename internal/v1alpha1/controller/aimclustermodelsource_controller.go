@@ -26,6 +26,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -83,22 +84,40 @@ func (r *AIMClusterModelSourceReconciler) Reconcile(ctx context.Context, req ctr
 		return ctrl.Result{}, err
 	}
 
+	syncInterval := source.Spec.SyncInterval.Duration
+	if syncInterval == 0 {
+		syncInterval = aimv1alpha1.DefaultSyncInterval
+	}
+
+	// The pipeline issues a registry listing on every run, but the controller is
+	// re-enqueued far more often than syncInterval (status writes, owned
+	// AIMClusterModel updates). Skip the pipeline until a sync is due to avoid
+	// hammering the registry; RequeueAfter guarantees the source still syncs on
+	// schedule without depending on an event.
+	if wait := timeUntilSync(&source, syncInterval); wait > 0 {
+		logger.V(1).Info("registry sync not due, skipping", "remaining", wait.String())
+		return ctrl.Result{RequeueAfter: wait}, nil
+	}
+
 	result, err := r.pipeline.Run(ctx, &source)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// If pipeline requests a requeue, honor it
 	if result.RequeueAfter > 0 {
 		return result, nil
 	}
-
-	// Otherwise, requeue after sync interval
-	syncInterval := source.Spec.SyncInterval.Duration
-	if syncInterval == 0 {
-		syncInterval = aimv1alpha1.DefaultSyncInterval
-	}
 	return ctrl.Result{RequeueAfter: syncInterval}, nil
+}
+
+// timeUntilSync returns how long until the source is due for a registry sync;
+// a value <= 0 means it is due now. A sync is due on spec change, when never
+// synced, or once the interval has elapsed since the last sync attempt.
+func timeUntilSync(source *aimv1alpha1.AIMClusterModelSource, interval time.Duration) time.Duration {
+	if source.Status.ObservedGeneration != source.Generation || source.Status.LastSyncTime == nil {
+		return 0
+	}
+	return interval - time.Since(source.Status.LastSyncTime.Time)
 }
 
 func (r *AIMClusterModelSourceReconciler) SetupWithManager(mgr ctrl.Manager) error {
