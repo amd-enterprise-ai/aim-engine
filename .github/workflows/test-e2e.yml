@@ -42,8 +42,12 @@ jobs:
       - name: Setup mise
         uses: jdx/mise-action@v2
         env:
-          # Skip mise.local.toml which contains dev-only tools not needed in CI
-          MISE_LOCAL_CONFIG_ALLOWED: "0"
+          # Load only mise.toml (CI tools); skip mise.local.toml dev tools.
+          # NOTE: MISE_LOCAL_CONFIG_ALLOWED is NOT a real mise setting (it was a
+          # no-op, so CI was installing/compiling every dev tool from
+          # mise.local.toml). Overriding the config filenames is the correct
+          # mechanism to exclude the local config.
+          MISE_OVERRIDE_CONFIG_FILENAMES: "mise.toml"
 
       - name: Cache Go build
         uses: actions/cache@v4
@@ -105,8 +109,12 @@ jobs:
       - name: Setup mise
         uses: jdx/mise-action@v2
         env:
-          # Skip mise.local.toml which contains dev-only tools not needed in CI
-          MISE_LOCAL_CONFIG_ALLOWED: "0"
+          # Load only mise.toml (CI tools); skip mise.local.toml dev tools.
+          # NOTE: MISE_LOCAL_CONFIG_ALLOWED is NOT a real mise setting (it was a
+          # no-op, so CI was installing/compiling every dev tool from
+          # mise.local.toml). Overriding the config filenames is the correct
+          # mechanism to exclude the local config.
+          MISE_OVERRIDE_CONFIG_FILENAMES: "mise.toml"
 
       - name: Cache Go build
         uses: actions/cache@v4
@@ -270,7 +278,7 @@ jobs:
           echo "Waiting for metrics poller to begin collecting..."
           collecting=false
           for _ in $(seq 1 30); do
-            if kubectl logs deployment/aim-metrics-poller -n aim-system --tail=300 2>/dev/null | grep -q '^workqueue_'; then
+            if kubectl logs deployment/aim-metrics-poller -c poller -n aim-system --tail=300 2>/dev/null | grep -q '^workqueue_'; then
               echo "Metrics poller is collecting."
               collecting=true
               break
@@ -279,7 +287,7 @@ jobs:
           done
           if [ "${collecting}" != "true" ]; then
             echo "WARNING: metrics poller did not produce a scrape within ~60s; continuing without gating."
-            kubectl logs deployment/aim-metrics-poller -n aim-system --tail=20 || true
+            kubectl logs deployment/aim-metrics-poller -c poller -n aim-system --tail=20 || true
           fi
 
       - name: Debug operator status
@@ -305,15 +313,27 @@ jobs:
         if: always()
         run: |
           mkdir -p .tmp/metrics-history
-          kubectl logs deployment/aim-metrics-poller -n aim-system --tail=-1 \
+          kubectl logs deployment/aim-metrics-poller -c poller -n aim-system --tail=-1 \
             > .tmp/metrics-history/operator-metrics.log 2>&1 || true
           # If the poller container restarted mid-run, the current logs miss the
           # earlier window; grab the prior container's logs and the pod describe
           # (restart count / OOM reason) so the time-series isn't silently lost.
-          kubectl logs deployment/aim-metrics-poller -n aim-system --previous --tail=-1 \
+          kubectl logs deployment/aim-metrics-poller -c poller -n aim-system --previous --tail=-1 \
             > .tmp/metrics-history/operator-metrics-previous.log 2>&1 || true
           kubectl describe pod -n aim-system -l app=aim-metrics-poller \
             > .tmp/metrics-history/poller-pod-describe.txt 2>&1 || true
+          # Storage/shared-infra status time-series from the status-poller sidecar
+          # (restartCount / OOMKilled / phase for NFS server, CSI driver, operator).
+          kubectl logs deployment/aim-metrics-poller -c status-poller -n aim-system --tail=-1 \
+            > .tmp/metrics-history/infra-status.log 2>&1 || true
+          kubectl logs deployment/aim-metrics-poller -c status-poller -n aim-system --previous --tail=-1 \
+            > .tmp/metrics-history/infra-status-previous.log 2>&1 || true
+          # End-of-run snapshot of the NFS server itself: describe (restart count /
+          # OOM reason / probe failures) and recent Warning events for nfs-system.
+          kubectl describe pod -n nfs-system -l app=nfs-server \
+            > .tmp/metrics-history/nfs-server-describe.txt 2>&1 || true
+          kubectl get events -n nfs-system --sort-by=.lastTimestamp \
+            > .tmp/metrics-history/nfs-server-events.txt 2>&1 || true
 
       - name: Upload Chainsaw report
         if: always()

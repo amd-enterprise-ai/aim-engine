@@ -45,21 +45,38 @@ spec:
             - name: nfs-data
               mountPath: /exports
           resources:
+            # This single pod backs every RWX cache/artifact for the whole suite
+            # while CI runs `chainsaw --parallel 4`, so it serves several
+            # concurrent model downloads (page-cache-heavy NFS I/O) at once.
+            # The old 512Mi limit / 50m request left it prone to OOM and CPU
+            # starvation under that load -> slow I/O (per-test readiness
+            # timeouts) and, worst case, OOMKill/eviction taking down all
+            # storage-backed tests at once. Generous memory headroom + a real
+            # CPU request; no CPU limit (avoid CFS throttling of NFS).
             requests:
-              cpu: 50m
-              memory: 128Mi
-            limits:
+              cpu: 500m
               memory: 512Mi
+            limits:
+              memory: 2Gi
           livenessProbe:
+            # Tolerant on purpose: restarting the single shared NFS server drops
+            # every client mount mid-run, so we only restart after a sustained
+            # outage (~6 x 20s = 120s), not a transient probe miss while busy.
             tcpSocket:
               port: nfs
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
           readinessProbe:
+            # A flapping readiness drops the Service endpoint and stalls clients,
+            # so give the probe slack under load too.
             tcpSocket:
               port: nfs
             initialDelaySeconds: 5
-            periodSeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
       volumes:
         - name: nfs-data
           emptyDir: {}

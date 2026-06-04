@@ -25,6 +25,19 @@ rules:
       - /metrics
     verbs:
       - get
+  # Read pod status + events so the status-poller sidecar can emit a time-series
+  # of restartCount / OOMKilled / phase for shared infra (NFS server, CSI driver,
+  # operator). This is how we confirm whether a shared-storage dependency
+  # restarts/OOMs mid-run (the suspected cause of whole-run, storage-backed
+  # test blowups) -- the NFS image exposes no Prometheus endpoint to scrape.
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - events
+    verbs:
+      - get
+      - list
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -82,6 +95,42 @@ spec:
                   | grep -E '^workqueue_|^controller_runtime_|^rest_client_|^process_|^leader_election_|^go_goroutines |^go_threads |^go_gc_duration_seconds' \
                   | grep -v '_bucket{' \
                   || echo "SCRAPE_FAILED"
+                sleep "$SCRAPE_INTERVAL"
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+        # Status-poller sidecar: emits a time-series of pod restartCount /
+        # last-termination-reason (OOMKilled) / phase for the shared infra
+        # namespaces, so a restart/OOM of the single NFS server (or CSI driver,
+        # or operator) can be correlated against test failures. kubectl auths
+        # in-cluster via the mounted ServiceAccount token automatically.
+        - name: status-poller
+          image: bitnami/kubectl:latest
+          env:
+            - name: SCRAPE_INTERVAL
+              value: "5"
+            - name: WATCH_NAMESPACES
+              value: "nfs-system kube-system aim-system"
+          command:
+            - sh
+            - -c
+            - |
+              set -u
+              echo "status poller starting: namespaces=[$WATCH_NAMESPACES] interval=${SCRAPE_INTERVAL}s"
+              cols='NS:.metadata.namespace,POD:.metadata.name,PHASE:.status.phase'
+              cols="$cols,RESTARTS:.status.containerStatuses[*].restartCount"
+              cols="$cols,LASTTERM:.status.containerStatuses[*].lastState.terminated.reason"
+              cols="$cols,READY:.status.containerStatuses[*].ready"
+              while true; do
+                echo "===STATUS_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ) epoch=$(date +%s)==="
+                for ns in $WATCH_NAMESPACES; do
+                  kubectl get pods -n "$ns" --no-headers -o "custom-columns=$cols" 2>/dev/null \
+                    || echo "STATUS_FAILED ns=$ns"
+                done
                 sleep "$SCRAPE_INTERVAL"
               done
           resources:
