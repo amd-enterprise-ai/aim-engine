@@ -4,7 +4,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     s3cmd kubectl \
     procps \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir -U huggingface_hub==1.11.0 hf_transfer hf_xet
+    # huggingface_hub 1.11.0's `hf` CLI imports `click` directly
+    # (huggingface_hub/cli/_cli_utils.py), but its `typer` dependency no longer
+    # pulls in `click`, so it must be installed explicitly or the CLI crashes
+    # with `ModuleNotFoundError: No module named 'click'` on every invocation.
+    && pip install --no-cache-dir -U huggingface_hub==1.11.0 hf_transfer hf_xet click
 
 ENV PYTHONUNBUFFERED=1
 

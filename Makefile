@@ -173,7 +173,17 @@ cache-warm: ## Pre-warm the S3 artifact cache with test models.
 	@echo "Pre-warming S3 artifact cache..."
 	@kubectl delete job cache-warm -n aim-system --ignore-not-found
 	@kubectl apply -f hack/cache-warm-job.yaml
-	@kubectl wait --for=condition=complete job/cache-warm -n aim-system --timeout=10m
+	@if ! kubectl wait --for=condition=complete job/cache-warm -n aim-system --timeout=10m; then \
+		echo "::group::cache-warm job failed - diagnostics"; \
+		echo "=== job ==="; kubectl get job cache-warm -n aim-system -o wide || true; \
+		echo "=== pods ==="; kubectl get pods -n aim-system -l job-name=cache-warm -o wide || true; \
+		echo "=== describe pods ==="; kubectl describe pods -n aim-system -l job-name=cache-warm || true; \
+		echo "=== downloader (initContainer) logs ==="; kubectl logs -n aim-system -l job-name=cache-warm -c downloader --tail=300 --prefix || true; \
+		echo "=== uploader logs ==="; kubectl logs -n aim-system -l job-name=cache-warm -c uploader --tail=200 --prefix || true; \
+		echo "=== recent aim-system events ==="; kubectl get events -n aim-system --sort-by=.lastTimestamp | tail -40 || true; \
+		echo "::endgroup::"; \
+		exit 1; \
+	fi
 	@echo "S3 cache warm complete."
 
 .PHONY: kind-delete
@@ -194,6 +204,10 @@ cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 # Config and selector are applied automatically based on ENV
 CHAINSAW_TEST_DIR := tests/e2e
 CHAINSAW_REPORT_DIR := .tmp/chainsaw-reports
+# Per-failed-test debug bundles (pod logs, describe, events) written by the
+# config-level chainsaw `catch`. Exported as an absolute path because chainsaw
+# runs catch scripts from each test's own directory. CI uploads it as an artifact.
+CHAINSAW_DEBUG_DIR := .tmp/chainsaw-debug
 CHAINSAW_CONFIG_DIR := tests/chainsaw/config
 
 # needs-secret tags tests with environmental credential prerequisites
@@ -228,8 +242,8 @@ test-chainsaw: ## Run chainsaw e2e tests (selector based on ENV). Pass CHAINSAW_
 	@echo "Environment: $(ENV) (context: $(CURRENT_CONTEXT))"
 	@echo "Config: $(CHAINSAW_ENV_CONFIG)"
 	@echo "Selector: $(if $(filter gpu,$(ENV)),$(CHAINSAW_SELECTOR_GPU),$(CHAINSAW_SELECTOR_KIND))"
-	@mkdir -p $(CHAINSAW_REPORT_DIR)
-	@PATH="$(CURDIR)/hack:$(PATH)" chainsaw test --full-name --test-dir $(CHAINSAW_TEST_DIR) \
+	@mkdir -p $(CHAINSAW_REPORT_DIR) $(CHAINSAW_DEBUG_DIR)
+	@CHAINSAW_DEBUG_DIR="$(CURDIR)/$(CHAINSAW_DEBUG_DIR)" PATH="$(CURDIR)/hack:$(PATH)" chainsaw test --full-name --test-dir $(CHAINSAW_TEST_DIR) \
 		--config $(CHAINSAW_ENV_CONFIG) \
 		$(CHAINSAW_ENV_SELECTOR) \
 		--report-format JSON --report-name chainsaw-report --report-path $(CHAINSAW_REPORT_DIR) \

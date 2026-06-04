@@ -17,3 +17,35 @@ spec:
   failFast: false
   skipDelete: false
   template: true
+  # On ANY test failure, chainsaw runs this catch BEFORE tearing down the
+  # ephemeral namespace (which is why post-job `kubectl` debug never sees the
+  # transient download/serving pods). We dump a per-test debug bundle to files
+  # under $CHAINSAW_DEBUG_DIR rather than streaming pod logs into the already
+  # huge (6k+ line) chainsaw console output. CI uploads that directory as an
+  # artifact (see .github/workflows/test-e2e.yml).
+  catch:
+    - description: Dump failed-test debug bundle (pods, events, logs) to files
+      script:
+        timeout: 120s
+        # skipLogOutput keeps the dumped output OUT of the chainsaw log stream;
+        # everything is written to files instead.
+        skipLogOutput: true
+        # NOTE: chainsaw runs catch scripts from the *test's own directory*, so
+        # the output path MUST be absolute. $CHAINSAW_DEBUG_DIR is exported by
+        # the Makefile to an absolute path; the /tmp fallback keeps ad-hoc
+        # `chainsaw test` runs from failing. $NAMESPACE is injected by chainsaw
+        # and is unique per test, so it uniquely identifies the failed test.
+        content: |
+          set +e
+          OUT="${CHAINSAW_DEBUG_DIR:-/tmp/chainsaw-debug}/${NAMESPACE}"
+          mkdir -p "$OUT"
+          kubectl get pods -n "$NAMESPACE" -o wide > "$OUT/pods.txt" 2>&1
+          kubectl get pods -n "$NAMESPACE" -o yaml > "$OUT/pods.yaml" 2>&1
+          kubectl describe pods -n "$NAMESPACE" > "$OUT/describe-pods.txt" 2>&1
+          kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp > "$OUT/events.txt" 2>&1
+          kubectl get aimartifact,aimservice,aimmodel,aimtemplatecache -n "$NAMESPACE" -o yaml > "$OUT/aim-resources.yaml" 2>&1
+          for p in $(kubectl get pods -n "$NAMESPACE" -o name 2>/dev/null); do
+            n="${p#pod/}"
+            kubectl logs -n "$NAMESPACE" "$p" --all-containers=true --prefix --tail=-1 > "$OUT/logs-${n}.txt" 2>&1
+            kubectl logs -n "$NAMESPACE" "$p" --all-containers=true --prefix --previous --tail=-1 > "$OUT/logs-${n}-previous.txt" 2>/dev/null || rm -f "$OUT/logs-${n}-previous.txt"
+          done

@@ -16,3 +16,26 @@ spec:
   failFast: false
   skipDelete: false
   template: true
+  # On ANY test failure, chainsaw runs this catch BEFORE namespace teardown and
+  # writes a per-test debug bundle (pods, events, logs) to files under
+  # $CHAINSAW_DEBUG_DIR instead of flooding the chainsaw console output. See the
+  # matching block in kind-ci.yaml for details.
+  catch:
+    - description: Dump failed-test debug bundle (pods, events, logs) to files
+      script:
+        timeout: 120s
+        skipLogOutput: true
+        content: |
+          set +e
+          OUT="${CHAINSAW_DEBUG_DIR:-/tmp/chainsaw-debug}/${NAMESPACE}"
+          mkdir -p "$OUT"
+          kubectl get pods -n "$NAMESPACE" -o wide > "$OUT/pods.txt" 2>&1
+          kubectl get pods -n "$NAMESPACE" -o yaml > "$OUT/pods.yaml" 2>&1
+          kubectl describe pods -n "$NAMESPACE" > "$OUT/describe-pods.txt" 2>&1
+          kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp > "$OUT/events.txt" 2>&1
+          kubectl get aimartifact,aimservice,aimmodel,aimtemplatecache -n "$NAMESPACE" -o yaml > "$OUT/aim-resources.yaml" 2>&1
+          for p in $(kubectl get pods -n "$NAMESPACE" -o name 2>/dev/null); do
+            n="${p#pod/}"
+            kubectl logs -n "$NAMESPACE" "$p" --all-containers=true --prefix --tail=-1 > "$OUT/logs-${n}.txt" 2>&1
+            kubectl logs -n "$NAMESPACE" "$p" --all-containers=true --prefix --previous --tail=-1 > "$OUT/logs-${n}-previous.txt" 2>/dev/null || rm -f "$OUT/logs-${n}-previous.txt"
+          done

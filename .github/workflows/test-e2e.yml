@@ -255,6 +255,33 @@ jobs:
       - name: Wait for operator to be ready
         run: kubectl wait --for=condition=Available --timeout=120s deployment/aim-engine-controller-manager -n aim-system
 
+      # Whole-run metrics history: an in-cluster poller scrapes the operator's
+      # protected /metrics every few seconds for the duration of the suite, so we
+      # get a time-series of workqueue depth / reconcile latency / queue-duration
+      # (not just a point-in-time snapshot) to diagnose reconcile-queue starvation.
+      - name: Start metrics history poller
+        run: |
+          kubectl apply -f hack/ci/metrics-poller.yaml
+          kubectl rollout status deployment/aim-metrics-poller -n aim-system --timeout=120s
+          # rollout status only proves the pod is Running (the poller has no
+          # readiness probe). Gate until it has emitted at least one real scrape
+          # (a workqueue_ line), proving it authenticated and reached /metrics, so
+          # collection is provably live before the first chainsaw test runs.
+          echo "Waiting for metrics poller to begin collecting..."
+          collecting=false
+          for _ in $(seq 1 30); do
+            if kubectl logs deployment/aim-metrics-poller -n aim-system --tail=300 2>/dev/null | grep -q '^workqueue_'; then
+              echo "Metrics poller is collecting."
+              collecting=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "${collecting}" != "true" ]; then
+            echo "WARNING: metrics poller did not produce a scrape within ~60s; continuing without gating."
+            kubectl logs deployment/aim-metrics-poller -n aim-system --tail=20 || true
+          fi
+
       - name: Debug operator status
         if: always()
         run: |
@@ -272,6 +299,22 @@ jobs:
       - name: Run Chainsaw tests
         run: make test-chainsaw-kind
 
+      # Dump the poller's accumulated time-series (TS-marked metric snapshots).
+      # Runs always() so we capture history for both passing and failing runs.
+      - name: Capture metrics history
+        if: always()
+        run: |
+          mkdir -p .tmp/metrics-history
+          kubectl logs deployment/aim-metrics-poller -n aim-system --tail=-1 \
+            > .tmp/metrics-history/operator-metrics.log 2>&1 || true
+          # If the poller container restarted mid-run, the current logs miss the
+          # earlier window; grab the prior container's logs and the pod describe
+          # (restart count / OOM reason) so the time-series isn't silently lost.
+          kubectl logs deployment/aim-metrics-poller -n aim-system --previous --tail=-1 \
+            > .tmp/metrics-history/operator-metrics-previous.log 2>&1 || true
+          kubectl describe pod -n aim-system -l app=aim-metrics-poller \
+            > .tmp/metrics-history/poller-pod-describe.txt 2>&1 || true
+
       - name: Upload Chainsaw report
         if: always()
         uses: actions/upload-artifact@v4
@@ -279,6 +322,27 @@ jobs:
           name: chainsaw-report-${{ github.run_id }}-${{ github.run_attempt }}
           path: .tmp/chainsaw-reports/
           if-no-files-found: warn
+          retention-days: 14
+
+      # Per-failed-test debug bundles (pod logs, describe, events) written by the
+      # config-level chainsaw `catch` at failure time, before namespace teardown.
+      # Only present when tests fail, so missing files is not a warning.
+      - name: Upload Chainsaw failure debug bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chainsaw-debug-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/chainsaw-debug/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload metrics history
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics-history-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/metrics-history/
+          if-no-files-found: ignore
           retention-days: 14
 
       - name: Debug on failure

@@ -1,0 +1,92 @@
+# In-cluster metrics history poller (CI diagnostics).
+#
+# Scrapes the operator's protected /metrics endpoint every few seconds and
+# prints timestamped controller-runtime / workqueue / rest-client metrics to
+# stdout, so `kubectl logs` yields a full time-series across the whole test run
+# (not just a point-in-time snapshot). Used to diagnose reconcile-queue latency
+# (workqueue_depth, workqueue_longest_running_processor_seconds, active_workers)
+# under full-suite load.
+#
+# The operator serves metrics over HTTPS with authn/authz, so the poller uses
+# its ServiceAccount token (bound below to a /metrics nonResourceURL role) and
+# --insecure for the self-signed serving cert.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aim-metrics-poller
+  namespace: aim-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aim-metrics-poller
+rules:
+  - nonResourceURLs:
+      - /metrics
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aim-metrics-poller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aim-metrics-poller
+subjects:
+  - kind: ServiceAccount
+    name: aim-metrics-poller
+    namespace: aim-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aim-metrics-poller
+  namespace: aim-system
+  labels:
+    app: aim-metrics-poller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aim-metrics-poller
+  template:
+    metadata:
+      labels:
+        app: aim-metrics-poller
+    spec:
+      serviceAccountName: aim-metrics-poller
+      containers:
+        - name: poller
+          image: alpine/curl:latest
+          env:
+            - name: METRICS_URL
+              value: "https://aim-engine-controller-manager-metrics-service.aim-system.svc:8443/metrics"
+            - name: SCRAPE_INTERVAL
+              value: "5"
+          command:
+            - sh
+            - -c
+            - |
+              set -u
+              TOKEN_FILE=/var/run/secrets/kubernetes.io/serviceaccount/token
+              echo "metrics poller starting: url=$METRICS_URL interval=${SCRAPE_INTERVAL}s"
+              while true; do
+                echo "===METRICS_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ) epoch=$(date +%s)==="
+                # Drop histogram _bucket lines: they are ~80% of the payload and
+                # would overrun the kubelet log buffer (losing early history) for
+                # a long run. _sum/_count + gauges are enough to derive rates and
+                # observe queue depth / latency / saturation over time.
+                curl -sk --max-time 8 -H "Authorization: Bearer $(cat "$TOKEN_FILE")" "$METRICS_URL" \
+                  | grep -E '^workqueue_|^controller_runtime_|^rest_client_|^process_|^leader_election_|^go_goroutines |^go_threads |^go_gc_duration_seconds' \
+                  | grep -v '_bucket{' \
+                  || echo "SCRAPE_FAILED"
+                sleep "$SCRAPE_INTERVAL"
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
