@@ -443,7 +443,7 @@ func TestGetComponentHealth_BaseProfile_SuppressesDownstream(t *testing.T) {
 		Image:            "registry.example.com/base:0.1",
 		AcceleratorModel: "EPYC_ZEN5",
 		AcceleratorType:  "cpu",
-		AcceleratorCount: 1,
+		AcceleratorCount: 128,
 	}
 	baseProfileStatus := &aimv1alpha2.AIMProfileStatus{
 		Status:     constants.AIMStatusReady,

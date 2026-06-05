@@ -415,7 +415,9 @@ type ProfileHardwareGroup struct {
 	AcceleratorModel string `json:"acceleratorModel,omitempty"`
 
 	// AcceleratorCount is the number of accelerator units the profile
-	// requests (e.g., 1, 2, 8 for tensor-parallel sizes).
+	// requests. For gpu: device count (e.g., 1, 2, 4, 8 for tensor-parallel
+	// sizes). For cpu: number of CPU cores (e.g., 128 for EPYC_ZEN5,
+	// 192 for EPYC_9965).
 	// +optional
 	AcceleratorCount int32 `json:"acceleratorCount,omitempty"`
 

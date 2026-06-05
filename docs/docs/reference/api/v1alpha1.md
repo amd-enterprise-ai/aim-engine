@@ -2429,7 +2429,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `acceleratorType` _[AcceleratorType](#acceleratortype)_ | AcceleratorType is the resource family (gpu, cpu). |  | Enum: [gpu cpu] <br />Optional: \{\} <br /> |
 | `acceleratorModel` _string_ | AcceleratorModel is the accelerator identifier (e.g., "MI300X",<br />"EPYC_ZEN5"). Empty for profiles with no accelerator requirement. |  | Optional: \{\} <br /> |
-| `acceleratorCount` _integer_ | AcceleratorCount is the number of accelerator units the profile<br />requests (e.g., 1, 2, 8 for tensor-parallel sizes). |  | Optional: \{\} <br /> |
+| `acceleratorCount` _integer_ | AcceleratorCount is the number of accelerator units the profile<br />requests. For gpu: device count (e.g., 1, 2, 4, 8 for tensor-parallel<br />sizes). For cpu: number of CPU cores (e.g., 128 for EPYC_ZEN5,<br />192 for EPYC_9965). |  | Optional: \{\} <br /> |
 | `supported` _boolean_ | Supported reports whether this hardware footprint is currently<br />satisfied by at least one cluster node. When false, all profiles in<br />this group are skipped during materialisation. |  |  |
 | `profiles` _[ProfileHardwareGroupEntry](#profilehardwaregroupentry) array_ | Profiles lists the \{metric, precision\} combinations discovered under<br />this hardware footprint. Reported even when the group is unsupported<br />so users can see what they're missing. |  | Optional: \{\} <br /> |
 

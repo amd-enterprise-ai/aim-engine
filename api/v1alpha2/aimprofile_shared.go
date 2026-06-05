@@ -128,9 +128,12 @@ type AIMProfileSpecCommon struct {
 	// +kubebuilder:validation:Enum=gpu;cpu
 	AcceleratorType AcceleratorType `json:"acceleratorType,omitempty"`
 
-	// AcceleratorCount is the number of accelerator units required (e.g., GPU count).
-	// Combined with AcceleratorType and cluster-level configuration to compute
-	// default resource requests in status.resources.
+	// AcceleratorCount is the number of accelerator units required.
+	// For AcceleratorType=gpu, this is the device count (e.g., 1, 2, 4, 8
+	// for tensor-parallel sizes). For AcceleratorType=cpu, this is the
+	// number of CPU cores (e.g., 128 for EPYC_ZEN5, 192 for EPYC_9965).
+	// Combined with cluster-level configuration to compute default
+	// resource requests in status.resources.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	AcceleratorCount int32 `json:"acceleratorCount,omitempty"`
