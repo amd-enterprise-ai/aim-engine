@@ -9,37 +9,6 @@ resources:
   - pvcs.yaml
 
 patches:
-  # Patch AcceleratorDetector GPU DaemonSet with imagePullSecrets for private registry.
-  # Update the secret name to match your cluster's pull secret for ghcr.io/silogen.
-  - target:
-      kind: DaemonSet
-      name: accelerator-detector-gpu
-    patch: |
-      apiVersion: apps/v1
-      kind: DaemonSet
-      metadata:
-        name: accelerator-detector-gpu
-      spec:
-        template:
-          spec:
-            imagePullSecrets:
-              - name: ghcr-pull-secret
-
-  # Patch AcceleratorDetector CPU DaemonSet with imagePullSecrets for private registry.
-  - target:
-      kind: DaemonSet
-      name: accelerator-detector-cpu
-    patch: |
-      apiVersion: apps/v1
-      kind: DaemonSet
-      metadata:
-        name: accelerator-detector-cpu
-      spec:
-        template:
-          spec:
-            imagePullSecrets:
-              - name: ghcr-pull-secret
-
   # Patch the deployment for development
   - target:
       kind: Deployment
@@ -89,16 +58,8 @@ patches:
                   claimName: aim-engine-go-mod-cache
 
 # Image replacement - Tilt will match this and inject its built image
-# Note: config/manager already transforms controller -> ghcr.io/amd-enterprise-ai/aim-engine
+# Note: config/manager already transforms controller -> docker.io/silogenai/aim-engine
 images:
-  - name: ghcr.io/amd-enterprise-ai/aim-engine
+  - name: docker.io/silogenai/aim-engine
     newName: ttl.sh/aim-placeholder/manager
     newTag: tilt
-  # AcceleratorDetector images - override placeholders with test images.
-  # Update newName/newTag to point at your private test registry.
-  - name: accelerator-detector-gpu
-    newName: ghcr.io/silogen/aim-base
-    newTag: 0.11-rc113
-  - name: accelerator-detector-cpu
-    newName: ghcr.io/silogen/aim-epyc-base
-    newTag: 0.11-rc201
