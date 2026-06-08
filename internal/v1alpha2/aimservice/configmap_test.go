@@ -48,7 +48,7 @@ func mustJSON(t *testing.T, v any) *apiextensionsv1.JSON {
 func sampleProfileSpec() *aimv1alpha2.AIMProfileSpecCommon {
 	return &aimv1alpha2.AIMProfileSpecCommon{
 		AimId:            "qwen/qwen3-32b",
-		ModelId:          "qwen/qwen3-32b-fp8",
+		ModelId:          testModelIDFP8,
 		Engine:           "vllm",
 		Metric:           aimv1alpha1.AIMMetric("latency"),
 		Precision:        aimv1alpha1.AIMPrecision("fp8"),
@@ -134,7 +134,7 @@ func TestAssembleProfileYAML_RoundTrip(t *testing.T) {
 	if parsed.AimID != "qwen/qwen3-32b" {
 		t.Errorf("aim_id mismatch: %q", parsed.AimID)
 	}
-	if parsed.ModelID != "qwen/qwen3-32b-fp8" {
+	if parsed.ModelID != testModelIDFP8 {
 		t.Errorf("model_id mismatch: %q", parsed.ModelID)
 	}
 	if parsed.Metadata.AcceleratorModel != "MI300X" {

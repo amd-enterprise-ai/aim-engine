@@ -40,6 +40,18 @@ import (
 // EnvVarAIMEngineArgs is the env var name for AIM engine arguments that should be JSON-merged.
 const EnvVarAIMEngineArgs = "AIM_ENGINE_ARGS"
 
+// FilterAnnotationsByPrefix returns a new (always non-nil) map with only the
+// entries of src whose keys start with prefix. src may be nil.
+func FilterAnnotationsByPrefix(src map[string]string, prefix string) map[string]string {
+	out := make(map[string]string)
+	for k, v := range src {
+		if strings.HasPrefix(k, prefix) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // ValueOrDefault returns the value pointed to by d, or the zero value of type T if d is nil.
 // This is a generic helper to safely dereference pointers with a fallback to the type's zero value.
 //

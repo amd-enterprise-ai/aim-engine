@@ -9,8 +9,8 @@
 #
 #   customProfile.engineArgs -> ConfigMap YAML -> volume mount -> AIM runtime -> vLLM CLI -> API
 #
-# Note: served-model-name cannot be used as a canary because the AIM runtime
-# unconditionally sets it based on model_id/aim_id regardless of the profile.
+# Note: served-model-name isn't the engine-arg canary (the runtime sets it
+# unconditionally); we instead assert it matches /v1/models below.
 #
 # Uses: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5 (weights downloaded via AIMArtifact)
 # Requires: GPU infrastructure
@@ -68,6 +68,10 @@ spec:
               metadata:
                 labels:
                   aim.eai.amd.com/service: test-cp-engine-args-svc
+                # model-id is derived from the template's modelId; the
+                # /v1/models check below confirms vLLM serves under this name.
+                annotations:
+                  aim.eai.amd.com/model-id: Qwen/Qwen3-32B
               spec:
                 predictor:
                   (volumes[?name == 'custom-profile']):
@@ -90,7 +94,7 @@ spec:
               status:
                 status: Running
 
-    - name: Verify max-model-len engine arg reached vLLM
+    - name: Verify max-model-len engine arg reached vLLM and model-id matches /v1/models
       try:
         - script:
             timeout: 3m
@@ -99,4 +103,6 @@ spec:
                 value: (join('', ['/integration/gpu-cp-engine-args/', $namespace, '/test-cp-engine-args-svc/v1']))
               - name: EXPECTED_MAX_MODEL_LEN
                 value: "8192"
+              - name: EXPECTED_MODEL_ID
+                value: Qwen/Qwen3-32B
             content: bash validate-model-name.sh

@@ -222,6 +222,13 @@ func buildInferenceService(
 		}
 	}
 
+	// Propagate auth annotations (cluster-auth/*) from the AIMService, then
+	// stamp the controller-owned model-id from the resolved template.
+	annotations := utils.FilterAnnotationsByPrefix(service.Annotations, constants.AnnotationPrefixClusterAuth)
+	if modelId := resolvedModelId(templateSpec); modelId != "" {
+		annotations[constants.AnnotationModelId] = modelId
+	}
+
 	// Build environment variables
 	envVars := buildMergedEnvVars(service, templateSpec, obs)
 
@@ -260,7 +267,7 @@ func buildInferenceService(
 			Name:        isvcName,
 			Namespace:   service.Namespace,
 			Labels:      labels,
-			Annotations: make(map[string]string),
+			Annotations: annotations,
 			OwnerReferences: []metav1.OwnerReference{
 				{
 					APIVersion:         service.APIVersion,
@@ -353,6 +360,21 @@ func buildInferenceService(
 	}
 
 	return inferenceService
+}
+
+// resolvedModelId returns the model id the runtime serves under, mirroring its
+// resolution order: ModelId, else modelSources[0].modelId, else aimId.
+func resolvedModelId(templateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon) string {
+	if templateSpec == nil {
+		return ""
+	}
+	if templateSpec.ModelId != "" {
+		return templateSpec.ModelId
+	}
+	if len(templateSpec.ModelSources) > 0 {
+		return templateSpec.ModelSources[0].ModelID
+	}
+	return templateSpec.AimId
 }
 
 // buildMergedEnvVars builds environment variables with hierarchical merging.

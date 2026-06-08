@@ -110,11 +110,16 @@ spec:
                 --timeout=60s \
                 -n "$NAMESPACE" "$PROFILE_GV/$DERIVED"
 
+              # cluster-auth/* annotations propagate to the InferenceService;
+              # the foreign annotation must not.
               cat <<EOF | kubectl apply -n "$NAMESPACE" -f -
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: test-cpu-via-model-service
+                annotations:
+                  cluster-auth/allowed-group: test-allowed-group
+                  example.com/ignored: drop-me
               spec:
                 profile:
                   name: $DERIVED
@@ -157,11 +162,33 @@ spec:
               metadata:
                 labels:
                   aim.eai.amd.com/service: test-cpu-via-model-service
+                # model-id is derived from the resolved profile's modelId;
+                # cluster-auth is propagated from the AIMService.
+                annotations:
+                  aim.eai.amd.com/model-id: Qwen/Qwen3-0.6B
+                  cluster-auth/allowed-group: test-allowed-group
               spec:
                 predictor:
                   containers:
                     - name: kserve-container
                       image: registry.example.com/aim-cpu-base:0.12.0
+
+    - name: Assert the foreign annotation is NOT propagated to the InferenceService
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              set -eu
+              ISVC=$(kubectl get inferenceservice -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=test-cpu-via-model-service \
+                -o jsonpath='{.items[0].metadata.name}')
+              VAL=$(kubectl get inferenceservice -n "$NAMESPACE" "$ISVC" \
+                -o jsonpath='{.metadata.annotations.example\.com/ignored}')
+              if [ -n "$VAL" ]; then
+                echo "ERROR: foreign annotation example.com/ignored leaked onto InferenceService: $VAL"
+                exit 1
+              fi
+              echo "OK: foreign annotation was not propagated"
 
     - name: Assert the service reaches Starting status
       try:

@@ -44,6 +44,7 @@ import (
 const (
 	testProfileA    = "profile-a"
 	testServiceName = "svc"
+	testModelIDFP8  = "qwen/qwen3-32b-fp8"
 
 	componentNameInferenceService = "InferenceService"
 	componentNameHTTPRoute        = "HTTPRoute"
@@ -336,6 +337,99 @@ func TestBuildInferenceServiceFromProfile_NilSpecReturnsNil(t *testing.T) {
 	}
 	if isvc := buildInferenceServiceFromProfile(service, obs); isvc != nil {
 		t.Fatalf("expected nil ISVC when profile spec is nil")
+	}
+}
+
+// TestResolvedModelIdFromProfile verifies the model-id identity follows the
+// runtime resolution chain `profile.model_id or config.model_id or config.aim_id`:
+// ModelId wins, then modelSources[0].modelId, then aimId.
+func TestResolvedModelIdFromProfile(t *testing.T) {
+	// ModelId wins even when modelSources carry a different id (matches the
+	// runtime, which writes profile.model_id from spec.ModelId).
+	modelIDWins := sampleProfileSpec() // ModelId = qwen/qwen3-32b-fp8
+	modelIDWins.ModelSources = []aimv1alpha1.AIMModelSource{
+		{ModelID: "acme/my-finetune-v1", SourceURI: "hf://acme/my-finetune-v1"},
+	}
+	if got := resolvedModelId(modelIDWins); got != testModelIDFP8 {
+		t.Errorf("ModelId set: resolvedModelId() = %q, want ModelId %q", got, testModelIDFP8)
+	}
+
+	// ModelId empty falls back to modelSources[0].modelId.
+	viaSources := sampleProfileSpec()
+	viaSources.ModelId = ""
+	viaSources.ModelSources = []aimv1alpha1.AIMModelSource{
+		{ModelID: "acme/my-finetune-v1", SourceURI: "hf://acme/my-finetune-v1"},
+	}
+	if got := resolvedModelId(viaSources); got != "acme/my-finetune-v1" {
+		t.Errorf("ModelId empty + modelSources: resolvedModelId() = %q, want %q", got, "acme/my-finetune-v1")
+	}
+
+	// ModelId and modelSources empty falls back to aimId.
+	viaAimID := sampleProfileSpec() // AimId = qwen/qwen3-32b
+	viaAimID.ModelId = ""
+	if got := resolvedModelId(viaAimID); got != "qwen/qwen3-32b" {
+		t.Errorf("ModelId + modelSources empty: resolvedModelId() = %q, want aimId %q", got, "qwen/qwen3-32b")
+	}
+}
+
+// TestBuildInferenceServiceFromProfile_AnnotationPropagation verifies cluster-auth
+// annotations propagate from the AIMService to the InferenceService, unrelated
+// annotations (including our own control annotations) are dropped, and the
+// controller-owned model-id annotation is stamped from the resolved profile
+// rather than any user-supplied value.
+func TestBuildInferenceServiceFromProfile_AnnotationPropagation(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      testServiceName,
+			Namespace: "ns",
+			Annotations: map[string]string{
+				"cluster-auth/allowed-group":            "ce0c754f-bb1b-63bb-5134-5501142effe7",
+				"aim.eai.amd.com/model-id":              "user-tried-to-override",
+				"aim.eai.amd.com/reconciliation-paused": "true",
+				"example.com/foreign":                   "drop-me",
+			},
+		},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+		},
+	}
+
+	profileSpec := sampleProfileSpec()
+	profileSpec.ModelSources = []aimv1alpha1.AIMModelSource{
+		{ModelID: testModelIDFP8, SourceURI: "hf://qwen/qwen3-32b-fp8"},
+	}
+	profileStatus := &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady}
+
+	r := &ProfileServiceReconciler{}
+	obs := ServiceObservation{
+		ServiceFetchResult:    ServiceFetchResult{service: service},
+		resolvedProfileSpec:   profileSpec,
+		resolvedProfileStatus: profileStatus,
+		profileName:           testProfileA,
+		profileScope:          aimv1alpha1.AIMResolutionScopeNamespace,
+	}
+	r.composeDerivedNames(context.Background(), &obs)
+	if obs.configErr != nil {
+		t.Fatalf("composeDerivedNames returned error: %v", obs.configErr)
+	}
+
+	isvc := buildInferenceServiceFromProfile(service, obs)
+	if isvc == nil {
+		t.Fatalf("buildInferenceServiceFromProfile returned nil")
+	}
+
+	ann := isvc.Annotations
+	if got := ann["cluster-auth/allowed-group"]; got != "ce0c754f-bb1b-63bb-5134-5501142effe7" {
+		t.Errorf("expected cluster-auth annotation propagated, got %q", got)
+	}
+	if _, ok := ann["example.com/foreign"]; ok {
+		t.Error("foreign annotation example.com/foreign must not be propagated")
+	}
+	if _, ok := ann["aim.eai.amd.com/reconciliation-paused"]; ok {
+		t.Error("control annotation aim.eai.amd.com/reconciliation-paused must not be propagated")
+	}
+	if got := ann[constants.AnnotationModelId]; got != testModelIDFP8 {
+		t.Errorf("model-id annotation = %q, want controller-owned %q (must not be overridable from service spec)", got, testModelIDFP8)
 	}
 }
 

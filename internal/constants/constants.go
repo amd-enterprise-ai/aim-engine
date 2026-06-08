@@ -290,6 +290,16 @@ const (
 	// over the resolved AIMModel's spec.image.
 	AnnotationDeploymentImageRef = AimLabelDomain + "/deployment-image-ref"
 
+	// AnnotationPrefixClusterAuth is the key prefix for auth annotations (e.g.
+	// cluster-auth/allowed-group) propagated from an AIMService to its InferenceService.
+	AnnotationPrefixClusterAuth = "cluster-auth/"
+
+	// AnnotationModelId records the model id the user intends to serve, stamped
+	// on every InferenceService the controller creates from the resolved profile/
+	// template. It equals the name the runtime serves under (vLLM
+	// --served-model-name, exposed at /v1/models).
+	AnnotationModelId = AimLabelDomain + "/model-id"
+
 	// AnnotationReconcilerPipeline forces an AIMService onto a specific
 	// reconciliation pipeline, bypassing the default spec-shape dispatch.
 	// Recognised values are ReconcilerPipelineTemplate (v1alpha1 template

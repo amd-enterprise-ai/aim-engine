@@ -66,4 +66,19 @@ if [[ "$ACTUAL" != "$EXPECTED_MAX_MODEL_LEN" ]]; then
 fi
 
 echo "max-model-len engine arg propagated correctly"
+
+# Assert the model-id annotation value is one of the names vLLM serves
+# (present in /v1/models data[].id) when EXPECTED_MODEL_ID is set.
+if [[ -n "${EXPECTED_MODEL_ID:-}" ]]; then
+  echo "Checking model-id '$EXPECTED_MODEL_ID' is exposed at /v1/models"
+  if echo "$BODY" | jq -e --arg m "$EXPECTED_MODEL_ID" '.data[] | select(.id == $m)' >/dev/null; then
+    echo "model-id '$EXPECTED_MODEL_ID' is served by vLLM"
+  else
+    echo "ERROR: model-id '$EXPECTED_MODEL_ID' not found in /v1/models ids"
+    echo "Served ids:"
+    echo "$BODY" | jq -r '.data[].id'
+    exit 1
+  fi
+fi
+
 echo "All checks passed"

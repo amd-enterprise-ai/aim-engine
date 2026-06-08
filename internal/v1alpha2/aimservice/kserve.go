@@ -98,6 +98,13 @@ func buildInferenceServiceFromProfile(
 		labels[constants.LabelPrecision] = precisionVal
 	}
 
+	// Propagate auth annotations (cluster-auth/*) from the AIMService, then
+	// stamp the controller-owned model-id from the resolved profile.
+	annotations := utils.FilterAnnotationsByPrefix(service.Annotations, constants.AnnotationPrefixClusterAuth)
+	if modelId := resolvedModelId(profileSpec); modelId != "" {
+		annotations[constants.AnnotationModelId] = modelId
+	}
+
 	// Build environment variables. Order of precedence (last wins on conflict):
 	//   profileSpec.ContainerEnv (author defaults, with any user overrides
 	//     from spec.profileOverrides.containerEnv already merged in by the
@@ -121,7 +128,7 @@ func buildInferenceServiceFromProfile(
 			Name:        obs.isvcName,
 			Namespace:   service.Namespace,
 			Labels:      labels,
-			Annotations: make(map[string]string),
+			Annotations: annotations,
 		},
 		Spec: servingv1beta1.InferenceServiceSpec{
 			Predictor: servingv1beta1.PredictorSpec{
@@ -296,6 +303,18 @@ func buildFrameworkEnvVars(profileSpec *aimv1alpha2.AIMProfileSpecCommon, profil
 	}
 
 	return vars
+}
+
+// resolvedModelId returns the model id the runtime serves under, mirroring its
+// resolution order: ModelId, else modelSources[0].modelId, else aimId.
+func resolvedModelId(profileSpec *aimv1alpha2.AIMProfileSpecCommon) string {
+	if profileSpec.ModelId != "" {
+		return profileSpec.ModelId
+	}
+	if len(profileSpec.ModelSources) > 0 {
+		return profileSpec.ModelSources[0].ModelID
+	}
+	return profileSpec.AimId
 }
 
 func resolveResourcesFromProfile(
