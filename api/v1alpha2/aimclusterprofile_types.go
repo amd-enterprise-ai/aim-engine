@@ -52,6 +52,7 @@ type AIMClusterProfileSpec struct {
 // +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.status.version`
 // +kubebuilder:printcolumn:name="Manual",type=boolean,priority=1,JSONPath=`.spec.manualSelectionOnly`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:selectablefield:JSONPath=`.spec.aimId`
 // Deployable profiles have both aimId and modelSources populated; base
 // profiles (custom-model derivation source material) have neither. Mixed
 // (one of the two set) is rejected to keep status.deployable derivable from

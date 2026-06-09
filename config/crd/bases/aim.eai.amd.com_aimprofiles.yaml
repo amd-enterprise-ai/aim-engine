@@ -1319,6 +1319,8 @@ spec:
             or both be empty (base profile)
           rule: (has(self.spec.aimId) && size(self.spec.aimId) > 0) == (has(self.spec.modelSources)
             && size(self.spec.modelSources) > 0)
+    selectableFields:
+    - jsonPath: .spec.aimId
     served: true
     storage: true
     subresources:

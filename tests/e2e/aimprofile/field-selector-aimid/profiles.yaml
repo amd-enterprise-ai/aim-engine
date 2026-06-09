@@ -1,0 +1,35 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: profile-alpha
+spec:
+  aimId: test/model-alpha
+  modelId: test/model-alpha-fp16
+  profileId: vllm-thr-fp16-tp1
+  engine: vllm
+  metric: throughput
+  precision: fp16
+  type: general
+  primary: false
+  image: registry.example.com/test-image:2.0.0
+  modelSources:
+    - modelId: test/model-alpha-fp16
+      sourceUri: hf://test/model-alpha-fp16
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: profile-beta
+spec:
+  aimId: test/model-beta
+  modelId: test/model-beta-fp16
+  profileId: vllm-thr-fp16-tp1
+  engine: vllm
+  metric: throughput
+  precision: fp16
+  type: general
+  primary: false
+  image: registry.example.com/test-image:2.0.0
+  modelSources:
+    - modelId: test/model-beta-fp16
+      sourceUri: hf://test/model-beta-fp16

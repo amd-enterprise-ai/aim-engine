@@ -64,6 +64,22 @@ The matching `status` fields mirror the labels for kubectl-friendly access:
 
 See [Naming and Labels → Profile labels](../reference/naming-and-labels.md#profile-labels) for the canonical list (including label setters and selector recipes).
 
+## Filtering profiles by `aimId` (field selector)
+
+`AIMProfile` and `AIMClusterProfile` expose `spec.aimId` as a **selectable field**, so clients can filter profiles by model architecture server-side with a field selector instead of listing everything and filtering client-side:
+
+```bash
+# Cluster profiles for one model architecture
+kubectl get aimclusterprofile --field-selector spec.aimId=qwen/qwen3-32b
+
+# Namespace profiles for one model architecture
+kubectl get aimprofile -n ml-team --field-selector spec.aimId=qwen/qwen3-32b
+```
+
+This is the recommended way for the management UI (and any API consumer) to scope a profile listing to a single model — it pushes the filter to the API server, avoiding a full list + client-side scan. Selectable fields on custom resources require Kubernetes 1.32+ (the `CustomResourceFieldSelectors` feature), which matches the project's minimum supported version (see [Prerequisites](../getting-started/installation.md#prerequisites)).
+
+Only `spec.aimId` is wired as a selectable field today. Other axes (`spec.engine`, `spec.precision`, `spec.acceleratorModel`, `status.deployable`, ...) are natural candidates and can be added the same way (Kubernetes allows up to 8 selectable fields per CRD version).
+
 ### Hand-authored profiles cannot fake provenance
 
 Hand-stamping `aim.eai.amd.com/source-model` (or `-scope`) labels on a user-authored AIMProfile does **not** work — the operator strips them on every reconcile. The labels are derived from the profile's controller ownerReferences (or from propagated labels for AIMProfileSet-owned profiles), so a profile with no AIM-controller owner ends up labeled `profile-origin: user-authored` with no `source-model` labels.

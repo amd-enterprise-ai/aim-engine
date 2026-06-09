@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Populate this section during release-prep, then rename to the release version -->
 
+### Added
+- Server-side field-selector filtering of profiles by model architecture: `spec.aimId` is now a selectable field on `AIMProfile` and `AIMClusterProfile` (e.g. `kubectl get aimprofile --field-selector spec.aimId=qwen/qwen3-32b`).
+
+### Changed
+- Minimum supported Kubernetes version raised to **1.32**, required for the `CustomResourceFieldSelectors` feature (GA in 1.32) that backs the new profile selectable field.
+
 ## [0.2.4] - 2026-05-26
 
 ### Added

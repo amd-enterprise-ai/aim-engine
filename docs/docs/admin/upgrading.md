@@ -62,6 +62,8 @@ AIM Engine follows semantic versioning. Within a major version:
 - Existing resources continue to work without modification
 - API group is `aim.eai.amd.com`; both `v1alpha1` and `v1alpha2` versions are served by every supported operator release until v1alpha1 is formally removed (see [Migration window](#migration-window))
 
+The minimum supported Kubernetes version is **1.32** (see [Prerequisites](../getting-started/installation.md#prerequisites)).
+
 ## Migration window
 
 The aim-engine operator serves `v1alpha1` and `v1alpha2` of every shared CRD

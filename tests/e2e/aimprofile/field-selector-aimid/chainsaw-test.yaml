@@ -1,0 +1,75 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimprofile-field-selector-aimid
+spec:
+  description: |
+    Verifies that AIMProfile exposes spec.aimId as a selectable field, so clients
+    (e.g. the management UI) can filter profiles server-side by model architecture
+    via `kubectl get aimprofile --field-selector spec.aimId=<id>`.
+
+    Requires the Kubernetes CustomResourceFieldSelectors feature (GA in v1.32).
+    Two CPU-only profiles with distinct aimIds are created; each field-selector
+    query must return exactly the matching profile, and a non-matching query
+    must return nothing.
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create two profiles with distinct aimIds
+      try:
+        - apply:
+            file: profiles.yaml
+
+    - name: Verify both profiles become Ready
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: profile-alpha
+              status:
+                status: Ready
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: profile-beta
+              status:
+                status: Ready
+
+    - name: Field selector on spec.aimId filters profiles server-side
+      try:
+        - script:
+            content: |
+              set -eu
+
+              # aimId=test/model-alpha must return exactly profile-alpha
+              got=$(kubectl get aimprofile -n "$NAMESPACE" \
+                --field-selector spec.aimId=test/model-alpha \
+                -o jsonpath='{.items[*].metadata.name}')
+              [ "$got" = "profile-alpha" ] || {
+                echo "expected only 'profile-alpha', got: '$got'" >&2
+                exit 1
+              }
+
+              # aimId=test/model-beta must return exactly profile-beta
+              got=$(kubectl get aimprofile -n "$NAMESPACE" \
+                --field-selector spec.aimId=test/model-beta \
+                -o jsonpath='{.items[*].metadata.name}')
+              [ "$got" = "profile-beta" ] || {
+                echo "expected only 'profile-beta', got: '$got'" >&2
+                exit 1
+              }
+
+              # a non-matching aimId must return nothing
+              got=$(kubectl get aimprofile -n "$NAMESPACE" \
+                --field-selector spec.aimId=test/model-missing \
+                -o jsonpath='{.items[*].metadata.name}')
+              [ -z "$got" ] || {
+                echo "expected no profiles for unknown aimId, got: '$got'" >&2
+                exit 1
+              }

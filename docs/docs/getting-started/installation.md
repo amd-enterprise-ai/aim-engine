@@ -6,7 +6,7 @@ This guide covers installing AIM Engine on a Kubernetes cluster.
 
 | Component | Minimum Version | Notes |
 |-----------|----------------|-------|
-| Kubernetes | 1.28+ | Cluster with AMD GPU nodes |
+| Kubernetes | 1.32+ | Cluster with AMD GPU nodes |
 | [AMD GPU Operator](https://github.com/ROCm/gpu-operator) | — | Advertises `amd.com/gpu` and the GPU node labels used for template selection |
 | KServe | v0.16.1 | See [KServe Configuration](../admin/kserve-configuration.md) |
 | Gateway API | v1.3.0 | Required for HTTP routing |
