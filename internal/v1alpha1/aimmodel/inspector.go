@@ -27,9 +27,12 @@ package aimmodel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -44,6 +47,55 @@ import (
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
+
+// imageInspectCooldown is the minimum interval between registry inspections of an
+// image after a registry-side failure. The cache is keyed by image and shared
+// across models, so many AIMModels referencing the same failing image do not
+// collectively hammer the registry; each image is re-inspected at most once per
+// cooldown. All registry failure types are throttled (note: DNS/unreachable
+// failures are categorized as not-found, so excluding any type would re-open the
+// hammering this guards against).
+const imageInspectCooldown = 15 * time.Minute
+
+var (
+	inspectFailureMu sync.Mutex
+	inspectFailures  = map[string]inspectFailure{}
+)
+
+type inspectFailure struct {
+	at  time.Time
+	err error
+}
+
+// recentInspectFailure returns the cached registry error for imageURI while its
+// last failure is within the cooldown, otherwise nil. Expired entries are evicted
+// on read so the map does not grow unbounded across rotating image tags.
+func recentInspectFailure(imageURI string) error {
+	inspectFailureMu.Lock()
+	defer inspectFailureMu.Unlock()
+	f, ok := inspectFailures[imageURI]
+	if !ok {
+		return nil
+	}
+	if time.Since(f.at) < imageInspectCooldown {
+		return f.err
+	}
+	delete(inspectFailures, imageURI)
+	return nil
+}
+
+// recordInspectResult caches registry errors to drive the cooldown and clears
+// the entry on success or non-registry errors.
+func recordInspectResult(imageURI string, err error) {
+	inspectFailureMu.Lock()
+	defer inspectFailureMu.Unlock()
+	var regErr *utils.ImageRegistryError
+	if errors.As(err, &regErr) {
+		inspectFailures[imageURI] = inspectFailure{at: time.Now(), err: err}
+		return
+	}
+	delete(inspectFailures, imageURI)
+}
 
 // inspectImage extracts metadata from a container image using the provided image pull secrets.
 // It uses go-containerregistry to authenticate and fetch image labels, then parses them into
@@ -66,8 +118,15 @@ func inspectImage(
 	imagePullSecrets []corev1.LocalObjectReference,
 	clientset kubernetes.Interface,
 	secretNamespace string,
-) (*aimv1alpha1.ImageMetadata, error) {
+) (_ *aimv1alpha1.ImageMetadata, retErr error) {
 	logger := ctrl.LoggerFrom(ctx)
+
+	// Skip the registry GET while a recent registry failure is still within the cooldown.
+	if err := recentInspectFailure(imageURI); err != nil {
+		logger.V(1).Info("Skipping image inspect within registry failure cooldown", "imageURI", imageURI)
+		return nil, err
+	}
+	defer func() { recordInspectResult(imageURI, retErr) }()
 
 	// Parse the image reference
 	ref, err := name.ParseReference(imageURI)

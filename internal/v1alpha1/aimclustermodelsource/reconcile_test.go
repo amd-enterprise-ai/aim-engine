@@ -270,9 +270,10 @@ func TestComposeState_MaxModelsLimit(t *testing.T) {
 		filterResults: []FilterResult{
 			{
 				Images: []RegistryImage{
-					{Registry: "ghcr.io", Repository: "org/model-2", Tag: "1.0.0"}, // should be added (total=2)
-					{Registry: "ghcr.io", Repository: "org/model-3", Tag: "1.0.0"}, // should be skipped (limit reached)
-					{Registry: "ghcr.io", Repository: "org/model-4", Tag: "1.0.0"}, // should be skipped
+					{Registry: "ghcr.io", Repository: "org/model-1", Tag: "1.0.0"}, // existing, covered (budget=1)
+					{Registry: "ghcr.io", Repository: "org/model-2", Tag: "1.0.0"}, // new, added (budget=2)
+					{Registry: "ghcr.io", Repository: "org/model-3", Tag: "1.0.0"}, // skipped (limit reached)
+					{Registry: "ghcr.io", Repository: "org/model-4", Tag: "1.0.0"}, // skipped
 				},
 			},
 		},
@@ -283,14 +284,18 @@ func TestComposeState_MaxModelsLimit(t *testing.T) {
 	}
 	obs := reconciler.ComposeState(context.Background(), reconcileCtx, fetch)
 
-	// Only 1 new image should be added (1 existing + 1 new = 2 = maxModels)
+	// One discovered image is already covered by an existing model, leaving room
+	// for exactly 1 new model before maxModels (2) is reached.
 	if len(obs.newImages) != 1 {
 		t.Errorf("expected 1 new image due to limit, got %d", len(obs.newImages))
 	}
+	if len(obs.newImages) == 1 && obs.newImages[0].Repository != "org/model-2" {
+		t.Errorf("expected new image to be model-2, got %s", obs.newImages[0].Repository)
+	}
 
-	// Total filtered should count all images
-	if obs.totalFiltered != 3 {
-		t.Errorf("expected totalFiltered=3, got %d", obs.totalFiltered)
+	// Total filtered should count all discovered images
+	if obs.totalFiltered != 4 {
+		t.Errorf("expected totalFiltered=4, got %d", obs.totalFiltered)
 	}
 }
 

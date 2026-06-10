@@ -1,0 +1,99 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMClusterModelSource Test: Respect Existing Models
+#
+# Guards against ownership thrashing: a source must respect an AIMClusterModel
+# that already exists for an image (created by a user or another source) instead
+# of re-creating and re-owning it.
+#
+# Tested behavior:
+# - Source reaches Ready and counts the image as discovered.
+# - No source-owned (auto-generated) model is created for the covered image.
+# - The pre-existing model is left untouched (no model-source label, no owner).
+# - After the pre-existing model is deleted, the source self-heals on its next
+#   scheduled sync by creating its own model for the now-uncovered image.
+#
+# Isolation: AIMClusterModel/AIMClusterModelSource are cluster-scoped and share
+# one global namespace. With chainsaw parallelism, names must be unique per run,
+# so all cluster-scoped names and the image embed the $namespace binding.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: respect-existing-models
+spec:
+  description: Source respects an existing model, then self-heals once it is deleted
+  steps:
+    - name: Create a pre-existing cluster model for the image
+      try:
+        - apply:
+            file: existing-model.yaml
+
+    - name: Create a source that discovers the same image
+      try:
+        - apply:
+            file: cluster-model-source.yaml
+
+    - name: Wait for the source to become Ready
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModelSource
+              metadata:
+                name: (join('-', ['test-respect-existing', $namespace]))
+              status:
+                status: Ready
+                discoveredModels: 1
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: Verify the source created no auto-generated model for the image
+      try:
+        - error:
+            timeout: 15s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/model-source: (join('-', ['test-respect-existing', $namespace]))
+
+    - name: Verify the pre-existing model was not adopted
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModel
+              metadata:
+                name: (join('-', ['test-respect-preexisting', $namespace]))
+                (labels."aim.eai.amd.com/model-source"): null
+                (ownerReferences): null
+
+    - name: Delete the pre-existing model
+      try:
+        - delete:
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModel
+              name: (join('-', ['test-respect-preexisting', $namespace]))
+
+    # With the image no longer covered, the source re-creates its own model on the
+    # next scheduled sync (syncInterval 30s on the fixture; a user model's deletion
+    # is deliberately not a watch trigger). The re-created model is source-owned
+    # with a generated name, so match by the model-source label, not by name. The
+    # timeout covers the 30s sync interval plus the 30s per-source registry floor.
+    # Readiness is not asserted: the generated model inspects the (fake) registry
+    # and will not reach Ready.
+    - name: Verify the source self-heals by re-creating the model
+      try:
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/model-source: (join('-', ['test-respect-existing', $namespace]))
+              spec:
+                image: (join('', ['registry.invalid/', $namespace, '/respect-existing:1.0']))

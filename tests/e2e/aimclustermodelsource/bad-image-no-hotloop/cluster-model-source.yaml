@@ -1,0 +1,20 @@
+# Tag-less image on an unreachable registry: the source must list tags, which
+# fails (DNS), driving the source to a failed state. Used to verify the registry
+# listing is throttled rather than hot-looping on the error path.
+#
+# syncInterval is 5s so the source WANTS to re-list every 5s, creating the
+# requeue pressure that the 30s per-source floor (reserveSyncSlot) must suppress.
+# Without that floor, status.lastSyncTime would advance every ~5s; with it, only
+# every ~30s. The test below distinguishes the two.
+#
+# The source is cluster-scoped, so its name embeds the $namespace binding to stay
+# unique across parallel runs (the per-source throttle is keyed by source name).
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModelSource
+metadata:
+  name: (join('-', ['test-bad-image-no-hotloop', $namespace]))
+spec:
+  maxModels: 5
+  syncInterval: 5s
+  images:
+    - does-not-exist.invalid/test/hotloop

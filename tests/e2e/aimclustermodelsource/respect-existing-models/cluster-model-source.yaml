@@ -1,0 +1,21 @@
+# Source that discovers the same image as the pre-existing model. The pinned tag
+# means no registry call is made; the source should respect the existing model.
+#
+# Name and image are templated with the chainsaw $namespace binding so this
+# cluster-scoped resource (and the model the source derives from the image) do
+# not collide with parallel test runs.
+#
+# syncInterval is short so the scheduled re-discovery used by the self-heal step
+# lands quickly. A user model's deletion is intentionally NOT a watch trigger
+# (only auto-generated, source-owned models are), so self-heal of a respected
+# image happens on the next scheduled sync, not on the delete event. The pinned
+# tag means these frequent syncs make no registry calls.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModelSource
+metadata:
+  name: (join('-', ['test-respect-existing', $namespace]))
+spec:
+  maxModels: 5
+  syncInterval: 30s
+  images:
+    - (join('', ['registry.invalid/', $namespace, '/respect-existing:1.0']))

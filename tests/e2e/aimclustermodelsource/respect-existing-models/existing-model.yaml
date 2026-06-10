@@ -1,0 +1,17 @@
+# A cluster model that already exists for an image, created outside any source
+# (e.g. by a user or another source). discovery.extractMetadata is off so the
+# model controller does not contact the (fake) registry.
+#
+# Cluster-scoped resources share one global namespace, so the name and image are
+# made unique per test run via the chainsaw $namespace binding (templating is on
+# in the chainsaw config). The image is templated too: the source derives the
+# auto-generated model name from the image, so a unique image keeps that name
+# from colliding with parallel runs.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModel
+metadata:
+  name: (join('-', ['test-respect-preexisting', $namespace]))
+spec:
+  image: (join('', ['registry.invalid/', $namespace, '/respect-existing:1.0']))
+  discovery:
+    extractMetadata: false

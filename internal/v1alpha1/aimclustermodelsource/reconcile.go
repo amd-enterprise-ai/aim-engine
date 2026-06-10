@@ -53,7 +53,8 @@ type ClusterModelSourceReconciler struct {
 type ClusterModelSourceFetch struct {
 	source *aimv1alpha1.AIMClusterModelSource
 
-	// existingModels are AIMClusterModels owned by this source
+	// existingModels are all AIMClusterModels in the cluster, regardless of creator,
+	// so overlapping sources respect a model that already exists for an image.
 	existingModels controllerutils.FetchResult[*aimv1alpha1.AIMClusterModelList]
 
 	// filterResults contains per-filter registry query results
@@ -73,10 +74,9 @@ func (r *ClusterModelSourceReconciler) FetchRemoteState(
 
 	fetch := ClusterModelSourceFetch{source: source}
 
-	// 1. List existing models owned by this source
+	// 1. List all cluster models (not just this source's) so existing images are respected.
 	fetch.existingModels = controllerutils.FetchList(ctx, c,
 		&aimv1alpha1.AIMClusterModelList{},
-		client.MatchingLabels{LabelKeyModelSource: source.Name},
 	)
 
 	// 2. Query registry for each filter
@@ -97,7 +97,7 @@ func (fetch ClusterModelSourceFetch) GetComponentHealth() []controllerutils.Comp
 			return controllerutils.ComponentHealth{
 				State:   constants.AIMStatusReady,
 				Reason:  "Listed",
-				Message: fmt.Sprintf("Found %d existing models", len(list.Items)),
+				Message: fmt.Sprintf("Found %d cluster models", len(list.Items)),
 			}
 		},
 	)
@@ -182,7 +182,7 @@ func (r *ClusterModelSourceReconciler) ComposeState(
 		existingByURI:           make(map[string]*aimv1alpha1.AIMClusterModel),
 	}
 
-	// Build lookup map from existing models
+	// Build a lookup of images that already have an AIMClusterModel, keyed by image URI.
 	if fetch.existingModels.OK() {
 		for i := range fetch.existingModels.Value.Items {
 			model := &fetch.existingModels.Value.Items[i]
@@ -190,12 +190,13 @@ func (r *ClusterModelSourceReconciler) ComposeState(
 		}
 	}
 
-	// Process filter results - determine new images to create
-	// Access source from embedded fetch result
+	// Determine which discovered images still need a model.
 	source := fetch.source
 	maxModels := source.GetMaxModels()
-	existingCount := len(obs.existingByURI)
 
+	// coveredCount is discovered images that already have a model; with newImages
+	// it bounds new models against maxModels.
+	var coveredCount int
 	for _, result := range fetch.filterResults {
 		if result.Error != nil {
 			obs.filtersWithErrors++
@@ -203,15 +204,18 @@ func (r *ClusterModelSourceReconciler) ComposeState(
 		for _, img := range result.Images {
 			obs.totalFiltered++
 			imageURI := img.ToImageURI()
-			if _, exists := obs.existingByURI[imageURI]; !exists {
-				if existingCount+len(obs.newImages) < maxModels {
-					obs.newImages = append(obs.newImages, img)
-				}
+			if _, exists := obs.existingByURI[imageURI]; exists {
+				// Model already exists for this image; respect it (never re-own).
+				coveredCount++
+				continue
+			}
+			if coveredCount+len(obs.newImages) < maxModels {
+				obs.newImages = append(obs.newImages, img)
 			}
 		}
 	}
 
-	obs.totalDiscovered = len(obs.existingByURI) + len(obs.newImages)
+	obs.totalDiscovered = coveredCount + len(obs.newImages)
 	return obs
 }
 

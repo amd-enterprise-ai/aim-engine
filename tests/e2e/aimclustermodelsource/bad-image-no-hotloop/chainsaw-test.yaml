@@ -1,0 +1,71 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMClusterModelSource Test: Bad Image, No Hot Loop
+#
+# Guards against registry hammering on the error path: a source whose registry
+# listing fails must surface the failure and then throttle further listings,
+# not re-query on every reconcile.
+#
+# Tested behavior:
+# - Source becomes not Ready when the registry listing fails.
+# - With syncInterval 5s the source wants to re-list constantly, but the 30s
+#   per-source floor caps actual listings: status.lastSyncTime (written only on
+#   an actual listing) advances at most ~once per 30s, not every 5s. The test
+#   samples it over a >30s window and asserts at most 2 distinct values.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: bad-image-no-hotloop
+spec:
+  description: A source with an unreachable registry fails and throttles re-listing
+  steps:
+    - name: Create a source with an unreachable registry
+      try:
+        - apply:
+            file: cluster-model-source.yaml
+
+    - name: Wait for the source to report failure with a sync timestamp
+      try:
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModelSource
+              metadata:
+                name: (join('-', ['test-bad-image-no-hotloop', $namespace]))
+              status:
+                (lastSyncTime != null): true
+                (conditions[?type == 'Ready']):
+                  - status: "False"
+
+    # Sample lastSyncTime every 3s for ~36s (> the 30s floor) and count the
+    # distinct values. With the floor: at most 2 listings in the window. Without
+    # it (regression): a new listing every ~5s, i.e. many distinct values. The
+    # explicit timeout overrides the per-config exec default (5s on kind) and
+    # leaves margin for kubectl latency across the 12 samples.
+    - name: Verify the registry listing is throttled, not hot-looping
+      try:
+        - script:
+            timeout: 90s
+            content: |
+              SOURCE="test-bad-image-no-hotloop-${NAMESPACE}"
+              seen=""
+              count=0
+              for _ in $(seq 1 12); do
+                t=$(kubectl get aimclustermodelsource "$SOURCE" -o jsonpath='{.status.lastSyncTime}' 2>/dev/null)
+                if [ -n "$t" ] && ! printf '%s\n' "$seen" | grep -qx "$t"; then
+                  seen="$seen
+              $t"
+                  count=$((count + 1))
+                fi
+                sleep 3
+              done
+              echo "distinct lastSyncTime values over 36s: $count"
+              if [ "$count" -eq 0 ]; then
+                echo "lastSyncTime never set"
+                exit 1
+              fi
+              if [ "$count" -gt 2 ]; then
+                echo "lastSyncTime advanced $count times in 36s: registry listing is hot-looping"
+                exit 1
+              fi

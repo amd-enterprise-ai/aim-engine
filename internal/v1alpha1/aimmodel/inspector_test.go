@@ -25,13 +25,66 @@ SOFTWARE.
 package aimmodel
 
 import (
+	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
 const inspectorTestGPUModel = "MI300X"
+
+func TestInspectFailureCooldown(t *testing.T) {
+	const imageURI = "registry.invalid/repo/image:tag"
+	t.Cleanup(func() {
+		inspectFailureMu.Lock()
+		delete(inspectFailures, imageURI)
+		inspectFailureMu.Unlock()
+	})
+
+	if err := recentInspectFailure(imageURI); err != nil {
+		t.Fatalf("expected no cooldown initially, got %v", err)
+	}
+
+	// Non-registry errors must not start a cooldown.
+	recordInspectResult(imageURI, errors.New("not a registry error"))
+	if err := recentInspectFailure(imageURI); err != nil {
+		t.Fatalf("non-registry error should not trigger cooldown, got %v", err)
+	}
+
+	// All registry error types start the cooldown: DNS/unreachable failures are
+	// categorized as not-found, so the cooldown must throttle every type to avoid
+	// re-opening registry hammering.
+	regErr := &utils.ImageRegistryError{Type: utils.ImagePullErrorGeneric, Message: "dial tcp: lookup failed"}
+	recordInspectResult(imageURI, regErr)
+	if got := recentInspectFailure(imageURI); !errors.Is(got, regErr) {
+		t.Fatalf("expected cached registry error, got %v", got)
+	}
+
+	// A failure older than the cooldown no longer suppresses inspection and is
+	// evicted from the map.
+	inspectFailureMu.Lock()
+	inspectFailures[imageURI] = inspectFailure{at: time.Now().Add(-imageInspectCooldown - time.Minute), err: regErr}
+	inspectFailureMu.Unlock()
+	if err := recentInspectFailure(imageURI); err != nil {
+		t.Fatalf("expected expired cooldown, got %v", err)
+	}
+	inspectFailureMu.Lock()
+	_, stillCached := inspectFailures[imageURI]
+	inspectFailureMu.Unlock()
+	if stillCached {
+		t.Fatal("expected expired cooldown entry to be evicted")
+	}
+
+	// Success clears any cached failure.
+	recordInspectResult(imageURI, regErr)
+	recordInspectResult(imageURI, nil)
+	if err := recentInspectFailure(imageURI); err != nil {
+		t.Fatalf("success should clear cooldown, got %v", err)
+	}
+}
 
 // ============================================================================
 // LABEL PARSING TESTS
