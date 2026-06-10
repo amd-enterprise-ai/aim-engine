@@ -181,12 +181,14 @@ spec:
                       VersionPolicy controls how template versions are filtered during aimId-based matching.
                       - pinned (default): match templates whose status.version equals the model's image tag
                       - latest: match only templates at the newest available status.version
-                      - any: match templates at any version
+                      - all: match templates at any version
+                      - any: deprecated alias of all, kept for backward compatibility
                       Only used when spec.aimId is set.
                     enum:
                     - pinned
                     - latest
                     - any
+                    - all
                     type: string
                 type: object
               customTemplates:
@@ -2481,9 +2483,9 @@ spec:
                     properties:
                       selector:
                         description: |-
-                          Selector chooses which source profiles to derive from. Iteration-1
-                          producers stamp role=deployable on every profile; selector.role=base
-                          is reserved for the iteration-2 base-image producers (custom-model
+                          Selector chooses which source profiles to derive from. Discovery of a
+                          deployable AIM image stamps role=deployable; selector.role=base targets
+                          the base profiles emitted by base-image discovery (custom-model
                           derivation source material).
                         properties:
                           acceleratorCount:
@@ -3911,12 +3913,14 @@ spec:
                       VersionPolicy controls how template versions are filtered during aimId-based matching.
                       - pinned (default): match templates whose status.version equals the model's image tag
                       - latest: match only templates at the newest available status.version
-                      - any: match templates at any version
+                      - all: match templates at any version
+                      - any: deprecated alias of all, kept for backward compatibility
                       Only used when spec.aimId is set.
                     enum:
                     - pinned
                     - latest
                     - any
+                    - all
                     type: string
                 type: object
               customTemplates:
@@ -6211,9 +6215,9 @@ spec:
                     properties:
                       selector:
                         description: |-
-                          Selector chooses which source profiles to derive from. Iteration-1
-                          producers stamp role=deployable on every profile; selector.role=base
-                          is reserved for the iteration-2 base-image producers (custom-model
+                          Selector chooses which source profiles to derive from. Discovery of a
+                          deployable AIM image stamps role=deployable; selector.role=base targets
+                          the base profiles emitted by base-image discovery (custom-model
                           derivation source material).
                         properties:
                           acceleratorCount:

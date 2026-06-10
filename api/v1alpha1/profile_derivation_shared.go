@@ -104,10 +104,11 @@ type ProfileSelectorModelRef struct {
 	Scope ProfileSelectorScope `json:"scope,omitempty"`
 }
 
-// ProfileSelectorRole filters source profiles by their forward-compatible role
-// label (`aim.eai.amd.com/profile-role`). Producers in iteration 1 always
-// stamp the `deployable` role, so `base` matches only iteration-2 base-image
-// producers (base-image discovery emitting role=base profiles).
+// ProfileSelectorRole filters source profiles by their role label
+// (`aim.eai.amd.com/profile-role`). Discovery of a deployable AIM image
+// stamps the `deployable` role; base-image discovery stamps `base` on
+// profiles that carry no aimId/modelSources, which custom-model AIMModels
+// derive into deployable copies.
 // +kubebuilder:validation:Enum=base;deployable
 type ProfileSelectorRole string
 

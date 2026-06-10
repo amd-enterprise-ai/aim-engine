@@ -318,7 +318,7 @@ func modelRelevantFields(obj client.Object) (constants.AIMStatus, int64, any) {
 	}
 }
 
-// provenanceLabelsChanged returns true when any of the iteration-1
+// provenanceLabelsChanged returns true when any of the
 // provenance labels (role / source-model[, -scope] / origin) flipped
 // between the old and new object. The resolver filters by these labels, so
 // any change can move a service from "matches" to "no match" or vice

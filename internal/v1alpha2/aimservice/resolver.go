@@ -607,7 +607,7 @@ func resolveBySelector(
 }
 
 // composeServiceSelector builds the effective ProfileSelector the resolver
-// runs filtering against. It applies the two iteration-1 invariants:
+// runs filtering against. It applies the two invariants:
 //   - selector.role is forced to Deployable (CEL forbids users from setting
 //     it; we still stamp here as a defence in depth).
 //   - spec.model.name desugars to selector.modelRef.name when the user did

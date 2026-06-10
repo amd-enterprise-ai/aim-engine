@@ -227,8 +227,9 @@ type AIMProfileStatus struct {
 	// AIMService: true when spec.aimId and spec.modelSources are both
 	// populated, false for base profiles awaiting derivation.
 	//
-	// Iteration 1 producers always emit deployable profiles. Base-profile
-	// production (from base-image discovery) lands in iteration 2.
+	// Image discovery of a deployable AIM image emits deployable profiles;
+	// base-image discovery emits base profiles (no aimId/modelSources) that
+	// a custom-model AIMModel derives into deployable copies.
 	// +kubebuilder:default=false
 	Deployable bool `json:"deployable"`
 

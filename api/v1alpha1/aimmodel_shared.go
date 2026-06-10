@@ -183,7 +183,7 @@ type AIMTemplateProfile struct {
 }
 
 // AIMVersionPolicy controls how template versions are filtered during aimId-based matching.
-// +kubebuilder:validation:Enum=pinned;latest;any
+// +kubebuilder:validation:Enum=pinned;latest;any;all
 type AIMVersionPolicy string
 
 const (
@@ -191,7 +191,11 @@ const (
 	AIMVersionPolicyPinned AIMVersionPolicy = "pinned"
 	// AIMVersionPolicyLatest matches only templates at the newest available status.version.
 	AIMVersionPolicyLatest AIMVersionPolicy = "latest"
-	// AIMVersionPolicyAny matches templates at any version.
+	// AIMVersionPolicyAll matches templates at any version. This is the
+	// canonical spelling, aligned with v1alpha2 ProfileVersionPolicy.
+	AIMVersionPolicyAll AIMVersionPolicy = "all"
+	// AIMVersionPolicyAny is a deprecated alias of AIMVersionPolicyAll, kept
+	// for backward compatibility with existing v1alpha1 objects. Prefer "all".
 	AIMVersionPolicyAny AIMVersionPolicy = "any"
 )
 
@@ -215,7 +219,8 @@ type AIMCustomModelSpec struct {
 	// VersionPolicy controls how template versions are filtered during aimId-based matching.
 	// - pinned (default): match templates whose status.version equals the model's image tag
 	// - latest: match only templates at the newest available status.version
-	// - any: match templates at any version
+	// - all: match templates at any version
+	// - any: deprecated alias of all, kept for backward compatibility
 	// Only used when spec.aimId is set.
 	// +optional
 	// +kubebuilder:default=pinned
@@ -398,9 +403,9 @@ type AIMModelProfilesSpec struct {
 // derivation request: which existing profiles (or discovery cache) the
 // reconciler should copy from.
 type AIMModelProfilesDerivedFrom struct {
-	// Selector chooses which source profiles to derive from. Iteration-1
-	// producers stamp role=deployable on every profile; selector.role=base
-	// is reserved for the iteration-2 base-image producers (custom-model
+	// Selector chooses which source profiles to derive from. Discovery of a
+	// deployable AIM image stamps role=deployable; selector.role=base targets
+	// the base profiles emitted by base-image discovery (custom-model
 	// derivation source material).
 	// +optional
 	Selector ProfileSelector `json:"selector,omitempty"`

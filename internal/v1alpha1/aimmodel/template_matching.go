@@ -69,9 +69,9 @@ type TemplateMatchResult struct {
 
 // FilterTemplatesByVersion filters templates according to the given version policy.
 //
-//   - pinned: only templates where status.version == imageTag
-//   - latest: only templates at the newest status.version (by semver)
-//   - any:    all templates
+//   - pinned:   only templates where status.version == imageTag
+//   - latest:   only templates at the newest status.version (by semver)
+//   - all/any:  all templates (any is a deprecated alias of all)
 func FilterTemplatesByVersion[T interface {
 	GetVersion() string
 }](
@@ -117,7 +117,7 @@ func FilterTemplatesByVersion[T interface {
 		}
 		return result
 
-	case aimv1alpha1.AIMVersionPolicyAny:
+	case aimv1alpha1.AIMVersionPolicyAll, aimv1alpha1.AIMVersionPolicyAny:
 		return templates
 
 	default:

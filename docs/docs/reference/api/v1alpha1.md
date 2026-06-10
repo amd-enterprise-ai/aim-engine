@@ -515,7 +515,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `hardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | Hardware specifies default hardware requirements for all templates.<br />Individual templates can override these defaults.<br />Required when modelSources is set and customTemplates is empty (unless aimId is set). |  | Optional: \{\} <br /> |
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type specifies default type for all templates.<br />Individual templates can override this default.<br />When nil, templates default to "unoptimized". |  | Enum: [optimized general preview unoptimized] <br />Optional: \{\} <br /> |
-| `versionPolicy` _[AIMVersionPolicy](#aimversionpolicy)_ | VersionPolicy controls how template versions are filtered during aimId-based matching.<br />- pinned (default): match templates whose status.version equals the model's image tag<br />- latest: match only templates at the newest available status.version<br />- any: match templates at any version<br />Only used when spec.aimId is set. | pinned | Enum: [pinned latest any] <br />Optional: \{\} <br /> |
+| `versionPolicy` _[AIMVersionPolicy](#aimversionpolicy)_ | VersionPolicy controls how template versions are filtered during aimId-based matching.<br />- pinned (default): match templates whose status.version equals the model's image tag<br />- latest: match only templates at the newest available status.version<br />- all: match templates at any version<br />- any: deprecated alias of all, kept for backward compatibility<br />Only used when spec.aimId is set. | pinned | Enum: [pinned latest any all] <br />Optional: \{\} <br /> |
 
 
 #### AIMCustomProfile
@@ -852,7 +852,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `selector` _[ProfileSelector](#profileselector)_ | Selector chooses which source profiles to derive from. Iteration-1<br />producers stamp role=deployable on every profile; selector.role=base<br />is reserved for the iteration-2 base-image producers (custom-model<br />derivation source material). |  | Optional: \{\} <br /> |
+| `selector` _[ProfileSelector](#profileselector)_ | Selector chooses which source profiles to derive from. Discovery of a<br />deployable AIM image stamps role=deployable; selector.role=base targets<br />the base profiles emitted by base-image discovery (custom-model<br />derivation source material). |  | Optional: \{\} <br /> |
 | `sourceRef` _[ProfileSourceRef](#profilesourceref)_ | SourceRef points to an alternate discovery cache source (a<br />pre-populated ConfigMap of profile YAMLs) instead of using the<br />visible AIMProfile / AIMClusterProfile objects. |  | Optional: \{\} <br /> |
 
 
@@ -2117,7 +2117,7 @@ _Underlying type:_ _string_
 AIMVersionPolicy controls how template versions are filtered during aimId-based matching.
 
 _Validation:_
-- Enum: [pinned latest any]
+- Enum: [pinned latest any all]
 
 _Appears in:_
 - [AIMCustomModelSpec](#aimcustommodelspec)
@@ -2126,7 +2126,8 @@ _Appears in:_
 | --- | --- |
 | `pinned` | AIMVersionPolicyPinned matches templates whose status.version equals the model's image tag.<br /> |
 | `latest` | AIMVersionPolicyLatest matches only templates at the newest available status.version.<br /> |
-| `any` | AIMVersionPolicyAny matches templates at any version.<br /> |
+| `all` | AIMVersionPolicyAll matches templates at any version. This is the<br />canonical spelling, aligned with v1alpha2 ProfileVersionPolicy.<br /> |
+| `any` | AIMVersionPolicyAny is a deprecated alias of AIMVersionPolicyAll, kept<br />for backward compatibility with existing v1alpha1 objects. Prefer "all".<br /> |
 
 
 #### AcceleratorType
@@ -2571,10 +2572,11 @@ _Appears in:_
 
 _Underlying type:_ _string_
 
-ProfileSelectorRole filters source profiles by their forward-compatible role
-label (`aim.eai.amd.com/profile-role`). Producers in iteration 1 always
-stamp the `deployable` role, so `base` matches only iteration-2 base-image
-producers (base-image discovery emitting role=base profiles).
+ProfileSelectorRole filters source profiles by their role label
+(`aim.eai.amd.com/profile-role`). Discovery of a deployable AIM image
+stamps the `deployable` role; base-image discovery stamps `base` on
+profiles that carry no aimId/modelSources, which custom-model AIMModels
+derive into deployable copies.
 
 _Validation:_
 - Enum: [base deployable]

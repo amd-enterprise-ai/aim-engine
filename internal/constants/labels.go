@@ -149,7 +149,7 @@ const (
 	LabelValueCacheTypeTemplateCache = "template-cache"
 
 	// ==========================================================================
-	// AIMProfile provenance labels (v1alpha2 iteration 1)
+	// AIMProfile provenance labels (v1alpha2)
 	//
 	// These labels are stamped on every AIMProfile / AIMClusterProfile so
 	// AIMProfileSet selectors can filter by role, origin, and source model
@@ -158,8 +158,8 @@ const (
 
 	// LabelKeyProfileRole marks an AIMProfile as `deployable` (has aimId +
 	// modelSources, ready for AIMService) or `base` (awaiting derivation).
-	// Iteration 1 emits only `deployable`; base-image discovery (iteration 2)
-	// emits `base` for custom-model derivation source material.
+	// Deployable-image discovery and derivation emit `deployable`; base-image
+	// discovery emits `base` for custom-model derivation source material.
 	LabelKeyProfileRole = AimLabelDomain + "/profile-role"
 
 	// LabelKeyProfileOrigin classifies how the profile was produced:

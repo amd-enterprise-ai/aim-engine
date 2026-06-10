@@ -105,9 +105,10 @@ func IsCopiedProfile(annotations map[string]string) bool {
 }
 
 // IsProfileDeployable reports whether the spec is materialised enough to back
-// an AIMService. Iteration 1 producers always emit deployable profiles; the
-// base-profile case (false) is only reachable through hand-authored base
-// profiles or once iteration 2 lands.
+// an AIMService. Deployable profiles come from discovering a deployable AIM
+// image, from derivation, or from hand-authored profiles; the base-profile
+// case (false) is reached by base-image discovery and hand-authored base
+// profiles, both of which require derivation before they can deploy.
 func IsProfileDeployable(spec aimv1alpha2.AIMProfileSpecCommon) bool {
 	return spec.AimId != "" && len(spec.ModelSources) > 0
 }
@@ -121,7 +122,7 @@ func ProfileRoleLabelValue(spec aimv1alpha2.AIMProfileSpecCommon) string {
 	return constants.LabelValueProfileRoleBase
 }
 
-// StampProfileProvenance writes the iteration-1 provenance labels onto a
+// StampProfileProvenance writes the provenance labels onto a
 // profile object. This is the single point where producer reconcilers
 // (AIMModel image discovery, AIMModel/AIMProfileSet derivation, AIMProfile
 // backfill) agree on how role / origin / source-model labels are stamped.
@@ -410,15 +411,16 @@ const (
 	SelectorScopeCluster
 )
 
-// ProvenanceLabelSelector turns the iteration-1 provenance fields on a
+// ProvenanceLabelSelector turns the provenance fields on a
 // ProfileSelector into a labels.Selector that filters AIMProfile /
 // AIMClusterProfile lists by role / source-model[-scope] / origin.
 //
 // The returned selector applies these rules in order (anything unset is a
 // pass-through):
-//   - selector.role defaults to Deployable; iteration-1 producers always
-//     stamp `aim.eai.amd.com/profile-role=deployable`. Selecting `Base`
-//     filters down to base profiles, which iteration 1 never produces.
+//   - selector.role defaults to Deployable; deployable-image discovery and
+//     derivation stamp `aim.eai.amd.com/profile-role=deployable`. Selecting
+//     `Base` filters down to the base profiles emitted by base-image
+//     discovery (custom-model derivation source material).
 //   - selector.modelRef.name (when set) requires the source-model label.
 //     selector.modelRef.scope chooses which scope label the source must have:
 //     Namespace, Cluster, or Auto (no scope constraint, the resulting
@@ -430,8 +432,9 @@ const (
 func ProvenanceLabelSelector(selector aimv1alpha1.ProfileSelector) (labels.Selector, SelectorScope, error) {
 	sel := labels.NewSelector()
 	// Role semantics:
-	//   Base       → require role=base (matches only the iteration-2 base-image
-	//                surface; in iteration 1 nothing is labelled `base`).
+	//   Base       → require role=base (matches the base profiles emitted by
+	//                base-image discovery; deployable-image discovery never
+	//                labels `base`).
 	//   Deployable → exclude anything actively labelled `base`. Profiles that
 	//                are not yet labelled (transitional state before the
 	//                AIMProfile reconciler backfills the role label) still
