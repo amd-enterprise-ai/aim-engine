@@ -124,7 +124,7 @@ def main():
         if actual_size is not None:
             total_actual += actual_size
 
-        if actual_size == 0:
+        if actual_size == 0 and expected_size is not None and expected_size != 0:
             errors.append(f"EMPTY: {f.rfilename} (expected {fmt_size(expected_size)})")
             print(f"  EMPTY    {f.rfilename}  expected={fmt_size(expected_size)}")
             continue
