@@ -607,6 +607,18 @@ spec:
                         description: AcceleratorModel replaces the copied profile's
                           acceleratorModel.
                         type: string
+                      acceleratorPartitioningMode:
+                        description: |-
+                          AcceleratorPartitioningMode replaces the copied profile's
+                          acceleratorPartitioningMode. Complete replacement, not a merge; an empty
+                          override string leaves the source profile's mode untouched. Same reserved
+                          values as AIMProfileSpecCommon.AcceleratorPartitioningMode. Whenever this
+                          override is set (to any value, including "unpartitioned"), the CEL rule on the
+                          enclosing spec also requires AcceleratorCount to be set: partition mode
+                          changes the per-unit interpretation of acceleratorCount, and CEL cannot
+                          read the base profile to tell whether the meaning actually changed, so it
+                          conservatively requires the count be restated.
+                        type: string
                       aimId:
                         description: |-
                           AimId stamps the derived profile's spec.aimId. When set, wins over
@@ -1052,6 +1064,19 @@ spec:
                       acceleratorModel:
                         description: AcceleratorModel filters by accelerator identifier.
                         type: string
+                      acceleratorPartitioningMode:
+                        description: |-
+                          AcceleratorPartitioningMode filters candidates by their declared
+                          partitioning mode. Partial-order match (NOT strict equality):
+                            ""              - no filter on this field.
+                            "unpartitioned" - matches profiles with mode "" or "unpartitioned".
+                            "partitioned"   - matches profiles whose mode is non-trivial (anything
+                                              other than "" / "unpartitioned").
+                            "<C>"           - selector-only convenience: matches profiles with mode
+                                              "<C>-*" (prefix on the scheme). Not a valid profile-spec
+                                              value (e.g. selector "CPX" matches "CPX-NPS1", "CPX-NPS4").
+                            "<C>-<M>"       - exact-string match on the scheme.
+                        type: string
                       acceleratorType:
                         description: AcceleratorType filters by accelerator resource
                           type.
@@ -1206,6 +1231,11 @@ spec:
                     it)
                   rule: '!(has(self.selector.role) && self.selector.role == ''base'')
                     || (has(self.overrides) && has(self.overrides.aimId) && has(self.overrides.modelId))'
+                - message: overrides.acceleratorCount must be specified together with
+                    any overrides.acceleratorPartitioningMode; partition mode changes
+                    the per-unit interpretation of acceleratorCount
+                  rule: '!has(self.overrides) || !has(self.overrides.acceleratorPartitioningMode)
+                    || size(self.overrides.acceleratorPartitioningMode) == 0 || has(self.overrides.acceleratorCount)'
               discovery:
                 description: |-
                   Discovery controls discovery behavior for this model.
@@ -1872,6 +1902,18 @@ spec:
                         description: AcceleratorModel replaces the copied profile's
                           acceleratorModel.
                         type: string
+                      acceleratorPartitioningMode:
+                        description: |-
+                          AcceleratorPartitioningMode replaces the copied profile's
+                          acceleratorPartitioningMode. Complete replacement, not a merge; an empty
+                          override string leaves the source profile's mode untouched. Same reserved
+                          values as AIMProfileSpecCommon.AcceleratorPartitioningMode. Whenever this
+                          override is set (to any value, including "unpartitioned"), the CEL rule on the
+                          enclosing spec also requires AcceleratorCount to be set: partition mode
+                          changes the per-unit interpretation of acceleratorCount, and CEL cannot
+                          read the base profile to tell whether the meaning actually changed, so it
+                          conservatively requires the count be restated.
+                        type: string
                       aimId:
                         description: |-
                           AimId stamps the derived profile's spec.aimId. When set, wins over
@@ -2317,6 +2359,19 @@ spec:
                       acceleratorModel:
                         description: AcceleratorModel filters by accelerator identifier.
                         type: string
+                      acceleratorPartitioningMode:
+                        description: |-
+                          AcceleratorPartitioningMode filters candidates by their declared
+                          partitioning mode. Partial-order match (NOT strict equality):
+                            ""              - no filter on this field.
+                            "unpartitioned" - matches profiles with mode "" or "unpartitioned".
+                            "partitioned"   - matches profiles whose mode is non-trivial (anything
+                                              other than "" / "unpartitioned").
+                            "<C>"           - selector-only convenience: matches profiles with mode
+                                              "<C>-*" (prefix on the scheme). Not a valid profile-spec
+                                              value (e.g. selector "CPX" matches "CPX-NPS1", "CPX-NPS4").
+                            "<C>-<M>"       - exact-string match on the scheme.
+                        type: string
                       acceleratorType:
                         description: AcceleratorType filters by accelerator resource
                           type.
@@ -2471,6 +2526,11 @@ spec:
                     it)
                   rule: '!(has(self.selector.role) && self.selector.role == ''base'')
                     || (has(self.overrides) && has(self.overrides.aimId) && has(self.overrides.modelId))'
+                - message: overrides.acceleratorCount must be specified together with
+                    any overrides.acceleratorPartitioningMode; partition mode changes
+                    the per-unit interpretation of acceleratorCount
+                  rule: '!has(self.overrides) || !has(self.overrides.acceleratorPartitioningMode)
+                    || size(self.overrides.acceleratorPartitioningMode) == 0 || has(self.overrides.acceleratorCount)'
               profiles:
                 description: |-
                   Profiles is the v1alpha2 fine-tune / custom-model onboarding surface.
@@ -2502,6 +2562,19 @@ spec:
                             type: integer
                           acceleratorModel:
                             description: AcceleratorModel filters by accelerator identifier.
+                            type: string
+                          acceleratorPartitioningMode:
+                            description: |-
+                              AcceleratorPartitioningMode filters candidates by their declared
+                              partitioning mode. Partial-order match (NOT strict equality):
+                                ""              - no filter on this field.
+                                "unpartitioned" - matches profiles with mode "" or "unpartitioned".
+                                "partitioned"   - matches profiles whose mode is non-trivial (anything
+                                                  other than "" / "unpartitioned").
+                                "<C>"           - selector-only convenience: matches profiles with mode
+                                                  "<C>-*" (prefix on the scheme). Not a valid profile-spec
+                                                  value (e.g. selector "CPX" matches "CPX-NPS1", "CPX-NPS4").
+                                "<C>-<M>"       - exact-string match on the scheme.
                             type: string
                           acceleratorType:
                             description: AcceleratorType filters by accelerator resource
@@ -2628,6 +2701,18 @@ spec:
                       acceleratorModel:
                         description: AcceleratorModel replaces the copied profile's
                           acceleratorModel.
+                        type: string
+                      acceleratorPartitioningMode:
+                        description: |-
+                          AcceleratorPartitioningMode replaces the copied profile's
+                          acceleratorPartitioningMode. Complete replacement, not a merge; an empty
+                          override string leaves the source profile's mode untouched. Same reserved
+                          values as AIMProfileSpecCommon.AcceleratorPartitioningMode. Whenever this
+                          override is set (to any value, including "unpartitioned"), the CEL rule on the
+                          enclosing spec also requires AcceleratorCount to be set: partition mode
+                          changes the per-unit interpretation of acceleratorCount, and CEL cannot
+                          read the base profile to tell whether the meaning actually changed, so it
+                          conservatively requires the count be restated.
                         type: string
                       aimId:
                         description: |-
@@ -4323,6 +4408,18 @@ spec:
                         description: AcceleratorModel replaces the copied profile's
                           acceleratorModel.
                         type: string
+                      acceleratorPartitioningMode:
+                        description: |-
+                          AcceleratorPartitioningMode replaces the copied profile's
+                          acceleratorPartitioningMode. Complete replacement, not a merge; an empty
+                          override string leaves the source profile's mode untouched. Same reserved
+                          values as AIMProfileSpecCommon.AcceleratorPartitioningMode. Whenever this
+                          override is set (to any value, including "unpartitioned"), the CEL rule on the
+                          enclosing spec also requires AcceleratorCount to be set: partition mode
+                          changes the per-unit interpretation of acceleratorCount, and CEL cannot
+                          read the base profile to tell whether the meaning actually changed, so it
+                          conservatively requires the count be restated.
+                        type: string
                       aimId:
                         description: |-
                           AimId stamps the derived profile's spec.aimId. When set, wins over
@@ -4768,6 +4865,19 @@ spec:
                       acceleratorModel:
                         description: AcceleratorModel filters by accelerator identifier.
                         type: string
+                      acceleratorPartitioningMode:
+                        description: |-
+                          AcceleratorPartitioningMode filters candidates by their declared
+                          partitioning mode. Partial-order match (NOT strict equality):
+                            ""              - no filter on this field.
+                            "unpartitioned" - matches profiles with mode "" or "unpartitioned".
+                            "partitioned"   - matches profiles whose mode is non-trivial (anything
+                                              other than "" / "unpartitioned").
+                            "<C>"           - selector-only convenience: matches profiles with mode
+                                              "<C>-*" (prefix on the scheme). Not a valid profile-spec
+                                              value (e.g. selector "CPX" matches "CPX-NPS1", "CPX-NPS4").
+                            "<C>-<M>"       - exact-string match on the scheme.
+                        type: string
                       acceleratorType:
                         description: AcceleratorType filters by accelerator resource
                           type.
@@ -4922,6 +5032,11 @@ spec:
                     it)
                   rule: '!(has(self.selector.role) && self.selector.role == ''base'')
                     || (has(self.overrides) && has(self.overrides.aimId) && has(self.overrides.modelId))'
+                - message: overrides.acceleratorCount must be specified together with
+                    any overrides.acceleratorPartitioningMode; partition mode changes
+                    the per-unit interpretation of acceleratorCount
+                  rule: '!has(self.overrides) || !has(self.overrides.acceleratorPartitioningMode)
+                    || size(self.overrides.acceleratorPartitioningMode) == 0 || has(self.overrides.acceleratorCount)'
               discovery:
                 description: |-
                   Discovery controls discovery behavior for this model.
@@ -5588,6 +5703,18 @@ spec:
                         description: AcceleratorModel replaces the copied profile's
                           acceleratorModel.
                         type: string
+                      acceleratorPartitioningMode:
+                        description: |-
+                          AcceleratorPartitioningMode replaces the copied profile's
+                          acceleratorPartitioningMode. Complete replacement, not a merge; an empty
+                          override string leaves the source profile's mode untouched. Same reserved
+                          values as AIMProfileSpecCommon.AcceleratorPartitioningMode. Whenever this
+                          override is set (to any value, including "unpartitioned"), the CEL rule on the
+                          enclosing spec also requires AcceleratorCount to be set: partition mode
+                          changes the per-unit interpretation of acceleratorCount, and CEL cannot
+                          read the base profile to tell whether the meaning actually changed, so it
+                          conservatively requires the count be restated.
+                        type: string
                       aimId:
                         description: |-
                           AimId stamps the derived profile's spec.aimId. When set, wins over
@@ -6033,6 +6160,19 @@ spec:
                       acceleratorModel:
                         description: AcceleratorModel filters by accelerator identifier.
                         type: string
+                      acceleratorPartitioningMode:
+                        description: |-
+                          AcceleratorPartitioningMode filters candidates by their declared
+                          partitioning mode. Partial-order match (NOT strict equality):
+                            ""              - no filter on this field.
+                            "unpartitioned" - matches profiles with mode "" or "unpartitioned".
+                            "partitioned"   - matches profiles whose mode is non-trivial (anything
+                                              other than "" / "unpartitioned").
+                            "<C>"           - selector-only convenience: matches profiles with mode
+                                              "<C>-*" (prefix on the scheme). Not a valid profile-spec
+                                              value (e.g. selector "CPX" matches "CPX-NPS1", "CPX-NPS4").
+                            "<C>-<M>"       - exact-string match on the scheme.
+                        type: string
                       acceleratorType:
                         description: AcceleratorType filters by accelerator resource
                           type.
@@ -6187,6 +6327,11 @@ spec:
                     it)
                   rule: '!(has(self.selector.role) && self.selector.role == ''base'')
                     || (has(self.overrides) && has(self.overrides.aimId) && has(self.overrides.modelId))'
+                - message: overrides.acceleratorCount must be specified together with
+                    any overrides.acceleratorPartitioningMode; partition mode changes
+                    the per-unit interpretation of acceleratorCount
+                  rule: '!has(self.overrides) || !has(self.overrides.acceleratorPartitioningMode)
+                    || size(self.overrides.acceleratorPartitioningMode) == 0 || has(self.overrides.acceleratorCount)'
               profiles:
                 description: |-
                   Profiles is the v1alpha2 fine-tune / custom-model onboarding surface.
@@ -6218,6 +6363,19 @@ spec:
                             type: integer
                           acceleratorModel:
                             description: AcceleratorModel filters by accelerator identifier.
+                            type: string
+                          acceleratorPartitioningMode:
+                            description: |-
+                              AcceleratorPartitioningMode filters candidates by their declared
+                              partitioning mode. Partial-order match (NOT strict equality):
+                                ""              - no filter on this field.
+                                "unpartitioned" - matches profiles with mode "" or "unpartitioned".
+                                "partitioned"   - matches profiles whose mode is non-trivial (anything
+                                                  other than "" / "unpartitioned").
+                                "<C>"           - selector-only convenience: matches profiles with mode
+                                                  "<C>-*" (prefix on the scheme). Not a valid profile-spec
+                                                  value (e.g. selector "CPX" matches "CPX-NPS1", "CPX-NPS4").
+                                "<C>-<M>"       - exact-string match on the scheme.
                             type: string
                           acceleratorType:
                             description: AcceleratorType filters by accelerator resource
@@ -6344,6 +6502,18 @@ spec:
                       acceleratorModel:
                         description: AcceleratorModel replaces the copied profile's
                           acceleratorModel.
+                        type: string
+                      acceleratorPartitioningMode:
+                        description: |-
+                          AcceleratorPartitioningMode replaces the copied profile's
+                          acceleratorPartitioningMode. Complete replacement, not a merge; an empty
+                          override string leaves the source profile's mode untouched. Same reserved
+                          values as AIMProfileSpecCommon.AcceleratorPartitioningMode. Whenever this
+                          override is set (to any value, including "unpartitioned"), the CEL rule on the
+                          enclosing spec also requires AcceleratorCount to be set: partition mode
+                          changes the per-unit interpretation of acceleratorCount, and CEL cannot
+                          read the base profile to tell whether the meaning actually changed, so it
+                          conservatively requires the count be restated.
                         type: string
                       aimId:
                         description: |-

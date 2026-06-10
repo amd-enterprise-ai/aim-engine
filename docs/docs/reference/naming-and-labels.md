@@ -120,8 +120,9 @@ Labels written by the [AcceleratorDetector](../concepts/accelerator-detection.md
 | Label pattern | Example key | Example value | Purpose |
 |---|---|---|---|
 | `feature.node.kubernetes.io/aim-accelerator.{model}` | `aim-accelerator.MI300X` | `"8"` | Specific GPU or CPU model |
+| `feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.{scheme}` | `aim-accelerator.partitioning-scheme.CPX-NPS4` | `"64"` | GPU partition state — the `default` sentinel (canonical-unpartitioned or non-partitionable hardware) or an explicit `<Compute>-<Memory>` scheme. Matched by `AIMProfile.spec.acceleratorPartitioningMode` via `Exists`/`DoesNotExist` |
 
-See [Accelerator Detection](../concepts/accelerator-detection.md) for details on label production.
+Both axes use the **value-in-key** pattern; the value (accelerator/partition count) is informational only and the matcher keys off the label key. See [Accelerator Detection](../concepts/accelerator-detection.md) for details on label production.
 
 ### Standard Kubernetes labels
 

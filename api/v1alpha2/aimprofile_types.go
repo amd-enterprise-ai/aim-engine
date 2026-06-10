@@ -51,6 +51,7 @@ type AIMProfileSpec struct {
 // +kubebuilder:printcolumn:name="Metric",type=string,JSONPath=`.spec.metric`
 // +kubebuilder:printcolumn:name="Precision",type=string,JSONPath=`.spec.precision`
 // +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.type`
+// +kubebuilder:printcolumn:name="Partitioning",type=string,priority=1,JSONPath=`.spec.acceleratorPartitioningMode`
 // +kubebuilder:printcolumn:name="Primary",type=boolean,JSONPath=`.spec.primary`
 // +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.status.version`
 // +kubebuilder:printcolumn:name="Manual",type=boolean,priority=1,JSONPath=`.spec.manualSelectionOnly`
@@ -61,6 +62,7 @@ type AIMProfileSpec struct {
 // (one of the two set) is rejected to keep status.deployable derivable from
 // spec.
 // +kubebuilder:validation:XValidation:rule="(has(self.spec.aimId) && size(self.spec.aimId) > 0) == (has(self.spec.modelSources) && size(self.spec.modelSources) > 0)",message="spec.aimId and spec.modelSources must both be set (deployable profile) or both be empty (base profile)"
+// +kubebuilder:validation:XValidation:rule="!(has(self.spec.acceleratorType) && self.spec.acceleratorType == 'cpu') || !has(self.spec.acceleratorPartitioningMode) || size(self.spec.acceleratorPartitioningMode) == 0 || self.spec.acceleratorPartitioningMode == 'unpartitioned'",message="acceleratorPartitioningMode must be 'unpartitioned' (or unset) when acceleratorType is cpu"
 //
 //nolint:lll // kubebuilder marker; CEL rule cannot be wrapped across lines
 type AIMProfile struct {

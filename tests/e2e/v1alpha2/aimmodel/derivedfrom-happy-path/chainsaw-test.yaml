@@ -4,7 +4,7 @@ metadata:
   name: v1alpha2-aimmodel-derivedfrom-happy-path
 spec:
   description: |
-    Happy-path coverage of ADR 0006b iteration 1 derivedFrom onboarding:
+    Happy-path coverage of derivedFrom onboarding:
     seeds a deployable source AIMProfile, applies a v1alpha2 AIMModel that
     uses spec.derivedFrom (no spec.image, no spec.profileCopy) to pick that
     profile, and asserts the synthesised child AIMProfileSet plus the

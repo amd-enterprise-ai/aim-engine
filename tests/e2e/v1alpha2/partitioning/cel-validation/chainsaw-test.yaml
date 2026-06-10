@@ -1,0 +1,158 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# GPU Partitioning CEL validation.
+#
+# Node-independent: exercises admission-time CEL rules only, so it runs on any
+# cluster (including kind) without partitioned hardware.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: partitioning-cel-validation
+spec:
+  description: CEL rules for acceleratorPartitioningMode across profile and service.
+  timeouts:
+    assert: 30s
+  steps:
+    # --- AIMClusterProfile: cpu + partition mode is a contradiction ---
+    - name: Reject CPU profile that requests a partition mode
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-part-cpu-contradiction
+              spec:
+                aimId: test/part-model
+                modelId: test/part-model-fp8
+                image: registry.example.com/test-image:1.0.0
+                modelSources:
+                  - modelId: test/part-model-fp8
+                    sourceUri: hf://test/part-model
+                acceleratorModel: EPYC_9965
+                acceleratorType: cpu
+                acceleratorPartitioningMode: CPX-NPS4
+
+    - name: Accept GPU profile with a specific partition scheme
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-part-gpu-scheme
+              spec:
+                aimId: test/part-model
+                modelId: test/part-model-fp8
+                image: registry.example.com/test-image:1.0.0
+                modelSources:
+                  - modelId: test/part-model-fp8
+                    sourceUri: hf://test/part-model
+                acceleratorModel: MI300X
+                acceleratorType: gpu
+                acceleratorCount: 1
+                acceleratorPartitioningMode: CPX-NPS4
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-part-gpu-scheme
+      finally:
+        - delete:
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              name: test-part-gpu-scheme
+
+    # --- AIMService.profileOverrides: count required when mode turns on partitioning ---
+    - name: Reject service whose profileOverrides turns on partitioning without a count
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-part-svc-no-count
+              spec:
+                profile:
+                  name: some-profile
+                profileOverrides:
+                  acceleratorPartitioningMode: CPX-NPS4
+                replicas: 1
+
+    - name: Accept service whose profileOverrides sets both mode and count
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-part-svc-with-count
+              spec:
+                profile:
+                  name: some-profile
+                profileOverrides:
+                  acceleratorPartitioningMode: CPX-NPS4
+                  acceleratorCount: 1
+                replicas: 1
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-part-svc-with-count
+      finally:
+        - delete:
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              name: test-part-svc-with-count
+
+    - name: Reject service whose profileOverrides sets mode=unpartitioned without a count
+      # The rule fires on ANY non-empty mode override. CEL cannot read the base
+      # profile to tell whether the per-unit interpretation actually changed, so
+      # it conservatively requires a count even for an 'unpartitioned' override.
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-part-svc-unpartitioned-no-count
+              spec:
+                profile:
+                  name: some-profile
+                profileOverrides:
+                  acceleratorPartitioningMode: unpartitioned
+                replicas: 1
+
+    # --- AIMClusterProfileSet.overrides: same count-with-any-override rule ---
+    - name: Reject profile set whose overrides turn on partitioning without a count
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfileSet
+              metadata:
+                name: test-part-set-no-count
+              spec:
+                selector:
+                  aimId: test/part-model
+                  acceleratorModel: MI300X
+                  acceleratorCount: 1
+                overrides:
+                  acceleratorPartitioningMode: CPX-NPS4

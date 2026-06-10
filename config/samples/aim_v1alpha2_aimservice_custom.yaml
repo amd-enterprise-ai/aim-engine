@@ -1,4 +1,4 @@
-# Custom-model AIMService (ADR 0006b iteration 2, Appendix Example).
+# Custom-model AIMService.
 #
 # Consumes the deployable AIMProfiles produced by the custom-model
 # derivation AIMModel (see aim_v1alpha2_aimmodel_custom.yaml). Resolution

@@ -946,6 +946,19 @@ spec:
                       acceleratorModel:
                         description: AcceleratorModel filters by accelerator identifier.
                         type: string
+                      acceleratorPartitioningMode:
+                        description: |-
+                          AcceleratorPartitioningMode filters candidates by their declared
+                          partitioning mode. Partial-order match (NOT strict equality):
+                            ""              - no filter on this field.
+                            "unpartitioned" - matches profiles with mode "" or "unpartitioned".
+                            "partitioned"   - matches profiles whose mode is non-trivial (anything
+                                              other than "" / "unpartitioned").
+                            "<C>"           - selector-only convenience: matches profiles with mode
+                                              "<C>-*" (prefix on the scheme). Not a valid profile-spec
+                                              value (e.g. selector "CPX" matches "CPX-NPS1", "CPX-NPS4").
+                            "<C>-<M>"       - exact-string match on the scheme.
+                        type: string
                       acceleratorType:
                         description: AcceleratorType filters by accelerator resource
                           type.
@@ -1066,6 +1079,21 @@ spec:
                       AcceleratorModel replaces the referenced profile's acceleratorModel
                       (e.g. "MI300X" -> "MI325X"). Validation against actual cluster
                       availability is left to the AIMServiceTemplate / runtime layers.
+                    type: string
+                  acceleratorPartitioningMode:
+                    description: |-
+                      AcceleratorPartitioningMode replaces the referenced profile's
+                      acceleratorPartitioningMode. Complete replacement, not a merge — single
+                      string, no substruct ambiguity. Empty string means "no override" (the
+                      resolved overlay inherits the base profile's mode). Use this to deploy a
+                      profile written for whole GPUs onto a partition slice. Whenever this
+                      override is set (to any value, including "unpartitioned"), the CEL rule on
+                      AIMService also requires an acceleratorCount override: partition mode
+                      changes the per-unit interpretation of acceleratorCount, and CEL cannot
+                      read the base profile to tell whether the meaning actually changed, so it
+                      conservatively requires the count be restated. See
+                      AcceleratorPartitioningMode on AIMProfileSpecCommon for the reserved
+                      values ("unpartitioned", "partitioned", "<C>-<M>").
                     type: string
                   containerEnv:
                     description: |-
@@ -2151,6 +2179,11 @@ spec:
           rule: '!(has(self.spec.profile) && has(self.spec.template))'
         - message: one of spec.model or spec.profile must be specified
           rule: has(self.spec.model) || has(self.spec.profile)
+        - message: acceleratorCount must be specified together with any acceleratorPartitioningMode
+            override; partition mode changes the per-unit interpretation of acceleratorCount
+          rule: '!has(self.spec.profileOverrides) || !has(self.spec.profileOverrides.acceleratorPartitioningMode)
+            || size(self.spec.profileOverrides.acceleratorPartitioningMode) == 0 ||
+            has(self.spec.profileOverrides.acceleratorCount)'
     served: true
     storage: false
     subresources:
@@ -3074,6 +3107,19 @@ spec:
                       acceleratorModel:
                         description: AcceleratorModel filters by accelerator identifier.
                         type: string
+                      acceleratorPartitioningMode:
+                        description: |-
+                          AcceleratorPartitioningMode filters candidates by their declared
+                          partitioning mode. Partial-order match (NOT strict equality):
+                            ""              - no filter on this field.
+                            "unpartitioned" - matches profiles with mode "" or "unpartitioned".
+                            "partitioned"   - matches profiles whose mode is non-trivial (anything
+                                              other than "" / "unpartitioned").
+                            "<C>"           - selector-only convenience: matches profiles with mode
+                                              "<C>-*" (prefix on the scheme). Not a valid profile-spec
+                                              value (e.g. selector "CPX" matches "CPX-NPS1", "CPX-NPS4").
+                            "<C>-<M>"       - exact-string match on the scheme.
+                        type: string
                       acceleratorType:
                         description: AcceleratorType filters by accelerator resource
                           type.
@@ -3194,6 +3240,21 @@ spec:
                       AcceleratorModel replaces the referenced profile's acceleratorModel
                       (e.g. "MI300X" -> "MI325X"). Validation against actual cluster
                       availability is left to the AIMServiceTemplate / runtime layers.
+                    type: string
+                  acceleratorPartitioningMode:
+                    description: |-
+                      AcceleratorPartitioningMode replaces the referenced profile's
+                      acceleratorPartitioningMode. Complete replacement, not a merge — single
+                      string, no substruct ambiguity. Empty string means "no override" (the
+                      resolved overlay inherits the base profile's mode). Use this to deploy a
+                      profile written for whole GPUs onto a partition slice. Whenever this
+                      override is set (to any value, including "unpartitioned"), the CEL rule on
+                      AIMService also requires an acceleratorCount override: partition mode
+                      changes the per-unit interpretation of acceleratorCount, and CEL cannot
+                      read the base profile to tell whether the meaning actually changed, so it
+                      conservatively requires the count be restated. See
+                      AcceleratorPartitioningMode on AIMProfileSpecCommon for the reserved
+                      values ("unpartitioned", "partitioned", "<C>-<M>").
                     type: string
                   containerEnv:
                     description: |-
@@ -4292,6 +4353,11 @@ spec:
             paired with spec.model.name
           rule: '!has(self.spec.profile) || !has(self.spec.profile.selector) || has(self.spec.profile.selector.aimId)
             || has(self.spec.profile.selector.modelRef) || has(self.spec.model)'
+        - message: acceleratorCount must be specified together with any acceleratorPartitioningMode
+            override; partition mode changes the per-unit interpretation of acceleratorCount
+          rule: '!has(self.spec.profileOverrides) || !has(self.spec.profileOverrides.acceleratorPartitioningMode)
+            || size(self.spec.profileOverrides.acceleratorPartitioningMode) == 0 ||
+            has(self.spec.profileOverrides.acceleratorCount)'
     served: true
     storage: true
     subresources:

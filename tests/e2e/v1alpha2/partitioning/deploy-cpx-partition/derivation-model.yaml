@@ -1,0 +1,33 @@
+# Derivation AIMModel: completes the base profiles with small custom weights
+# (Qwen3-0.6B) AND retargets the deploy onto a single CPX-NPS4 partition.
+#
+# overrides.acceleratorPartitioningMode + overrides.acceleratorCount: the CEL
+# rule requires a count whenever a partition mode override is set, because the
+# mode changes the per-unit interpretation of the count. count=1 means one CPX
+# compute partition (~1/8 of an MI300X), which is enough for a 0.6B model.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: part-derived
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        role: base
+        modelRef:
+          name: part-base
+          scope: Namespace
+        # Select the count-1 (TP1) base profile: aim-base:0.11 emits
+        # tp1/tp2/tp4/tp8 variants, and a single CPX-NPS4 partition is one
+        # schedulable unit, so we want the profile whose engine args already
+        # assume one GPU (TP1) rather than overriding a TP2 profile down to 1.
+        acceleratorCount: 1
+    versionPolicy: all
+    overrides:
+      aimId: acme/qwen3-0-6b-cpx
+      modelId: Qwen/Qwen3-0.6B
+      modelSources:
+        - modelId: Qwen/Qwen3-0.6B
+          sourceUri: hf://Qwen/Qwen3-0.6B
+      acceleratorCount: 1
+      acceleratorPartitioningMode: CPX-NPS4

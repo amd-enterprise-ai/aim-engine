@@ -1,4 +1,4 @@
-# Custom-model derivation AIMModel (ADR 0006b iteration 2, Appendix Example 2).
+# Custom-model derivation AIMModel.
 #
 # Reuses the base AIMProfiles emitted by a base-image AIMModel (see
 # aim_v1alpha2_aimmodel_base_image.yaml) and converts them into deployable

@@ -170,7 +170,7 @@ func (r *ProfileReconciler) ComposeState(
 	spec := fetch.profile.Spec.AIMProfileSpecCommon
 	obs.resolvedResources = ResolveResources(spec.AcceleratorType, spec.AcceleratorCount, spec.Resources)
 	if HasAcceleratorRequirement(spec.AcceleratorModel, spec.AcceleratorCount, spec.Resources) {
-		obs.matchResult = MatchNodes(fetch.nodes, spec.AcceleratorModel, obs.resolvedResources)
+		obs.matchResult = MatchNodes(fetch.nodes, spec.AcceleratorType, spec.AcceleratorModel, spec.AcceleratorPartitioningMode, obs.resolvedResources)
 	}
 	obs.deployable = IsProfileDeployable(spec)
 	obs.sourceModel = SourceModelFromOwnerRefs(fetch.profile, fetch.profile.Namespace)
@@ -188,7 +188,7 @@ func (r *ClusterProfileReconciler) ComposeState(
 	spec := fetch.profile.Spec.AIMProfileSpecCommon
 	obs.resolvedResources = ResolveResources(spec.AcceleratorType, spec.AcceleratorCount, spec.Resources)
 	if HasAcceleratorRequirement(spec.AcceleratorModel, spec.AcceleratorCount, spec.Resources) {
-		obs.matchResult = MatchNodes(fetch.nodes, spec.AcceleratorModel, obs.resolvedResources)
+		obs.matchResult = MatchNodes(fetch.nodes, spec.AcceleratorType, spec.AcceleratorModel, spec.AcceleratorPartitioningMode, obs.resolvedResources)
 	}
 	obs.deployable = IsProfileDeployable(spec)
 	// Cluster profiles have no namespace by definition; SourceModelFromOwnerRefs

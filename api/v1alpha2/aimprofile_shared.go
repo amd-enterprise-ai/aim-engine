@@ -134,9 +134,44 @@ type AIMProfileSpecCommon struct {
 	// number of CPU cores (e.g., 128 for EPYC_ZEN5, 192 for EPYC_9965).
 	// Combined with cluster-level configuration to compute default
 	// resource requests in status.resources.
+	//
+	// For AcceleratorType=gpu, the per-unit interpretation depends on
+	// AcceleratorPartitioningMode: under "unpartitioned" (default) one unit is
+	// one whole GPU; under "partitioned" or a specific scheme one unit is one
+	// partition slice (e.g. CPX-NPS4 = 1/8 of a GPU).
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	AcceleratorCount int32 `json:"acceleratorCount,omitempty"`
+
+	// AcceleratorPartitioningMode declares the GPU partition state the profile
+	// requires. Free-form string with reserved values:
+	//
+	//   ""              - omitted; CRD-defaulted to "unpartitioned".
+	//   "unpartitioned" - hardware-default partition state. Matches unpartitioned
+	//                     MI300X (canonical SPX-NPS1) AND non-partitionable
+	//                     hardware (Radeon, etc.) — any node whose detector
+	//                     stamped aim-accelerator.partitioning-scheme.default.
+	//   "partitioned"   - any actively partitioned mode. Excludes both
+	//                     unpartitioned partitionable hardware and
+	//                     non-partitionable hardware.
+	//   "<C>-<M>"       - specific compute+memory scheme, e.g. "CPX-NPS4". Matches
+	//                     only nodes carrying that exact scheme label; does not
+	//                     match non-partitionable hardware.
+	//
+	// Other values (e.g. "CPX" alone, or typos) are accepted but fail-safe to
+	// zero matching nodes under this iteration's label schema — compute-only /
+	// memory-only matching is not supported here. AIM Engine does NOT validate
+	// against AMD's hardware compatibility matrix; invalid combinations simply
+	// report MatchingNodes == 0.
+	//
+	// Resolves to a single Exists or DoesNotExist node-affinity term on the
+	// aim-accelerator.partitioning-scheme.* labels published by the
+	// AcceleratorDetector, AND-ed with the acceleratorModel term.
+	// +kubebuilder:default="unpartitioned"
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	AcceleratorPartitioningMode string `json:"acceleratorPartitioningMode,omitempty"`
 
 	// Resources is an optional override for K8s resource requests/limits.
 	// When set, merged on top of the defaults that AIM Engine computes from

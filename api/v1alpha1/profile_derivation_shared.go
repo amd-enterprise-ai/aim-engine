@@ -178,6 +178,19 @@ type ProfileSelector struct {
 	// +optional
 	AcceleratorModel string `json:"acceleratorModel,omitempty"`
 
+	// AcceleratorPartitioningMode filters candidates by their declared
+	// partitioning mode. Partial-order match (NOT strict equality):
+	//   ""              - no filter on this field.
+	//   "unpartitioned" - matches profiles with mode "" or "unpartitioned".
+	//   "partitioned"   - matches profiles whose mode is non-trivial (anything
+	//                     other than "" / "unpartitioned").
+	//   "<C>"           - selector-only convenience: matches profiles with mode
+	//                     "<C>-*" (prefix on the scheme). Not a valid profile-spec
+	//                     value (e.g. selector "CPX" matches "CPX-NPS1", "CPX-NPS4").
+	//   "<C>-<M>"       - exact-string match on the scheme.
+	// +optional
+	AcceleratorPartitioningMode string `json:"acceleratorPartitioningMode,omitempty"`
+
 	// AcceleratorType filters by accelerator resource type.
 	// +optional
 	AcceleratorType AcceleratorType `json:"acceleratorType,omitempty"`
@@ -268,6 +281,18 @@ type ProfileOverrides struct {
 	// +optional
 	AcceleratorCount *int32 `json:"acceleratorCount,omitempty"`
 
+	// AcceleratorPartitioningMode replaces the copied profile's
+	// acceleratorPartitioningMode. Complete replacement, not a merge; an empty
+	// override string leaves the source profile's mode untouched. Same reserved
+	// values as AIMProfileSpecCommon.AcceleratorPartitioningMode. Whenever this
+	// override is set (to any value, including "unpartitioned"), the CEL rule on the
+	// enclosing spec also requires AcceleratorCount to be set: partition mode
+	// changes the per-unit interpretation of acceleratorCount, and CEL cannot
+	// read the base profile to tell whether the meaning actually changed, so it
+	// conservatively requires the count be restated.
+	// +optional
+	AcceleratorPartitioningMode string `json:"acceleratorPartitioningMode,omitempty"`
+
 	// ContainerEnv merges by env var name, overriding matching source entries.
 	// +optional
 	// +listType=map
@@ -297,6 +322,7 @@ type ProfileOverrides struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.versionPolicy) || (self.versionPolicy != 'latest' && self.versionPolicy != 'all') || !has(self.version)",message="latest/all versionPolicy must not set version"
 // +kubebuilder:validation:XValidation:rule="!(has(self.selector.role) && self.selector.role == 'base') || (!has(self.selector.aimId) && !has(self.selector.modelId) && !has(self.selector.profileId))",message="selector.aimId/modelId/profileId are not allowed when selector.role=base; set overrides.aimId/modelId/profileId instead (base profiles have no source identity to filter on)"
 // +kubebuilder:validation:XValidation:rule="!(has(self.selector.role) && self.selector.role == 'base') || (has(self.overrides) && has(self.overrides.aimId) && has(self.overrides.modelId))",message="selector.role=base requires overrides.aimId and overrides.modelId (base profiles carry no identity of their own; overrides supply it)"
+// +kubebuilder:validation:XValidation:rule="!has(self.overrides) || !has(self.overrides.acceleratorPartitioningMode) || size(self.overrides.acceleratorPartitioningMode) == 0 || has(self.overrides.acceleratorCount)",message="overrides.acceleratorCount must be specified together with any overrides.acceleratorPartitioningMode; partition mode changes the per-unit interpretation of acceleratorCount"
 //
 //nolint:lll // kubebuilder marker; CEL rule cannot be wrapped across lines
 type AIMProfileSetSpec struct {

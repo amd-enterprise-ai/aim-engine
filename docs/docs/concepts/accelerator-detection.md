@@ -9,19 +9,21 @@ The labels feed two different consumers depending on API version:
 
 ## How It Works
 
-Two DaemonSets run `aim-runtime detect-hardware` on each node, write the results to NFD's local feature file directory, and NFD publishes them as node labels.
+Two DaemonSets detect hardware on each node, write the results to NFD's local feature file directory, and NFD publishes them as node labels. The GPU detector runs `aim-runtime detect-hardware` for the accelerator model and, independently, `amd-smi partition` for the GPU partition state; the CPU detector reads `/proc/cpuinfo`.
 
 ```
 Node boots
   → AcceleratorDetector pod starts
-  → Runs aim-runtime detect-hardware
-  → Writes feature file to /etc/kubernetes/node-feature-discovery/features.d/
+  → GPU: runs `aim-runtime detect-hardware` (model) + `amd-smi partition` (partition state)
+    CPU: reads /proc/cpuinfo
+  → Writes feature file(s) to /etc/kubernetes/node-feature-discovery/features.d/
   → NFD publishes node labels:
       feature.node.kubernetes.io/aim-accelerator.MI300X=8
+      feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.CPX-NPS4=64
   → AIM Engine matches profiles (or v1alpha1 templates) to nodes via label affinity
 ```
 
-Detection runs periodically (default: every 5 minutes) to ensure labels stay current.
+Detection runs periodically (default: every 10 seconds) to keep labels — including GPU partition state — current. The end-to-end latency floor is NFD's own scan interval, not `detectInterval`.
 
 ## Node Labels
 
@@ -51,6 +53,28 @@ AIM Engine constructs node affinity from `AIMProfile.spec.acceleratorModel` (or 
 !!! note
     Architecture-level labels for fallback profile matching (e.g. `aim-accelerator.CDNA3`, `aim-accelerator.EPYC_ZEN5`) will be supported once `aim-runtime` returns the full identifier hierarchy.
 
+## GPU Partition Scheme Labels
+
+On GPU nodes the detector also reads the current partition state from `amd-smi partition --current --json` and publishes it on a single partition axis, `feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.*`. The kernel-applied state reported by `amd-smi` is the single source of truth — AMD GPU Operator / DCM labels are **not** consulted, because they can lag or disagree with the kernel.
+
+Two kinds of value appear on this axis:
+
+- A hardware-agnostic **`default`** sentinel meaning "canonical unpartitioned state, or hardware that doesn't expose partitioning at all".
+- Explicit **`<Compute>-<Memory>`** scheme names (e.g. `CPX-NPS4`) for actively partitioned states, and `SPX-NPS1` for the canonical unpartitioned state on partitionable hardware.
+
+| Node state | Labels |
+|------------|--------|
+| 8-GPU MI300X, unpartitioned (`SPX+NPS1`) | `aim-accelerator.MI300X=8`, `partitioning-scheme.default=8`, `partitioning-scheme.SPX-NPS1=8` |
+| 8-GPU MI300X, `CPX+NPS4` (64 partitions) | `aim-accelerator.MI300X=8`, `partitioning-scheme.CPX-NPS4=64` |
+| Non-partitionable hardware (e.g. Radeon) | `aim-accelerator.RadeonW7900=4`, `partitioning-scheme.default=4` |
+
+The label *value* is the number of schedulable units in that bucket and is informational only. `AIMProfile.spec.acceleratorPartitioningMode` matches on the label *key* via `Exists` / `DoesNotExist`; see [Profiles — Accelerator and node affinity](profiles.md#accelerator-and-node-affinity).
+
+Partition detection runs **independently of `detect-hardware`**: the scheme comes straight from `amd-smi partition --current --json`, so partition labels are published even on accelerator images that don't ship the `detect-hardware` command — and, conversely, a partition failure never suppresses the model/family labels (the two axes live in separate feature files; see [NFD Integration](#nfd-integration)). It is best-effort: when `amd-smi` is missing/old, times out, or returns unparseable output, the detector falls back to `partitioning-scheme.default` if it otherwise knows GPUs are present, and otherwise preserves the last-good partition labels rather than dropping them. The GPU detector image must ship an `amd-smi` that supports `partition --current --json`.
+
+!!! note
+    This iteration assumes the AMD GPU Operator's `resource_naming_strategy: single` (every GPU/partition advertised as `amd.com/gpu`). The partition labels themselves are strategy-independent (the detector reads `amd-smi`, not the device plugin), but partition-aware scheduling is only supported under `single` today.
+
 ## DaemonSets
 
 | DaemonSet | Image | Target Nodes | Detects |
@@ -64,7 +88,9 @@ Both DaemonSets are independently configurable via Helm values.
 
 ### NFD Integration
 
-Feature files are written to `/etc/kubernetes/node-feature-discovery/features.d/aim-accelerator-{gpu,cpu}`, one per DaemonSet. NFD's [local source](https://nfd.sigs.k8s.io/usage/customization-guide#local-feature-source) picks up every file and merges the resulting labels onto the node. The CPU and GPU detectors write separate files so they can co-exist on heterogeneous nodes without clobbering each other. Writes use an atomic rename to avoid race conditions with the NFD worker.
+Feature files are written to `/etc/kubernetes/node-feature-discovery/features.d/`. The CPU detector writes `aim-accelerator-cpu`; the GPU detector writes **two** files — `aim-accelerator-gpu` for the model/family labels (from `detect-hardware`) and `aim-accelerator-gpu-partition` for the partition axis (from `amd-smi`). NFD's [local source](https://nfd.sigs.k8s.io/usage/customization-guide#local-feature-source) picks up every file and merges the resulting labels onto the node. Splitting the model and partition axes into separate files lets the CPU and GPU detectors co-exist on heterogeneous nodes without clobbering each other, and gives each axis an independent lifecycle so a failure of one never overwrites the other's labels. Writes use an atomic rename to avoid race conditions with the NFD worker.
+
+Labels are **sticky across transient failures**: a detection failure (the underlying tool is missing, exits non-zero, times out, or returns unparseable output) is treated as distinct from a confident "no accelerators here". On failure the detector leaves the relevant last-good feature file untouched and retries on the next cycle, rather than truncating it to empty. Because the model and partition axes are separate files, this applies to each independently — a transient `amd-smi` failure can't drop the model labels, and an absent `detect-hardware` can't drop the partition labels. It prevents a single transient hiccup from flapping a node's `aim-accelerator.*` labels and every consumer's profile/model availability.
 
 ## Prerequisites
 
@@ -78,7 +104,7 @@ The AcceleratorDetector is enabled by default. Configure it in your Helm `values
 ```yaml
 acceleratorDetector:
   enable: true
-  detectInterval: 300
+  detectInterval: 10
 
   gpu:
     enable: true

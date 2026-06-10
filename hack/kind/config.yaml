@@ -11,6 +11,14 @@
 # (see internal/v1alpha2/aimprofile/node_match.go), so labels alone are
 # sufficient on kind.
 #
+# GPU profiles also carry a partition axis: an unpartitioned profile (the CRD
+# default) requires the AcceleratorDetector's
+# feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.default label
+# to Exist (partitionNodeSelectorRequirement in node_match.go). Without it,
+# every unpartitioned GPU profile matches zero nodes and only the manual-only
+# CPU fallback survives -> resolve-by-image fails with ProfileNotFound. So each
+# GPU worker must mock partitioning-scheme.default alongside its model label.
+#
 # Both worker nodes carry the EPYC_ZEN5 CPU label because that is what the
 # AcceleratorDetector emits in production for AMD EPYC hosts that also house
 # Instinct accelerators (CPU and GPU labels co-exist on the same node).
@@ -28,6 +36,8 @@ nodes:
       # v1alpha2 accelerator labels (would be written by AcceleratorDetector at runtime)
       feature.node.kubernetes.io/aim-accelerator.MI300X: "8"
       feature.node.kubernetes.io/aim-accelerator.EPYC_ZEN5: "128"
+      # Partition axis: unpartitioned GPU profiles require the default scheme to Exist
+      feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.default: "8"
   - role: worker
     labels:
       # AMD Instinct MI350X (device ID without 0x prefix, matching k8s-device-plugin format)
@@ -37,3 +47,5 @@ nodes:
       # v1alpha2 accelerator labels (would be written by AcceleratorDetector at runtime)
       feature.node.kubernetes.io/aim-accelerator.MI350X: "8"
       feature.node.kubernetes.io/aim-accelerator.EPYC_ZEN5: "128"
+      # Partition axis: unpartitioned GPU profiles require the default scheme to Exist
+      feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.default: "8"

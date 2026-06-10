@@ -217,15 +217,16 @@ CHAINSAW_CONFIG_DIR := tests/chainsaw/config
 # specific test directory.
 CHAINSAW_NEEDS_SECRET_EXCLUDE := needs-secret notin (hf_token,ghcr_pull_secret)
 
-# Kind environment: exclude tests requiring GPU, longhorn storage, or external
-# network. `tier notin (manual)` excludes expensive / operator-gated tests that
-# shouldn't run by default (e.g. multi-hundred-GiB live model downloads).
-CHAINSAW_SELECTOR_KIND := requires notin (gpu,longhorn,hf_token,nfd),tier notin (manual),$(CHAINSAW_NEEDS_SECRET_EXCLUDE)
+# Kind environment: exclude tests requiring GPU, longhorn storage, external
+# network, or an HF token. Expensive / operator-gated tests (e.g. multi-hundred-
+# GiB live model downloads) gate themselves via one of these `requires` values
+# (e.g. requires=hf_token) rather than a separate tier axis.
+CHAINSAW_SELECTOR_KIND := requires notin (gpu,longhorn,hf_token,nfd),$(CHAINSAW_NEEDS_SECRET_EXCLUDE)
 
-# GPU environment: exclude tests that only work on Kind (mocked node labels).
-# `tier notin (manual)` excludes expensive tests — run those explicitly by
-# pointing CHAINSAW_TEST_DIR at the specific test directory.
-CHAINSAW_SELECTOR_GPU := requires notin (kind,hf_token,nfd),tier notin (manual),$(CHAINSAW_NEEDS_SECRET_EXCLUDE)
+# GPU environment: exclude tests that only work on Kind (mocked node labels) or
+# need an HF token. GPU tests are otherwise fully end-to-end. Run an excluded
+# test explicitly by invoking chainsaw directly against its dir without a selector.
+CHAINSAW_SELECTOR_GPU := requires notin (kind,hf_token,nfd),$(CHAINSAW_NEEDS_SECRET_EXCLUDE)
 
 # Select appropriate config based on ENV and CI detection
 # CI is detected via CI env var (set by GitHub Actions, GitLab CI, etc.)

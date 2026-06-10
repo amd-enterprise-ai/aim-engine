@@ -63,6 +63,9 @@ func hasProfileOverrides(o *aimv1alpha1.AIMServiceProfileOverrides) bool {
 	if o.AcceleratorCount != nil {
 		return true
 	}
+	if o.AcceleratorPartitioningMode != "" {
+		return true
+	}
 	if len(o.ContainerEnv) > 0 {
 		return true
 	}
@@ -85,12 +88,13 @@ func asProfileOverrides(o *aimv1alpha1.AIMServiceProfileOverrides) *aimv1alpha1.
 		return nil
 	}
 	return &aimv1alpha1.ProfileOverrides{
-		ModelSources:     o.ModelSources,
-		AcceleratorModel: o.AcceleratorModel,
-		AcceleratorCount: o.AcceleratorCount,
-		ContainerEnv:     o.ContainerEnv,
-		EngineEnv:        o.EngineEnv,
-		EngineArgs:       o.EngineArgs,
+		ModelSources:                o.ModelSources,
+		AcceleratorModel:            o.AcceleratorModel,
+		AcceleratorCount:            o.AcceleratorCount,
+		AcceleratorPartitioningMode: o.AcceleratorPartitioningMode,
+		ContainerEnv:                o.ContainerEnv,
+		EngineEnv:                   o.EngineEnv,
+		EngineArgs:                  o.EngineArgs,
 	}
 }
 

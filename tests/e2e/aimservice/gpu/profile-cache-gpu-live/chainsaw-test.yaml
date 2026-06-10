@@ -26,13 +26,16 @@ kind: Test
 metadata:
   name: profile-cache-gpu-live
   labels:
-    # tier=manual keeps this out of the default selectors entirely: a 362 GiB
-    # download + multi-GPU cold warmup runs for ~30-45m end-to-end and is too
-    # heavy for routine CI. Whoever invokes a manual test already knows the
-    # environmental prerequisites (GPU cluster, Longhorn, HF token), so we
-    # don't bother tagging requires=gpu/longhorn/hf_token here. Run it via:
-    #   make test-chainsaw-gpu CHAINSAW_TEST_DIR=tests/e2e/aimservice/gpu/profile-cache-gpu-live
-    tier: manual
+    # requires=gpu marks this as a GPU test (excluded from the kind suite), while
+    # needs-secret=hf_token additionally excludes it from the GPU suite too (both
+    # selectors apply needs-secret notin (hf_token,ghcr_pull_secret)). We want it
+    # out of BOTH by default: a 362 GiB download + multi-GPU cold warmup runs for
+    # ~30-45m end-to-end and is too heavy for routine CI. It genuinely needs an HF
+    # token (plus a GPU cluster and Longhorn), so the tags are accurate. Run it
+    # explicitly by invoking chainsaw without the env selector, e.g.:
+    #   PATH="$PWD/hack:$PATH" chainsaw test --test-dir tests/e2e/aimservice/gpu/profile-cache-gpu-live --config tests/chainsaw/config/gpu.yaml
+    requires: gpu
+    needs-secret: hf_token
 spec:
   description: Full profile cache pipeline with real MI300X inference and endpoint validation
   timeouts:

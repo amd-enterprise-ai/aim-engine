@@ -1,0 +1,90 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# GPU Partitioning: real end-to-end deploy onto a partitioned node.
+#
+# Unlike the node-independent cel-validation / resolved-affinity tests, this one
+# actually serves a (small) model on a real CPX-NPS4 partition. Under the AMD GPU
+# Operator's resource_naming_strategy: single, each schedulable amd.com/gpu unit
+# on a CPX-NPS4 MI300X is a single compute partition (~1/8 of the card, ~24 GiB),
+# so the model must be small enough to fit one partition — Qwen3-0.6B, the same
+# model the v1alpha2 custom-model/end-to-end fixture already serves on aim-base.
+#
+# Gated `requires: gpu` only: this runs as part of the GPU e2e suite (GPU tests
+# are fully end-to-end), and `requires: gpu` keeps it out of the kind suite
+# (no partitioned hardware in kind). It needs a node advertising a real CPX-NPS4
+# partition (see the gate step below); on a GPU cluster without one it fails fast.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: partitioning-deploy-cpx-partition
+  labels:
+    requires: gpu
+spec:
+  description: Deploy a small model onto a real CPX-NPS4 MI300X partition and reach Ready.
+  steps:
+    - name: Gate - at least one node advertises an MI300X CPX-NPS4 partition
+      description: |
+        Cheap precondition before the expensive deploy: a real partitioned node
+        must exist, advertising both the model label and the CPX-NPS4 partition
+        scheme label (the detector publishes the scheme value as a count, so we
+        assert key presence rather than an exact value).
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: v1
+              kind: Node
+              metadata:
+                (labels."feature.node.kubernetes.io/aim-accelerator.MI300X" != null && labels."feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.CPX-NPS4" != null): true
+
+    - name: Apply the base-image AIMModel
+      try:
+        - apply:
+            file: base-model.yaml
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: part-base
+              status:
+                managedProfiles:
+                  (base > `0`): true
+
+    - name: Apply the derivation AIMModel that retargets onto a CPX-NPS4 partition
+      try:
+        - apply:
+            file: derivation-model.yaml
+        # The derived profile must be deployable, carry the overridden
+        # single-partition shape, and match the real CPX-NPS4 node.
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                labels:
+                  aim.eai.amd.com/profile-role: deployable
+                  aim.eai.amd.com/source-model: part-derived
+              spec:
+                acceleratorCount: 1
+                acceleratorPartitioningMode: CPX-NPS4
+              status:
+                deployable: true
+                (matchingNodes > `0`): true
+
+    - name: Apply the AIMService and assert it reaches Ready on the partition
+      try:
+        - apply:
+            file: service.yaml
+        - assert:
+            timeout: 900s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: part-service
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"

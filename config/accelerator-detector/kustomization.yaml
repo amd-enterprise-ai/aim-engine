@@ -16,4 +16,4 @@ images:
   newTag: "0.11"
 - name: accelerator-detector-gpu
   newName: docker.io/amdenterpriseai/aim-base
-  newTag: "0.11"
+  newTag: "0.12"

@@ -79,12 +79,12 @@ Cluster-wide runtime configuration for AIM resources. Creates an AIMClusterRunti
 
 ## acceleratorDetector
 
-AcceleratorDetector DaemonSets for hardware detection via NFD. Detects GPU and CPU accelerators on cluster nodes and writes NFD feature files so that AIM profiles can target specific hardware. Requires NFD (Node Feature Discovery) to be installed on the cluster.
+AcceleratorDetector DaemonSets for hardware detection via NFD. Detects GPU and CPU accelerators on cluster nodes and writes NFD feature files so that AIM profiles can target specific hardware. Requires NFD (Node Feature Discovery) to be installed on the cluster.  GPU nodes additionally publish current partition state under feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.* by reading `amd-smi partition --current --json`. The GPU detector image must therefore ship an amd-smi build that supports `partition --current --json`.  changing is dominated by NFD's own scan interval, NOT detectInterval below. For timely partition labels, lower NFD's local-source scan interval to match (e.g. nfd-worker core.sleepInterval / -sleep-interval ~10s). NFD is an external prerequisite of this chart and is configured in the NFD release.
 
 | Parameter | Description | Default |
 |-----------|-------------|----------|
 | `acceleratorDetector.enable` | Enable the AcceleratorDetector DaemonSets | `true` |
-| `acceleratorDetector.detectInterval` | Seconds between re-detection cycles | `300` |
+| `acceleratorDetector.detectInterval` | Seconds between re-detection cycles. Lowered to 10s for low-latency partition-state labels; `amd-smi partition --current --json` is ~0.6s so 10s polling is essentially free. The effective floor is NFD's scan interval. | `10` |
 | `acceleratorDetector.gpu` | GPU node detection (uses aim-base image with ROCm/amdsmi). Detects AMD Instinct GPUs and writes NFD labels like feature.node.kubernetes.io/aim-accelerator.MI300X=8 Only scheduled on nodes with feature.node.kubernetes.io/amd-gpu=true (set by the AMD GPU Operator NFD rule). |  |
 | `acceleratorDetector.gpu.enable` | Enable GPU accelerator detection DaemonSet | `true` |
 | `acceleratorDetector.gpu.image.repository` | GPU detector image repository (aim-base) | `docker.io/amdenterpriseai/aim-base` |

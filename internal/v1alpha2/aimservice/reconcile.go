@@ -377,7 +377,7 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 		result.hpa = v1alpha1service.FetchHPA(ctx, c, result.inferenceService.Value)
 	}
 
-	// Resolve the profile using whichever of the four ADR 0006b shapes the
+	// Resolve the profile using whichever of the four supported shapes the
 	// AIMService spec authored (name, model, model+selector, selector). The
 	// resolver desugars spec.model.name into selector.modelRef.name, forces
 	// role=Deployable, and emits a ProfileSelectorAmbiguous event when more

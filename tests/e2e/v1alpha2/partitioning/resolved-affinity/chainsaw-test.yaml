@@ -1,0 +1,119 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# GPU Partitioning: acceleratorPartitioningMode -> resolvedNodeAffinity.
+#
+# Node-independent: status.resolvedNodeAffinity is computed from the spec
+# regardless of whether any node currently matches, so this runs on kind. The
+# profiles report NotAvailable (no partitioned nodes in kind) but the partition
+# term is still present in the resolved affinity, which is what we assert.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: partitioning-resolved-affinity
+spec:
+  description: acceleratorPartitioningMode maps to the expected node-affinity term.
+  timeouts:
+    assert: 30s
+  steps:
+    - name: mode=unpartitioned resolves to partitioning-scheme.default Exists
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-part-affinity-none
+              spec:
+                aimId: test/part-model
+                modelId: test/part-model-fp8
+                image: registry.example.com/test-image:1.0.0
+                modelSources:
+                  - modelId: test/part-model-fp8
+                    sourceUri: hf://test/part-model
+                acceleratorModel: MI300X
+                acceleratorType: gpu
+                acceleratorCount: 1
+                acceleratorPartitioningMode: unpartitioned
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-part-affinity-none
+              status:
+                (resolvedNodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[?key == 'feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.default' && operator == 'Exists'] | length(@)): 1
+      finally:
+        - delete:
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              name: test-part-affinity-none
+
+    - name: mode=partitioned resolves to partitioning-scheme.default DoesNotExist
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-part-affinity-any
+              spec:
+                aimId: test/part-model
+                modelId: test/part-model-fp8
+                image: registry.example.com/test-image:1.0.0
+                modelSources:
+                  - modelId: test/part-model-fp8
+                    sourceUri: hf://test/part-model
+                acceleratorModel: MI300X
+                acceleratorType: gpu
+                acceleratorCount: 1
+                acceleratorPartitioningMode: partitioned
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-part-affinity-any
+              status:
+                (resolvedNodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[?key == 'feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.default' && operator == 'DoesNotExist'] | length(@)): 1
+      finally:
+        - delete:
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              name: test-part-affinity-any
+
+    - name: specific scheme resolves to partitioning-scheme.<scheme> Exists
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-part-affinity-cpx
+              spec:
+                aimId: test/part-model
+                modelId: test/part-model-fp8
+                image: registry.example.com/test-image:1.0.0
+                modelSources:
+                  - modelId: test/part-model-fp8
+                    sourceUri: hf://test/part-model
+                acceleratorModel: MI300X
+                acceleratorType: gpu
+                acceleratorCount: 1
+                acceleratorPartitioningMode: CPX-NPS4
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-part-affinity-cpx
+              status:
+                (resolvedNodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[?key == 'feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.CPX-NPS4' && operator == 'Exists'] | length(@)): 1
+      finally:
+        - delete:
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              name: test-part-affinity-cpx

@@ -796,7 +796,7 @@ func isSupportedProfile(spec aimv1alpha2.AIMProfileSpecCommon, nodes []corev1.No
 		return true
 	}
 	resolvedResources := aimprofile.ResolveResources(spec.AcceleratorType, spec.AcceleratorCount, spec.Resources)
-	return aimprofile.MatchNodes(nodes, spec.AcceleratorModel, resolvedResources).MatchingNodes > 0
+	return aimprofile.MatchNodes(nodes, spec.AcceleratorType, spec.AcceleratorModel, spec.AcceleratorPartitioningMode, resolvedResources).MatchingNodes > 0
 }
 
 func summarizeManagedProfiles(desired []desiredProfile, existing []managedProfile) (aimv1alpha1.ManagedProfileCounts, int32) {

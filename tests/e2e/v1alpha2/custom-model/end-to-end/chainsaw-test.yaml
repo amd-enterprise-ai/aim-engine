@@ -2,7 +2,7 @@
 #
 # v1alpha2 custom-model end-to-end (GPU-only).
 #
-# Drives the full custom-model chain from ADR 0006b iteration 2:
+# Drives the full custom-model chain:
 #   base-image AIMModel  -> base AIMProfiles (role=base)
 #   derivation AIMModel  -> deployable AIMProfiles (role=deployable)
 #   AIMService           -> InferenceService Ready

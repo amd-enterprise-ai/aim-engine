@@ -24,6 +24,7 @@ package aimprofile
 
 import (
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -42,6 +43,24 @@ const (
 	// the operator uses an Exists selector on the key for node affinity. A
 	// single node may have multiple labels (model, architecture, family).
 	AcceleratorLabelPrefix = "feature.node.kubernetes.io/aim-accelerator."
+
+	// PartitioningSchemeLabelPrefix is the single partition axis published by
+	// the AcceleratorDetector. Keys are either the `default` sentinel or a
+	// literal `<Compute>-<Memory>` scheme:
+	//   feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.default=8
+	//   feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.CPX-NPS4=64
+	// Like the model labels, values are informational; the resolver matches on
+	// key existence via Exists / DoesNotExist.
+	PartitioningSchemeLabelPrefix = AcceleratorLabelPrefix + "partitioning-scheme."
+
+	// PartitioningSchemeDefault is the hardware-agnostic sentinel key suffix
+	// stamped on canonical-unpartitioned and non-partitionable nodes.
+	PartitioningSchemeDefault = "default"
+
+	// PartitioningModeUnpartitioned selects unpartitioned hardware (the CRD default).
+	PartitioningModeUnpartitioned = "unpartitioned"
+	// PartitioningModePartitioned selects any actively-partitioned mode.
+	PartitioningModePartitioned = "partitioned"
 )
 
 // NodeMatchResult holds the result of matching a profile against cluster nodes.
@@ -105,6 +124,13 @@ func ResolveResources(accelType aimv1alpha1.AcceleratorType, accelCount int32, r
 
 // acceleratorDeviceRequest returns the K8s resource name and quantity derived from the
 // accelerator type and count. Returns empty name when no device request can be derived.
+//
+// MIXED-MODE SEAM: under resource_naming_strategy: single (the only supported
+// strategy today) every GPU/partition is advertised as amd.com/gpu, so partition
+// mode does NOT affect the resource name — it only scopes node affinity (see
+// partitionNodeSelectorRequirement). The future mixed/multiple follow-up would
+// branch here on the resolved partition mode to request a mode-specific resource
+// (e.g. amd.com/cpx_nps4). Do not add that branch yet.
 func acceleratorDeviceRequest(accelType aimv1alpha1.AcceleratorType, accelCount int32) (corev1.ResourceName, resource.Quantity) {
 	if accelCount <= 0 {
 		return "", resource.Quantity{}
@@ -120,14 +146,18 @@ func acceleratorDeviceRequest(accelType aimv1alpha1.AcceleratorType, accelCount 
 	}
 }
 
-// MatchNodes checks how many nodes in the list satisfy both the accelerator label
-// requirements and the resolved resource capacity requirements of a profile.
-func MatchNodes(nodes []corev1.Node, accelModel string, resolvedResources *corev1.ResourceRequirements) NodeMatchResult {
-	affinity := BuildNodeAffinity(accelModel)
+// MatchNodes checks how many nodes in the list satisfy the accelerator label
+// requirements (model +, for GPU profiles, partition), and the resolved
+// resource capacity requirements of a profile.
+func MatchNodes(nodes []corev1.Node, accelType aimv1alpha1.AcceleratorType, accelModel, partitioningMode string, resolvedResources *corev1.ResourceRequirements) NodeMatchResult {
+	affinity := BuildNodeAffinity(accelType, accelModel, partitioningMode)
+	partitionReq := partitionNodeSelectorRequirement(accelType, partitioningMode)
 
 	var count int32
 	for i := range nodes {
-		if nodeMatchesAccelerator(&nodes[i], accelModel) && nodeHasResourceCapacity(&nodes[i], resolvedResources) {
+		if nodeMatchesAccelerator(&nodes[i], accelModel) &&
+			nodeMatchesPartitioning(&nodes[i], partitionReq) &&
+			nodeHasResourceCapacity(&nodes[i], resolvedResources) {
 			count++
 		}
 	}
@@ -138,24 +168,93 @@ func MatchNodes(nodes []corev1.Node, accelModel string, resolvedResources *corev
 	}
 }
 
-// BuildNodeAffinity constructs a corev1.NodeAffinity from the accelerator model.
-// Returns nil if no accelerator model is specified.
-func BuildNodeAffinity(accelModel string) *corev1.NodeAffinity {
+// BuildNodeAffinity constructs a corev1.NodeAffinity from the accelerator model
+// and (for GPU profiles) the partitioning mode. The terms are AND-ed into a
+// single NodeSelectorTerm so the resulting affinity is "model AND partition".
+// Returns nil when no accelerator model is specified.
+func BuildNodeAffinity(accelType aimv1alpha1.AcceleratorType, accelModel, partitioningMode string) *corev1.NodeAffinity {
 	if accelModel == "" {
 		return nil
+	}
+
+	exprs := []corev1.NodeSelectorRequirement{
+		{
+			Key:      AcceleratorLabelPrefix + accelModel,
+			Operator: corev1.NodeSelectorOpExists,
+		},
+	}
+	if req := partitionNodeSelectorRequirement(accelType, partitioningMode); req != nil {
+		exprs = append(exprs, *req)
 	}
 
 	return &corev1.NodeAffinity{
 		RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
 			NodeSelectorTerms: []corev1.NodeSelectorTerm{
-				{MatchExpressions: []corev1.NodeSelectorRequirement{
-					{
-						Key:      AcceleratorLabelPrefix + accelModel,
-						Operator: corev1.NodeSelectorOpExists,
-					},
-				}},
+				{MatchExpressions: exprs},
 			},
 		},
+	}
+}
+
+// partitionNodeSelectorRequirement is the single seam that maps an
+// acceleratorPartitioningMode to a node-affinity term over the
+// partitioning-scheme label axis. Partitioning is a GPU-only concept, so the
+// term is emitted only for GPU profiles; CPU and untyped profiles get no
+// partition constraint (returns nil). The mapping is uniform and string-blind:
+//
+//	"" / "unpartitioned" -> partitioning-scheme.default Exists
+//	"partitioned"        -> partitioning-scheme.default DoesNotExist
+//	"<value>"            -> partitioning-scheme.<value> Exists
+//
+// MIXED-MODE SEAM: this is the one place partition mode becomes a *label*
+// affinity term. The future resource_naming_strategy: mixed/multiple follow-up
+// (a partition requested via a mode-specific RESOURCE name such as
+// amd.com/cpx_nps4 instead of, or in addition to, this label) replaces or
+// augments exactly this function plus acceleratorDeviceRequest below. No other
+// caller needs to change, and the partitioning-scheme.<C>-<M> value shape is
+// already 1:1 with the device plugin's mode-specific resource names. Do NOT add
+// a strategy switch here yet — single is the only supported strategy.
+func partitionNodeSelectorRequirement(accelType aimv1alpha1.AcceleratorType, partitioningMode string) *corev1.NodeSelectorRequirement {
+	if accelType != aimv1alpha1.AcceleratorTypeGPU {
+		return nil
+	}
+	switch mode := canonicalizePartitioningMode(partitioningMode); mode {
+	case "", PartitioningModeUnpartitioned:
+		return &corev1.NodeSelectorRequirement{
+			Key:      PartitioningSchemeLabelPrefix + PartitioningSchemeDefault,
+			Operator: corev1.NodeSelectorOpExists,
+		}
+	case PartitioningModePartitioned:
+		return &corev1.NodeSelectorRequirement{
+			Key:      PartitioningSchemeLabelPrefix + PartitioningSchemeDefault,
+			Operator: corev1.NodeSelectorOpDoesNotExist,
+		}
+	default:
+		return &corev1.NodeSelectorRequirement{
+			Key:      PartitioningSchemeLabelPrefix + mode,
+			Operator: corev1.NodeSelectorOpExists,
+		}
+	}
+}
+
+// canonicalizePartitioningMode normalizes a user-entered partitioning mode so
+// matching is case-insensitive. The reserved sentinels collapse to their
+// canonical lowercase form ("unpartitioned"/"partitioned"); every other value
+// is a scheme and is upper-cased to line up with the partition labels the
+// AcceleratorDetector publishes — amd-smi axis values are always emitted
+// upper-case (see config/accelerator-detector/scripts/detect-and-label.py
+// `_clean_axis`). Without this, a profile written as "cpx-nps4" would build
+// affinity on partitioning-scheme.cpx-nps4 and silently match zero nodes.
+func canonicalizePartitioningMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "":
+		return ""
+	case PartitioningModeUnpartitioned:
+		return PartitioningModeUnpartitioned
+	case PartitioningModePartitioned:
+		return PartitioningModePartitioned
+	default:
+		return strings.ToUpper(strings.TrimSpace(mode))
 	}
 }
 
@@ -166,6 +265,21 @@ func nodeMatchesAccelerator(node *corev1.Node, accelModel string) bool {
 		return true
 	}
 	_, exists := node.Labels[AcceleratorLabelPrefix+accelModel]
+	return exists
+}
+
+// nodeMatchesPartitioning evaluates the partition term (already resolved by
+// partitionNodeSelectorRequirement) against a node's labels, mirroring its
+// Exists / DoesNotExist semantics. A nil requirement (non-GPU profile) matches
+// every node.
+func nodeMatchesPartitioning(node *corev1.Node, req *corev1.NodeSelectorRequirement) bool {
+	if req == nil {
+		return true
+	}
+	_, exists := node.Labels[req.Key]
+	if req.Operator == corev1.NodeSelectorOpDoesNotExist {
+		return !exists
+	}
 	return exists
 }
 

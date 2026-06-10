@@ -42,7 +42,8 @@ func makeNode(name string, labels map[string]string, allocatable corev1.Resource
 func TestMatchNodes(t *testing.T) {
 	mi300xNode := makeNode("gpu-node-1",
 		map[string]string{
-			AcceleratorLabelPrefix + "MI300X": "",
+			AcceleratorLabelPrefix + "MI300X":                         "",
+			PartitioningSchemeLabelPrefix + PartitioningSchemeDefault: "4",
 		},
 		corev1.ResourceList{
 			"amd.com/gpu":         resource.MustParse("4"),
@@ -52,7 +53,8 @@ func TestMatchNodes(t *testing.T) {
 	)
 	mi325xNode := makeNode("gpu-node-2",
 		map[string]string{
-			AcceleratorLabelPrefix + "MI325X": "",
+			AcceleratorLabelPrefix + "MI325X":                         "",
+			PartitioningSchemeLabelPrefix + PartitioningSchemeDefault: "8",
 		},
 		corev1.ResourceList{
 			"amd.com/gpu":         resource.MustParse("8"),
@@ -71,7 +73,9 @@ func TestMatchNodes(t *testing.T) {
 	tests := []struct {
 		name              string
 		nodes             []corev1.Node
+		accelType         aimv1alpha1.AcceleratorType
 		accelModel        string
+		partitioningMode  string
 		resolvedResources *corev1.ResourceRequirements
 		wantMatching      int32
 		wantAffinity      bool
@@ -79,6 +83,7 @@ func TestMatchNodes(t *testing.T) {
 		{
 			name:              "MI300X with count=1 matches one node",
 			nodes:             []corev1.Node{mi300xNode, mi325xNode, cpuNode},
+			accelType:         aimv1alpha1.AcceleratorTypeGPU,
 			accelModel:        "MI300X",
 			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 1, nil),
 			wantMatching:      1,
@@ -87,6 +92,7 @@ func TestMatchNodes(t *testing.T) {
 		{
 			name:              "MI325X with count=8 matches one node",
 			nodes:             []corev1.Node{mi300xNode, mi325xNode},
+			accelType:         aimv1alpha1.AcceleratorTypeGPU,
 			accelModel:        "MI325X",
 			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 8, nil),
 			wantMatching:      1,
@@ -95,6 +101,7 @@ func TestMatchNodes(t *testing.T) {
 		{
 			name:              "count exceeds node capacity matches zero",
 			nodes:             []corev1.Node{mi300xNode},
+			accelType:         aimv1alpha1.AcceleratorTypeGPU,
 			accelModel:        "MI300X",
 			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 8, nil),
 			wantMatching:      0,
@@ -109,13 +116,17 @@ func TestMatchNodes(t *testing.T) {
 			name: "label present but resource missing from Allocatable still matches",
 			nodes: []corev1.Node{
 				makeNode("kind-gpu-node",
-					map[string]string{AcceleratorLabelPrefix + "MI300X": "8"},
+					map[string]string{
+						AcceleratorLabelPrefix + "MI300X":                         "8",
+						PartitioningSchemeLabelPrefix + PartitioningSchemeDefault: "8",
+					},
 					corev1.ResourceList{
 						corev1.ResourceCPU:    resource.MustParse("16"),
 						corev1.ResourceMemory: resource.MustParse("32Gi"),
 					},
 				),
 			},
+			accelType:         aimv1alpha1.AcceleratorTypeGPU,
 			accelModel:        "MI300X",
 			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 1, nil),
 			wantMatching:      1,
@@ -124,6 +135,7 @@ func TestMatchNodes(t *testing.T) {
 		{
 			name:       "explicit resource override takes precedence",
 			nodes:      []corev1.Node{mi300xNode, mi325xNode, cpuNode},
+			accelType:  aimv1alpha1.AcceleratorTypeGPU,
 			accelModel: "MI300X",
 			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 2, &corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{"amd.com/gpu": resource.MustParse("1")},
@@ -142,6 +154,7 @@ func TestMatchNodes(t *testing.T) {
 		{
 			name:              "unknown GPU model matches zero nodes",
 			nodes:             []corev1.Node{mi300xNode, mi325xNode},
+			accelType:         aimv1alpha1.AcceleratorTypeGPU,
 			accelModel:        "H100",
 			resolvedResources: nil,
 			wantMatching:      0,
@@ -150,6 +163,7 @@ func TestMatchNodes(t *testing.T) {
 		{
 			name:              "empty node list matches zero",
 			nodes:             []corev1.Node{},
+			accelType:         aimv1alpha1.AcceleratorTypeGPU,
 			accelModel:        "MI300X",
 			resolvedResources: nil,
 			wantMatching:      0,
@@ -159,7 +173,7 @@ func TestMatchNodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchNodes(tt.nodes, tt.accelModel, tt.resolvedResources)
+			result := MatchNodes(tt.nodes, tt.accelType, tt.accelModel, tt.partitioningMode, tt.resolvedResources)
 			if result.MatchingNodes != tt.wantMatching {
 				t.Errorf("MatchingNodes = %d, want %d", result.MatchingNodes, tt.wantMatching)
 			}
@@ -175,10 +189,15 @@ func TestMatchNodes(t *testing.T) {
 
 func TestBuildNodeAffinity(t *testing.T) {
 	tests := []struct {
-		name       string
-		accelModel string
-		wantNil    bool
-		wantExprs  int
+		name             string
+		accelType        aimv1alpha1.AcceleratorType
+		accelModel       string
+		partitioningMode string
+		wantNil          bool
+		wantExprs        int
+		// wantPartitionKey/Op assert the partition term (second expr) when present.
+		wantPartitionKey string
+		wantPartitionOp  corev1.NodeSelectorOperator
 	}{
 		{
 			name:       "empty model returns nil",
@@ -186,20 +205,43 @@ func TestBuildNodeAffinity(t *testing.T) {
 			wantNil:    true,
 		},
 		{
-			name:       "model produces one expression",
-			accelModel: "MI300X",
-			wantExprs:  1,
+			name:             "gpu model with default mode produces model + default partition term",
+			accelType:        aimv1alpha1.AcceleratorTypeGPU,
+			accelModel:       "MI300X",
+			partitioningMode: "unpartitioned",
+			wantExprs:        2,
+			wantPartitionKey: PartitioningSchemeLabelPrefix + PartitioningSchemeDefault,
+			wantPartitionOp:  corev1.NodeSelectorOpExists,
 		},
 		{
-			name:       "architecture-level model works the same",
-			accelModel: "CDNA3",
+			name:             "gpu model with partitioned mode produces default DoesNotExist term",
+			accelType:        aimv1alpha1.AcceleratorTypeGPU,
+			accelModel:       "MI300X",
+			partitioningMode: "partitioned",
+			wantExprs:        2,
+			wantPartitionKey: PartitioningSchemeLabelPrefix + PartitioningSchemeDefault,
+			wantPartitionOp:  corev1.NodeSelectorOpDoesNotExist,
+		},
+		{
+			name:             "gpu model with specific scheme produces scheme Exists term",
+			accelType:        aimv1alpha1.AcceleratorTypeGPU,
+			accelModel:       "MI300X",
+			partitioningMode: "CPX-NPS4",
+			wantExprs:        2,
+			wantPartitionKey: PartitioningSchemeLabelPrefix + "CPX-NPS4",
+			wantPartitionOp:  corev1.NodeSelectorOpExists,
+		},
+		{
+			name:       "cpu model gets no partition term",
+			accelType:  aimv1alpha1.AcceleratorTypeCPU,
+			accelModel: "EPYC_9965",
 			wantExprs:  1,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := BuildNodeAffinity(tt.accelModel)
+			result := BuildNodeAffinity(tt.accelType, tt.accelModel, tt.partitioningMode)
 			if tt.wantNil {
 				if result != nil {
 					t.Fatal("expected nil NodeAffinity")
@@ -216,26 +258,34 @@ func TestBuildNodeAffinity(t *testing.T) {
 			if len(req.NodeSelectorTerms) != 1 {
 				t.Errorf("terms = %d, want 1", len(req.NodeSelectorTerms))
 			}
-			if len(req.NodeSelectorTerms[0].MatchExpressions) != tt.wantExprs {
-				t.Errorf("expressions = %d, want %d", len(req.NodeSelectorTerms[0].MatchExpressions), tt.wantExprs)
+			exprs := req.NodeSelectorTerms[0].MatchExpressions
+			if len(exprs) != tt.wantExprs {
+				t.Fatalf("expressions = %d, want %d", len(exprs), tt.wantExprs)
 			}
-			expr := req.NodeSelectorTerms[0].MatchExpressions[0]
-			if expr.Operator != corev1.NodeSelectorOpExists {
-				t.Errorf("operator = %q, want Exists", expr.Operator)
+			// First expression is always the model term.
+			if exprs[0].Operator != corev1.NodeSelectorOpExists {
+				t.Errorf("model operator = %q, want Exists", exprs[0].Operator)
 			}
-			wantKey := AcceleratorLabelPrefix + tt.accelModel
-			if expr.Key != wantKey {
-				t.Errorf("key = %q, want %q", expr.Key, wantKey)
+			if wantKey := AcceleratorLabelPrefix + tt.accelModel; exprs[0].Key != wantKey {
+				t.Errorf("model key = %q, want %q", exprs[0].Key, wantKey)
+			}
+			if tt.wantPartitionKey != "" {
+				if exprs[1].Key != tt.wantPartitionKey {
+					t.Errorf("partition key = %q, want %q", exprs[1].Key, tt.wantPartitionKey)
+				}
+				if exprs[1].Operator != tt.wantPartitionOp {
+					t.Errorf("partition operator = %q, want %q", exprs[1].Operator, tt.wantPartitionOp)
+				}
 			}
 		})
 	}
 }
 
 func TestBuildNodeAffinity_DeterministicOutput(t *testing.T) {
-	first := BuildNodeAffinity("MI300X")
+	first := BuildNodeAffinity(aimv1alpha1.AcceleratorTypeGPU, "MI300X", "none")
 
 	for i := 0; i < 20; i++ {
-		result := BuildNodeAffinity("MI300X")
+		result := BuildNodeAffinity(aimv1alpha1.AcceleratorTypeGPU, "MI300X", "none")
 		exprs := result.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions
 		firstExprs := first.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions
 		if exprs[0].Key != firstExprs[0].Key {
@@ -364,7 +414,7 @@ func TestMatchNodes_NilLabelsNode(t *testing.T) {
 		},
 	}
 
-	result := MatchNodes([]corev1.Node{node}, "MI300X", nil)
+	result := MatchNodes([]corev1.Node{node}, aimv1alpha1.AcceleratorTypeGPU, "MI300X", "none", nil)
 	if result.MatchingNodes != 0 {
 		t.Errorf("expected 0 matching nodes for node with nil Labels, got %d", result.MatchingNodes)
 	}

@@ -133,12 +133,25 @@ clusterRuntimeConfig:
 # Detects GPU and CPU accelerators on cluster nodes and writes NFD feature
 # files so that AIM profiles can target specific hardware. Requires NFD
 # (Node Feature Discovery) to be installed on the cluster.
+#
+# GPU nodes additionally publish current partition state under
+# feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.* by reading
+# `amd-smi partition --current --json`. The GPU detector image must therefore
+# ship an amd-smi build that supports `partition --current --json`.
+#
+# Propagation floor: end-to-end latency from a partition flip to the label
+# changing is dominated by NFD's own scan interval, NOT detectInterval below.
+# For timely partition labels, lower NFD's local-source scan interval to match
+# (e.g. nfd-worker core.sleepInterval / -sleep-interval ~10s). NFD is an
+# external prerequisite of this chart and is configured in the NFD release.
 acceleratorDetector:
   # -- Enable the AcceleratorDetector DaemonSets
   enable: true
 
-  # -- Seconds between re-detection cycles
-  detectInterval: 300
+  # -- Seconds between re-detection cycles. Lowered to 10s for low-latency
+  # partition-state labels; `amd-smi partition --current --json` is ~0.6s so
+  # 10s polling is essentially free. The effective floor is NFD's scan interval.
+  detectInterval: 10
 
   # -- GPU node detection (uses aim-base image with ROCm/amdsmi).
   # Detects AMD Instinct GPUs and writes NFD labels like
@@ -152,7 +165,7 @@ acceleratorDetector:
       # -- GPU detector image repository (aim-base)
       repository: docker.io/amdenterpriseai/aim-base
       # -- GPU detector image tag
-      tag: "0.11"
+      tag: "0.12"
       # -- Image pull policy
       pullPolicy: IfNotPresent
     # -- Secrets for pulling the GPU detector image from private registries
@@ -187,6 +200,9 @@ acceleratorDetector:
       # -- CPU detector image repository (aim-epyc-base)
       repository: docker.io/amdenterpriseai/aim-epyc-base
       # -- CPU detector image tag
+      # NOTE: aim-epyc-base is only published up to 0.11; bump to 0.12 once it
+      # is released. The detector's runtime fallback (detect-and-label.py)
+      # already handles the 0.12 packaging change when that image lands.
       tag: "0.11"
       # -- Image pull policy
       pullPolicy: IfNotPresent

@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"unicode"
 
 	"github.com/blang/semver/v4"
@@ -98,6 +99,9 @@ func MatchesProfileCopySelector(candidate ProfileCopyCandidate, selector aimv1al
 	if selector.AcceleratorModel != "" && candidate.Spec.AcceleratorModel != selector.AcceleratorModel {
 		return false, nil
 	}
+	if !matchesPartitioningSelector(selector.AcceleratorPartitioningMode, candidate.Spec.AcceleratorPartitioningMode) {
+		return false, nil
+	}
 	if selector.AcceleratorType != "" && candidate.Spec.AcceleratorType != selector.AcceleratorType {
 		return false, nil
 	}
@@ -105,6 +109,37 @@ func MatchesProfileCopySelector(candidate ProfileCopyCandidate, selector aimv1al
 		return false, nil
 	}
 	return MatchesEngineArgs(candidate.Spec.EngineArgs, selector.EngineArgs)
+}
+
+// matchesPartitioningSelector implements the partial-order match for
+// selector.acceleratorPartitioningMode against a candidate profile's mode.
+// Deliberately asymmetric with the spec field (the hyphenless "<C>" prefix
+// branch is selector-only):
+//
+//	selector ""              -> no filter (always matches).
+//	selector "unpartitioned" -> candidate mode "" or "unpartitioned".
+//	selector "partitioned"   -> candidate mode non-trivial (anything but "" / "unpartitioned").
+//	selector "<C>"           -> candidate mode begins with "<C>-" (e.g. "CPX" matches
+//	                            "CPX-NPS1", "CPX-NPS4"). Hyphenless = prefix branch.
+//	selector "<C>-<M>"       -> exact-string match.
+func matchesPartitioningSelector(selectorMode, candidateMode string) bool {
+	// Canonicalize both sides so matching is case-insensitive and consistent
+	// with the affinity-building seam (see canonicalizePartitioningMode).
+	sel := canonicalizePartitioningMode(selectorMode)
+	cand := canonicalizePartitioningMode(candidateMode)
+	switch sel {
+	case "":
+		return true
+	case PartitioningModeUnpartitioned:
+		return cand == "" || cand == PartitioningModeUnpartitioned
+	case PartitioningModePartitioned:
+		return cand != "" && cand != PartitioningModeUnpartitioned
+	default:
+		if strings.Contains(sel, "-") {
+			return cand == sel
+		}
+		return strings.HasPrefix(cand, sel+"-")
+	}
 }
 
 // MatchesEngineArgs returns true when every top-level selector key exists in the source engineArgs
@@ -238,6 +273,9 @@ func ApplyProfileCopyOverrides(
 	}
 	if overrides.AcceleratorCount != nil {
 		result.AcceleratorCount = *overrides.AcceleratorCount
+	}
+	if overrides.AcceleratorPartitioningMode != "" {
+		result.AcceleratorPartitioningMode = overrides.AcceleratorPartitioningMode
 	}
 
 	result.ContainerEnv = MergeContainerEnv(result.ContainerEnv, overrides.ContainerEnv)

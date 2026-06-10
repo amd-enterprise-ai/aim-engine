@@ -1,4 +1,4 @@
-# Base-image AIMModel (ADR 0006b iteration 2).
+# Base-image AIMModel.
 #
 # When spec.image points at a "base" AIM image (one whose profile YAMLs
 # omit model_id and model_sources), native discovery materialises the

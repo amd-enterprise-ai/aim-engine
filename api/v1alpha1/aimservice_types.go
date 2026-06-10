@@ -227,6 +227,21 @@ type AIMServiceProfileOverrides struct {
 	// +optional
 	AcceleratorCount *int32 `json:"acceleratorCount,omitempty"`
 
+	// AcceleratorPartitioningMode replaces the referenced profile's
+	// acceleratorPartitioningMode. Complete replacement, not a merge — single
+	// string, no substruct ambiguity. Empty string means "no override" (the
+	// resolved overlay inherits the base profile's mode). Use this to deploy a
+	// profile written for whole GPUs onto a partition slice. Whenever this
+	// override is set (to any value, including "unpartitioned"), the CEL rule on
+	// AIMService also requires an acceleratorCount override: partition mode
+	// changes the per-unit interpretation of acceleratorCount, and CEL cannot
+	// read the base profile to tell whether the meaning actually changed, so it
+	// conservatively requires the count be restated. See
+	// AcceleratorPartitioningMode on AIMProfileSpecCommon for the reserved
+	// values ("unpartitioned", "partitioned", "<C>-<M>").
+	// +optional
+	AcceleratorPartitioningMode string `json:"acceleratorPartitioningMode,omitempty"`
+
 	// ContainerEnv merges by env-var name on top of the profile's
 	// containerEnv. Matching names override; new names are appended.
 	// AIM framework variables (AIM_*) reserved for the controller are
@@ -552,8 +567,11 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.profileOverrides) || has(self.spec.profile)",message="spec.profileOverrides requires spec.profile to be set"
 // +kubebuilder:validation:XValidation:rule="!(has(self.spec.profile) && has(self.spec.template))",message="spec.profile and spec.template are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="has(self.spec.model) || has(self.spec.profile)",message="one of spec.model or spec.profile must be specified"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.profileOverrides) || !has(self.spec.profileOverrides.acceleratorPartitioningMode) || size(self.spec.profileOverrides.acceleratorPartitioningMode) == 0 || has(self.spec.profileOverrides.acceleratorCount)",message="acceleratorCount must be specified together with any acceleratorPartitioningMode override; partition mode changes the per-unit interpretation of acceleratorCount"
 // Note: KServe uses {name}-{namespace} format which must not exceed 63 characters.
 // This constraint is validated at runtime since CEL cannot access metadata.namespace.
+//
+//nolint:lll // kubebuilder marker; CEL rule cannot be wrapped across lines
 type AIMService struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

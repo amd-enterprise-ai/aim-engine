@@ -1,0 +1,12 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: part-service
+  annotations:
+    # Route spec.model.name through the profile pipeline so the resolver picks
+    # the deployable AIMProfiles owned by the derivation model (not the v1alpha1
+    # template path, which doesn't understand derivedFrom chains).
+    aim.eai.amd.com/reconciler-pipeline: profile
+spec:
+  model:
+    name: part-derived

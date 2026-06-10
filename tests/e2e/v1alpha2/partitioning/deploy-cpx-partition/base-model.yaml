@@ -1,0 +1,9 @@
+# Base AIM image whose embedded profile YAMLs leave aim_id/model_id/
+# model_sources empty, surfacing as role=base AIMProfiles that the
+# derivation model below completes into a deployable profile.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: part-base
+spec:
+  image: amdenterpriseai/aim-base:0.11

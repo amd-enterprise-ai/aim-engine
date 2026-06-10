@@ -43,12 +43,11 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 )
 
-// profileResolutionShape enumerates the ADR 0006b authoring shapes the
-// AIMService resolver normalises onto a single internal funnel. The
-// image-shape variant (spec.model.image) was added after the original
-// ADR to support the v1alpha2-first quick-start docs; it desugars to the
-// model-selector shape once an AIMModel with the requested image is
-// located (or auto-created).
+// profileResolutionShape enumerates the AIMService authoring shapes the
+// resolver normalises onto a single internal funnel. The image-shape variant
+// (spec.model.image) was added later to support the v1alpha2-first quick-start
+// docs; it desugars to the model-selector shape once an AIMModel with the
+// requested image is located (or auto-created).
 type profileResolutionShape string
 
 const (
@@ -123,7 +122,7 @@ type candidateRef struct {
 // the profileResolution book-keeping used to surface diagnostics through
 // the component health pipeline and event recorder.
 //
-// The four shapes ADR 0006b prescribes collapse onto a single funnel here:
+// The four supported shapes collapse onto a single funnel here:
 //
 //	By name:
 //	  spec.profile.name → namespace fetch → cluster fetch.
@@ -169,7 +168,7 @@ func resolveProfileCandidates(
 	}
 }
 
-// resolutionShapeFor maps an AIMService spec to its ADR resolution shape.
+// resolutionShapeFor maps an AIMService spec to its resolution shape.
 // Shape detection runs ahead of any cluster I/O so the caller can short-
 // circuit on `resolutionShapeNone` without burning a List.
 func resolutionShapeFor(service *aimv1alpha1.AIMService) profileResolutionShape {

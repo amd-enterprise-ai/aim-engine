@@ -152,7 +152,7 @@ func TestDecorateProfileStatus(t *testing.T) {
 			},
 			matchResult: NodeMatchResult{
 				MatchingNodes: 3,
-				NodeAffinity:  BuildNodeAffinity("MI300X"),
+				NodeAffinity:  BuildNodeAffinity(aimv1alpha2.AcceleratorTypeGPU, "MI300X", "unpartitioned"),
 			},
 			wantVersion:     "1.0.0",
 			wantHWSummary:   "1 x MI300X",
