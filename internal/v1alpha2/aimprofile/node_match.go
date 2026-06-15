@@ -24,6 +24,7 @@ package aimprofile
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -75,9 +76,18 @@ type NodeMatchResult struct {
 //	gpu → constants.DefaultGPUResourceName (amd.com/gpu)
 //	cpu → corev1.ResourceCPU
 //
+// For EPYC CPU profiles (acceleratorModel starts with "EPYC"), memory is derived from
+// the engine env var VLLM_CPU_KVCACHE_SPACE (doubled) to enable Guaranteed QoS pods.
+//
 // If spec.resources already contains the derived resource name, the explicit value wins.
 // Returns nil only when both accelerator count is zero and resources is nil.
-func ResolveResources(accelType aimv1alpha1.AcceleratorType, accelCount int32, resources *corev1.ResourceRequirements) *corev1.ResourceRequirements {
+func ResolveResources(
+	accelType aimv1alpha1.AcceleratorType,
+	accelCount int32,
+	resources *corev1.ResourceRequirements,
+	acceleratorModel string,
+	engineEnv map[string]string,
+) *corev1.ResourceRequirements {
 	derivedName, derivedQty := acceleratorDeviceRequest(accelType, accelCount)
 
 	if derivedName == "" && resources == nil {
@@ -104,12 +114,11 @@ func ResolveResources(accelType aimv1alpha1.AcceleratorType, accelCount int32, r
 		if _, exists := resolved.Requests[derivedName]; !exists {
 			resolved.Requests[derivedName] = derivedQty
 		}
-		// GPU (and other extended/device resources) are non-overcommitable, so
-		// Kubernetes requires Limits to be set for them on the Pod spec and
-		// enforces requests==limits. Mirror the derived request into Limits when
-		// the accelerator is a device type; CPU is overcommitable and can be
-		// left unlimited.
-		if accelType == aimv1alpha1.AcceleratorTypeGPU {
+		// Mirror requests into limits for both GPU and CPU accelerator types.
+		// GPU device resources are non-overcommitable (K8s enforces requests==limits).
+		// CPU limits are set to enable Guaranteed QoS on EPYC pods (memory
+		// limits are added separately below for EPYC profiles).
+		if accelType == aimv1alpha1.AcceleratorTypeGPU || accelType == aimv1alpha1.AcceleratorTypeCPU {
 			if resolved.Limits == nil {
 				resolved.Limits = make(corev1.ResourceList)
 			}
@@ -119,7 +128,37 @@ func ResolveResources(accelType aimv1alpha1.AcceleratorType, accelCount int32, r
 		}
 	}
 
+	// EPYC CPU profiles: derive memory from VLLM_CPU_KVCACHE_SPACE to enable
+	// Guaranteed QoS (requests==limits for both CPU and memory). Explicit
+	// spec.resources memory takes precedence.
+	if accelType == aimv1alpha1.AcceleratorTypeCPU && strings.HasPrefix(acceleratorModel, "EPYC") {
+		if _, exists := resolved.Requests[corev1.ResourceMemory]; !exists {
+			memGi := deriveEPYCMemoryGi(engineEnv)
+			memQty := resource.MustParse(fmt.Sprintf("%dGi", memGi))
+			resolved.Requests[corev1.ResourceMemory] = memQty
+			if resolved.Limits == nil {
+				resolved.Limits = make(corev1.ResourceList)
+			}
+			resolved.Limits[corev1.ResourceMemory] = memQty
+		}
+	}
+
 	return resolved
+}
+
+const defaultEPYCMemoryGi int64 = 120
+
+// deriveEPYCMemoryGi computes memory in GiB for EPYC CPU profiles by
+// doubling VLLM_CPU_KVCACHE_SPACE (the KV-cache reservation already
+// accounts for roughly half of useful runtime memory). Falls back to
+// defaultEPYCMemoryGi when the env var is absent or unparseable.
+func deriveEPYCMemoryGi(engineEnv map[string]string) int64 {
+	if v, ok := engineEnv["VLLM_CPU_KVCACHE_SPACE"]; ok {
+		if gi, err := strconv.ParseInt(v, 10, 64); err == nil && gi > 0 {
+			return gi * 2
+		}
+	}
+	return defaultEPYCMemoryGi
 }
 
 // acceleratorDeviceRequest returns the K8s resource name and quantity derived from the

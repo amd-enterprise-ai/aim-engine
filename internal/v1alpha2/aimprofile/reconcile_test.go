@@ -78,7 +78,7 @@ func TestBuildComponentHealth(t *testing.T) {
 			name:              "matching nodes returns ready",
 			accelModel:        "MI300X",
 			accelCount:        1,
-			resolvedResources: ResolveResources(aimv1alpha2.AcceleratorTypeGPU, 1, nil),
+			resolvedResources: ResolveResources(aimv1alpha2.AcceleratorTypeGPU, 1, nil, "MI300X", nil),
 			matchResult:       NodeMatchResult{MatchingNodes: 2},
 			wantLen:           1,
 			wantState:         constants.AIMStatusReady,
@@ -88,7 +88,7 @@ func TestBuildComponentHealth(t *testing.T) {
 			name:              "no matching nodes returns not available",
 			accelModel:        "MI300X",
 			accelCount:        1,
-			resolvedResources: ResolveResources(aimv1alpha2.AcceleratorTypeGPU, 1, nil),
+			resolvedResources: ResolveResources(aimv1alpha2.AcceleratorTypeGPU, 1, nil, "MI300X", nil),
 			matchResult:       NodeMatchResult{MatchingNodes: 0},
 			wantLen:           1,
 			wantState:         constants.AIMStatusNotAvailable,
@@ -212,7 +212,7 @@ func TestDecorateProfileStatus(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			status := &aimv1alpha2.AIMProfileStatus{}
 			cm := controllerutils.NewConditionManager(nil)
-			resolvedResources := ResolveResources(tt.spec.AcceleratorType, tt.spec.AcceleratorCount, tt.spec.Resources)
+			resolvedResources := ResolveResources(tt.spec.AcceleratorType, tt.spec.AcceleratorCount, tt.spec.Resources, tt.spec.AcceleratorModel, tt.spec.EngineEnv)
 
 			decorateProfileStatus(
 				status, cm, tt.spec,
@@ -311,7 +311,7 @@ func TestDecorateProfileStatus_SetsDeployableAndOriginAndCondition(t *testing.T)
 			cm := controllerutils.NewConditionManager(nil)
 			decorateProfileStatus(
 				status, cm, tc.spec,
-				ResolveResources(tc.spec.AcceleratorType, tc.spec.AcceleratorCount, tc.spec.Resources),
+				ResolveResources(tc.spec.AcceleratorType, tc.spec.AcceleratorCount, tc.spec.Resources, tc.spec.AcceleratorModel, tc.spec.EngineEnv),
 				nil, NodeMatchResult{},
 				tc.deployable, tc.source, tc.origin, "",
 			)

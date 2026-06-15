@@ -69,6 +69,33 @@ func TestMatchNodes(t *testing.T) {
 			corev1.ResourceMemory: resource.MustParse("256Gi"),
 		},
 	)
+	epyc9965Node := makeNode("epyc-9965-node",
+		map[string]string{
+			AcceleratorLabelPrefix + "EPYC_9965": "192",
+		},
+		corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("192"),
+			corev1.ResourceMemory: resource.MustParse("1536Gi"),
+		},
+	)
+	epycZen5Node := makeNode("epyc-zen5-node",
+		map[string]string{
+			AcceleratorLabelPrefix + "EPYC_ZEN5": "128",
+		},
+		corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("128"),
+			corev1.ResourceMemory: resource.MustParse("1024Gi"),
+		},
+	)
+	epycZen4Node := makeNode("epyc-zen4-node",
+		map[string]string{
+			AcceleratorLabelPrefix + "EPYC_ZEN4": "96",
+		},
+		corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("96"),
+			corev1.ResourceMemory: resource.MustParse("768Gi"),
+		},
+	)
 
 	tests := []struct {
 		name              string
@@ -85,7 +112,7 @@ func TestMatchNodes(t *testing.T) {
 			nodes:             []corev1.Node{mi300xNode, mi325xNode, cpuNode},
 			accelType:         aimv1alpha1.AcceleratorTypeGPU,
 			accelModel:        "MI300X",
-			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 1, nil),
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 1, nil, "MI300X", nil),
 			wantMatching:      1,
 			wantAffinity:      true,
 		},
@@ -94,7 +121,7 @@ func TestMatchNodes(t *testing.T) {
 			nodes:             []corev1.Node{mi300xNode, mi325xNode},
 			accelType:         aimv1alpha1.AcceleratorTypeGPU,
 			accelModel:        "MI325X",
-			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 8, nil),
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 8, nil, "MI325X", nil),
 			wantMatching:      1,
 			wantAffinity:      true,
 		},
@@ -103,7 +130,7 @@ func TestMatchNodes(t *testing.T) {
 			nodes:             []corev1.Node{mi300xNode},
 			accelType:         aimv1alpha1.AcceleratorTypeGPU,
 			accelModel:        "MI300X",
-			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 8, nil),
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 8, nil, "MI300X", nil),
 			wantMatching:      0,
 			wantAffinity:      true,
 		},
@@ -128,7 +155,7 @@ func TestMatchNodes(t *testing.T) {
 			},
 			accelType:         aimv1alpha1.AcceleratorTypeGPU,
 			accelModel:        "MI300X",
-			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 1, nil),
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 1, nil, "MI300X", nil),
 			wantMatching:      1,
 			wantAffinity:      true,
 		},
@@ -139,7 +166,7 @@ func TestMatchNodes(t *testing.T) {
 			accelModel: "MI300X",
 			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeGPU, 2, &corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{"amd.com/gpu": resource.MustParse("1")},
-			}),
+			}, "MI300X", nil),
 			wantMatching: 1,
 			wantAffinity: true,
 		},
@@ -167,6 +194,86 @@ func TestMatchNodes(t *testing.T) {
 			accelModel:        "MI300X",
 			resolvedResources: nil,
 			wantMatching:      0,
+			wantAffinity:      true,
+		},
+		{
+			name:              "EPYC_9965 matches only EPYC_9965 node",
+			nodes:             []corev1.Node{mi300xNode, epyc9965Node, epycZen5Node, cpuNode},
+			accelType:         aimv1alpha1.AcceleratorTypeCPU,
+			accelModel:        "EPYC_9965",
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeCPU, 188, nil, "EPYC_9965", map[string]string{"VLLM_CPU_KVCACHE_SPACE": "80"}),
+			wantMatching:      1,
+			wantAffinity:      true,
+		},
+		{
+			name:              "EPYC_ZEN5 matches only EPYC_ZEN5 node",
+			nodes:             []corev1.Node{mi300xNode, epyc9965Node, epycZen5Node, epycZen4Node},
+			accelType:         aimv1alpha1.AcceleratorTypeCPU,
+			accelModel:        "EPYC_ZEN5",
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeCPU, 124, nil, "EPYC_ZEN5", map[string]string{"VLLM_CPU_KVCACHE_SPACE": "40"}),
+			wantMatching:      1,
+			wantAffinity:      true,
+		},
+		{
+			name:              "EPYC_ZEN4 matches only EPYC_ZEN4 node",
+			nodes:             []corev1.Node{epyc9965Node, epycZen5Node, epycZen4Node},
+			accelType:         aimv1alpha1.AcceleratorTypeCPU,
+			accelModel:        "EPYC_ZEN4",
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeCPU, 64, nil, "EPYC_ZEN4", map[string]string{"VLLM_CPU_KVCACHE_SPACE": "30"}),
+			wantMatching:      1,
+			wantAffinity:      true,
+		},
+		{
+			name:              "EPYC_9965 CPU count exceeds node capacity matches zero",
+			nodes:             []corev1.Node{epyc9965Node},
+			accelType:         aimv1alpha1.AcceleratorTypeCPU,
+			accelModel:        "EPYC_9965",
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeCPU, 256, nil, "EPYC_9965", nil),
+			wantMatching:      0,
+			wantAffinity:      true,
+		},
+		{
+			name:              "EPYC_9965 does not match GPU nodes",
+			nodes:             []corev1.Node{mi300xNode, mi325xNode},
+			accelType:         aimv1alpha1.AcceleratorTypeCPU,
+			accelModel:        "EPYC_9965",
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeCPU, 188, nil, "EPYC_9965", nil),
+			wantMatching:      0,
+			wantAffinity:      true,
+		},
+		{
+			name:              "EPYC_9965 no partition constraint matches node without partition labels",
+			nodes:             []corev1.Node{epyc9965Node},
+			accelType:         aimv1alpha1.AcceleratorTypeCPU,
+			accelModel:        "EPYC_9965",
+			partitioningMode:  "unpartitioned",
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeCPU, 96, nil, "EPYC_9965", nil),
+			wantMatching:      1,
+			wantAffinity:      true,
+		},
+		{
+			name:  "EPYC_ZEN5 label-only node without Allocatable CPU still matches",
+			nodes: []corev1.Node{
+				makeNode("zen5-label-only",
+					map[string]string{AcceleratorLabelPrefix + "EPYC_ZEN5": "128"},
+					corev1.ResourceList{
+						corev1.ResourceMemory: resource.MustParse("512Gi"),
+					},
+				),
+			},
+			accelType:         aimv1alpha1.AcceleratorTypeCPU,
+			accelModel:        "EPYC_ZEN5",
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeCPU, 128, nil, "EPYC_ZEN5", nil),
+			wantMatching:      1,
+			wantAffinity:      true,
+		},
+		{
+			name:              "mixed GPU and EPYC nodes only EPYC matches CPU profile",
+			nodes:             []corev1.Node{mi300xNode, mi325xNode, epyc9965Node, epycZen5Node, epycZen4Node, cpuNode},
+			accelType:         aimv1alpha1.AcceleratorTypeCPU,
+			accelModel:        "EPYC_9965",
+			resolvedResources: ResolveResources(aimv1alpha1.AcceleratorTypeCPU, 96, nil, "EPYC_9965", nil),
+			wantMatching:      1,
 			wantAffinity:      true,
 		},
 	}
@@ -232,10 +339,29 @@ func TestBuildNodeAffinity(t *testing.T) {
 			wantPartitionOp:  corev1.NodeSelectorOpExists,
 		},
 		{
-			name:       "cpu model gets no partition term",
+			name:       "EPYC_9965 cpu model gets no partition term",
 			accelType:  aimv1alpha1.AcceleratorTypeCPU,
 			accelModel: "EPYC_9965",
 			wantExprs:  1,
+		},
+		{
+			name:       "EPYC_ZEN5 cpu model gets no partition term",
+			accelType:  aimv1alpha1.AcceleratorTypeCPU,
+			accelModel: "EPYC_ZEN5",
+			wantExprs:  1,
+		},
+		{
+			name:       "EPYC_ZEN4 cpu model gets no partition term",
+			accelType:  aimv1alpha1.AcceleratorTypeCPU,
+			accelModel: "EPYC_ZEN4",
+			wantExprs:  1,
+		},
+		{
+			name:             "EPYC_9965 ignores partitioning mode",
+			accelType:        aimv1alpha1.AcceleratorTypeCPU,
+			accelModel:       "EPYC_9965",
+			partitioningMode: "CPX-NPS4",
+			wantExprs:        1,
 		},
 	}
 
@@ -422,14 +548,17 @@ func TestMatchNodes_NilLabelsNode(t *testing.T) {
 
 func TestResolveResources(t *testing.T) {
 	tests := []struct {
-		name       string
-		accelType  aimv1alpha1.AcceleratorType
-		accelCount int32
-		resources  *corev1.ResourceRequirements
-		wantNil    bool
-		wantGPU    string
-		wantCPU    string
-		wantMemory string
+		name             string
+		accelType        aimv1alpha1.AcceleratorType
+		accelCount       int32
+		resources        *corev1.ResourceRequirements
+		acceleratorModel string
+		engineEnv        map[string]string
+		wantNil          bool
+		wantGPU          string
+		wantCPU          string
+		wantMemory       string
+		wantMemoryLimit  string
 	}{
 		{
 			name:       "GPU count injected",
@@ -488,11 +617,70 @@ func TestResolveResources(t *testing.T) {
 			accelCount: 4,
 			wantNil:    true,
 		},
+		{
+			name:             "EPYC_9965 derives memory from VLLM_CPU_KVCACHE_SPACE",
+			accelType:        aimv1alpha1.AcceleratorTypeCPU,
+			accelCount:       188,
+			acceleratorModel: "EPYC_9965",
+			engineEnv:        map[string]string{"VLLM_CPU_KVCACHE_SPACE": "80"},
+			wantCPU:          "188",
+			wantMemory:       "160Gi",
+			wantMemoryLimit:  "160Gi",
+		},
+		{
+			name:             "EPYC_9965 without VLLM_CPU_KVCACHE_SPACE uses default memory",
+			accelType:        aimv1alpha1.AcceleratorTypeCPU,
+			accelCount:       188,
+			acceleratorModel: "EPYC_9965",
+			wantCPU:          "188",
+			wantMemory:       "120Gi",
+			wantMemoryLimit:  "120Gi",
+		},
+		{
+			name:             "EPYC_ZEN5 derives memory from VLLM_CPU_KVCACHE_SPACE",
+			accelType:        aimv1alpha1.AcceleratorTypeCPU,
+			accelCount:       124,
+			acceleratorModel: "EPYC_ZEN5",
+			engineEnv:        map[string]string{"VLLM_CPU_KVCACHE_SPACE": "40"},
+			wantCPU:          "124",
+			wantMemory:       "80Gi",
+			wantMemoryLimit:  "80Gi",
+		},
+		{
+			name:             "EPYC with explicit spec.resources memory preserves override",
+			accelType:        aimv1alpha1.AcceleratorTypeCPU,
+			accelCount:       188,
+			acceleratorModel: "EPYC_9965",
+			engineEnv:        map[string]string{"VLLM_CPU_KVCACHE_SPACE": "80"},
+			resources: &corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceMemory: resource.MustParse("256Gi"),
+				},
+			},
+			wantCPU:    "188",
+			wantMemory: "256Gi",
+		},
+		{
+			name:             "non-EPYC CPU profile does not derive memory",
+			accelType:        aimv1alpha1.AcceleratorTypeCPU,
+			accelCount:       32,
+			acceleratorModel: "GENERIC_CPU",
+			engineEnv:        map[string]string{"VLLM_CPU_KVCACHE_SPACE": "40"},
+			wantCPU:          "32",
+		},
+		{
+			name:             "GPU profile with EPYC model prefix does not derive memory",
+			accelType:        aimv1alpha1.AcceleratorTypeGPU,
+			accelCount:       4,
+			acceleratorModel: "EPYC_FAKE_GPU",
+			engineEnv:        map[string]string{"VLLM_CPU_KVCACHE_SPACE": "80"},
+			wantGPU:          "4",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resolved := ResolveResources(tt.accelType, tt.accelCount, tt.resources)
+			resolved := ResolveResources(tt.accelType, tt.accelCount, tt.resources, tt.acceleratorModel, tt.engineEnv)
 			if tt.wantNil {
 				if resolved != nil {
 					t.Fatalf("expected nil, got %v", resolved)
@@ -526,8 +714,41 @@ func TestResolveResources(t *testing.T) {
 				if !ok {
 					t.Errorf("expected memory in resolved requests")
 				} else if qty.String() != tt.wantMemory {
-					t.Errorf("memory = %q, want %q", qty.String(), tt.wantMemory)
+					t.Errorf("memory request = %q, want %q", qty.String(), tt.wantMemory)
 				}
+			}
+			if tt.wantMemoryLimit != "" {
+				qty, ok := resolved.Limits[corev1.ResourceMemory]
+				if !ok {
+					t.Errorf("expected memory in resolved limits")
+				} else if qty.String() != tt.wantMemoryLimit {
+					t.Errorf("memory limit = %q, want %q", qty.String(), tt.wantMemoryLimit)
+				}
+			}
+		})
+	}
+}
+
+func TestDeriveEPYCMemoryGi(t *testing.T) {
+	tests := []struct {
+		name      string
+		engineEnv map[string]string
+		want      int64
+	}{
+		{"VLLM_CPU_KVCACHE_SPACE=80 doubles to 160", map[string]string{"VLLM_CPU_KVCACHE_SPACE": "80"}, 160},
+		{"VLLM_CPU_KVCACHE_SPACE=40 doubles to 80", map[string]string{"VLLM_CPU_KVCACHE_SPACE": "40"}, 80},
+		{"missing env var uses default", nil, defaultEPYCMemoryGi},
+		{"empty map uses default", map[string]string{}, defaultEPYCMemoryGi},
+		{"non-numeric value uses default", map[string]string{"VLLM_CPU_KVCACHE_SPACE": "invalid"}, defaultEPYCMemoryGi},
+		{"zero value uses default", map[string]string{"VLLM_CPU_KVCACHE_SPACE": "0"}, defaultEPYCMemoryGi},
+		{"negative value uses default", map[string]string{"VLLM_CPU_KVCACHE_SPACE": "-10"}, defaultEPYCMemoryGi},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deriveEPYCMemoryGi(tt.engineEnv)
+			if got != tt.want {
+				t.Errorf("deriveEPYCMemoryGi() = %d, want %d", got, tt.want)
 			}
 		})
 	}

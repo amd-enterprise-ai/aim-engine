@@ -795,7 +795,7 @@ func isSupportedProfile(spec aimv1alpha2.AIMProfileSpecCommon, nodes []corev1.No
 	if !aimprofile.HasAcceleratorRequirement(spec.AcceleratorModel, spec.AcceleratorCount, spec.Resources) {
 		return true
 	}
-	resolvedResources := aimprofile.ResolveResources(spec.AcceleratorType, spec.AcceleratorCount, spec.Resources)
+	resolvedResources := aimprofile.ResolveResources(spec.AcceleratorType, spec.AcceleratorCount, spec.Resources, spec.AcceleratorModel, spec.EngineEnv)
 	return aimprofile.MatchNodes(nodes, spec.AcceleratorType, spec.AcceleratorModel, spec.AcceleratorPartitioningMode, resolvedResources).MatchingNodes > 0
 }
 

@@ -168,7 +168,7 @@ func (r *ProfileReconciler) ComposeState(
 ) ProfileObservation {
 	obs := ProfileObservation{ProfileFetchResult: fetch}
 	spec := fetch.profile.Spec.AIMProfileSpecCommon
-	obs.resolvedResources = ResolveResources(spec.AcceleratorType, spec.AcceleratorCount, spec.Resources)
+	obs.resolvedResources = ResolveResources(spec.AcceleratorType, spec.AcceleratorCount, spec.Resources, spec.AcceleratorModel, spec.EngineEnv)
 	if HasAcceleratorRequirement(spec.AcceleratorModel, spec.AcceleratorCount, spec.Resources) {
 		obs.matchResult = MatchNodes(fetch.nodes, spec.AcceleratorType, spec.AcceleratorModel, spec.AcceleratorPartitioningMode, obs.resolvedResources)
 	}
@@ -186,7 +186,7 @@ func (r *ClusterProfileReconciler) ComposeState(
 ) ClusterProfileObservation {
 	obs := ClusterProfileObservation{ClusterProfileFetchResult: fetch}
 	spec := fetch.profile.Spec.AIMProfileSpecCommon
-	obs.resolvedResources = ResolveResources(spec.AcceleratorType, spec.AcceleratorCount, spec.Resources)
+	obs.resolvedResources = ResolveResources(spec.AcceleratorType, spec.AcceleratorCount, spec.Resources, spec.AcceleratorModel, spec.EngineEnv)
 	if HasAcceleratorRequirement(spec.AcceleratorModel, spec.AcceleratorCount, spec.Resources) {
 		obs.matchResult = MatchNodes(fetch.nodes, spec.AcceleratorType, spec.AcceleratorModel, spec.AcceleratorPartitioningMode, obs.resolvedResources)
 	}

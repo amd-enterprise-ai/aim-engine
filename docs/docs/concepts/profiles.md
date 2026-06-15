@@ -173,6 +173,40 @@ The [AcceleratorDetector](accelerator-detection.md) DaemonSet labels each node w
 
 The label value (count) is informational only — the selector operator is `Exists`. Actual capacity is enforced via the computed device resource request.
 
+### Hardware support
+
+Different AIM images support different AMD hardware families:
+
+| Family | Example `acceleratorModel` |
+|---|---|
+| AMD Instinct | `MI300X` |
+| AMD Radeon | `RadeonW7900` |
+| AMD EPYC | `EPYC_9965` |
+
+The hardware a profile targets is declared on the **profile** itself, via `AIMProfile.spec.acceleratorModel`:
+
+```yaml
+# AIMProfile (or AIMClusterProfile)
+spec:
+  acceleratorModel: MI300X
+```
+
+You don't normally author these profiles by hand — the `AIMModel` discovers the AIM image and publishes one profile per supported (hardware, precision, metric) combination, each stamped with the `spec.acceleratorModel` it was built for. See [Where profiles come from](#where-profiles-come-from). To target specific hardware you therefore pick among the *already-discovered* profiles rather than inventing a new accelerator value.
+
+An `AIMService` selects a profile with that value through `spec.profile.selector.acceleratorModel` — the selector matches against the profiles' `spec.acceleratorModel` and resolves the service to a profile carrying it:
+
+```yaml
+# AIMService
+spec:
+  model:
+    name: qwen-qwen3-32b
+  profile:
+    selector:
+      acceleratorModel: MI300X
+```
+
+Make sure the chosen model image actually supports the target hardware — an image built for AMD Instinct GPUs will not run on Radeon or EPYC. Profile resolution only matches an image to a node whose detected labels satisfy the profile's `spec.acceleratorModel`; it does not transcode an unsupported image onto incompatible hardware. See [Deploying Services — Model + selector](../guides/deploying-services.md#model--selector) for the full selector resolution flow.
+
 ### Partitioned GPUs
 
 For partitioned GPU configurations (CPX-NPS4, MIG, etc.), override the derived device resource in `spec.resources`:
