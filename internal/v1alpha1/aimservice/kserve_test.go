@@ -23,6 +23,7 @@
 package aimservice
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -466,6 +467,22 @@ func TestPlanInferenceService_UpdatesReplicasWhenISVCExists(t *testing.T) {
 			maxReplicas: nil,
 			expectMin:   3,
 			expectMax:   3,
+		},
+		{
+			// Scale-to-zero: max must clamp to 1 when omitted (else the
+			// service is pinned at 0 forever).
+			name:        "scale to zero, max defaults to 1",
+			minReplicas: ptr.To(int32(0)),
+			maxReplicas: nil,
+			expectMin:   0,
+			expectMax:   1,
+		},
+		{
+			name:        "scale to zero with explicit max",
+			minReplicas: ptr.To(int32(0)),
+			maxReplicas: ptr.To(int32(5)),
+			expectMin:   0,
+			expectMax:   5,
 		},
 	}
 
@@ -1435,5 +1452,139 @@ func TestBuildMergedEnvVars_ClusterTemplateEnv(t *testing.T) {
 		t.Error("missing env var SHARED_VAR")
 	} else if val != "from-cluster-template" {
 		t.Errorf("expected SHARED_VAR='from-cluster-template', got '%s'", val)
+	}
+}
+
+// TestConfigureReplicasAndAutoscaling_AutoscalerClass verifies the ISVC
+// carries autoscalerClass=external when autoscaling is requested and
+// autoscalerClass=none on the legacy fixed-replica path.
+func TestConfigureReplicasAndAutoscaling_AutoscalerClass(t *testing.T) {
+	tests := []struct {
+		name        string
+		minReplicas *int32
+		maxReplicas *int32
+		autoScaling *aimv1alpha1.AIMServiceAutoScaling
+		replicas    *int32
+		expectClass string
+	}{
+		{
+			name:        "scale-to-zero service",
+			minReplicas: ptr.To(int32(0)),
+			maxReplicas: ptr.To(int32(3)),
+			expectClass: constants.AutoscalerClassExternal,
+		},
+		{
+			name:        "warm autoscaling service",
+			minReplicas: ptr.To(int32(1)),
+			maxReplicas: ptr.To(int32(4)),
+			autoScaling: &aimv1alpha1.AIMServiceAutoScaling{
+				Metrics: []aimv1alpha1.AIMServiceMetricsSpec{{Type: "PodMetric"}},
+			},
+			expectClass: constants.AutoscalerClassExternal,
+		},
+		{
+			name:        "legacy fixed-replica path stays on autoscalerClass=none",
+			replicas:    ptr.To(int32(2)),
+			expectClass: constants.AutoscalerClassNone,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := NewService("svc").Build()
+			service.Spec.MinReplicas = tt.minReplicas
+			service.Spec.MaxReplicas = tt.maxReplicas
+			service.Spec.AutoScaling = tt.autoScaling
+			service.Spec.Replicas = tt.replicas
+
+			isvc := &servingv1beta1.InferenceService{
+				ObjectMeta: metav1.ObjectMeta{Name: "isvc", Namespace: testNamespace},
+			}
+			configureReplicasAndAutoscaling(isvc, service)
+
+			if got := isvc.Annotations[constants.AnnotationKServeAutoscalerClass]; got != tt.expectClass {
+				t.Errorf("autoscalerClass: expected %q, got %q", tt.expectClass, got)
+			}
+		})
+	}
+}
+
+// TestConfigureReplicasAndAutoscaling_ForwardsUserMetricsForOTelCollector
+// verifies user metrics are written into isvc.Spec.Predictor.AutoScaling.Metrics
+// so KServe's RawKubeReconciler creates the OpenTelemetryCollector CR that
+// feeds in-pod sidecar injection. The gateway-rate metric must NOT appear
+// here -- that trigger belongs solely on the controller-owned ScaledObject.
+func TestConfigureReplicasAndAutoscaling_ForwardsUserMetricsForOTelCollector(t *testing.T) {
+	service := NewService("svc").Build()
+	service.Spec.MinReplicas = ptr.To(int32(0))
+	service.Spec.MaxReplicas = ptr.To(int32(3))
+	service.Spec.AutoScaling = &aimv1alpha1.AIMServiceAutoScaling{
+		Metrics: []aimv1alpha1.AIMServiceMetricsSpec{
+			{
+				Type: "PodMetric",
+				PodMetric: &aimv1alpha1.AIMServicePodMetricSource{
+					Metric: &aimv1alpha1.AIMServicePodMetric{
+						Backend:           "opentelemetry",
+						MetricNames:       []string{"vllm:num_requests_running"},
+						Query:             "vllm:num_requests_running",
+						OperationOverTime: "avg",
+					},
+					Target: &aimv1alpha1.AIMServiceMetricTarget{
+						Type:  "Value",
+						Value: "1",
+					},
+				},
+			},
+		},
+	}
+
+	isvc := &servingv1beta1.InferenceService{
+		ObjectMeta: metav1.ObjectMeta{Name: "isvc", Namespace: testNamespace},
+	}
+	configureReplicasAndAutoscaling(isvc, service)
+
+	if isvc.Spec.Predictor.AutoScaling == nil {
+		t.Fatal("isvc.Spec.Predictor.AutoScaling must be populated; got nil")
+	}
+	if len(isvc.Spec.Predictor.AutoScaling.Metrics) != 1 {
+		t.Fatalf("expected 1 forwarded user metric, got %d", len(isvc.Spec.Predictor.AutoScaling.Metrics))
+	}
+
+	got := isvc.Spec.Predictor.AutoScaling.Metrics[0]
+	if got.PodMetric == nil {
+		t.Fatalf("forwarded metric must be a PodMetric; got %+v", got)
+	}
+	if string(got.PodMetric.Metric.Backend) != "opentelemetry" {
+		t.Errorf("forwarded metric backend must be 'opentelemetry'; got %q", got.PodMetric.Metric.Backend)
+	}
+	if !reflect.DeepEqual(got.PodMetric.Metric.MetricNames, []string{"vllm:num_requests_running"}) {
+		t.Errorf("forwarded metric names mismatch; got %v", got.PodMetric.Metric.MetricNames)
+	}
+
+	for _, m := range isvc.Spec.Predictor.AutoScaling.Metrics {
+		if m.PodMetric != nil && strings.Contains(m.PodMetric.Metric.Query, "envoy_cluster_external_upstream_rq_completed") {
+			t.Fatalf("controller must not inject the gateway-rate metric into the ISVC AutoScaling spec; got: %+v", m)
+		}
+	}
+}
+
+// TestConfigureReplicasAndAutoscaling_SidecarAnnotations verifies the OTel
+// sidecar and Prometheus port annotations are applied to autoscaled services.
+func TestConfigureReplicasAndAutoscaling_SidecarAnnotations(t *testing.T) {
+	service := NewService("qwen").Build()
+	service.Spec.MinReplicas = ptr.To(int32(0))
+	service.Spec.MaxReplicas = ptr.To(int32(3))
+
+	isvc := &servingv1beta1.InferenceService{
+		ObjectMeta: metav1.ObjectMeta{Name: "qwen", Namespace: testNamespace},
+	}
+	configureReplicasAndAutoscaling(isvc, service)
+
+	want := "qwen" + constants.PredictorServiceSuffix
+	if got := isvc.Annotations[constants.AnnotationOTelSidecarInject]; got != want {
+		t.Errorf("expected sidecar inject annotation %q; got %q", want, got)
+	}
+	if got := isvc.Annotations[constants.AnnotationPrometheusPort]; got != constants.DefaultPrometheusPort {
+		t.Errorf("expected Prometheus port annotation %q; got %q", constants.DefaultPrometheusPort, got)
 	}
 }

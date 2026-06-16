@@ -275,6 +275,7 @@ type AIMServiceProfileOverrides struct {
 //
 // With v1alpha2, a Profile can be used instead of a Template. Template and Profile
 // are mutually exclusive — at least one resolution path must be specified.
+// +kubebuilder:validation:XValidation:rule="!has(self.minReplicas) || !has(self.maxReplicas) || self.minReplicas <= self.maxReplicas",message="minReplicas must be less than or equal to maxReplicas"
 type AIMServiceSpec struct {
 	// Model specifies which model to deploy using one of the available reference methods.
 	// Use `name` to reference an existing AIMModel/AIMClusterModel by name, or use `image`
@@ -321,10 +322,11 @@ type AIMServiceSpec struct {
 	Replicas *int32 `json:"replicas,omitempty"`
 
 	// MinReplicas specifies the minimum number of replicas for autoscaling.
-	// Defaults to 1. Scale to zero is not supported.
+	// Defaults to 1. Set to 0 to enable scale-to-zero: KEDA idles the predictor
+	// to zero replicas when idle and brings it back up on the next request.
 	// When specified with MaxReplicas, enables autoscaling for the service.
 	// +optional
-	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Minimum=0
 	MinReplicas *int32 `json:"minReplicas,omitempty"`
 
 	// MaxReplicas specifies the maximum number of replicas for autoscaling.
@@ -530,6 +532,21 @@ const (
 	AIMServiceReasonCreatingRuntime = "CreatingRuntime"
 	AIMServiceReasonRuntimeReady    = "RuntimeReady"
 	AIMServiceReasonRuntimeScaling  = "RuntimeScaling"
+	// AIMServiceReasonScaledToZero indicates the deployment is idled to zero
+	// replicas by KEDA under scale-to-zero. Healthy state, not a failure.
+	AIMServiceReasonScaledToZero = "ScaledToZero"
+	// AIMServiceReasonRoutingRequired indicates an invalid scale-to-zero
+	// configuration: minReplicas=0 with routing disabled. The 0->1 activation
+	// trigger queries gateway-side Envoy metrics that only exist once an
+	// HTTPRoute is wired up, so without routing the service idles to zero and
+	// can never wake. Drives ConfigValid=False.
+	AIMServiceReasonRoutingRequired = "RoutingRequiredForScaleToZero"
+	// AIMServiceReasonAutoscalingRequiresMetrics indicates autoscaling was
+	// configured (minReplicas/maxReplicas/autoScaling) but no scaling trigger
+	// resolves: the controller stamps autoscalerClass=external yet KEDA only
+	// manages replicas when a ScaledObject with at least one trigger exists, so
+	// the declared bounds are never enforced. Drives ConfigValid=False.
+	AIMServiceReasonAutoscalingRequiresMetrics = "AutoscalingRequiresMetrics"
 
 	// Routing
 	AIMServiceReasonPathTemplateInvalid = "PathTemplateInvalid"

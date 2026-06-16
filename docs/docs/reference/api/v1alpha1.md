@@ -1390,6 +1390,10 @@ _Appears in:_
 
 AIMServiceAutoScaling configures KEDA-based autoscaling with custom metrics.
 This enables automatic scaling based on metrics collected from OpenTelemetry.
+A present autoScaling block must carry at least one real setting: a fully
+empty block is a partially-complete spec that yields no usable configuration,
+so it is rejected. Omit the whole block to use default scaling instead. Any
+single valid sub-field (metrics, pollingInterval, or cooldownPeriod) is enough.
 
 
 
@@ -1399,6 +1403,8 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `metrics` _[AIMServiceMetricsSpec](#aimservicemetricsspec) array_ | Metrics is a list of metrics to be used for autoscaling.<br />Each metric defines a source (PodMetric) and target values. |  | Optional: \{\} <br /> |
+| `pollingInterval` _integer_ | PollingInterval is the KEDA polling interval in seconds. Defaults to 5<br />when spec.minReplicas == 0 (so a single request reliably activates the<br />deployment within ~10s); otherwise unset (KEDA default of 30 applies). |  | Minimum: 1 <br />Optional: \{\} <br /> |
+| `cooldownPeriod` _integer_ | CooldownPeriod is the seconds-of-inactivity budget KEDA waits before<br />scaling back to minReplicaCount. Under scale-to-zero, defaults to a<br />memory-derived value (300-1200s); otherwise unset (KEDA default of 300). |  | Minimum: 0 <br />Optional: \{\} <br /> |
 
 
 #### AIMServiceCacheStatus
@@ -1466,6 +1472,8 @@ AIMServiceList contains a list of AIMService.
 
 AIMServiceMetricTarget defines the target value for a metric.
 Specifies how the metric value should be interpreted and what target to maintain.
+The value field that matches the chosen type must be set, otherwise the
+target carries no threshold and the scaler cannot make a decision.
 
 
 
@@ -1744,7 +1752,7 @@ _Appears in:_
 | `caching` _[AIMServiceCachingConfig](#aimservicecachingconfig)_ | Caching controls caching behavior for this service.<br />When nil, defaults to Shared mode. |  | Optional: \{\} <br /> |
 | `cacheModel` _boolean_ | DEPRECATED: Use Caching.Mode instead. This field will be removed in a future version.<br />This field is no longer honored by the controller. |  | Optional: \{\} <br /> |
 | `replicas` _integer_ | Replicas specifies the number of replicas for this service.<br />When not specified, defaults to 1 replica.<br />This value overrides any replica settings from the template.<br />For autoscaling, use MinReplicas and MaxReplicas instead. | 1 | Optional: \{\} <br /> |
-| `minReplicas` _integer_ | MinReplicas specifies the minimum number of replicas for autoscaling.<br />Defaults to 1. Scale to zero is not supported.<br />When specified with MaxReplicas, enables autoscaling for the service. |  | Minimum: 1 <br />Optional: \{\} <br /> |
+| `minReplicas` _integer_ | MinReplicas specifies the minimum number of replicas for autoscaling.<br />Defaults to 1. Set to 0 to enable scale-to-zero: KEDA idles the predictor<br />to zero replicas when idle and brings it back up on the next request.<br />When specified with MaxReplicas, enables autoscaling for the service. |  | Minimum: 0 <br />Optional: \{\} <br /> |
 | `maxReplicas` _integer_ | MaxReplicas specifies the maximum number of replicas for autoscaling.<br />Required when MinReplicas is set or when AutoScaling configuration is provided. |  | Minimum: 1 <br />Optional: \{\} <br /> |
 | `autoScaling` _[AIMServiceAutoScaling](#aimserviceautoscaling)_ | AutoScaling configures advanced autoscaling behavior using KEDA.<br />Supports custom metrics from OpenTelemetry backend.<br />When specified, MinReplicas and MaxReplicas should also be set. |  | Optional: \{\} <br /> |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both<br />as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority<br />over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster<br />runtime config with the name `default` is used, if it exists. |  | Optional: \{\} <br /> |

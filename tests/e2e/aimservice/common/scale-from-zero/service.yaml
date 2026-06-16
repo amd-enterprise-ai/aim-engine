@@ -1,0 +1,39 @@
+# AIMService exercising the full 0 -> 1 -> N activation surface:
+#   - minReplicas=0  -> controller-owned ScaledObject adds the gateway-rate
+#                       activation trigger (0->1 on any request).
+#   - maxReplicas=3  -> KEDA scales 1->N under load via the user metric.
+#   - runtimeConfigName references the routing-enabled AIMRuntimeConfig
+#     in runtimeconfig.yaml; routing is a hard prerequisite for
+#     scale-from-zero because the activation trigger queries gateway-side
+#     Envoy metrics that only exist once an HTTPRoute is wired up.
+#   - autoScaling.cooldownPeriod=30 shortens KEDA's idle-to-zero window
+#     well below the memory-derived default (300-1200s). The default is
+#     tuned for real LLM cold-start budgets; for CI we want the test to
+#     observe the idle->activate transition within the chainsaw timeout.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: test-scale-from-zero-service
+spec:
+  runtimeConfigName: scale-from-zero
+  model:
+    name: test-scale-from-zero-model
+
+  minReplicas: 0
+  maxReplicas: 3
+
+  autoScaling:
+    pollingInterval: 5
+    cooldownPeriod: 30
+    metrics:
+      - type: PodMetric
+        podmetric:
+          metric:
+            backend: "opentelemetry"
+            metricNames:
+              - vllm:num_requests_running
+            query: "vllm:num_requests_running"
+            operationOverTime: "avg"
+          target:
+            type: Value
+            value: "1"

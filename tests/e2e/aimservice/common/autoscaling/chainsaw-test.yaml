@@ -15,26 +15,6 @@ kind: Test
 metadata:
   name: aimservice-autoscaling
 spec:
-  # TEMPORARILY DISABLED — see EAI-XXXX (TODO: file issue) for the proper fix.
-  #
-  # Reason: commit 222dbd0 bumped this fixture from aim-dummy:0.1.9 to :0.2.0
-  # as a side-effect of the v1alpha2 architecture work. The :0.2.0 image
-  # (built from images/aim-dummy/ on this branch) publishes optimised MI300X
-  # profiles that v1alpha1 auto-selection prefers over the unoptimised CPU
-  # profile. The selected GPU template makes the predictor pod request
-  # amd.com/gpu: 1; kind has no device plugin so the pod stays Pending and
-  # the AIMService flips to status: Failed. The test was originally designed
-  # to run on kind (no `requires: gpu` label) and main still passes because
-  # main pins :0.1.9 whose discovered profiles auto-select to something kind
-  # can schedule.
-  #
-  # Proper fix (intended follow-up): build aim-dummy in CI from the in-tree
-  # images/aim-dummy/ source and `kind load docker-image` it into the kind
-  # cluster under a deterministic local tag. That removes the implicit
-  # coupling between fixture-image versions and the ghcr.io publish state
-  # and lets us evolve aim-dummy's profile set without breaking unrelated
-  # v1alpha1 tests.
-  skip: true
   description: Test AIMService autoscaling configuration propagates to InferenceService
   timeouts:
     assert: 300s
@@ -76,7 +56,14 @@ spec:
                   minReplicas: 1
                   maxReplicas: 3
 
-    - name: Verify InferenceService has KEDA autoscaler annotations
+    - name: Verify InferenceService hands autoscaling off to AIM Engine
+      description: |
+        autoscalerClass=external tells KServe's KEDA reconciler to skip
+        authoring its own ScaledObject. AIM Engine writes the actual
+        ScaledObject (see next step) so it can carry the gateway-rate
+        activation trigger needed for scale-from-zero. The OTel sidecar
+        and Prometheus port annotations are still required so the user's
+        in-pod vLLM metrics reach keda-otel-scaler.
       try:
         - assert:
             timeout: 120s
@@ -87,8 +74,33 @@ spec:
                 labels:
                   aim.eai.amd.com/service: test-autoscaling-service
                 annotations:
-                  serving.kserve.io/autoscalerClass: "keda"
+                  serving.kserve.io/autoscalerClass: "external"
                   prometheus.kserve.io/port: "8000"
+
+    - name: Verify AIM Engine authored the KEDA ScaledObject
+      description: |
+        Under autoscalerClass=external the AIMService controller is the
+        sole author of the ScaledObject. The resource is named after the
+        predictor Deployment (`<isvcName>-predictor`, where isvcName is
+        a hash-derived name that varies per (namespace, serviceName) and
+        therefore per chainsaw run) and owned by the AIMService so GC
+        follows the parent. We match by the aim.eai.amd.com/service
+        label rather than by name to stay robust to the hashed name,
+        and we don't assert on scaleTargetRef.name for the same reason.
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: keda.sh/v1alpha1
+              kind: ScaledObject
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-autoscaling-service
+                  app.kubernetes.io/component: autoscaling
+                  app.kubernetes.io/managed-by: aim-engine
+              spec:
+                minReplicaCount: 1
+                maxReplicaCount: 3
 
     - name: Verify InferenceService has correct replica configuration
       try:

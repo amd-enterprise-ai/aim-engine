@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Kustomize base for the scale-from-zero activation collector. This is
+# referenced from config/default so `make build-installer` (and the Helm
+# chart generated from config/default) ship the collector alongside the
+# controller. The raw manifest is still usable standalone via
+# `kubectl apply -f kgateway-metrics-collector.yaml` for clusters that
+# manage cluster infra outside the AIM Engine install.
+resources:
+  - kgateway-metrics-collector.yaml

@@ -10,14 +10,23 @@ This guide covers installing AIM Engine on a Kubernetes cluster.
 | [AMD GPU Operator](https://github.com/ROCm/gpu-operator) | — | Advertises `amd.com/gpu` and the GPU node labels used for template selection |
 | KServe | v0.16.1 | See [KServe Configuration](../admin/kserve-configuration.md) |
 | Gateway API | v1.3.0 | Required for HTTP routing |
+| kgateway | v2.0+ | Gateway API data plane that AIM Engine targets for routing and the scale-from-zero activation signal |
 | cert-manager | v1.16+ | Required by KServe and optional metrics TLS |
+| KEDA | 2.18+ | Autoscaling; required because scale-from-zero is a default-on feature |
+| keda-otel-add-on | latest | gRPC scaler that bridges OpenTelemetry metrics to KEDA. Installed alongside KEDA |
+| OpenTelemetry Operator | 0.101+ | Reconciles the `OpenTelemetryCollector` CR for the bundled scale-from-zero collector (see note below) |
+
+The scale-from-zero collector (`kgateway-metrics-collector`) is **not** a
+separate prerequisite to apply — it ships with the AIM Engine Helm chart and
+`dist/install.yaml` and is enabled by default
+(`scaleFromZero.gatewayMetricsCollector.enable=true`), deployed into the release
+namespace. You only apply it yourself when opting out; see
+[the collector README](https://github.com/amd-enterprise-ai/aim-engine/tree/main/config/prereqs/scale-from-zero).
 
 Optional components:
 
 | Component | Version | Purpose |
 |-----------|---------|---------|
-| KEDA | 2.18+ | Autoscaling with OpenTelemetry metrics |
-| OpenTelemetry Operator | 0.101+ | Custom metrics collection for autoscaling |
 | Longhorn or similar CSI | — | ReadWriteMany storage for model caching |
 
 ## Install with Helm
@@ -49,6 +58,21 @@ helm install aim-engine oci://docker.io/amdenterpriseai/aim-engine-chart \
   --create-namespace
 ```
 
+The chart deploys the scale-from-zero `kgateway-metrics-collector` into the
+release namespace by default (`scaleFromZero.gatewayMetricsCollector.enable=true`);
+it needs the OpenTelemetry Operator CRDs already present. To run it standalone
+instead — for a different namespace, a non-default gateway label, or because you
+manage cluster infra separately — set that value to `false` and apply the
+manifest yourself:
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/amd-enterprise-ai/aim-engine/main/config/prereqs/scale-from-zero/kgateway-metrics-collector.yaml
+kubectl -n keda rollout status deploy/kgateway-metrics-collector --timeout=120s
+```
+
+See [`config/prereqs/scale-from-zero/README.md`](https://github.com/amd-enterprise-ai/aim-engine/tree/main/config/prereqs/scale-from-zero)
+for the customization points.
+
 See [Helm Chart Values](../reference/helm-values.md) for all configurable values (replicas, resources, metrics, CRD management, etc.).
 
 ### 3. Enable model discovery (optional)
@@ -71,7 +95,8 @@ make helm
 kubectl apply -f dist/crds.yaml
 kubectl wait --for=condition=Established crd --all --timeout=60s
 
-# Install the operator
+# Install the operator (bundles the scale-from-zero collector by default;
+# requires the OpenTelemetry Operator CRDs to be present)
 helm install aim-engine ./dist/chart \
   --namespace aim-system \
   --create-namespace

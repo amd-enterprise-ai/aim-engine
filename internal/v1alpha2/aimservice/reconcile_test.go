@@ -28,6 +28,7 @@ import (
 	"testing"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -39,6 +40,7 @@ import (
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	v1alpha1service "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservice"
 )
 
 const (
@@ -486,6 +488,41 @@ func TestGetComponentHealth_IncludesConfigAndRouteEntries(t *testing.T) {
 	}
 }
 
+// TestGetComponentHealth_ScaleToZeroRequiresRouting verifies the profile
+// pipeline surfaces the invalid scale-from-zero-without-routing combination as
+// a ConfigValid-driving InvalidSpec error, even before a profile resolves.
+func TestGetComponentHealth_ScaleToZeroRequiresRouting(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+		Spec:       aimv1alpha1.AIMServiceSpec{MinReplicas: ptr.To(int32(0))},
+	}
+	obs := ServiceObservation{
+		ServiceFetchResult: ServiceFetchResult{service: service},
+	}
+
+	entries := obs.GetComponentHealth(context.Background(), nil)
+
+	var cfg *controllerutils.ComponentHealth
+	for i := range entries {
+		if entries[i].Component == v1alpha1service.ComponentScaleToZeroConfig {
+			cfg = &entries[i]
+		}
+	}
+	if cfg == nil {
+		t.Fatalf("expected a ScaleToZeroConfig component health entry")
+	}
+	if cfg.State != constants.AIMStatusFailed {
+		t.Errorf("ScaleToZeroConfig state = %q, want Failed", cfg.State)
+	}
+	if cfg.Reason != aimv1alpha1.AIMServiceReasonRoutingRequired {
+		t.Errorf("ScaleToZeroConfig reason = %q, want %q", cfg.Reason, aimv1alpha1.AIMServiceReasonRoutingRequired)
+	}
+	if len(cfg.Errors) != 1 ||
+		controllerutils.CategorizeError(cfg.Errors[0]).Category() != controllerutils.ErrorCategoryInvalidSpec {
+		t.Errorf("expected a single InvalidSpec error, got %+v", cfg.Errors)
+	}
+}
+
 // TestGetComponentHealth_ProfileNotFound_SuppressesDownstream pins F13 part 1:
 // when no profile resolves, the planner intentionally skips creating ISVC
 // and HTTPRoute, so reporting them as "Creating"/"not found" would mislead
@@ -611,6 +648,75 @@ func TestGetComponentHealth_ResolvedProfile_KeepsDownstream(t *testing.T) {
 	}
 }
 
+// TestGetComponentHealth_ScaleToZeroIdleReportsReady pins the v1alpha2 fix for
+// the idle-readiness gap: a healthily-idled scale-to-zero service (KEDA scaled
+// the predictor to zero, no pods, HPA reporting ScalingDisabled) must report
+// the InferenceServicePods and HPA components as Ready/ScaledToZero rather than
+// stalling at "no pods"/"waiting" forever.
+func TestGetComponentHealth_ScaleToZeroIdleReportsReady(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			MinReplicas: ptr.To(int32(0)),
+			MaxReplicas: ptr.To(int32(3)),
+		},
+	}
+	// Routing enabled (promoted field from the inlined runtime config) so the
+	// scale-to-zero routing prerequisite passes and does not add an unrelated
+	// ConfigValid=False entry.
+	service.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{Enabled: ptr.To(true)}
+
+	// HPA at the idle floor: ScalingActive=False with KEDA's authoritative
+	// ScalingDisabled reason.
+	idleHPA := &autoscalingv2.HorizontalPodAutoscaler{
+		Status: autoscalingv2.HorizontalPodAutoscalerStatus{
+			Conditions: []autoscalingv2.HorizontalPodAutoscalerCondition{
+				{Type: autoscalingv2.ScalingActive, Status: corev1.ConditionFalse, Reason: "ScalingDisabled"},
+			},
+		},
+	}
+	emptyPods := &controllerutils.FetchResult[*corev1.PodList]{Value: &corev1.PodList{}}
+
+	obs := ServiceObservation{
+		ServiceFetchResult: ServiceFetchResult{
+			service:              service,
+			inferenceService:     controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: &servingv1beta1.InferenceService{}},
+			inferenceServicePods: emptyPods,
+			hpa:                  controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]{Value: idleHPA},
+		},
+		resolvedProfileSpec:   sampleProfileSpec(),
+		resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady, Deployable: true},
+		profileName:           testProfileA,
+		profileScope:          aimv1alpha1.AIMResolutionScopeNamespace,
+	}
+
+	entries := obs.GetComponentHealth(context.Background(), nil)
+
+	var pods, hpa *controllerutils.ComponentHealth
+	for i := range entries {
+		switch entries[i].Component {
+		case "InferenceServicePods":
+			pods = &entries[i]
+		case "HPA":
+			hpa = &entries[i]
+		}
+	}
+
+	if pods == nil {
+		t.Fatalf("expected an InferenceServicePods entry; got %+v", entries)
+	}
+	if pods.State != constants.AIMStatusReady || pods.Reason != aimv1alpha1.AIMServiceReasonScaledToZero {
+		t.Errorf("InferenceServicePods = %q/%q, want Ready/ScaledToZero", pods.State, pods.Reason)
+	}
+
+	if hpa == nil {
+		t.Fatalf("expected an HPA entry; got %+v", entries)
+	}
+	if hpa.State != constants.AIMStatusReady || hpa.Reason != aimv1alpha1.AIMServiceReasonScaledToZero {
+		t.Errorf("HPA = %q/%q, want Ready/ScaledToZero", hpa.State, hpa.Reason)
+	}
+}
+
 func TestPlanProfileCache_SkipsWhenExisting(t *testing.T) {
 	service := &aimv1alpha1.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
@@ -694,7 +800,7 @@ func TestBuildInferenceServiceFromProfile_Replicas_FixedDisablesHPA(t *testing.T
 	}
 }
 
-func TestBuildInferenceServiceFromProfile_Replicas_AutoScalingEnablesKEDA(t *testing.T) {
+func TestBuildInferenceServiceFromProfile_Replicas_AutoScalingHandsOffToExternal(t *testing.T) {
 	isvc := buildTestISVC(t, aimv1alpha1.AIMServiceSpec{
 		MinReplicas: ptr.To(int32(2)),
 		MaxReplicas: ptr.To(int32(5)),
@@ -706,9 +812,13 @@ func TestBuildInferenceServiceFromProfile_Replicas_AutoScalingEnablesKEDA(t *tes
 	if got := isvc.Spec.Predictor.MaxReplicas; got != 5 {
 		t.Errorf("MaxReplicas: want 5, got %d", got)
 	}
-	if got := isvc.Annotations[constants.AnnotationKServeAutoscalerClass]; got != constants.AutoscalerClassKeda {
-		t.Errorf("autoscaler class: want %q (min/max triggers KEDA), got %q",
-			constants.AutoscalerClassKeda, got)
+	// autoscalerClass=external is what tells KServe's KEDA reconciler to
+	// short-circuit; the AIMService controller writes the actual
+	// ScaledObject (see scaledobject.go). Asserting "keda" here would
+	// re-introduce two ScaledObjects fighting over the same Deployment.
+	if got := isvc.Annotations[constants.AnnotationKServeAutoscalerClass]; got != constants.AutoscalerClassExternal {
+		t.Errorf("autoscaler class: want %q (AIM Engine owns the ScaledObject under min/max), got %q",
+			constants.AutoscalerClassExternal, got)
 	}
 }
 
@@ -851,6 +961,157 @@ func TestPlanProfileCache_CreatesSharedCache(t *testing.T) {
 	}
 	if cache.Labels[constants.LabelService] != testServiceName {
 		t.Errorf("expected service label on cache, got %v", cache.Labels)
+	}
+}
+
+// TestPlanResources_ScaleToZeroEmitsScaledObject verifies the v1alpha2
+// pipeline wires the ScaledObject planner. Asserts at the GVK level so the
+// v1alpha1 planner tests remain the source of truth for resource shape.
+func TestPlanResources_ScaleToZeroEmitsScaledObject(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile:     &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			MinReplicas: ptr.To(int32(0)),
+			MaxReplicas: ptr.To(int32(3)),
+			AutoScaling: &aimv1alpha1.AIMServiceAutoScaling{
+				Metrics: []aimv1alpha1.AIMServiceMetricsSpec{{
+					Type: "PodMetric",
+					PodMetric: &aimv1alpha1.AIMServicePodMetricSource{
+						Metric: &aimv1alpha1.AIMServicePodMetric{
+							Backend:     "opentelemetry",
+							MetricNames: []string{"vllm:num_requests_running"},
+							Query:       "vllm:num_requests_running",
+						},
+						Target: &aimv1alpha1.AIMServiceMetricTarget{Type: "Value", Value: "1"},
+					},
+				}},
+			},
+		},
+	}
+	service.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{Enabled: ptr.To(true)}
+
+	r := &ProfileServiceReconciler{}
+	obs := ServiceObservation{
+		ServiceFetchResult:  ServiceFetchResult{service: service},
+		resolvedProfileSpec: sampleProfileSpec(),
+		// Deployable=true mirrors what the AIMProfile reconciler stamps
+		// once the profile validates and is what isDeployable() short-
+		// circuits on. Setting it here keeps the fixture spec minimal
+		// (no ModelSources) so PlanResources does not divert into the
+		// AIMProfileCache branch, which would early-return on the
+		// unready cache and skip the scale-to-zero resources we are
+		// asserting on.
+		resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{
+			Status:     constants.AIMStatusReady,
+			Deployable: true,
+		},
+		profileName:      testProfileA,
+		profileScope:     aimv1alpha1.AIMResolutionScopeNamespace,
+		profileAssembled: true,
+	}
+	r.composeDerivedNames(context.Background(), &obs)
+	if obs.configErr != nil {
+		t.Fatalf("composeDerivedNames: %v", obs.configErr)
+	}
+
+	pr := r.PlanResources(context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+		obs,
+	)
+
+	var sawScaledObject bool
+	for _, obj := range pr.GetToApply() {
+		gvk := obj.GetObjectKind().GroupVersionKind()
+		if gvk.Group == "keda.sh" && gvk.Kind == "ScaledObject" {
+			sawScaledObject = true
+		}
+	}
+	if !sawScaledObject {
+		t.Errorf("scale-to-zero v1alpha2 service must produce a KEDA ScaledObject")
+	}
+}
+
+func TestResolveEffectiveResourcesFromProfile(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+	}
+	profileSpec := sampleProfileSpec()
+	memBlock := &corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("32Gi")},
+		Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("48Gi")},
+	}
+
+	tests := []struct {
+		name   string
+		status *aimv1alpha2.AIMProfileStatus
+		want   *corev1.ResourceRequirements
+	}{
+		{
+			name:   "nil status returns nil",
+			status: nil,
+			want:   nil,
+		},
+		{
+			name:   "profile not ready returns nil",
+			status: &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusProgressing, Resources: memBlock},
+			want:   nil,
+		},
+		{
+			name:   "profile ready returns merged resources",
+			status: &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady, Resources: memBlock},
+			want:   memBlock,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveEffectiveResourcesFromProfile(service, profileSpec, tc.status)
+			switch {
+			case tc.want == nil:
+				if got != nil {
+					t.Errorf("want nil, got %+v", got)
+				}
+			case got == nil:
+				t.Errorf("want non-nil, got nil")
+			default:
+				if got.Limits.Memory().Cmp(*tc.want.Limits.Memory()) != 0 {
+					t.Errorf("limits.memory: want %v, got %v", tc.want.Limits.Memory(), got.Limits.Memory())
+				}
+				if got.Requests.Memory().Cmp(*tc.want.Requests.Memory()) != 0 {
+					t.Errorf("requests.memory: want %v, got %v", tc.want.Requests.Memory(), got.Requests.Memory())
+				}
+			}
+		})
+	}
+}
+
+// TestResolveEffectiveResourcesFromProfile_ServiceOverrideWins verifies the
+// service-level Resources override takes precedence over the profile's
+// computed resources (matching resolveResourcesFromProfile's precedence).
+func TestResolveEffectiveResourcesFromProfile_ServiceOverrideWins(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Resources: &corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("16Gi")},
+			},
+		},
+	}
+	profileSpec := sampleProfileSpec()
+	profileStatus := &aimv1alpha2.AIMProfileStatus{
+		Status: constants.AIMStatusReady,
+		Resources: &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("128Gi")},
+		},
+	}
+
+	got := resolveEffectiveResourcesFromProfile(service, profileSpec, profileStatus)
+	if got == nil {
+		t.Fatal("expected non-nil resources")
+	}
+	if got.Requests.Memory().Cmp(resource.MustParse("16Gi")) != 0 {
+		t.Errorf("service override should win; got %v, want 16Gi", got.Requests.Memory())
 	}
 }
 

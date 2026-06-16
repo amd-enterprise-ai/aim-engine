@@ -82,9 +82,10 @@ type ServiceFetchResult struct {
 
 	profileCache controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]
 
-	inferenceService controllerutils.FetchResult[*servingv1beta1.InferenceService]
-	hpa              controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]
-	httpRoute        controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
+	inferenceService     controllerutils.FetchResult[*servingv1beta1.InferenceService]
+	inferenceServicePods *controllerutils.FetchResult[*corev1.PodList]
+	hpa                  controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]
+	httpRoute            controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
 
 	mergedRuntimeConfig controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
 }
@@ -135,10 +136,25 @@ type ServiceObservation struct {
 
 // GetComponentHealth returns health entries for each component the service
 // depends on or owns.
-func (obs ServiceObservation) GetComponentHealth(_ context.Context, _ kubernetes.Interface) []controllerutils.ComponentHealth {
+func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset kubernetes.Interface) []controllerutils.ComponentHealth {
 	var health []controllerutils.ComponentHealth
 
 	if cfg := obs.getConfigHealth(); cfg.Component != "" {
+		health = append(health, cfg)
+	}
+
+	// Scale-from-zero requires routing; surface the invalid combination as
+	// ConfigValid=False. Shared with the v1alpha1 pipeline so the validation is
+	// identical regardless of which pipeline owns the service.
+	if cfg := v1alpha1service.ScaleToZeroRoutingComponentHealth(obs.service, obs.mergedRuntimeConfig.Value); cfg.Component != "" {
+		health = append(health, cfg)
+	}
+
+	// Autoscaling configured but no trigger resolves -> ConfigValid=False.
+	// Shared with the v1alpha1 pipeline so the invariant (external autoscaler
+	// class implies a ScaledObject) holds regardless of which pipeline owns the
+	// service.
+	if cfg := v1alpha1service.AutoscalingTriggerComponentHealth(obs.service); cfg.Component != "" {
 		health = append(health, cfg)
 	}
 
@@ -181,11 +197,41 @@ func (obs ServiceObservation) GetComponentHealth(_ context.Context, _ kubernetes
 		health = append(health, obs.getInferenceServiceHealth())
 	}
 
+	// Predictor pod health (downstream). Shared with the v1alpha1 pipeline so a
+	// healthily-idled scale-to-zero service reports Ready (ScaledToZero) instead
+	// of stalling at "no pods" forever.
+	if podsHealth, ok := v1alpha1service.InferenceServicePodsComponentHealth(
+		ctx, clientset, obs.service, obs.hpa, obs.inferenceServicePods,
+	); ok {
+		health = append(health, podsHealth)
+	}
+
+	// HPA health (autoscaling configured). Shared with v1alpha1 so the
+	// activation metric never gates readiness under scale-to-zero.
+	if hpaHealth := v1alpha1service.HPAComponentHealth(
+		obs.service,
+		obs.hpa,
+		podItemCount(obs.inferenceServicePods),
+		v1alpha1service.InferenceServiceReady(obs.inferenceService),
+	); hpaHealth.Component != "" {
+		health = append(health, hpaHealth)
+	}
+
 	if route := v1alpha1service.HTTPRouteComponentHealth(obs.service, obs.mergedRuntimeConfig.Value, obs.httpRoute); route.Component != "" {
 		health = append(health, route)
 	}
 
 	return health
+}
+
+// podItemCount returns the number of pods in a (possibly nil) pod-list fetch
+// result, treating a missing or failed fetch as zero. Mirrors the v1alpha1
+// helper so the shared HPA verdict sees an identical pod count.
+func podItemCount(pods *controllerutils.FetchResult[*corev1.PodList]) int {
+	if pods == nil || !pods.OK() || pods.Value == nil {
+		return 0
+	}
+	return len(pods.Value.Items)
 }
 
 // getConfigHealth reports configuration errors produced during ComposeState
@@ -371,10 +417,15 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 
 	result.inferenceService = fetchInferenceService(ctx, c, service)
 
-	// Fetch HPA if the InferenceService exists. HPA is only present when
-	// KServe has created the predictor (KEDA names it keda-hpa-{isvc}-predictor).
+	// Fetch HPA and predictor pods if the InferenceService exists. The HPA is
+	// only present when KServe has created the predictor (KEDA names it
+	// keda-hpa-{isvc}-predictor). Pods feed the shared scale-to-zero idle
+	// verdict so a healthily-idled service reports Ready rather than stalling
+	// at "no pods" forever.
 	if result.inferenceService.OK() && result.inferenceService.Value != nil {
 		result.hpa = v1alpha1service.FetchHPA(ctx, c, result.inferenceService.Value)
+		pods := v1alpha1service.FetchPredictorPods(ctx, c, result.inferenceService.Value)
+		result.inferenceServicePods = &pods
 	}
 
 	// Resolve the profile using whichever of the four supported shapes the
@@ -662,6 +713,14 @@ func (r *ProfileServiceReconciler) PlanResources(
 	// owns the service.
 	if route := v1alpha1service.PlanHTTPRoute(ctx, service, obs.mergedRuntimeConfig.Value); route != nil {
 		planResult.Apply(route)
+	}
+
+	// 5. Plan the KEDA ScaledObject. effectiveResources is nil until the
+	// profile is Ready, in which case PlanScaledObject falls back to its flat
+	// cooldown default and the next reconcile re-plans idempotently.
+	effectiveResources := resolveEffectiveResourcesFromProfile(service, obs.resolvedProfileSpec, obs.resolvedProfileStatus)
+	if so := v1alpha1service.PlanScaledObject(ctx, service, effectiveResources); so != nil {
+		planResult.Apply(so)
 	}
 
 	return planResult

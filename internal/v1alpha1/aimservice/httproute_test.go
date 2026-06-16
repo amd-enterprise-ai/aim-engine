@@ -627,7 +627,7 @@ func TestPlanHTTPRoute_OwnerReference(t *testing.T) {
 	}
 
 	service := NewService("my-svc").Build()
-	service.UID = "test-service-uid"
+	service.UID = testServiceUID
 	service.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
 		Enabled:    ptr.To(true),
 		GatewayRef: gatewayRef,

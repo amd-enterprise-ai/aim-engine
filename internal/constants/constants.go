@@ -233,6 +233,8 @@ const (
 	ComponentRouting = "routing"
 	// ComponentModelStorage is the component value for storage-related resources
 	ComponentModelStorage = "model-storage"
+	// ComponentAutoscaling is the component value for autoscaling resources.
+	ComponentAutoscaling = "autoscaling"
 )
 
 // Environment variable names
@@ -253,6 +255,51 @@ const (
 	EnvVLLMEnableMetrics = "VLLM_ENABLE_METRICS"
 	// EnvAIMBaseImageRef is the env var baked into AIM model images recording the base image.
 	EnvAIMBaseImageRef = "AIM_BASE_IMAGE_REF"
+
+	// EnvAIMKEDAOTelScalerAddress overrides the keda-otel-add-on scaler
+	// endpoint written into ScaledObject trigger metadata. Format host:port.
+	EnvAIMKEDAOTelScalerAddress = "AIM_KEDA_OTEL_SCALER_ADDRESS"
+
+	// EnvAIMCooldownSecondsPerGiMemory tunes the per-GiB multiplier used
+	// to derive scale-to-zero cooldownPeriod from the predictor's memory
+	// request. Set to 0 to disable the memory contribution.
+	EnvAIMCooldownSecondsPerGiMemory = "AIM_COOLDOWN_SECONDS_PER_GI_MEMORY"
+)
+
+// keda-otel-add-on defaults
+const (
+	// DefaultKEDAOTelScalerAddress is the in-cluster gRPC endpoint of the
+	// keda-otel-add-on scaler. Matches the KServe inferenceservice-config
+	// `opentelemetryCollector.metricScalerEndpoint` so warm and activation
+	// triggers share a single scaler instance.
+	DefaultKEDAOTelScalerAddress = "keda-otel-scaler.keda.svc:4318"
+
+	// DefaultCooldownSecondsPerGiMemory is the seconds-per-GiB multiplier
+	// in the cooldown heuristic
+	//
+	//	cooldownPeriod = clamp(300 + memGiB * perGiB, 300, 1200)
+	//
+	// 5 s/GiB budgets for ~1.6 GB/s warm-cache read throughput plus the
+	// keda-otel-add-on scaler's ~120 s rate-decay window and vLLM/ROCm
+	// stabilization tail. Errs on the over-cool side because scaling to
+	// zero mid-warmup is far more expensive than a few extra idle seconds.
+	// Operators on faster/slower storage tune via EnvAIMCooldownSecondsPerGiMemory.
+	DefaultCooldownSecondsPerGiMemory = int32(5)
+
+	// DefaultGatewayActivationTargetValue is the targetValue of the
+	// gateway-rate activation trigger. Compiled-in, not operator-tunable: the
+	// gateway trigger is activation-only
+	// (0->1); this value is deliberately large so the trigger never influences
+	// the 1->N decision -- it is a neutralizing ceiling, not a req/s target.
+	DefaultGatewayActivationTargetValue = "1000"
+
+	// DefaultGatewayActivationOperationOverTime is the aggregation the scaler
+	// applies to the gateway series. Compiled-in, not operator-tunable: it must
+	// be `avg` because the collector emits per-scrape deltas via
+	// `cumulativetodelta` -- `rate` would go negative across Envoy counter
+	// resets. This is a JOINED INVARIANT with the collector's processor
+	// pipeline (pinned by TestGatewayActivationInvariant); change them together.
+	DefaultGatewayActivationOperationOverTime = "avg"
 )
 
 // KServe annotation and label keys
@@ -261,8 +308,13 @@ const (
 	AnnotationKServeAutoscalerClass = "serving.kserve.io/autoscalerClass"
 	// AutoscalerClassNone disables autoscaling
 	AutoscalerClassNone = "none"
-	// AutoscalerClassKeda enables KEDA-based autoscaling
+	// AutoscalerClassKeda lets KServe author the ScaledObject from the ISVC's
+	// AutoScaling spec.
 	AutoscalerClassKeda = "keda"
+	// AutoscalerClassExternal tells KServe an external system manages
+	// autoscaling: KServe authors no ScaledObject and ignores Spec.Replicas
+	// diffs. AIM Engine uses this to own the ScaledObject directly.
+	AutoscalerClassExternal = "external"
 	// LabelKServeInferenceService is the label key used by KServe on predictor pods
 	LabelKServeInferenceService = "serving.kserve.io/inferenceservice"
 	// AnnotationOTelSidecarInject is the annotation for OpenTelemetry sidecar injection

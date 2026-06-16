@@ -14,11 +14,21 @@ namePrefix: aim-engine-
 #  pairs:
 #    someName: someValue
 
+# Extra transformer configs. Adds (does not replace) kustomize's built-in
+# nameReference defaults so namePrefix propagates into CRD fields that
+# reference core objects (e.g. OpenTelemetryCollector.spec.serviceAccount).
+configurations:
+- kustomizeconfig.yaml
+
 resources:
 - ../crd
 - ../rbac
 - ../manager
 - ../accelerator-detector
+# Scale-from-zero activation collector (cluster-singleton OpenTelemetryCollector
+# + its RBAC). Shipped with the controller so build-installer/install.yaml and
+# the Helm chart carry it. Requires the OpenTelemetry Operator CRDs on-cluster.
+- ../prereqs/scale-from-zero
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix including the one in
 # crd/kustomization.yaml
 #- ../webhook

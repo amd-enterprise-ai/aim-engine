@@ -1,0 +1,20 @@
+# Namespaced runtime config used by the scale-from-zero test. Scale-from-zero
+# requires routing because the controller-owned ScaledObject's activation
+# trigger (`envoy_cluster_external_upstream_rq_completed`) only has a series
+# to query once an HTTPRoute exists in front of the predictor. We keep this
+# config minimal (routing only -- no labelPropagation, storage or
+# artifactCache) so the test surface is exactly the routing+autoscaling
+# interaction.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: scale-from-zero
+spec:
+  routing:
+    enabled: true
+    gatewayRef:
+      name: kserve-ingress-gateway
+      namespace: kgateway-system
+    # Namespace is included so concurrent / leftover runs don't collide on
+    # the shared gateway path.
+    pathTemplate: "/integration/scale-from-zero/{.metadata.namespace}/{.metadata.name}"

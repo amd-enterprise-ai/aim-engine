@@ -1,0 +1,420 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: Scale-From-Zero (Kind)
+#
+# Validates the full minReplicas=0 surface for v1alpha1 AIMService -- both
+# the idle leg (1->0) and the activation leg (0->1):
+#
+#   AIMRuntimeConfig (routing + gatewayRef)
+#       -> AIMService (minReplicas=0, maxReplicas=3, user metric,
+#                      cooldownPeriod=30s for fast CI)
+#       -> InferenceService (autoscalerClass=external, minReplicas=0)
+#       -> KEDA ScaledObject (controller-owned;
+#                             gateway activation trigger + user metric)
+#       -> HTTPRoute (gateway path; required for activation trigger to
+#                     have a series to query)
+#
+# Note: AIM Engine does not author any gateway retry policy. The first
+# request to an idle service returns 503 while the predictor wakes; clients
+# are expected to retry (the OpenAI SDKs do so by default).
+#
+# Step ordering matters and is deliberate (see below):
+#   reach Running -> WARM-UP request (serve 200 + seed gateway series)
+#       -> KEDA idles deployment to 0 -> COLD activation request -> 0->1.
+#
+# Why a warm-up request BEFORE asserting idle-to-zero:
+#   The gateway activation trigger queries
+#   `envoy_cluster_external_upstream_rq_completed{namespace,deployment}`.
+#   Envoy does NOT emit that counter for a predictor's upstream cluster
+#   until at least one request has *completed* against it -- so on a fresh
+#   service the series simply does not exist, the keda-otel-add-on scaler
+#   returns "not found", and KEDA reports TriggerError and HOLDS the
+#   deployment at its current replica count (it will not idle on a metric
+#   *error*). The warm-up request creates the series (and proves the
+#   service serves). Only then can the trigger resolve to 0 and let KEDA
+#   idle the deployment. The earlier KServe-spun replica therefore is NOT
+#   reliably short-lived before this point; do not assert on a running pod.
+#
+# Why the idle step gets a generous timeout:
+#   keda-otel-add-on retains each series for METRIC_STORE_RETENTION_SECONDS
+#   (120s by default) and the trigger uses operationOverTime=avg, so the
+#   warm-up request's delta stays in the averaging window (keeping the
+#   trigger "active") for ~retention seconds before decaying to 0. Idle is
+#   therefore dominated by ~120s (retention) + cooldownPeriod(30s), NOT by
+#   cooldown alone. Measured idle latency on kind is ~150s; we allow 300s.
+#
+# Routing is a hard prerequisite for scale-from-zero (the activation
+# trigger needs the gateway-side Envoy series). The sibling `autoscaling`
+# test uses minReplicas=1 specifically to avoid this dependency.
+#
+# Uses: aim-dummy in model.yaml (lightweight,
+# kind-schedulable; serves /v1/models and /v1/chat/completions, plus a
+# /metrics endpoint exposing vllm:num_requests_running=0 when idle so the
+# user metric trigger resolves instead of erroring -- see
+# images/aim-dummy/server/main.go). Driven by the shared validate-http.sh.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-scale-from-zero
+spec:
+  description: Test AIMService scale-from-zero with routing-backed activation trigger and end-to-end HTTP request
+  timeouts:
+    assert: 300s
+  steps:
+    - name: Create routing-enabled runtime config
+      try:
+        - apply:
+            file: runtimeconfig.yaml
+
+    - name: Create model
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for model to be ready (discovery complete)
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: test-scale-from-zero-model
+              status:
+                status: Ready
+
+    - name: Create service with scale-from-zero autoscaling
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Verify InferenceService hands autoscaling off to AIM Engine
+      description: |
+        autoscalerClass=external tells KServe's KEDA reconciler to skip
+        authoring its own ScaledObject so the AIM Engine controller can
+        be the sole author. The OTel sidecar / Prometheus port annotations
+        are still required so user-side vLLM metrics reach keda-otel-scaler.
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-scale-from-zero-service
+                annotations:
+                  serving.kserve.io/autoscalerClass: "external"
+                  prometheus.kserve.io/port: "8000"
+              spec:
+                predictor:
+                  minReplicas: 0
+                  maxReplicas: 3
+
+    - name: Verify AIM Engine authored the KEDA ScaledObject with activation trigger
+      description: |
+        Under scale-from-zero the controller adds two triggers: the
+        gateway-rate activation trigger (envoy_cluster_external_upstream_rq_completed,
+        0->1 on any request) and the user vllm:num_requests_running metric
+        (1->N under load). Both metricQuery strings are scoped with
+        {namespace,deployment} labels by the controller; we match by
+        substring to stay robust to the hash-derived predictor name.
+        Selecting by aim.eai.amd.com/service label avoids depending on the
+        hashed ScaledObject name itself. cooldownPeriod is the
+        service-level override (30s) so KEDA idles within the chainsaw
+        timeout.
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: keda.sh/v1alpha1
+              kind: ScaledObject
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-scale-from-zero-service
+                  app.kubernetes.io/component: autoscaling
+                  app.kubernetes.io/managed-by: aim-engine
+              spec:
+                minReplicaCount: 0
+                maxReplicaCount: 3
+                cooldownPeriod: 30
+                pollingInterval: 5
+                (length(triggers) >= `2`): true
+                (length(triggers[?contains(metadata.metricQuery, 'envoy_cluster_external_upstream_rq_completed')]) >= `1`): true
+                (length(triggers[?contains(metadata.metricQuery, 'vllm:num_requests_running')]) >= `1`): true
+
+    - name: Verify HTTPRoute is created for routing
+      description: |
+        The activation trigger queries gateway-side Envoy metrics that
+        only exist once an HTTPRoute fronts the predictor. Asserting the
+        HTTPRoute exists confirms the routing prerequisite is satisfied
+        before we send the activation request.
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-scale-from-zero-service
+
+    - name: Verify service reaches Running
+      description: |
+        Wait for the first AIMService.status: Running cycle. We assert ONLY
+        status + runtime.min/max here, never a running pod or a replica
+        count: depending on KEDA timing the predictor may be at 1 (KServe's
+        initial spin-up, held up because the gateway trigger has no series
+        yet) or already idling -- both are Running. The warm-up step below
+        drives the deployment into a deterministic state.
+        Note: status.runtime.minReplicas reflects spec.minReplicas (the
+        user's intent and KEDA's effective floor), not HPA.Spec.MinReplicas
+        which KEDA pins to 1 because Kubernetes' HPA v2 still validates
+        MinReplicas>=1 outside the alpha HPAScaleToZero feature gate. The
+        override lives in ComputeRuntimeStatus (internal/v1alpha1/aimservice/exports.go).
+      try:
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-scale-from-zero-service
+              status:
+                status: Running
+                runtime:
+                  minReplicas: 0
+                  maxReplicas: 3
+      catch:
+        - describe:
+            apiVersion: aim.eai.amd.com/v1alpha1
+            kind: AIMService
+        - describe:
+            apiVersion: serving.kserve.io/v1beta1
+            kind: InferenceService
+        - describe:
+            apiVersion: keda.sh/v1alpha1
+            kind: ScaledObject
+        - describe:
+            apiVersion: autoscaling/v2
+            kind: HorizontalPodAutoscaler
+        - get:
+            apiVersion: v1
+            kind: Pod
+        - podLogs:
+            selector: serving.kserve.io/inferenceservice=test-scale-from-zero-service
+            tail: 80
+
+    - name: Warm up and seed the gateway activation metric
+      description: |
+        Send a real request through kserve-ingress-gateway -> HTTPRoute ->
+        predictor BEFORE asserting idle-to-zero. This is the linchpin of a
+        robust test: it (1) proves the service serves a 200, and (2) creates
+        the `envoy_cluster_external_upstream_rq_completed{namespace,deployment}`
+        series in Envoy/keda-otel-scaler. Until this series exists the
+        gateway trigger returns "not found", KEDA reports TriggerError, and
+        the deployment will NOT idle (it holds at the current replica
+        count). validate-http.sh retries for the full deadline, so this
+        step is robust whether the predictor is already warm (served
+        immediately) or KEDA has it cold (request drives 0->1 first).
+      try:
+        - script:
+            timeout: 360s
+            env:
+              - name: HTTP_BASE_PATH
+                value: (join('', ['/integration/scale-from-zero/', $namespace, '/test-scale-from-zero-service/v1']))
+              - name: HTTP_RETRY_DEADLINE
+                value: "300"
+            content: bash ../../gpu/_shared/validate-http.sh
+      catch:
+        - describe:
+            apiVersion: aim.eai.amd.com/v1alpha1
+            kind: AIMService
+        - describe:
+            apiVersion: keda.sh/v1alpha1
+            kind: ScaledObject
+        - describe:
+            apiVersion: gateway.networking.k8s.io/v1
+            kind: HTTPRoute
+        - podLogs:
+            selector: serving.kserve.io/inferenceservice=test-scale-from-zero-service
+            tail: 80
+
+    - name: Verify the warm-up brought the deployment up
+      description: |
+        Gate the idle assertion on a real >=1 replica state first, so the
+        next step observes a genuine 1->0 transition rather than a stale 0/0
+        left over from before the warm-up woke the pod.
+
+        We assert the predictor Deployment's readyReplicas, NOT the
+        AIMService status.runtime.currentReplicas. Under KEDA scale-from-zero
+        the 0->1 activation is driven by KEDA scaling the Deployment
+        directly; the HPA only owns 1->N and its Status.CurrentReplicas
+        stays 0 (often unset) for several seconds after a pod is up and
+        serving, then catches up. The AIMService status mirrors that HPA
+        value (see ComputeRuntimeStatus), so gating on it is racy: the pod
+        can be Ready and returning 200 while currentReplicas still reads 0.
+        The Deployment's readyReplicas is the live source of truth and flips
+        to 1 as soon as the warm-up pod is Ready, independent of HPA/KEDA
+        bookkeeping lag.
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-scale-from-zero-service
+                  component: predictor
+              status:
+                (readyReplicas >= `1`): true
+      catch:
+        - describe:
+            apiVersion: aim.eai.amd.com/v1alpha1
+            kind: AIMService
+        - describe:
+            apiVersion: autoscaling/v2
+            kind: HorizontalPodAutoscaler
+        - get:
+            apiVersion: apps/v1
+            kind: Deployment
+        - get:
+            apiVersion: v1
+            kind: Pod
+
+    - name: Wait for KEDA to idle the deployment to zero
+      description: |
+        With the gateway series now seeded (warm-up step) and the user
+        vllm:num_requests_running metric reporting 0 (aim-dummy /metrics),
+        both triggers resolve as inactive and KEDA idles the Deployment to
+        0. The AIMService status mirrors the live HPA via
+        status.runtime.currentReplicas / desiredReplicas, and getHPAHealth
+        treats ScalingActive=False as the healthy idle state -- status stays
+        Running. minReplicas reflects spec intent (0) via the
+        ComputeRuntimeStatus override; desiredReplicas drops to 0 in
+        lockstep with currentReplicas.
+      try:
+        - assert:
+            # Idle latency is dominated by the keda-otel-add-on retention
+            # window (METRIC_STORE_RETENTION_SECONDS=120, avg-over-window)
+            # plus cooldownPeriod(30s), NOT cooldown alone. Measured ~150s
+            # on kind; 300s absorbs a busy KEDA / slower scrape pipeline.
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-scale-from-zero-service
+              status:
+                status: Running
+                runtime:
+                  currentReplicas: 0
+                  desiredReplicas: 0
+                  minReplicas: 0
+                  maxReplicas: 3
+      catch:
+        - describe:
+            apiVersion: aim.eai.amd.com/v1alpha1
+            kind: AIMService
+        - describe:
+            apiVersion: keda.sh/v1alpha1
+            kind: ScaledObject
+        - describe:
+            apiVersion: autoscaling/v2
+            kind: HorizontalPodAutoscaler
+        - get:
+            apiVersion: v1
+            kind: Pod
+
+    - name: Trigger 0->1 activation by hitting the HTTPRoute via the gateway
+      description: |
+        Sends a real request through kserve-ingress-gateway -> HTTPRoute
+        -> predictor service. The first attempts will be served by Envoy
+        as 502/503 because there's no upstream replica; each completed
+        request increments envoy_cluster_external_upstream_rq_completed,
+        which is the activation series queried by the controller-owned
+        ScaledObject. AIM Engine does not retry these on the gateway --
+        the client is expected to. The shared validate-http.sh script's
+        long-running retry loop plays that client role here, retrying the
+        cold-start 5xx burst until the call returns 200 once KEDA has
+        scaled to 1 and aim-dummy is serving /v1/models.
+      try:
+        - script:
+            timeout: 360s
+            env:
+              - name: HTTP_BASE_PATH
+                value: (join('', ['/integration/scale-from-zero/', $namespace, '/test-scale-from-zero-service/v1']))
+              - name: HTTP_RETRY_DEADLINE
+                value: "300"
+            content: bash ../../gpu/_shared/validate-http.sh
+      catch:
+        - describe:
+            apiVersion: aim.eai.amd.com/v1alpha1
+            kind: AIMService
+        - describe:
+            apiVersion: serving.kserve.io/v1beta1
+            kind: InferenceService
+        - describe:
+            apiVersion: keda.sh/v1alpha1
+            kind: ScaledObject
+        - describe:
+            apiVersion: autoscaling/v2
+            kind: HorizontalPodAutoscaler
+        - describe:
+            apiVersion: gateway.networking.k8s.io/v1
+            kind: HTTPRoute
+        - get:
+            apiVersion: v1
+            kind: Pod
+        - podLogs:
+            selector: serving.kserve.io/inferenceservice=test-scale-from-zero-service
+            tail: 80
+
+    - name: Verify the activation request scaled the deployment from zero
+      description: |
+        End-of-cycle assertion: after the validate-http.sh call has
+        succeeded the predictor Deployment must show readyReplicas >= 1.
+        This proves the 0->1 transition was driven by HTTP traffic (the
+        earlier idle-to-zero step rules out KServe's initial spin-up).
+
+        As in the warm-up gate, the "is it up" check reads the Deployment's
+        readyReplicas (live truth) rather than AIMService
+        status.runtime.currentReplicas, which lags the HPA during KEDA's
+        0->1 activation. The AIMService is still asserted Running with its
+        spec-derived replica bounds (min 0 / max 3).
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-scale-from-zero-service
+                  component: predictor
+              status:
+                (readyReplicas >= `1`): true
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-scale-from-zero-service
+              status:
+                status: Running
+                runtime:
+                  minReplicas: 0
+                  maxReplicas: 3
+      catch:
+        - describe:
+            apiVersion: aim.eai.amd.com/v1alpha1
+            kind: AIMService
+        - describe:
+            apiVersion: autoscaling/v2
+            kind: HorizontalPodAutoscaler
+        - get:
+            apiVersion: v1
+            kind: Pod

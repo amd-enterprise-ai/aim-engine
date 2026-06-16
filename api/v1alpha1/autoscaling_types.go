@@ -24,15 +24,35 @@ package v1alpha1
 
 // AIMServiceAutoScaling configures KEDA-based autoscaling with custom metrics.
 // This enables automatic scaling based on metrics collected from OpenTelemetry.
+// A present autoScaling block must carry at least one real setting: a fully
+// empty block is a partially-complete spec that yields no usable configuration,
+// so it is rejected. Omit the whole block to use default scaling instead. Any
+// single valid sub-field (metrics, pollingInterval, or cooldownPeriod) is enough.
+// +kubebuilder:validation:XValidation:rule="(has(self.metrics) && size(self.metrics) > 0) || has(self.pollingInterval) || has(self.cooldownPeriod)",message="spec.autoScaling must not be empty: set at least one of metrics, pollingInterval, or cooldownPeriod, or omit the autoScaling block to use default scaling"
 type AIMServiceAutoScaling struct {
 	// Metrics is a list of metrics to be used for autoscaling.
 	// Each metric defines a source (PodMetric) and target values.
 	// +optional
 	Metrics []AIMServiceMetricsSpec `json:"metrics,omitempty"`
+
+	// PollingInterval is the KEDA polling interval in seconds. Defaults to 5
+	// when spec.minReplicas == 0 (so a single request reliably activates the
+	// deployment within ~10s); otherwise unset (KEDA default of 30 applies).
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	PollingInterval *int32 `json:"pollingInterval,omitempty"`
+
+	// CooldownPeriod is the seconds-of-inactivity budget KEDA waits before
+	// scaling back to minReplicaCount. Under scale-to-zero, defaults to a
+	// memory-derived value (300-1200s); otherwise unset (KEDA default of 300).
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	CooldownPeriod *int32 `json:"cooldownPeriod,omitempty"`
 }
 
 // AIMServiceMetricsSpec defines a single metric for autoscaling.
 // Specifies the metric source type and configuration.
+// +kubebuilder:validation:XValidation:rule="self.type != 'PodMetric' || has(self.podmetric)",message="metrics entry of type PodMetric must set podmetric"
 type AIMServiceMetricsSpec struct {
 	// Type is the type of metric source.
 	// Valid values: "PodMetric" (per-pod custom metrics).
@@ -59,6 +79,7 @@ type AIMServicePodMetricSource struct {
 
 // AIMServicePodMetric identifies the pod metric and its backend.
 // Supports multiple metrics backends including OpenTelemetry.
+// +kubebuilder:validation:XValidation:rule="has(self.query) || (has(self.metricNames) && size(self.metricNames) > 0)",message="podmetric.metric must set query or metricNames so the scaler has something to query"
 type AIMServicePodMetric struct {
 	// Backend defines the metrics backend to use.
 	// If not specified, defaults to "opentelemetry".
@@ -92,6 +113,11 @@ type AIMServicePodMetric struct {
 
 // AIMServiceMetricTarget defines the target value for a metric.
 // Specifies how the metric value should be interpreted and what target to maintain.
+// The value field that matches the chosen type must be set, otherwise the
+// target carries no threshold and the scaler cannot make a decision.
+// +kubebuilder:validation:XValidation:rule="self.type != 'Value' || has(self.value)",message="target type Value requires target.value"
+// +kubebuilder:validation:XValidation:rule="self.type != 'AverageValue' || has(self.averageValue)",message="target type AverageValue requires target.averageValue"
+// +kubebuilder:validation:XValidation:rule="self.type != 'Utilization' || has(self.averageUtilization)",message="target type Utilization requires target.averageUtilization"
 type AIMServiceMetricTarget struct {
 	// Type specifies how to interpret the metric value.
 	// "Value": absolute value target (use Value field)

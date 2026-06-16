@@ -305,6 +305,21 @@ func buildFrameworkEnvVars(profileSpec *aimv1alpha2.AIMProfileSpecCommon, profil
 	return vars
 }
 
+// resolveEffectiveResourcesFromProfile returns the fully-merged predictor
+// ResourceRequirements, or nil when the profile is not yet Ready.
+// PlanScaledObject uses this to derive a memory-aware cooldown.
+func resolveEffectiveResourcesFromProfile(
+	service *aimv1alpha1.AIMService,
+	profileSpec *aimv1alpha2.AIMProfileSpecCommon,
+	profileStatus *aimv1alpha2.AIMProfileStatus,
+) *corev1.ResourceRequirements {
+	if profileSpec == nil || profileStatus == nil || profileStatus.Status != constants.AIMStatusReady {
+		return nil
+	}
+	rr := resolveResourcesFromProfile(service, profileSpec, profileStatus)
+	return &rr
+}
+
 // resolvedModelId returns the model id the runtime serves under, mirroring its
 // resolution order: ModelId, else modelSources[0].modelId, else aimId.
 func resolvedModelId(profileSpec *aimv1alpha2.AIMProfileSpecCommon) string {

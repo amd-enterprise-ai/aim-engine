@@ -262,6 +262,22 @@ jobs:
 
       - name: Wait for operator to be ready
         run: kubectl wait --for=condition=Available --timeout=120s deployment/aim-engine-controller-manager -n aim-system
+      
+      - name: Wait for kgateway metrics collector to be ready
+        run: |
+          set -euo pipefail
+          COLLECTOR_DEPLOY=aim-engine-kgateway-metrics-collector
+          for i in $(seq 1 24); do
+            if kubectl -n aim-system get deploy "${COLLECTOR_DEPLOY}" >/dev/null 2>&1; then
+              kubectl -n aim-system rollout status "deploy/${COLLECTOR_DEPLOY}" --timeout=120s
+              exit 0
+            fi
+            echo "Waiting for OTel Operator to create ${COLLECTOR_DEPLOY} ($i/24)..."
+            sleep 5
+          done
+          echo "scale-from-zero collector deployment never appeared" >&2
+          kubectl -n aim-system get opentelemetrycollectors,deploy 2>&1 || true
+          exit 1
 
       # Whole-run metrics history: an in-cluster poller scrapes the operator's
       # protected /metrics every few seconds for the duration of the suite, so we

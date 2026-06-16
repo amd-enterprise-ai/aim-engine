@@ -24,11 +24,16 @@ package aimservice
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
+	duckv1 "knative.dev/pkg/apis/duck/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -1029,5 +1034,341 @@ func TestGetResolvedTemplate(t *testing.T) {
 				t.Error("unexpected status")
 			}
 		})
+	}
+}
+
+// hpaWithScalingActive returns a minimal HPA whose ScalingActive condition
+// carries the given status/reason.
+func hpaWithScalingActive(status corev1.ConditionStatus, reason string) *autoscalingv2.HorizontalPodAutoscaler {
+	return &autoscalingv2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{Name: "hpa"},
+		Status: autoscalingv2.HorizontalPodAutoscalerStatus{
+			Conditions: []autoscalingv2.HorizontalPodAutoscalerCondition{
+				{
+					Type:    autoscalingv2.AbleToScale,
+					Status:  corev1.ConditionTrue,
+					Reason:  "SucceededGetScale",
+					Message: "the HPA controller was able to get the target's current scale",
+				},
+				{
+					Type:   autoscalingv2.ScalingActive,
+					Status: status,
+					Reason: reason,
+				},
+			},
+		},
+	}
+}
+
+func TestIsScaleToZero(t *testing.T) {
+	tests := []struct {
+		name        string
+		minReplicas *int32
+		want        bool
+	}{
+		{name: "unset (nil) - not scale-to-zero", minReplicas: nil, want: false},
+		{name: "minReplicas=0 - scale-to-zero", minReplicas: ptr.To(int32(0)), want: true},
+		{name: "minReplicas=1 - not scale-to-zero", minReplicas: ptr.To(int32(1)), want: false},
+		{name: "minReplicas=3 - not scale-to-zero", minReplicas: ptr.To(int32(3)), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewService("svc").WithModelImage("test-image:v1").Build()
+			svc.Spec.MinReplicas = tt.minReplicas
+			if got := isScaleToZero(svc); got != tt.want {
+				t.Errorf("isScaleToZero=%v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	if got := isScaleToZero(nil); got {
+		t.Errorf("isScaleToZero(nil)=true, want false")
+	}
+}
+
+func TestServiceObservation_IsScaledToZero(t *testing.T) {
+	tests := []struct {
+		name        string
+		minReplicas *int32
+		hpa         *autoscalingv2.HorizontalPodAutoscaler
+		pods        *corev1.PodList
+		want        bool
+	}{
+		{
+			name:        "scale-to-zero opted in and HPA reports ScalingDisabled - idle",
+			minReplicas: ptr.To(int32(0)),
+			hpa:         hpaWithScalingActive(corev1.ConditionFalse, hpaReasonScalingDisabled),
+			want:        true,
+		},
+		{
+			name:        "scale-to-zero opted in but HPA ScalingActive=True - not idle (running)",
+			minReplicas: ptr.To(int32(0)),
+			hpa:         hpaWithScalingActive(corev1.ConditionTrue, "ValidMetricFound"),
+			want:        false,
+		},
+		{
+			// Mirrors getHPAHealth: a non-authoritative ScalingActive=False
+			// reason with zero pods is still idle (the activation metric series
+			// just isn't available yet).
+			name:        "scale-to-zero, ScalingActive=False non-authoritative reason, zero pods - idle",
+			minReplicas: ptr.To(int32(0)),
+			hpa:         hpaWithScalingActive(corev1.ConditionFalse, "FailedGetExternalMetric"),
+			pods:        podsWithReady(0, 0),
+			want:        true,
+		},
+		{
+			name:        "scale-to-zero, ScalingActive=False non-authoritative reason, pods running - not idle",
+			minReplicas: ptr.To(int32(0)),
+			hpa:         hpaWithScalingActive(corev1.ConditionFalse, "FailedGetExternalMetric"),
+			pods:        podsWithReady(1, 1),
+			want:        false,
+		},
+		{
+			// Regression: the HPA exists but has not emitted a ScalingActive
+			// condition yet (scalingActive==nil). With zero pods this is idle;
+			// the old predicate returned false here, leaving the service stuck
+			// reporting NoPods / Starting.
+			name:        "scale-to-zero, ScalingActive not emitted yet, zero pods - idle",
+			minReplicas: ptr.To(int32(0)),
+			hpa:         &autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{Name: "hpa"}},
+			pods:        podsWithReady(0, 0),
+			want:        true,
+		},
+		{
+			name:        "scale-to-zero, ScalingActive not emitted yet, pods running - not idle",
+			minReplicas: ptr.To(int32(0)),
+			hpa:         &autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{Name: "hpa"}},
+			pods:        podsWithReady(1, 0),
+			want:        false,
+		},
+		{
+			name:        "minReplicas=1 with ScalingDisabled - not scale-to-zero (something is wrong)",
+			minReplicas: ptr.To(int32(1)),
+			hpa:         hpaWithScalingActive(corev1.ConditionFalse, hpaReasonScalingDisabled),
+			want:        false,
+		},
+		{
+			name:        "scale-to-zero opted in but HPA not fetched yet - not idle yet",
+			minReplicas: ptr.To(int32(0)),
+			hpa:         nil,
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewService("svc").WithModelImage("test-image:v1").Build()
+			svc.Spec.MinReplicas = tt.minReplicas
+
+			fetch := ServiceFetchResult{
+				service: svc,
+				hpa: controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]{
+					Value: tt.hpa,
+				},
+			}
+			if tt.pods != nil {
+				fetch.inferenceServicePods = &controllerutils.FetchResult[*corev1.PodList]{
+					Value: tt.pods,
+				}
+			}
+			obs := ServiceObservation{ServiceFetchResult: fetch}
+
+			if got := obs.isScaledToZero(); got != tt.want {
+				t.Errorf("isScaledToZero=%v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// readyISVC returns an InferenceService whose Ready condition is True.
+func readyISVC(name string) *servingv1beta1.InferenceService {
+	isvc := &servingv1beta1.InferenceService{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace},
+	}
+	isvc.Status.Conditions = duckv1.Conditions{
+		{Type: "Ready", Status: corev1.ConditionTrue},
+	}
+	return isvc
+}
+
+// podsWithReady returns a Pod list of length `total`, of which `ready`
+// pods carry PodReady=True. Used to drive observedPodCount in
+// getHPAHealth tests.
+func podsWithReady(total, ready int) *corev1.PodList {
+	items := make([]corev1.Pod, 0, total)
+	for i := 0; i < total; i++ {
+		p := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("p%d", i), Namespace: testNamespace}}
+		if i < ready {
+			p.Status.Conditions = []corev1.PodCondition{
+				{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+			}
+		}
+		items = append(items, p)
+	}
+	return &corev1.PodList{Items: items}
+}
+
+func TestGetHPAHealth_ScaleToZero(t *testing.T) {
+	tests := []struct {
+		name          string
+		minReplicas   *int32
+		maxReplicas   *int32
+		hpa           *autoscalingv2.HorizontalPodAutoscaler
+		pods          *corev1.PodList
+		expectState   constants.AIMStatus
+		expectReason  string
+		expectMessage string
+	}{
+		{
+			name:          "scale-to-zero idle is healthy via authoritative ScalingDisabled",
+			minReplicas:   ptr.To(int32(0)),
+			maxReplicas:   ptr.To(int32(3)),
+			hpa:           hpaWithScalingActive(corev1.ConditionFalse, hpaReasonScalingDisabled),
+			expectState:   constants.AIMStatusReady,
+			expectReason:  aimv1alpha1.AIMServiceReasonScaledToZero,
+			expectMessage: "Service is idle: KEDA has scaled the deployment to zero replicas; will scale up when the configured trigger becomes active",
+		},
+		{
+			name:         "scale-to-zero opted in, HPA actively scaling - HPAOperational",
+			minReplicas:  ptr.To(int32(0)),
+			maxReplicas:  ptr.To(int32(3)),
+			hpa:          hpaWithScalingActive(corev1.ConditionTrue, "ValidMetricFound"),
+			expectState:  constants.AIMStatusReady,
+			expectReason: "HPAOperational",
+		},
+		{
+			name:         "minReplicas>=1 with ScalingDisabled is still MetricsFailed (not a legitimate idle)",
+			minReplicas:  ptr.To(int32(1)),
+			maxReplicas:  ptr.To(int32(3)),
+			hpa:          hpaWithScalingActive(corev1.ConditionFalse, hpaReasonScalingDisabled),
+			expectState:  constants.AIMStatusFailed,
+			expectReason: "MetricsFailed",
+		},
+		{
+			name:         "minReplicas>=1 with a real metrics error is still MetricsFailed",
+			minReplicas:  ptr.To(int32(1)),
+			maxReplicas:  ptr.To(int32(3)),
+			hpa:          hpaWithScalingActive(corev1.ConditionFalse, "FailedGetExternalMetric"),
+			expectState:  constants.AIMStatusFailed,
+			expectReason: "MetricsFailed",
+		},
+		{
+			name:         "scale-to-zero with FailedGetExternalMetric AND zero pods is healthy idle",
+			minReplicas:  ptr.To(int32(0)),
+			maxReplicas:  ptr.To(int32(3)),
+			hpa:          hpaWithScalingActive(corev1.ConditionFalse, "FailedGetExternalMetric"),
+			pods:         podsWithReady(0, 0),
+			expectState:  constants.AIMStatusReady,
+			expectReason: aimv1alpha1.AIMServiceReasonScaledToZero,
+		},
+		{
+			name:         "scale-to-zero with FailedGetExternalMetric AND running pods is HPAOperational (does not gate readiness)",
+			minReplicas:  ptr.To(int32(0)),
+			maxReplicas:  ptr.To(int32(3)),
+			hpa:          hpaWithScalingActive(corev1.ConditionFalse, "FailedGetExternalMetric"),
+			pods:         podsWithReady(1, 1),
+			expectState:  constants.AIMStatusReady,
+			expectReason: "HPAOperational",
+		},
+		{
+			name:         "scale-to-zero with no ScalingActive condition AND zero pods is healthy idle",
+			minReplicas:  ptr.To(int32(0)),
+			maxReplicas:  ptr.To(int32(3)),
+			hpa:          &autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{Name: "hpa"}},
+			pods:         podsWithReady(0, 0),
+			expectState:  constants.AIMStatusReady,
+			expectReason: aimv1alpha1.AIMServiceReasonScaledToZero,
+		},
+		{
+			name:         "scale-to-zero with no ScalingActive condition AND running pods is HPAOperational (does not gate readiness)",
+			minReplicas:  ptr.To(int32(0)),
+			maxReplicas:  ptr.To(int32(3)),
+			hpa:          &autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{Name: "hpa"}},
+			pods:         podsWithReady(1, 0),
+			expectState:  constants.AIMStatusReady,
+			expectReason: "HPAOperational",
+		},
+		{
+			name:         "scale-to-zero with pods running and aim-dummy not emitting the user metric stays Ready (regression: was Activating/Progressing)",
+			minReplicas:  ptr.To(int32(0)),
+			maxReplicas:  ptr.To(int32(3)),
+			hpa:          hpaWithScalingActive(corev1.ConditionFalse, "FailedGetExternalMetric"),
+			pods:         podsWithReady(2, 2),
+			expectState:  constants.AIMStatusReady,
+			expectReason: "HPAOperational",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewService("svc").WithModelImage("test-image:v1").Build()
+			svc.Spec.MinReplicas = tt.minReplicas
+			svc.Spec.MaxReplicas = tt.maxReplicas
+
+			fetch := ServiceFetchResult{
+				service: svc,
+				inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+					Value: readyISVC("svc-isvc"),
+				},
+				hpa: controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]{
+					Value: tt.hpa,
+				},
+			}
+			if tt.pods != nil {
+				fetch.inferenceServicePods = &controllerutils.FetchResult[*corev1.PodList]{
+					Value: tt.pods,
+				}
+			}
+			obs := ServiceObservation{ServiceFetchResult: fetch}
+
+			got := obs.getHPAHealth()
+			if got.State != tt.expectState {
+				t.Errorf("state=%q, want %q (msg=%q)", got.State, tt.expectState, got.Message)
+			}
+			if got.Reason != tt.expectReason {
+				t.Errorf("reason=%q, want %q (msg=%q)", got.Reason, tt.expectReason, got.Message)
+			}
+			if tt.expectMessage != "" && got.Message != tt.expectMessage {
+				t.Errorf("message=%q, want %q", got.Message, tt.expectMessage)
+			}
+		})
+	}
+}
+
+// TestGetComponentHealth_ScaleToZeroRequiresRouting verifies the template
+// pipeline surfaces the invalid scale-from-zero-without-routing combination
+// through GetComponentHealth so the state engine sets ConfigValid=False.
+func TestGetComponentHealth_ScaleToZeroRequiresRouting(t *testing.T) {
+	svc := NewService("svc").WithModelImage("test-image:v1").Build()
+	svc.Spec.MinReplicas = ptr.To(int32(0))
+	svc.Spec.MaxReplicas = ptr.To(int32(3))
+
+	obs := ServiceObservation{ServiceFetchResult: ServiceFetchResult{service: svc}}
+
+	health := obs.GetComponentHealth(context.Background(), nil)
+
+	var cfg *controllerutils.ComponentHealth
+	for i := range health {
+		if health[i].Component == ComponentScaleToZeroConfig {
+			cfg = &health[i]
+		}
+	}
+	if cfg == nil {
+		t.Fatalf("expected a ScaleToZeroConfig component health entry when scale-to-zero is set without routing")
+	}
+	if cfg.State != constants.AIMStatusFailed {
+		t.Errorf("ScaleToZeroConfig state=%q, want Failed", cfg.State)
+	}
+	if cfg.Reason != aimv1alpha1.AIMServiceReasonRoutingRequired {
+		t.Errorf("ScaleToZeroConfig reason=%q, want %q", cfg.Reason, aimv1alpha1.AIMServiceReasonRoutingRequired)
+	}
+
+	// Enabling routing clears the condition entirely.
+	svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{Enabled: ptr.To(true)}
+	for _, h := range obs.GetComponentHealth(context.Background(), nil) {
+		if h.Component == ComponentScaleToZeroConfig {
+			t.Errorf("ScaleToZeroConfig should not be reported once routing is enabled")
+		}
 	}
 }

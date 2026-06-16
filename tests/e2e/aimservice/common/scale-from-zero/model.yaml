@@ -1,7 +1,7 @@
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMModel
 metadata:
-  name: test-autoscaling-update-model
+  name: test-scale-from-zero-model
 spec:
   image: ghcr.io/silogen/aim-dummy:0.2.1
   resources:

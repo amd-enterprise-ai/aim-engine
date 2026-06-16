@@ -171,15 +171,9 @@ spec:
 
 ### Autoscaling
 
-```yaml
-spec:
-  model:
-    name: qwen-qwen3-32b
-  minReplicas: 1
-  maxReplicas: 5
-```
+When autoscaling is configured, the controller marks the InferenceService with `autoscalerClass=external` (so KServe writes no autoscaler of its own) and creates a controller-owned KEDA `ScaledObject` that targets the predictor Deployment. That `ScaledObject` is the sole authority on scaling.
 
-When `minReplicas` and `maxReplicas` are set, the controller annotates the InferenceService for KEDA-managed autoscaling. Without custom metrics, KEDA uses default scaling behavior.
+The `ScaledObject` is only created when at least one trigger resolves: a scale-from-zero activation trigger (when `minReplicas: 0`) and/or the custom metrics below. Configuring autoscaling (`minReplicas`/`maxReplicas`/`autoScaling`) with `minReplicas >= 1` and no metrics yields no trigger, so the declared bounds could never be enforced — AIM Engine rejects this as `ConfigValid=False` (reason `AutoscalingRequiresMetrics`). Add a metric, set `minReplicas: 0` for scale-from-zero, or use `spec.replicas` for a fixed replica count.
 
 For custom metrics (e.g. vLLM OpenTelemetry counters):
 
@@ -385,6 +379,19 @@ spec:
       metric: latency
   minReplicas: 1
   maxReplicas: 3
+  autoScaling:
+    metrics:
+      - type: PodMetric
+        podmetric:
+          metric:
+            backend: opentelemetry
+            metricNames:
+              - vllm:num_requests_running
+            query: "vllm:num_requests_running"
+            operationOverTime: avg
+          target:
+            type: Value
+            value: "1"
   resources:
     limits:
       cpu: "16"

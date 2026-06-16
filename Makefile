@@ -132,6 +132,11 @@ kind-create: manifests ## Create kind cluster with all dependencies for local de
 	@# Install core dependencies (cert-manager, kgateway, kserve)
 	@echo "Installing core dependencies..."
 	@helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
+	@# Install scale-from-zero activation prereq (kgateway-metrics-collector).
+	@# Cluster-wide OpenTelemetryCollector that scrapes Envoy from kgateway
+	@# data-plane pods and forwards the request counter to keda-otel-scaler;
+	@# required for AIMServices with spec.minReplicas: 0 to ever activate.
+	@$(MAKE) install-scale-from-zero-prereq
 	@# Install kind-specific dependencies (NFS server + csi-driver-nfs)
 	@echo "Installing kind-specific dependencies..."
 	@helmfile sync -f hack/kind/helmfile.yaml.gotmpl
@@ -167,6 +172,13 @@ seaweedfs-init-bucket: ## Create the aim-cache S3 bucket in SeaweedFS.
 seaweedfs-default-config: ## Apply default AIMClusterRuntimeConfig with S3 cache enabled.
 	@echo "Applying default AIMClusterRuntimeConfig..."
 	@kubectl apply -f hack/default-cluster-runtime-config.yaml
+
+.PHONY: install-scale-from-zero-prereq
+install-scale-from-zero-prereq: ## Install kgateway-metrics-collector (scale-from-zero activation prereq).
+	@echo "Installing scale-from-zero prereq (kgateway-metrics-collector)..."
+	@kubectl apply -f config/prereqs/scale-from-zero/kgateway-metrics-collector.yaml
+	@echo "Waiting for kgateway-metrics-collector deployment..."
+	@kubectl -n keda rollout status deploy/kgateway-metrics-collector --timeout=180s
 
 .PHONY: cache-warm
 cache-warm: ## Pre-warm the S3 artifact cache with test models.
@@ -323,6 +335,11 @@ vcluster-create: ## Create personal vcluster, install dependencies, and connect.
 	vcluster create $(VCLUSTER_NAME) --namespace $(VCLUSTER_NAME) -f hack/dependencies/vcluster.yaml
 	@echo "Installing dependencies..."
 	helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
+	@# Install scale-from-zero activation prereq (kgateway-metrics-collector).
+	@# Cluster-wide OpenTelemetryCollector that scrapes Envoy from kgateway
+	@# data-plane pods and forwards the request counter to keda-otel-scaler;
+	@# required for AIMServices with spec.minReplicas: 0 to ever activate.
+	@$(MAKE) install-scale-from-zero-prereq
 	@echo "Creating aim-system namespace..."
 	@kubectl create namespace aim-system --dry-run=client -o yaml | kubectl apply -f -
 	@echo "Installing CRDs..."

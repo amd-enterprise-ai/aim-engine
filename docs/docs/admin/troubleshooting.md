@@ -153,6 +153,24 @@ Common causes:
 - `routing.enabled` is not set (check runtime config)
 - Gateway namespace mismatch in `gatewayRef`
 
+### Scale-to-Zero Service Rejected (`RoutingRequiredForScaleToZero`)
+
+A service with `spec.minReplicas: 0` reports `ConfigValid=False` and never creates its runtime:
+
+```bash
+kubectl get aimservice <name> -o jsonpath='{.status.conditions}' | jq
+kubectl get events --field-selector reason=RoutingRequiredForScaleToZero -n <namespace>
+```
+
+Cause: scale-from-zero needs routing enabled — the 0->1 activation trigger reads gateway-side Envoy metrics that only exist once an `HTTPRoute` is created. With routing disabled the service could never wake, so AIM Engine rejects the spec.
+
+Fix one of:
+
+- Enable routing on the service (`spec.routing.enabled: true` with a `gatewayRef`), or set a cluster-wide default (`runtimeConfig.routing.enabled`). See [Routing and Ingress](../guides/routing-and-ingress.md).
+- Set `minReplicas >= 1` if you don't want scale-to-zero.
+
+See [ScaleToZeroConfig](../reference/conditions.md#scaletozeroconfig) for the full condition reference.
+
 ## Operator Logs
 
 View operator logs for detailed error information:

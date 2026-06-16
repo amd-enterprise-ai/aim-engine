@@ -202,6 +202,14 @@ jobs:
           helm install aim-engine ./chart --namespace aim-system --create-namespace
           ```
 
+          Scale-from-zero: the chart ships the cluster-wide gateway-metrics
+          collector by default (`scaleFromZero.gatewayMetricsCollector.enable=true`),
+          required for any AIMService with `spec.minReplicas: 0`. It needs the
+          OpenTelemetry Operator on the cluster. To manage it yourself instead,
+          install with `--set scaleFromZero.gatewayMetricsCollector.enable=false`
+          and apply `config/prereqs/scale-from-zero/kgateway-metrics-collector.yaml`
+          (see its README for customization knobs).
+
           Or clone this branch:
 
           ```bash

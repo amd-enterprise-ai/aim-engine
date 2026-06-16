@@ -37,6 +37,12 @@ cd aim-engine-deploy
 kubectl apply -f crds.yaml
 kubectl wait --for=condition=Established crd --all --timeout=60s
 
+# Install the scale-from-zero collector prerequisite (cluster-wide)
+# Required for AIMServices with spec.minReplicas: 0. See
+# config/prereqs/scale-from-zero/README.md in main for customization knobs.
+kubectl apply -f https://raw.githubusercontent.com/amd-enterprise-ai/aim-engine/main/config/prereqs/scale-from-zero/kgateway-metrics-collector.yaml
+kubectl -n keda rollout status deploy/kgateway-metrics-collector --timeout=120s
+
 # Install operator via Helm
 helm install aim-engine ./chart --namespace aim-system --create-namespace
 ```
@@ -53,6 +59,9 @@ make helm
 # Install CRDs
 kubectl apply -f dist/crds.yaml
 kubectl wait --for=condition=Established crd --all --timeout=60s
+
+# Install the scale-from-zero collector prerequisite (cluster-wide)
+make install-scale-from-zero-prereq
 
 # Option 1: Install directly with Helm
 helm install aim-engine ./dist/chart --namespace aim-system --create-namespace

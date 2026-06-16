@@ -1,0 +1,175 @@
+{{- if .Values.scaleFromZero.gatewayMetricsCollector.enable }}
+{{- $c := .Values.scaleFromZero.gatewayMetricsCollector }}
+# Cluster-singleton OpenTelemetry collector that scrapes Envoy admin metrics
+# from every kgateway data-plane pod and forwards the request counter used by
+# AIMService scale-from-zero activation to keda-otel-scaler. This is the ONLY
+# activation signal available while a service with spec.minReplicas: 0 has zero
+# pods, so it must be running for such services to ever wake back up.
+#
+# Requires the OpenTelemetry Operator CRDs (opentelemetry.io/v1beta1) on the
+# cluster -- the operator reconciles this CR into a Deployment + Service.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aim-engine-kgateway-metrics-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: aim-scale-from-zero
+    app.kubernetes.io/component: gateway-metrics-collector
+    {{- include "chart.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aim-engine-kgateway-metrics-collector
+  labels:
+    app.kubernetes.io/name: aim-scale-from-zero
+    app.kubernetes.io/component: gateway-metrics-collector
+    {{- include "chart.labels" . | nindent 4 }}
+rules:
+  # The Prometheus receiver's kubernetes_sd_configs needs read access to pods
+  # (and related objects) across namespaces to discover kgateway data-plane
+  # scrape targets. Read-only is sufficient.
+  - apiGroups: [""]
+    resources: ["pods", "endpoints", "services", "namespaces", "nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aim-engine-kgateway-metrics-collector
+  labels:
+    app.kubernetes.io/name: aim-scale-from-zero
+    app.kubernetes.io/component: gateway-metrics-collector
+    {{- include "chart.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aim-engine-kgateway-metrics-collector
+subjects:
+  - kind: ServiceAccount
+    name: aim-engine-kgateway-metrics-collector
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: aim-engine-kgateway-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: aim-scale-from-zero
+    app.kubernetes.io/component: gateway-metrics-collector
+    {{- include "chart.labels" . | nindent 4 }}
+spec:
+  mode: deployment
+  replicas: {{ $c.replicas }}
+  serviceAccount: aim-engine-kgateway-metrics-collector
+  {{- with $c.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  config:
+    receivers:
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: kgateway-envoy
+              # Keep well below the controller's scaler pollingInterval so a
+              # single request between polls is reliably visible.
+              scrape_interval: {{ $c.scrapeInterval }}
+              scrape_timeout: 900ms
+              metrics_path: /stats/prometheus
+              # Filter at the Envoy admin endpoint so each scrape transfers a
+              # handful of lines instead of the full /stats/prometheus (~10k
+              # lines/pod). NOTE: Envoy's `filter` regex matches the INTERNAL
+              # stat name (cluster.<name>.external.upstream_rq_completed), NOT
+              # the Prometheus-rendered envoy_cluster_external_upstream_rq_completed
+              # -- the latter matches nothing. We use the broad
+              # `upstream_rq_completed` substring (resilient to naming) and let
+              # the filter/metrics processor below keep the exact series.
+              # `usedonly` drops counters never incremented (clusters with no
+              # completed request yet) -- exactly the set we don't need.
+              params:
+                filter:
+                  - upstream_rq_completed
+                usedonly:
+                  - ""
+              kubernetes_sd_configs:
+                - role: pod
+                  selectors:
+                    - role: pod
+                      label: "gateway.networking.k8s.io/gateway-name={{ $c.gatewayName }}"
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_container_port_name]
+                  action: keep
+                  regex: http-monitoring
+                - source_labels: [__meta_kubernetes_namespace]
+                  target_label: kgateway_namespace
+                - source_labels: [__meta_kubernetes_pod_name]
+                  target_label: kgateway_pod
+    processors:
+      # Keep only the counter we use for activation; Envoy exposes
+      # thousands of metrics per pod.
+      filter/metrics:
+        metrics:
+          include:
+            match_type: strict
+            metric_names:
+              - envoy_cluster_external_upstream_rq_completed
+      # Drop Envoy-internal cluster series (admin_port_cluster,
+      # prometheus_stats, etc.) so the scaler's per-series store stays clean.
+      filter/exclude_envoy_internal:
+        error_mode: ignore
+        metrics:
+          datapoint:
+            - 'metric.name == "envoy_cluster_external_upstream_rq_completed" and (attributes["envoy_cluster_name"] == nil or not IsMatch(attributes["envoy_cluster_name"], "^kube_"))'
+      # Parse Envoy's `kube_<ns>_<svc>_<port>` cluster name into
+      # namespace/deployment attributes the trigger query selects on.
+      transform/cluster_labels:
+        error_mode: ignore
+        metric_statements:
+          - context: datapoint
+            conditions:
+              - 'metric.name == "envoy_cluster_external_upstream_rq_completed"'
+              - 'attributes["envoy_cluster_name"] != nil'
+              - 'IsMatch(attributes["envoy_cluster_name"], "^kube_")'
+            statements:
+              - 'set(attributes["namespace"], Split(attributes["envoy_cluster_name"], "_")[1])'
+              - 'set(attributes["deployment"], Split(attributes["envoy_cluster_name"], "_")[2])'
+      # Convert cumulative counters to per-scrape deltas so the scaler's rate
+      # aggregation never sees a negative value across an Envoy counter reset
+      # (predictor cycle, kgateway restart, zero-endpoint eviction).
+      cumulativetodelta:
+        include:
+          metrics:
+            - envoy_cluster_external_upstream_rq_completed
+          match_type: strict
+      batch:
+        send_batch_size: 1024
+        timeout: 1s
+    exporters:
+      otlp:
+        endpoint: {{ $c.otlpEndpoint }}
+        compression: none
+        tls:
+          insecure: true
+      debug:
+        verbosity: basic
+        sampling_initial: 2
+        sampling_thereafter: 200
+    service:
+      pipelines:
+        metrics:
+          receivers: [prometheus]
+          processors: [filter/metrics, filter/exclude_envoy_internal, transform/cluster_labels, cumulativetodelta, batch]
+          exporters: [otlp, debug]
+      telemetry:
+        metrics:
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
+{{- end }}

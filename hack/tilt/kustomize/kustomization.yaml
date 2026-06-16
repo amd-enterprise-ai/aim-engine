@@ -57,6 +57,39 @@ patches:
                 persistentVolumeClaim:
                   claimName: aim-engine-go-mod-cache
 
+  # Exclude the bundled scale-from-zero collector from the Tilt build. It is
+  # part of config/default (so install.yaml and the Helm chart ship it), but in
+  # local dev the collector is installed standalone in the `keda` namespace by
+  # `make install-scale-from-zero-prereq` (kind-create / vcluster-create).
+  # Without these deletes Tilt would deploy a SECOND collector in aim-system,
+  # double-scraping every kgateway pod and double-emitting to keda-otel-scaler.
+  - patch: |
+      $patch: delete
+      apiVersion: opentelemetry.io/v1beta1
+      kind: OpenTelemetryCollector
+      metadata:
+        name: aim-engine-kgateway-metrics
+        namespace: aim-system
+  - patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: aim-engine-kgateway-metrics-collector
+        namespace: aim-system
+  - patch: |
+      $patch: delete
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: aim-engine-kgateway-metrics-collector
+  - patch: |
+      $patch: delete
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: aim-engine-kgateway-metrics-collector
+
 # Image replacement - Tilt will match this and inject its built image
 # Note: config/manager already transforms controller -> docker.io/silogenai/aim-engine
 images:

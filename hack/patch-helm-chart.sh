@@ -41,6 +41,45 @@ else
 fi
 
 # ------------------------------------------------------------------------------
+# Inject manager env block: scale-from-zero controller defaults plus any
+# operator-supplied overrides from .Values.manager.env. The kubebuilder
+# helm/v2-alpha plugin emits no env: stanza, so we splice one in here.
+# ------------------------------------------------------------------------------
+echo "  - Adding manager env injection (scale-from-zero controller config)..."
+if [[ -f "${MANAGER_YAML}" ]]; then
+    python3 - "${MANAGER_YAML}" <<'PYEOF'
+import sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+
+marker = "                  imagePullPolicy: {{ .Values.manager.image.pullPolicy }}\n"
+if marker not in content:
+    sys.stderr.write(f"WARN: imagePullPolicy marker not found in {path}; "
+                     "skipping env injection\n")
+    sys.exit(0)
+
+env_block = (
+    "                  env:\n"
+    "                    - name: AIM_KEDA_OTEL_SCALER_ADDRESS\n"
+    "                      value: {{ .Values.scaleFromZero.scalerAddress | quote }}\n"
+    "                    - name: AIM_COOLDOWN_SECONDS_PER_GI_MEMORY\n"
+    "                      value: {{ .Values.scaleFromZero.cooldownSecondsPerGiMemory | quote }}\n"
+    "                    {{- with .Values.manager.env }}\n"
+    "                    {{- toYaml . | nindent 20 }}\n"
+    "                    {{- end }}\n"
+)
+
+if "AIM_KEDA_OTEL_SCALER_ADDRESS" not in content:
+    content = content.replace(marker, marker + env_block, 1)
+    with open(path, "w") as f:
+        f.write(content)
+PYEOF
+else
+    echo "    Warning: ${MANAGER_YAML} not found, skipping env injection"
+fi
+
+# ------------------------------------------------------------------------------
 # Remove CRDs from chart - they are distributed separately
 # This allows independent CRD lifecycle management
 # ------------------------------------------------------------------------------
@@ -48,21 +87,59 @@ echo "  - Removing CRDs from chart (distributed separately)..."
 rm -rf "${CHART_DIR}/templates/crd"
 
 # ------------------------------------------------------------------------------
-# Remove kustomize-generated accelerator-detector resources from other.yaml
-# These are replaced by the custom Helm template with values support
+# Remove kustomize-generated add-on resources from other.yaml. These are
+# replaced by custom Helm templates with values support:
+#   - accelerator-detector  -> templates/accelerator-detector.yaml
+#   - scale-from-zero collector (aim-scale-from-zero) -> templates/scale-from-zero-collector.yaml
 # ------------------------------------------------------------------------------
 OTHER_YAML="${CHART_DIR}/templates/other/other.yaml"
 if [[ -f "${OTHER_YAML}" ]]; then
-    echo "  - Removing kustomize-generated accelerator-detector from other.yaml..."
+    echo "  - Removing kustomize-generated add-on resources from other.yaml..."
     python3 -c "
 import re, sys
 with open('${OTHER_YAML}') as f:
     content = f.read()
 docs = re.split(r'^---$', content, flags=re.MULTILINE)
-filtered = [d for d in docs if 'accelerator-detector' not in d]
+tokens = ('accelerator-detector', 'aim-scale-from-zero')
+filtered = [d for d in docs if not any(t in d for t in tokens)]
 with open('${OTHER_YAML}', 'w') as f:
     f.write('---'.join(filtered))
 "
+fi
+
+# ------------------------------------------------------------------------------
+# Remove the plugin-generated scale-from-zero collector RBAC fragment. The
+# helm/v2-alpha plugin emits only the ClusterRoleBinding here (gated on
+# metrics.enable, and missing its ServiceAccount + ClusterRole). The complete,
+# values-driven set lives in templates/scale-from-zero-collector.yaml.
+# ------------------------------------------------------------------------------
+COLLECTOR_RBAC="${CHART_DIR}/templates/rbac/kgateway-metrics-collector.yaml"
+if [[ -f "${COLLECTOR_RBAC}" ]]; then
+    echo "  - Removing plugin-generated scale-from-zero collector RBAC fragment..."
+    rm -f "${COLLECTOR_RBAC}"
+fi
+
+# ------------------------------------------------------------------------------
+# Restore the manager ServiceAccount. Whenever extra RBAC (the scale-from-zero
+# collector) is present in config/default, the helm/v2-alpha plugin drops
+# ServiceAccount/aim-engine-controller-manager from its output -- even though
+# the manager Deployment and its RoleBindings still reference it. Without this
+# the operator pods fail to schedule ("serviceaccount not found"). We re-create
+# the SA here to match what the plugin emits when no extra RBAC is present.
+# ------------------------------------------------------------------------------
+MANAGER_SA="${CHART_DIR}/templates/rbac/controller-manager.yaml"
+if [[ ! -f "${MANAGER_SA}" ]]; then
+    echo "  - Restoring manager ServiceAccount (dropped by helm/v2-alpha plugin)..."
+    cat > "${MANAGER_SA}" <<'EOF'
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/name: aim-engine
+  name: aim-engine-controller-manager
+  namespace: {{ .Release.Namespace }}
+EOF
 fi
 
 # ------------------------------------------------------------------------------

@@ -1,0 +1,14 @@
+# Extra kustomize transformer config, merged on top of the built-in
+# defaults (it extends, never replaces them).
+#
+# Teaches kustomize that OpenTelemetryCollector.spec.serviceAccount is a
+# reference to a ServiceAccount name, so the namePrefix/namespace transforms
+# in this overlay rewrite it in lockstep with the ServiceAccount object
+# itself. Without this the scale-from-zero collector (../prereqs/scale-from-zero)
+# would reference an unprefixed, non-existent SA once aim-engine- is applied.
+nameReference:
+  - kind: ServiceAccount
+    version: v1
+    fieldSpecs:
+      - kind: OpenTelemetryCollector
+        path: spec/serviceAccount

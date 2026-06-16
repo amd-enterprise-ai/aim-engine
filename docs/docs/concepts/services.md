@@ -331,7 +331,22 @@ spec:
     name: qwen-qwen3-32b
   minReplicas: 1
   maxReplicas: 5
+  autoScaling:
+    metrics:
+      - type: PodMetric
+        podmetric:
+          metric:
+            backend: opentelemetry
+            metricNames:
+              - vllm:num_requests_running
+            query: "vllm:num_requests_running"
+            operationOverTime: avg
+          target:
+            type: Value
+            value: "1"
 ```
+
+Autoscaling between `minReplicas` and `maxReplicas` requires at least one metric (or `minReplicas: 0` for scale-from-zero); otherwise the spec is rejected with `ConfigValid=False` (reason `AutoscalingRequiresMetrics`).
 
 ### Custom weights via overlay
 

@@ -129,6 +129,99 @@ clusterRuntimeConfig:
   #     match:
   #       - "aim.eai.amd.com/*"
 
+# -- Cluster-wide AIMClusterModelSource for automatic model discovery.
+# Creates an AIMClusterModelSource CR when enabled. The kubebuilder
+# helm/v2-alpha plugin always wraps the generated template in
+# `{{- if .Values.clusterModelSource.enable }}`, so this block must
+# exist even when the resource is not wanted -- otherwise `helm install`
+# fails with `nil pointer evaluating interface {}.enable`.
+clusterModelSource:
+  # -- Enable creation of the AIMClusterModelSource resource. Off by
+  # default so a fresh `helm install` succeeds without needing a
+  # registry pull secret in the operator namespace.
+  enable: false
+  # -- Name of the AIMClusterModelSource resource
+  name: default
+  # -- Spec fields for the AIMClusterModelSource.
+  # See [AIMClusterModelSource](../../concepts/model-discovery.md).
+  # @default -- `{}` (see examples below)
+  # spec:
+  #   registry: ghcr.io
+  #   syncInterval: 1h
+  #   maxModels: 10
+  #   imagePullSecrets:
+  #     - name: ghcr-regcred
+  #   images:
+  #     - "amdenterpriseai/aim-qwen-qwen3-32b:0.8.4"
+  spec: {}
+
+# -- Controller-side tuning for scale-from-zero. The feature itself is
+# always on; these knobs adjust how the controller authors KEDA
+# ScaledObjects for services with `spec.minReplicas: 0` and whether the
+# cluster-wide activation collector ships with the chart.
+# See `docs/docs/guides/scaling-and-autoscaling.md` for the full design.
+scaleFromZero:
+  # -- gRPC endpoint of the keda-otel-add-on scaler. Used for both
+  # gateway-rate activation metrics and in-pod vLLM metrics. Default
+  # matches a stock keda-otel-add-on install in the `keda` namespace.
+  scalerAddress: keda-otel-scaler.keda.svc:4318
+
+  # -- Seconds-per-GiB multiplier in the cooldown heuristic
+  #
+  #   cooldownPeriod = clamp(300 + memGiB * cooldownSecondsPerGiMemory, 300, 1200)
+  #
+  # The default (5) budgets for ~1.6 GB/s warm-cache throughput plus
+  # the scaler's rate-decay window. Tune for your storage:
+  # faster (NVMe/hugepages) -> 2-3; slower (NFS/network PVC) -> 8-12;
+  # CPU-only inference -> 0 to disable the memory contribution.
+  # Per-service `spec.autoScaling.cooldownPeriod` always wins.
+  cooldownSecondsPerGiMemory: 5
+
+  # Note: the gateway-rate *activation* trigger's targetValue (a neutralizing
+  # 0->1 ceiling) and operationOverTime (`avg`, joined to the collector's
+  # cumulativetodelta processor) are compiled-in controller constants, not
+  # Helm values -- the only correct value for each would be the default, so
+  # they are deliberately not exposed.
+
+  # -- Cluster-singleton OpenTelemetry collector that scrapes kgateway
+  # data-plane Envoy stats and forwards the gateway request-rate counter to
+  # keda-otel-scaler. This is the only activation signal an AIMService with
+  # `spec.minReplicas: 0` has while it sits at zero pods, so it must run for
+  # scale-from-zero to ever wake a service back up. Deployed into the release
+  # namespace. Requires the OpenTelemetry Operator CRDs on the cluster.
+  gatewayMetricsCollector:
+    # -- Ship and manage the gateway-metrics collector with the chart.
+    # Disable if you install it out-of-band (see
+    # `config/prereqs/scale-from-zero/`) or the OpenTelemetry Operator is
+    # not present, in which case `helm install` would fail on the
+    # OpenTelemetryCollector CR.
+    enable: true
+
+    # -- OTLP gRPC endpoint of the keda-otel-add-on receiver the collector
+    # pushes the gateway-rate metric to. Must resolve from the collector's
+    # (release) namespace.
+    otlpEndpoint: keda-otel-scaler.keda.svc:4317
+
+    # -- Value of the `gateway.networking.k8s.io/gateway-name` label on your
+    # kgateway data-plane pods; selects which gateways are scraped.
+    gatewayName: kserve-ingress-gateway
+
+    # -- Collector scrape interval. Keep well below the controller's scaler
+    # pollingInterval so a single request between polls stays visible.
+    scrapeInterval: 1s
+
+    # -- Number of collector replicas
+    replicas: 1
+
+    # -- Resource requests/limits for the collector pod
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
 # -- AcceleratorDetector DaemonSets for hardware detection via NFD.
 # Detects GPU and CPU accelerators on cluster nodes and writes NFD feature
 # files so that AIM profiles can target specific hardware. Requires NFD

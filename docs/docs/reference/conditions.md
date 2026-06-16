@@ -46,6 +46,8 @@ Whether the resource's spec is valid and all referenced resources exist.
 |---|---|---|
 | `True` | `ConfigurationValid` | Configuration is valid |
 | `False` | `InvalidSpec` | Configuration validation failed |
+| `False` | `RoutingRequiredForScaleToZero` | `minReplicas: 0` is set but routing is not enabled. See [ScaleToZeroConfig](#scaletozeroconfig). |
+| `False` | `AutoscalingRequiresMetrics` | Autoscaling is configured but no scaling trigger resolves. See [AutoscalingConfig](#autoscalingconfig). |
 | `False` | `ReferenceNotFound` | A referenced resource does not exist |
 
 ### Ready
@@ -136,6 +138,26 @@ Set only when `spec.minReplicas` / `spec.maxReplicas` are configured.
 | `True` | `HPAOperational` | HPA is active and metrics are available |
 | `False` | `HPANotFound` | Waiting for KEDA to create HPA |
 | `False` | `WaitingForMetrics` | InferenceService not ready yet; metrics unavailable |
+
+### ScaleToZeroConfig
+
+Validates the scale-from-zero prerequisite that routing be enabled. Reported only when `spec.minReplicas: 0` is set **and** routing is disabled (neither `spec.routing.enabled` nor a cluster-wide `runtimeConfig.routing.enabled` default is on). The 0->1 activation trigger scrapes gateway-side Envoy metrics that only exist once an `HTTPRoute` is created, so a routing-less scale-to-zero service could never wake — AIM Engine therefore rejects the spec instead of creating it.
+
+| Status | Reason | Description |
+|---|---|---|
+| `False` | `RoutingRequiredForScaleToZero` | `minReplicas: 0` with routing disabled. Drives `ConfigValid=False` (`InvalidSpec` category) and emits an `InvalidSpec` event. Fix by enabling routing (`spec.routing.enabled: true` or `runtimeConfig.routing.enabled`) or setting `minReplicas >= 1`. |
+
+When valid, this check is silent — no condition or component-health entry is emitted.
+
+### AutoscalingConfig
+
+Validates that whenever autoscaling is configured (`spec.minReplicas`/`spec.maxReplicas`/`spec.autoScaling`) at least one KEDA scaling trigger resolves. The controller stamps `autoscalerClass=external` on the InferenceService and owns the KEDA `ScaledObject` directly, but that `ScaledObject` is only created when a trigger exists — the scale-from-zero activation trigger (`minReplicas: 0`) or a user-defined `spec.autoScaling.metrics` entry. Configuring autoscaling with neither leaves the predictor under external scaling control with nothing to drive it, so the declared replica bounds are never enforced (e.g. `maxReplicas` is set but the deployment never scales). AIM Engine rejects the spec instead of creating it.
+
+| Status | Reason | Description |
+|---|---|---|
+| `False` | `AutoscalingRequiresMetrics` | Autoscaling configured but no trigger resolves. Drives `ConfigValid=False` (`InvalidSpec` category) and emits an `InvalidSpec` event. Fix by adding a metric (`spec.autoScaling.metrics`), setting `minReplicas: 0` for scale-from-zero, or using `spec.replicas` for a fixed replica count. |
+
+When valid, this check is silent — no condition or component-health entry is emitted.
 
 ## AIMModel / AIMClusterModel conditions (v1alpha2)
 

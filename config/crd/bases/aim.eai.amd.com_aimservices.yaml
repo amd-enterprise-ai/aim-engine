@@ -86,6 +86,14 @@ spec:
                   Supports custom metrics from OpenTelemetry backend.
                   When specified, MinReplicas and MaxReplicas should also be set.
                 properties:
+                  cooldownPeriod:
+                    description: |-
+                      CooldownPeriod is the seconds-of-inactivity budget KEDA waits before
+                      scaling back to minReplicaCount. Under scale-to-zero, defaults to a
+                      memory-derived value (300-1200s); otherwise unset (KEDA default of 300).
+                    format: int32
+                    minimum: 0
+                    type: integer
                   metrics:
                     description: |-
                       Metrics is a list of metrics to be used for autoscaling.
@@ -138,6 +146,11 @@ spec:
                                     If not specified, defaults to "keda-otel-scaler.keda.svc:4317" for OpenTelemetry backend.
                                   type: string
                               type: object
+                              x-kubernetes-validations:
+                              - message: podmetric.metric must set query or metricNames
+                                  so the scaler has something to query
+                                rule: has(self.query) || (has(self.metricNames) &&
+                                  size(self.metricNames) > 0)
                             target:
                               description: |-
                                 Target specifies the target value for the metric.
@@ -177,6 +190,13 @@ spec:
                               required:
                               - type
                               type: object
+                              x-kubernetes-validations:
+                              - message: target type Value requires target.value
+                                rule: self.type != 'Value' || has(self.value)
+                              - message: target type AverageValue requires target.averageValue
+                                rule: self.type != 'AverageValue' || has(self.averageValue)
+                              - message: target type Utilization requires target.averageUtilization
+                                rule: self.type != 'Utilization' || has(self.averageUtilization)
                           required:
                           - metric
                           - target
@@ -191,8 +211,25 @@ spec:
                       required:
                       - type
                       type: object
+                      x-kubernetes-validations:
+                      - message: metrics entry of type PodMetric must set podmetric
+                        rule: self.type != 'PodMetric' || has(self.podmetric)
                     type: array
+                  pollingInterval:
+                    description: |-
+                      PollingInterval is the KEDA polling interval in seconds. Defaults to 5
+                      when spec.minReplicas == 0 (so a single request reliably activates the
+                      deployment within ~10s); otherwise unset (KEDA default of 30 applies).
+                    format: int32
+                    minimum: 1
+                    type: integer
                 type: object
+                x-kubernetes-validations:
+                - message: 'spec.autoScaling must not be empty: set at least one of
+                    metrics, pollingInterval, or cooldownPeriod, or omit the autoScaling
+                    block to use default scaling'
+                  rule: (has(self.metrics) && size(self.metrics) > 0) || has(self.pollingInterval)
+                    || has(self.cooldownPeriod)
               cacheModel:
                 description: |-
                   DEPRECATED: Use Caching.Mode instead. This field will be removed in a future version.
@@ -420,10 +457,11 @@ spec:
               minReplicas:
                 description: |-
                   MinReplicas specifies the minimum number of replicas for autoscaling.
-                  Defaults to 1. Scale to zero is not supported.
+                  Defaults to 1. Set to 0 to enable scale-to-zero: KEDA idles the predictor
+                  to zero replicas when idle and brings it back up on the next request.
                   When specified with MaxReplicas, enables autoscaling for the service.
                 format: int32
-                minimum: 1
+                minimum: 0
                 type: integer
               model:
                 description: |-
@@ -1849,6 +1887,10 @@ spec:
                 - message: template selection is immutable after creation
                   rule: self == oldSelf
             type: object
+            x-kubernetes-validations:
+            - message: minReplicas must be less than or equal to maxReplicas
+              rule: '!has(self.minReplicas) || !has(self.maxReplicas) || self.minReplicas
+                <= self.maxReplicas'
           status:
             description: AIMServiceStatus defines the observed state of AIMService.
             properties:
@@ -2247,6 +2289,14 @@ spec:
                   Supports custom metrics from OpenTelemetry backend.
                   When specified, MinReplicas and MaxReplicas should also be set.
                 properties:
+                  cooldownPeriod:
+                    description: |-
+                      CooldownPeriod is the seconds-of-inactivity budget KEDA waits before
+                      scaling back to minReplicaCount. Under scale-to-zero, defaults to a
+                      memory-derived value (300-1200s); otherwise unset (KEDA default of 300).
+                    format: int32
+                    minimum: 0
+                    type: integer
                   metrics:
                     description: |-
                       Metrics is a list of metrics to be used for autoscaling.
@@ -2299,6 +2349,11 @@ spec:
                                     If not specified, defaults to "keda-otel-scaler.keda.svc:4317" for OpenTelemetry backend.
                                   type: string
                               type: object
+                              x-kubernetes-validations:
+                              - message: podmetric.metric must set query or metricNames
+                                  so the scaler has something to query
+                                rule: has(self.query) || (has(self.metricNames) &&
+                                  size(self.metricNames) > 0)
                             target:
                               description: |-
                                 Target specifies the target value for the metric.
@@ -2338,6 +2393,13 @@ spec:
                               required:
                               - type
                               type: object
+                              x-kubernetes-validations:
+                              - message: target type Value requires target.value
+                                rule: self.type != 'Value' || has(self.value)
+                              - message: target type AverageValue requires target.averageValue
+                                rule: self.type != 'AverageValue' || has(self.averageValue)
+                              - message: target type Utilization requires target.averageUtilization
+                                rule: self.type != 'Utilization' || has(self.averageUtilization)
                           required:
                           - metric
                           - target
@@ -2352,8 +2414,25 @@ spec:
                       required:
                       - type
                       type: object
+                      x-kubernetes-validations:
+                      - message: metrics entry of type PodMetric must set podmetric
+                        rule: self.type != 'PodMetric' || has(self.podmetric)
                     type: array
+                  pollingInterval:
+                    description: |-
+                      PollingInterval is the KEDA polling interval in seconds. Defaults to 5
+                      when spec.minReplicas == 0 (so a single request reliably activates the
+                      deployment within ~10s); otherwise unset (KEDA default of 30 applies).
+                    format: int32
+                    minimum: 1
+                    type: integer
                 type: object
+                x-kubernetes-validations:
+                - message: 'spec.autoScaling must not be empty: set at least one of
+                    metrics, pollingInterval, or cooldownPeriod, or omit the autoScaling
+                    block to use default scaling'
+                  rule: (has(self.metrics) && size(self.metrics) > 0) || has(self.pollingInterval)
+                    || has(self.cooldownPeriod)
               cacheModel:
                 description: |-
                   DEPRECATED: Use Caching.Mode instead. This field will be removed in a future version.
@@ -2581,10 +2660,11 @@ spec:
               minReplicas:
                 description: |-
                   MinReplicas specifies the minimum number of replicas for autoscaling.
-                  Defaults to 1. Scale to zero is not supported.
+                  Defaults to 1. Set to 0 to enable scale-to-zero: KEDA idles the predictor
+                  to zero replicas when idle and brings it back up on the next request.
                   When specified with MaxReplicas, enables autoscaling for the service.
                 format: int32
-                minimum: 1
+                minimum: 0
                 type: integer
               model:
                 description: |-
@@ -4010,6 +4090,10 @@ spec:
                 - message: template selection is immutable after creation
                   rule: self == oldSelf
             type: object
+            x-kubernetes-validations:
+            - message: minReplicas must be less than or equal to maxReplicas
+              rule: '!has(self.minReplicas) || !has(self.maxReplicas) || self.minReplicas
+                <= self.maxReplicas'
           status:
             description: AIMServiceStatus defines the observed state of AIMService.
             properties:

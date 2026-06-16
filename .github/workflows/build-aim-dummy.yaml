@@ -30,7 +30,9 @@ env:
 
 jobs:
   build:
-    if: vars.ACTIVATE_AIM_DUMMY_WORKFLOW == 'true'
+    # Gate automatic triggers (tag push / PR) behind the repo variable, but
+    # always allow a manual run — dispatching the workflow is an explicit opt-in.
+    if: ${{ vars.ACTIVATE_AIM_DUMMY_WORKFLOW == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
 
     steps:

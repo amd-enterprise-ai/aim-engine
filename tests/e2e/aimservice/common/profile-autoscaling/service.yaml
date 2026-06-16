@@ -1,7 +1,9 @@
 # v1alpha2 AIMService exercising the profile + autoscaling path. Both
 # minReplicas and maxReplicas are set so the ISVC must be built with KEDA
 # autoscaling (min != max), and the ProfileServiceReconciler must wire both
-# fields through to the predictor spec.
+# fields through to the predictor spec. A custom metric supplies the KEDA
+# trigger: without it the controller would have nothing to author a ScaledObject
+# from and the spec is rejected with ConfigValid=False (AutoscalingRequiresMetrics).
 apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
@@ -11,3 +13,16 @@ spec:
     name: test-profile-autoscaling-profile
   minReplicas: 1
   maxReplicas: 3
+  autoScaling:
+    metrics:
+      - type: PodMetric
+        podmetric:
+          metric:
+            backend: "opentelemetry"
+            metricNames:
+              - vllm:num_requests_running
+            query: "vllm:num_requests_running"
+            operationOverTime: "avg"
+          target:
+            type: Value
+            value: "1"

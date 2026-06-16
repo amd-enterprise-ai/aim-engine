@@ -43,8 +43,9 @@ import (
 // ============================================================================
 
 const (
-	testNamespace = "test-ns"
-	testModelName = "test-model"
+	testNamespace  = "test-ns"
+	testModelName  = "test-model"
+	testServiceUID = "test-service-uid"
 )
 
 // ============================================================================
@@ -67,7 +68,7 @@ func NewService(name string) *ServiceBuilder {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: testNamespace,
-				UID:       "test-service-uid",
+				UID:       testServiceUID,
 			},
 			Spec: aimv1alpha1.AIMServiceSpec{},
 		},

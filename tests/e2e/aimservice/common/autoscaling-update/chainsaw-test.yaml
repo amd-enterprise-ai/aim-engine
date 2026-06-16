@@ -19,16 +19,6 @@ kind: Test
 metadata:
   name: aimservice-autoscaling-update
 spec:
-  # TEMPORARILY DISABLED — see the sibling aimservice-autoscaling test for
-  # the full explanation. Short version: commit 222dbd0 bumped this fixture
-  # from aim-dummy:0.1.9 to :0.2.0, whose discovered profile set makes
-  # v1alpha1 auto-selection pick an MI300X GPU template, which kind cannot
-  # schedule (no device plugin). Main still passes because main pins :0.1.9.
-  #
-  # Proper fix: build aim-dummy in CI from images/aim-dummy/ and load it
-  # into kind under a deterministic local tag so tests are not coupled to
-  # the ghcr.io publish state.
-  skip: true
   description: Test that updating AIMService minReplicas/maxReplicas propagates to InferenceService
   timeouts:
     assert: 300s

@@ -45,7 +45,11 @@ spec:
         - apply:
             file: service.yaml
 
-    - name: Verify InferenceService has KEDA autoscaler annotation
+    - name: Verify InferenceService hands autoscaling off to AIM Engine
+      description: |
+        autoscalerClass=external is what causes KServe's KEDA reconciler
+        to short-circuit so the AIMService controller can be the sole
+        author of the predictor ScaledObject (see scaledobject.go).
       try:
         - assert:
             resource:
@@ -55,7 +59,25 @@ spec:
                 labels:
                   aim.eai.amd.com/service: test-profile-autoscaling-service
                 annotations:
-                  serving.kserve.io/autoscalerClass: "keda"
+                  serving.kserve.io/autoscalerClass: "external"
+
+    - name: Verify AIM Engine authored the KEDA ScaledObject
+      try:
+        - assert:
+            resource:
+              apiVersion: keda.sh/v1alpha1
+              kind: ScaledObject
+              metadata:
+                name: test-profile-autoscaling-service-predictor
+                labels:
+                  aim.eai.amd.com/service: test-profile-autoscaling-service
+                  app.kubernetes.io/component: autoscaling
+                  app.kubernetes.io/managed-by: aim-engine
+              spec:
+                scaleTargetRef:
+                  name: test-profile-autoscaling-service-predictor
+                minReplicaCount: 1
+                maxReplicaCount: 3
 
     - name: Verify InferenceService has minReplicas=1 and maxReplicas=3
       try:

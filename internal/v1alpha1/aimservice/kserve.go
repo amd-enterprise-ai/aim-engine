@@ -241,18 +241,9 @@ func buildInferenceService(
 	// based and custom models).
 	image := resolveDeploymentImage(obs)
 
-	// Get GPU count and resource name from template status.resolvedHardware.
-	// The template controller computes resolvedHardware from discovery + spec fallback.
-	gpuCount := int64(0)
-	gpuResourceName := corev1.ResourceName(constants.DefaultGPUResourceName)
-	if templateStatus != nil && templateStatus.ResolvedHardware != nil && templateStatus.ResolvedHardware.GPU != nil {
-		gpuCount = int64(templateStatus.ResolvedHardware.GPU.Requests)
-		if templateStatus.ResolvedHardware.GPU.ResourceName != "" {
-			gpuResourceName = corev1.ResourceName(templateStatus.ResolvedHardware.GPU.ResourceName)
-		}
-	}
-
-	// Build resource requirements
+	// Build resource requirements. Shared with resolveEffectiveResources
+	// so planScaledObject sees the same merged resources as the ISVC.
+	gpuCount, gpuResourceName := extractGPUFromTemplateStatus(templateStatus)
 	resources := resolveResources(service, templateSpec, gpuCount, gpuResourceName)
 
 	// Build shared memory volume
@@ -479,6 +470,39 @@ func buildMergedEnvVars(
 	return envVars
 }
 
+// extractGPUFromTemplateStatus returns the GPU count and resource name
+// from ResolvedHardware, falling back to DefaultGPUResourceName when the
+// template hasn't named a resource.
+func extractGPUFromTemplateStatus(templateStatus *aimv1alpha1.AIMServiceTemplateStatus) (int64, corev1.ResourceName) {
+	gpuCount := int64(0)
+	gpuResourceName := corev1.ResourceName(constants.DefaultGPUResourceName)
+	if templateStatus != nil && templateStatus.ResolvedHardware != nil && templateStatus.ResolvedHardware.GPU != nil {
+		gpuCount = int64(templateStatus.ResolvedHardware.GPU.Requests)
+		if templateStatus.ResolvedHardware.GPU.ResourceName != "" {
+			gpuResourceName = corev1.ResourceName(templateStatus.ResolvedHardware.GPU.ResourceName)
+		}
+	}
+	return gpuCount, gpuResourceName
+}
+
+// resolveEffectiveResources returns the fully-merged predictor
+// ResourceRequirements (service override > template > GPU-count default),
+// or nil when the template is not yet Ready. planScaledObject uses this to
+// derive a memory-aware cooldown; nil during the transient phase makes the
+// cooldown fall back to the flat default until the next reconcile.
+func resolveEffectiveResources(
+	service *aimv1alpha1.AIMService,
+	templateSpec *aimv1alpha1.AIMServiceTemplateSpecCommon,
+	templateStatus *aimv1alpha1.AIMServiceTemplateStatus,
+) *corev1.ResourceRequirements {
+	if templateSpec == nil || templateStatus == nil || templateStatus.Status != constants.AIMStatusReady {
+		return nil
+	}
+	gpuCount, gpuResourceName := extractGPUFromTemplateStatus(templateStatus)
+	rr := resolveResources(service, templateSpec, gpuCount, gpuResourceName)
+	return &rr
+}
+
 // resolveResources builds resource requirements for the inference container.
 // Priority order (highest to lowest):
 // 1. Service spec resources (user override)
@@ -572,28 +596,22 @@ func configureReplicasAndAutoscaling(isvc *servingv1beta1.InferenceService, serv
 		service.Spec.MaxReplicas != nil
 
 	if hasAutoscaling {
-		// Enable KEDA autoscaling
+		// autoscalerClass=external -- KServe writes no ScaledObject; the
+		// controller-owned one in scaledobject.go is the sole author.
 		injectAutoscalingAnnotations(isvc)
 
-		// Set min replicas
-		if service.Spec.MinReplicas != nil {
-			isvc.Spec.Predictor.MinReplicas = service.Spec.MinReplicas
-		} else {
-			one := int32(1)
-			isvc.Spec.Predictor.MinReplicas = &one
-		}
+		// resolveReplicaBounds is the single source of truth for min/max
+		// defaulting; the ScaledObject path consumes the same helper.
+		minReplicas, maxReplicas := resolveReplicaBounds(service)
+		isvc.Spec.Predictor.MinReplicas = ptr.To(minReplicas)
+		isvc.Spec.Predictor.MaxReplicas = maxReplicas
 
-		// Set max replicas
-		if service.Spec.MaxReplicas != nil {
-			isvc.Spec.Predictor.MaxReplicas = *service.Spec.MaxReplicas
-		} else if service.Spec.MinReplicas != nil {
-			// Default max to min if only min specified
-			isvc.Spec.Predictor.MaxReplicas = *service.Spec.MinReplicas
-		} else {
-			isvc.Spec.Predictor.MaxReplicas = 1
-		}
-
-		// Apply autoscaling configuration if provided
+		// Under autoscalerClass=external, KServe still uses
+		// Spec.Predictor.AutoScaling.Metrics to size the per-ISVC
+		// OpenTelemetryCollector CR that drives in-pod sidecar injection.
+		// The duplication with planScaledObject's triggers is intentional:
+		// KServe reads this for the sidecar; the ScaledObject is the sole
+		// authority on trigger shape.
 		if service.Spec.AutoScaling != nil {
 			isvc.Spec.Predictor.AutoScaling = convertToKServeAutoScaling(service.Spec.AutoScaling)
 		}
@@ -621,16 +639,18 @@ func disableHPA(isvc *servingv1beta1.InferenceService) {
 	isvc.Annotations[constants.AnnotationKServeAutoscalerClass] = constants.AutoscalerClassNone
 }
 
-// injectAutoscalingAnnotations adds required annotations for KEDA autoscaling.
-// This includes KEDA autoscaler class, OpenTelemetry sidecar injection, and Prometheus metrics port.
-// Always overwrites annotations so that switching from fixed replicas to autoscaling
-// correctly updates the autoscaler class and related annotations.
+// injectAutoscalingAnnotations adds the annotations the autoscaled predictor
+// needs from KServe. autoscalerClass=external keeps KServe's KEDA reconciler
+// out of the way so the controller can own the ScaledObject directly. OTel
+// sidecar and Prometheus annotations are also injected for warm-state
+// metrics. Always overwrites so transitions to/from fixed-replica
+// mode update the values rather than leaving stale state.
 func injectAutoscalingAnnotations(isvc *servingv1beta1.InferenceService) {
 	if isvc.Annotations == nil {
 		isvc.Annotations = make(map[string]string)
 	}
 
-	isvc.Annotations[constants.AnnotationKServeAutoscalerClass] = constants.AutoscalerClassKeda
+	isvc.Annotations[constants.AnnotationKServeAutoscalerClass] = constants.AutoscalerClassExternal
 
 	predictorName := isvc.Name + constants.PredictorServiceSuffix
 	isvc.Annotations[constants.AnnotationOTelSidecarInject] = predictorName
@@ -640,7 +660,9 @@ func injectAutoscalingAnnotations(isvc *servingv1beta1.InferenceService) {
 	}
 }
 
-// convertToKServeAutoScaling converts AIM autoscaling config to KServe AutoScalingSpec.
+// convertToKServeAutoScaling converts AIM autoscaling config to a KServe
+// AutoScalingSpec. Consumed by KServe only to configure the
+// OpenTelemetryCollector for in-pod sidecar injection.
 func convertToKServeAutoScaling(aimAutoScaling *aimv1alpha1.AIMServiceAutoScaling) *servingv1beta1.AutoScalingSpec {
 	if aimAutoScaling == nil {
 		return nil
