@@ -147,7 +147,7 @@ A natural rebind happens when the existing binding is no longer usable:
 |---|---|
 | Bound profile deleted | The `Get` for `status.resolvedProfile` returns NotFound → re-rank against remaining candidates. |
 | Bound profile no longer matches the current selector | The user narrowed `spec.profile.selector` (or `spec.model.name` changed) and the bound profile no longer passes the filter → re-rank with the new intent. |
-| Bound profile becomes manual-selection-only | `spec.manualSelectionOnly: true` excludes it from auto-selection. |
+| Bound profile drops below the `minimumType` floor | The bound profile's `type` is now below the selector's `minimumType` (e.g. retyped to `unoptimized` while the floor is `optimized`) → re-rank. |
 | Transient infrastructure error fetching the bound profile | Re-rank rather than risk serving a stale binding through an outage. |
 
 Each natural rebind emits a `Normal` event with reason `ProfileRebound` naming the previous profile, the new profile, and the trigger reason — so `kubectl describe aimservice` always tells you why a binding changed.

@@ -93,8 +93,16 @@ type AIMProfileSpecCommon struct {
 	// +kubebuilder:default=false
 	Primary bool `json:"primary"`
 
-	// ManualSelectionOnly excludes this profile from automatic AIMService selection.
-	// It remains addressable by explicit name and is preserved from aim-build profile YAMLs.
+	// ManualSelectionOnly is DEPRECATED and no longer honored by the resolver.
+	// It was a binary gate excluding a profile from automatic AIMService
+	// selection; that intent is now expressed through the graded `type`
+	// hierarchy (optimized > general > preview > unoptimized) combined with the
+	// selector's `minimumType` floor. The field is retained for backward
+	// compatibility (existing objects and aim-build profile YAMLs still set it)
+	// but has no effect on selection; it will be removed in a future API
+	// version. Use `type: unoptimized` (+ a selector `minimumType`) instead.
+	//
+	// Deprecated: superseded by `type` + selector `minimumType`; ignored by the resolver.
 	// +kubebuilder:default=false
 	ManualSelectionOnly bool `json:"manualSelectionOnly,omitempty"`
 

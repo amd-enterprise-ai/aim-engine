@@ -352,6 +352,12 @@ const (
 	AIMProfileTypePreview AIMProfileType = "preview"
 	// AIMProfileTypeUnoptimized indicates the profile has not been optimized.
 	AIMProfileTypeUnoptimized AIMProfileType = "unoptimized"
+	// AIMProfileTypeAny is a selector-only sentinel meaning "no optimization
+	// floor — accept every tier". It is never stamped on a profile's own
+	// spec.type; it is only valid as a ProfileSelector.minimumType value, where
+	// it disables the floor (equivalent to flooring at unoptimized, the lowest
+	// tier, but reads as intent rather than asking specifically for unoptimized).
+	AIMProfileTypeAny AIMProfileType = "any"
 )
 
 // AIMProfileMetadata describes the characteristics of a cached deployment profile.

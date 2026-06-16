@@ -64,6 +64,7 @@ const (
 	AIMProfileTypeGeneral     = aimv1alpha1.AIMProfileTypeGeneral
 	AIMProfileTypePreview     = aimv1alpha1.AIMProfileTypePreview
 	AIMProfileTypeUnoptimized = aimv1alpha1.AIMProfileTypeUnoptimized
+	AIMProfileTypeAny         = aimv1alpha1.AIMProfileTypeAny
 
 	AcceleratorTypeCPU = aimv1alpha1.AcceleratorTypeCPU
 	AcceleratorTypeGPU = aimv1alpha1.AcceleratorTypeGPU

@@ -624,18 +624,30 @@ func composeServiceSelector(service *aimv1alpha1.AIMService) aimv1alpha1.Profile
 			Scope: aimv1alpha1.ProfileSelectorScopeAuto,
 		}
 	}
+	// Default the optimization floor for auto-selection. Unset means "prefer
+	// production-grade": only optimized (or better/untyped) profiles are
+	// auto-selected, so a service never silently lands on a preview/unoptimized
+	// profile. A service opts into lower tiers (e.g. CPU/EPYC profiles published
+	// as unoptimized) by setting spec.profile.selector.minimumType explicitly
+	// (e.g. "unoptimized" or "any"). This default lives here, not as a CRD
+	// default, so derivation selectors (AIMProfileSet / AIMModel.profiles) keep
+	// treating empty as "any" and stay un-tier-restricted.
+	if selector.MinimumType == "" {
+		selector.MinimumType = aimv1alpha1.AIMProfileTypeOptimized
+	}
 	return selector
 }
 
 // filterNamespaceProfilesBySpec applies the spec-side selector filters
-// (aimId, precision, acceleratorModel, ...) to a label-filtered list and
-// drops manual-selection-only and overlay profiles. The label filter (role,
+// (aimId, precision, acceleratorModel, the minimumType floor, ...) to a
+// label-filtered list and drops overlay profiles. The label filter (role,
 // source-model[-scope]) has already been applied at List time via the
 // provenance label selector.
 //
-// A user can explicitly target a profile by spec.profile.name even when
-// manualSelectionOnly is true; the selector path implicitly excludes them
-// because they should not be auto-selected.
+// Lower optimization tiers are excluded by the selector's minimumType floor
+// (default optimized for AIMService auto-selection), not by a per-profile flag;
+// a user can still reach any profile — including unoptimized ones — explicitly
+// by spec.profile.name (the by-name path skips this selector filtering).
 //
 // All overlays are excluded regardless of owning service: they are PRIVATE
 // to the AIMService that owns them and reached only through the dedicated
@@ -649,9 +661,6 @@ func filterNamespaceProfilesBySpec(
 	out := make([]aimv1alpha2.AIMProfile, 0, len(profiles))
 	for i := range profiles {
 		p := &profiles[i]
-		if p.Spec.ManualSelectionOnly {
-			continue
-		}
 		if _, isOverlay := p.Annotations[AnnotationOverlayService]; isOverlay {
 			continue
 		}
@@ -676,9 +685,6 @@ func filterClusterProfilesBySpec(
 	out := make([]aimv1alpha2.AIMClusterProfile, 0, len(profiles))
 	for i := range profiles {
 		p := &profiles[i]
-		if p.Spec.ManualSelectionOnly {
-			continue
-		}
 		candidate := aimprofile.ProfileCopyCandidate{
 			Name:   p.Name,
 			Spec:   p.Spec.AIMProfileSpecCommon,
@@ -845,19 +851,14 @@ var (
 	precisionPrefMap        = utils.MakePreferenceMap(utils.PrecisionPreferenceOrder)
 )
 
+// profileTypeRank delegates to aimprofile.ProfileTypeRank so the ranking tier
+// order (used here) and the minimumType floor (used by the selector matcher)
+// can never drift. An empty/unset type ranks as unoptimized (the lowest real
+// tier), so an untyped profile sorts last and is excluded by the default
+// optimized floor — the conservative choice for a profile that doesn't declare
+// its optimization level.
 func profileTypeRank(t aimv1alpha1.AIMProfileType) int {
-	switch t {
-	case aimv1alpha1.AIMProfileTypeOptimized:
-		return 0
-	case aimv1alpha1.AIMProfileTypeGeneral:
-		return 1
-	case aimv1alpha1.AIMProfileTypePreview:
-		return 2
-	case aimv1alpha1.AIMProfileTypeUnoptimized:
-		return 3
-	default:
-		return 4
-	}
+	return aimprofile.ProfileTypeRank(t)
 }
 
 // compareProfileVersions returns 1 if a>b, -1 if a<b, 0 on tie. Empty
@@ -1069,11 +1070,12 @@ func evaluateStickyBinding(
 }
 
 // boundNamespaceStillMatches mirrors filterNamespaceProfilesBySpec for a
-// single previously-bound profile: same manual-only / overlay exclusions
-// and the same selector predicate. Kept as a tiny helper so the sticky
-// path and the freshly-listed path can't drift on what "matches" means.
+// single previously-bound profile: same overlay exclusion and the same
+// selector predicate (including the minimumType floor). Kept as a tiny helper
+// so the sticky path and the freshly-listed path can't drift on what "matches"
+// means.
 func boundNamespaceStillMatches(p *aimv1alpha2.AIMProfile, selector aimv1alpha1.ProfileSelector) bool {
-	if p == nil || p.Spec.ManualSelectionOnly {
+	if p == nil {
 		return false
 	}
 	if _, isOverlay := p.Annotations[AnnotationOverlayService]; isOverlay {
@@ -1089,7 +1091,7 @@ func boundNamespaceStillMatches(p *aimv1alpha2.AIMProfile, selector aimv1alpha1.
 }
 
 func boundClusterStillMatches(p *aimv1alpha2.AIMClusterProfile, selector aimv1alpha1.ProfileSelector) bool {
-	if p == nil || p.Spec.ManualSelectionOnly {
+	if p == nil {
 		return false
 	}
 	candidate := aimprofile.ProfileCopyCandidate{

@@ -50,7 +50,8 @@ Cache-backed mode is mainly used by `AIMModel.spec.profiles.derivedFrom.sourceRe
 | `engine` | Match by inference engine (`vllm`, `tgi`). |
 | `metric` | Match `latency` or `throughput`. |
 | `precision` | Match by numeric precision (`fp8`, `fp16`, `bf16`, ...). |
-| `type` | Match optimization level (`optimized`, `general`, `preview`, `unoptimized`). |
+| `type` | Match optimization level exactly (`optimized`, `general`, `preview`, `unoptimized`). |
+| `minimumType` | Match optimization level as a floor — that tier or better (`optimized > general > preview > unoptimized`), or `any` for no floor. Empty means no floor for derivation selectors (AIMService auto-selection defaults this floor to `optimized` instead). ANDs with `type` when both are set. |
 | `acceleratorModel` | Match by accelerator identifier (`MI300X`, `MI325X`, ...). |
 | `acceleratorType` | Match `gpu` or `cpu`. |
 | `acceleratorCount` | Match by accelerator unit count. |

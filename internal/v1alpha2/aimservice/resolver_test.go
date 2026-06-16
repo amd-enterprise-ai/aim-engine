@@ -1555,19 +1555,19 @@ func TestStickyBinding_NoEventWhenForceRebindLandsOnSameWinner(t *testing.T) {
 	}
 }
 
-// TestStickyBinding_ManualSelectionOnlyBoundProfileTriggersRebind covers
-// a subtle edge case: the bound profile was Manual=true even at binding
-// time (auto-selection should have excluded it), OR it has been mutated
-// to manual-only since the binding was made. Either way, the selector
-// match predicate now excludes it and the sticky path must fall through.
-func TestStickyBinding_ManualSelectionOnlyBoundProfileTriggersRebind(t *testing.T) {
+// TestStickyBinding_BoundProfileBelowMinimumTypeTriggersRebind covers a
+// subtle edge case: the bound profile sits below the selector's minimumType
+// floor (e.g. it was retyped to unoptimized, or the default optimized floor
+// would never have auto-selected it). The selector match predicate now
+// excludes it via the floor and the sticky path must fall through to a rebind.
+func TestStickyBinding_BoundProfileBelowMinimumTypeTriggersRebind(t *testing.T) {
 	scheme := newResolverTestScheme(t)
 	labels := map[string]string{constants.LabelKeyProfileRole: constants.LabelValueProfileRoleDeployable}
 
-	// Bound profile is now manual-only — auto-selection would have
-	// excluded it; sticky must respect that exclusion too.
+	// Bound profile is unoptimized — below the default optimized floor that
+	// composeServiceSelector applies, so sticky must respect that exclusion.
 	bound := resolverProfileBuilderWithUID("bound", "fp16", labels, stickyTestBoundUID)
-	bound.Spec.ManualSelectionOnly = true
+	bound.Spec.Type = aimv1alpha1.AIMProfileTypeUnoptimized
 	other := resolverProfileBuilderWithUID("other", "fp8", labels, "other-uid")
 	c := newResolverClient(t, scheme, bound, other)
 
@@ -1578,10 +1578,10 @@ func TestStickyBinding_ManualSelectionOnlyBoundProfileTriggersRebind(t *testing.
 
 	ns, _, _ := resolveProfileCandidates(context.Background(), c, recorder, service)
 	if ns.Value == nil || ns.Value.Name != "other" {
-		t.Fatalf("expected rebind to 'other' when bound is manual-only; got %+v", ns.Value)
+		t.Fatalf("expected rebind to 'other' when bound is below the minimumType floor; got %+v", ns.Value)
 	}
 	if !reboundEventEmitted(t, drainRecorder(recorder), "bound", "other") {
-		t.Error("expected a ProfileRebound event when bound profile flips to manual-only")
+		t.Error("expected a ProfileRebound event when bound profile drops below the minimumType floor")
 	}
 }
 

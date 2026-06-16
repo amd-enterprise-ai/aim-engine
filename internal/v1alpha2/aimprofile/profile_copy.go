@@ -96,6 +96,9 @@ func MatchesProfileCopySelector(candidate ProfileCopyCandidate, selector aimv1al
 	if selector.Type != "" && candidate.Spec.Type != selector.Type {
 		return false, nil
 	}
+	if !MeetsMinimumType(candidate.Spec.Type, selector.MinimumType) {
+		return false, nil
+	}
 	if selector.AcceleratorModel != "" && candidate.Spec.AcceleratorModel != selector.AcceleratorModel {
 		return false, nil
 	}
@@ -109,6 +112,42 @@ func MatchesProfileCopySelector(candidate ProfileCopyCandidate, selector aimv1al
 		return false, nil
 	}
 	return MatchesEngineArgs(candidate.Spec.EngineArgs, selector.EngineArgs)
+}
+
+// ProfileTypeRank maps a profile optimization tier to a sortable rank where a
+// LOWER number is better (optimized=0 > general=1 > preview=2 > unoptimized=3).
+// An empty/unset type is treated as unoptimized (the lowest real tier): a
+// profile that does not declare its optimization level is handled
+// conservatively, so it sorts last and is excluded by the default optimized
+// minimumType floor — only auto-selected when a selector opts down to
+// minimumType "unoptimized" or "any". The selector-only "any" sentinel maps to
+// the largest rank so it never excludes a candidate when used as a floor.
+// Unknown/garbage values fall just below unoptimized.
+func ProfileTypeRank(t aimv1alpha1.AIMProfileType) int {
+	switch t {
+	case aimv1alpha1.AIMProfileTypeOptimized:
+		return 0
+	case aimv1alpha1.AIMProfileTypeGeneral:
+		return 1
+	case aimv1alpha1.AIMProfileTypePreview:
+		return 2
+	case aimv1alpha1.AIMProfileTypeUnoptimized, "":
+		return 3
+	case aimv1alpha1.AIMProfileTypeAny:
+		return 1 << 30
+	default:
+		return 4
+	}
+}
+
+// MeetsMinimumType reports whether a candidate profile's type satisfies a
+// selector's minimumType floor: the candidate must be the floor tier or better.
+// An empty floor or the "any" sentinel disables the check (accept every tier).
+func MeetsMinimumType(candidate, minimum aimv1alpha1.AIMProfileType) bool {
+	if minimum == "" || minimum == aimv1alpha1.AIMProfileTypeAny {
+		return true
+	}
+	return ProfileTypeRank(candidate) <= ProfileTypeRank(minimum)
 }
 
 // matchesPartitioningSelector implements the partial-order match for

@@ -598,8 +598,11 @@ func mergeCandidates(clusterCandidates, namespaceCandidates []aimprofile.Profile
 }
 
 func candidateIdentity(candidate aimprofile.ProfileCopyCandidate) string {
+	// manualSelectionOnly is intentionally omitted: it is deprecated and no
+	// longer affects selection, so two candidates differing only by it are
+	// equivalent for dedup purposes.
 	return fmt.Sprintf(
-		"%s|%s|%s|%s|%s|%s|%s|%t|%t|%s|%s|%s|%d|%s|%s",
+		"%s|%s|%s|%s|%s|%s|%s|%t|%s|%s|%s|%d|%s|%s",
 		candidate.Name,
 		candidate.Spec.AimId,
 		candidate.Spec.ModelId,
@@ -608,7 +611,6 @@ func candidateIdentity(candidate aimprofile.ProfileCopyCandidate) string {
 		candidate.Spec.Metric,
 		candidate.Spec.Type,
 		candidate.Spec.Primary,
-		candidate.Spec.ManualSelectionOnly,
 		candidate.Spec.AcceleratorModel,
 		candidate.Spec.AcceleratorType,
 		candidate.Spec.Precision,

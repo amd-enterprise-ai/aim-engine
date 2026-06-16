@@ -73,6 +73,70 @@ func TestMatchesProfileCopySelector_PartialEngineArgs(t *testing.T) {
 	}
 }
 
+func TestMeetsMinimumType(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		candidate aimv1alpha1.AIMProfileType
+		minimum   aimv1alpha1.AIMProfileType
+		want      bool
+	}{
+		{"empty floor accepts anything", aimv1alpha1.AIMProfileTypeUnoptimized, "", true},
+		{"any floor accepts anything", aimv1alpha1.AIMProfileTypeUnoptimized, aimv1alpha1.AIMProfileTypeAny, true},
+		{"optimized floor rejects unoptimized", aimv1alpha1.AIMProfileTypeUnoptimized, aimv1alpha1.AIMProfileTypeOptimized, false},
+		{"optimized floor rejects preview", aimv1alpha1.AIMProfileTypePreview, aimv1alpha1.AIMProfileTypeOptimized, false},
+		{"optimized floor accepts optimized", aimv1alpha1.AIMProfileTypeOptimized, aimv1alpha1.AIMProfileTypeOptimized, true},
+		{"optimized floor rejects untyped (treated as unoptimized)", aimv1alpha1.AIMProfileType(""), aimv1alpha1.AIMProfileTypeOptimized, false},
+		{"unoptimized floor accepts untyped", aimv1alpha1.AIMProfileType(""), aimv1alpha1.AIMProfileTypeUnoptimized, true},
+		{"any floor accepts untyped", aimv1alpha1.AIMProfileType(""), aimv1alpha1.AIMProfileTypeAny, true},
+		{"preview floor accepts general", aimv1alpha1.AIMProfileTypeGeneral, aimv1alpha1.AIMProfileTypePreview, true},
+		{"preview floor accepts preview", aimv1alpha1.AIMProfileTypePreview, aimv1alpha1.AIMProfileTypePreview, true},
+		{"preview floor rejects unoptimized", aimv1alpha1.AIMProfileTypeUnoptimized, aimv1alpha1.AIMProfileTypePreview, false},
+		{"unoptimized floor accepts unoptimized", aimv1alpha1.AIMProfileTypeUnoptimized, aimv1alpha1.AIMProfileTypeUnoptimized, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MeetsMinimumType(tt.candidate, tt.minimum); got != tt.want {
+				t.Errorf("MeetsMinimumType(%q, %q) = %v, want %v", tt.candidate, tt.minimum, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMatchesProfileCopySelector_MinimumTypeFloor(t *testing.T) {
+	t.Parallel()
+	unoptimized := ProfileCopyCandidate{Spec: aimv1alpha2.AIMProfileSpecCommon{
+		AimId: "meta-llama/Llama-3.2-1B-Instruct",
+		Type:  aimv1alpha1.AIMProfileTypeUnoptimized,
+	}}
+
+	// Default-equivalent optimized floor excludes the unoptimized EPYC-style profile.
+	ok, err := MatchesProfileCopySelector(unoptimized, aimv1alpha1.ProfileSelector{
+		AimId:       "meta-llama/Llama-3.2-1B-Instruct",
+		MinimumType: aimv1alpha1.AIMProfileTypeOptimized,
+	})
+	if err != nil || ok {
+		t.Fatalf("optimized floor should exclude unoptimized; ok=%v err=%v", ok, err)
+	}
+
+	// Opt-in via minimumType=any includes it.
+	ok, err = MatchesProfileCopySelector(unoptimized, aimv1alpha1.ProfileSelector{
+		AimId:       "meta-llama/Llama-3.2-1B-Instruct",
+		MinimumType: aimv1alpha1.AIMProfileTypeAny,
+	})
+	if err != nil || !ok {
+		t.Fatalf("any floor should include unoptimized; ok=%v err=%v", ok, err)
+	}
+
+	// Empty floor (derivation selectors) also includes it.
+	ok, err = MatchesProfileCopySelector(unoptimized, aimv1alpha1.ProfileSelector{
+		AimId: "meta-llama/Llama-3.2-1B-Instruct",
+	})
+	if err != nil || !ok {
+		t.Fatalf("empty floor should include unoptimized; ok=%v err=%v", ok, err)
+	}
+}
+
 // TestMatchesProfileCopySelector_StrictIdentityEquality locks in the
 // post-CEL contract: selector identity fields are pure source-side
 // filters. An empty selector field is a wildcard (matches anything), a

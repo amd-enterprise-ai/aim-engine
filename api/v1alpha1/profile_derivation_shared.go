@@ -170,9 +170,26 @@ type ProfileSelector struct {
 	// +optional
 	Precision AIMPrecision `json:"precision,omitempty"`
 
-	// Type filters by optimization level.
+	// Type filters by optimization level (exact match).
 	// +optional
 	Type AIMProfileType `json:"type,omitempty"`
+
+	// MinimumType filters by a minimum optimization level: candidates whose
+	// type is this tier OR BETTER are accepted (hierarchy: optimized > general
+	// > preview > unoptimized). This is the floor counterpart to the exact-match
+	// Type field; the two AND together when both are set.
+	//
+	// The sentinel "any" disables the floor (accept every tier). When this
+	// field is empty the AIMService resolver applies a default floor of
+	// "optimized" so auto-selection prefers production-grade profiles and never
+	// silently picks an unoptimized one; to opt a service into lower tiers
+	// (e.g. CPU/EPYC profiles published as unoptimized) set minimumType
+	// explicitly to "unoptimized" or "any". Derivation selectors
+	// (AIMProfileSet / AIMModel.profiles) treat empty as "any" so copying is
+	// never tier-restricted by default.
+	// +optional
+	// +kubebuilder:validation:Enum=optimized;general;preview;unoptimized;any
+	MinimumType AIMProfileType `json:"minimumType,omitempty"`
 
 	// AcceleratorModel filters by accelerator identifier.
 	// +optional

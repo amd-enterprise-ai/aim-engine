@@ -135,9 +135,9 @@ spec:
 | `engine` | Inference engine (`vllm`, `tgi`, ...). |
 | `metric` | Optimization target: `latency` or `throughput`. |
 | `precision` | Numeric precision: `fp4`, `fp8`, `fp16`, `fp32`, `bf16`, `int4`, `int8`. |
-| `type` | Optimization level. Hierarchy: `optimized > general > preview > unoptimized`. |
+| `type` | Optimization level. Hierarchy: `optimized > general > preview > unoptimized`. Auto-selection compares this against the selector's `minimumType` floor (default `optimized` for AIMServices), so lower tiers are opt-in. An empty/unset `type` is treated as `unoptimized` (conservative: an undeclared tier is excluded by the default floor unless the selector opts down). |
 | `primary` | Marks the recommended default for this model + hardware combination. Boosts ranking during automatic selection. Default `false`. |
-| `manualSelectionOnly` | Excludes this profile from automatic selection. Still addressable by explicit `spec.profile.name`. Used by aim-build for preview / experimental profiles. Default `false`. |
+| `manualSelectionOnly` | **Deprecated and ignored by the resolver.** Formerly excluded a profile from automatic selection; that role is now served by `type` + the selector's `minimumType` floor. Retained for backward compatibility (still accepted on existing objects and aim-build YAMLs) but has no effect. Default `false`. |
 | `acceleratorModel` | Accelerator identifier for node selection (e.g. `MI300X`, `CDNA3`, `EPYC_ZEN5`). Maps to a `feature.node.kubernetes.io/aim-accelerator.<value>` node label with the `Exists` operator. |
 | `acceleratorType` | `gpu` or `cpu`. Determines resource derivation strategy. |
 | `acceleratorCount` | Number of accelerator units required. Combined with `acceleratorType` and cluster config to compute default resource requests. |
@@ -277,9 +277,24 @@ The profile controller watches node events and re-evaluates hardware availabilit
 
 When a service uses `spec.model.name` resolution (which produces multiple candidate profiles), primaries are ranked above non-primaries during selection. Non-primary profiles remain addressable by explicit name.
 
-## `manualSelectionOnly` profiles
+## Optimization tier and the `minimumType` floor
 
-`spec.manualSelectionOnly: true` excludes a profile from automatic selection entirely. The profile remains addressable by explicit `spec.profile.name` but is never returned by the model-driven ranker. aim-build uses this for preview / experimental tunings that ship in the image but shouldn't be picked by default.
+A profile's `spec.type` (`optimized > general > preview > unoptimized`) is both a ranking signal and a selection gate. Automatic selection (`spec.model.name` / selector resolution) only considers profiles whose `type` is at or above the selector's `spec.profile.selector.minimumType` floor. For AIMServices that floor **defaults to `optimized`**, so preview/unoptimized profiles (e.g. CPU/EPYC tunings published as `unoptimized`) are never auto-picked unless the service opts in:
+
+```yaml
+# AIMService — accept lower tiers (e.g. an EPYC unoptimized profile)
+spec:
+  model:
+    name: aim-epyc-llama-3-2-1b-zen4-lowmem
+  profile:
+    selector:
+      minimumType: any   # or "unoptimized"; default would be "optimized"
+```
+
+Any profile — including lower tiers — also remains addressable by explicit `spec.profile.name`, which bypasses the floor entirely.
+
+!!! warning "`manualSelectionOnly` is deprecated"
+    `spec.manualSelectionOnly` is no longer honored. It was a binary "exclude from auto-selection" gate, redundant with the graded `type` hierarchy. Express the same intent by publishing the profile as `type: unoptimized` (the resolver's default `minimumType: optimized` floor then keeps it opt-in). The field is still accepted for backward compatibility but has no effect and will be removed in a future API version.
 
 ## Examples
 
