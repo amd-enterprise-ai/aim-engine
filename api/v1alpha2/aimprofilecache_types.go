@@ -81,6 +81,14 @@ type AIMProfileCacheSpec struct {
 	// +kubebuilder:default=Shared
 	// +optional
 	Mode AIMProfileCacheMode `json:"mode,omitempty"`
+
+	// RequiresAdapterDisk requests that the backing model artifact carry a shared
+	// ReadWriteMany adapter disk for LoRA serving. Set by the AIMService planner
+	// when the service serves adapters. When set, the cache stamps an adapterDisk
+	// onto the artifact it creates and won't adopt one lacking a disk; size and
+	// class come from AIMRuntimeConfig.Storage.
+	// +optional
+	RequiresAdapterDisk bool `json:"requiresAdapterDisk,omitempty"`
 }
 
 // AIMProfileCacheStatus defines the observed state of AIMProfileCache.

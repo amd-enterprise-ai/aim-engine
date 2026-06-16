@@ -1,0 +1,43 @@
+# Namespaced AIMProfile for Llama-2-7b on MI300X with LoRA adapter support.
+#
+# features: [adapters] is the whole point of this test: the v1alpha2 configmap
+# assembler emits it as metadata.features into the mounted profile YAML, which
+# is what the runtime gates LoRA loading on (supports_adapters). Without it the
+# image serves the base model but silently ignores staged adapters.
+#
+# image is the LoRA-capable base inference image. The profile resolves to a
+# single model source (Llama-2-7b), so adapters bind unambiguously to it.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: llama2-lora-live
+spec:
+  aimId: meta-llama/Llama-2-7b
+  modelId: NousResearch/Llama-2-7b-hf
+  engine: vllm
+  metric: latency
+  precision: fp16
+  type: unoptimized
+  primary: true
+  acceleratorModel: MI300X
+  acceleratorType: gpu
+  acceleratorCount: 1
+  image: docker.io/silogenai/aim-instinct-base:0.12-rc54
+  features:
+    - adapters
+  modelSources:
+    - modelId: NousResearch/Llama-2-7b-hf
+      sourceUri: hf://NousResearch/Llama-2-7b-hf
+      # Non-gated mirror ships both .bin and .safetensors (~27 GiB); headroom.
+      size: 60Gi
+  caching:
+    enabled: true
+    env:
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: huggingface-creds
+            key: token
+  engineArgs:
+    max-model-len: 4096
+    gpu-memory-utilization: 0.9

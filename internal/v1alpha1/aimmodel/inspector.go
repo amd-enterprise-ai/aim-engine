@@ -97,7 +97,6 @@ func recordInspectResult(imageURI string, err error) {
 	delete(inspectFailures, imageURI)
 }
 
-
 // inspectImage extracts metadata from a container image using the provided image pull secrets.
 // It uses go-containerregistry to authenticate and fetch image labels, then parses them into
 // the imageMetadata structure.
@@ -120,7 +119,6 @@ func inspectImage(
 	clientset kubernetes.Interface,
 	secretNamespace string,
 ) (_ *aimv1alpha1.ImageMetadata, retErr error) {
-
 	logger := ctrl.LoggerFrom(ctx)
 
 	// Skip the registry GET while a recent registry failure is still within the cooldown.

@@ -43,7 +43,154 @@ const (
 	// AIMServiceProfileIndexKey is the field index key for indexing AIMService resources
 	// by their profile reference (.spec.profile.name).
 	AIMServiceProfileIndexKey = ".spec.profileRef"
+
+	// AIMServiceAdapterArtifactIndexKey is the field index key for indexing AIMService
+	// resources by the names of the adapter artifacts they reference
+	// (.spec.adapters[].name). Enables enqueueing services when an adapter artifact changes.
+	AIMServiceAdapterArtifactIndexKey = ".spec.adapters.name"
 )
+
+// AIMServiceAdapterKind enumerates the kinds an adapter reference may target.
+// Restricted to AIMArtifact in v1; reserved to admit a future AIMAdapter catalog kind.
+// +kubebuilder:validation:Enum=AIMArtifact
+type AIMServiceAdapterKind string
+
+const (
+	// AdapterKindAIMArtifact references an AIMArtifact (type=adapter).
+	AdapterKindAIMArtifact AIMServiceAdapterKind = "AIMArtifact"
+)
+
+// AIMAdapterMode selects the adapter contract for the service. Its values are
+// the lowercase tokens the inference container reads via the AIM_ADAPTER_MODE
+// env, and the field is immutable after creation.
+//   - static (default): the served set is fixed at creation — spec.adapters is
+//     CEL-immutable. The adapter disk is mounted read-only only when the service
+//     declares at least one adapter.
+//   - dynamic: spec.adapters may be edited after creation; the runtime
+//     hot-loads/unloads from the mounted subtree. The adapter disk is mounted
+//     (immutably) whenever the service is in dynamic mode — even at zero adapters
+//     — so add/remove never restarts the pod.
+//
+// A service serves no adapters by simply declaring none: the default-static,
+// no-adapters case mounts nothing.
+//
+// +kubebuilder:validation:Enum=static;dynamic
+type AIMAdapterMode string
+
+const (
+	// AdapterModeStatic fixes the adapter set at creation; the disk is mounted
+	// only when adapters are declared.
+	AdapterModeStatic AIMAdapterMode = "static"
+	// AdapterModeDynamic permits editing spec.adapters and mounts the disk even
+	// at zero adapters.
+	AdapterModeDynamic AIMAdapterMode = "dynamic"
+)
+
+// AdapterModeDynamic reports whether the service uses dynamic adapter mode.
+func (s *AIMServiceSpec) AdapterModeDynamic() bool {
+	return s.AdapterMode == AdapterModeDynamic
+}
+
+// AdaptersEnabled reports whether the service needs the adapter disk mounted and
+// its per-service subtree provisioned. True when the service declares at least
+// one adapter, or is in dynamic mode (which mounts the disk even at zero adapters
+// so adapters can be added later without restarting the pod). Deliberately
+// independent of the adapter-list length in dynamic mode.
+func (s *AIMServiceSpec) AdaptersEnabled() bool {
+	return len(s.Adapters) > 0 || s.AdapterModeDynamic()
+}
+
+// AIMServiceAdapterReference is a typed reference to a LoRA adapter served by this
+// service. Today it is resolved as a pure reference to an existing adapter
+// artifact. The inline bootstrap fields (sourceUri/modelId/rank) are reserved:
+// the schema accepts them, but create-if-missing self-healing is not yet wired,
+// so a referenced adapter artifact must currently exist.
+// +kubebuilder:validation:XValidation:rule="!has(self.sourceUri) || has(self.modelId)",message="modelId is required when sourceUri is set"
+// +kubebuilder:validation:XValidation:rule="has(self.sourceUri) || (!has(self.modelId) && !has(self.rank))",message="modelId and rank are only allowed together with sourceUri"
+type AIMServiceAdapterReference struct {
+	// Name is the metadata.name of the referenced adapter artifact.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+
+	// Kind is the kind of the referenced adapter. Required; restricted to AIMArtifact in v1.
+	Kind AIMServiceAdapterKind `json:"kind"`
+
+	// SourceURI is an optional create-if-missing bootstrap source. When set and no
+	// adapter artifact named Name exists, a later release will create one from this
+	// source; a pre-existing artifact always wins. RESERVED: not yet acted on.
+	// +optional
+	SourceURI string `json:"sourceUri,omitempty"`
+
+	// ModelID is the adapter's canonical model id. Required when SourceURI is set.
+	// RESERVED: only meaningful alongside SourceURI.
+	// +optional
+	ModelID string `json:"modelId,omitempty"`
+
+	// Rank is the optional LoRA rank for the bootstrapped adapter. RESERVED: only
+	// meaningful alongside SourceURI.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	Rank *int32 `json:"rank,omitempty"`
+}
+
+// AIMAdapterState is the disk-side lifecycle state of an adapter within a service's
+// subtree. The controller tracks staging and removal directly; the engine-reported
+// states (Loaded/LoadRejected) are reserved until the inference container exposes a
+// per-adapter load-status surface.
+// +kubebuilder:validation:Enum=Pending;Downloading;Downloaded;Deleting;Loaded;LoadRejected
+type AIMAdapterState string
+
+const (
+	// AdapterStatePending means the adapter is applied and waiting on a precondition.
+	AdapterStatePending AIMAdapterState = "Pending"
+	// AdapterStateDownloading means a staging Job is running for this adapter.
+	AdapterStateDownloading AIMAdapterState = "Downloading"
+	// AdapterStateDownloaded means the bytes are staged in this service's subtree.
+	AdapterStateDownloaded AIMAdapterState = "Downloaded"
+	// AdapterStateDeleting means the adapter was removed from spec.adapters and its
+	// bytes are being reclaimed from the service subtree by the subtree-sync Job.
+	// The entry is dropped from status once the prune completes.
+	AdapterStateDeleting AIMAdapterState = "Deleting"
+	// AdapterStateLoaded means the inference engine has the adapter in memory.
+	// RESERVED: engine-reported, not yet populated by the controller.
+	AdapterStateLoaded AIMAdapterState = "Loaded"
+	// AdapterStateLoadRejected means the bytes are present but the engine declined
+	// to load the adapter. RESERVED: engine-reported, not yet populated.
+	AdapterStateLoadRejected AIMAdapterState = "LoadRejected"
+)
+
+// AIMServiceAdapterStatus is the per-adapter status aggregated onto an AIMService.
+type AIMServiceAdapterStatus struct {
+	// Name is the adapter reference name.
+	Name string `json:"name"`
+
+	// AdapterPath is the on-disk directory name (mirrored from the artifact).
+	// +optional
+	AdapterPath string `json:"adapterPath,omitempty"`
+
+	// ModelID is the adapter's canonical model id (mirrored from the artifact).
+	// +optional
+	ModelID string `json:"modelId,omitempty"`
+
+	// State is the disk-side state of the adapter for this service.
+	// +optional
+	State AIMAdapterState `json:"state,omitempty"`
+
+	// LoadedReplicas reports how many serving replicas have the adapter loaded,
+	// as "loaded/total" (e.g. "3/3"). RESERVED: engine-reported, not yet populated.
+	// +optional
+	LoadedReplicas string `json:"loadedReplicas,omitempty"`
+
+	// LastObserved is when the controller last observed this adapter's state.
+	// +optional
+	LastObserved *metav1.Time `json:"lastObserved,omitempty"`
+
+	// LastError carries the most recent error for this adapter (e.g. a mirrored
+	// failing reason from the underlying artifact).
+	// +optional
+	LastError string `json:"lastError,omitempty"`
+}
 
 // AIMCachingMode controls caching behavior for a service.
 // Canonical values are Dedicated and Shared.
@@ -301,6 +448,34 @@ type AIMServiceSpec struct {
 	// +optional
 	ProfileOverrides *AIMServiceProfileOverrides `json:"profileOverrides,omitempty"`
 
+	// AdapterMode is the immutable adapter contract for the service, mapped
+	// directly to the AIM_ADAPTER_MODE container env. static (default) freezes
+	// spec.adapters and mounts the adapter disk only when adapters are declared;
+	// dynamic allows editing spec.adapters and mounts the disk even at zero
+	// adapters (so add/remove never restarts the pod). It is immutable after
+	// creation.
+	// +optional
+	// +kubebuilder:default=static
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec.adapterMode is immutable after creation"
+	AdapterMode AIMAdapterMode `json:"adapterMode,omitempty"`
+
+	// Adapters is the load-bearing list of LoRA adapters this service serves.
+	// The list may only be edited after creation when adapterMode is dynamic
+	// (static freezes it). Omitting the list serves no adapters.
+	// Supported on both the template (v1alpha1) and profile (v1alpha2) pipelines:
+	// the base model the adapters attach to is resolved from the service's
+	// template cache or profile cache respectively. In dynamic mode the list may
+	// be edited after creation: adding an adapter stages it into the service's
+	// subtree and the aim-runtime hot-loads it; removing one lets the runtime
+	// unload it (subtree cleanup is reclaimed out-of-band). The InferenceService
+	// is never modified for adapter changes — it mounts the whole per-service
+	// subtree read-only. Entries are pure references; (kind, name) pairs must be
+	// unique. Omitting the list serves no adapters.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=64
+	Adapters []AIMServiceAdapterReference `json:"adapters,omitempty"`
+
 	// Caching controls caching behavior for this service.
 	// When nil, defaults to Shared mode.
 	// +optional
@@ -418,6 +593,31 @@ type AIMServiceStatus struct {
 	// Runtime captures runtime status including replica counts.
 	// +optional
 	Runtime *AIMServiceRuntimeStatus `json:"runtime,omitempty"`
+
+	// Adapters reports the per-adapter disk-side status for services that declare
+	// spec.adapters. One entry per declared adapter. Observation is
+	// best-effort/eventual; the disk state the controller wrote is authoritative.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Adapters []AIMServiceAdapterStatus `json:"adapters,omitempty"`
+
+	// AdapterSubtreeSyncKey records the declared adapter set most recently
+	// reconciled onto the service's adapter subtree by the subtree-sync Job
+	// (a hash of the sorted spec.adapters names). The controller re-runs the
+	// sync Job — which creates the subtree and prunes adapter directories no
+	// longer declared — whenever this drifts from the current desired set, so
+	// editing spec.adapters reclaims removed adapters without re-run loops.
+	// +optional
+	AdapterSubtreeSyncKey string `json:"adapterSubtreeSyncKey,omitempty"`
+
+	// AdapterDiskPersistentVolumeClaim is the resolved shared adapter-disk PVC
+	// (from the base model artifact's status). It is recorded here once resolved
+	// and reused when a transient parent-resolution gap would otherwise leave it
+	// empty, so a blip never re-renders the InferenceService without its adapter
+	// mount and restarts a running predictor. Never cleared once set.
+	// +optional
+	AdapterDiskPersistentVolumeClaim string `json:"adapterDiskPersistentVolumeClaim,omitempty"`
 }
 
 // AIMServiceCacheStatus captures cache-related status for an AIMService.
@@ -585,6 +785,8 @@ const (
 // +kubebuilder:validation:XValidation:rule="!(has(self.spec.profile) && has(self.spec.template))",message="spec.profile and spec.template are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="has(self.spec.model) || has(self.spec.profile)",message="one of spec.model or spec.profile must be specified"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.profileOverrides) || !has(self.spec.profileOverrides.acceleratorPartitioningMode) || size(self.spec.profileOverrides.acceleratorPartitioningMode) == 0 || has(self.spec.profileOverrides.acceleratorCount)",message="acceleratorCount must be specified together with any acceleratorPartitioningMode override; partition mode changes the per-unit interpretation of acceleratorCount"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.adapters) || self.spec.adapters.all(a, self.spec.adapters.exists_one(b, b.kind == a.kind && b.name == a.name))",message="spec.adapters entries must have unique (kind, name) pairs"
+// +kubebuilder:validation:XValidation:rule="self.spec.adapterMode == 'dynamic' || (has(self.spec.adapters) == has(oldSelf.spec.adapters) && (!has(self.spec.adapters) || self.spec.adapters == oldSelf.spec.adapters))",message="spec.adapters is immutable unless spec.adapterMode is dynamic"
 // Note: KServe uses {name}-{namespace} format which must not exceed 63 characters.
 // This constraint is validated at runtime since CEL cannot access metadata.namespace.
 //

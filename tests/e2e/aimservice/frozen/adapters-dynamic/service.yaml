@@ -1,0 +1,20 @@
+# v1alpha2 AIMService that starts by serving TWO LoRA adapters on the
+# bootstrapped base model. The test later removes adapter "b" to exercise the
+# dynamic subtree-sync prune/unload path.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: adapters-dynamic-service
+spec:
+  profile:
+    name: adapters-dynamic-profile
+  # Dynamic mode: the adapter disk is mounted (even at zero adapters) and
+  # spec.adapters may be edited after creation — the test removes "b" and later
+  # drops to zero.
+  adapterMode: dynamic
+  adapters:
+    - name: adapters-dynamic-lora-a
+      kind: AIMArtifact
+    - name: adapters-dynamic-lora-b
+      kind: AIMArtifact
+  replicas: 1

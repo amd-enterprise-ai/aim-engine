@@ -1,0 +1,177 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMArtifact CEL Validation: adapter type constraints
+#
+# Validates the artifact-root CEL rules introduced for LoRA adapter support:
+# - spec.type is immutable
+# - spec.parentArtifact is required iff spec.type == adapter
+# - spec.modelId is required when spec.type == adapter
+# - spec.adapterDisk is only allowed on model artifacts
+# - spec.rank is only allowed on adapter artifacts
+# - spec.parentArtifact / spec.sourceUri immutability
+#
+# No special infrastructure required (admission-time validation only).
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: adapter-cel-validation
+spec:
+  description: CEL validation rules for adapter/model AIMArtifacts
+  timeouts:
+    assert: 30s
+  steps:
+    # --- Rejection cases ---
+
+    - name: Reject adapter without parentArtifact
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: cel-adapter-no-parent
+              spec:
+                type: adapter
+                modelId: org/adapter
+                sourceUri: hf://org/adapter
+
+    - name: Reject adapter without modelId
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: cel-adapter-no-modelid
+              spec:
+                type: adapter
+                parentArtifact: some-base
+                sourceUri: hf://org/adapter
+
+    - name: Reject model that sets parentArtifact
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: cel-model-with-parent
+              spec:
+                type: model
+                parentArtifact: some-base
+                sourceUri: hf://org/model
+
+    - name: Reject adapter that sets adapterDisk
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: cel-adapter-with-disk
+              spec:
+                type: adapter
+                parentArtifact: some-base
+                modelId: org/adapter
+                sourceUri: hf://org/adapter
+                adapterDisk:
+                  size: 10Gi
+
+    - name: Reject model that sets rank
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: cel-model-with-rank
+              spec:
+                type: model
+                sourceUri: hf://org/model
+                rank: 16
+
+    # --- Acceptance cases ---
+
+    - name: Accept model artifact with adapterDisk
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: cel-model-with-disk
+              spec:
+                type: model
+                sourceUri: hf://org/base-model
+                size: 1Mi
+                adapterDisk:
+                  size: 10Gi
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: cel-model-with-disk
+
+    - name: Accept adapter artifact with parentArtifact + modelId + rank
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: cel-adapter-valid
+              spec:
+                type: adapter
+                parentArtifact: cel-model-with-disk
+                modelId: org/lora
+                sourceUri: hf://org/lora
+                rank: 16
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: cel-adapter-valid
+
+    # --- Immutability cases ---
+
+    - name: Reject changing spec.type after creation
+      try:
+        - script:
+            content: |
+              set -eu
+              if kubectl patch aimartifact -n "$NAMESPACE" cel-adapter-valid \
+                  --type merge -p '{"spec":{"type":"model"}}' 2>/dev/null; then
+                echo "ERROR: spec.type mutation was accepted"
+                exit 1
+              fi
+              echo "OK: spec.type is immutable"
+
+    - name: Reject changing spec.parentArtifact after creation
+      try:
+        - script:
+            content: |
+              set -eu
+              if kubectl patch aimartifact -n "$NAMESPACE" cel-adapter-valid \
+                  --type merge -p '{"spec":{"parentArtifact":"other-base"}}' 2>/dev/null; then
+                echo "ERROR: spec.parentArtifact mutation was accepted"
+                exit 1
+              fi
+              echo "OK: spec.parentArtifact is immutable"

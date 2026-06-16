@@ -14,4 +14,5 @@ resources:
 - aim_v1alpha2_aimmodel_finetune.yaml
 - aim_v1alpha2_aimprofileset.yaml
 - aim_v1alpha2_aimprofileset_cache.yaml
+- aim_v1alpha2_lora_adapters.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

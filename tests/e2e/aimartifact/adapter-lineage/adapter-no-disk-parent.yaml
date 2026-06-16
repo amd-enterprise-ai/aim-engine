@@ -1,0 +1,29 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: adapter-lineage-base-nodisk
+spec:
+  type: model
+  sourceUri: hf://test-org/base-model-nodisk
+  size: 10Mi
+  env:
+    - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+      value: "true"
+    - name: AIM_DEBUG_SIMULATE_HF_DURATION
+      value: "2"
+    - name: EXPECTED_SIZE_BYTES
+      value: "102400"
+    - name: PROGRESS_INTERVAL
+      value: "3"
+    - name: STALL_TIMEOUT
+      value: "120"
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: adapter-lineage-lora-orphan
+spec:
+  type: adapter
+  parentArtifact: adapter-lineage-base-nodisk
+  modelId: test-org/lora-orphan
+  sourceUri: hf://test-org/lora-orphan

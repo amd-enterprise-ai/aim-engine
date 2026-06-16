@@ -1,0 +1,14 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: adapters-live-full-chain
+spec:
+  routing:
+    enabled: true
+    gatewayRef:
+      name: kserve-ingress-gateway
+      namespace: kgateway-system
+    # Namespace in the path so leftover/parallel runs don't collide on the
+    # shared gateway. validate-adapter-loaded.sh hits this base path + /models.
+    pathTemplate: "/integration/adapters-live-full-chain/{.metadata.namespace}/{.metadata.name}"
+    requestTimeout: "180s"

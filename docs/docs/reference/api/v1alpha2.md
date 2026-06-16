@@ -187,6 +187,7 @@ _Appears in:_
 | `containerEnv` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | ContainerEnv specifies container-level env vars for the AIM runtime process (K8s pod spec). |  | Optional: \{\} <br /> |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets lists secrets for pulling container images. |  | Optional: \{\} <br /> |
 | `serviceAccountName` _string_ | ServiceAccountName specifies the service account for workloads. |  | Optional: \{\} <br /> |
+| `features` _string array_ | Features lists optional capabilities the profile's image honours, e.g.<br />"adapters" for LoRA serving. A service declaring spec.adapters is rejected<br />(ConfigValid=False) unless its resolved profile lists "adapters" here. |  | Optional: \{\} <br /> |
 
 
 
@@ -353,6 +354,7 @@ _Appears in:_
 | `storageClassName` _string_ | StorageClassName specifies the storage class for cache volumes.<br />When not specified, uses the cluster default storage class. |  | Optional: \{\} <br /> |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env specifies environment variables for authentication when downloading models.<br />These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  | Optional: \{\} <br /> |
 | `mode` _[AIMProfileCacheMode](#aimprofilecachemode)_ | Mode controls the ownership behavior of artifacts created by this profile cache.<br />- Dedicated: artifacts are owned by this profile cache and garbage collected when it's deleted.<br />- Shared (default): artifacts have no owner references and persist independently. | Shared | Enum: [Dedicated Shared] <br />Optional: \{\} <br /> |
+| `requiresAdapterDisk` _boolean_ | RequiresAdapterDisk requests that the backing model artifact carry a shared<br />ReadWriteMany adapter disk for LoRA serving. Set by the AIMService planner<br />when the service serves adapters. When set, the cache stamps an adapterDisk<br />onto the artifact it creates and won't adopt one lacking a disk; size and<br />class come from AIMRuntimeConfig.Storage. |  | Optional: \{\} <br /> |
 
 
 #### AIMProfileCacheStatus
@@ -485,6 +487,7 @@ _Appears in:_
 | `containerEnv` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | ContainerEnv specifies container-level env vars for the AIM runtime process (K8s pod spec). |  | Optional: \{\} <br /> |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets lists secrets for pulling container images. |  | Optional: \{\} <br /> |
 | `serviceAccountName` _string_ | ServiceAccountName specifies the service account for workloads. |  | Optional: \{\} <br /> |
+| `features` _string array_ | Features lists optional capabilities the profile's image honours, e.g.<br />"adapters" for LoRA serving. A service declaring spec.adapters is rejected<br />(ConfigValid=False) unless its resolved profile lists "adapters" here. |  | Optional: \{\} <br /> |
 | `caching` _[AIMProfileCachingConfig](#aimprofilecachingconfig)_ | Caching configures model caching behavior for this namespace-scoped profile. |  | Optional: \{\} <br /> |
 
 
@@ -526,6 +529,7 @@ _Appears in:_
 | `containerEnv` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | ContainerEnv specifies container-level env vars for the AIM runtime process (K8s pod spec). |  | Optional: \{\} <br /> |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#localobjectreference-v1-core) array_ | ImagePullSecrets lists secrets for pulling container images. |  | Optional: \{\} <br /> |
 | `serviceAccountName` _string_ | ServiceAccountName specifies the service account for workloads. |  | Optional: \{\} <br /> |
+| `features` _string array_ | Features lists optional capabilities the profile's image honours, e.g.<br />"adapters" for LoRA serving. A service declaring spec.adapters is rejected<br />(ConfigValid=False) unless its resolved profile lists "adapters" here. |  | Optional: \{\} <br /> |
 
 
 #### AIMProfileStatus

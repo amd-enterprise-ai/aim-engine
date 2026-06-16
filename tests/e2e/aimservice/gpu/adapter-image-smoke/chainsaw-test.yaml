@@ -1,0 +1,214 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Adapter runtime-contract smoke test (no control plane)
+#
+# Purpose: confirm that the AIM inference image actually honours the LoRA adapter
+# container contract (ADR-0004) — i.e. that it contains the runtime support from
+# aim-build's fix/eai-5778-lora and loads an adapter staged on disk. This runs
+# the image DIRECTLY as a Pod (no AIMService / KServe / gateway) so it isolates
+# "does the image load adapters?" from the rest of the engine.
+#
+# How it works:
+# 1. An init container downloads a small LoRA into an emptyDir laid out exactly
+#    like the engine stages it: ${AIM_ADAPTER_SOURCE}/<adapter-name>/.
+# 2. The serve container runs the image with the adapter contract env vars
+#    (AIM_ADAPTER_SOURCE + AIM_ADAPTER_MODE=static). In static mode the runtime
+#    enumerates the directory once at launch and passes the adapter to vLLM as
+#    --lora-modules.
+# 3. We poll the in-pod /v1/models endpoint until the adapter id appears
+#    (vLLM lists each loaded LoRA as its own model entry).
+#
+# IMPORTANT caveats (read before trusting a failure):
+# - The runtime only activates LoRA when its BUNDLED PROFILE advertises the
+#   "adapters" feature (build_adapter_runtime is gated on
+#   profile.metadata.supports_adapters). For an ad-hoc AIM_MODEL_ID the selected
+#   profile may not carry it, in which case the image will serve the base model
+#   but NOT load the adapter even though the bytes are present. If the adapter
+#   does not appear, check the pod logs for adapter handling: a contract-aware
+#   image logs about static/dynamic adapter mode; an image WITHOUT the contract
+#   ignores AIM_ADAPTER_* entirely (that is the "rc54 lacks the runtime" signal).
+# - The base model + LoRA below are a DOCUMENTED PLACEHOLDER (the vLLM-canonical
+#   reference pair). Confirm/override them for the target image via the env vars
+#   in the "Create the smoke Pod" step (IMAGE, BASE_MODEL, ADAPTER_REPO,
+#   ADAPTER_NAME, ADAPTER_MAX_RANK).
+#
+# Requires:
+# - GPU cluster with the AMD device plugin (amd.com/gpu schedulable).
+# - HuggingFace token Secret (huggingface-creds, key "token") copied in from
+#   ${HF_TOKEN_SECRET_FILE:-~/workspace/silogen/hf-token-secret.yaml}.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: adapter-image-smoke
+  labels:
+    requires: gpu
+    needs-secret: hf_token
+spec:
+  description: >-
+    Run the AIM inference image directly with a disk-staged LoRA and confirm the
+    runtime loads it (adapter id shows up in /v1/models).
+  timeouts:
+    assert: 20m
+  steps:
+    - name: Copy HF token secret into the test namespace
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              SRC="${HF_TOKEN_SECRET_FILE:-$HOME/workspace/silogen/hf-token-secret.yaml}"
+              if [ ! -f "$SRC" ]; then
+                echo "ERROR: HF token secret file not found at $SRC" >&2
+                echo "Set HF_TOKEN_SECRET_FILE to point at a v1 Secret named 'huggingface-creds' with key 'token'." >&2
+                exit 1
+              fi
+              kubectl -n "$NAMESPACE" apply -f "$SRC"
+
+    - name: Create the smoke Pod (image + disk-staged LoRA)
+      try:
+        - script:
+            timeout: 120s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+
+              # --- Overridable test inputs (documented placeholders) ----------
+              IMAGE="${IMAGE:-docker.io/silogenai/aim-instinct-base:0.12-rc54}"
+              # Non-gated mirror of Llama-2-7b + vLLM's canonical test LoRA.
+              BASE_MODEL="${BASE_MODEL:-NousResearch/Llama-2-7b-hf}"
+              ADAPTER_REPO="${ADAPTER_REPO:-yard1/llama-2-7b-sql-lora-test}"
+              ADAPTER_NAME="${ADAPTER_NAME:-sql-lora}"
+              ADAPTER_MAX_RANK="${ADAPTER_MAX_RANK:-64}"
+              ADAPTER_SOURCE="/adapters"
+
+              echo "image=$IMAGE base=$BASE_MODEL adapter=$ADAPTER_REPO name=$ADAPTER_NAME"
+
+              cat <<EOF | kubectl apply -n "$NAMESPACE" -f -
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: adapter-image-smoke
+                labels:
+                  app: adapter-image-smoke
+              spec:
+                restartPolicy: Never
+                initContainers:
+                  # Stage the LoRA exactly how the engine lays it out:
+                  # \${ADAPTER_SOURCE}/<adapter-name>/{adapter_config.json,...}
+                  - name: fetch-adapter
+                    image: ${IMAGE}
+                    command: ["python", "-c"]
+                    args:
+                      - |
+                        import os
+                        from huggingface_hub import snapshot_download
+                        dest = "${ADAPTER_SOURCE}/${ADAPTER_NAME}"
+                        os.makedirs(dest, exist_ok=True)
+                        snapshot_download(repo_id="${ADAPTER_REPO}", local_dir=dest,
+                                          token=os.environ.get("HF_TOKEN"))
+                        print("staged adapter into", dest, ":", os.listdir(dest))
+                    env:
+                      - name: HF_TOKEN
+                        valueFrom:
+                          secretKeyRef:
+                            name: huggingface-creds
+                            key: token
+                    volumeMounts:
+                      - name: adapters
+                        mountPath: ${ADAPTER_SOURCE}
+                containers:
+                  - name: serve
+                    image: ${IMAGE}
+                    env:
+                      - name: AIM_MODEL_ID
+                        value: "${BASE_MODEL}"
+                      # --- LoRA adapter container contract (ADR-0004) ---
+                      - name: AIM_ADAPTER_SOURCE
+                        value: "${ADAPTER_SOURCE}"
+                      - name: AIM_ADAPTER_MODE
+                        value: "static"
+                      - name: AIM_ADAPTER_MAX_RANK
+                        value: "${ADAPTER_MAX_RANK}"
+                      - name: HF_TOKEN
+                        valueFrom:
+                          secretKeyRef:
+                            name: huggingface-creds
+                            key: token
+                      - name: HUGGING_FACE_HUB_TOKEN
+                        valueFrom:
+                          secretKeyRef:
+                            name: huggingface-creds
+                            key: token
+                    ports:
+                      - containerPort: 8000
+                    resources:
+                      limits:
+                        amd.com/gpu: "1"
+                    volumeMounts:
+                      - name: adapters
+                        mountPath: ${ADAPTER_SOURCE}
+                        readOnly: true
+                volumes:
+                  - name: adapters
+                    emptyDir: {}
+              EOF
+
+    - name: Wait for the adapter to be loaded by the runtime
+      description: |
+        Poll the in-pod /v1/models endpoint until the adapter id appears. vLLM
+        surfaces each loaded LoRA as its own model entry, so its presence proves
+        the runtime honoured the contract and loaded the disk-staged adapter.
+      try:
+        - script:
+            # Model download + engine warmup can take many minutes on first pull.
+            timeout: 20m
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              ADAPTER_NAME="${ADAPTER_NAME:-sql-lora}"
+              POD=adapter-image-smoke
+
+              echo "Waiting for $POD to be Running..."
+              kubectl wait -n "$NAMESPACE" --for=jsonpath='{.status.phase}'=Running \
+                pod/"$POD" --timeout=600s
+
+              echo "Polling /v1/models for adapter '$ADAPTER_NAME'..."
+              deadline=$(( $(date +%s) + 900 ))
+              while [ "$(date +%s)" -lt "$deadline" ]; do
+                body="$(kubectl exec -n "$NAMESPACE" "$POD" -c serve -- \
+                  sh -c 'curl -sf http://localhost:8000/v1/models 2>/dev/null' || true)"
+                if echo "$body" | grep -q "\"id\"[[:space:]]*:[[:space:]]*\"${ADAPTER_NAME}\""; then
+                  echo "OK: adapter '$ADAPTER_NAME' is loaded:"
+                  echo "$body"
+                  exit 0
+                fi
+                sleep 10
+              done
+
+              echo "ERROR: adapter '$ADAPTER_NAME' not found in /v1/models within budget" >&2
+              echo "--- last /v1/models ---"; echo "$body"
+              exit 1
+      catch:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              echo "===== Pod describe ====="
+              kubectl describe pod -n "$NAMESPACE" adapter-image-smoke || true
+              echo "===== serve logs (tail) ====="
+              kubectl logs -n "$NAMESPACE" adapter-image-smoke -c serve --tail=200 || true
+              echo "===== init logs ====="
+              kubectl logs -n "$NAMESPACE" adapter-image-smoke -c fetch-adapter || true
+      finally:
+        - delete:
+            ref:
+              apiVersion: v1
+              kind: Pod
+              name: adapter-image-smoke

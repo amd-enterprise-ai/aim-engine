@@ -1,0 +1,14 @@
+# v1alpha2 AIMService that serves one LoRA adapter on the bootstrapped base model.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: adapters-staged-service
+spec:
+  profile:
+    name: adapters-staged-profile
+  # adapterMode defaults to static: declaring adapters mounts the disk with a
+  # create-time-fixed set (no explicit adapterMode needed).
+  adapters:
+    - name: adapters-staged-lora
+      kind: AIMArtifact
+  replicas: 1

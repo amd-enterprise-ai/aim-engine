@@ -1,0 +1,11 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: lh-adapters-service
+spec:
+  profile:
+    name: lh-adapters-profile
+  adapters:
+    - name: lh-adapters-lora
+      kind: AIMArtifact
+  replicas: 1

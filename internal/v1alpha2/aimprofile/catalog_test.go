@@ -45,6 +45,8 @@ metadata:
   primary: true
   accelerator_model: MI300X
   accelerator_count: 1
+  features:
+    - adapters
 env_vars:
   VLLM_USE_TRITON_FLASH_ATTN: "1"
 `
@@ -87,6 +89,12 @@ env_vars:
 	}
 	if item.Spec.AcceleratorCount != 1 {
 		t.Fatalf("AcceleratorCount = %d, want 1", item.Spec.AcceleratorCount)
+	}
+	// The image's metadata.features must be materialised onto the profile spec
+	// so the AIMService gate and the re-emitted runtime profile both honour
+	// the adapter capability the image originally declared.
+	if len(item.Spec.Features) != 1 || item.Spec.Features[0] != "adapters" {
+		t.Fatalf("Features = %v, want [adapters]", item.Spec.Features)
 	}
 	if !item.Spec.Primary {
 		t.Fatal("Primary = false, want true")

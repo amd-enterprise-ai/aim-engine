@@ -204,6 +204,28 @@ type AIMProfileSpecCommon struct {
 	// ServiceAccountName specifies the service account for workloads.
 	// +optional
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
+	// Features lists optional capabilities the profile's image honours, e.g.
+	// "adapters" for LoRA serving. A service declaring spec.adapters is rejected
+	// (ConfigValid=False) unless its resolved profile lists "adapters" here.
+	// +optional
+	// +listType=set
+	Features []string `json:"features,omitempty"`
+}
+
+// ProfileFeatureAdapters is the spec.features token a profile sets to advertise
+// that its image honours the LoRA adapter container contract.
+const ProfileFeatureAdapters = "adapters"
+
+// SupportsAdapters reports whether the profile advertises LoRA adapter support
+// via spec.features. The v1alpha2 AIMService pipeline gates spec.adapters on it.
+func (s *AIMProfileSpecCommon) SupportsAdapters() bool {
+	for _, f := range s.Features {
+		if f == ProfileFeatureAdapters {
+			return true
+		}
+	}
+	return false
 }
 
 // AIMProfileCachingConfig configures model caching behavior for namespace-scoped profiles.

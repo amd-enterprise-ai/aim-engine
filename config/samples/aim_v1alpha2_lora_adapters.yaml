@@ -1,0 +1,62 @@
+# LoRA adapter support — minimal MVP worked example.
+#
+# MVP contract (see docs/docs/explanation/lora-adapters.md):
+#   * The operator pre-creates the parent base-model AIMArtifact with an
+#     `adapterDisk` block (AIMProfileCache auto-propagation is deferred).
+#   * Adapters are reference-only. spec.adapterMode selects the contract:
+#     static (the default, shown here) mounts the adapter disk with a
+#     create-time-fixed set and freezes spec.adapters; dynamic allows editing
+#     spec.adapters after creation and mounts the disk even at zero adapters, so
+#     add/remove never restarts the pod. adapterMode is immutable after creation.
+#   * The resolved profile must have exactly one model source, and the base
+#     model must be cached with `Shared` caching and an exact sourceUri match.
+---
+# 1. Parent base model with an adapter disk (operator-created bootstrap).
+#    Provisions two PVCs: the model cache PVC and a shared RWX adapter disk.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  labels:
+    app.kubernetes.io/name: aim-engine
+    app.kubernetes.io/managed-by: kustomize
+  name: gemma-3-27b-it-cache
+spec:
+  type: model
+  modelId: google/gemma-3-27b-it
+  sourceUri: hf://google/gemma-3-27b-it
+  size: 60Gi
+  adapterDisk:
+    size: 50Gi
+---
+# 2. A shared, pre-authored adapter bound to the parent base model.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  labels:
+    app.kubernetes.io/name: aim-engine
+    app.kubernetes.io/managed-by: kustomize
+  name: cs-tone-v3
+spec:
+  type: adapter
+  modelId: acme/cs-tone-v3
+  parentArtifact: gemma-3-27b-it-cache
+  sourceUri: s3://eai-artifacts/adapters/cs-tone-v3/
+  rank: 16
+---
+# 3. A v1alpha2 service that serves the adapter. The adapter is staged into this
+#    service's isolated subtree of the shared adapter disk and mounted read-only
+#    at /adapters. adapterMode: static (the default) => spec.adapters is fixed.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  labels:
+    app.kubernetes.io/name: aim-engine
+    app.kubernetes.io/managed-by: kustomize
+  name: gemma-cs
+spec:
+  profile:
+    name: gemma-3-27b-it-mi300x-bf16
+  adapterMode: static # default; optional. Use "dynamic" to edit adapters later.
+  adapters:
+    - name: cs-tone-v3
+      kind: AIMArtifact

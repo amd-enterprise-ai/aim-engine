@@ -20,6 +20,10 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .spec.type
+      name: Type
+      priority: 1
+      type: string
     - jsonPath: .status.status
       name: Status
       type: string
@@ -68,6 +72,28 @@ spec:
           spec:
             description: AIMArtifactSpec defines the desired state of AIMArtifact
             properties:
+              adapterDisk:
+                description: |-
+                  AdapterDisk, when set on a type=model artifact, provisions a shared ReadWriteMany
+                  adapter disk owned by this model artifact and partitioned per consuming service.
+                  Only allowed when type=model.
+                properties:
+                  size:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      Size is the requested size of the adapter disk PVC.
+                      Defaults to 50Gi when unset (a cascade default may override it).
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  storageClassName:
+                    description: |-
+                      StorageClassName specifies the storage class for the adapter disk.
+                      When empty, the cluster default storage class is used.
+                      The access mode is fixed at ReadWriteMany by the controller.
+                    type: string
+                type: object
               downloadFilter:
                 description: |-
                   DownloadFilter controls which files are included or excluded when downloading from HuggingFace.
@@ -295,6 +321,22 @@ spec:
                   When not specified, derived from SourceURI for HuggingFace sources.
                 pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                 type: string
+              parentArtifact:
+                description: |-
+                  ParentArtifact names the base model AIMArtifact (type=model) this adapter is
+                  compatible with. Required and only allowed when type=adapter; immutable.
+                  The adapter is owned by (cascade-deleted with) the parent. Compatibility is
+                  keyed on the parent's modelId.
+                type: string
+                x-kubernetes-validations:
+                - message: parentArtifact is immutable
+                  rule: self == oldSelf
+              rank:
+                description: Rank is the LoRA rank of the adapter. Optional; only
+                  meaningful when type=adapter.
+                format: int32
+                minimum: 1
+                type: integer
               retentionPriority:
                 description: |-
                   RetentionPriority marks this artifact as eligible for automatic eviction
@@ -336,12 +378,35 @@ spec:
                   StorageClassName specifies the storage class for the cache volume.
                   When not specified, uses the cluster default storage class.
                 type: string
+              type:
+                default: model
+                description: |-
+                  Type discriminates a base model artifact (`model`) from a LoRA adapter
+                  definition (`adapter`). Defaults to `model`; immutable after creation.
+                  Adapter artifacts require parentArtifact and modelId, and do not get their
+                  own cache PVC.
+                enum:
+                - model
+                - adapter
+                type: string
             required:
             - sourceUri
             type: object
           status:
             description: AIMArtifactStatus defines the observed state of AIMArtifact
             properties:
+              adapterPath:
+                description: |-
+                  AdapterPath is the resolved on-disk directory name for a type=adapter artifact,
+                  frozen at first resolution (defaults to metadata.name). This is the canonical
+                  copy, mirrored into consuming services' status.
+                type: string
+              adapterPersistentVolumeClaim:
+                description: |-
+                  AdapterPersistentVolumeClaim is the name of the shared adapter disk PVC
+                  provisioned for a type=model artifact that declares an adapterDisk. Empty
+                  otherwise.
+                type: string
               allocatedSize:
                 anyOf:
                 - type: integer
@@ -470,6 +535,11 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
+              parentModelId:
+                description: |-
+                  ParentModelID is the parent model artifact's modelId, denormalized onto the
+                  adapter for convenience (refreshed each reconcile).
+                type: string
               persistentVolumeClaim:
                 description: PersistentVolumeClaim represents the name of the created
                   PVC
@@ -501,6 +571,37 @@ spec:
                     format: int64
                     type: integer
                 type: object
+              resolvedParent:
+                description: |-
+                  ResolvedParent captures the resolved parent model artifact for a type=adapter
+                  artifact, including its UID.
+                properties:
+                  kind:
+                    description: Kind is the fully-qualified kind of the resolved
+                      reference, when known.
+                    type: string
+                  name:
+                    description: Name is the resource name that satisfied the reference.
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace identifies where the resource was found when namespace-scoped.
+                      Empty indicates a cluster-scoped resource.
+                    type: string
+                  scope:
+                    description: Scope indicates whether the resolved resource was
+                      namespace or cluster scoped.
+                    enum:
+                    - Namespace
+                    - Cluster
+                    - Merged
+                    - Unknown
+                    type: string
+                  uid:
+                    description: UID captures the unique identifier of the resolved
+                      reference, when known.
+                    type: string
+                type: object
               resolvedSourceUri:
                 description: |-
                   ResolvedSourceURI is the effective download source after cache resolution.
@@ -520,6 +621,25 @@ spec:
                 type: string
             type: object
         type: object
+        x-kubernetes-validations:
+        - message: spec.type is immutable
+          optionalOldSelf: true
+          rule: '!has(self.spec.type) || !oldSelf.hasValue() || !has(oldSelf.value().spec.type)
+            || self.spec.type == oldSelf.value().spec.type'
+        - message: spec.parentArtifact is required when spec.type is adapter
+          rule: '!has(self.spec.type) || self.spec.type != ''adapter'' || has(self.spec.parentArtifact)'
+        - message: spec.modelId is required when spec.type is adapter
+          rule: '!has(self.spec.type) || self.spec.type != ''adapter'' || (has(self.spec.modelId)
+            && size(self.spec.modelId) > 0)'
+        - message: spec.parentArtifact is only allowed when spec.type is adapter
+          rule: '!has(self.spec.parentArtifact) || (has(self.spec.type) && self.spec.type
+            == ''adapter'')'
+        - message: spec.adapterDisk is only allowed when spec.type is model
+          rule: '!has(self.spec.adapterDisk) || !has(self.spec.type) || self.spec.type
+            == ''model'''
+        - message: spec.rank is only allowed when spec.type is adapter
+          rule: '!has(self.spec.rank) || (has(self.spec.type) && self.spec.type ==
+            ''adapter'')'
     served: true
     storage: true
     subresources:

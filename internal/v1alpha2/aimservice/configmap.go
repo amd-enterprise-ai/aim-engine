@@ -82,6 +82,10 @@ type profileMetadata struct {
 	Metric              string `json:"metric"`
 	Precision           string `json:"precision"`
 	Type                string `json:"type"`
+	// Features carries optional capability tokens (e.g. "adapters") into runtime
+	// ProfileMetadata; the runtime computes supports_adapters from it. Omitted
+	// when empty.
+	Features []string `json:"features,omitempty"`
 }
 
 // profileConfigMapName returns a deterministic ConfigMap name for a profile-based AIMService.
@@ -135,6 +139,7 @@ func assembleProfileYAML(spec *aimv1alpha2.AIMProfileSpecCommon) ([]byte, string
 			Metric:              string(spec.Metric),
 			Precision:           string(spec.Precision),
 			Type:                string(spec.Type),
+			Features:            append([]string(nil), spec.Features...),
 		},
 		EngineArgs: engineArgs,
 		EnvVars:    envVars,

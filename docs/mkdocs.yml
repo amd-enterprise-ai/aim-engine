@@ -77,6 +77,7 @@ nav:
       - Custom Models: guides/custom-models.md
       - Scaling and Autoscaling: guides/scaling-and-autoscaling.md
       - Model Caching: guides/model-caching.md
+      - LoRA Adapters: guides/lora-adapters.md
       - Routing and Ingress: guides/routing-and-ingress.md
       - Private Registries: guides/private-registries.md
       - Multi-Tenancy: guides/multi-tenancy.md

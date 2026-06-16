@@ -1,0 +1,189 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Longhorn Test: real rename(2) + subPath isolation
+#
+# Requires a genuine RWX storage class (longhorn). kind's local-path cannot do
+# real multi-writer RWX, so this is gated to the GPU/longhorn environment.
+#
+# Validates that the adapter staging Job performs a real atomic promote on a
+# real RWX filesystem and that the live subtree is isolated under the service's
+# subPath (service UID):
+# 1. Bootstrap base model (adapterDisk on longhorn) + adapter, frozen profile.
+# 2. Service stages the adapter -> Downloaded.
+# 3. A verifier Pod mounts the adapter disk RW and asserts the promoted dir
+#    exists at <service-uid>/<adapter>/ and the .staging area is cleaned up.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: adapters-longhorn-rename
+  labels:
+    requires: longhorn
+spec:
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Bootstrap base model with a longhorn-backed adapter disk
+      try:
+        - apply:
+            file: base-artifact.yaml
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: lh-adapters-base
+              status:
+                status: Ready
+                (adapterPersistentVolumeClaim != ""): true
+
+    - name: Create the adapter artifact
+      try:
+        - apply:
+            file: adapter-artifact.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: lh-adapters-lora
+              status:
+                status: Ready
+
+    - name: Create the frozen cluster profile
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-profile.yaml --status-only
+
+    - name: Create the service
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert the service-owned profile cache is created
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: lh-adapters-service
+
+    - name: Freeze the profile cache pointing at the base artifact
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              PC_NAME=$(kubectl get aimprofilecache -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=lh-adapters-service \
+                -o jsonpath='{.items[0].metadata.name}')
+              [ -n "$PC_NAME" ] || { echo "ERROR: no AIMProfileCache"; exit 1; }
+              CACHE_PVC=$(kubectl get pvc -n "$NAMESPACE" \
+                -l aim.eai.amd.com/cache.name=lh-adapters-base \
+                -o jsonpath='{.items[0].metadata.name}')
+              kubectl annotate aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+              kubectl patch aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                --type=merge --subresource=status \
+                -p "{
+                  \"status\": {
+                    \"status\": \"Ready\",
+                    \"conditions\": [
+                      {\"type\": \"ProfileFound\", \"status\": \"True\", \"reason\": \"ProfileResolved\", \"message\": \"resolved\", \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"},
+                      {\"type\": \"ArtifactsReady\", \"status\": \"True\", \"reason\": \"AllCachesReady\", \"message\": \"ready\", \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"}
+                    ],
+                    \"artifacts\": {
+                      \"lh-adapters-base\": {
+                        \"name\": \"lh-adapters-base\",
+                        \"model\": \"test-org/base-weights\",
+                        \"status\": \"Ready\",
+                        \"persistentVolumeClaim\": \"$CACHE_PVC\",
+                        \"mountPoint\": \"/workspace/cache/test-org/base-weights\"
+                      }
+                    }
+                  }
+                }"
+
+    - name: Assert the adapter reaches Downloaded
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: lh-adapters-service
+              status:
+                (adapters[?name == 'lh-adapters-lora']):
+                  - state: Downloaded
+
+    - name: Verify the promoted subtree layout on the real RWX disk
+      description: |
+        Mount the adapter disk RW in a throwaway Pod and assert the adapter was
+        atomically promoted into <service-uid>/<adapter>/ and that the staging
+        area for the service has been cleaned up (no leftover .staging dir).
+      try:
+        - script:
+            # Internally waits on a verifier Pod for up to ~180s; override the
+            # config-level exec timeout (gpu.yaml: 30s) so the script isn't killed.
+            timeout: 200s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              SVC_UID=$(kubectl get aimservice -n "$NAMESPACE" lh-adapters-service \
+                -o jsonpath='{.metadata.uid}')
+              ADAPTER_PVC=$(kubectl get aimartifact -n "$NAMESPACE" lh-adapters-base \
+                -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+              echo "service uid: $SVC_UID  adapter pvc: $ADAPTER_PVC"
+
+              cat <<EOF | kubectl apply -n "$NAMESPACE" -f -
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: lh-adapter-verifier
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: verify
+                    image: busybox:1.36
+                    command: ["sh", "-c"]
+                    args:
+                      - |
+                        set -eu
+                        live="/disk/${SVC_UID}/lh-adapters-lora"
+                        echo "checking \$live"
+                        test -f "\$live/adapter_config.json" || { echo "MISSING promoted adapter config"; ls -laR /disk; exit 1; }
+                        if [ -d "/disk/.staging/${SVC_UID}" ] && [ -n "\$(ls -A /disk/.staging/${SVC_UID} 2>/dev/null)" ]; then
+                          echo "ERROR: staging dir not cleaned up"; ls -laR /disk/.staging; exit 1
+                        fi
+                        echo "OK: adapter promoted atomically and staging cleaned"
+                    volumeMounts:
+                      - name: disk
+                        mountPath: /disk
+                volumes:
+                  - name: disk
+                    persistentVolumeClaim:
+                      claimName: ${ADAPTER_PVC}
+              EOF
+
+              kubectl wait --for=condition=Ready pod/lh-adapter-verifier -n "$NAMESPACE" --timeout=60s || true
+              kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/lh-adapter-verifier -n "$NAMESPACE" --timeout=120s
+              kubectl logs -n "$NAMESPACE" lh-adapter-verifier
+      finally:
+        - delete:
+            ref:
+              apiVersion: v1
+              kind: Pod
+              name: lh-adapter-verifier

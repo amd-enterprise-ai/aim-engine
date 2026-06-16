@@ -1,0 +1,457 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: dynamic adapter add/remove + subtree prune
+#
+# Validates that removing an adapter from a live AIMService reclaims its bytes on
+# the shared adapter disk via the AIMService-owned subtree-sync Job (prune), while
+# leaving the kept adapter (and the running InferenceService) untouched. Adapters
+# are dynamic: the runtime loads/unloads from the disk, so the disk is ground
+# truth and the subtree-sync Job is the sole writer that prunes undeclared
+# adapter directories.
+#
+# Flow:
+# 1. Bootstrap base model (adapterDisk) + two adapter artifacts (a, b).
+# 2. A v1alpha2 AIMService declaring BOTH adapters stages them -> Downloaded.
+# 3. A verifier Pod confirms BOTH adapter dirs exist under <service-uid>/.
+# 4. Remove adapter "b" from spec.adapters. A fresh subtree-sync Job (new
+#    DesiredKey) runs and prunes b's directory; status records the new key and
+#    drops b from status.adapters.
+# 5. A verifier Pod confirms b's dir is GONE and a's dir is still present.
+#
+# Runs in kind: downloads are simulated (AIM_DEBUG_SIMULATE_*) and the RWX disk is
+# backed by local-path on the single node (good enough for prune verification;
+# real multi-writer RWX rename semantics are covered by the longhorn test).
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: adapters-dynamic
+spec:
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Bootstrap the base model artifact with an adapter disk
+      try:
+        - apply:
+            file: base-artifact.yaml
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: adapters-dynamic-base
+              status:
+                status: Ready
+                (adapterPersistentVolumeClaim != ""): true
+
+    - name: Create both adapter artifacts and assert they validate lineage
+      try:
+        - apply:
+            file: adapter-a.yaml
+        - apply:
+            file: adapter-b.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: adapters-dynamic-lora-a
+              status:
+                status: Ready
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: adapters-dynamic-lora-b
+              status:
+                status: Ready
+
+    - name: Create the frozen cluster profile (Ready, single model source)
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-profile.yaml --status-only
+
+    - name: Create the v1alpha2 service that serves both adapters
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert the service-owned profile cache is created
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: adapters-dynamic-service
+
+    - name: Freeze the service-owned profile cache, pointing at the base artifact
+      description: |
+        Bypass the cache controller so the resolved parent is the bootstrapped
+        base artifact (which owns the adapter disk).
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              PC_NAME=$(kubectl get aimprofilecache -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=adapters-dynamic-service \
+                -o jsonpath='{.items[0].metadata.name}')
+              [ -n "$PC_NAME" ] || { echo "ERROR: no AIMProfileCache"; kubectl get aimprofilecache -n "$NAMESPACE" -o yaml; exit 1; }
+              echo "Found AIMProfileCache: $PC_NAME"
+
+              CACHE_PVC=$(kubectl get pvc -n "$NAMESPACE" \
+                -l aim.eai.amd.com/cache.name=adapters-dynamic-base \
+                -o jsonpath='{.items[0].metadata.name}')
+
+              kubectl annotate aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+
+              kubectl patch aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                --type=merge --subresource=status \
+                -p "{
+                  \"status\": {
+                    \"status\": \"Ready\",
+                    \"conditions\": [
+                      {\"type\": \"ProfileFound\", \"status\": \"True\", \"reason\": \"ProfileResolved\", \"message\": \"resolved\", \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"},
+                      {\"type\": \"ArtifactsReady\", \"status\": \"True\", \"reason\": \"AllCachesReady\", \"message\": \"ready\", \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"}
+                    ],
+                    \"artifacts\": {
+                      \"adapters-dynamic-base\": {
+                        \"name\": \"adapters-dynamic-base\",
+                        \"model\": \"test-org/base-weights\",
+                        \"status\": \"Ready\",
+                        \"persistentVolumeClaim\": \"$CACHE_PVC\",
+                        \"mountPoint\": \"/workspace/cache/test-org/base-weights\"
+                      }
+                    }
+                  }
+                }"
+              echo "Froze profile cache $PC_NAME"
+
+    - name: Assert the subtree-sync Job is launched for the two-adapter set
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: adapters-dynamic-service
+                  aim.eai.amd.com/component: adapter-subtree-sync
+
+    - name: Assert both adapters reach Downloaded
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: adapters-dynamic-service
+              status:
+                (adapters[?name == 'adapters-dynamic-lora-a']):
+                  - state: Downloaded
+                (adapters[?name == 'adapters-dynamic-lora-b']):
+                  - state: Downloaded
+                (adapterSubtreeSyncKey != ''): true
+
+    - name: Verify both adapter directories exist on the disk and capture the synced key
+      description: |
+        Mount the adapter disk in a throwaway Pod and assert BOTH adapters were
+        promoted into <service-uid>/<adapter>/. Persist the current
+        adapterSubtreeSyncKey so the remove step can prove the sync re-ran.
+      try:
+        - script:
+            # Internally waits on a verifier Pod; override the config exec timeout.
+            timeout: 200s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              SVC_UID=$(kubectl get aimservice -n "$NAMESPACE" adapters-dynamic-service -o jsonpath='{.metadata.uid}')
+              ADAPTER_PVC=$(kubectl get aimartifact -n "$NAMESPACE" adapters-dynamic-base -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+              OLD_KEY=$(kubectl get aimservice -n "$NAMESPACE" adapters-dynamic-service -o jsonpath='{.status.adapterSubtreeSyncKey}')
+              echo "service uid: $SVC_UID  adapter pvc: $ADAPTER_PVC  synced key: $OLD_KEY"
+
+              kubectl create configmap adapters-dynamic-state -n "$NAMESPACE" \
+                --from-literal=oldKey="$OLD_KEY" --dry-run=client -o yaml | kubectl apply -f -
+
+              cat <<EOF | kubectl apply -n "$NAMESPACE" -f -
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: adapters-dynamic-verify-pre
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: verify
+                    image: busybox:1.36
+                    command: ["sh", "-c"]
+                    args:
+                      - |
+                        set -eu
+                        for a in adapters-dynamic-lora-a adapters-dynamic-lora-b; do
+                          live="/disk/${SVC_UID}/\$a"
+                          test -f "\$live/adapter_config.json" || { echo "MISSING promoted adapter \$a"; ls -laR /disk; exit 1; }
+                        done
+                        echo "OK: both adapters promoted"
+                    volumeMounts:
+                      - name: disk
+                        mountPath: /disk
+                volumes:
+                  - name: disk
+                    persistentVolumeClaim:
+                      claimName: ${ADAPTER_PVC}
+              EOF
+
+              kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/adapters-dynamic-verify-pre -n "$NAMESPACE" --timeout=120s
+              kubectl logs -n "$NAMESPACE" adapters-dynamic-verify-pre
+      finally:
+        - delete:
+            ref:
+              apiVersion: v1
+              kind: Pod
+              name: adapters-dynamic-verify-pre
+
+    - name: Remove adapter b from the service (dynamic unload)
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              kubectl patch aimservice -n "$NAMESPACE" adapters-dynamic-service --type=merge \
+                -p '{"spec":{"adapters":[{"name":"adapters-dynamic-lora-a","kind":"AIMArtifact"}]}}'
+              echo "Removed adapter b from spec.adapters"
+
+    - name: Assert status drops adapter b and keeps adapter a
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: adapters-dynamic-service
+              status:
+                (adapters[?name == 'adapters-dynamic-lora-a']):
+                  - state: Downloaded
+                (adapters[?name == 'adapters-dynamic-lora-b']): []
+
+    - name: Assert the subtree-sync key changes (the prune Job re-ran)
+      description: |
+        The recorded adapterSubtreeSyncKey only updates after the new (one-adapter)
+        subtree-sync Job succeeds, so a changed key proves the prune Job ran.
+      try:
+        - script:
+            # Polls status for up to ~120s; override the config exec timeout.
+            timeout: 200s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              OLD_KEY=$(kubectl get configmap adapters-dynamic-state -n "$NAMESPACE" -o jsonpath='{.data.oldKey}')
+              for i in $(seq 1 60); do
+                NEW_KEY=$(kubectl get aimservice -n "$NAMESPACE" adapters-dynamic-service -o jsonpath='{.status.adapterSubtreeSyncKey}')
+                B_STATE=$(kubectl get aimservice -n "$NAMESPACE" adapters-dynamic-service \
+                  -o jsonpath="{.status.adapters[?(@.name=='adapters-dynamic-lora-b')].state}")
+                if [ -n "$NEW_KEY" ] && [ "$NEW_KEY" != "$OLD_KEY" ] && [ -z "$B_STATE" ]; then
+                  echo "subtree-sync key changed: $OLD_KEY -> $NEW_KEY; adapter b dropped from status"
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "ERROR: expected key change from $OLD_KEY and adapter b removed from status (b state='$B_STATE')"
+              kubectl get aimservice -n "$NAMESPACE" adapters-dynamic-service -o yaml
+              exit 1
+
+    - name: Verify adapter b is pruned from the disk and adapter a is kept
+      try:
+        - script:
+            # Internally waits on a verifier Pod; override the config exec timeout.
+            timeout: 200s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              SVC_UID=$(kubectl get aimservice -n "$NAMESPACE" adapters-dynamic-service -o jsonpath='{.metadata.uid}')
+              ADAPTER_PVC=$(kubectl get aimartifact -n "$NAMESPACE" adapters-dynamic-base -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+              echo "service uid: $SVC_UID  adapter pvc: $ADAPTER_PVC"
+
+              cat <<EOF | kubectl apply -n "$NAMESPACE" -f -
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: adapters-dynamic-verify-post
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: verify
+                    image: busybox:1.36
+                    command: ["sh", "-c"]
+                    args:
+                      - |
+                        set -eu
+                        keep="/disk/${SVC_UID}/adapters-dynamic-lora-a"
+                        gone="/disk/${SVC_UID}/adapters-dynamic-lora-b"
+                        test -f "\$keep/adapter_config.json" || { echo "MISSING kept adapter a"; ls -laR /disk; exit 1; }
+                        if [ -e "\$gone" ]; then echo "ERROR: pruned adapter b still present"; ls -laR /disk; exit 1; fi
+                        echo "OK: adapter b pruned, adapter a kept"
+                    volumeMounts:
+                      - name: disk
+                        mountPath: /disk
+                volumes:
+                  - name: disk
+                    persistentVolumeClaim:
+                      claimName: ${ADAPTER_PVC}
+              EOF
+
+              kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/adapters-dynamic-verify-post -n "$NAMESPACE" --timeout=120s
+              kubectl logs -n "$NAMESPACE" adapters-dynamic-verify-post
+      finally:
+        - delete:
+            ref:
+              apiVersion: v1
+              kind: Pod
+              name: adapters-dynamic-verify-post
+
+    - name: Remove the last adapter (drop to zero)
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              kubectl patch aimservice -n "$NAMESPACE" adapters-dynamic-service --type=merge \
+                -p '{"spec":{"adapters":[]}}'
+              echo "Removed all adapters from spec.adapters"
+
+    - name: Assert status clears but the subtree stays (mount persists at zero)
+      description: |
+        Even with spec.adapters empty, the engine keeps running (status carries the
+        Deleting entry) until the empty-set subtree-sync Job prunes the last
+        adapter, after which status.adapters is cleared. Because the service is in
+        Dynamic adapter mode, the subtree is NOT torn down: the synced key advances
+        to the (non-empty) empty-set key rather than "" — so the read-only mount
+        survives a drop to zero and the pod is never restarted.
+      try:
+        - script:
+            # Polls status for up to ~120s; override the config exec timeout.
+            timeout: 200s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              OLD_KEY=$(kubectl get configmap adapters-dynamic-state -n "$NAMESPACE" -o jsonpath='{.data.oldKey}')
+              for i in $(seq 1 60); do
+                COUNT=$(kubectl get aimservice -n "$NAMESPACE" adapters-dynamic-service \
+                  -o jsonpath='{.status.adapters[*].name}')
+                KEY=$(kubectl get aimservice -n "$NAMESPACE" adapters-dynamic-service \
+                  -o jsonpath='{.status.adapterSubtreeSyncKey}')
+                # adapters cleared, key still recorded (non-empty empty-set key),
+                # and it advanced past the two-adapter key captured earlier.
+                if [ -z "$COUNT" ] && [ -n "$KEY" ] && [ "$KEY" != "$OLD_KEY" ]; then
+                  echo "status.adapters cleared; subtree retained at key $KEY (mount persists)"
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "ERROR: expected adapters cleared with a retained non-empty key (adapters='$COUNT' key='$KEY')"
+              kubectl get aimservice -n "$NAMESPACE" adapters-dynamic-service -o yaml
+              exit 1
+
+    - name: Assert the InferenceService still mounts the adapter disk at zero adapters
+      description: |
+        The whole point of adapterMode: the read-only /adapters mount and the
+        AIM_ADAPTER_SOURCE env are immutable startup properties of the pod, keyed
+        on adapter mode rather than the (now empty) adapter list — so dropping to
+        zero adapters leaves the InferenceService mount untouched.
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: adapters-dynamic-service
+              spec:
+                predictor:
+                  containers:
+                    - name: kserve-container
+                      (volumeMounts[?mountPath == '/adapters']):
+                        - readOnly: true
+                      (env[?name == 'AIM_ADAPTER_SOURCE']):
+                        - value: /adapters
+
+    - name: Verify the service subtree has no adapter directories left
+      try:
+        - script:
+            # Internally waits on a verifier Pod; override the config exec timeout.
+            timeout: 200s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              SVC_UID=$(kubectl get aimservice -n "$NAMESPACE" adapters-dynamic-service -o jsonpath='{.metadata.uid}')
+              ADAPTER_PVC=$(kubectl get aimartifact -n "$NAMESPACE" adapters-dynamic-base -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+              echo "service uid: $SVC_UID  adapter pvc: $ADAPTER_PVC"
+
+              cat <<EOF | kubectl apply -n "$NAMESPACE" -f -
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: adapters-dynamic-verify-empty
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: verify
+                    image: busybox:1.36
+                    command: ["sh", "-c"]
+                    args:
+                      - |
+                        set -eu
+                        root="/disk/${SVC_UID}"
+                        # The subtree dir itself may remain (mkdir -p), but it must
+                        # contain no adapter directories after the final prune.
+                        if [ -d "\$root" ] && [ -n "\$(ls -A "\$root" 2>/dev/null)" ]; then
+                          echo "ERROR: subtree still has entries after drop-to-zero"; ls -laR "\$root"; exit 1
+                        fi
+                        echo "OK: service subtree empty after drop-to-zero"
+                    volumeMounts:
+                      - name: disk
+                        mountPath: /disk
+                volumes:
+                  - name: disk
+                    persistentVolumeClaim:
+                      claimName: ${ADAPTER_PVC}
+              EOF
+
+              kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/adapters-dynamic-verify-empty -n "$NAMESPACE" --timeout=120s
+              kubectl logs -n "$NAMESPACE" adapters-dynamic-verify-empty
+      finally:
+        - delete:
+            ref:
+              apiVersion: v1
+              kind: Pod
+              name: adapters-dynamic-verify-empty

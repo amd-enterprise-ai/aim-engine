@@ -1,0 +1,208 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E: LoRA adapter full chain on real GPU (MI300X)
+#
+# This is the end-to-end proof that LoRA adapters work through the WHOLE engine
+# on real hardware — the thing neither sibling test covers on its own:
+#   - adapter-image-smoke proves the image loads an adapter, but bypasses the
+#     control plane (raw Pod, no profile/service).
+#   - adapters-longhorn-rename proves control-plane staging onto a real RWX
+#     disk, but with simulated downloads, a fake image, and a frozen cache.
+# Here everything is real: real Llama-2-7b weights, real LoRA bytes, the real
+# LoRA-capable image, the live profile/cache/service pipeline, and the runtime
+# feature gate (profile features -> metadata.features -> supports_adapters).
+#
+# Flow:
+# 1. Pre-create the base-model AIMArtifact WITH an adapter disk (RWX/longhorn).
+#    The profile cache adopts it (disk-bearing), giving adapters a parent disk.
+# 2. Pre-create the adapter AIMArtifact (parent = base).
+# 3. Create the AIMProfile (features: [adapters], MI300X, LoRA-capable image).
+# 4. Create the AIMService (spec.adapters). It drives the cache (model download),
+#    stages the adapter onto the shared disk, and brings up the ISVC with the
+#    profile YAML mounted (carrying metadata.features).
+# 5. Assert the adapter reaches Downloaded and the service reaches Running.
+# 6. Hit /v1/models via the gateway and assert the adapter id appears — i.e. the
+#    runtime actually LOADED the staged adapter (the runtime-contract proof).
+#
+# Requires (excluded from default selectors; run explicitly — see README below):
+# - GPU cluster with an MI300X node (amd.com/gpu schedulable).
+# - longhorn (RWX) for the shared adapter disk.
+# - huggingface-creds secret (copied in from HF_TOKEN_SECRET_FILE).
+# - Docker Hub pull secret for docker.io/silogenai (DOCKER_PULL_SECRET_FILE).
+#
+# Run it:
+#   make test-chainsaw ENV=gpu \
+#     CHAINSAW_TEST_DIR=tests/e2e/aimservice/gpu/adapters-live-full-chain \
+#     CHAINSAW_ENV_SELECTOR=
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: adapters-live-full-chain
+  labels:
+    requires: gpu
+    needs-secret: hf_token
+spec:
+  description: >-
+    Real Llama-2-7b + LoRA through the full v1alpha2 pipeline on MI300X, proving
+    the runtime loads a control-plane-staged adapter (id appears in /v1/models).
+  timeouts:
+    assert: 600s
+  steps:
+    - name: Copy HF token secret into the test namespace
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              SRC="${HF_TOKEN_SECRET_FILE:-$HOME/workspace/silogen/hf-token-secret.yaml}"
+              if [ ! -f "$SRC" ]; then
+                echo "ERROR: HF token secret file not found at $SRC" >&2
+                echo "Set HF_TOKEN_SECRET_FILE to a v1 Secret named 'huggingface-creds' (key 'token')." >&2
+                exit 1
+              fi
+              kubectl -n "$NAMESPACE" apply -f "$SRC"
+
+    - name: Create the Docker Hub pull secret for the silogenai image
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              SRC="${DOCKER_PULL_SECRET_FILE:-$HOME/workspace/silogen/dockerio_silogen_pullsecret.json}"
+              if [ ! -f "$SRC" ]; then
+                echo "ERROR: docker pull secret file not found at $SRC" >&2
+                echo "Set DOCKER_PULL_SECRET_FILE to a docker config json with auth for docker.io/silogenai." >&2
+                exit 1
+              fi
+              kubectl -n "$NAMESPACE" create secret generic dockerio-silogen \
+                --type=kubernetes.io/dockerconfigjson \
+                --from-file=.dockerconfigjson="$SRC" \
+                --dry-run=client -o yaml | kubectl -n "$NAMESPACE" apply -f -
+
+    - name: Create the runtime config (routing)
+      try:
+        - apply:
+            file: runtime-config.yaml
+
+    - name: Pre-create the base model artifact with an RWX adapter disk
+      try:
+        - apply:
+            file: base-artifact.yaml
+        - assert:
+            # Real ~27 GiB download; give generous headroom.
+            timeout: 40m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: llama2-base
+              status:
+                status: Ready
+                (adapterPersistentVolumeClaim != ""): true
+
+    - name: Create the adapter artifact (parent = base)
+      try:
+        - apply:
+            file: adapter-artifact.yaml
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: fingpt-lora
+              status:
+                status: Ready
+
+    - name: "Create the profile (features: [adapters]) and wait for Ready"
+      try:
+        - apply:
+            file: profile.yaml
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: llama2-lora-live
+              status:
+                status: Ready
+
+    - name: Create the service
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert the adapter reaches Downloaded (staged onto the shared disk)
+      try:
+        - assert:
+            timeout: 15m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: llama2-lora-service
+              status:
+                (adapters[?name == 'fingpt-lora']):
+                  - state: Downloaded
+      catch:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              echo "===== AIMService status ====="
+              kubectl get aimservice -n "$NAMESPACE" llama2-lora-service -o yaml || true
+              echo "===== adapter staging Jobs ====="
+              kubectl get jobs -n "$NAMESPACE" -l aim.eai.amd.com/component=adapter-stage || true
+              kubectl logs -n "$NAMESPACE" -l aim.eai.amd.com/component=adapter-stage --tail=200 || true
+
+    - name: Assert the service reaches Running
+      try:
+        - assert:
+            # Cold vLLM/ROCm warmup on MI300X for a 7B model after the PVC->HBM
+            # load; generous budget for cold caches.
+            timeout: 30m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: llama2-lora-service
+              status:
+                status: Running
+                resolvedProfile:
+                  name: llama2-lora-live
+                  scope: Namespace
+      catch:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              echo "===== AIMService ====="
+              kubectl get aimservice -n "$NAMESPACE" llama2-lora-service -o yaml || true
+              echo "===== InferenceService ====="
+              kubectl get inferenceservice -n "$NAMESPACE" -o yaml || true
+              echo "===== predictor pods ====="
+              kubectl get pods -n "$NAMESPACE" || true
+              kubectl describe pods -n "$NAMESPACE" -l serving.kserve.io/inferenceservice || true
+              kubectl logs -n "$NAMESPACE" -l serving.kserve.io/inferenceservice --tail=200 --all-containers || true
+
+    - name: Assert the runtime LOADED the adapter (id present in /v1/models)
+      description: |
+        The control plane staging only proves bytes landed on disk. vLLM lists
+        each LOADED LoRA as its own /v1/models entry keyed by the adapter id
+        (== the on-disk subdir == the AIMArtifact name), so its presence proves
+        the runtime honoured the contract end-to-end.
+      try:
+        - script:
+            timeout: 15m
+            env:
+              - name: ADAPTER_NAME
+                value: fingpt-lora
+              - name: HTTP_BASE_PATH
+                value: (join('', ['/integration/adapters-live-full-chain/', $namespace, '/llama2-lora-service/v1']))
+            content: bash ../_shared/validate-adapter-loaded.sh

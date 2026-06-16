@@ -32,6 +32,81 @@ Package v1alpha1 contains API Schema definitions for the aim v1alpha1 API group.
 
 
 
+#### AIMAdapterDisk
+
+
+
+AIMAdapterDisk configures the shared, RWX adapter disk provisioned alongside a
+model artifact. When present on a type=model artifact, the controller provisions
+a second PersistentVolumeClaim (ReadWriteMany) owned by the model artifact and
+shared by every AIMService that serves adapters on this base model.
+
+
+
+_Appears in:_
+- [AIMArtifactSpec](#aimartifactspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Size is the requested size of the adapter disk PVC.<br />Defaults to 50Gi when unset (a cascade default may override it). |  | Optional: \{\} <br /> |
+| `storageClassName` _string_ | StorageClassName specifies the storage class for the adapter disk.<br />When empty, the cluster default storage class is used.<br />The access mode is fixed at ReadWriteMany by the controller. |  | Optional: \{\} <br /> |
+
+
+#### AIMAdapterMode
+
+_Underlying type:_ _string_
+
+AIMAdapterMode selects the adapter contract for the service. Its values are
+the lowercase tokens the inference container reads via the AIM_ADAPTER_MODE
+env, and the field is immutable after creation.
+  - static (default): the served set is fixed at creation — spec.adapters is
+    CEL-immutable. The adapter disk is mounted read-only only when the service
+    declares at least one adapter.
+  - dynamic: spec.adapters may be edited after creation; the runtime
+    hot-loads/unloads from the mounted subtree. The adapter disk is mounted
+    (immutably) whenever the service is in dynamic mode — even at zero adapters
+    — so add/remove never restarts the pod.
+
+A service serves no adapters by simply declaring none: the default-static,
+no-adapters case mounts nothing.
+
+_Validation:_
+- Enum: [static dynamic]
+
+_Appears in:_
+- [AIMServiceSpec](#aimservicespec)
+
+| Field | Description |
+| --- | --- |
+| `static` | AdapterModeStatic fixes the adapter set at creation; the disk is mounted<br />only when adapters are declared.<br /> |
+| `dynamic` | AdapterModeDynamic permits editing spec.adapters and mounts the disk even<br />at zero adapters.<br /> |
+
+
+#### AIMAdapterState
+
+_Underlying type:_ _string_
+
+AIMAdapterState is the disk-side lifecycle state of an adapter within a service's
+subtree. The controller tracks staging and removal directly; the engine-reported
+states (Loaded/LoadRejected) are reserved until the inference container exposes a
+per-adapter load-status surface.
+
+_Validation:_
+- Enum: [Pending Downloading Downloaded Deleting Loaded LoadRejected]
+
+_Appears in:_
+- [AIMServiceAdapterStatus](#aimserviceadapterstatus)
+
+| Field | Description |
+| --- | --- |
+| `Pending` | AdapterStatePending means the adapter is applied and waiting on a precondition.<br /> |
+| `Downloading` | AdapterStateDownloading means a staging Job is running for this adapter.<br /> |
+| `Downloaded` | AdapterStateDownloaded means the bytes are staged in this service's subtree.<br /> |
+| `Deleting` | AdapterStateDeleting means the adapter was removed from spec.adapters and its<br />bytes are being reclaimed from the service subtree by the subtree-sync Job.<br />The entry is dropped from status once the prune completes.<br /> |
+| `Loaded` | AdapterStateLoaded means the inference engine has the adapter in memory.<br />RESERVED: engine-reported, not yet populated by the controller.<br /> |
+| `LoadRejected` | AdapterStateLoadRejected means the bytes are present but the engine declined<br />to load the adapter. RESERVED: engine-reported, not yet populated.<br /> |
+
+
 #### AIMArtifact
 
 
@@ -121,7 +196,11 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
+| `type` _[AIMArtifactType](#aimartifacttype)_ | Type discriminates a base model artifact (`model`) from a LoRA adapter<br />definition (`adapter`). Defaults to `model`; immutable after creation.<br />Adapter artifacts require parentArtifact and modelId, and do not get their<br />own cache PVC. | model | Enum: [model adapter] <br />Optional: \{\} <br /> |
 | `sourceUri` _string_ | SourceURI specifies the source location of the model to download.<br />Supported protocols: hf:// (HuggingFace) and s3:// (S3-compatible storage).<br />This field uniquely identifies the artifact and is immutable after creation.<br />Example: hf://meta-llama/Llama-3-8B |  | MinLength: 1 <br />Pattern: `^(hf\|s3)://[^ \t\r\n]+$` <br /> |
+| `parentArtifact` _string_ | ParentArtifact names the base model AIMArtifact (type=model) this adapter is<br />compatible with. Required and only allowed when type=adapter; immutable.<br />The adapter is owned by (cascade-deleted with) the parent. Compatibility is<br />keyed on the parent's modelId. |  | Optional: \{\} <br /> |
+| `rank` _integer_ | Rank is the LoRA rank of the adapter. Optional; only meaningful when type=adapter. |  | Minimum: 1 <br />Optional: \{\} <br /> |
+| `adapterDisk` _[AIMAdapterDisk](#aimadapterdisk)_ | AdapterDisk, when set on a type=model artifact, provisions a shared ReadWriteMany<br />adapter disk owned by this model artifact and partitioned per consuming service.<br />Only allowed when type=model. |  | Optional: \{\} <br /> |
 | `modelId` _string_ | ModelID is the canonical identifier in \{org\}/\{name\} format.<br />Determines the cache download path: /workspace/cache/\{modelId\}<br />For HuggingFace sources, this is typically derived from the URI (e.g., "meta-llama/Llama-3-8B").<br />For S3 sources, this must be explicitly provided (e.g., "my-team/fine-tuned-llama").<br />When not specified, derived from SourceURI for HuggingFace sources. |  | Pattern: `^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$` <br />Optional: \{\} <br /> |
 | `storageClassName` _string_ | StorageClassName specifies the storage class for the cache volume.<br />When not specified, uses the cluster default storage class. |  | Optional: \{\} <br /> |
 | `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | Size specifies the size of the cache volume |  | Optional: \{\} <br /> |
@@ -159,6 +238,10 @@ _Appears in:_
 | `allocatedSize` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | AllocatedSize is the actual PVC size requested (including headroom). |  | Optional: \{\} <br /> |
 | `headroomPercent` _integer_ | HeadroomPercent is the headroom percentage that was applied to the PVC size. |  | Optional: \{\} <br /> |
 | `resolvedSourceUri` _string_ | ResolvedSourceURI is the effective download source after cache resolution.<br />When the S3 artifact cache has a hit, this contains the rewritten s3:// URI.<br />When empty, spec.sourceUri is used directly. |  | Optional: \{\} <br /> |
+| `adapterPersistentVolumeClaim` _string_ | AdapterPersistentVolumeClaim is the name of the shared adapter disk PVC<br />provisioned for a type=model artifact that declares an adapterDisk. Empty<br />otherwise. |  | Optional: \{\} <br /> |
+| `adapterPath` _string_ | AdapterPath is the resolved on-disk directory name for a type=adapter artifact,<br />frozen at first resolution (defaults to metadata.name). This is the canonical<br />copy, mirrored into consuming services' status. |  | Optional: \{\} <br /> |
+| `resolvedParent` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedParent captures the resolved parent model artifact for a type=adapter<br />artifact, including its UID. |  | Optional: \{\} <br /> |
+| `parentModelId` _string_ | ParentModelID is the parent model artifact's modelId, denormalized onto the<br />adapter for convenience (refreshed each reconcile). |  | Optional: \{\} <br /> |
 
 
 #### AIMArtifactStorageQuota
@@ -178,6 +261,24 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `clusterLimit` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | ClusterLimit is the maximum total allocated storage for all AIMArtifacts cluster-wide.<br />When the sum of all artifact PVC sizes across all namespaces would exceed this limit,<br />new artifact PVCs are blocked until evictable artifacts are cleaned up or the limit is raised. |  | Optional: \{\} <br /> |
 | `defaultNamespaceLimit` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | DefaultNamespaceLimit is the default maximum allocated storage for AIMArtifacts per namespace.<br />Can be overridden for individual namespaces via the aim.eai.amd.com/artifact-storage-quota annotation. |  | Optional: \{\} <br /> |
+
+
+#### AIMArtifactType
+
+_Underlying type:_ _string_
+
+AIMArtifactType discriminates a model artifact from a LoRA adapter artifact.
+
+_Validation:_
+- Enum: [model adapter]
+
+_Appears in:_
+- [AIMArtifactSpec](#aimartifactspec)
+
+| Field | Description |
+| --- | --- |
+| `model` | ArtifactTypeModel is a base model artifact backed by a cache PVC. This is the<br />default and matches the behavior of artifacts created before adapters existed.<br /> |
+| `adapter` | ArtifactTypeAdapter is a LoRA adapter definition. Adapter artifacts do not get<br />their own cache PVC; their bytes are staged per-consuming-service into the<br />parent model artifact's adapter disk.<br /> |
 
 
 #### AIMCachingMode
@@ -1173,6 +1274,7 @@ AIMResolvedReference captures metadata about a resolved reference.
 
 
 _Appears in:_
+- [AIMArtifactStatus](#aimartifactstatus)
 - [AIMModelStatus](#aimmodelstatus)
 - [AIMServiceCacheStatus](#aimservicecachestatus)
 - [AIMServiceStatus](#aimservicestatus)
@@ -1382,6 +1484,70 @@ _Appears in:_
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `spec` _[AIMServiceSpec](#aimservicespec)_ |  |  |  |
 | `status` _[AIMServiceStatus](#aimservicestatus)_ |  |  |  |
+
+
+#### AIMServiceAdapterKind
+
+_Underlying type:_ _string_
+
+AIMServiceAdapterKind enumerates the kinds an adapter reference may target.
+Restricted to AIMArtifact in v1; reserved to admit a future AIMAdapter catalog kind.
+
+_Validation:_
+- Enum: [AIMArtifact]
+
+_Appears in:_
+- [AIMServiceAdapterReference](#aimserviceadapterreference)
+
+| Field | Description |
+| --- | --- |
+| `AIMArtifact` | AdapterKindAIMArtifact references an AIMArtifact (type=adapter).<br /> |
+
+
+#### AIMServiceAdapterReference
+
+
+
+AIMServiceAdapterReference is a typed reference to a LoRA adapter served by this
+service. Today it is resolved as a pure reference to an existing adapter
+artifact. The inline bootstrap fields (sourceUri/modelId/rank) are reserved:
+the schema accepts them, but create-if-missing self-healing is not yet wired,
+so a referenced adapter artifact must currently exist.
+
+
+
+_Appears in:_
+- [AIMServiceSpec](#aimservicespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name is the metadata.name of the referenced adapter artifact. |  | MaxLength: 253 <br />MinLength: 1 <br /> |
+| `kind` _[AIMServiceAdapterKind](#aimserviceadapterkind)_ | Kind is the kind of the referenced adapter. Required; restricted to AIMArtifact in v1. |  | Enum: [AIMArtifact] <br /> |
+| `sourceUri` _string_ | SourceURI is an optional create-if-missing bootstrap source. When set and no<br />adapter artifact named Name exists, a later release will create one from this<br />source; a pre-existing artifact always wins. RESERVED: not yet acted on. |  | Optional: \{\} <br /> |
+| `modelId` _string_ | ModelID is the adapter's canonical model id. Required when SourceURI is set.<br />RESERVED: only meaningful alongside SourceURI. |  | Optional: \{\} <br /> |
+| `rank` _integer_ | Rank is the optional LoRA rank for the bootstrapped adapter. RESERVED: only<br />meaningful alongside SourceURI. |  | Minimum: 1 <br />Optional: \{\} <br /> |
+
+
+#### AIMServiceAdapterStatus
+
+
+
+AIMServiceAdapterStatus is the per-adapter status aggregated onto an AIMService.
+
+
+
+_Appears in:_
+- [AIMServiceStatus](#aimservicestatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name is the adapter reference name. |  |  |
+| `adapterPath` _string_ | AdapterPath is the on-disk directory name (mirrored from the artifact). |  | Optional: \{\} <br /> |
+| `modelId` _string_ | ModelID is the adapter's canonical model id (mirrored from the artifact). |  | Optional: \{\} <br /> |
+| `state` _[AIMAdapterState](#aimadapterstate)_ | State is the disk-side state of the adapter for this service. |  | Enum: [Pending Downloading Downloaded Deleting Loaded LoadRejected] <br />Optional: \{\} <br /> |
+| `loadedReplicas` _string_ | LoadedReplicas reports how many serving replicas have the adapter loaded,<br />as "loaded/total" (e.g. "3/3"). RESERVED: engine-reported, not yet populated. |  | Optional: \{\} <br /> |
+| `lastObserved` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#time-v1-meta)_ | LastObserved is when the controller last observed this adapter's state. |  | Optional: \{\} <br /> |
+| `lastError` _string_ | LastError carries the most recent error for this adapter (e.g. a mirrored<br />failing reason from the underlying artifact). |  | Optional: \{\} <br /> |
 
 
 #### AIMServiceAutoScaling
@@ -1749,6 +1915,8 @@ _Appears in:_
 | `template` _[AIMServiceTemplateConfig](#aimservicetemplateconfig)_ | Template contains template selection and configuration.<br />Use Template.Name to specify an explicit template, or omit to auto-select.<br />Mutually exclusive with Profile (v1alpha2). |  | Optional: \{\} <br /> |
 | `profile` _[AIMServiceProfileConfig](#aimserviceprofileconfig)_ | Profile contains profile selection configuration (v1alpha2 only).<br />When set, the service uses a profile-based reconciliation path.<br />Mutually exclusive with Template. |  | Optional: \{\} <br /> |
 | `profileOverrides` _[AIMServiceProfileOverrides](#aimserviceprofileoverrides)_ | ProfileOverrides allows overriding specific profile parameters for this service.<br />Only valid when Profile is set. |  | Optional: \{\} <br /> |
+| `adapterMode` _[AIMAdapterMode](#aimadaptermode)_ | AdapterMode is the immutable adapter contract for the service, mapped<br />directly to the AIM_ADAPTER_MODE container env. static (default) freezes<br />spec.adapters and mounts the adapter disk only when adapters are declared;<br />dynamic allows editing spec.adapters and mounts the disk even at zero<br />adapters (so add/remove never restarts the pod). It is immutable after<br />creation. | static | Enum: [static dynamic] <br />Optional: \{\} <br /> |
+| `adapters` _[AIMServiceAdapterReference](#aimserviceadapterreference) array_ | Adapters is the load-bearing list of LoRA adapters this service serves.<br />The list may only be edited after creation when adapterMode is dynamic<br />(static freezes it). Omitting the list serves no adapters.<br />Supported on both the template (v1alpha1) and profile (v1alpha2) pipelines:<br />the base model the adapters attach to is resolved from the service's<br />template cache or profile cache respectively. In dynamic mode the list may<br />be edited after creation: adding an adapter stages it into the service's<br />subtree and the aim-runtime hot-loads it; removing one lets the runtime<br />unload it (subtree cleanup is reclaimed out-of-band). The InferenceService<br />is never modified for adapter changes — it mounts the whole per-service<br />subtree read-only. Entries are pure references; (kind, name) pairs must be<br />unique. Omitting the list serves no adapters. |  | MaxItems: 64 <br />Optional: \{\} <br /> |
 | `caching` _[AIMServiceCachingConfig](#aimservicecachingconfig)_ | Caching controls caching behavior for this service.<br />When nil, defaults to Shared mode. |  | Optional: \{\} <br /> |
 | `cacheModel` _boolean_ | DEPRECATED: Use Caching.Mode instead. This field will be removed in a future version.<br />This field is no longer honored by the controller. |  | Optional: \{\} <br /> |
 | `replicas` _integer_ | Replicas specifies the number of replicas for this service.<br />When not specified, defaults to 1 replica.<br />This value overrides any replica settings from the template.<br />For autoscaling, use MinReplicas and MaxReplicas instead. | 1 | Optional: \{\} <br /> |
@@ -1789,6 +1957,9 @@ _Appears in:_
 | `resolvedProfile` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedProfile captures metadata about the profile that satisfied the reference.<br />Set when the service uses a profile-based reconciliation path (v1alpha2). |  | Optional: \{\} <br /> |
 | `cache` _[AIMServiceCacheStatus](#aimservicecachestatus)_ | Cache captures cache-related status for this service. |  | Optional: \{\} <br /> |
 | `runtime` _[AIMServiceRuntimeStatus](#aimserviceruntimestatus)_ | Runtime captures runtime status including replica counts. |  | Optional: \{\} <br /> |
+| `adapters` _[AIMServiceAdapterStatus](#aimserviceadapterstatus) array_ | Adapters reports the per-adapter disk-side status for services that declare<br />spec.adapters. One entry per declared adapter. Observation is<br />best-effort/eventual; the disk state the controller wrote is authoritative. |  | Optional: \{\} <br /> |
+| `adapterSubtreeSyncKey` _string_ | AdapterSubtreeSyncKey records the declared adapter set most recently<br />reconciled onto the service's adapter subtree by the subtree-sync Job<br />(a hash of the sorted spec.adapters names). The controller re-runs the<br />sync Job — which creates the subtree and prunes adapter directories no<br />longer declared — whenever this drifts from the current desired set, so<br />editing spec.adapters reclaims removed adapters without re-run loops. |  | Optional: \{\} <br /> |
+| `adapterDiskPersistentVolumeClaim` _string_ | AdapterDiskPersistentVolumeClaim is the resolved shared adapter-disk PVC<br />(from the base model artifact's status). It is recorded here once resolved<br />and reused when a transient parent-resolution gap would otherwise leave it<br />empty, so a blip never re-renders the InferenceService without its adapter<br />mount and restarts a running predictor. Never cleared once set. |  | Optional: \{\} <br /> |
 
 
 
@@ -1979,6 +2150,8 @@ _Appears in:_
 | `defaultStorageClassName` _string_ | DefaultStorageClassName specifies the storage class to use for artifacts and PVCs<br />when the consuming resource (AIMArtifact, AIMTemplateCache, AIMServiceTemplate) does not<br />specify a storage class. If this field is empty, the cluster's default storage class is used. |  | Optional: \{\} <br /> |
 | `pvcHeadroomPercent` _integer_ | PVCHeadroomPercent specifies the percentage of extra space to add to PVCs<br />for model storage. This accounts for filesystem overhead and temporary files<br />during model loading. The value represents a percentage (e.g., 10 means 10% extra space).<br />If not specified, defaults to 10%. | 10 | Minimum: 0 <br />Optional: \{\} <br /> |
 | `downloadFilter` _[AIMDownloadFilter](#aimdownloadfilter)_ | DownloadFilter controls which files are included or excluded during artifact downloads.<br />When set here, applies as the default for all artifacts using this runtime config.<br />Individual artifacts can override this with their own downloadFilter.<br />When no filter is configured at any level, subdirectory files are excluded by default.<br />Set to an empty object (downloadFilter: \{\}) to explicitly allow all files. |  | Optional: \{\} <br /> |
+| `adapterDiskStorageClassName` _string_ | AdapterDiskStorageClassName is the storage class for the shared<br />ReadWriteMany adapter disk. It must be RWX-capable (e.g. longhorn, NFS) and<br />is resolved before the (typically RWO) DefaultStorageClassName. |  | Optional: \{\} <br /> |
+| `adapterDiskSize` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#quantity-resource-api)_ | AdapterDiskSize is the cluster default size for the shared adapter disk PVC<br />(built-in default when unset). An artifact's adapterDisk.size wins over it. |  | Optional: \{\} <br /> |
 
 
 #### AIMTemplateCache

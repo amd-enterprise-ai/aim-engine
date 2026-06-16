@@ -135,6 +135,9 @@ type imageProfileMetadata struct {
 	AcceleratorType     aimv1alpha1.AcceleratorType `json:"accelerator_type,omitempty"`
 	AcceleratorCount    *int32                      `json:"accelerator_count,omitempty"`
 	GPUCount            *int32                      `json:"gpu_count,omitempty"`
+	// Features mirrors the runtime's metadata.features (e.g. "adapters"); discovery
+	// materialises it onto AIMProfile.spec.features so gating matches the image.
+	Features []string `json:"features,omitempty"`
 }
 
 // ToCandidates returns the catalog entries as ProfileCopy candidates.
@@ -381,6 +384,7 @@ func parseProfileYAMLIntoCatalogItem(raw []byte, relpath, defaultAimID, sourceIm
 			EngineEnv:           parsed.EnvVars,
 			Image:               sourceImage,
 			ModelSources:        deriveModelSources(parsed.ModelID),
+			Features:            append([]string(nil), parsed.Metadata.Features...),
 		},
 	}, nil
 }

@@ -1,0 +1,426 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: adapter staging end-to-end (v1alpha2)
+#
+# Validates the AIMService adapter pipeline reaching "staged" in kind:
+# 1. A bootstrapped base model artifact (adapterDisk) provisions the shared
+#    adapter disk PVC.
+# 2. An adapter artifact validates lineage and reaches Ready.
+# 3. A v1alpha2 AIMService declaring spec.adapters resolves the base model via
+#    the (frozen) profile cache, runs a fast subtree-sync Job to create the
+#    per-service subtree directory (and prune undeclared adapters). This service
+#    uses the default static mode, so the InferenceService is gated on the
+#    adapters being fully staged (the runtime enumerates the adapter directory
+#    once at launch); in dynamic mode the gate is only the subtree existing.
+# 4. A per-(service x adapter) staging Job runs asynchronously and promotes dummy
+#    bytes (AIM_DEBUG_SIMULATE_PROMOTE) so the rename(2) path runs without real
+#    downloads; the service then reports the adapter as Downloaded.
+# 5. The InferenceService mounts the adapter disk read-only at /adapters scoped
+#    to the service's subtree (subPath = service UID).
+# 6. The resolved adapter disk PVC is recorded on the service status (sticky), so
+#    a later transient gap in the parent's status keeps the mount.
+# 7. The periodic reaper keeps the live service subtree and prunes an orphaned
+#    one (the keep-list contract that protects mounted subtrees).
+# 8. Blanking the parent's adapter-disk PVC status (gap) does NOT drop the live
+#    ISVC adapter mount (the sticky fallback preserves it).
+#
+# Test type: Frozen dependency test (AIMClusterProfile + AIMProfileCache frozen).
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: adapters-staged
+spec:
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Bootstrap the base model artifact with an adapter disk
+      try:
+        - apply:
+            file: base-artifact.yaml
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: adapters-staged-base
+              status:
+                status: Ready
+                (adapterPersistentVolumeClaim != ""): true
+
+    - name: Create the adapter artifact and assert it validates lineage
+      try:
+        - apply:
+            file: adapter-artifact.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: adapters-staged-lora
+              status:
+                status: Ready
+
+    - name: Create the frozen cluster profile (Ready, single model source)
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-profile.yaml --status-only
+
+    - name: Create the v1alpha2 service that serves the adapter
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert the service-owned profile cache is created
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: adapters-staged-service
+
+    - name: Freeze the service-owned profile cache, pointing at the base artifact
+      description: |
+        Bypass the cache controller so the resolved parent is the bootstrapped
+        base artifact (which owns the adapter disk). The service resolves the
+        parent by matching status.artifacts[*].model to the profile's modelId.
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              PC_NAME=$(kubectl get aimprofilecache -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=adapters-staged-service \
+                -o jsonpath='{.items[0].metadata.name}')
+              if [ -z "$PC_NAME" ]; then
+                echo "ERROR: No AIMProfileCache found for the service"
+                kubectl get aimprofilecache -n "$NAMESPACE" -o yaml
+                exit 1
+              fi
+              echo "Found AIMProfileCache: $PC_NAME"
+
+              CACHE_PVC=$(kubectl get pvc -n "$NAMESPACE" \
+                -l aim.eai.amd.com/cache.name=adapters-staged-base \
+                -o jsonpath='{.items[0].metadata.name}')
+
+              kubectl annotate aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+
+              kubectl patch aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                --type=merge --subresource=status \
+                -p "{
+                  \"status\": {
+                    \"status\": \"Ready\",
+                    \"conditions\": [
+                      {\"type\": \"ProfileFound\", \"status\": \"True\", \"reason\": \"ProfileResolved\", \"message\": \"resolved\", \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"},
+                      {\"type\": \"ArtifactsReady\", \"status\": \"True\", \"reason\": \"AllCachesReady\", \"message\": \"ready\", \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"}
+                    ],
+                    \"artifacts\": {
+                      \"adapters-staged-base\": {
+                        \"name\": \"adapters-staged-base\",
+                        \"model\": \"test-org/base-weights\",
+                        \"status\": \"Ready\",
+                        \"persistentVolumeClaim\": \"$CACHE_PVC\",
+                        \"mountPoint\": \"/workspace/cache/test-org/base-weights\"
+                      }
+                    }
+                  }
+                }"
+              echo "Froze profile cache $PC_NAME"
+
+    - name: Assert the subtree-sync Job is launched (gates ISVC creation)
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: adapters-staged-service
+                  aim.eai.amd.com/component: adapter-subtree-sync
+
+    - name: Assert a staging Job is launched for the (service, adapter) pair
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: adapters-staged-service
+                  aim.eai.amd.com/component: adapter-stage
+
+    - name: Assert the service reports the adapter as Downloaded
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: adapters-staged-service
+              status:
+                (adapters[?name == 'adapters-staged-lora']):
+                  - state: Downloaded
+
+    - name: Assert the service records the synced adapter subtree key
+      description: |
+        Once the subtree-sync Job succeeds the controller records the declared
+        adapter set's hash on status, so it can detect add/remove drift without
+        re-running the sync in a loop.
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: adapters-staged-service
+              status:
+                (adapterSubtreeSyncKey != ''): true
+
+    - name: Assert the InferenceService mounts the adapter disk read-only at /adapters
+      description: |
+        The predictor mounts the shared adapter disk read-only at /adapters
+        (subPath = service UID) and is pointed at it via the container
+        contract env var AIM_ADAPTER_SOURCE.
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: adapters-staged-service
+              spec:
+                predictor:
+                  containers:
+                    - name: kserve-container
+                      (volumeMounts[?mountPath == '/adapters']):
+                        - readOnly: true
+                      (env[?name == 'AIM_ADAPTER_SOURCE']):
+                        - value: /adapters
+
+    - name: Assert the service records the sticky adapter disk PVC
+      description: |
+        The resolved adapter disk PVC is persisted on the service status so a
+        later transient gap in the parent's status can fall back to it and keep
+        the read-only mount instead of restarting the predictor.
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: adapters-staged-service
+              status:
+                (adapterDiskPersistentVolumeClaim != ''): true
+
+    - name: Reaper keeps the live service subtree and prunes an orphaned one
+      description: |
+        Per-service adapter subtrees are not Kubernetes objects, so a periodic
+        reaper Job reclaims subtrees whose owning AIMService is gone. This proves
+        the keep-list contract: a live service's subtree is retained while an
+        orphaned subtree (no backing AIMService) is pruned. The orphan is
+        back-dated past the reaper's 30-min grace guard so it is eligible for
+        immediate reclaim; the live subtree is in the keep-list.
+      try:
+        - script:
+            # Seeds the disk then forces a fresh reaper run; override the
+            # config-level exec timeout so the script isn't killed mid-wait.
+            timeout: 240s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              SVC_UID=$(kubectl get aimservice -n "$NAMESPACE" adapters-staged-service -o jsonpath='{.metadata.uid}')
+              ADAPTER_PVC=$(kubectl get aimartifact -n "$NAMESPACE" adapters-staged-base -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+              ORPHAN_UID="deadbeef-0000-0000-0000-000000000000"
+              echo "live uid: $SVC_UID  orphan uid: $ORPHAN_UID  adapter pvc: $ADAPTER_PVC"
+
+              # Seed an orphaned subtree (runs as uid 1000 like the staging/reaper
+              # Jobs so the reaper can delete it) and back-date it past the guard.
+              kubectl delete pod adapters-staged-reap-seed -n "$NAMESPACE" --ignore-not-found
+              cat <<EOF | kubectl apply -n "$NAMESPACE" -f -
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: adapters-staged-reap-seed
+              spec:
+                restartPolicy: Never
+                securityContext:
+                  runAsUser: 1000
+                  runAsGroup: 1000
+                  fsGroup: 1000
+                containers:
+                  - name: seed
+                    image: busybox:1.36
+                    command: ["sh", "-c"]
+                    args:
+                      - |
+                        set -eu
+                        mkdir -p "/disk/${ORPHAN_UID}/ghost-adapter"
+                        echo '{}' > "/disk/${ORPHAN_UID}/ghost-adapter/adapter_config.json"
+                        # Back-date the orphan subtree dir well past MIN_AGE_SECONDS (30m).
+                        touch -t 202001010000 "/disk/${ORPHAN_UID}"
+                        test -d "/disk/${SVC_UID}" || { echo "ERROR: live subtree missing before reap"; ls -laR /disk; exit 1; }
+                        echo "seeded orphan; live subtree present"
+                    volumeMounts:
+                      - name: disk
+                        mountPath: /disk
+                volumes:
+                  - name: disk
+                    persistentVolumeClaim:
+                      claimName: ${ADAPTER_PVC}
+              EOF
+              kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/adapters-staged-reap-seed -n "$NAMESPACE" --timeout=120s
+              kubectl logs -n "$NAMESPACE" adapters-staged-reap-seed
+
+              # Force a fresh reaper run: drop any prior reaper Job, then nudge the
+              # base model artifact to reconcile so it recreates the reaper with a
+              # current keep-list (which includes the live service UID).
+              kubectl delete job -n "$NAMESPACE" -l aim.eai.amd.com/component=adapter-reap --ignore-not-found
+              kubectl annotate aimartifact -n "$NAMESPACE" adapters-staged-base \
+                aim.eai.amd.com/test-nudge="$(date +%s)" --overwrite
+
+              JOB=""
+              for i in $(seq 1 60); do
+                JOB=$(kubectl get job -n "$NAMESPACE" -l aim.eai.amd.com/component=adapter-reap \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                if [ -n "$JOB" ] && kubectl wait --for=condition=complete job/"$JOB" -n "$NAMESPACE" --timeout=5s 2>/dev/null; then
+                  echo "reaper job $JOB complete"
+                  kubectl logs -n "$NAMESPACE" job/"$JOB" || true
+                  break
+                fi
+                sleep 3
+              done
+              [ -n "$JOB" ] || { echo "ERROR: no reaper job ran"; kubectl get job -n "$NAMESPACE"; exit 1; }
+      finally:
+        - delete:
+            ref:
+              apiVersion: v1
+              kind: Pod
+              name: adapters-staged-reap-seed
+
+    - name: Verify the orphan subtree is pruned and the live subtree is kept
+      try:
+        - script:
+            # Waits on a verifier Pod; override the config-level exec timeout.
+            timeout: 200s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              SVC_UID=$(kubectl get aimservice -n "$NAMESPACE" adapters-staged-service -o jsonpath='{.metadata.uid}')
+              ADAPTER_PVC=$(kubectl get aimartifact -n "$NAMESPACE" adapters-staged-base -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+              ORPHAN_UID="deadbeef-0000-0000-0000-000000000000"
+
+              kubectl delete pod adapters-staged-reap-verify -n "$NAMESPACE" --ignore-not-found
+              cat <<EOF | kubectl apply -n "$NAMESPACE" -f -
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: adapters-staged-reap-verify
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: verify
+                    image: busybox:1.36
+                    command: ["sh", "-c"]
+                    args:
+                      - |
+                        set -eu
+                        if [ -e "/disk/${ORPHAN_UID}" ]; then
+                          echo "ERROR: orphan subtree still present after reap"; ls -laR /disk; exit 1
+                        fi
+                        test -d "/disk/${SVC_UID}" || { echo "ERROR: live subtree was reaped"; ls -laR /disk; exit 1; }
+                        echo "OK: orphan pruned, live subtree kept"
+                    volumeMounts:
+                      - name: disk
+                        mountPath: /disk
+                volumes:
+                  - name: disk
+                    persistentVolumeClaim:
+                      claimName: ${ADAPTER_PVC}
+              EOF
+              kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/adapters-staged-reap-verify -n "$NAMESPACE" --timeout=120s
+              kubectl logs -n "$NAMESPACE" adapters-staged-reap-verify
+      finally:
+        - delete:
+            ref:
+              apiVersion: v1
+              kind: Pod
+              name: adapters-staged-reap-verify
+
+    - name: Adapter mount survives a transient parent adapter-disk PVC gap
+      description: |
+        The service derives the adapter disk PVC from the base model artifact's
+        status. If that value is transiently empty (the artifact reconcile is
+        mid-flight), re-rendering the InferenceService must NOT drop the
+        read-only /adapters mount and restart the running predictor. The sticky
+        status field lets the service keep the mount across the gap. Here we
+        pause the base artifact and blank its status.adapterPersistentVolumeClaim
+        to force the gap, then assert the ISVC keeps the mount.
+      try:
+        - script:
+            # Has a sleep + several kubectl calls; override the config-level exec
+            # timeout (10s) so the script isn't killed mid-wait.
+            timeout: 60s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              # Pause the base artifact so its controller can't immediately
+              # repopulate the adapter-disk PVC status, then blank it.
+              kubectl annotate aimartifact -n "$NAMESPACE" adapters-staged-base \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+              kubectl patch aimartifact -n "$NAMESPACE" adapters-staged-base \
+                --type=merge --subresource=status \
+                -p '{"status":{"adapterPersistentVolumeClaim":""}}'
+              # Nudge the service to reconcile against the gap, then give the
+              # controller time to (re-)render the ISVC before asserting.
+              kubectl annotate aimservice -n "$NAMESPACE" adapters-staged-service \
+                aim.eai.amd.com/test-nudge="$(date +%s)" --overwrite
+              sleep 15
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: adapters-staged-service
+              spec:
+                predictor:
+                  containers:
+                    - name: kserve-container
+                      (volumeMounts[?mountPath == '/adapters']):
+                        - readOnly: true
+      finally:
+        - script:
+            timeout: 60s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              # Unpause so the artifact controller repopulates the adapter-disk PVC.
+              kubectl annotate aimartifact -n "$NAMESPACE" adapters-staged-base \
+                aim.eai.amd.com/reconciliation-paused- --overwrite || true

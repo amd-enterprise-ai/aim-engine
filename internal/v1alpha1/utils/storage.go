@@ -106,6 +106,20 @@ func ResolveStorageClass(explicitStorageClass string, runtimeConfigSpec *aimv1al
 	return runtimeConfigSpec.DefaultStorageClassName
 }
 
+// ResolveAdapterDiskStorageClass resolves the RWX storage class for a model
+// artifact's shared adapter disk, in precedence order: explicitStorageClass
+// (adapterDisk.storageClassName), Storage.AdapterDiskStorageClassName, then the
+// generic ResolveStorageClass fallback.
+func ResolveAdapterDiskStorageClass(explicitStorageClass string, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon) string {
+	if explicitStorageClass != "" {
+		return explicitStorageClass
+	}
+	if runtimeConfigSpec != nil && runtimeConfigSpec.Storage != nil && runtimeConfigSpec.Storage.AdapterDiskStorageClassName != nil {
+		return *runtimeConfigSpec.Storage.AdapterDiskStorageClassName
+	}
+	return ResolveStorageClass("", runtimeConfigSpec)
+}
+
 // GetPVCHeadroomPercent returns the PVC headroom percentage from the runtime config spec.
 // If not set, returns the default value defined in DefaultPVCHeadroomPercent.
 func GetPVCHeadroomPercent(spec *aimv1alpha1.AIMRuntimeConfigCommon) int32 {

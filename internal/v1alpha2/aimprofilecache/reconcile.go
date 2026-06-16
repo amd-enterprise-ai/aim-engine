@@ -236,6 +236,13 @@ func (r *ProfileCacheReconciler) ComposeState(
 				continue
 			}
 
+			// LoRA-serving caches must only adopt a disk-bearing artifact; a
+			// diskless match would wedge the service. Falling through to
+			// MissingCaches makes PlanResources create one with a disk.
+			if pc.Spec.RequiresAdapterDisk && cached.Spec.AdapterDisk == nil {
+				continue
+			}
+
 			if cached.Spec.SourceURI == model.SourceURI &&
 				(pc.Spec.StorageClassName == "" || pc.Spec.StorageClassName == cached.Spec.StorageClassName) {
 				if !found || constants.CompareAIMStatus(bestArtifact.Status.Status, cached.Status.Status) < 0 {
@@ -293,6 +300,12 @@ func (r *ProfileCacheReconciler) PlanResources(
 				Size:             getSizeOrZero(model.Size),
 				Env:              utils.MergeEnvVars(pc.Spec.Env, model.Env),
 			},
+		}
+
+		// Provision the shared adapter disk; size/class are left empty so the
+		// AIMArtifact reconciler resolves them from AIMRuntimeConfig.Storage.
+		if pc.Spec.RequiresAdapterDisk {
+			artifact.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
 		}
 
 		if pc.Spec.Mode == aimv1alpha2.ProfileCacheModeDedicated {

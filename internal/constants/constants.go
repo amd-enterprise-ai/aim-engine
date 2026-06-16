@@ -223,6 +223,47 @@ const (
 	DefaultGPUResourceName = "amd.com/gpu"
 	// AIMCacheBasePath is the base directory for cached models
 	AIMCacheBasePath = "/workspace/cache"
+	// AIMAdapterMountPath is the path inside the inference container where the
+	// service's adapter subtree is mounted (read-only). The inference container
+	// loads every directory under this path.
+	AIMAdapterMountPath = "/adapters"
+	// EnvAIMAdapterSource is the container-contract env var that tells the image
+	// which directory to load adapters from. The controller sets it to
+	// AIMAdapterMountPath so the image finds the mounted subtree.
+	EnvAIMAdapterSource = "AIM_ADAPTER_SOURCE"
+	// EnvAIMAdapterMode is the container-contract env var that selects the
+	// adapter contract the image honours at boot ("static" or "dynamic").
+	EnvAIMAdapterMode = "AIM_ADAPTER_MODE"
+	// EnvAIMAdapterRefreshInterval is the dynamic-mode poll cadence (seconds) for
+	// the image's filesystem watcher. Ignored in static mode.
+	EnvAIMAdapterRefreshInterval = "AIM_ADAPTER_REFRESH_INTERVAL"
+	// EnvAIMAdapterMaxCount is the max number of adapters the image should load
+	// on-accelerator concurrently.
+	EnvAIMAdapterMaxCount = "AIM_ADAPTER_MAX_COUNT"
+	// EnvAIMAdapterMaxCPUCount is the max number of adapters the image should
+	// cache in CPU memory (>= EnvAIMAdapterMaxCount).
+	EnvAIMAdapterMaxCPUCount = "AIM_ADAPTER_MAX_CPU_COUNT"
+	// EnvAIMAdapterMaxRank is the max LoRA rank the image should provision for.
+	EnvAIMAdapterMaxRank = "AIM_ADAPTER_MAX_RANK"
+	// AIMAdapterPVCRoot is the path where the shared adapter-disk PVC is mounted
+	// (read-write) inside a staging Job. Staging/aside areas live at this root.
+	AIMAdapterPVCRoot = "/adapter-disk"
+	// VolumeAdapterDisk is the name of the adapter-disk volume on pods/jobs.
+	VolumeAdapterDisk = "adapter-disk"
+
+	// Conservative built-in defaults for the adapter container contract. A later
+	// iteration will source the caps from the resolved profile / runtime config;
+	// until then the controller emits these uniform defaults so they are visible
+	// in the pod spec.
+	DefaultAIMAdapterRefreshIntervalSeconds = 30
+	DefaultAIMAdapterMaxCount               = 8
+	DefaultAIMAdapterMaxCPUCount            = 16
+	DefaultAIMAdapterMaxRank                = 32
+
+	// LabelAdapterDynamicAllowed is the namespace label that opts a namespace in
+	// to dynamic adapter mode. Enforcement is not yet wired (see
+	// aimadapter.DynamicModeAllowed).
+	LabelAdapterDynamicAllowed = "aim.eai.amd.com/adapter-dynamic-allowed"
 )
 
 // Component values for resource labels

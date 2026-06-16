@@ -1,0 +1,18 @@
+# First adapter artifact (kept across the remove step). AIM_DEBUG_SIMULATE_PROMOTE
+# makes the staging Job write dummy bytes and exercise the rename(2) promote
+# without any real download (kind-friendly).
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: adapters-dynamic-lora-a
+spec:
+  type: adapter
+  parentArtifact: adapters-dynamic-base
+  modelId: test-org/lora-a
+  sourceUri: hf://test-org/lora-a
+  rank: 16
+  env:
+    - name: AIM_DEBUG_SIMULATE_PROMOTE
+      value: "true"
+    - name: AIM_DEBUG_DOWNLOAD_DURATION
+      value: "2"

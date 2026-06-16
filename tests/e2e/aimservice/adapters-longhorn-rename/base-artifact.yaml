@@ -1,0 +1,25 @@
+# Base model artifact whose adapter disk uses a genuine RWX storage class
+# (longhorn). Only the model download is simulated; the adapter staging Job
+# performs a real rename(2) into the live subtree on this PVC.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: lh-adapters-base
+spec:
+  type: model
+  sourceUri: hf://test-org/base-weights
+  size: 10Mi
+  adapterDisk:
+    size: 5Gi
+    storageClassName: longhorn
+  env:
+    - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+      value: "true"
+    - name: AIM_DEBUG_SIMULATE_HF_DURATION
+      value: "2"
+    - name: EXPECTED_SIZE_BYTES
+      value: "102400"
+    - name: PROGRESS_INTERVAL
+      value: "3"
+    - name: STALL_TIMEOUT
+      value: "120"

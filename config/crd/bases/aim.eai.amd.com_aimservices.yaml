@@ -80,6 +80,86 @@ spec:
               With v1alpha2, a Profile can be used instead of a Template. Template and Profile
               are mutually exclusive — at least one resolution path must be specified.
             properties:
+              adapterMode:
+                default: static
+                description: |-
+                  AdapterMode is the immutable adapter contract for the service, mapped
+                  directly to the AIM_ADAPTER_MODE container env. static (default) freezes
+                  spec.adapters and mounts the adapter disk only when adapters are declared;
+                  dynamic allows editing spec.adapters and mounts the disk even at zero
+                  adapters (so add/remove never restarts the pod). It is immutable after
+                  creation.
+                enum:
+                - static
+                - dynamic
+                type: string
+                x-kubernetes-validations:
+                - message: spec.adapterMode is immutable after creation
+                  rule: self == oldSelf
+              adapters:
+                description: |-
+                  Adapters is the load-bearing list of LoRA adapters this service serves.
+                  The list may only be edited after creation when adapterMode is dynamic
+                  (static freezes it). Omitting the list serves no adapters.
+                  Supported on both the template (v1alpha1) and profile (v1alpha2) pipelines:
+                  the base model the adapters attach to is resolved from the service's
+                  template cache or profile cache respectively. In dynamic mode the list may
+                  be edited after creation: adding an adapter stages it into the service's
+                  subtree and the aim-runtime hot-loads it; removing one lets the runtime
+                  unload it (subtree cleanup is reclaimed out-of-band). The InferenceService
+                  is never modified for adapter changes — it mounts the whole per-service
+                  subtree read-only. Entries are pure references; (kind, name) pairs must be
+                  unique. Omitting the list serves no adapters.
+                items:
+                  description: |-
+                    AIMServiceAdapterReference is a typed reference to a LoRA adapter served by this
+                    service. Today it is resolved as a pure reference to an existing adapter
+                    artifact. The inline bootstrap fields (sourceUri/modelId/rank) are reserved:
+                    the schema accepts them, but create-if-missing self-healing is not yet wired,
+                    so a referenced adapter artifact must currently exist.
+                  properties:
+                    kind:
+                      description: Kind is the kind of the referenced adapter. Required;
+                        restricted to AIMArtifact in v1.
+                      enum:
+                      - AIMArtifact
+                      type: string
+                    modelId:
+                      description: |-
+                        ModelID is the adapter's canonical model id. Required when SourceURI is set.
+                        RESERVED: only meaningful alongside SourceURI.
+                      type: string
+                    name:
+                      description: Name is the metadata.name of the referenced adapter
+                        artifact.
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                    rank:
+                      description: |-
+                        Rank is the optional LoRA rank for the bootstrapped adapter. RESERVED: only
+                        meaningful alongside SourceURI.
+                      format: int32
+                      minimum: 1
+                      type: integer
+                    sourceUri:
+                      description: |-
+                        SourceURI is an optional create-if-missing bootstrap source. When set and no
+                        adapter artifact named Name exists, a later release will create one from this
+                        source; a pre-existing artifact always wins. RESERVED: not yet acted on.
+                      type: string
+                  required:
+                  - kind
+                  - name
+                  type: object
+                  x-kubernetes-validations:
+                  - message: modelId is required when sourceUri is set
+                    rule: '!has(self.sourceUri) || has(self.modelId)'
+                  - message: modelId and rank are only allowed together with sourceUri
+                    rule: has(self.sourceUri) || (!has(self.modelId) && !has(self.rank))
+                maxItems: 64
+                type: array
+                x-kubernetes-list-type: atomic
               autoScaling:
                 description: |-
                   AutoScaling configures advanced autoscaling behavior using KEDA.
@@ -1821,6 +1901,21 @@ spec:
                   Storage configures storage defaults for this service's PVCs and caches.
                   When set, these values override namespace/cluster runtime config defaults.
                 properties:
+                  adapterDiskSize:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      AdapterDiskSize is the cluster default size for the shared adapter disk PVC
+                      (built-in default when unset). An artifact's adapterDisk.size wins over it.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  adapterDiskStorageClassName:
+                    description: |-
+                      AdapterDiskStorageClassName is the storage class for the shared
+                      ReadWriteMany adapter disk. It must be RWX-capable (e.g. longhorn, NFS) and
+                      is resolved before the (typically RWO) DefaultStorageClassName.
+                    type: string
                   defaultStorageClassName:
                     description: |-
                       DefaultStorageClassName specifies the storage class to use for artifacts and PVCs
@@ -1894,6 +1989,76 @@ spec:
           status:
             description: AIMServiceStatus defines the observed state of AIMService.
             properties:
+              adapterDiskPersistentVolumeClaim:
+                description: |-
+                  AdapterDiskPersistentVolumeClaim is the resolved shared adapter-disk PVC
+                  (from the base model artifact's status). It is recorded here once resolved
+                  and reused when a transient parent-resolution gap would otherwise leave it
+                  empty, so a blip never re-renders the InferenceService without its adapter
+                  mount and restarts a running predictor. Never cleared once set.
+                type: string
+              adapterSubtreeSyncKey:
+                description: |-
+                  AdapterSubtreeSyncKey records the declared adapter set most recently
+                  reconciled onto the service's adapter subtree by the subtree-sync Job
+                  (a hash of the sorted spec.adapters names). The controller re-runs the
+                  sync Job — which creates the subtree and prunes adapter directories no
+                  longer declared — whenever this drifts from the current desired set, so
+                  editing spec.adapters reclaims removed adapters without re-run loops.
+                type: string
+              adapters:
+                description: |-
+                  Adapters reports the per-adapter disk-side status for services that declare
+                  spec.adapters. One entry per declared adapter. Observation is
+                  best-effort/eventual; the disk state the controller wrote is authoritative.
+                items:
+                  description: AIMServiceAdapterStatus is the per-adapter status aggregated
+                    onto an AIMService.
+                  properties:
+                    adapterPath:
+                      description: AdapterPath is the on-disk directory name (mirrored
+                        from the artifact).
+                      type: string
+                    lastError:
+                      description: |-
+                        LastError carries the most recent error for this adapter (e.g. a mirrored
+                        failing reason from the underlying artifact).
+                      type: string
+                    lastObserved:
+                      description: LastObserved is when the controller last observed
+                        this adapter's state.
+                      format: date-time
+                      type: string
+                    loadedReplicas:
+                      description: |-
+                        LoadedReplicas reports how many serving replicas have the adapter loaded,
+                        as "loaded/total" (e.g. "3/3"). RESERVED: engine-reported, not yet populated.
+                      type: string
+                    modelId:
+                      description: ModelID is the adapter's canonical model id (mirrored
+                        from the artifact).
+                      type: string
+                    name:
+                      description: Name is the adapter reference name.
+                      type: string
+                    state:
+                      description: State is the disk-side state of the adapter for
+                        this service.
+                      enum:
+                      - Pending
+                      - Downloading
+                      - Downloaded
+                      - Deleting
+                      - Loaded
+                      - LoadRejected
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               cache:
                 description: Cache captures cache-related status for this service.
                 properties:
@@ -2226,6 +2391,13 @@ spec:
           rule: '!has(self.spec.profileOverrides) || !has(self.spec.profileOverrides.acceleratorPartitioningMode)
             || size(self.spec.profileOverrides.acceleratorPartitioningMode) == 0 ||
             has(self.spec.profileOverrides.acceleratorCount)'
+        - message: spec.adapters entries must have unique (kind, name) pairs
+          rule: '!has(self.spec.adapters) || self.spec.adapters.all(a, self.spec.adapters.exists_one(b,
+            b.kind == a.kind && b.name == a.name))'
+        - message: spec.adapters is immutable unless spec.adapterMode is dynamic
+          rule: self.spec.adapterMode == 'dynamic' || (has(self.spec.adapters) ==
+            has(oldSelf.spec.adapters) && (!has(self.spec.adapters) || self.spec.adapters
+            == oldSelf.spec.adapters))
     served: true
     storage: false
     subresources:
@@ -2283,6 +2455,86 @@ spec:
               With v1alpha2, a Profile can be used instead of a Template. Template and Profile
               are mutually exclusive — at least one resolution path must be specified.
             properties:
+              adapterMode:
+                default: static
+                description: |-
+                  AdapterMode is the immutable adapter contract for the service, mapped
+                  directly to the AIM_ADAPTER_MODE container env. static (default) freezes
+                  spec.adapters and mounts the adapter disk only when adapters are declared;
+                  dynamic allows editing spec.adapters and mounts the disk even at zero
+                  adapters (so add/remove never restarts the pod). It is immutable after
+                  creation.
+                enum:
+                - static
+                - dynamic
+                type: string
+                x-kubernetes-validations:
+                - message: spec.adapterMode is immutable after creation
+                  rule: self == oldSelf
+              adapters:
+                description: |-
+                  Adapters is the load-bearing list of LoRA adapters this service serves.
+                  The list may only be edited after creation when adapterMode is dynamic
+                  (static freezes it). Omitting the list serves no adapters.
+                  Supported on both the template (v1alpha1) and profile (v1alpha2) pipelines:
+                  the base model the adapters attach to is resolved from the service's
+                  template cache or profile cache respectively. In dynamic mode the list may
+                  be edited after creation: adding an adapter stages it into the service's
+                  subtree and the aim-runtime hot-loads it; removing one lets the runtime
+                  unload it (subtree cleanup is reclaimed out-of-band). The InferenceService
+                  is never modified for adapter changes — it mounts the whole per-service
+                  subtree read-only. Entries are pure references; (kind, name) pairs must be
+                  unique. Omitting the list serves no adapters.
+                items:
+                  description: |-
+                    AIMServiceAdapterReference is a typed reference to a LoRA adapter served by this
+                    service. Today it is resolved as a pure reference to an existing adapter
+                    artifact. The inline bootstrap fields (sourceUri/modelId/rank) are reserved:
+                    the schema accepts them, but create-if-missing self-healing is not yet wired,
+                    so a referenced adapter artifact must currently exist.
+                  properties:
+                    kind:
+                      description: Kind is the kind of the referenced adapter. Required;
+                        restricted to AIMArtifact in v1.
+                      enum:
+                      - AIMArtifact
+                      type: string
+                    modelId:
+                      description: |-
+                        ModelID is the adapter's canonical model id. Required when SourceURI is set.
+                        RESERVED: only meaningful alongside SourceURI.
+                      type: string
+                    name:
+                      description: Name is the metadata.name of the referenced adapter
+                        artifact.
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                    rank:
+                      description: |-
+                        Rank is the optional LoRA rank for the bootstrapped adapter. RESERVED: only
+                        meaningful alongside SourceURI.
+                      format: int32
+                      minimum: 1
+                      type: integer
+                    sourceUri:
+                      description: |-
+                        SourceURI is an optional create-if-missing bootstrap source. When set and no
+                        adapter artifact named Name exists, a later release will create one from this
+                        source; a pre-existing artifact always wins. RESERVED: not yet acted on.
+                      type: string
+                  required:
+                  - kind
+                  - name
+                  type: object
+                  x-kubernetes-validations:
+                  - message: modelId is required when sourceUri is set
+                    rule: '!has(self.sourceUri) || has(self.modelId)'
+                  - message: modelId and rank are only allowed together with sourceUri
+                    rule: has(self.sourceUri) || (!has(self.modelId) && !has(self.rank))
+                maxItems: 64
+                type: array
+                x-kubernetes-list-type: atomic
               autoScaling:
                 description: |-
                   AutoScaling configures advanced autoscaling behavior using KEDA.
@@ -4024,6 +4276,21 @@ spec:
                   Storage configures storage defaults for this service's PVCs and caches.
                   When set, these values override namespace/cluster runtime config defaults.
                 properties:
+                  adapterDiskSize:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      AdapterDiskSize is the cluster default size for the shared adapter disk PVC
+                      (built-in default when unset). An artifact's adapterDisk.size wins over it.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  adapterDiskStorageClassName:
+                    description: |-
+                      AdapterDiskStorageClassName is the storage class for the shared
+                      ReadWriteMany adapter disk. It must be RWX-capable (e.g. longhorn, NFS) and
+                      is resolved before the (typically RWO) DefaultStorageClassName.
+                    type: string
                   defaultStorageClassName:
                     description: |-
                       DefaultStorageClassName specifies the storage class to use for artifacts and PVCs
@@ -4097,6 +4364,76 @@ spec:
           status:
             description: AIMServiceStatus defines the observed state of AIMService.
             properties:
+              adapterDiskPersistentVolumeClaim:
+                description: |-
+                  AdapterDiskPersistentVolumeClaim is the resolved shared adapter-disk PVC
+                  (from the base model artifact's status). It is recorded here once resolved
+                  and reused when a transient parent-resolution gap would otherwise leave it
+                  empty, so a blip never re-renders the InferenceService without its adapter
+                  mount and restarts a running predictor. Never cleared once set.
+                type: string
+              adapterSubtreeSyncKey:
+                description: |-
+                  AdapterSubtreeSyncKey records the declared adapter set most recently
+                  reconciled onto the service's adapter subtree by the subtree-sync Job
+                  (a hash of the sorted spec.adapters names). The controller re-runs the
+                  sync Job — which creates the subtree and prunes adapter directories no
+                  longer declared — whenever this drifts from the current desired set, so
+                  editing spec.adapters reclaims removed adapters without re-run loops.
+                type: string
+              adapters:
+                description: |-
+                  Adapters reports the per-adapter disk-side status for services that declare
+                  spec.adapters. One entry per declared adapter. Observation is
+                  best-effort/eventual; the disk state the controller wrote is authoritative.
+                items:
+                  description: AIMServiceAdapterStatus is the per-adapter status aggregated
+                    onto an AIMService.
+                  properties:
+                    adapterPath:
+                      description: AdapterPath is the on-disk directory name (mirrored
+                        from the artifact).
+                      type: string
+                    lastError:
+                      description: |-
+                        LastError carries the most recent error for this adapter (e.g. a mirrored
+                        failing reason from the underlying artifact).
+                      type: string
+                    lastObserved:
+                      description: LastObserved is when the controller last observed
+                        this adapter's state.
+                      format: date-time
+                      type: string
+                    loadedReplicas:
+                      description: |-
+                        LoadedReplicas reports how many serving replicas have the adapter loaded,
+                        as "loaded/total" (e.g. "3/3"). RESERVED: engine-reported, not yet populated.
+                      type: string
+                    modelId:
+                      description: ModelID is the adapter's canonical model id (mirrored
+                        from the artifact).
+                      type: string
+                    name:
+                      description: Name is the adapter reference name.
+                      type: string
+                    state:
+                      description: State is the disk-side state of the adapter for
+                        this service.
+                      enum:
+                      - Pending
+                      - Downloading
+                      - Downloaded
+                      - Deleting
+                      - Loaded
+                      - LoadRejected
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               cache:
                 description: Cache captures cache-related status for this service.
                 properties:
@@ -4442,6 +4779,15 @@ spec:
           rule: '!has(self.spec.profileOverrides) || !has(self.spec.profileOverrides.acceleratorPartitioningMode)
             || size(self.spec.profileOverrides.acceleratorPartitioningMode) == 0 ||
             has(self.spec.profileOverrides.acceleratorCount)'
+        - message: spec.adapters requires spec.profile
+          rule: '!has(self.spec.adapters) || size(self.spec.adapters) == 0 || has(self.spec.profile)'
+        - message: spec.adapters entries must have unique (kind, name) pairs
+          rule: '!has(self.spec.adapters) || self.spec.adapters.all(a, self.spec.adapters.exists_one(b,
+            b.kind == a.kind && b.name == a.name))'
+        - message: spec.adapters is immutable unless spec.adapterMode is dynamic
+          rule: self.spec.adapterMode == 'dynamic' || (has(self.spec.adapters) ==
+            has(oldSelf.spec.adapters) && (!has(self.spec.adapters) || self.spec.adapters
+            == oldSelf.spec.adapters))
     served: true
     storage: true
     subresources:

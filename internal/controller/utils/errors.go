@@ -223,6 +223,36 @@ func IsStateEngineError(err error) bool {
 	return errors.As(err, &se)
 }
 
+// DemoteUpstreamDependencyErrors rewrites any MissingUpstreamDependency errors on
+// a ComponentHealth to MissingDownstreamDependency, preserving the reason and
+// message. Use it for components that are downstream resources the controller
+// owns (e.g. predictor pods created via the InferenceService) but which are
+// inspected through shared helpers that assume an upstream user reference.
+//
+// A MissingUpstreamDependency is treated by the state engine as a blocking
+// config error (ConfigValid=False, ShouldApply=false), which halts the entire
+// reconcile — including unrelated convergence such as adapter subtree GC,
+// routing and autoscaling. A downstream dependency instead degrades readiness
+// without blocking apply, which is the correct semantics for a resource we own
+// (e.g. an unpullable predictor image must not stop the operator from reclaiming
+// adapter-disk bytes).
+func DemoteUpstreamDependencyErrors(health ComponentHealth) ComponentHealth {
+	if len(health.Errors) == 0 {
+		return health
+	}
+	demoted := make([]error, len(health.Errors))
+	for i, e := range health.Errors {
+		var se StateEngineError
+		if errors.As(e, &se) && se.Category() == ErrorCategoryMissingUpstreamDependency {
+			demoted[i] = NewMissingDownstreamDependencyError(se.Reason(), se.UserMessage(), errors.Unwrap(e))
+			continue
+		}
+		demoted[i] = e
+	}
+	health.Errors = demoted
+	return health
+}
+
 // CategorizeError inspects a raw error and categorizes it as a StateEngineError.
 // This function performs deep inspection to determine the error category:
 // - Kubernetes API errors (NotFound, Forbidden, Unauthorized, etc.)

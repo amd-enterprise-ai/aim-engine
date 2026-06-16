@@ -686,6 +686,21 @@ spec:
                   Storage configures storage defaults for this service's PVCs and caches.
                   When set, these values override namespace/cluster runtime config defaults.
                 properties:
+                  adapterDiskSize:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      AdapterDiskSize is the cluster default size for the shared adapter disk PVC
+                      (built-in default when unset). An artifact's adapterDisk.size wins over it.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  adapterDiskStorageClassName:
+                    description: |-
+                      AdapterDiskStorageClassName is the storage class for the shared
+                      ReadWriteMany adapter disk. It must be RWX-capable (e.g. longhorn, NFS) and
+                      is resolved before the (typically RWO) DefaultStorageClassName.
+                    type: string
                   defaultStorageClassName:
                     description: |-
                       DefaultStorageClassName specifies the storage class to use for artifacts and PVCs

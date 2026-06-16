@@ -47,6 +47,13 @@ func effectiveSourceURI(mc *aimv1alpha1.AIMArtifact) string {
 	return mc.Spec.SourceURI
 }
 
+// ResolveDownloadImage exposes the download-image resolution to other packages
+// (e.g. the AIMService adapter staging Jobs) so they share the same image
+// precedence: artifact spec > runtime config > build-time default.
+func ResolveDownloadImage(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon) string {
+	return resolveDownloadImage(mc, runtimeConfigSpec)
+}
+
 // resolveDownloadImage picks the container image for download and size-check
 // jobs. Precedence: artifact spec > runtime config > build-time default.
 func resolveDownloadImage(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon) string {
@@ -57,6 +64,12 @@ func resolveDownloadImage(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1a
 		return runtimeConfigSpec.Artifact.ModelDownloadImage
 	}
 	return aimv1alpha1.DefaultDownloadImage
+}
+
+// PullPolicyForImage exposes pullPolicyForImage to other packages building Jobs
+// that use the downloader image (e.g. AIMService adapter staging).
+func PullPolicyForImage(image string) corev1.PullPolicy {
+	return pullPolicyForImage(image)
 }
 
 // pullPolicyForImage mirrors kubelet's own default-policy heuristic: when the

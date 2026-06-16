@@ -82,6 +82,17 @@ type AIMStorageConfig struct {
 	// Set to an empty object (downloadFilter: {}) to explicitly allow all files.
 	// +optional
 	DownloadFilter *AIMDownloadFilter `json:"downloadFilter,omitempty"`
+
+	// AdapterDiskStorageClassName is the storage class for the shared
+	// ReadWriteMany adapter disk. It must be RWX-capable (e.g. longhorn, NFS) and
+	// is resolved before the (typically RWO) DefaultStorageClassName.
+	// +optional
+	AdapterDiskStorageClassName *string `json:"adapterDiskStorageClassName,omitempty"`
+
+	// AdapterDiskSize is the cluster default size for the shared adapter disk PVC
+	// (built-in default when unset). An artifact's adapterDisk.size wins over it.
+	// +optional
+	AdapterDiskSize *resource.Quantity `json:"adapterDiskSize,omitempty"`
 }
 
 // AIMServiceRuntimeConfig contains runtime configuration fields that apply to services.

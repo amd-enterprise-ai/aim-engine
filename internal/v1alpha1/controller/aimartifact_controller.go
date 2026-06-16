@@ -37,6 +37,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -70,6 +71,7 @@ type AIMArtifactReconciler struct {
 }
 
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimartifacts,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimservices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimartifacts/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimartifacts/finalizers,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
@@ -83,13 +85,6 @@ type AIMArtifactReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the AIMArtifact object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
 func (r *AIMArtifactReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -101,6 +96,19 @@ func (r *AIMArtifactReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 		logger.Error(err, "Failed to fetch AIMArtifact")
 		return ctrl.Result{}, err
+	}
+
+	// Adapter artifacts are cascade-deleted with their parent model artifact, so
+	// ensure the owner reference is in place before reconciling.
+	if model.Spec.Type == aimv1alpha1.ArtifactTypeAdapter {
+		updated, err := r.ensureAdapterParentOwnerRef(ctx, &model)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if updated {
+			// The owner-ref Update re-triggers reconciliation; let it run fresh.
+			return ctrl.Result{}, nil
+		}
 	}
 
 	var result ctrl.Result
@@ -198,6 +206,106 @@ func downloadJobPodPredicate() predicate.Predicate {
 		DeleteFunc: func(e event.DeleteEvent) bool {
 			// Always react to pod deletions
 			return true
+		},
+	}
+}
+
+// ensureAdapterParentOwnerRef sets an owner reference from a type=adapter artifact
+// to its parent model artifact so Kubernetes-native cascade reclaims the adapter
+// when the parent is deleted. Returns true when an update was performed.
+func (r *AIMArtifactReconciler) ensureAdapterParentOwnerRef(ctx context.Context, adapter *aimv1alpha1.AIMArtifact) (bool, error) {
+	if adapter.Spec.ParentArtifact == "" {
+		return false, nil
+	}
+
+	var parent aimv1alpha1.AIMArtifact
+	if err := r.Get(ctx, client.ObjectKey{Namespace: adapter.Namespace, Name: adapter.Spec.ParentArtifact}, &parent); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Parent not present yet; status will surface ParentArtifactNotFound.
+			return false, nil
+		}
+		return false, err
+	}
+
+	// Already owned by this parent?
+	for _, ref := range adapter.GetOwnerReferences() {
+		if ref.UID == parent.UID {
+			return false, nil
+		}
+	}
+
+	if err := controllerutil.SetOwnerReference(&parent, adapter, r.Scheme); err != nil {
+		return false, err
+	}
+	if err := r.Update(ctx, adapter); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// findAdaptersForParent enqueues adapter artifacts when their parent model artifact
+// changes (e.g. gains an adapter disk).
+func (r *AIMArtifactReconciler) findAdaptersForParent(ctx context.Context, obj client.Object) []ctrl.Request {
+	parent, ok := obj.(*aimv1alpha1.AIMArtifact)
+	if !ok || parent.Spec.Type == aimv1alpha1.ArtifactTypeAdapter {
+		return nil
+	}
+
+	var adapters aimv1alpha1.AIMArtifactList
+	if err := r.List(ctx, &adapters,
+		client.InNamespace(parent.Namespace),
+		client.MatchingFields{aimv1alpha1.ArtifactParentIndexKey: parent.Name},
+	); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list adapter artifacts for parent",
+			"parent", parent.Name, "namespace", parent.Namespace)
+		return nil
+	}
+
+	requests := make([]ctrl.Request, len(adapters.Items))
+	for i := range adapters.Items {
+		requests[i] = ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&adapters.Items[i])}
+	}
+	return requests
+}
+
+// findAdapterDiskArtifactsForService enqueues adapter-disk-owning artifacts in a
+// changed adapter service's namespace so the reaper's keep-list refreshes
+// promptly. Only narrows the staleness window; the reaper's grace guard is the
+// real safety net against deletion races.
+func (r *AIMArtifactReconciler) findAdapterDiskArtifactsForService(ctx context.Context, obj client.Object) []ctrl.Request {
+	svc, ok := obj.(*aimv1alpha1.AIMService)
+	if !ok || !svc.Spec.AdaptersEnabled() {
+		return nil
+	}
+
+	var artifacts aimv1alpha1.AIMArtifactList
+	if err := r.List(ctx, &artifacts, client.InNamespace(svc.Namespace)); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list artifacts for adapter service watch",
+			"service", svc.Name, "namespace", svc.Namespace)
+		return nil
+	}
+
+	var requests []ctrl.Request
+	for i := range artifacts.Items {
+		if artifacts.Items[i].Spec.AdapterDisk != nil {
+			requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&artifacts.Items[i])})
+		}
+	}
+	return requests
+}
+
+// adapterServicePredicate reacts only to AIMServices that need an adapter disk,
+// so unrelated service churn does not wake the artifact controller.
+func adapterServicePredicate() predicate.Predicate {
+	enabled := func(obj client.Object) bool {
+		svc, ok := obj.(*aimv1alpha1.AIMService)
+		return ok && svc.Spec.AdaptersEnabled()
+	}
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool { return enabled(e.Object) },
+		DeleteFunc: func(e event.DeleteEvent) bool { return enabled(e.Object) },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return enabled(e.ObjectOld) || enabled(e.ObjectNew)
 		},
 	}
 }
@@ -451,10 +559,31 @@ func (r *AIMArtifactReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorderFor(r.pipeline.GetFullName())
 	r.pipeline.Recorder = r.Recorder
 
+	// Index adapter artifacts by their parent reference so a parent change can
+	// enqueue its adapters.
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.Background(),
+		&aimv1alpha1.AIMArtifact{},
+		aimv1alpha1.ArtifactParentIndexKey,
+		func(obj client.Object) []string {
+			a, ok := obj.(*aimv1alpha1.AIMArtifact)
+			if !ok || a.Spec.ParentArtifact == "" {
+				return nil
+			}
+			return []string{a.Spec.ParentArtifact}
+		},
+	); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha1.AIMArtifact{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
+		Watches(
+			&aimv1alpha1.AIMArtifact{},
+			handler.EnqueueRequestsFromMapFunc(r.findAdaptersForParent),
+		).
 		Watches(
 			&corev1.Pod{},
 			handler.EnqueueRequestsFromMapFunc(r.findArtifactForPod),
@@ -474,6 +603,11 @@ func (r *AIMArtifactReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&aimv1alpha1.AIMClusterRuntimeConfig{},
 			handler.EnqueueRequestsFromMapFunc(r.findAllArtifactsForClusterConfig),
 			builder.WithPredicates(clusterQuotaPredicate()),
+		).
+		Watches(
+			&aimv1alpha1.AIMService{},
+			handler.EnqueueRequestsFromMapFunc(r.findAdapterDiskArtifactsForService),
+			builder.WithPredicates(adapterServicePredicate()),
 		).
 		Named(artifactName).
 		Complete(r)

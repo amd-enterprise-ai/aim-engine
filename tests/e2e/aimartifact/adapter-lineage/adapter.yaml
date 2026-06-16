@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: adapter-lineage-lora
+spec:
+  type: adapter
+  parentArtifact: adapter-lineage-base
+  modelId: test-org/lora-adapter
+  sourceUri: hf://test-org/lora-adapter
+  rank: 16

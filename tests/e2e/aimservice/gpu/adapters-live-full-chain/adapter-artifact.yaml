@@ -1,0 +1,29 @@
+# LoRA adapter artifact. Its name (fingpt-lora) becomes the on-disk subdirectory
+# and the adapter id vLLM surfaces in /v1/models — that's what the test asserts.
+#
+# parentArtifact points at the base model (CEL-required on adapters); the
+# service independently resolves the same base via the profile cache to find the
+# shared adapter disk. The real LoRA bytes are downloaded by the service's
+# staging Job at stage time.
+#
+# This is a genuine Llama-2-7b LoRA that adapts only the attention projections
+# (q/k/v, rank 8 — well under the runtime's default max 32) and does NOT touch
+# embeddings/lm_head. That matters: adapters that resize the vocabulary (e.g.
+# the sql-lora test adapter, which adds 4 tokens -> 32004) fail to load on a
+# 32000-vocab base under current vLLM, which enforces an exact embedding match.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: fingpt-lora
+spec:
+  type: adapter
+  parentArtifact: llama2-base
+  modelId: NousResearch/Llama-2-7b-hf
+  sourceUri: hf://FinGPT/fingpt-mt_llama2-7b_lora
+  rank: 8
+  env:
+    - name: HF_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: huggingface-creds
+          key: token

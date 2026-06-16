@@ -1,0 +1,121 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMArtifact adapter lineage + adapter-disk provisioning
+#
+# Exercises the artifact-controller adapter branch end-to-end in kind:
+# 1. A type=model artifact with spec.adapterDisk provisions a second RWX PVC
+#    (the shared adapter disk) and records it in status.adapterPersistentVolumeClaim.
+# 2. A type=adapter artifact pointing at that model validates its lineage and
+#    reaches Ready (no cache PVC, no download Job created for the adapter itself).
+# 3. An adapter whose parent model lacks an adapterDisk does NOT become Ready.
+#
+# Model downloads are simulated (AIM_DEBUG_SIMULATE_HF_DOWNLOAD) so no real
+# network is required. The adapter disk PVC binds via the kind `nfs` RWX
+# storage class (csi-driver-nfs).
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: adapter-lineage
+spec:
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Create base model artifact with an adapter disk
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert the shared adapter disk PVC is provisioned (RWX)
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: v1
+              kind: PersistentVolumeClaim
+              metadata:
+                labels:
+                  aim.eai.amd.com/cache.name: adapter-lineage-base
+              spec:
+                accessModes:
+                  - ReadWriteMany
+
+    - name: Assert the model records its adapter disk and reaches Ready
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: adapter-lineage-base
+              status:
+                status: Ready
+                (adapterPersistentVolumeClaim != ""): true
+
+    - name: Assert a periodic adapter reaper Job is created for the disk
+      try:
+        - assert:
+            resource:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                labels:
+                  aim.eai.amd.com/cache.name: adapter-lineage-base
+                  aim.eai.amd.com/component: adapter-reap
+
+    - name: Create the adapter artifact referencing the base model
+      try:
+        - apply:
+            file: adapter.yaml
+
+    - name: Assert the adapter validates lineage and becomes Ready
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: adapter-lineage-lora
+              status:
+                status: Ready
+                adapterPath: adapter-lineage-lora
+                resolvedParent:
+                  name: adapter-lineage-base
+
+    - name: Assert the adapter did NOT get a cache PVC or download Job
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              pvc=$(kubectl get pvc -n "$NAMESPACE" \
+                -l aim.eai.amd.com/cache.name=adapter-lineage-lora --no-headers 2>/dev/null | wc -l)
+              if [ "$pvc" -ne 0 ]; then
+                echo "ERROR: adapter must not allocate a cache PVC, found $pvc"
+                exit 1
+              fi
+              echo "OK: adapter has no cache PVC"
+
+    - name: Create an adapter whose parent model has no adapter disk
+      try:
+        - apply:
+            file: adapter-no-disk-parent.yaml
+
+    - name: Assert the orphan adapter is gated because its parent lacks an adapter disk
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: adapter-lineage-lora-orphan
+              status:
+                status: Pending
+                (conditions[?type == 'AdapterParentReady']):
+                  - status: "False"
+                    reason: ParentLacksAdapterDisk

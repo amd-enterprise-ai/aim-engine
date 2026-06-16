@@ -47,6 +47,9 @@ import (
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.profile) || !has(self.spec.profile.selector) || !has(self.spec.profile.selector.role) || self.spec.profile.selector.role == 'deployable'",message="spec.profile.selector.role on v1alpha2 may only be omitted or set to deployable; base is reserved for AIMProfileSet selectors"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.profile) || !has(self.spec.profile.selector) || has(self.spec.profile.selector.aimId) || has(self.spec.profile.selector.modelRef) || has(self.spec.model)",message="spec.profile.selector must narrow on aimId, modelRef.name, or be paired with spec.model.name"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.profileOverrides) || !has(self.spec.profileOverrides.acceleratorPartitioningMode) || size(self.spec.profileOverrides.acceleratorPartitioningMode) == 0 || has(self.spec.profileOverrides.acceleratorCount)",message="acceleratorCount must be specified together with any acceleratorPartitioningMode override; partition mode changes the per-unit interpretation of acceleratorCount"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.adapters) || size(self.spec.adapters) == 0 || has(self.spec.profile)",message="spec.adapters requires spec.profile"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.adapters) || self.spec.adapters.all(a, self.spec.adapters.exists_one(b, b.kind == a.kind && b.name == a.name))",message="spec.adapters entries must have unique (kind, name) pairs"
+// +kubebuilder:validation:XValidation:rule="self.spec.adapterMode == 'dynamic' || (has(self.spec.adapters) == has(oldSelf.spec.adapters) && (!has(self.spec.adapters) || self.spec.adapters == oldSelf.spec.adapters))",message="spec.adapters is immutable unless spec.adapterMode is dynamic"
 //
 //nolint:lll // kubebuilder marker; CEL rule cannot be wrapped across lines
 type AIMService struct {

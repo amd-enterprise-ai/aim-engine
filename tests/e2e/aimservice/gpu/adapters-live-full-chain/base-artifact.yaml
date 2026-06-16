@@ -1,0 +1,28 @@
+# Base-model artifact, pre-created WITH an adapter disk.
+#
+# The profile cache adopts this (matching sourceUri, no owner refs) instead of
+# creating its own — and because it already carries an adapterDisk, the service
+# can resolve a non-empty AdapterDiskPVC and stage LoRA adapters onto it. The
+# adapter disk is a genuine RWX volume (longhorn) shared by the staging Job
+# (writer) and the inference pod (reader).
+#
+# Real download (no simulation): the runtime needs actual Llama-2-7b weights to
+# serve and load the LoRA.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: llama2-base
+spec:
+  type: model
+  modelId: NousResearch/Llama-2-7b-hf
+  sourceUri: hf://NousResearch/Llama-2-7b-hf
+  size: 60Gi
+  adapterDisk:
+    size: 5Gi
+    storageClassName: longhorn
+  env:
+    - name: HF_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: huggingface-creds
+          key: token

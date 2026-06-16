@@ -66,6 +66,28 @@ type ArtifactFetchResult struct {
 	mergedRuntimeConfig controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
 	cachePvc            controllerutils.FetchResult[*corev1.PersistentVolumeClaim]
 
+	// adapterPvc is the shared adapter disk PVC, fetched only for type=model
+	// artifacts that declare an adapterDisk.
+	adapterPvc *controllerutils.FetchResult[*corev1.PersistentVolumeClaim]
+
+	// adapterReaperJob is the periodic subtree-reclaim Job, fetched only for
+	// type=model artifacts that declare an adapterDisk.
+	adapterReaperJob *controllerutils.FetchResult[*batchv1.Job]
+
+	// liveAdapterServiceIDs are the subtree IDs (AIMService UIDs) of services in
+	// the namespace that currently declare adapters; the reaper keeps these.
+	liveAdapterServiceIDs []string
+
+	// liveAdapterServiceIDsErr records a failure to list live services. When set,
+	// the keep-list is untrustworthy and the reaper must be skipped this cycle
+	// (an empty keep-list would otherwise reap every subtree, including mounted
+	// ones); reclaim retries on the next RequeueAfter.
+	liveAdapterServiceIDsErr error
+
+	// parentArtifact is the referenced parent model artifact, fetched only for
+	// type=adapter artifacts.
+	parentArtifact *controllerutils.FetchResult[*aimv1alpha1.AIMArtifact]
+
 	// Check-size job (fetched when spec.size is empty and not yet discovered)
 	checkSizeJob     *controllerutils.FetchResult[*batchv1.Job]
 	checkSizeJobPods *controllerutils.FetchResult[*corev1.PodList]
@@ -175,6 +197,13 @@ func (r *ArtifactReconciler) FetchRemoteState(
 	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha1.AIMArtifact],
 ) ArtifactFetchResult {
 	mc := reconcileCtx.Object
+
+	// Adapter artifacts do not get a cache PVC or download/check-size jobs. Their
+	// only dependency is the parent model artifact (lineage).
+	if isAdapter(mc) {
+		return r.fetchAdapterState(ctx, c, mc)
+	}
+
 	downloadJobName := getDownloadJobName(mc)
 	downloadJob := &batchv1.Job{}
 	downloadJobPods := &corev1.PodList{}
@@ -193,6 +222,29 @@ func (r *ArtifactReconciler) FetchRemoteState(
 			client.ObjectKey{Name: "aim-engine-artifact-status-updater", Namespace: mc.Namespace},
 			&rbacv1.RoleBinding{},
 		),
+	}
+
+	// Model artifacts that declare an adapter disk provision a second shared RWX PVC.
+	if mc.Spec.AdapterDisk != nil {
+		adapterPvc := controllerutils.Fetch(
+			ctx, c,
+			client.ObjectKey{Name: GenerateAdapterPvcName(mc), Namespace: mc.Namespace},
+			&corev1.PersistentVolumeClaim{},
+		)
+		result.adapterPvc = &adapterPvc
+
+		reaperJob := controllerutils.Fetch(
+			ctx, c,
+			client.ObjectKey{Name: generateAdapterReaperJobName(mc), Namespace: mc.Namespace},
+			&batchv1.Job{},
+		)
+		result.adapterReaperJob = &reaperJob
+
+		result.liveAdapterServiceIDs, result.liveAdapterServiceIDsErr = listLiveAdapterServiceIDs(ctx, c, mc.Namespace)
+		if result.liveAdapterServiceIDsErr != nil {
+			log.FromContext(ctx).Error(result.liveAdapterServiceIDsErr,
+				"failed to list AIMServices for adapter reclaim; skipping reaper this cycle", "namespace", mc.Namespace)
+		}
 	}
 
 	// Fetch check-size job if size not in spec AND not yet discovered
@@ -312,6 +364,10 @@ func (r *ArtifactReconciler) FetchRemoteState(
 }
 
 func (obs ArtifactObservation) GetComponentHealth(ctx context.Context, clientset kubernetes.Interface) []controllerutils.ComponentHealth {
+	if isAdapter(obs.artifact) {
+		return obs.getAdapterComponentHealth()
+	}
+
 	health := []controllerutils.ComponentHealth{
 		obs.mergedRuntimeConfig.ToUpstreamComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth),
 	}
@@ -410,6 +466,11 @@ type ArtifactObservation struct {
 
 	// Quota evaluation result (populated when quota data is available)
 	quotaDecision *QuotaDecision
+
+	// Adapter-only observations (type=adapter)
+	adapterPath    string
+	parentResolved *aimv1alpha1.AIMResolvedReference
+	parentModelID  string
 }
 
 func (r *ArtifactReconciler) ComposeState(
@@ -419,6 +480,10 @@ func (r *ArtifactReconciler) ComposeState(
 ) ArtifactObservation {
 	logger := log.FromContext(ctx)
 	obs := ArtifactObservation{ArtifactFetchResult: fetch}
+
+	if isAdapter(fetch.artifact) {
+		return composeAdapterState(fetch)
+	}
 
 	// Direct S3 cache check when source is hf:// and not yet resolved
 	mc := fetch.artifact
@@ -527,14 +592,107 @@ func resolveCacheEnv(mc *aimv1alpha1.AIMArtifact, runtimeConfig *aimv1alpha1.AIM
 	return nil
 }
 
+// planCachePvc handles the quota gate and cache PVC creation once size is known
+// (Phase 2). It mutates result in place; every path here is terminal for the
+// reconcile cycle, so the caller returns immediately afterwards.
+//
+// When size was just discovered from the check-size job in this cycle, PVC
+// creation is deferred so discoveredSizeBytes is persisted to status first. This
+// ensures NeedsQuotaLock acquires the lock on the next reconcile, serializing
+// quota evaluation and PVC creation.
+func (r *ArtifactReconciler) planCachePvc(
+	ctx context.Context,
+	mc *aimv1alpha1.AIMArtifact,
+	obs ArtifactObservation,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	result *controllerutils.PlanResult,
+) {
+	logger := log.FromContext(ctx)
+
+	if obs.discoveredSizeBytes != nil && mc.Status.DiscoveredSizeBytes == nil {
+		logger.Info("Size just discovered, deferring PVC creation to next cycle",
+			"namespace", mc.Namespace, "name", mc.Name,
+			"discoveredSizeBytes", *obs.discoveredSizeBytes)
+		result.RequeueAfter = 1 * time.Second
+		return
+	}
+
+	// Quota evaluation is mandatory before PVC creation. If we entered the
+	// quota-evaluation path but no decision was reached, requeue rather than
+	// bypassing the gate.
+	if obs.quotaDataFetched && obs.quotaDecision == nil {
+		logger.Info("Quota evaluation incomplete, requeueing before PVC creation",
+			"namespace", mc.Namespace, "name", mc.Name)
+		result.RequeueAfter = 5 * time.Second
+		return
+	}
+
+	if obs.quotaDecision != nil && (obs.quotaDecision.NamespaceExceeded || obs.quotaDecision.ClusterExceeded) {
+		r.planQuotaExceeded(ctx, mc, obs, result)
+		return
+	}
+
+	headroomPercent := v1alpha1utils.GetPVCHeadroomPercent(runtimeConfig)
+	storageClassName := v1alpha1utils.ResolveStorageClass(mc.Spec.StorageClassName, runtimeConfig)
+	effectiveSize := obs.GetEffectiveSize()
+	pvcSize := v1alpha1utils.QuantityWithHeadroom(effectiveSize, headroomPercent)
+
+	result.Apply(buildCachePvc(mc, pvcSize, storageClassName))
+}
+
+// planQuotaExceeded handles the over-quota branch: evict lower-priority artifacts
+// when possible, otherwise leave the artifact blocked (the StorageQuotaExceeded
+// condition is set in DecorateStatus) and requeue to pick up config changes.
+func (r *ArtifactReconciler) planQuotaExceeded(
+	ctx context.Context,
+	mc *aimv1alpha1.AIMArtifact,
+	obs ArtifactObservation,
+	result *controllerutils.PlanResult,
+) {
+	logger := log.FromContext(ctx)
+
+	if len(obs.quotaDecision.ToEvict) > 0 {
+		for i := range obs.quotaDecision.ToEvict {
+			evicted := &obs.quotaDecision.ToEvict[i]
+			logger.Info("Evicting artifact to free storage quota",
+				"evicted", evicted.Name,
+				"evictedNamespace", evicted.Namespace,
+				"retentionPriority", effectiveRetentionPriority(evicted, obs.quotaDecision.DefaultRetentionPriority),
+				"forArtifact", mc.Name)
+			if r.Recorder != nil {
+				r.Recorder.Eventf(evicted, corev1.EventTypeWarning, "Evicted",
+					"Evicted to free storage quota for artifact %s/%s", mc.Namespace, mc.Name)
+			}
+			result.Delete(evicted)
+		}
+		result.RequeueAfter = 10 * time.Second
+		return
+	}
+
+	// Blocked: cannot evict enough to satisfy quota. PVC creation is skipped.
+	// Requeue periodically so we pick up config changes (e.g., raised quota,
+	// new defaultRetentionPriority, deleted artifacts) without needing
+	// explicit watches for every possible config source.
+	logger.Info("Artifact blocked by storage quota",
+		"reason", obs.quotaDecision.BlockReason,
+		"namespace", mc.Namespace,
+		"name", mc.Name)
+	result.RequeueAfter = 30 * time.Second
+}
+
 func (r *ArtifactReconciler) PlanResources(
 	ctx context.Context,
 	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha1.AIMArtifact],
 	obs ArtifactObservation,
 ) controllerutils.PlanResult {
-	logger := log.FromContext(ctx)
 	mc := reconcileCtx.Object
 	result := controllerutils.PlanResult{}
+
+	// Adapter artifacts have nothing to create: no PVC, no download job. Their
+	// bytes are staged per-service into the parent's adapter disk by AIMService.
+	if isAdapter(mc) {
+		return result
+	}
 
 	// Use runtime config if available, otherwise use nil (functions should handle defaults)
 	runtimeConfig := obs.mergedRuntimeConfig.Value
@@ -558,67 +716,8 @@ func (r *ArtifactReconciler) PlanResources(
 	}
 
 	// Phase 2: Quota gate + PVC creation - size is known.
-	// When size was just discovered from the check-size job in this cycle,
-	// defer PVC creation so discoveredSizeBytes is persisted to status first.
-	// This ensures NeedsQuotaLock acquires the lock on the next reconcile,
-	// serializing quota evaluation and PVC creation.
 	if obs.cachePvc.IsNotFound() {
-		if obs.discoveredSizeBytes != nil && mc.Status.DiscoveredSizeBytes == nil {
-			logger.Info("Size just discovered, deferring PVC creation to next cycle",
-				"namespace", mc.Namespace, "name", mc.Name,
-				"discoveredSizeBytes", *obs.discoveredSizeBytes)
-			result.RequeueAfter = 1 * time.Second
-			return result
-		}
-
-		// Quota evaluation is mandatory before PVC creation. If we entered the
-		// quota-evaluation path but no decision was reached, requeue rather than
-		// bypassing the gate.
-		if obs.quotaDataFetched && obs.quotaDecision == nil {
-			logger.Info("Quota evaluation incomplete, requeueing before PVC creation",
-				"namespace", mc.Namespace, "name", mc.Name)
-			result.RequeueAfter = 5 * time.Second
-			return result
-		}
-
-		if obs.quotaDecision != nil && (obs.quotaDecision.NamespaceExceeded || obs.quotaDecision.ClusterExceeded) {
-			if len(obs.quotaDecision.ToEvict) > 0 {
-				for i := range obs.quotaDecision.ToEvict {
-					evicted := &obs.quotaDecision.ToEvict[i]
-					logger.Info("Evicting artifact to free storage quota",
-						"evicted", evicted.Name,
-						"evictedNamespace", evicted.Namespace,
-						"retentionPriority", effectiveRetentionPriority(evicted, obs.quotaDecision.DefaultRetentionPriority),
-						"forArtifact", mc.Name)
-					if r.Recorder != nil {
-						r.Recorder.Eventf(evicted, corev1.EventTypeWarning, "Evicted",
-							"Evicted to free storage quota for artifact %s/%s", mc.Namespace, mc.Name)
-					}
-					result.Delete(evicted)
-				}
-				result.RequeueAfter = 10 * time.Second
-				return result
-			}
-			// Blocked: cannot evict enough to satisfy quota. PVC creation is skipped.
-			// The StorageQuotaExceeded condition is set in DecorateStatus.
-			// Requeue periodically so we pick up config changes (e.g., raised quota,
-			// new defaultRetentionPriority, deleted artifacts) without needing
-			// explicit watches for every possible config source.
-			logger.Info("Artifact blocked by storage quota",
-				"reason", obs.quotaDecision.BlockReason,
-				"namespace", mc.Namespace,
-				"name", mc.Name)
-			result.RequeueAfter = 30 * time.Second
-			return result
-		}
-
-		headroomPercent := v1alpha1utils.GetPVCHeadroomPercent(runtimeConfig)
-		storageClassName := v1alpha1utils.ResolveStorageClass(mc.Spec.StorageClassName, runtimeConfig)
-		effectiveSize := obs.GetEffectiveSize()
-		pvcSize := v1alpha1utils.QuantityWithHeadroom(effectiveSize, headroomPercent)
-
-		pvc := buildCachePvc(mc, pvcSize, storageClassName)
-		result.Apply(pvc)
+		r.planCachePvc(ctx, mc, obs, runtimeConfig, &result)
 		return result
 	}
 
@@ -627,6 +726,32 @@ func (r *ArtifactReconciler) PlanResources(
 		obs.downloadJob != nil && obs.downloadJob.IsNotFound() && obs.roleBinding.OK() {
 		downloadJob := buildDownloadJob(mc, runtimeConfig, obs.GetEffectiveSize(), cacheEnv...)
 		result.Apply(downloadJob)
+	}
+
+	// Phase 4: Adapter disk PVC (model artifacts that declare an adapterDisk).
+	// Created alongside the cache PVC; owned by this model artifact. It has no
+	// immediate consumer, so it is intentionally NOT part of component health
+	// (a WaitForFirstConsumer PVC would otherwise keep the model Progressing).
+	if mc.Spec.AdapterDisk != nil && obs.adapterPvc != nil && obs.adapterPvc.IsNotFound() {
+		sc := adapterDiskStorageClass(mc, runtimeConfig)
+		size := adapterDiskSize(mc, runtimeConfig)
+		result.Apply(buildAdapterPvc(mc, sc, size))
+	}
+
+	// Phase 5: Periodic adapter-subtree reclaim. Subtrees aren't K8s objects, so
+	// owner-ref GC can't reclaim them; a reaper Job mounts the disk RW and removes
+	// subtrees whose owning AIMService is gone, plus crash-orphaned staging dirs.
+	// TTL on the Job + RequeueAfter on the model drives the sweep cadence.
+	if mc.Spec.AdapterDisk != nil && obs.adapterPvc != nil && obs.adapterPvc.OK() {
+		// Only launch the reaper with a trustworthy keep-list. If the live-service
+		// list failed, an empty keep-list would reap every subtree (including ones
+		// mounted into running pods), so skip creation and retry next cycle.
+		if obs.liveAdapterServiceIDsErr == nil && obs.adapterReaperJob != nil && obs.adapterReaperJob.IsNotFound() {
+			result.Apply(buildAdapterReaperJob(mc, obs.adapterPvc.Value.Name, obs.liveAdapterServiceIDs, runtimeConfig))
+		}
+		if result.RequeueAfter == 0 {
+			result.RequeueAfter = AdapterReclaimInterval
+		}
 	}
 
 	return result
@@ -645,6 +770,11 @@ func (r *ArtifactReconciler) DecorateStatus(
 		status.Mode = aimv1alpha1.ArtifactModeDedicated
 	} else {
 		status.Mode = aimv1alpha1.ArtifactModeShared
+	}
+
+	if isAdapter(obs.artifact) {
+		decorateAdapterStatus(status, cm, obs)
+		return
 	}
 
 	mc := obs.artifact
@@ -696,6 +826,11 @@ func (r *ArtifactReconciler) DecorateStatus(
 	// Set PVC name in status when PVC exists
 	if !obs.cachePvc.IsNotFound() && obs.cachePvc.Value != nil && status.PersistentVolumeClaim == "" {
 		status.PersistentVolumeClaim = obs.cachePvc.Value.Name
+	}
+
+	// Record the adapter disk PVC name for model artifacts that declare an adapterDisk.
+	if mc.Spec.AdapterDisk != nil && obs.adapterPvc != nil && obs.adapterPvc.OK() && obs.adapterPvc.Value != nil {
+		status.AdapterPersistentVolumeClaim = obs.adapterPvc.Value.Name
 	}
 
 	// Check if the pod has failed (before the job is marked as failed by k8s)

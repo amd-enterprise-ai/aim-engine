@@ -1,0 +1,22 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: adapter-lineage-base
+spec:
+  type: model
+  sourceUri: hf://test-org/base-model
+  size: 10Mi
+  adapterDisk:
+    size: 5Gi
+  env:
+    # Simulate the model download so no real network access is needed.
+    - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+      value: "true"
+    - name: AIM_DEBUG_SIMULATE_HF_DURATION
+      value: "2"
+    - name: EXPECTED_SIZE_BYTES
+      value: "102400"
+    - name: PROGRESS_INTERVAL
+      value: "3"
+    - name: STALL_TIMEOUT
+      value: "120"

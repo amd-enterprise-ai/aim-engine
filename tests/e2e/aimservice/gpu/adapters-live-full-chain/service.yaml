@@ -1,0 +1,17 @@
+# v1alpha2 AIMService that serves the Llama-2-7b profile with one LoRA adapter.
+# spec.adapters drives the per-service subtree + staging onto the base model's
+# adapter disk; imagePullSecrets lets the ISVC pull the silogenai base image.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: llama2-lora-service
+spec:
+  runtimeConfigName: adapters-live-full-chain
+  profile:
+    name: llama2-lora-live
+  adapters:
+    - name: fingpt-lora
+      kind: AIMArtifact
+  imagePullSecrets:
+    - name: dockerio-silogen
+  replicas: 1

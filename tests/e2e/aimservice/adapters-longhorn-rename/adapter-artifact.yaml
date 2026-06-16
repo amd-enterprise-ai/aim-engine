@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: lh-adapters-lora
+spec:
+  type: adapter
+  parentArtifact: lh-adapters-base
+  modelId: test-org/lora
+  sourceUri: hf://test-org/lora
+  rank: 16
+  env:
+    # Real rename(2) on a real RWX filesystem; only the byte source is faked.
+    - name: AIM_DEBUG_SIMULATE_PROMOTE
+      value: "true"
+    - name: AIM_DEBUG_DOWNLOAD_DURATION
+      value: "2"

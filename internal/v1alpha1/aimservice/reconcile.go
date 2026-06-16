@@ -26,6 +26,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -37,6 +38,7 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimadapter"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
@@ -81,6 +83,11 @@ type ServiceFetchResult struct {
 	hpa                    controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]
 	httpRoute              controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
 	templateCache          controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]
+
+	// adapterDeps holds the per-adapter artifacts, staging Jobs, and resolved
+	// base-model artifact for spec.adapters. Populated only when the service
+	// declares adapters. See internal/aimadapter.
+	adapterDeps aimadapter.Dependencies
 }
 
 // FetchRemoteState fetches all resources needed for AIMService reconciliation.
@@ -155,6 +162,16 @@ func (r *ServiceReconciler) FetchRemoteState(
 		logger.V(1).Info("Transient error fetching InferenceService, skipping upstream fetch to avoid accidental changes")
 	}
 
+	// Adapter staging dependencies (spec.adapters). The parent model artifact is
+	// resolved via the template cache's resolved artifacts (keyed on the
+	// template's first model id); the remaining staging mechanics are shared via
+	// internal/aimadapter.
+	if aimadapter.IsActive(service) {
+		parentName, parentErr := resolveAdapterParentName(result)
+		result.adapterDeps = aimadapter.Fetch(ctx, c, service, parentName)
+		result.adapterDeps.ParentResolutionErr = parentErr
+	}
+
 	return result
 }
 
@@ -207,6 +224,11 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 
 	// HPA health (if autoscaling is configured)
 	health = append(health, obs.getHPAHealth())
+
+	// Adapter staging health (if the service declares adapters)
+	if aimadapter.IsActive(obs.service) {
+		health = append(health, aimadapter.Health(obs.adapterState, len(obs.service.Spec.Adapters)))
+	}
 
 	// Scale-from-zero requires routing; surface the invalid combination as
 	// ConfigValid=False instead of letting the service idle to a state it can
@@ -712,9 +734,17 @@ func inferenceServicePodsHealth(
 		}, true
 	}
 
-	return pods.ToComponentHealthWithContext(
+	// Predictor pods are a downstream resource the AIMService owns (controller →
+	// InferenceService → Deployment → pod), not a user-referenced upstream. The
+	// shared pod inspector classifies an unpullable image as a
+	// MissingUpstreamDependency, which the state engine treats as a blocking
+	// config error (ConfigValid=False, ShouldApply=false) — wrongly halting
+	// unrelated convergence such as adapter subtree GC. Demote it to a downstream
+	// dependency so a bad predictor image degrades readiness without blocking
+	// apply.
+	return controllerutils.DemoteUpstreamDependencyErrors(pods.ToComponentHealthWithContext(
 		ctx, clientset, "InferenceServicePods", controllerutils.GetPodsHealth,
-	), true
+	)), true
 }
 
 // isInferenceServiceReady checks if the InferenceService has Ready=True condition.
@@ -934,6 +964,10 @@ type ServiceObservation struct {
 	// runtimeStatus captures the computed runtime status including replica counts and resource usage.
 	// Derived in ComposeState from the InferenceService and pods.
 	runtimeStatus *aimv1alpha1.AIMServiceRuntimeStatus
+
+	// adapterState is the computed adapter staging state (spec.adapters),
+	// produced in ComposeState by the shared internal/aimadapter engine.
+	adapterState aimadapter.State
 }
 
 // ComposeState creates the observation from fetched data, deriving semantic state.
@@ -979,6 +1013,12 @@ func (r *ServiceReconciler) ComposeState(
 
 	// Compute runtime status from InferenceService and pods
 	obs.runtimeStatus = ComputeRuntimeStatus(fetch.service, fetch.hpa)
+
+	// Validate and interpret declared adapters (spec.adapters), and keep computing
+	// while removed adapters are still being reclaimed (status carries Deleting).
+	if aimadapter.IsActive(fetch.service) {
+		obs.adapterState = aimadapter.Compose(fetch.service, fetch.adapterDeps)
+	}
 
 	return obs
 }
@@ -1076,9 +1116,56 @@ func (r *ServiceReconciler) PlanResources(
 		planResult.Apply(cm)
 	}
 
-	// 5. Plan InferenceService
+	// 4b. Adapter staging (spec.adapters). Adapters load dynamically, so the ISVC
+	// is never gated on downloads: we ensure the per-service subtree exists and
+	// stage adapters asynchronously (the aim-runtime hot-loads each as it lands).
+	// ISVC *creation* is gated only on the subtree being mountable (config valid
+	// + adapter disk resolved + subtree dir present); a config error keeps the
+	// ISVC from being created and surfaces via the Adapters component health.
+	// Once the ISVC exists, adapter add/remove never blocks its updates.
+	// Run the adapter engine while adapters are declared OR still being reclaimed
+	// (a removal — including dropping the last adapter — drives its prune Job to
+	// completion via status-carried Deleting entries).
+	if aimadapter.IsActive(service) {
+		aimadapter.Plan(&planResult, service, obs.adapterDeps, obs.adapterState, obs.mergedRuntimeConfig.Value)
+	}
+	// ISVC creation is gated whenever the service needs the adapter disk —
+	// adapters declared, or dynamic mode (which mounts even at zero adapters) —
+	// because the read-only subPath mount requires the subtree directory to exist
+	// before the pod starts (the aim-runtime errors on a missing subPath). This
+	// gate is on the subtree being mountable, never on downloads.
+	isvcExists := obs.inferenceService.OK() && obs.inferenceService.Value != nil
+	if service.Spec.AdaptersEnabled() {
+		if !isvcExists && !obs.adapterState.Ready {
+			logger.V(1).Info("Adapter subtree not mountable yet; deferring ISVC creation",
+				"configErr", obs.adapterState.ConfigErr,
+				"adapterDiskPVC", obs.adapterState.AdapterDiskPVC,
+				"subtreeReady", obs.adapterState.SubtreeReady)
+			return planResult
+		}
+	}
+
+	// 5. Plan InferenceService. When the service needs the adapter disk, mount the
+	// service's adapter subtree read-only at /adapters — present even at zero
+	// adapters in dynamic mode, so add/remove never restarts the pod.
 	if isvc := planInferenceService(ctx, service, templateName, templateSpec, templateStatus, obs); isvc != nil {
-		planResult.Apply(isvc)
+		switch {
+		case aimadapter.PreserveExistingMount(service, obs.adapterState) && isvcExists:
+			// Preserve-on-unknown: the adapter disk PVC didn't resolve this cycle.
+			// Re-applying would drop the adapter mount and restart the running
+			// predictor, so leave the existing ISVC untouched and retry.
+			logger.V(1).Info("Adapter disk PVC unresolved; preserving running ISVC adapter wiring")
+			if planResult.RequeueAfter == 0 {
+				planResult.RequeueAfter = 5 * time.Second
+			}
+		default:
+			if service.Spec.AdaptersEnabled() {
+				if isvcObj, ok := isvc.(*servingv1beta1.InferenceService); ok {
+					aimadapter.AddVolumeMount(isvcObj, service, obs.adapterState.AdapterDiskPVC)
+				}
+			}
+			planResult.Apply(isvc)
+		}
 	}
 
 	return planResult
@@ -1180,5 +1267,10 @@ func (r *ServiceReconciler) DecorateStatus(
 	// Set runtime status (replica counts and resource usage)
 	if obs.runtimeStatus != nil {
 		status.Runtime = obs.runtimeStatus
+	}
+
+	// Mirror adapter staging state (spec.adapters) and any in-flight removals.
+	if aimadapter.IsActive(obs.service) {
+		aimadapter.DecorateStatus(status, obs.adapterState)
 	}
 }

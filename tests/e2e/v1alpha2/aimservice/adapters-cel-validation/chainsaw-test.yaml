@@ -1,0 +1,244 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService CEL Validation: spec.adapters + spec.adapterMode constraints
+#
+# Validates the AIMService-root CEL rules for LoRA adapter support:
+# - spec.adapters is allowed on v1alpha1 (template pipeline)
+# - spec.adapters requires spec.profile (v1alpha2 only)
+# - spec.adapters entries must have unique (kind, name) pairs (both versions)
+# - spec.adapterMode defaults to "static" and is immutable after creation
+# - spec.adapters may only be edited after creation when adapterMode is "dynamic"
+#   (static freezes the set; the adapter disk mount itself is decoupled from the
+#   list length and stays mounted at zero adapters in dynamic mode)
+#
+# No special infrastructure required (admission-time validation only).
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: adapters-cel-validation
+spec:
+  description: CEL validation rules for AIMService.spec.adapters and spec.adapterMode
+  timeouts:
+    assert: 30s
+  steps:
+    # --- Acceptance: adapters default to static (no adapterMode needed) ---
+
+    - name: Accept adapters on v1alpha1 AIMService (defaults to static)
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: cel-adapters-v1a1
+              spec:
+                model:
+                  name: some-model
+                adapters:
+                  - name: lora-a
+                    kind: AIMArtifact
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: cel-adapters-v1a1
+              # adapterMode is defaulted to static when omitted.
+              spec:
+                adapterMode: static
+
+    - name: Reject v1alpha1 adapters with duplicate (kind, name)
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: cel-adapters-v1a1-dup
+              spec:
+                model:
+                  name: some-model
+                adapters:
+                  - name: lora-a
+                    kind: AIMArtifact
+                  - name: lora-a
+                    kind: AIMArtifact
+
+    # --- Rejection: invalid adapterMode value (enum is static|dynamic) ---
+
+    - name: Reject unknown adapterMode value
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: cel-adapters-bad-mode
+              spec:
+                profile:
+                  name: some-profile
+                adapterMode: disabled
+                adapters:
+                  - name: lora-a
+                    kind: AIMArtifact
+
+    # --- Rejection: v1alpha2 specifics ---
+
+    - name: Reject v1alpha2 adapters without profile
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: cel-adapters-no-profile
+              spec:
+                model:
+                  image: registry.example.com/test-image:1.0.0
+                adapters:
+                  - name: lora-a
+                    kind: AIMArtifact
+
+    - name: Reject v1alpha2 adapters with duplicate (kind, name)
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: cel-adapters-dup
+              spec:
+                profile:
+                  name: some-profile
+                adapters:
+                  - name: lora-a
+                    kind: AIMArtifact
+                  - name: lora-a
+                    kind: AIMArtifact
+
+    # --- Acceptance: dynamic mode without adapters (mount-at-zero contract) ---
+
+    - name: Accept adapterMode dynamic with no adapters declared
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: cel-adapters-empty-dynamic
+              spec:
+                profile:
+                  name: some-profile
+                adapterMode: dynamic
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: cel-adapters-empty-dynamic
+
+    # --- Acceptance: dynamic service with a valid set ---
+
+    - name: Accept v1alpha2 dynamic adapters with profile and unique pairs
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: cel-adapters-dynamic
+              spec:
+                profile:
+                  name: some-profile
+                adapterMode: dynamic
+                adapters:
+                  - name: lora-a
+                    kind: AIMArtifact
+                  - name: lora-b
+                    kind: AIMArtifact
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: cel-adapters-dynamic
+
+    # --- Mutability: dynamic allows editing, static does not ---
+
+    - name: Accept mutating spec.adapters on a dynamic service
+      try:
+        - script:
+            content: |
+              set -eu
+              # Dynamic mode: editing the list (here removing lora-b, and dropping
+              # to zero) must be accepted; adapters load/unload from disk.
+              if ! kubectl patch aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" \
+                  cel-adapters-dynamic --type merge \
+                  -p '{"spec":{"adapters":[{"name":"lora-a","kind":"AIMArtifact"}]}}'; then
+                echo "ERROR: spec.adapters mutation rejected on a dynamic service"
+                exit 1
+              fi
+              if ! kubectl patch aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" \
+                  cel-adapters-dynamic --type merge \
+                  -p '{"spec":{"adapters":[]}}'; then
+                echo "ERROR: dropping to zero adapters rejected on a dynamic service"
+                exit 1
+              fi
+              echo "OK: spec.adapters is mutable in dynamic mode (including to zero)"
+
+    - name: Create a static service to exercise immutability
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: cel-adapters-static
+              spec:
+                profile:
+                  name: some-profile
+                adapterMode: static
+                adapters:
+                  - name: lora-a
+                    kind: AIMArtifact
+
+    - name: Reject mutating spec.adapters on a static service
+      try:
+        - script:
+            content: |
+              set -eu
+              # Static mode freezes the set: editing spec.adapters must be rejected.
+              if kubectl patch aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" \
+                  cel-adapters-static --type merge \
+                  -p '{"spec":{"adapters":[{"name":"lora-b","kind":"AIMArtifact"}]}}' 2>/dev/null; then
+                echo "ERROR: spec.adapters mutation was accepted on a static service"
+                exit 1
+              fi
+              echo "OK: spec.adapters is immutable in static mode"
+
+    - name: Reject changing spec.adapterMode after creation
+      try:
+        - script:
+            content: |
+              set -eu
+              # adapterMode is an immutable, startup-time contract.
+              if kubectl patch aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" \
+                  cel-adapters-static --type merge \
+                  -p '{"spec":{"adapterMode":"dynamic"}}' 2>/dev/null; then
+                echo "ERROR: spec.adapterMode change was accepted"
+                exit 1
+              fi
+              echo "OK: spec.adapterMode is immutable"

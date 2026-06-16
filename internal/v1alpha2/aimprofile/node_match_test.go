@@ -252,7 +252,7 @@ func TestMatchNodes(t *testing.T) {
 			wantAffinity:      true,
 		},
 		{
-			name:  "EPYC_ZEN5 label-only node without Allocatable CPU still matches",
+			name: "EPYC_ZEN5 label-only node without Allocatable CPU still matches",
 			nodes: []corev1.Node{
 				makeNode("zen5-label-only",
 					map[string]string{AcceleratorLabelPrefix + "EPYC_ZEN5": "128"},

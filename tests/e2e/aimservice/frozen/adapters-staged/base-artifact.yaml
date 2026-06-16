@@ -1,0 +1,23 @@
+# Bootstrap: operator pre-creates the base model artifact with an adapter disk
+# (MVP contract). Download is simulated so no real network is required.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: adapters-staged-base
+spec:
+  type: model
+  sourceUri: hf://test-org/base-weights
+  size: 10Mi
+  adapterDisk:
+    size: 5Gi
+  env:
+    - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+      value: "true"
+    - name: AIM_DEBUG_SIMULATE_HF_DURATION
+      value: "2"
+    - name: EXPECTED_SIZE_BYTES
+      value: "102400"
+    - name: PROGRESS_INTERVAL
+      value: "3"
+    - name: STALL_TIMEOUT
+      value: "120"

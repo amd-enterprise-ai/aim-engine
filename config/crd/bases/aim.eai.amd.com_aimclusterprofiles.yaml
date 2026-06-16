@@ -360,6 +360,15 @@ spec:
                   EngineEnv contains environment variables for the inference engine subprocess.
                   Applied via os.execv, distinct from container-level ContainerEnv.
                 type: object
+              features:
+                description: |-
+                  Features lists optional capabilities the profile's image honours, e.g.
+                  "adapters" for LoRA serving. A service declaring spec.adapters is rejected
+                  (ConfigValid=False) unless its resolved profile lists "adapters" here.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
               image:
                 description: |-
                   Image is the deployment container image. Required.

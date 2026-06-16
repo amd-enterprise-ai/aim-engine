@@ -202,6 +202,44 @@ func TestAssembleProfileYAML_RendersResolvedSpec(t *testing.T) {
 	}
 }
 
+// TestAssembleProfileYAML_EmitsFeatures asserts the AIMProfile's adapter
+// feature token is projected into metadata.features, which is the only signal
+// the runtime uses to compute supports_adapters and activate LoRA. Dropping it
+// here silently disables adapter loading even for a service whose profile
+// advertises the feature.
+func TestAssembleProfileYAML_EmitsFeatures(t *testing.T) {
+	spec := sampleProfileSpec()
+	spec.Features = []string{aimv1alpha2.ProfileFeatureAdapters}
+
+	yamlBytes, _, err := assembleProfileYAML(spec)
+	if err != nil {
+		t.Fatalf("assembleProfileYAML error: %v", err)
+	}
+
+	var parsed profileYAML
+	if err := yaml.Unmarshal(yamlBytes, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(parsed.Metadata.Features) != 1 || parsed.Metadata.Features[0] != aimv1alpha2.ProfileFeatureAdapters {
+		t.Fatalf("metadata.features = %v, want [%q]", parsed.Metadata.Features, aimv1alpha2.ProfileFeatureAdapters)
+	}
+}
+
+// TestAssembleProfileYAML_OmitsEmptyFeatures asserts a profile without features
+// emits no `features` key at all, matching the runtime's own serialization
+// (empty features are dropped) so legacy profiles round-trip unchanged.
+func TestAssembleProfileYAML_OmitsEmptyFeatures(t *testing.T) {
+	spec := sampleProfileSpec()
+
+	yamlBytes, _, err := assembleProfileYAML(spec)
+	if err != nil {
+		t.Fatalf("assembleProfileYAML error: %v", err)
+	}
+	if strings.Contains(string(yamlBytes), "features") {
+		t.Fatalf("expected no features key for a profile without features; got:\n%s", yamlBytes)
+	}
+}
+
 func TestBuildProfileConfigMap(t *testing.T) {
 	service := &aimv1alpha1.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},

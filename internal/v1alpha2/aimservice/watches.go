@@ -104,73 +104,16 @@ const (
 //   - AIMModel / AIMClusterModel -> upstream model state for model-driven
 //     services (status.managedProfiles drives downstream profile readiness).
 func RegisterWatches(ctx context.Context, mgr manager.Manager, b *builder.Builder, c client.Client) (*builder.Builder, error) {
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMService{}, aimv1alpha1.AIMServiceProfileIndexKey, func(obj client.Object) []string {
-		svc, ok := obj.(*aimv1alpha1.AIMService)
-		if !ok {
-			return nil
-		}
-		if svc.Spec.Profile == nil || svc.Spec.Profile.Name == "" {
-			return nil
-		}
-		return []string{svc.Spec.Profile.Name}
-	}); err != nil {
-		return nil, err
-	}
-
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMService{}, ServiceModelNameIndex, func(obj client.Object) []string {
-		svc, ok := obj.(*aimv1alpha1.AIMService)
-		if !ok {
-			return nil
-		}
-		if svc.Spec.Model == nil || svc.Spec.Model.Name == nil || *svc.Spec.Model.Name == "" {
-			return nil
-		}
-		return []string{*svc.Spec.Model.Name}
-	}); err != nil {
-		return nil, err
-	}
-
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMService{}, ServiceSelectorModelRefIndex, func(obj client.Object) []string {
-		svc, ok := obj.(*aimv1alpha1.AIMService)
-		if !ok {
-			return nil
-		}
-		if svc.Spec.Profile == nil || svc.Spec.Profile.Selector == nil ||
-			svc.Spec.Profile.Selector.ModelRef == nil || svc.Spec.Profile.Selector.ModelRef.Name == "" {
-			return nil
-		}
-		return []string{svc.Spec.Profile.Selector.ModelRef.Name}
-	}); err != nil {
-		return nil, err
-	}
-
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMService{}, ServiceSelectorAimIdIndex, func(obj client.Object) []string {
-		svc, ok := obj.(*aimv1alpha1.AIMService)
-		if !ok {
-			return nil
-		}
-		if svc.Spec.Profile == nil || svc.Spec.Profile.Selector == nil || svc.Spec.Profile.Selector.AimId == "" {
-			return nil
-		}
-		return []string{svc.Spec.Profile.Selector.AimId}
-	}); err != nil {
-		return nil, err
-	}
-
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMService{}, ServiceModelImageIndex, func(obj client.Object) []string {
-		svc, ok := obj.(*aimv1alpha1.AIMService)
-		if !ok {
-			return nil
-		}
-		if svc.Spec.Model == nil || svc.Spec.Model.Image == nil || *svc.Spec.Model.Image == "" {
-			return nil
-		}
-		return []string{*svc.Spec.Model.Image}
-	}); err != nil {
+	if err := registerServiceIndexes(ctx, mgr); err != nil {
 		return nil, err
 	}
 
 	return b.
+		Watches(
+			&aimv1alpha1.AIMArtifact{},
+			handler.EnqueueRequestsFromMapFunc(findServicesForAdapterArtifact(c)),
+			builder.WithPredicates(adapterArtifactRelevantChangePredicate()),
+		).
 		Watches(
 			&aimv1alpha2.AIMProfile{},
 			handler.EnqueueRequestsFromMapFunc(findServicesForProfile(c)),
@@ -196,6 +139,76 @@ func RegisterWatches(ctx context.Context, mgr manager.Manager, b *builder.Builde
 			handler.EnqueueRequestsFromMapFunc(findServicesForClusterModel(c)),
 			builder.WithPredicates(modelRelevantChangePredicate()),
 		), nil
+}
+
+// registerServiceIndexes wires the field indexers the AIMService controller
+// relies on for event-driven fan-out (profile/model lookups and adapter
+// artifact lineage). Split out of RegisterWatches to keep that function's
+// branching within the linter's cyclomatic budget.
+func registerServiceIndexes(ctx context.Context, mgr manager.Manager) error {
+	indexers := []struct {
+		key    string
+		mapper func(client.Object) []string
+	}{
+		{aimv1alpha1.AIMServiceProfileIndexKey, func(obj client.Object) []string {
+			svc, ok := obj.(*aimv1alpha1.AIMService)
+			if !ok || svc.Spec.Profile == nil || svc.Spec.Profile.Name == "" {
+				return nil
+			}
+			return []string{svc.Spec.Profile.Name}
+		}},
+		{ServiceModelNameIndex, func(obj client.Object) []string {
+			svc, ok := obj.(*aimv1alpha1.AIMService)
+			if !ok || svc.Spec.Model == nil || svc.Spec.Model.Name == nil || *svc.Spec.Model.Name == "" {
+				return nil
+			}
+			return []string{*svc.Spec.Model.Name}
+		}},
+		{ServiceSelectorModelRefIndex, func(obj client.Object) []string {
+			svc, ok := obj.(*aimv1alpha1.AIMService)
+			if !ok || svc.Spec.Profile == nil || svc.Spec.Profile.Selector == nil ||
+				svc.Spec.Profile.Selector.ModelRef == nil || svc.Spec.Profile.Selector.ModelRef.Name == "" {
+				return nil
+			}
+			return []string{svc.Spec.Profile.Selector.ModelRef.Name}
+		}},
+		{ServiceSelectorAimIdIndex, func(obj client.Object) []string {
+			svc, ok := obj.(*aimv1alpha1.AIMService)
+			if !ok || svc.Spec.Profile == nil || svc.Spec.Profile.Selector == nil || svc.Spec.Profile.Selector.AimId == "" {
+				return nil
+			}
+			return []string{svc.Spec.Profile.Selector.AimId}
+		}},
+		{ServiceModelImageIndex, func(obj client.Object) []string {
+			svc, ok := obj.(*aimv1alpha1.AIMService)
+			if !ok || svc.Spec.Model == nil || svc.Spec.Model.Image == nil || *svc.Spec.Model.Image == "" {
+				return nil
+			}
+			return []string{*svc.Spec.Model.Image}
+		}},
+		// Index services by the names of the adapter artifacts they reference so
+		// an adapter artifact event fans out to its consuming services.
+		{aimv1alpha1.AIMServiceAdapterArtifactIndexKey, func(obj client.Object) []string {
+			svc, ok := obj.(*aimv1alpha1.AIMService)
+			if !ok || len(svc.Spec.Adapters) == 0 {
+				return nil
+			}
+			names := make([]string, 0, len(svc.Spec.Adapters))
+			for _, a := range svc.Spec.Adapters {
+				if a.Name != "" {
+					names = append(names, a.Name)
+				}
+			}
+			return names
+		}},
+	}
+
+	for _, idx := range indexers {
+		if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMService{}, idx.key, idx.mapper); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // profileRelevantChangePredicate fires on events that can change the ISVC the
@@ -426,6 +439,68 @@ func findServicesForClusterModel(c client.Client) handler.MapFunc {
 		if model.Spec.Image != "" {
 			collectServicesByField(ctx, c, requests, ServiceModelImageIndex, model.Spec.Image, "")
 		}
+		return requestsFromSet(requests)
+	}
+}
+
+// adapterArtifactRelevantChangePredicate fires on adapter/model artifact events
+// that can change a service's adapter staging or gating: type, overall status,
+// adapterPath, and the model's adapterPersistentVolumeClaim.
+func adapterArtifactRelevantChangePredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(_ event.CreateEvent) bool { return true },
+		DeleteFunc:  func(_ event.DeleteEvent) bool { return true },
+		GenericFunc: func(_ event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldA, ok1 := e.ObjectOld.(*aimv1alpha1.AIMArtifact)
+			newA, ok2 := e.ObjectNew.(*aimv1alpha1.AIMArtifact)
+			if !ok1 || !ok2 {
+				return true
+			}
+			// Only adapter and model artifacts are relevant to adapter staging.
+			if newA.Spec.Type != aimv1alpha1.ArtifactTypeAdapter && newA.Spec.Type != aimv1alpha1.ArtifactTypeModel {
+				return false
+			}
+			return oldA.Status.Status != newA.Status.Status ||
+				oldA.Status.AdapterPath != newA.Status.AdapterPath ||
+				oldA.Status.AdapterPersistentVolumeClaim != newA.Status.AdapterPersistentVolumeClaim
+		},
+	}
+}
+
+// findServicesForAdapterArtifact fans an AIMArtifact event back to the services
+// that serve it. For adapter artifacts, services referencing the adapter by name
+// are enqueued directly. For model artifacts (potential parents), the change is
+// hopped through the parent index to find adapters, then to their services, so a
+// parent gaining its adapter disk re-triggers staging.
+func findServicesForAdapterArtifact(c client.Client) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		artifact, ok := obj.(*aimv1alpha1.AIMArtifact)
+		if !ok {
+			return nil
+		}
+		requests := map[types.NamespacedName]struct{}{}
+
+		switch artifact.Spec.Type {
+		case aimv1alpha1.ArtifactTypeAdapter:
+			collectServicesByField(ctx, c, requests, aimv1alpha1.AIMServiceAdapterArtifactIndexKey, artifact.Name, artifact.Namespace)
+		default:
+			// Model artifact: find adapters whose parent is this model, then the
+			// services that reference those adapters.
+			var adapters aimv1alpha1.AIMArtifactList
+			if err := c.List(ctx, &adapters,
+				client.InNamespace(artifact.Namespace),
+				client.MatchingFields{aimv1alpha1.ArtifactParentIndexKey: artifact.Name},
+			); err != nil {
+				log.FromContext(ctx).Error(err, "failed to list adapters for parent artifact",
+					"parent", artifact.Name, "namespace", artifact.Namespace)
+				return nil
+			}
+			for i := range adapters.Items {
+				collectServicesByField(ctx, c, requests, aimv1alpha1.AIMServiceAdapterArtifactIndexKey, adapters.Items[i].Name, artifact.Namespace)
+			}
+		}
+
 		return requestsFromSet(requests)
 	}
 }
