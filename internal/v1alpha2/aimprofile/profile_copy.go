@@ -229,14 +229,26 @@ func ApplyProfileCopyOverrides(
 	if overrides != nil && overrides.Image != "" {
 		resolvedImageOverride = overrides.Image
 	}
-	// sourceIsDeployable distinguishes the two image-resolution cases
-	// for ResolveDerivedProfileImage. A deployable source carries weights
-	// baked into a fat image and we want to peel back to aim-base; a base
-	// source (BYO custom-model flow) already IS the runtime image and
-	// must not be peeled further (its AIM_BASE_IMAGE_REF is the FROM
-	// line of aim-base itself, e.g. vllm-openai-rocm — rebasing onto the
-	// source registry+org produces a nonexistent mirror).
-	result.Image = ResolveDerivedProfileImage(resolvedImageOverride, sourceBaseImage, source.Image, IsProfileDeployable(source))
+	// sourceIsDeployable + weightsChanged together pick the image-
+	// resolution case for ResolveDerivedProfileImage:
+	//   - A deployable source is a model-optimized image: its profile is
+	//     tuned for a specific model and references that model's weights via
+	//     modelSources. When the derivation REPLACES those weights (overrides
+	//     supply modelSources) the optimized image no longer matches the new
+	//     model, so we resolve back to the lean aim-base runtime and let the
+	//     new weights come from overrides.modelSources.
+	//   - When the derivation leaves the weights untouched (no
+	//     overrides.modelSources) the optimized image and its tuned config
+	//     still apply, so we KEEP the optimized source image. This is
+	//     what lets a partitioning-only or env-only override stay on the
+	//     model-optimized image instead of silently falling back to base.
+	//   - A base source (BYO custom-model flow) already IS the runtime
+	//     image and must not be resolved to a base image (its AIM_BASE_IMAGE_REF is
+	//     the FROM line of aim-base itself, e.g. vllm-openai-rocm —
+	//     rebasing onto the source registry+org produces a nonexistent
+	//     mirror).
+	weightsChanged := overrides != nil && len(overrides.ModelSources) > 0
+	result.Image = ResolveDerivedProfileImage(resolvedImageOverride, sourceBaseImage, source.Image, IsProfileDeployable(source), weightsChanged)
 
 	if overrides == nil {
 		return result, nil
@@ -376,24 +388,40 @@ func MergeEngineArgs(base, overrides *apiextensionsv1.JSON) (*apiextensionsv1.JS
 //     pod. Custom-model derivations therefore deploy on the base image
 //     declared by their base AIMModel; weights come from
 //     `overrides.modelSources`, not from a rebased image.
-//  3. sourceBaseImage (the AIM_BASE_IMAGE_REF the inspector extracted from
+//  3. When the source is deployable but the derivation does NOT change the
+//     weights (weightsChanged is false, i.e. overrides supply no
+//     modelSources), keep the optimized sourceImage. The model-optimized
+//     image and its tuned engine config still apply, so a partitioning-only
+//     or env-only override stays on it instead of falling back to the lean
+//     base runtime. Resolving to the base image here would discard the model
+//     optimizations and silently downgrade the deployment.
+//  4. sourceBaseImage (the AIM_BASE_IMAGE_REF the inspector extracted from
 //     the source image) is normalised to MAJOR.MINOR (build pipelines often
 //     stamp release-candidate tags like `0.11-rc21` but the deployable
 //     aim-base image is always tagged with its MAJOR.MINOR rolling tag)
 //     and rebased onto sourceImage's registry+org so private mirrors don't
 //     reach back to the upstream aim-base. This is the fine-tuned flow:
-//     source is a fat image with weights baked in and we peel back to the
-//     matching aim-base runtime.
-//  4. As a legacy fallback for installs whose imageMetadata was cached
+//     source is a model-optimized image, the derivation REPLACES its
+//     weights via overrides.modelSources, and we resolve back to the matching
+//     aim-base runtime.
+//  5. As a legacy fallback for installs whose imageMetadata was cached
 //     before AIM_BASE_IMAGE_REF extraction existed, synthesize
 //     aim-base:MAJOR.MINOR from sourceImage's tag and rebase onto its
 //     registry+org.
-//  5. Otherwise return sourceImage unchanged.
-func ResolveDerivedProfileImage(imageOverride, sourceBaseImage, sourceImage string, sourceIsDeployable bool) string {
+//  6. Otherwise return sourceImage unchanged.
+//
+// weightsChanged is true when the derivation replaces the source profile's
+// model weights (overrides.modelSources is non-empty). It only gates the
+// deployable-source base-image resolution: a base source and an explicit imageOverride both
+// resolve identically regardless of whether weights changed.
+func ResolveDerivedProfileImage(imageOverride, sourceBaseImage, sourceImage string, sourceIsDeployable, weightsChanged bool) string {
 	if imageOverride != "" {
 		return imageOverride
 	}
 	if !sourceIsDeployable {
+		return sourceImage
+	}
+	if !weightsChanged {
 		return sourceImage
 	}
 	if sourceBaseImage != "" {

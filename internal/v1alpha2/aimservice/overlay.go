@@ -125,11 +125,14 @@ func buildServiceOverlayProfile(
 
 	// Pull baseImage from the seed profile's annotations (set by
 	// AIMModel discovery when it materialised the seed). aimprofile uses
-	// it to rebase the resolved deployment image onto the seed's
-	// registry+org for fine-tuned weights, so private mirrors don't reach
-	// back to the upstream aim-base. Annotation absent on user-authored
-	// AIMProfiles is fine: ApplyProfileCopyOverrides treats empty as
-	// "leave the seed image alone" which is the right semantic.
+	// it to resolve the deployment image back to the seed's
+	// aim-base registry+org — but ONLY when this overlay replaces the
+	// weights (spec.profileOverrides.modelSources). A partitioning-only or
+	// env-only overlay leaves the weights untouched, so it keeps the
+	// optimized seed image instead of falling back to aim-base. Annotation
+	// absent on user-authored AIMProfiles is fine: ApplyProfileCopyOverrides
+	// treats empty as "leave the seed image alone" which is the right
+	// semantic.
 	seedBaseImage := seedBaseImageFromObservation(obs)
 
 	overlaySpec, err := aimprofile.ApplyProfileCopyOverrides(

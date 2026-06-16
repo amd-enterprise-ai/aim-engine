@@ -1,0 +1,16 @@
+# Weights-REPLACED override: swap in user-supplied weights via modelSources.
+# The optimized seed image is specific to its model, so once the weights are
+# replaced the overlay must resolve back to the seed's aim-base runtime,
+# rebased onto the seed image's registry+org -> registry.example.com/aim-base:0.11.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: overlay-weights-replaced-service
+spec:
+  profile:
+    name: overlay-img-seed
+  profileOverrides:
+    modelSources:
+      - modelId: user/finetune-weights
+        sourceUri: hf://user/finetune-weights
+        size: 4Gi

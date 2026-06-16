@@ -39,7 +39,7 @@ spec:
     emits base AIMProfiles; a derivation AIMModel converts them into
     deployable AIMProfiles via overrides.modelSources; an AIMService
     backed by the derivation model reaches Ready. The derived profile's
-    spec.image equals the base AIMModel's image (no rebase peel-back),
+    spec.image equals the base AIMModel's image (no base-image resolution),
     so the test exercises the real BYO custom-model deployment shape.
   timeouts:
     assert: 900s

@@ -1,6 +1,6 @@
 # Fine-Tuned Models
 
-A **fine-tuned model** reuses an existing official AIM model's runtime profiles — its container image, tuned engine arguments, accelerator pairings, and benchmarked precisions — and swaps in your fine-tune weights. You get the same performance characteristics as the published model with no re-tuning work.
+A **fine-tuned model** reuses an existing official AIM model's runtime profiles — its `aim-base` runtime, tuned engine arguments, accelerator pairings, and benchmarked precisions — and swaps in your fine-tune weights. You get the same performance characteristics as the published model with no re-tuning work.
 
 !!! info "v1alpha2"
     Fine-tuned models use the `aim.eai.amd.com/v1alpha2` API. The v1alpha1 fine-tune path via `spec.profileCopy` is replaced by `spec.profiles`.
@@ -15,7 +15,7 @@ A **fine-tuned model** reuses an existing official AIM model's runtime profiles 
 
 ## Mental model
 
-A fine-tuned model is a single AIMModel that derives from an already-existing official AIMModel. No base image is involved — the source profiles are fully deployable already, you're just rebasing them onto your weights.
+A fine-tuned model is a single AIMModel that derives from an already-existing official AIMModel: you inherit the published model's tuned engine arguments, accelerator pairings, and benchmarked precisions, and swap in your weights via `modelSources`. Because the override replaces the weights, each derived profile's image resolves back to the official model's `aim-base` runtime (rebased onto its registry+org) — the model-optimized image is specific to the published weights, so your fine-tune loads onto the clean base runtime instead. See [Image resolution](../concepts/profilesets.md#image-resolution) for how the derived image is chosen.
 
 ```mermaid
 graph LR

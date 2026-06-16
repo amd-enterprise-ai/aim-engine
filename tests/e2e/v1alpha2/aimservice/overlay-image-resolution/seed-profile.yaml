@@ -1,0 +1,52 @@
+# Frozen, deployable seed AIMClusterProfile for the overlay image-resolution
+# test. It models a published "optimized" profile: a model-optimized image
+# (spec.image) plus the AIM_BASE_IMAGE_REF the inspector recorded
+# (status.baseImage). The two services in the chainsaw test derive overlays
+# from this seed and we assert the resolved overlay spec.image:
+#
+#   - weights-untouched override (partitioning-only) KEEPS spec.image.
+#   - weights-replaced override (modelSources)        RESOLVES to aim-base,
+#     rebased onto the seed's registry+org.
+#
+# Frozen via the reconciliation-paused annotation so the real reconciler
+# doesn't overwrite the hand-patched status (applied with apply-with-status.sh).
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterProfile
+metadata:
+  name: overlay-img-seed
+  annotations:
+    aim.eai.amd.com/reconciliation-paused: "true"
+spec:
+  aimId: test/overlay-img
+  modelId: test/overlay-img-fp8
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: optimized
+  primary: true
+  acceleratorModel: MI300X
+  acceleratorType: gpu
+  acceleratorCount: 1
+  # Model-optimized image. This is the image a weights-untouched override
+  # must preserve.
+  image: registry.example.com/aim-opt-model:0.11
+  modelSources:
+    - modelId: test/overlay-img-fp8
+      sourceUri: hf://test/overlay-img-fp8
+      size: 2Gi
+status:
+  status: Ready
+  version: "0.11"
+  hardwareSummary: MI300X
+  matchingNodes: 1
+  deployable: true
+  # AIM_BASE_IMAGE_REF the inspector extracted from the optimized image.
+  # The weights-replaced derivation resolves back to this, rebased onto the
+  # seed image's registry+org -> registry.example.com/aim-base:0.11.
+  baseImage: ghcr.io/silogen/aim-base:0.11
+  conditions:
+    - type: HardwareAvailable
+      status: "True"
+      reason: NodesMatched
+      message: Matching nodes available
+      lastTransitionTime: "2025-01-01T00:00:00Z"

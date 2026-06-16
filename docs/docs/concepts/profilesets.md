@@ -101,7 +101,19 @@ The same shape applies to [`AIMModel.spec.profiles.derivedFrom`](../guides/custo
 | `containerEnv` | Merges by env-var name; matching names override, new names append. |
 | `engineEnv` | Merges by key; matching keys override, new keys append. |
 | `engineArgs` | Shallow merge on top of source `engineArgs`; matching top-level keys override, new keys append. |
-| `image` | Replaces the derived profile's container image entirely. When unset, derivation rebases the source profile's `image` onto the derived profile's `status.baseImage` so private mirrors stay self-contained. |
+| `image` | Replaces the derived profile's container image entirely. When unset, the image is resolved from the source profile and whether the override replaces the weights — see [Image resolution](#image-resolution) below. |
+
+### Image resolution
+
+When `overrides.image` is unset, the derived profile's image depends on the source profile's role and whether the override replaces the model weights (`overrides.modelSources`):
+
+| Source profile | Override replaces weights? | Resulting image |
+|---|---|---|
+| Deployable (`role=deployable`, a model-optimized image) | **Yes** (`modelSources` set) | Resolves back to the source's `status.baseImage` (`AIM_BASE_IMAGE_REF`), normalised to `MAJOR.MINOR` and rebased onto the source image's registry+org. The new weights load onto the clean aim-base runtime. |
+| Deployable | **No** (partitioning-only / env-only / engineArgs-only override) | **Keeps the optimized source image.** The model optimizations and tuning still apply, so a re-partition or env tweak stays on the model-optimized image instead of silently downgrading to the base runtime. |
+| Base (`role=base`, an aim-base image used for [Custom Models](../guides/custom-models.md)) | — | Keeps the source image unchanged. A base profile already *is* the runtime image; weights come from `overrides.modelSources`. |
+
+An explicit `overrides.image` always wins outright, regardless of the above.
 
 Derived profiles inherit the source profile's `status.baseImage` so subsequent derivations or overlays can rebase consistently.
 

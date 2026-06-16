@@ -1,0 +1,18 @@
+# Weights-UNTOUCHED override: re-partition the optimized profile onto a
+# single CPX-NPS4 partition without changing the weights. The overlay
+# must keep the optimized seed image (registry.example.com/aim-opt-model:0.11);
+# resolving to the base image here would silently downgrade the deployment to
+# the lean aim-base runtime and discard the model optimizations.
+#
+# CEL requires acceleratorCount whenever acceleratorPartitioningMode is
+# overridden (the mode changes the per-unit interpretation of the count).
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: overlay-weights-unchanged-service
+spec:
+  profile:
+    name: overlay-img-seed
+  profileOverrides:
+    acceleratorPartitioningMode: CPX-NPS4
+    acceleratorCount: 1

@@ -1,0 +1,78 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Overlay image resolution: a service-owned overlay AIMProfile derived from a
+# deployable ("optimized", model-specific) seed must resolve spec.image
+# based on whether the override REPLACES the weights:
+#
+#   - Weights untouched (partitioning-only / env-only / engineArgs-only):
+#     KEEP the optimized seed image. Resolving to the base image here would
+#     discard the model optimizations and silently downgrade the deployment to
+#     the lean aim-base runtime.
+#   - Weights replaced (spec.profileOverrides.modelSources): RESOLVE back to
+#     the seed's aim-base runtime (status.baseImage, normalised to MAJOR.MINOR
+#     and rebased onto the seed image's registry+org) so the new weights are
+#     loaded onto a clean runtime.
+#
+# Frozen + node-independent: the seed status is hand-patched and only
+# spec.image of the resulting overlay is asserted, so this runs in kind
+# without partitioned hardware. It is the e2e counterpart of the
+# ResolveDerivedProfileImage / ApplyProfileCopyOverrides unit tests.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-overlay-image-resolution
+spec:
+  description: |
+    Overlay spec.image keeps the optimized seed image for a weights-untouched
+    (partitioning-only) override and resolves to aim-base for a weights-replaced
+    (modelSources) override.
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create the frozen deployable seed AIMClusterProfile (Ready, with baseImage)
+      try:
+        - apply:
+            file: seed-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh seed-profile.yaml --status-only
+
+    - name: Weights-untouched override keeps the optimized seed image
+      try:
+        - apply:
+            file: service-weights-unchanged.yaml
+        # The overlay name is a deterministic hash, so match it by the
+        # service back-reference annotation the reconciler stamps. A nameless
+        # assert is evaluated against every AIMProfile in the namespace and
+        # passes when one satisfies the whole tree, so the annotation doubles
+        # as the selector. spec.image must KEEP the optimized seed image and
+        # the partitioning override must have landed on the overlay.
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                annotations:
+                  aim.eai.amd.com/overlay-service: overlay-weights-unchanged-service
+              spec:
+                image: registry.example.com/aim-opt-model:0.11
+                acceleratorPartitioningMode: CPX-NPS4
+
+    - name: Weights-replaced override resolves to aim-base (rebased onto seed registry+org)
+      try:
+        - apply:
+            file: service-weights-replaced.yaml
+        # spec.image must RESOLVE to the seed's aim-base, rebased onto the seed
+        # image's registry+org, and the user's weights must have flowed onto
+        # the overlay's modelSources.
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                annotations:
+                  aim.eai.amd.com/overlay-service: overlay-weights-replaced-service
+              spec:
+                image: registry.example.com/aim-base:0.11
+                (modelSources[?modelId == 'user/finetune-weights']):
+                  - sourceUri: hf://user/finetune-weights
