@@ -1,0 +1,41 @@
+site_name: AIM Engine - AMD Inference Microservices
+site_description: Documentation has moved to the AMD Enterprise AI docs site
+repo_url: https://github.com/amd-enterprise-ai/aim-engine
+repo_name: amd-enterprise-ai/aim-engine
+
+theme:
+  name: material
+  custom_dir: overrides
+  features:
+    - navigation.top
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: grey
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: grey
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - attr_list
+  - md_in_html
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
