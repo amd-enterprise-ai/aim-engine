@@ -64,12 +64,34 @@ apply_protocol() {
 clean_incomplete() {
     _dir="$TARGET_DIR/.cache/huggingface/download"
     if [ -d "$_dir" ]; then
-        _count=$(find "$_dir" -name "*.incomplete" 2>/dev/null | wc -l)
+        _count=$(find "$_dir" -iname "*.incomplete" 2>/dev/null | wc -l)
         if [ "$_count" -gt 0 ]; then
-            find "$_dir" -name "*.incomplete" -delete 2>/dev/null || true
+            find "$_dir" -iname "*.incomplete" -delete 2>/dev/null || true
             echo "Cleaned $_count incomplete file(s)"
         fi
     fi
+}
+
+# ── Clean stale lock files (before every attempt) ───────────
+# A SIGKILL'd download (stall-guard, OOM, lost node) can leave a huggingface_hub
+# lock file behind. On filesystems without flock support these are SoftFileLocks
+# where the file itself is the lock, so a stale one blocks every later attempt
+# forever; on flock filesystems the file is inert and deleting it is a no-op.
+# Sweep broadly since lock placement varies across HF versions. Safe only
+# because the download Job is the sole writer of its cache volume.
+clean_locks() {
+    _total=0
+    for _root in "$TARGET_DIR" "${HF_HOME:-}" "${HF_HUB_CACHE:-}" "${HF_XET_CACHE:-}" "/tmp"; do
+        [ -n "$_root" ] || continue
+        [ -d "$_root" ] || continue
+        _n=$(find "$_root" -type f -iname '*.lock' 2>/dev/null | wc -l)
+        if [ "$_n" -gt 0 ]; then
+            find "$_root" -type f -iname '*.lock' -delete 2>/dev/null || true
+            _total=$((_total + _n))
+        fi
+    done
+    [ "$_total" -gt 0 ] && echo "Cleaned $_total stale lock file(s)"
+    return 0
 }
 
 # ── Build --include/--exclude flags from env vars ────────────
@@ -147,6 +169,7 @@ do_hf_download() {
 if [ -z "${AIM_DOWNLOADER_PROTOCOL:-}" ]; then
     # ── Legacy mode: single attempt, use whatever env vars are set ──
     echo "Downloading from Hugging Face: $MODEL_PATH to $TARGET_DIR"
+    clean_locks
     do_hf_download
     exit 0
 fi
@@ -182,7 +205,10 @@ while [ -n "$remaining" ]; do
         echo "Protocol switch: $last_protocol -> $protocol"
         clean_incomplete
     fi
-    
+
+    # Remove stale locks left by a prior killed attempt/pod (preserves files + metadata)
+    clean_locks
+
     if ! apply_protocol "$protocol"; then
         last_protocol="$protocol"
         continue
