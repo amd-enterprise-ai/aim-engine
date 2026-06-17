@@ -1016,12 +1016,19 @@ func planProfileCache(
 
 	serviceLabelValue, _ := utils.SanitizeLabelValue(service.Name)
 
-	// Prefer the profile's caching.env when present (namespace-scoped
-	// profiles only); otherwise the profile cache controller falls back to
-	// its own defaults.
+	// Download-auth env, merged in increasing precedence:
+	//  1. profile caching.env  - namespace-scoped profiles only; nil for
+	//     cluster profiles (no caching field) and per-service overlays.
+	//  2. service caching.env  - scope-agnostic, per-service. This is the
+	//     path that reaches the download Job for cluster/overlay profiles.
+	// Service wins on conflicting names. Empty leaves the profile cache
+	// controller on its own defaults.
 	var cacheEnv []corev1.EnvVar
 	if obs.profile.Value != nil && obs.profile.Value.Spec.Caching != nil && len(obs.profile.Value.Spec.Caching.Env) > 0 {
-		cacheEnv = obs.profile.Value.Spec.Caching.Env
+		cacheEnv = utils.MergeEnvVars(cacheEnv, obs.profile.Value.Spec.Caching.Env)
+	}
+	if service.Spec.Caching != nil && len(service.Spec.Caching.Env) > 0 {
+		cacheEnv = utils.MergeEnvVars(cacheEnv, service.Spec.Caching.Env)
 	}
 
 	storageClassName := ""
@@ -1047,6 +1054,7 @@ func planProfileCache(
 			StorageClassName: storageClassName,
 			Mode:             profileCacheModeFor(cachingMode),
 			Env:              cacheEnv,
+			RuntimeConfigRef: service.GetRuntimeConfigRef(),
 			// Adapters need the base artifact to carry a shared RWX adapter disk.
 			RequiresAdapterDisk: service.Spec.AdaptersEnabled(),
 		},

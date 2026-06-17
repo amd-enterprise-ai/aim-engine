@@ -1,0 +1,36 @@
+# Frozen namespace-scoped AIMProfile with modelSources but NO caching block.
+# The profile deliberately omits caching.env so the only credential source for
+# the download is the AIMService's spec.caching.env. This mirrors the
+# cluster-scoped / overlay profile case (where a profile caching.env is
+# structurally unreachable) while staying namespace-scoped for a simple,
+# kind-friendly fixture.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: test-caching-env
+  annotations:
+    aim.eai.amd.com/reconciliation-paused: "true"
+spec:
+  aimId: test/caching-env
+  modelId: test/caching-env-fp8
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: optimized
+  primary: true
+  image: registry.example.com/test-image:1.0.0
+  modelSources:
+    - modelId: test-org/caching-env-weights
+      sourceUri: hf://test-org/caching-env-weights
+      size: 2Gi
+status:
+  status: Ready
+  version: 1.0.0
+  hardwareSummary: CPU
+  matchingNodes: 1
+  conditions:
+    - type: HardwareAvailable
+      status: "True"
+      reason: NoAcceleratorSpecified
+      message: No accelerator specified, profile is available on any node
+      lastTransitionTime: "2025-01-01T00:00:00Z"

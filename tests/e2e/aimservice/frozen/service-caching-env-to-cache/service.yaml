@@ -1,0 +1,17 @@
+# v1alpha2 AIMService that supplies download credentials via spec.caching.env
+# and selects a named runtime config. Both must flow through to the
+# AIMProfileCache the service materialises (and onward to the download Job),
+# even though the referenced profile carries no caching.env of its own.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: test-caching-env-svc
+spec:
+  profile:
+    name: test-caching-env
+  runtimeConfigName: fast
+  caching:
+    env:
+      - name: HF_TOKEN
+        value: service-token-value
+  replicas: 1

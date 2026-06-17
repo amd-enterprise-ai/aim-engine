@@ -964,6 +964,131 @@ func TestPlanProfileCache_CreatesSharedCache(t *testing.T) {
 	}
 }
 
+// TestPlanProfileCache_ServiceCachingEnvReachesCache locks the regression fix:
+// for a cluster-scoped (or overlay) profile there is no profile caching.env, so
+// the service's spec.caching.env is the only credential source that reaches the
+// download Job. obs.profile.Value is nil here to model the cluster-scoped path.
+func TestPlanProfileCache_ServiceCachingEnvReachesCache(t *testing.T) {
+	token := corev1.EnvVar{
+		Name: "HF_TOKEN",
+		ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "hf-token"},
+				Key:                  "token",
+			},
+		},
+	}
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			Caching: &aimv1alpha1.AIMServiceCachingConfig{Env: []corev1.EnvVar{token}},
+		},
+	}
+	profileSpec := sampleProfileSpec()
+	profileSpec.ModelSources = []aimv1alpha1.AIMModelSource{{
+		ModelID:   "org/model",
+		SourceURI: "hf://org/model",
+	}}
+
+	obs := ServiceObservation{
+		ServiceFetchResult:  ServiceFetchResult{service: service},
+		profileName:         testProfileA,
+		profileScope:        aimv1alpha1.AIMResolutionScopeCluster,
+		resolvedProfileSpec: profileSpec,
+	}
+
+	cache := planProfileCache(service, obs)
+	if cache == nil {
+		t.Fatalf("expected profile cache to be planned")
+	}
+	if len(cache.Spec.Env) != 1 || cache.Spec.Env[0].Name != "HF_TOKEN" {
+		t.Fatalf("service caching.env must reach cache.spec.env, got %+v", cache.Spec.Env)
+	}
+	if cache.Spec.Env[0].ValueFrom == nil || cache.Spec.Env[0].ValueFrom.SecretKeyRef == nil {
+		t.Errorf("secretKeyRef must be preserved on the cache env, got %+v", cache.Spec.Env[0])
+	}
+}
+
+// TestPlanProfileCache_ServiceCachingEnvOverridesProfile verifies the merge
+// precedence: when both the namespace profile and the service set caching.env,
+// the service value wins on conflicting names.
+func TestPlanProfileCache_ServiceCachingEnvOverridesProfile(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			Caching: &aimv1alpha1.AIMServiceCachingConfig{
+				Env: []corev1.EnvVar{{Name: "HF_TOKEN", Value: "from-service"}},
+			},
+		},
+	}
+	profileSpec := sampleProfileSpec()
+	profileSpec.ModelSources = []aimv1alpha1.AIMModelSource{{ModelID: "org/model", SourceURI: "hf://org/model"}}
+
+	profile := &aimv1alpha2.AIMProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: testProfileA, Namespace: "ns"},
+		Spec: aimv1alpha2.AIMProfileSpec{
+			Caching: &aimv1alpha2.AIMProfileCachingConfig{
+				Env: []corev1.EnvVar{
+					{Name: "HF_TOKEN", Value: "from-profile"},
+					{Name: "PROFILE_ONLY", Value: "profile-only-val"},
+				},
+			},
+		},
+	}
+
+	obs := ServiceObservation{
+		ServiceFetchResult:  ServiceFetchResult{service: service},
+		profileName:         testProfileA,
+		profileScope:        aimv1alpha1.AIMResolutionScopeNamespace,
+		resolvedProfileSpec: profileSpec,
+	}
+	obs.profile.Value = profile
+
+	cache := planProfileCache(service, obs)
+	if cache == nil {
+		t.Fatalf("expected profile cache to be planned")
+	}
+	got := envMap(cache.Spec.Env)
+	if got["HF_TOKEN"] != "from-service" {
+		t.Errorf("service caching.env must override profile on conflict, got %q", got["HF_TOKEN"])
+	}
+	if got["PROFILE_ONLY"] != "profile-only-val" {
+		t.Errorf("profile-only caching.env key must be preserved, got %q", got["PROFILE_ONLY"])
+	}
+}
+
+// TestPlanProfileCache_PropagatesRuntimeConfigRef verifies the service's runtime
+// config reference flows onto the AIMProfileCache so a named AIMRuntimeConfig's
+// env can feed the download Job (instead of always the default-named config).
+func TestPlanProfileCache_PropagatesRuntimeConfigRef(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile:          &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			RuntimeConfigRef: aimv1alpha1.RuntimeConfigRef{Name: "fast"},
+		},
+	}
+	profileSpec := sampleProfileSpec()
+	profileSpec.ModelSources = []aimv1alpha1.AIMModelSource{{ModelID: "org/model", SourceURI: "hf://org/model"}}
+
+	obs := ServiceObservation{
+		ServiceFetchResult:  ServiceFetchResult{service: service},
+		profileName:         testProfileA,
+		profileScope:        aimv1alpha1.AIMResolutionScopeNamespace,
+		resolvedProfileSpec: profileSpec,
+	}
+
+	cache := planProfileCache(service, obs)
+	if cache == nil {
+		t.Fatalf("expected profile cache to be planned")
+	}
+	if cache.Spec.Name != "fast" {
+		t.Errorf("expected runtimeConfigRef to propagate, got %q", cache.Spec.Name)
+	}
+}
+
 // TestPlanResources_ScaleToZeroEmitsScaledObject verifies the v1alpha2
 // pipeline wires the ScaledObject planner. Asserts at the GVK level so the
 // v1alpha1 planner tests remain the source of truth for resource shape.

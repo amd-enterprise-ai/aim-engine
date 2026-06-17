@@ -26,6 +26,7 @@ import (
 	"context"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -479,6 +480,40 @@ func TestPlanResources_CreatesArtifactsForMissing(t *testing.T) {
 			len(result.GetToApplyWithoutOwnerRef()),
 			len(result.GetToApply()),
 			len(result.GetToApplyWithoutOwnerRef()))
+	}
+}
+
+// TestPlanResources_PropagatesEnvAndRuntimeConfigRef verifies the cache's
+// download-auth env and runtime config reference are stamped onto the
+// AIMArtifact it creates, so the credential and the named runtime config both
+// reach the download Job (matching the v1alpha1 template-cache behavior).
+func TestPlanResources_PropagatesEnvAndRuntimeConfigRef(t *testing.T) {
+	r := &ProfileCacheReconciler{}
+	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeCluster, aimv1alpha2.ProfileCacheModeShared, "")
+	pc.Spec.Env = []corev1.EnvVar{{Name: "HF_TOKEN", Value: "tok"}}
+	pc.Spec.RuntimeConfigRef = aimv1alpha1.RuntimeConfigRef{Name: "fast"}
+
+	obs := ProfileCacheObservation{
+		ProfileCacheFetchResult: ProfileCacheFetchResult{profileCache: pc},
+		MissingCaches: []aimv1alpha1.AIMModelSource{
+			{ModelID: "org/model-a", SourceURI: "hf://org/model-a"},
+		},
+	}
+
+	result := r.PlanResources(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: pc}, obs)
+	planned := result.GetToApplyWithoutOwnerRef()
+	if len(planned) != 1 {
+		t.Fatalf("expected 1 artifact, got %d", len(planned))
+	}
+	art, ok := planned[0].(*aimv1alpha1.AIMArtifact)
+	if !ok {
+		t.Fatalf("expected an AIMArtifact, got %T", planned[0])
+	}
+	if art.Spec.Name != "fast" {
+		t.Errorf("expected runtimeConfigRef to propagate onto artifact, got %q", art.Spec.Name)
+	}
+	if len(art.Spec.Env) != 1 || art.Spec.Env[0].Name != "HF_TOKEN" {
+		t.Errorf("expected cache env to propagate onto artifact, got %+v", art.Spec.Env)
 	}
 }
 

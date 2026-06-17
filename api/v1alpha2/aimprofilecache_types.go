@@ -75,6 +75,11 @@ type AIMProfileCacheSpec struct {
 	// +listMapKey=name
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
+	// RuntimeConfigRef selects the AIMRuntimeConfig whose Env and Storage feed
+	// the download Job created for this cache. Propagated onto the AIMArtifact.
+	// When empty, the artifact falls back to the default-named runtime config.
+	aimv1alpha1.RuntimeConfigRef `json:",inline"`
+
 	// Mode controls the ownership behavior of artifacts created by this profile cache.
 	// - Dedicated: artifacts are owned by this profile cache and garbage collected when it's deleted.
 	// - Shared (default): artifacts have no owner references and persist independently.

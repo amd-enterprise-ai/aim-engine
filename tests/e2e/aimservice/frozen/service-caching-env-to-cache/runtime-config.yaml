@@ -1,0 +1,9 @@
+# Minimal namespace-scoped runtime config the service references by name. It
+# only needs to exist so the service's RuntimeConfigRef resolves (ConfigValid),
+# letting the service proceed to materialise the AIMProfileCache. Its name is
+# what we assert propagates onto the cache via runtimeConfigName.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: fast
+spec: {}

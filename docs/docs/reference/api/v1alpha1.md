@@ -1613,6 +1613,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `mode` _[AIMCachingMode](#aimcachingmode)_ | Mode controls when to use caching.<br />Canonical values:<br />- Shared (default): reuse/create shared cache assets<br />- Dedicated: create service-owned dedicated cache assets<br />Legacy values are accepted and normalized:<br />- Always -> Shared<br />- Auto -> Shared<br />- Never -> Dedicated | Shared | Enum: [Dedicated Shared Auto Always Never] <br />Optional: \{\} <br /> |
+| `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#envvar-v1-core) array_ | Env supplies credentials for model downloads (for example a HuggingFace<br />token via secretKeyRef). Unlike the inference container env, these<br />variables reach only the model-download Job, so download-only secrets are<br />never injected into the serving container. They are also reachable for<br />cluster-scoped and overlay profiles, where the profile's own caching.env<br />does not exist. Merged over the profile's caching.env (service wins). |  | Optional: \{\} <br /> |
 
 
 #### AIMServiceList

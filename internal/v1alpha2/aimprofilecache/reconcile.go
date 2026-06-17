@@ -299,6 +299,7 @@ func (r *ProfileCacheReconciler) PlanResources(
 				ModelID:          model.ModelID,
 				Size:             getSizeOrZero(model.Size),
 				Env:              utils.MergeEnvVars(pc.Spec.Env, model.Env),
+				RuntimeConfigRef: pc.Spec.RuntimeConfigRef,
 			},
 		}
 

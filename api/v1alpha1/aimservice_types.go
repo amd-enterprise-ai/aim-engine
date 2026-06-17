@@ -219,7 +219,7 @@ const (
 )
 
 // AIMServiceCachingConfig controls caching behavior for a service.
-// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="caching mode is immutable after creation"
+// +kubebuilder:validation:XValidation:rule="self.mode == oldSelf.mode",message="caching mode is immutable after creation"
 type AIMServiceCachingConfig struct {
 	// Mode controls when to use caching.
 	// Canonical values:
@@ -233,6 +233,17 @@ type AIMServiceCachingConfig struct {
 	// +kubebuilder:default=Shared
 	// +optional
 	Mode AIMCachingMode `json:"mode,omitempty"`
+
+	// Env supplies credentials for model downloads (for example a HuggingFace
+	// token via secretKeyRef). Unlike the inference container env, these
+	// variables reach only the model-download Job, so download-only secrets are
+	// never injected into the serving container. They are also reachable for
+	// cluster-scoped and overlay profiles, where the profile's own caching.env
+	// does not exist. Merged over the profile's caching.env (service wins).
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Env []corev1.EnvVar `json:"env,omitempty"`
 }
 
 // AIMServiceTemplateConfig contains template selection configuration for AIMService.

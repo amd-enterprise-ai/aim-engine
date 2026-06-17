@@ -1,0 +1,66 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: Service caching.env + RuntimeConfigRef reach the cache
+#
+# Pins the v1alpha2 download-credential path. The referenced AIMProfile has
+# model sources but NO caching.env (the cluster-scoped / overlay reality), so
+# the AIMService's spec.caching.env is the only credential source. Asserts both
+# that env and the named runtime config propagate onto the AIMProfileCache the
+# service materialises - the inputs the AIMProfileCache controller then stamps
+# onto the AIMArtifact and, finally, the download Job.
+#
+# Frozen profile so the test does not depend on a real AIMProfile reconcile;
+# the env/runtimeConfig wiring under test runs entirely on the AIMService side.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: service-caching-env-to-cache
+spec:
+  description: |
+    Verifies AIMService.spec.caching.env and the service's runtimeConfigName
+    are propagated onto the service-driven AIMProfileCache, providing a
+    download-auth path that works for profiles without their own caching.env
+    (cluster-scoped and per-service overlay profiles).
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create frozen namespace AIMProfile (Ready, modelSources, no caching.env)
+      try:
+        - apply:
+            file: profile.yaml
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              apply-with-status.sh profile.yaml --status-only -n "$NAMESPACE"
+
+    - name: Create the named runtime config the service references
+      try:
+        - apply:
+            file: runtime-config.yaml
+
+    - name: Create v1alpha2 service with caching.env and a named runtime config
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert AIMProfileCache carries the service caching.env and runtimeConfigName
+      try:
+        - assert:
+            timeout: 30s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                namespace: ($namespace)
+                labels:
+                  aim.eai.amd.com/service: test-caching-env-svc
+              spec:
+                profileName: test-caching-env
+                profileScope: Namespace
+                mode: Shared
+                runtimeConfigName: fast
+                env:
+                  - name: HF_TOKEN
+                    value: service-token-value
