@@ -48,7 +48,7 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfileSet
               metadata:
-                name: derivedfrom-finetune-profiles-b7b0084a
+                # Match by source-model labels, not the synthesized hash name.
                 labels:
                   aim.eai.amd.com/source-model: derivedfrom-finetune
                   aim.eai.amd.com/source-model-scope: namespace
@@ -67,10 +67,11 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfile
               metadata:
-                name: derivedfrom-finetune-profiles-b7b0084a-cpu-default-f2681b35
+                # Match by provenance labels, not the hashed derived name.
                 labels:
                   aim.eai.amd.com/profile-role: deployable
                   aim.eai.amd.com/profile-origin: derived
+                  aim.eai.amd.com/source-model: derivedfrom-finetune
               spec:
                 aimId: derived-org/derived-model
                 modelSources:
@@ -93,8 +94,8 @@ spec:
               status:
                 status: Ready
                 aimId: derived-org/derived-model
-                profileSetRef:
-                  name: derivedfrom-finetune-profiles-b7b0084a
+                # Synthesized set name carries an internal hash; assert presence.
+                (profileSetRef.name != ''): true
                 managedProfiles:
                   total: 1
                   ready: 1

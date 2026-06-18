@@ -32,13 +32,17 @@ spec:
 
     - name: Assert the synthesized AIMProfileSet exists
       try:
+        # Identify the synthesized set by the source-model label rather than its
+        # hashed name; the model owns exactly one set in this namespace.
         - assert:
             timeout: 60s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfileSet
               metadata:
-                name: custom-copy-model-profiles-2be25a47
+                labels:
+                  aim.eai.amd.com/source-model: custom-copy-model
+                  aim.eai.amd.com/source-model-scope: namespace
               spec:
                 selector:
                   aimId: custom-org/custom-model
@@ -48,13 +52,18 @@ spec:
 
     - name: Assert the copied AIMProfile preserves direct-derivative fields
       try:
+        # The derived profile is the only copy owned by this model; match it by
+        # provenance labels instead of its hashed name.
         - assert:
             timeout: 60s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfile
               metadata:
-                name: custom-copy-model-profiles-2be25a47-cpu-latency-c02fe2fa
+                labels:
+                  aim.eai.amd.com/profile-role: deployable
+                  aim.eai.amd.com/profile-origin: derived
+                  aim.eai.amd.com/source-model: custom-copy-model
               spec:
                 aimId: custom-org/custom-model
                 modelId: custom-org/custom-copy-model
@@ -98,8 +107,8 @@ spec:
               status:
                 status: Ready
                 aimId: custom-org/custom-model
-                profileSetRef:
-                  name: custom-copy-model-profiles-2be25a47
+                # Synthesized set name carries an internal hash; assert presence.
+                (profileSetRef.name != ''): true
                 managedProfiles:
                   total: 1
                   ready: 1

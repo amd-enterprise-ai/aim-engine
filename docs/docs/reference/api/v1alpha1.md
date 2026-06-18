@@ -1225,6 +1225,37 @@ _Appears in:_
 | `any` | AIMProfileTypeAny is a selector-only sentinel meaning "no optimization<br />floor — accept every tier". It is never stamped on a profile's own<br />spec.type; it is only valid as a ProfileSelector.minimumType value, where<br />it disables the floor (equivalent to flooring at unoptimized, the lowest<br />tier, but reads as intent rather than asking specifically for unoptimized).<br /> |
 
 
+#### AIMProfileTypeFloor
+
+_Underlying type:_ _string_
+
+AIMProfileTypeFloor enumerates the values accepted by a profile selector's
+minimumType floor: the real optimization tiers plus the selector-only "any"
+sentinel that disables the floor.
+
+It is a distinct type from AIMProfileType on purpose. MinimumType cannot just
+be an AIMProfileType: that type's own enum constrains a profile's spec.type to
+the four real tiers (a profile is never "any"), and a field whose type already
+declares an enum cannot widen it — controller-gen emits an allOf of the two
+enums, whose intersection silently drops "any" and makes the documented
+sentinel un-settable. A separate type carries the correct 5-value enum for the
+floor while leaving spec.type constrained to real tiers.
+
+_Validation:_
+- Enum: [optimized general preview unoptimized any]
+
+_Appears in:_
+- [ProfileSelector](#profileselector)
+
+| Field | Description |
+| --- | --- |
+| `optimized` | AIMProfileTypeFloorOptimized floors selection at optimized (the default<br />for AIMService auto-selection).<br /> |
+| `general` | AIMProfileTypeFloorGeneral floors selection at general.<br /> |
+| `preview` | AIMProfileTypeFloorPreview floors selection at preview.<br /> |
+| `unoptimized` | AIMProfileTypeFloorUnoptimized floors selection at unoptimized (the<br />lowest real tier — admits every typed profile).<br /> |
+| `any` | AIMProfileTypeFloorAny disables the floor entirely (accept every tier,<br />including untyped/unknown).<br /> |
+
+
 #### AIMResolutionScope
 
 _Underlying type:_ _string_
@@ -2724,7 +2755,7 @@ _Appears in:_
 | `metric` _[AIMMetric](#aimmetric)_ | Metric filters by optimization target. |  | Enum: [latency throughput] <br />Optional: \{\} <br /> |
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision filters by numeric precision. |  | Enum: [auto fp4 fp8 fp16 fp32 bf16 int4 int8] <br />Optional: \{\} <br /> |
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type filters by optimization level (exact match). |  | Enum: [optimized general preview unoptimized] <br />Optional: \{\} <br /> |
-| `minimumType` _[AIMProfileType](#aimprofiletype)_ | MinimumType filters by a minimum optimization level: candidates whose<br />type is this tier OR BETTER are accepted (hierarchy: optimized > general<br />> preview > unoptimized). This is the floor counterpart to the exact-match<br />Type field; the two AND together when both are set.<br />The sentinel "any" disables the floor (accept every tier). When this<br />field is empty the AIMService resolver applies a default floor of<br />"optimized" so auto-selection prefers production-grade profiles and never<br />silently picks an unoptimized one; to opt a service into lower tiers<br />(e.g. CPU/EPYC profiles published as unoptimized) set minimumType<br />explicitly to "unoptimized" or "any". Derivation selectors<br />(AIMProfileSet / AIMModel.profiles) treat empty as "any" so copying is<br />never tier-restricted by default. |  | Enum: [optimized general preview unoptimized any] <br />Optional: \{\} <br /> |
+| `minimumType` _[AIMProfileTypeFloor](#aimprofiletypefloor)_ | MinimumType filters by a minimum optimization level: candidates whose<br />type is this tier OR BETTER are accepted (hierarchy: optimized > general<br />> preview > unoptimized). This is the floor counterpart to the exact-match<br />Type field; the two AND together when both are set.<br />The sentinel "any" disables the floor (accept every tier). When this<br />field is empty the AIMService resolver applies a default floor of<br />"optimized" so auto-selection prefers production-grade profiles and never<br />silently picks an unoptimized one; to opt a service into lower tiers<br />(e.g. CPU/EPYC profiles published as unoptimized) set minimumType<br />explicitly to "unoptimized" or "any". Derivation selectors<br />(AIMProfileSet / AIMModel.profiles) treat empty as "any" so copying is<br />never tier-restricted by default. |  | Enum: [optimized general preview unoptimized any] <br />Optional: \{\} <br /> |
 | `acceleratorModel` _string_ | AcceleratorModel filters by accelerator identifier. |  | Optional: \{\} <br /> |
 | `acceleratorPartitioningMode` _string_ | AcceleratorPartitioningMode filters candidates by their declared<br />partitioning mode. Partial-order match (NOT strict equality):<br />  ""              - no filter on this field.<br />  "unpartitioned" - matches profiles with mode "" or "unpartitioned".<br />  "partitioned"   - matches profiles whose mode is non-trivial (anything<br />                    other than "" / "unpartitioned").<br />  "<C>"           - selector-only convenience: matches profiles with mode<br />                    "<C>-*" (prefix on the scheme). Not a valid profile-spec<br />                    value (e.g. selector "CPX" matches "CPX-NPS1", "CPX-NPS4").<br />  "<C>-<M>"       - exact-string match on the scheme. |  | Optional: \{\} <br /> |
 | `acceleratorType` _[AcceleratorType](#acceleratortype)_ | AcceleratorType filters by accelerator resource type. |  | Enum: [gpu cpu] <br />Optional: \{\} <br /> |

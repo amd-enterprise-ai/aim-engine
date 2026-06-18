@@ -121,6 +121,14 @@ spec:
                     modelRef:
                       name: byo-derived
                       scope: Namespace
+                    # BYO custom-model profiles are untyped/general by nature
+                    # (the user supplies weights on a base image and does not
+                    # classify the optimization tier). AIMService auto-selection
+                    # defaults minimumType=optimized, which would exclude the
+                    # derived general profile; this service explicitly targets
+                    # its own derived profile, so it disables the floor with
+                    # minimumType=any.
+                    minimumType: any
               EOF
 
     - name: Assert the AIMService resolved the derived profile

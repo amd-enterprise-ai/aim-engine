@@ -360,6 +360,36 @@ const (
 	AIMProfileTypeAny AIMProfileType = "any"
 )
 
+// AIMProfileTypeFloor enumerates the values accepted by a profile selector's
+// minimumType floor: the real optimization tiers plus the selector-only "any"
+// sentinel that disables the floor.
+//
+// It is a distinct type from AIMProfileType on purpose. MinimumType cannot just
+// be an AIMProfileType: that type's own enum constrains a profile's spec.type to
+// the four real tiers (a profile is never "any"), and a field whose type already
+// declares an enum cannot widen it — controller-gen emits an allOf of the two
+// enums, whose intersection silently drops "any" and makes the documented
+// sentinel un-settable. A separate type carries the correct 5-value enum for the
+// floor while leaving spec.type constrained to real tiers.
+// +kubebuilder:validation:Enum=optimized;general;preview;unoptimized;any
+type AIMProfileTypeFloor string
+
+const (
+	// AIMProfileTypeFloorOptimized floors selection at optimized (the default
+	// for AIMService auto-selection).
+	AIMProfileTypeFloorOptimized AIMProfileTypeFloor = "optimized"
+	// AIMProfileTypeFloorGeneral floors selection at general.
+	AIMProfileTypeFloorGeneral AIMProfileTypeFloor = "general"
+	// AIMProfileTypeFloorPreview floors selection at preview.
+	AIMProfileTypeFloorPreview AIMProfileTypeFloor = "preview"
+	// AIMProfileTypeFloorUnoptimized floors selection at unoptimized (the
+	// lowest real tier — admits every typed profile).
+	AIMProfileTypeFloorUnoptimized AIMProfileTypeFloor = "unoptimized"
+	// AIMProfileTypeFloorAny disables the floor entirely (accept every tier,
+	// including untyped/unknown).
+	AIMProfileTypeFloorAny AIMProfileTypeFloor = "any"
+)
+
 // AIMProfileMetadata describes the characteristics of a cached deployment profile.
 // This is identical to AIMDiscoveryProfileMetadata but exists in the template status namespace.
 type AIMProfileMetadata struct {

@@ -21,13 +21,23 @@ spec:
 
     - name: Assert the derived AIMProfile is created from the cache source
       try:
+        # Match by provenance labels + the copy annotation rather than the
+        # derived name: the name carries a deterministic hash (over the set
+        # name + candidate identity) that is an internal implementation
+        # detail, not an API contract. Asserting it couples the fixture to the
+        # naming algorithm; the labels/annotation + spec uniquely identify the
+        # single derived profile here.
         - assert:
             timeout: 60s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfile
               metadata:
-                name: cache-backed-profiles-cpu-default-cb1e6105
+                labels:
+                  aim.eai.amd.com/profile-role: deployable
+                  aim.eai.amd.com/profile-origin: derived
+                annotations:
+                  aim.eai.amd.com/profile-source: copy
               spec:
                 aimId: cached-org/cached-model
                 modelId: cached-org/custom-model

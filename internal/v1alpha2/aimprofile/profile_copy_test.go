@@ -78,21 +78,21 @@ func TestMeetsMinimumType(t *testing.T) {
 	tests := []struct {
 		name      string
 		candidate aimv1alpha1.AIMProfileType
-		minimum   aimv1alpha1.AIMProfileType
+		minimum   aimv1alpha1.AIMProfileTypeFloor
 		want      bool
 	}{
 		{"empty floor accepts anything", aimv1alpha1.AIMProfileTypeUnoptimized, "", true},
-		{"any floor accepts anything", aimv1alpha1.AIMProfileTypeUnoptimized, aimv1alpha1.AIMProfileTypeAny, true},
-		{"optimized floor rejects unoptimized", aimv1alpha1.AIMProfileTypeUnoptimized, aimv1alpha1.AIMProfileTypeOptimized, false},
-		{"optimized floor rejects preview", aimv1alpha1.AIMProfileTypePreview, aimv1alpha1.AIMProfileTypeOptimized, false},
-		{"optimized floor accepts optimized", aimv1alpha1.AIMProfileTypeOptimized, aimv1alpha1.AIMProfileTypeOptimized, true},
-		{"optimized floor rejects untyped (treated as unoptimized)", aimv1alpha1.AIMProfileType(""), aimv1alpha1.AIMProfileTypeOptimized, false},
-		{"unoptimized floor accepts untyped", aimv1alpha1.AIMProfileType(""), aimv1alpha1.AIMProfileTypeUnoptimized, true},
-		{"any floor accepts untyped", aimv1alpha1.AIMProfileType(""), aimv1alpha1.AIMProfileTypeAny, true},
-		{"preview floor accepts general", aimv1alpha1.AIMProfileTypeGeneral, aimv1alpha1.AIMProfileTypePreview, true},
-		{"preview floor accepts preview", aimv1alpha1.AIMProfileTypePreview, aimv1alpha1.AIMProfileTypePreview, true},
-		{"preview floor rejects unoptimized", aimv1alpha1.AIMProfileTypeUnoptimized, aimv1alpha1.AIMProfileTypePreview, false},
-		{"unoptimized floor accepts unoptimized", aimv1alpha1.AIMProfileTypeUnoptimized, aimv1alpha1.AIMProfileTypeUnoptimized, true},
+		{"any floor accepts anything", aimv1alpha1.AIMProfileTypeUnoptimized, aimv1alpha1.AIMProfileTypeFloorAny, true},
+		{"optimized floor rejects unoptimized", aimv1alpha1.AIMProfileTypeUnoptimized, aimv1alpha1.AIMProfileTypeFloorOptimized, false},
+		{"optimized floor rejects preview", aimv1alpha1.AIMProfileTypePreview, aimv1alpha1.AIMProfileTypeFloorOptimized, false},
+		{"optimized floor accepts optimized", aimv1alpha1.AIMProfileTypeOptimized, aimv1alpha1.AIMProfileTypeFloorOptimized, true},
+		{"optimized floor rejects untyped (treated as unoptimized)", aimv1alpha1.AIMProfileType(""), aimv1alpha1.AIMProfileTypeFloorOptimized, false},
+		{"unoptimized floor accepts untyped", aimv1alpha1.AIMProfileType(""), aimv1alpha1.AIMProfileTypeFloorUnoptimized, true},
+		{"any floor accepts untyped", aimv1alpha1.AIMProfileType(""), aimv1alpha1.AIMProfileTypeFloorAny, true},
+		{"preview floor accepts general", aimv1alpha1.AIMProfileTypeGeneral, aimv1alpha1.AIMProfileTypeFloorPreview, true},
+		{"preview floor accepts preview", aimv1alpha1.AIMProfileTypePreview, aimv1alpha1.AIMProfileTypeFloorPreview, true},
+		{"preview floor rejects unoptimized", aimv1alpha1.AIMProfileTypeUnoptimized, aimv1alpha1.AIMProfileTypeFloorPreview, false},
+		{"unoptimized floor accepts unoptimized", aimv1alpha1.AIMProfileTypeUnoptimized, aimv1alpha1.AIMProfileTypeFloorUnoptimized, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -113,7 +113,7 @@ func TestMatchesProfileCopySelector_MinimumTypeFloor(t *testing.T) {
 	// Default-equivalent optimized floor excludes the unoptimized EPYC-style profile.
 	ok, err := MatchesProfileCopySelector(unoptimized, aimv1alpha1.ProfileSelector{
 		AimId:       "meta-llama/Llama-3.2-1B-Instruct",
-		MinimumType: aimv1alpha1.AIMProfileTypeOptimized,
+		MinimumType: aimv1alpha1.AIMProfileTypeFloorOptimized,
 	})
 	if err != nil || ok {
 		t.Fatalf("optimized floor should exclude unoptimized; ok=%v err=%v", ok, err)
@@ -122,7 +122,7 @@ func TestMatchesProfileCopySelector_MinimumTypeFloor(t *testing.T) {
 	// Opt-in via minimumType=any includes it.
 	ok, err = MatchesProfileCopySelector(unoptimized, aimv1alpha1.ProfileSelector{
 		AimId:       "meta-llama/Llama-3.2-1B-Instruct",
-		MinimumType: aimv1alpha1.AIMProfileTypeAny,
+		MinimumType: aimv1alpha1.AIMProfileTypeFloorAny,
 	})
 	if err != nil || !ok {
 		t.Fatalf("any floor should include unoptimized; ok=%v err=%v", ok, err)

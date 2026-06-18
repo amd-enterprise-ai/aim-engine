@@ -1271,18 +1271,6 @@ spec:
                         - throughput
                         type: string
                       minimumType:
-                        allOf:
-                        - enum:
-                          - optimized
-                          - general
-                          - preview
-                          - unoptimized
-                        - enum:
-                          - optimized
-                          - general
-                          - preview
-                          - unoptimized
-                          - any
                         description: |-
                           MinimumType filters by a minimum optimization level: candidates whose
                           type is this tier OR BETTER are accepted (hierarchy: optimized > general
@@ -1297,6 +1285,12 @@ spec:
                           explicitly to "unoptimized" or "any". Derivation selectors
                           (AIMProfileSet / AIMModel.profiles) treat empty as "any" so copying is
                           never tier-restricted by default.
+                        enum:
+                        - optimized
+                        - general
+                        - preview
+                        - unoptimized
+                        - any
                         type: string
                       modelId:
                         description: ModelId filters by the source profile's specific
@@ -3841,18 +3835,6 @@ spec:
                         - throughput
                         type: string
                       minimumType:
-                        allOf:
-                        - enum:
-                          - optimized
-                          - general
-                          - preview
-                          - unoptimized
-                        - enum:
-                          - optimized
-                          - general
-                          - preview
-                          - unoptimized
-                          - any
                         description: |-
                           MinimumType filters by a minimum optimization level: candidates whose
                           type is this tier OR BETTER are accepted (hierarchy: optimized > general
@@ -3867,6 +3849,12 @@ spec:
                           explicitly to "unoptimized" or "any". Derivation selectors
                           (AIMProfileSet / AIMModel.profiles) treat empty as "any" so copying is
                           never tier-restricted by default.
+                        enum:
+                        - optimized
+                        - general
+                        - preview
+                        - unoptimized
+                        - any
                         type: string
                       modelId:
                         description: ModelId filters by the source profile's specific

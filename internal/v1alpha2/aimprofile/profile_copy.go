@@ -143,11 +143,11 @@ func ProfileTypeRank(t aimv1alpha1.AIMProfileType) int {
 // MeetsMinimumType reports whether a candidate profile's type satisfies a
 // selector's minimumType floor: the candidate must be the floor tier or better.
 // An empty floor or the "any" sentinel disables the check (accept every tier).
-func MeetsMinimumType(candidate, minimum aimv1alpha1.AIMProfileType) bool {
-	if minimum == "" || minimum == aimv1alpha1.AIMProfileTypeAny {
+func MeetsMinimumType(candidate aimv1alpha1.AIMProfileType, minimum aimv1alpha1.AIMProfileTypeFloor) bool {
+	if minimum == "" || minimum == aimv1alpha1.AIMProfileTypeFloorAny {
 		return true
 	}
-	return ProfileTypeRank(candidate) <= ProfileTypeRank(minimum)
+	return ProfileTypeRank(candidate) <= ProfileTypeRank(aimv1alpha1.AIMProfileType(minimum))
 }
 
 // matchesPartitioningSelector implements the partial-order match for

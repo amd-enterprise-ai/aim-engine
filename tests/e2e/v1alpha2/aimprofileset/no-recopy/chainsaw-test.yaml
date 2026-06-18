@@ -19,13 +19,16 @@ spec:
 
     - name: Wait for the source AIMProfile discovered from the image
       try:
+        # Match by the image-source annotation + spec rather than the derived
+        # name (which carries an internal hash). The image-sourced profile is
+        # the only one carrying profile-source=image, so this uniquely
+        # identifies the discovered source profile.
         - assert:
             timeout: 180s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfile
               metadata:
-                name: profileset-no-recopy-model-cpu-bf16-latency-ad005fe9
                 annotations:
                   aim.eai.amd.com/profile-source: image
                   aim.eai.amd.com/profile-copyable: "true"
@@ -55,15 +58,19 @@ spec:
                 managedProfiles:
                   total: 1
                   ready: 1
+        # Match the copy by its owning profile-set-name annotation + spec
+        # instead of the hashed derived name. profile-set-name pins it to the
+        # first set specifically, so this can't accidentally match the second
+        # set's (spec-identical) copy created later.
         - assert:
             timeout: 60s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfile
               metadata:
-                name: first-copy-profiles-cpu-bf16-latency-0e72a7cd
                 annotations:
                   aim.eai.amd.com/profile-source: copy
+                  aim.eai.amd.com/profile-set-name: first-copy-profiles
               spec:
                 aimId: HuggingFaceTB/SmolLM2-135M
                 modelId: HuggingFaceTB/SmolLM2-135M
@@ -90,15 +97,19 @@ spec:
                 managedProfiles:
                   total: 1
                   ready: 1
+        # Pin to the second set via profile-set-name. Combined with the per-set
+        # managedProfiles.total=1 assertion above, this proves the second set
+        # created its own single copy rather than re-copying the first set's
+        # derived profile (the behaviour under test).
         - assert:
             timeout: 60s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfile
               metadata:
-                name: second-copy-profiles-cpu-bf16-latency-305360f3
                 annotations:
                   aim.eai.amd.com/profile-source: copy
+                  aim.eai.amd.com/profile-set-name: second-copy-profiles
               spec:
                 aimId: HuggingFaceTB/SmolLM2-135M
                 modelId: HuggingFaceTB/SmolLM2-135M

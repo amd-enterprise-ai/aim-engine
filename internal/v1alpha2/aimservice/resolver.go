@@ -517,6 +517,8 @@ func resolveBySelector(
 	}
 
 	var (
+		nsRaw             []aimv1alpha2.AIMProfile
+		clusterRaw        []aimv1alpha2.AIMClusterProfile
 		nsCandidates      []aimv1alpha2.AIMProfile
 		clusterCandidates []aimv1alpha2.AIMClusterProfile
 	)
@@ -538,6 +540,7 @@ func resolveBySelector(
 			return controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Error: res.listErr},
 				controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]{}, res
 		}
+		nsRaw = list.Items
 		nsCandidates = filterNamespaceProfilesBySpec(list.Items, selector)
 	}
 	if scope != aimprofile.SelectorScopeNamespace {
@@ -554,6 +557,7 @@ func resolveBySelector(
 			return controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{},
 				controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]{Error: res.listErr}, res
 		}
+		clusterRaw = list.Items
 		clusterCandidates = filterClusterProfilesBySpec(list.Items, selector)
 	}
 
@@ -600,9 +604,73 @@ func resolveBySelector(
 	}
 
 	res.notFoundReason = aimv1alpha1.AIMServiceReasonProfileNotFound
-	res.notFoundMessage = "no AIMProfile or AIMClusterProfile matched the selector"
+	// Distinguish "nothing matched the selector" from "candidates matched but
+	// all rank below the optimization-tier floor". The latter is a common,
+	// confusing case under the default optimized floor (e.g. a catalog of only
+	// general/unoptimized CPU profiles), so surface an actionable message that
+	// names the floor and the opt-out knob instead of a bare "no match".
+	if excluded := countFloorExcluded(selector, nsRaw, clusterRaw); excluded > 0 {
+		res.notFoundMessage = fmt.Sprintf(
+			"no AIMProfile or AIMClusterProfile met the minimumType=%s floor: %d candidate(s) matched the selector but rank below it; set spec.profile.selector.minimumType (e.g. \"any\" or \"unoptimized\") to include lower tiers",
+			selector.MinimumType, excluded)
+	} else {
+		res.notFoundMessage = "no AIMProfile or AIMClusterProfile matched the selector"
+	}
 	return controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{},
 		controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]{}, res
+}
+
+// countFloorExcluded returns how many listed candidates satisfied every
+// selector predicate EXCEPT the minimumType floor — i.e. profiles the user
+// could reach by lowering spec.profile.selector.minimumType. It re-runs the
+// selector match with the floor relaxed to "any" and counts the candidates
+// that pass everything else yet fail the real floor, so other spec mismatches
+// (precision, acceleratorModel, ...) are never miscounted as floor exclusions.
+// Returns 0 when no floor is active (empty / "any").
+func countFloorExcluded(
+	selector aimv1alpha1.ProfileSelector,
+	nsRaw []aimv1alpha2.AIMProfile,
+	clusterRaw []aimv1alpha2.AIMClusterProfile,
+) int {
+	if selector.MinimumType == "" || selector.MinimumType == aimv1alpha1.AIMProfileTypeFloorAny {
+		return 0
+	}
+	relaxed := selector
+	relaxed.MinimumType = aimv1alpha1.AIMProfileTypeFloorAny
+
+	count := 0
+	for i := range nsRaw {
+		p := &nsRaw[i]
+		if _, isOverlay := p.Annotations[AnnotationOverlayService]; isOverlay {
+			continue
+		}
+		candidate := aimprofile.ProfileCopyCandidate{
+			Name:   p.Name,
+			Spec:   p.Spec.AIMProfileSpecCommon,
+			Status: p.Status,
+		}
+		if ok, err := aimprofile.MatchesProfileCopySelector(candidate, relaxed); err != nil || !ok {
+			continue
+		}
+		if !aimprofile.MeetsMinimumType(p.Spec.Type, selector.MinimumType) {
+			count++
+		}
+	}
+	for i := range clusterRaw {
+		p := &clusterRaw[i]
+		candidate := aimprofile.ProfileCopyCandidate{
+			Name:   p.Name,
+			Spec:   p.Spec.AIMProfileSpecCommon,
+			Status: p.Status,
+		}
+		if ok, err := aimprofile.MatchesProfileCopySelector(candidate, relaxed); err != nil || !ok {
+			continue
+		}
+		if !aimprofile.MeetsMinimumType(p.Spec.Type, selector.MinimumType) {
+			count++
+		}
+	}
+	return count
 }
 
 // composeServiceSelector builds the effective ProfileSelector the resolver
@@ -633,7 +701,7 @@ func composeServiceSelector(service *aimv1alpha1.AIMService) aimv1alpha1.Profile
 	// default, so derivation selectors (AIMProfileSet / AIMModel.profiles) keep
 	// treating empty as "any" and stay un-tier-restricted.
 	if selector.MinimumType == "" {
-		selector.MinimumType = aimv1alpha1.AIMProfileTypeOptimized
+		selector.MinimumType = aimv1alpha1.AIMProfileTypeFloorOptimized
 	}
 	return selector
 }

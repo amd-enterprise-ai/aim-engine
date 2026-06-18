@@ -32,13 +32,19 @@ spec:
 
     - name: Assert the synthesized child AIMProfileSet and derived profile exist
       try:
+        # Identify the synthesized child set and its derived profile by the
+        # source-model provenance labels the AIMModel stamps, not by the
+        # hashed names (internal, algorithm-dependent). The model owns exactly
+        # one synthesized set in this namespace, so the labels are unambiguous.
         - assert:
             timeout: 60s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfileSet
               metadata:
-                name: seeded-derivative-model-profiles-bd5d8c17
+                labels:
+                  aim.eai.amd.com/source-model: seeded-derivative-model
+                  aim.eai.amd.com/source-model-scope: namespace
               status:
                 status: Ready
                 managedProfiles:
@@ -50,7 +56,10 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfile
               metadata:
-                name: seeded-derivative-model-profiles-bd5d8c17-cpu-default-3fc64d5a
+                labels:
+                  aim.eai.amd.com/profile-role: deployable
+                  aim.eai.amd.com/profile-origin: derived
+                  aim.eai.amd.com/source-model: seeded-derivative-model
               status:
                 status: Ready
 
@@ -88,8 +97,9 @@ spec:
               status:
                 status: Ready
                 aimId: seeded-org/seeded-model
-                profileSetRef:
-                  name: seeded-derivative-model-profiles-bd5d8c17
+                # The synthesized set name carries an internal hash; assert it
+                # is populated rather than pinning the exact value.
+                (profileSetRef.name != ''): true
                 managedProfiles:
                   total: 1
                   ready: 1

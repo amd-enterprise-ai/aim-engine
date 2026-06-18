@@ -188,8 +188,7 @@ type ProfileSelector struct {
 	// (AIMProfileSet / AIMModel.profiles) treat empty as "any" so copying is
 	// never tier-restricted by default.
 	// +optional
-	// +kubebuilder:validation:Enum=optimized;general;preview;unoptimized;any
-	MinimumType AIMProfileType `json:"minimumType,omitempty"`
+	MinimumType AIMProfileTypeFloor `json:"minimumType,omitempty"`
 
 	// AcceleratorModel filters by accelerator identifier.
 	// +optional

@@ -583,3 +583,58 @@ func TestLoadNamespaceCandidates_BaseRoleMatchesNothingInIteration1(t *testing.T
 		t.Fatalf("len(candidates) = %d, want 0 (no profile is labelled base in iteration 1)", len(candidates))
 	}
 }
+
+// TestDerivedProfileName_Stable locks the derived-profile naming algorithm.
+//
+// A derived AIMProfile's name is
+//
+//	GenerateDerivedName([setName, profileId],
+//	    WithHashSource(setName, candidateIdentity(source)))
+//
+// so the hash suffix is a pure function of candidateIdentity's field list.
+// Any change to that list silently renames every derived profile across the
+// engine — exactly what PR #139 did when it dropped manualSelectionOnly from
+// the fingerprint, invalidating hard-coded names in e2e fixtures and any
+// external consumer that keys off them.
+//
+// This golden test makes such a change a single, deliberate edit here instead
+// of a scavenger hunt: if it fails, derived names changed. Update the golden
+// value AND audit dependent fixtures/consumers (tests/e2e/**/*.yaml asserts on
+// derived profile names, docs, etc.) before shipping the rename.
+func TestDerivedProfileName_Stable(t *testing.T) {
+	t.Parallel()
+
+	source := aimprofile.ProfileCopyCandidate{
+		Name: "stable-source",
+		Spec: aimv1alpha2.AIMProfileSpecCommon{
+			AimId:            "acme/model",
+			ModelId:          "acme/model",
+			ProfileId:        "cpu-default",
+			Engine:           "vllm",
+			Metric:           aimv1alpha2.AIMMetric("latency"),
+			Type:             aimv1alpha1.AIMProfileTypeGeneral,
+			Primary:          true,
+			AcceleratorType:  aimv1alpha2.AcceleratorType("cpu"),
+			AcceleratorCount: 1,
+			Precision:        aimv1alpha2.AIMPrecision("fp16"),
+		},
+		Status: aimv1alpha2.AIMProfileStatus{Version: "0.2.0"},
+	}
+
+	name, err := utils.GenerateDerivedName(
+		[]string{"stable-set", firstNonEmpty(source.Spec.ProfileId, source.Name)},
+		utils.WithHashSource("stable-set", candidateIdentity(source)),
+	)
+	if err != nil {
+		t.Fatalf("GenerateDerivedName() error = %v", err)
+	}
+
+	const want = "stable-set-cpu-default-966da3c3"
+	if name != want {
+		t.Fatalf("derived profile name = %q, want %q\n"+
+			"The derived-profile naming algorithm changed (candidateIdentity or "+
+			"GenerateDerivedName). Every derived AIMProfile is now renamed; update "+
+			"this golden value and audit e2e fixtures / consumers that match on "+
+			"derived names.", name, want)
+	}
+}

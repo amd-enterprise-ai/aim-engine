@@ -12,7 +12,11 @@ spec:
   engine: vllm
   metric: latency
   precision: bf16
-  type: general
+  # Production-grade tier: AIMService auto-selection applies a default
+  # minimumType=optimized floor (resolver composeServiceSelector), so the
+  # model's best deployable profile must be optimized to be auto-resolvable
+  # by a service that sets no selector.
+  type: optimized
   primary: true
   acceleratorModel: EPYC_ZEN5
   acceleratorType: cpu
