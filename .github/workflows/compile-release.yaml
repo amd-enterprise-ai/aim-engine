@@ -580,6 +580,13 @@ jobs:
       - name: Load aim-dummy image into Kind
         run: kind load docker-image "docker.io/amdenterpriseai/aim-dummy:${AIM_DUMMY_TAG}" --name "${KIND_CLUSTER}"
 
+      - name: Load artifact-downloader image into Kind
+        if: env.BUILD_IMAGES == 'true'
+        run: |
+          echo "${{ secrets.DOCKER_HUB_PULL }}" | docker login docker.io -u "${{ secrets.DOCKER_HUB_PULL_USER }}" --password-stdin
+          docker pull "docker.io/silogenai/aim-artifact-downloader:${VERSION}"
+          kind load docker-image "docker.io/silogenai/aim-artifact-downloader:${VERSION}" --name "${KIND_CLUSTER}"
+
       - name: Create aim-system namespace
         run: kubectl create namespace aim-system --dry-run=client -o yaml | kubectl apply -f -
 
