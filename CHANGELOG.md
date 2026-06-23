@@ -11,10 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Server-side field-selector filtering of profiles by model architecture: `spec.aimId` is now a selectable field on `AIMProfile` and `AIMClusterProfile` (e.g. `kubectl get aimprofile --field-selector spec.aimId=qwen/qwen3-32b`).
+- `spec.routing.hostnames` on AIMService and RuntimeConfig to pin generated HTTPRoutes to specific Gateway listener hostnames (EAI-6951).
 
 ### Changed
 - Minimum supported Kubernetes version raised to **1.32**, required for the `CustomResourceFieldSelectors` feature (GA in 1.32) that backs the new profile selectable field.
 - Serving containers now derive their `ImagePullPolicy` from the image tag (`PullAlways` for `:latest`/tagless, `IfNotPresent` for versioned/digest tags) instead of always pulling, matching kubelet's default and letting pre-loaded (e.g. `kind load`) images be used; re-pushed mutable versioned tags will no longer be re-pulled on nodes with a cached layer.
+
+### Fixed
+- Inference route auth bypass on multi-listener gateways (EAI-6951): generated HTTPRoutes were not pinned to a hostname, so they attached to every listener on the parent Gateway and could be reached on listeners that do not enforce authentication. Routes are now pinned to the configured `spec.routing.hostnames`, and a routing-enabled service on a Gateway with more than one listener now requires a hostname — without one no route is created and the service reports `ConfigValid=False` / `RouteHostnameRequired`. Single-listener gateways are unaffected.
 
 ## [0.2.4] - 2026-05-26
 

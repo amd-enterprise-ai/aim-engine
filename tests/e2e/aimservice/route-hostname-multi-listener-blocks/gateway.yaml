@@ -1,0 +1,24 @@
+# A Gateway exposing two HTTP listeners with distinct hostnames. The operator
+# only inspects the listener count for the host-pinning guard, so the gateway
+# does not need to be programmed by a controller for this test.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: test-route-multi-listener
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - name: workloads
+      protocol: HTTP
+      port: 80
+      hostname: workloads.example.com
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: api
+      protocol: HTTP
+      port: 80
+      hostname: api.example.com
+      allowedRoutes:
+        namespaces:
+          from: All

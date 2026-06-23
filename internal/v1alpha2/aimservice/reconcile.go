@@ -88,6 +88,7 @@ type ServiceFetchResult struct {
 	inferenceServicePods *controllerutils.FetchResult[*corev1.PodList]
 	hpa                  controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]
 	httpRoute            controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
+	gateway              controllerutils.FetchResult[*gatewayapiv1.Gateway]
 
 	mergedRuntimeConfig controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
 
@@ -158,6 +159,14 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	// ConfigValid=False. Shared with the v1alpha1 pipeline so the validation is
 	// identical regardless of which pipeline owns the service.
 	if cfg := v1alpha1service.ScaleToZeroRoutingComponentHealth(obs.service, obs.mergedRuntimeConfig.Value); cfg.Component != "" {
+		health = append(health, cfg)
+	}
+
+	// Routing on a multi-listener gateway requires a hostname pin; otherwise
+	// the route attaches to every listener and can bypass authentication.
+	// Surface as ConfigValid=False even before a profile resolves (the route
+	// is also not created). Shared with the v1alpha1 pipeline.
+	if cfg := v1alpha1service.RoutingHostnameComponentHealth(obs.service, obs.mergedRuntimeConfig.Value, obs.gateway); cfg.Component != "" {
 		health = append(health, cfg)
 	}
 
@@ -485,6 +494,10 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 	// service or runtime config).
 	result.httpRoute = v1alpha1service.FetchHTTPRoute(ctx, c, service, result.mergedRuntimeConfig.Value)
 
+	// Fetch the parent Gateway so the host-pinning guard can see how many
+	// listeners it exposes (a multi-listener gateway requires a hostname pin).
+	result.gateway = v1alpha1service.FetchGateway(ctx, c, service, result.mergedRuntimeConfig.Value)
+
 	// Adapter staging dependencies (spec.adapters). The parent model artifact is
 	// resolved indirectly via the profile cache's resolved artifacts (keyed on
 	// the profile's modelId), so it is only available once the cache exists. The
@@ -792,7 +805,7 @@ func (r *ProfileServiceReconciler) PlanResources(
 	// config. The builder and naming scheme are shared with the v1alpha1
 	// pipeline so routing behaves identically regardless of which pipeline
 	// owns the service.
-	if route := v1alpha1service.PlanHTTPRoute(ctx, service, obs.mergedRuntimeConfig.Value); route != nil {
+	if route := v1alpha1service.PlanHTTPRoute(ctx, service, obs.mergedRuntimeConfig.Value, obs.gateway.Value); route != nil {
 		planResult.Apply(route)
 	}
 

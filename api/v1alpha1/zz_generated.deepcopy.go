@@ -1446,6 +1446,11 @@ func (in *AIMRuntimeRoutingConfig) DeepCopyInto(out *AIMRuntimeRoutingConfig) {
 		*out = new(apisv1.ParentReference)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.Hostnames != nil {
+		in, out := &in.Hostnames, &out.Hostnames
+		*out = make([]apisv1.Hostname, len(*in))
+		copy(*out, *in)
+	}
 	if in.PathTemplate != nil {
 		in, out := &in.PathTemplate, &out.PathTemplate
 		*out = new(string)

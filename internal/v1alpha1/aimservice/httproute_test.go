@@ -662,3 +662,254 @@ func TestPlanHTTPRoute_OwnerReference(t *testing.T) {
 		t.Error("expected controller=true")
 	}
 }
+
+// ============================================================================
+// HOSTNAME PINNING TESTS
+// ============================================================================
+
+// gatewayWithListeners returns a Gateway exposing the given number of bare
+// HTTP listeners on port 80. Only the listener count matters for the
+// host-pinning guard.
+func gatewayWithListeners(n int) *gatewayapiv1.Gateway {
+	gw := &gatewayapiv1.Gateway{}
+	for i := 0; i < n; i++ {
+		gw.Spec.Listeners = append(gw.Spec.Listeners, gatewayapiv1.Listener{
+			Name:     gatewayapiv1.SectionName("l" + string(rune('a'+i))),
+			Protocol: gatewayapiv1.HTTPProtocolType,
+			Port:     80,
+		})
+	}
+	return gw
+}
+
+func TestResolveHostnames(t *testing.T) {
+	svcHosts := []gatewayapiv1.Hostname{"workloads.svc.example.com"}
+	rcHosts := []gatewayapiv1.Hostname{"workloads.rc.example.com"}
+
+	tests := []struct {
+		name          string
+		service       *aimv1alpha1.AIMService
+		runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon
+		want          []gatewayapiv1.Hostname
+	}{
+		{
+			name:    "neither set",
+			service: NewService("svc").Build(),
+			want:    nil,
+		},
+		{
+			name: "service only",
+			service: func() *aimv1alpha1.AIMService {
+				svc := NewService("svc").Build()
+				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{Hostnames: svcHosts}
+				return svc
+			}(),
+			want: svcHosts,
+		},
+		{
+			name:    "runtime config only",
+			service: NewService("svc").Build(),
+			runtimeConfig: &aimv1alpha1.AIMRuntimeConfigCommon{
+				AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+					Routing: &aimv1alpha1.AIMRuntimeRoutingConfig{Hostnames: rcHosts},
+				},
+			},
+			want: rcHosts,
+		},
+		{
+			name: "service overrides runtime config",
+			service: func() *aimv1alpha1.AIMService {
+				svc := NewService("svc").Build()
+				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{Hostnames: svcHosts}
+				return svc
+			}(),
+			runtimeConfig: &aimv1alpha1.AIMRuntimeConfigCommon{
+				AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+					Routing: &aimv1alpha1.AIMRuntimeRoutingConfig{Hostnames: rcHosts},
+				},
+			},
+			want: svcHosts,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveHostnames(tt.service, tt.runtimeConfig)
+			if len(got) != len(tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, got)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("hostname[%d]: expected %q, got %q", i, tt.want[i], got[i])
+				}
+			}
+		})
+	}
+}
+
+func TestPlanHTTPRoute_Hostnames(t *testing.T) {
+	gatewayRef := &gatewayapiv1.ParentReference{Name: "test-gateway"}
+	hosts := []gatewayapiv1.Hostname{"workloads.example.com"}
+
+	newService := func(hostnames []gatewayapiv1.Hostname) *aimv1alpha1.AIMService {
+		svc := NewService("svc").Build()
+		svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
+			Enabled:    ptr.To(true),
+			GatewayRef: gatewayRef,
+			Hostnames:  hostnames,
+		}
+		return svc
+	}
+
+	tests := []struct {
+		name          string
+		service       *aimv1alpha1.AIMService
+		gateway       *gatewayapiv1.Gateway
+		expectRoute   bool
+		expectedHosts []gatewayapiv1.Hostname
+	}{
+		{
+			name:          "hostnames pinned onto route",
+			service:       newService(hosts),
+			gateway:       gatewayWithListeners(1),
+			expectRoute:   true,
+			expectedHosts: hosts,
+		},
+		{
+			name:          "single listener, no hostnames - route created with empty hostnames (back-compat)",
+			service:       newService(nil),
+			gateway:       gatewayWithListeners(1),
+			expectRoute:   true,
+			expectedHosts: nil,
+		},
+		{
+			name:        "multi listener, no hostnames - route refused",
+			service:     newService(nil),
+			gateway:     gatewayWithListeners(2),
+			expectRoute: false,
+		},
+		{
+			name:          "multi listener with hostnames - route pinned",
+			service:       newService(hosts),
+			gateway:       gatewayWithListeners(2),
+			expectRoute:   true,
+			expectedHosts: hosts,
+		},
+		{
+			name:          "nil gateway, no hostnames - route created (cannot determine listeners)",
+			service:       newService(nil),
+			gateway:       nil,
+			expectRoute:   true,
+			expectedHosts: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := PlanHTTPRoute(context.Background(), tt.service, nil, tt.gateway)
+
+			if !tt.expectRoute {
+				if result != nil {
+					t.Fatalf("expected no route, got %T", result)
+				}
+				return
+			}
+
+			if result == nil {
+				t.Fatal("expected HTTPRoute, got nil")
+			}
+			route := result.(*gatewayapiv1.HTTPRoute)
+			if len(route.Spec.Hostnames) != len(tt.expectedHosts) {
+				t.Fatalf("expected hostnames %v, got %v", tt.expectedHosts, route.Spec.Hostnames)
+			}
+			for i := range route.Spec.Hostnames {
+				if route.Spec.Hostnames[i] != tt.expectedHosts[i] {
+					t.Errorf("hostname[%d]: expected %q, got %q", i, tt.expectedHosts[i], route.Spec.Hostnames[i])
+				}
+			}
+		})
+	}
+}
+
+// ============================================================================
+// HOSTNAME GUARD HEALTH TESTS
+// ============================================================================
+
+func TestRoutingHostnameComponentHealth(t *testing.T) {
+	gatewayRef := &gatewayapiv1.ParentReference{Name: "test-gateway"}
+
+	routingEnabled := func(hostnames []gatewayapiv1.Hostname) *aimv1alpha1.AIMService {
+		svc := NewService("svc").Build()
+		svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
+			Enabled:    ptr.To(true),
+			GatewayRef: gatewayRef,
+			Hostnames:  hostnames,
+		}
+		return svc
+	}
+
+	okGateway := func(n int) controllerutils.FetchResult[*gatewayapiv1.Gateway] {
+		return controllerutils.FetchResult[*gatewayapiv1.Gateway]{Value: gatewayWithListeners(n)}
+	}
+
+	tests := []struct {
+		name       string
+		service    *aimv1alpha1.AIMService
+		gateway    controllerutils.FetchResult[*gatewayapiv1.Gateway]
+		wantFailed bool
+	}{
+		{
+			name:       "multi listener, no hostnames - RouteHostnameRequired",
+			service:    routingEnabled(nil),
+			gateway:    okGateway(2),
+			wantFailed: true,
+		},
+		{
+			name:    "multi listener with hostnames - not failed by guard",
+			service: routingEnabled([]gatewayapiv1.Hostname{"workloads.example.com"}),
+			gateway: okGateway(2),
+		},
+		{
+			name:    "single listener, no hostnames - not failed",
+			service: routingEnabled(nil),
+			gateway: okGateway(1),
+		},
+		{
+			name:    "gateway not fetched - guard does not block",
+			service: routingEnabled(nil),
+			gateway: controllerutils.FetchResult[*gatewayapiv1.Gateway]{},
+		},
+		{
+			name:    "routing disabled - guard does not block",
+			service: NewService("svc").Build(),
+			gateway: okGateway(2),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			health := RoutingHostnameComponentHealth(tt.service, nil, tt.gateway)
+
+			if tt.wantFailed {
+				if health.Component != ComponentRouteConfig {
+					t.Fatalf("expected %q component, got %q", ComponentRouteConfig, health.Component)
+				}
+				if health.State != constants.AIMStatusFailed {
+					t.Errorf("expected Failed state, got %q", health.State)
+				}
+				if health.Reason != ReasonRouteHostnameRequired {
+					t.Errorf("expected reason %q, got %q", ReasonRouteHostnameRequired, health.Reason)
+				}
+				if len(health.Errors) != 1 ||
+					controllerutils.CategorizeError(health.Errors[0]).Category() != controllerutils.ErrorCategoryInvalidSpec {
+					t.Errorf("expected a single InvalidSpec error, got %+v", health.Errors)
+				}
+				return
+			}
+
+			if health.Component != "" {
+				t.Errorf("expected empty (non-blocking) health, got %+v", health)
+			}
+		})
+	}
+}

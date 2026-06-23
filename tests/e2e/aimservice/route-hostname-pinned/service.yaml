@@ -1,0 +1,18 @@
+# v1alpha2 AIMService with routing enabled against a multi-listener gateway and
+# a hostname pin. The generated HTTPRoute must carry spec.hostnames so it only
+# attaches to the workloads listener. gatewayRef omits the namespace so it
+# defaults to the service namespace, where the Gateway lives.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: test-pinned-service
+spec:
+  profile:
+    name: test-route-pin-profile
+  replicas: 1
+  routing:
+    enabled: true
+    gatewayRef:
+      name: test-route-pinned-gateway
+    hostnames:
+      - workloads.example.com

@@ -115,6 +115,18 @@ func FetchHTTPRoute(
 	return fetchHTTPRoute(ctx, c, service, runtimeConfig)
 }
 
+// FetchGateway fetches the parent Gateway referenced by the resolved
+// gatewayRef when routing is enabled. The listener count drives the
+// host-pinning guard. Exported for reuse by the profile-based pipeline.
+func FetchGateway(
+	ctx context.Context,
+	c client.Client,
+	service *aimv1alpha1.AIMService,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+) controllerutils.FetchResult[*gatewayapiv1.Gateway] {
+	return fetchGateway(ctx, c, service, runtimeConfig)
+}
+
 // ComputeRuntimeStatus derives replica counts and the formatted Replicas
 // string for an AIMService from its HPA (if present) or spec defaults. The
 // v1alpha2 profile pipeline reuses this so the Replicas printcolumn behaves
@@ -270,6 +282,62 @@ func HTTPRouteComponentHealth(
 	}
 
 	return httpRoute.ToComponentHealth("HTTPRoute", controllerutils.GetHTTPRouteHealth)
+}
+
+// ComponentRouteConfig is the ComponentHealth name (and condition-type stem,
+// RouteConfigReady) for the routing host-pinning prerequisite check. Exported
+// so both pipelines and their tests reference one source of truth.
+const ComponentRouteConfig = "RouteConfig"
+
+// ReasonRouteHostnameRequired is the failure reason surfaced when routing is
+// enabled on a multi-listener gateway without any hostnames configured.
+const ReasonRouteHostnameRequired = "RouteHostnameRequired"
+
+// RoutingHostnameComponentHealth enforces the host-pinning guard: when routing
+// is enabled, a gatewayRef resolves, and the parent gateway exposes more than
+// one listener, the route must be pinned to a hostname. Without one, the
+// generated HTTPRoute would attach to every listener on the gateway and could
+// be reached on listeners that do not enforce the intended authentication
+// (the EAI-6951 auth bypass). In that case the route is intentionally not
+// created (see PlanHTTPRoute) and this surfaces ConfigValid=False so the user
+// knows why.
+//
+// The guard only fires when the gateway was successfully fetched (so the
+// listener count is known); a single-listener gateway, a configured hostname,
+// or an unfetched gateway returns an empty (non-blocking) health entry.
+// Shared between the template and profile pipelines.
+func RoutingHostnameComponentHealth(
+	service *aimv1alpha1.AIMService,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	gateway controllerutils.FetchResult[*gatewayapiv1.Gateway],
+) controllerutils.ComponentHealth {
+	if !isRoutingEnabled(service, runtimeConfig) {
+		return controllerutils.ComponentHealth{}
+	}
+	if resolveGatewayRef(service, runtimeConfig) == nil {
+		return controllerutils.ComponentHealth{}
+	}
+	if !gateway.OK() || !requiresHostname(gateway.Value) {
+		return controllerutils.ComponentHealth{}
+	}
+	if len(resolveHostnames(service, runtimeConfig)) > 0 {
+		return controllerutils.ComponentHealth{}
+	}
+
+	return controllerutils.ComponentHealth{
+		Component:      ComponentRouteConfig,
+		DependencyType: controllerutils.DependencyTypeDownstream,
+		State:          constants.AIMStatusFailed,
+		Reason:         ReasonRouteHostnameRequired,
+		Message:        "Parent gateway has multiple listeners but no routing hostnames are configured; refusing to create an all-hosts route",
+		Errors: []error{
+			controllerutils.NewInvalidSpecError(
+				ReasonRouteHostnameRequired,
+				"The parent gateway exposes more than one listener, so the route must be pinned to a hostname to avoid attaching to listeners that do not enforce authentication. Set spec.routing.hostnames on the service or runtimeConfig.routing.hostnames on the runtime config.",
+				nil,
+			),
+		},
+	}
 }
 
 // ComponentScaleToZeroConfig is the ComponentHealth name (and condition-type

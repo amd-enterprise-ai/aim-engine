@@ -66,6 +66,28 @@ Path templates use JSONPath expressions in `{...}` to build route paths from ser
 
 Path templates have a maximum length of 200 characters. If no template is specified, the default path is `/{namespace}/{uid}`.
 
+## Hostnames
+
+By default, a generated `HTTPRoute` is not pinned to a hostname, so it attaches to **every** listener exposed by the parent Gateway. On a Gateway with multiple listeners (for example separate `workloads.*`, `api.*`, and `ui.*` hostnames) this means a service can be reached on listeners that may not enforce the intended authentication.
+
+Pin the route to one or more hostnames so it only attaches to the matching listener:
+
+```yaml
+spec:
+  routing:
+    enabled: true
+    gatewayRef:
+      name: inference-gateway
+      namespace: kgateway-system
+    hostnames:
+      - workloads.example.com
+```
+
+`hostnames` can be set on the service (`spec.routing.hostnames`) or as a default on the runtime config (`AIMRuntimeConfig` / `AIMClusterRuntimeConfig`), following the same precedence as other routing fields. The service-level list overrides the runtime config list as a whole.
+
+!!! warning "Required for multi-listener gateways"
+    When the parent Gateway exposes **more than one listener**, a hostname is required. A routing-enabled service with no hostnames in that case does **not** get an `HTTPRoute` and reports `ConfigValid=False` with reason `RouteHostnameRequired` (condition `RouteConfigReady=False`). Set `hostnames` to clear it. Single-listener gateways are unaffected: leaving `hostnames` empty keeps the route attached to that one listener.
+
 ## Request Timeout
 
 Set an HTTP request timeout for the route:
@@ -102,6 +124,7 @@ Configuration is resolved in this order (highest to lowest priority):
 AIM Engine creates an HTTPRoute with:
 
 - **Parent**: The gateway from `gatewayRef`
+- **Hostnames**: The configured `hostnames`, if any (required on multi-listener gateways; see [Hostnames](#hostnames))
 - **Path match**: `PathPrefix` with the resolved path template
 - **Backend**: KServe predictor service (`{isvc-name}-predictor`, where `isvc-name` is the derived InferenceService name) on port 80
 - **URL rewrite**: The matched prefix is rewritten to `/` so backends receive clean paths like `/v1/chat/completions`

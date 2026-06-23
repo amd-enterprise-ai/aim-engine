@@ -82,6 +82,7 @@ type ServiceFetchResult struct {
 	inferenceServicePods   *controllerutils.FetchResult[*corev1.PodList]
 	hpa                    controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]
 	httpRoute              controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
+	gateway                controllerutils.FetchResult[*gatewayapiv1.Gateway]
 	templateCache          controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]
 
 	// adapterDeps holds the per-adapter artifacts, staging Jobs, and resolved
@@ -134,6 +135,10 @@ func (r *ServiceReconciler) FetchRemoteState(
 
 	// 2. Fetch HTTPRoute if routing might be enabled (we own this, always check)
 	result.httpRoute = fetchHTTPRoute(ctx, c, service, result.mergedRuntimeConfig.Value)
+
+	// 2b. Fetch the parent Gateway so the host-pinning guard can see how many
+	// listeners it exposes (a multi-listener gateway requires a hostname pin).
+	result.gateway = fetchGateway(ctx, c, service, result.mergedRuntimeConfig.Value)
 
 	// 3. Fetch TemplateCache (always fetch - cascades health from Artifact/PVC)
 	// artifact status is resolved through TemplateCache.Status.Artifacts
@@ -234,6 +239,13 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	// ConfigValid=False instead of letting the service idle to a state it can
 	// never wake from.
 	if cfg := ScaleToZeroRoutingComponentHealth(obs.service, obs.mergedRuntimeConfig.Value); cfg.Component != "" {
+		health = append(health, cfg)
+	}
+
+	// Routing on a multi-listener gateway requires a hostname pin; otherwise
+	// the route attaches to every listener and can bypass authentication.
+	// Surface as ConfigValid=False (the route is also not created).
+	if cfg := RoutingHostnameComponentHealth(obs.service, obs.mergedRuntimeConfig.Value, obs.gateway); cfg.Component != "" {
 		health = append(health, cfg)
 	}
 

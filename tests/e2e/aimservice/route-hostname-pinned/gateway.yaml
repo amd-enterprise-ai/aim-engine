@@ -1,0 +1,24 @@
+# A Gateway exposing two HTTP listeners with distinct hostnames. With a hostname
+# configured on the service, the generated HTTPRoute must be pinned to that
+# hostname so it only attaches to the matching listener.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: test-route-pinned-gateway
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - name: workloads
+      protocol: HTTP
+      port: 80
+      hostname: workloads.example.com
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: api
+      protocol: HTTP
+      port: 80
+      hostname: api.example.com
+      allowedRoutes:
+        namespaces:
+          from: All

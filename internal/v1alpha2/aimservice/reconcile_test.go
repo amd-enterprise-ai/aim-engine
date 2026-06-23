@@ -35,6 +35,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/utils/ptr"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
@@ -516,6 +517,56 @@ func TestGetComponentHealth_ScaleToZeroRequiresRouting(t *testing.T) {
 	}
 	if cfg.Reason != aimv1alpha1.AIMServiceReasonRoutingRequired {
 		t.Errorf("ScaleToZeroConfig reason = %q, want %q", cfg.Reason, aimv1alpha1.AIMServiceReasonRoutingRequired)
+	}
+	if len(cfg.Errors) != 1 ||
+		controllerutils.CategorizeError(cfg.Errors[0]).Category() != controllerutils.ErrorCategoryInvalidSpec {
+		t.Errorf("expected a single InvalidSpec error, got %+v", cfg.Errors)
+	}
+}
+
+// TestGetComponentHealth_MultiListenerRequiresHostname verifies the profile
+// pipeline surfaces the host-pinning guard (multi-listener parent gateway with
+// no routing hostnames) as a ConfigValid-driving InvalidSpec error on the
+// HTTPRoute component, sharing the v1alpha1 helper.
+func TestGetComponentHealth_MultiListenerRequiresHostname(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+	}
+	service.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
+		Enabled:    ptr.To(true),
+		GatewayRef: &gatewayapiv1.ParentReference{Name: "gw"},
+	}
+	gateway := &gatewayapiv1.Gateway{
+		Spec: gatewayapiv1.GatewaySpec{
+			Listeners: []gatewayapiv1.Listener{
+				{Name: "a", Protocol: gatewayapiv1.HTTPProtocolType, Port: 80},
+				{Name: "b", Protocol: gatewayapiv1.HTTPProtocolType, Port: 80},
+			},
+		},
+	}
+	obs := ServiceObservation{
+		ServiceFetchResult: ServiceFetchResult{
+			service: service,
+			gateway: controllerutils.FetchResult[*gatewayapiv1.Gateway]{Value: gateway},
+		},
+	}
+
+	entries := obs.GetComponentHealth(context.Background(), nil)
+
+	var cfg *controllerutils.ComponentHealth
+	for i := range entries {
+		if entries[i].Component == v1alpha1service.ComponentRouteConfig {
+			cfg = &entries[i]
+		}
+	}
+	if cfg == nil {
+		t.Fatalf("expected a RouteConfig component health entry")
+	}
+	if cfg.State != constants.AIMStatusFailed {
+		t.Errorf("RouteConfig state = %q, want Failed", cfg.State)
+	}
+	if cfg.Reason != v1alpha1service.ReasonRouteHostnameRequired {
+		t.Errorf("RouteConfig reason = %q, want %q", cfg.Reason, v1alpha1service.ReasonRouteHostnameRequired)
 	}
 	if len(cfg.Errors) != 1 ||
 		controllerutils.CategorizeError(cfg.Errors[0]).Category() != controllerutils.ErrorCategoryInvalidSpec {

@@ -653,6 +653,43 @@ spec:
                     required:
                     - name
                     type: object
+                  hostnames:
+                    description: |-
+                      Hostnames pins generated HTTPRoutes to these hostnames so a route only
+                      attaches to the matching Gateway listener instead of every listener on
+                      the parent gateway. Without a hostname, an HTTPRoute matches all of the
+                      parent gateway's listener hostnames, which can expose a service on
+                      listeners that do not enforce the intended authentication.
+
+                      This field is required when the parent gateway exposes more than one
+                      listener: in that case a service with routing enabled but no hostnames
+                      configured will not get an HTTPRoute and reports ConfigValid=False with
+                      reason RouteHostnameRequired. When the parent gateway has a single
+                      listener, leaving this empty preserves the existing behavior (the route
+                      inherits that listener's hostnames).
+
+                      Individual services can override this list via spec.routing.hostnames.
+                    items:
+                      description: |-
+                        Hostname is the fully qualified domain name of a network host. This matches
+                        the RFC 1123 definition of a hostname with 2 notable exceptions:
+
+                         1. IPs are not allowed.
+                         2. A hostname may be prefixed with a wildcard label (`*.`). The wildcard
+                            label must appear by itself as the first label.
+
+                        Hostname can be "precise" which is a domain name without the terminating
+                        dot of a network host (e.g. "foo.example.com") or "wildcard", which is a
+                        domain name prefixed with a single wildcard label (e.g. `*.example.com`).
+
+                        Note that as per RFC1035 and RFC1123, a *label* must consist of lower case
+                        alphanumeric characters or '-', and must start and end with an alphanumeric
+                        character. No other punctuation is allowed.
+                      maxLength: 253
+                      minLength: 1
+                      pattern: ^(\*\.)?[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                      type: string
+                    type: array
                   pathTemplate:
                     description: |-
                       PathTemplate defines the HTTP path template for routes, evaluated using JSONPath expressions.

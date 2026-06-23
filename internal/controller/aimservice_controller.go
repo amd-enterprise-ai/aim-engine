@@ -105,6 +105,7 @@ type AIMServiceReconciler struct {
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterruntimeconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=serving.kserve.io,resources=inferenceservices,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch
 // +kubebuilder:rbac:groups=keda.sh,resources=scaledobjects,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
@@ -337,8 +338,34 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.findServicesForHPA),
 			builder.WithPredicates(hpaReplicaChangePredicate()),
 		).
+		Watches(
+			&gatewayapiv1.Gateway{},
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForGateway),
+		).
 		Named(serviceName).
 		Complete(r)
+}
+
+// findServicesForGateway enqueues every AIMService when a Gateway changes.
+// The host-pinning guard depends on the parent gateway's listener count, so a
+// listener added or removed must re-evaluate services that route through it.
+// Gateways change rarely and the gatewayRef can be supplied indirectly via
+// runtime config (which is not indexed per service), so a cluster-wide enqueue
+// is the simplest correct trigger.
+func (r *AIMServiceReconciler) findServicesForGateway(ctx context.Context, _ client.Object) []reconcile.Request {
+	var services aimv1alpha1.AIMServiceList
+	if err := r.List(ctx, &services); err != nil {
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(services.Items))
+	for i := range services.Items {
+		svc := &services.Items[i]
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace},
+		})
+	}
+	return requests
 }
 
 func (r *AIMServiceReconciler) findServicesForInferenceServicePod(ctx context.Context, obj client.Object) []reconcile.Request {

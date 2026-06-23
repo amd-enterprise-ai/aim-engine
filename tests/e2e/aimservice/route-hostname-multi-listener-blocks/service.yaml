@@ -1,0 +1,17 @@
+# v1alpha2 AIMService with routing enabled against a multi-listener gateway but
+# no hostnames. The host-pinning guard must refuse to create an all-hosts route
+# and surface ConfigValid=False (RouteConfigReady=False / RouteHostnameRequired)
+# regardless of whether the referenced profile resolves. gatewayRef omits the
+# namespace so it defaults to the service namespace, where the Gateway lives.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: test-unpinned-service
+spec:
+  profile:
+    name: test-route-block-profile
+  replicas: 1
+  routing:
+    enabled: true
+    gatewayRef:
+      name: test-route-multi-listener

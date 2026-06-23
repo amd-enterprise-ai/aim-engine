@@ -1,0 +1,158 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: hostname-pinned route on a multi-listener gateway (EAI-6951)
+#
+# With a hostname configured, a routing-enabled service on a multi-listener
+# gateway must produce an HTTPRoute pinned to that hostname (spec.hostnames),
+# so the route only attaches to the intended listener instead of all of them.
+#
+# Reuses the profile-cpu-ready freeze pattern: a frozen CPU AIMClusterProfile
+# plus a frozen AIMProfileCache/AIMArtifact so the service reaches route
+# creation in kind without a real download.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: route-hostname-pinned
+spec:
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create frozen CPU cluster profile with Ready status
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-profile.yaml --status-only
+
+    - name: Create the multi-listener gateway
+      try:
+        - apply:
+            file: gateway.yaml
+
+    - name: Create the routing-enabled service with a hostname pin
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Freeze profile cache and artifact to Ready
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+
+              for _ in $(seq 1 30); do
+                PC_NAME=$(kubectl get aimprofilecache -n "$NAMESPACE" \
+                  -l aim.eai.amd.com/service=test-pinned-service \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                ART_NAME=$(kubectl get aimartifact -n "$NAMESPACE" \
+                  -l aim.eai.amd.com/profile.name=test-route-pin-profile \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                if [ -n "$PC_NAME" ] && [ -n "$ART_NAME" ]; then
+                  break
+                fi
+                sleep 1
+              done
+
+              if [ -z "$PC_NAME" ] || [ -z "$ART_NAME" ]; then
+                echo "ERROR: profile cache or artifact not found in time"
+                kubectl get aimprofilecache,aimartifact -n "$NAMESPACE" -o wide || true
+                exit 1
+              fi
+              echo "Found AIMProfileCache=$PC_NAME AIMArtifact=$ART_NAME"
+
+              kubectl annotate aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+              kubectl annotate aimartifact "$ART_NAME" -n "$NAMESPACE" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+
+              kubectl patch aimartifact "$ART_NAME" -n "$NAMESPACE" \
+                --type=merge --subresource=status \
+                -p '{
+                  "status": {
+                    "status": "Ready",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True",
+                        "reason": "Ready",
+                        "message": "Artifact frozen Ready by chainsaw test",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      }
+                    ],
+                    "persistentVolumeClaim": "'"$ART_NAME"'-pvc"
+                  }
+                }'
+
+              kubectl patch aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                --type=merge --subresource=status \
+                -p '{
+                  "status": {
+                    "status": "Ready",
+                    "conditions": [
+                      {
+                        "type": "ProfileFound",
+                        "status": "True",
+                        "reason": "ProfileResolved",
+                        "message": "Profile resolved",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      },
+                      {
+                        "type": "ArtifactsReady",
+                        "status": "True",
+                        "reason": "AllCachesReady",
+                        "message": "All artifacts are ready",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      },
+                      {
+                        "type": "Ready",
+                        "status": "True",
+                        "reason": "Ready",
+                        "message": "Profile cache frozen Ready by chainsaw test",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      }
+                    ],
+                    "artifacts": {
+                      "'"$ART_NAME"'": {
+                        "name": "'"$ART_NAME"'",
+                        "model": "Qwen/Qwen3-0.6B",
+                        "status": "Ready",
+                        "persistentVolumeClaim": "'"$ART_NAME"'-pvc",
+                        "mountPoint": "/workspace/cache/Qwen/Qwen3-0.6B"
+                      }
+                    }
+                  }
+                }'
+
+              echo "Patched $PC_NAME and $ART_NAME to Ready"
+
+    - name: Assert the HTTPRoute is pinned to the configured hostname
+      try:
+        - assert:
+            resource:
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-pinned-service
+              spec:
+                hostnames:
+                  - workloads.example.com
+
+    - name: Assert the service does not report RouteHostnameRequired
+      try:
+        - error:
+            timeout: 5s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-pinned-service
+              status:
+                (conditions[?type == 'RouteConfigReady']):
+                  - status: "False"
+                    reason: RouteHostnameRequired

@@ -279,6 +279,23 @@ type AIMRuntimeRoutingConfig struct {
 	// +optional
 	GatewayRef *gatewayapiv1.ParentReference `json:"gatewayRef,omitempty"`
 
+	// Hostnames pins generated HTTPRoutes to these hostnames so a route only
+	// attaches to the matching Gateway listener instead of every listener on
+	// the parent gateway. Without a hostname, an HTTPRoute matches all of the
+	// parent gateway's listener hostnames, which can expose a service on
+	// listeners that do not enforce the intended authentication.
+	//
+	// This field is required when the parent gateway exposes more than one
+	// listener: in that case a service with routing enabled but no hostnames
+	// configured will not get an HTTPRoute and reports ConfigValid=False with
+	// reason RouteHostnameRequired. When the parent gateway has a single
+	// listener, leaving this empty preserves the existing behavior (the route
+	// inherits that listener's hostnames).
+	//
+	// Individual services can override this list via spec.routing.hostnames.
+	// +optional
+	Hostnames []gatewayapiv1.Hostname `json:"hostnames,omitempty"`
+
 	// PathTemplate defines the HTTP path template for routes, evaluated using JSONPath expressions.
 	// The template is rendered against the AIMService object to generate unique paths.
 	//

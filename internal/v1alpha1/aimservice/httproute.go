@@ -66,22 +66,63 @@ func fetchHTTPRoute(
 	}, &gatewayapiv1.HTTPRoute{})
 }
 
+// fetchGateway fetches the parent Gateway referenced by the resolved
+// gatewayRef. The listener count drives the host-pinning guard: a route on a
+// multi-listener gateway must be pinned to a hostname (otherwise it attaches
+// to every listener, bypassing per-listener authentication). When routing is
+// disabled or no gatewayRef resolves there is nothing to fetch.
+//
+// The gatewayRef namespace defaults to the service namespace when unset,
+// matching Gateway API ParentReference semantics.
+func fetchGateway(
+	ctx context.Context,
+	c client.Client,
+	service *aimv1alpha1.AIMService,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+) controllerutils.FetchResult[*gatewayapiv1.Gateway] {
+	if !isRoutingEnabled(service, runtimeConfig) {
+		return controllerutils.FetchResult[*gatewayapiv1.Gateway]{}
+	}
+
+	gatewayRef := resolveGatewayRef(service, runtimeConfig)
+	if gatewayRef == nil {
+		return controllerutils.FetchResult[*gatewayapiv1.Gateway]{}
+	}
+
+	namespace := service.Namespace
+	if gatewayRef.Namespace != nil {
+		namespace = string(*gatewayRef.Namespace)
+	}
+
+	return controllerutils.Fetch(ctx, c, client.ObjectKey{
+		Namespace: namespace,
+		Name:      string(gatewayRef.Name),
+	}, &gatewayapiv1.Gateway{})
+}
+
 // planHTTPRoute creates the HTTPRoute if routing is enabled.
 func planHTTPRoute(
 	ctx context.Context,
 	service *aimv1alpha1.AIMService,
 	obs ServiceObservation,
 ) client.Object {
-	return PlanHTTPRoute(ctx, service, obs.mergedRuntimeConfig.Value)
+	return PlanHTTPRoute(ctx, service, obs.mergedRuntimeConfig.Value, obs.gateway.Value)
 }
 
 // PlanHTTPRoute is an exported variant of planHTTPRoute usable from other
 // packages (e.g. the v1alpha2 profile-based reconciler) that don't carry the
 // full ServiceObservation.
+//
+// gateway is the resolved parent Gateway (may be nil when it could not be
+// fetched). When it exposes more than one listener and no hostnames are
+// configured the route is intentionally not created, so it cannot attach to
+// listeners that do not enforce the intended authentication; the matching
+// ConfigValid=False condition is surfaced via HTTPRouteComponentHealth.
 func PlanHTTPRoute(
 	ctx context.Context,
 	service *aimv1alpha1.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	gateway *gatewayapiv1.Gateway,
 ) client.Object {
 	logger := log.FromContext(ctx).WithName("planHTTPRoute")
 
@@ -101,8 +142,39 @@ func PlanHTTPRoute(
 		return nil
 	}
 
-	logger.V(1).Info("creating HTTPRoute", "gatewayRef", gatewayRef.Name)
-	return buildHTTPRoute(service, gatewayRef, runtimeConfig)
+	hostnames := resolveHostnames(service, runtimeConfig)
+	if len(hostnames) == 0 && requiresHostname(gateway) {
+		logger.V(1).Info("refusing to create route: multi-listener gateway requires hostnames",
+			"gateway", gateway.Name,
+			"listeners", len(gateway.Spec.Listeners),
+		)
+		return nil
+	}
+
+	logger.V(1).Info("creating HTTPRoute", "gatewayRef", gatewayRef.Name, "hostnames", hostnames)
+	return buildHTTPRoute(service, gatewayRef, runtimeConfig, hostnames)
+}
+
+// requiresHostname reports whether the parent gateway forces a hostname pin,
+// i.e. it was successfully fetched and exposes more than one listener. A route
+// without hostnames on such a gateway would attach to every listener.
+func requiresHostname(gateway *gatewayapiv1.Gateway) bool {
+	return gateway != nil && len(gateway.Spec.Listeners) > 1
+}
+
+// resolveHostnames returns the hostnames to pin the route to, with the
+// service-level list overriding the runtime config list as a whole (mirroring
+// resolveGatewayRef rather than merging).
+func resolveHostnames(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) []gatewayapiv1.Hostname {
+	if service.Spec.Routing != nil && len(service.Spec.Routing.Hostnames) > 0 {
+		return service.Spec.Routing.Hostnames
+	}
+
+	if runtimeConfig != nil && runtimeConfig.Routing != nil && len(runtimeConfig.Routing.Hostnames) > 0 {
+		return runtimeConfig.Routing.Hostnames
+	}
+
+	return nil
 }
 
 // resolveGatewayRef gets the gateway reference from service or runtime config.
@@ -120,11 +192,14 @@ func resolveGatewayRef(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alph
 	return nil
 }
 
-// buildHTTPRoute constructs an HTTPRoute for the service.
+// buildHTTPRoute constructs an HTTPRoute for the service. hostnames, when
+// non-empty, pins the route to those hostnames so it only attaches to the
+// matching Gateway listener.
 func buildHTTPRoute(
 	service *aimv1alpha1.AIMService,
 	gatewayRef *gatewayapiv1.ParentReference,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	hostnames []gatewayapiv1.Hostname,
 ) *gatewayapiv1.HTTPRoute {
 	routeName, _ := GenerateHTTPRouteName(service.Name, service.Namespace)
 
@@ -227,7 +302,8 @@ func buildHTTPRoute(
 			CommonRouteSpec: gatewayapiv1.CommonRouteSpec{
 				ParentRefs: parentRefs,
 			},
-			Rules: []gatewayapiv1.HTTPRouteRule{rule},
+			Hostnames: hostnames,
+			Rules:     []gatewayapiv1.HTTPRouteRule{rule},
 		},
 	}
 

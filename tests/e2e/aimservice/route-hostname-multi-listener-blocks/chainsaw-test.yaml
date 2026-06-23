@@ -1,0 +1,57 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: multi-listener gateway requires a hostname pin (EAI-6951)
+#
+# When routing is enabled against a Gateway that exposes more than one listener
+# and no hostnames are configured, the operator must NOT create an all-hosts
+# HTTPRoute (which would attach to every listener and could bypass per-listener
+# authentication). Instead it surfaces ConfigValid=False via the RouteConfig
+# component (RouteConfigReady=False, reason RouteHostnameRequired).
+#
+# This is a pure config-validity check: it fires before any profile resolves,
+# so the test needs no real model/profile. It also exercises the operator's
+# RBAC for reading Gateways.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: route-hostname-multi-listener-blocks
+spec:
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create a multi-listener gateway
+      try:
+        - apply:
+            file: gateway.yaml
+
+    - name: Create a routing-enabled service with no hostnames
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert the service reports RouteHostnameRequired (ConfigValid=False)
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-unpinned-service
+              status:
+                (conditions[?type == 'RouteConfigReady']):
+                  - status: "False"
+                    reason: RouteHostnameRequired
+                (conditions[?type == 'ConfigValid']):
+                  - status: "False"
+
+    - name: Assert no HTTPRoute was created for the service
+      try:
+        - error:
+            timeout: 15s
+            resource:
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-unpinned-service
