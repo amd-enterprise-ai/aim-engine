@@ -50,9 +50,9 @@ feature.node.kubernetes.io/aim-accelerator.EPYC_9965: "128"
 
 AIM Engine constructs node affinity from `AIMProfile.spec.acceleratorModel` (or v1alpha1 `AIMServiceTemplate.spec.hardware.gpu.model`) using the `Exists` operator, without requiring any knowledge of hardware specifics. The label value (accelerator count) is informational only; actual capacity is enforced via the computed device resource request — see [Profiles — Accelerator and node affinity](profiles.md#accelerator-and-node-affinity).
 
-!!! note
-    Architecture-level labels for fallback profile matching (e.g. `aim-accelerator.CDNA3`, `aim-accelerator.EPYC_ZEN5`) will be supported once `aim-runtime` returns the full identifier hierarchy.
-
+:::{note}
+Architecture-level labels for fallback profile matching (e.g. `aim-accelerator.CDNA3`, `aim-accelerator.EPYC_ZEN5`) will be supported once `aim-runtime` returns the full identifier hierarchy.
+:::
 ## GPU Partition Scheme Labels
 
 On GPU nodes the detector also reads the current partition state from `amd-smi partition --current --json` and publishes it on a single partition axis, `feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.*`. The kernel-applied state reported by `amd-smi` is the single source of truth — AMD GPU Operator / DCM labels are **not** consulted, because they can lag or disagree with the kernel.
@@ -72,9 +72,9 @@ The label *value* is the number of schedulable units in that bucket and is infor
 
 Partition detection runs **independently of `detect-hardware`**: the scheme comes straight from `amd-smi partition --current --json`, so partition labels are published even on accelerator images that don't ship the `detect-hardware` command — and, conversely, a partition failure never suppresses the model/family labels (the two axes live in separate feature files; see [NFD Integration](#nfd-integration)). It is best-effort: when `amd-smi` is missing/old, times out, or returns unparseable output, the detector falls back to `partitioning-scheme.default` if it otherwise knows GPUs are present, and otherwise preserves the last-good partition labels rather than dropping them. The GPU detector image must ship an `amd-smi` that supports `partition --current --json`.
 
-!!! note
-    This iteration assumes the AMD GPU Operator's `resource_naming_strategy: single` (every GPU/partition advertised as `amd.com/gpu`). The partition labels themselves are strategy-independent (the detector reads `amd-smi`, not the device plugin), but partition-aware scheduling is only supported under `single` today.
-
+:::{note}
+This iteration assumes the AMD GPU Operator's `resource_naming_strategy: single` (every GPU/partition advertised as `amd.com/gpu`). The partition labels themselves are strategy-independent (the detector reads `amd-smi`, not the device plugin), but partition-aware scheduling is only supported under `single` today.
+:::
 ## DaemonSets
 
 | DaemonSet | Image | Target Nodes | Detects |

@@ -1,8 +1,10 @@
 # GPU Management
 
-!!! note "AcceleratorDetector"
-    AIM Engine includes an [AcceleratorDetector](../concepts/accelerator-detection.md) that detects GPUs and CPUs via NFD, writing labels under `feature.node.kubernetes.io/aim-accelerator.*`. It is enabled by default. The k8s-device-plugin labels documented below remain supported as a fallback.
+:::{admonition} AcceleratorDetector
+:class: note
 
+AIM Engine includes an [AcceleratorDetector](../concepts/accelerator-detection.md) that detects GPUs and CPUs via NFD, writing labels under `feature.node.kubernetes.io/aim-accelerator.*`. It is enabled by default. The k8s-device-plugin labels documented below remain supported as a fallback.
+:::
 AIM Engine detects available GPUs in the cluster and uses this information for profile resolution (v1alpha2) / template selection (v1alpha1) and node scheduling.
 
 ## GPU Detection
@@ -29,27 +31,29 @@ GPU preference scoring (highest to lowest): MI325X > MI300X > MI250X > MI210 > R
 
 Profiles (v1alpha2) and templates (v1alpha1) specify GPU requirements that translate to Kubernetes resource requests:
 
-=== "Profile (v1alpha2)"
+::::{tab-set}
+:::{tab-item} Profile (v1alpha2)
+```yaml
+# In an AIMProfile / AIMClusterProfile
+spec:
+  accelerator:
+    model: MI300X
+  resources:
+    requests:
+      amd.com/gpu: "4"
+```
+:::
 
-    ```yaml
-    # In an AIMProfile / AIMClusterProfile
-    spec:
-      accelerator:
-        model: MI300X
-      resources:
-        requests:
-          amd.com/gpu: "4"
-    ```
-
-=== "Template (v1alpha1, deprecated)"
-
-    ```yaml
-    # In an AIMServiceTemplate
-    hardware:
-      gpu:
-        model: MI300X
-        requests: 4
-    ```
+:::{tab-item} Template (v1alpha1, deprecated)
+```yaml
+# In an AIMServiceTemplate
+hardware:
+  gpu:
+    model: MI300X
+    requests: 4
+```
+:::
+::::
 
 Both result in the inference pod requesting `amd.com/gpu: 4`. Profiles use standard Kubernetes `ResourceRequirements` directly, while templates use a simplified `hardware` abstraction.
 

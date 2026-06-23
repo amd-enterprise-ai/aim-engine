@@ -2,9 +2,11 @@
 
 A **fine-tuned model** reuses an existing official AIM model's runtime profiles — its `aim-base` runtime, tuned engine arguments, accelerator pairings, and benchmarked precisions — and swaps in your fine-tune weights. You get the same performance characteristics as the published model with no re-tuning work.
 
-!!! info "v1alpha2"
-    Fine-tuned models use the `aim.eai.amd.com/v1alpha2` API. The v1alpha1 fine-tune path via `spec.profileCopy` is replaced by `spec.profiles`.
+:::{admonition} v1alpha2
+:class: note
 
+Fine-tuned models use the `aim.eai.amd.com/v1alpha2` API. The v1alpha1 fine-tune path via `spec.profileCopy` is replaced by `spec.profiles`.
+:::
 ## When to use this flow
 
 | Goal | Use this flow? |
@@ -17,13 +19,10 @@ A **fine-tuned model** reuses an existing official AIM model's runtime profiles 
 
 A fine-tuned model is a single AIMModel that derives from an already-existing official AIMModel: you inherit the published model's tuned engine arguments, accelerator pairings, and benchmarked precisions, and swap in your weights via `modelSources`. Because the override replaces the weights, each derived profile's image resolves back to the official model's `aim-base` runtime (rebased onto its registry+org) — the model-optimized image is specific to the published weights, so your fine-tune loads onto the clean base runtime instead. See [Image resolution](../concepts/profilesets.md#image-resolution) for how the derived image is chosen.
 
-```mermaid
-graph LR
-    A[Official AIMModel<br/>spec.image: aim-llama:0.9.0] -->|emits deployable profiles| B[Deployable AIMProfiles<br/>aimId=meta-llama/Llama-3-8B-Instruct<br/>tuned for MI300X, MI325X, ...]
-    B -->|consumed by| C[Fine-tune AIMModel<br/>spec.profiles.derivedFrom...]
-    C -->|emits deployable profiles| D[Deployable AIMProfiles<br/>aimId inherited<br/>modelSources overridden]
-    D -->|backs| E[AIMService]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/fine-tuned-flow-dark.svg">
+  <img alt="Fine-tune flow: an official AIMModel's deployable profiles are consumed by a fine-tune AIMModel that emits new deployable profiles backing an AIMService." src="../assets/diagrams/fine-tuned-flow.svg">
+</picture>
 
 The official AIMModel is typically applied once by the platform team or auto-discovered via `AIMClusterModelSource`. Your fine-tune AIMModel reuses its profiles read-only.
 

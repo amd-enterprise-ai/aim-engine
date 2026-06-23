@@ -30,9 +30,11 @@ AIM images (like `amdenterpriseai/aim-qwen-qwen3-32b`) package open-source model
 
 The `AIMModel` runs discovery on the image and publishes one `AIMProfile` per supported (GPU, precision, metric) combination. The `AIMService` resolves to the best deployable profile for your hardware, pre-warms the model cache, and creates a KServe `InferenceService`.
 
-!!! note "Why the `reconciler-pipeline: profile` annotation?"
-    AIMService dispatch is decided by **spec shape**, not by `apiVersion`. During the v1alpha1 → v1alpha2 migration window, `spec.model.name` and `spec.model.image` default to the legacy template pipeline so existing deployments keep working unchanged. The annotation forces this service onto the v1alpha2 profile pipeline, which resolves `qwen3-32b` to one of the `AIMClusterProfile`s produced by the `AIMClusterModel` above. The annotation becomes unnecessary once v1alpha1 is removed — see [Migration window](admin/upgrading.md#migration-window) for the full dispatch table.
+:::{admonition} Why the `reconciler-pipeline: profile` annotation?
+:class: note
 
+AIMService dispatch is decided by **spec shape**, not by `apiVersion`. During the v1alpha1 → v1alpha2 migration window, `spec.model.name` and `spec.model.image` default to the legacy template pipeline so existing deployments keep working unchanged. The annotation forces this service onto the v1alpha2 profile pipeline, which resolves `qwen3-32b` to one of the `AIMClusterProfile`s produced by the `AIMClusterModel` above. The annotation becomes unnecessary once v1alpha1 is removed — see [Migration window](admin/upgrading.md#migration-window) for the full dispatch table.
+:::
 ## Three model flows
 
 How you onboard a model depends on its relationship to AMD's published catalog:
@@ -45,33 +47,30 @@ How you onboard a model depends on its relationship to AMD's published catalog:
 
 ## Where to start
 
-<div class="grid cards" markdown>
+::::{grid} 1 1 3 3
+:gutter: 3
 
--   :material-server:{ .lg .middle } **Cluster administrators**
+:::{grid-item-card} Cluster administrators
+:link: getting-started/installation
+:link-type: doc
 
-    ---
+Install AIM Engine, configure KServe, manage GPU resources, and set up cluster-wide defaults.
+:::
 
-    Install AIM Engine, configure KServe, manage GPU resources, and set up cluster-wide defaults.
+:::{grid-item-card} Developers & integrators
+:link: getting-started/quickstart
+:link-type: doc
 
-    [:octicons-arrow-right-24: Installation](getting-started/installation.md)
+Deploy inference services, configure scaling, set up routing, integrate with your applications.
+:::
 
--   :material-code-braces:{ .lg .middle } **Developers & integrators**
+:::{grid-item-card} Data scientists
+:link: guides/model-catalog
+:link-type: doc
 
-    ---
-
-    Deploy inference services, configure scaling, set up routing, integrate with your applications.
-
-    [:octicons-arrow-right-24: Quickstart](getting-started/quickstart.md)
-
--   :material-brain:{ .lg .middle } **Data scientists**
-
-    ---
-
-    Browse the model catalog, deploy fine-tunes or custom models, tune inference parameters.
-
-    [:octicons-arrow-right-24: Model Catalog](guides/model-catalog.md)
-
-</div>
+Browse the model catalog, deploy fine-tunes or custom models, tune inference parameters.
+:::
+::::
 
 ## Key features
 

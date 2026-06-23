@@ -102,9 +102,9 @@ helm install aim-engine ./dist/chart \
   --create-namespace
 ```
 
-!!! tip
-    This project uses [mise](https://mise.jdx.dev) to manage tool versions (Go, controller-gen, etc.). Run `mise install` and `eval "$(mise activate bash)"` to get the correct versions on your PATH. See [Development Setup](../contributing/development-setup.md) for details.
-
+:::{tip}
+This project uses [mise](https://mise.jdx.dev) to manage tool versions (Go, controller-gen, etc.). Run `mise install` and `eval "$(mise activate bash)"` to get the correct versions on your PATH. See [Development Setup](../contributing/development-setup.md) for details.
+:::
 ## Common Configuration
 
 ### Enable Cluster Runtime Defaults
@@ -153,9 +153,9 @@ helm uninstall aim-engine -n aim-system
 helm uninstall aim-engine-crds -n aim-system
 ```
 
-!!! warning
-    Uninstalling the CRDs release deletes all AIM custom resources from the cluster. Remove the operator first, then the CRDs only if you want a full cleanup.
-
+:::{warning}
+Uninstalling the CRDs release deletes all AIM custom resources from the cluster. Remove the operator first, then the CRDs only if you want a full cleanup.
+:::
 ## Next Steps
 
 - [Quickstart](quickstart.md) — Deploy your first inference service

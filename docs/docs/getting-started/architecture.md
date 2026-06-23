@@ -4,65 +4,25 @@ AIM Engine is a Kubernetes operator that orchestrates the full lifecycle of AI i
 
 ## High-level architecture
 
-```mermaid
-graph TB
-    subgraph User["User-applied resources"]
-        AIMService["AIMService"]
-        AIMModel["AIMModel /<br/>AIMClusterModel"]
-        ModelSource["AIMClusterModelSource"]
-        ProfileSet["AIMProfileSet /<br/>AIMClusterProfileSet"]
-        Profile["AIMProfile /<br/>AIMClusterProfile<br/><small>(hand-authored)</small>"]
-    end
+AIM Engine has two cooperating flows that meet at the `AIMProfile`: **onboarding** turns models into deployable profiles, and **serving** turns a profile into a running endpoint. Throughout these diagrams, colour denotes the kind of resource — blue for user-applied, red for operator controllers, green for operator-managed, grey for infrastructure.
 
-    subgraph Operator["AIM Engine operator"]
-        direction TB
-        ModelCtrl["Model controller"]
-        ProfileSetCtrl["Profile-set controller"]
-        ProfileCtrl["Profile controller"]
-        ServiceCtrl["Service controller"]
-        CacheCtrl["Cache controller"]
-    end
+### Onboarding: from models to profiles
 
-    subgraph Managed["Operator-managed resources"]
-        DerivedProfile["Derived AIMProfile"]
-        DiscoveryJob["Discovery Job +<br/>ConfigMap"]
-        ProfileCache["AIMProfileCache"]
-        Artifact["AIMArtifact"]
-        ISVC["KServe<br/>InferenceService"]
-        HTTPRoute["Gateway API<br/>HTTPRoute"]
-    end
+Official models (via discovery), profile sets (via derivation), and hand-authored profiles all converge on a deployable `AIMProfile`.
 
-    subgraph Infra["Infrastructure"]
-        KServe["KServe"]
-        GatewayAPI["Gateway API"]
-        PVC["Persistent Volumes"]
-        GPU["AMD GPUs"]
-    end
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/model-onboarding-dark.svg">
+  <img alt="Model onboarding flow: AIMClusterModelSource discovers AIMModels; the Model controller runs image discovery and derivation; profile sets and hand-authored profiles also resolve to deployable AIMProfiles." src="../assets/diagrams/model-onboarding.svg">
+</picture>
 
-    AIMModel --> ModelCtrl
-    ModelSource -->|discovers| AIMModel
-    ProfileSet --> ProfileSetCtrl
+### Serving: from profile to endpoint
 
-    ModelCtrl -->|discovery flow| DiscoveryJob
-    ModelCtrl -->|derivation flow| ProfileSetCtrl
-    ProfileSetCtrl --> DerivedProfile
-    ModelCtrl --> Profile
-    Profile --> ProfileCtrl
+An `AIMService` resolves one of those profiles, and the Service controller creates the cache, InferenceService, and route that back a running endpoint.
 
-    AIMService --> ServiceCtrl
-    ServiceCtrl -->|resolves| Profile
-    ServiceCtrl -->|optional overlay| DerivedProfile
-    ServiceCtrl --> CacheCtrl
-    CacheCtrl --> ProfileCache
-    ProfileCache --> Artifact
-    Artifact --> PVC
-    ServiceCtrl --> ISVC
-    ServiceCtrl --> HTTPRoute
-
-    ISVC --> KServe
-    HTTPRoute --> GatewayAPI
-    KServe --> GPU
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/service-deployment-dark.svg">
+  <img alt="Service deployment flow: AIMService drives the Service controller, which resolves an AIMProfile, warms a cache to a PVC via AIMProfileCache and AIMArtifact, and creates a KServe InferenceService and Gateway API HTTPRoute." src="../assets/diagrams/service-deployment.svg">
+</picture>
 
 ## CRDs and their roles
 
@@ -95,25 +55,10 @@ CRD validation enforces "exactly one of `spec.image` or `spec.profiles`" — nei
 
 When you apply an `AIMService`, the controller reaches a single `AIMProfile` through one of five resolution shapes:
 
-```mermaid
-flowchart TD
-    Spec[AIMService spec] -->|spec.profile.name| Name[By name]
-    Spec -->|spec.model.name| Model[By model]
-    Spec -->|spec.model + spec.profile.selector| ModelSel[Model + selector]
-    Spec -->|spec.profile.selector| Selector[Global selector]
-    Spec -->|spec.model.image + annotation| ImageShape[By image &rarr; auto-create AIMModel]
-
-    Name --> Resolved[Resolved AIMProfile]
-    Model --> Rank[Rank by primary > type > version]
-    ModelSel --> Rank
-    Selector --> Rank
-    ImageShape --> Model
-    Rank --> Resolved
-
-    Resolved -->|spec.profileOverrides?| Overlay[Materialise overlay AIMProfile]
-    Overlay --> Final[Profile used for deployment]
-    Resolved --> Final
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/service-resolution-dark.svg">
+  <img alt="AIMService resolution shapes converging on a single resolved AIMProfile, then an optional overlay before deployment." src="../assets/diagrams/service-resolution.svg">
+</picture>
 
 The image shape requires the `aim.eai.amd.com/reconciler-pipeline: profile` annotation during the migration window — see [Migration window](../admin/upgrading.md#migration-window). See [Services](../concepts/services.md#resolution-shapes) for the canonical resolution table and mechanics.
 
@@ -147,16 +92,10 @@ Namespace wins. The resolved scope is recorded in `status.resolvedModel.scope` a
 
 Every AIM controller follows the same pipeline:
 
-```mermaid
-flowchart LR
-    Fetch["Fetch<br/><small>Gather all referenced resources</small>"]
-    Compose["Compose<br/><small>Interpret state, check health</small>"]
-    Plan["Plan<br/><small>Decide what to create or update</small>"]
-    Apply["Apply<br/><small>Execute changes against the cluster</small>"]
-    Status["Status<br/><small>Update conditions and health</small>"]
-
-    Fetch --> Compose --> Plan --> Apply --> Status
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/reconcile-pipeline-dark.svg">
+  <img alt="The shared reconciliation pipeline: Fetch, Compose, Plan, Apply, Status." src="../assets/diagrams/reconcile-pipeline.svg">
+</picture>
 
 Each step is idempotent: the operator converges toward the desired state on every reconciliation, handling partial failures and eventual consistency gracefully.
 

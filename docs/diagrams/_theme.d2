@@ -1,0 +1,83 @@
+# Central style for all AIM Engine diagrams.
+#
+# Every diagram in this directory starts with `...@_theme` to spread these
+# definitions in. Edit this one file to restyle every graph. Render-time
+# behaviour (layout engine, light/dark theme, padding) is centralized here via
+# vars.d2-config so `d2 in.d2 out.svg` needs no extra flags.
+
+vars: {
+  d2-config: {
+    layout-engine: elk
+    # Single light theme with an opaque background, so each committed SVG is a
+    # self-contained "figure card" that stays legible on both the light and dark
+    # page backgrounds (and on GitHub). We intentionally do NOT embed a
+    # prefers-color-scheme dark variant: an <img>-referenced SVG can only follow
+    # the OS color scheme, never the site's in-page light/dark toggle, so a dark
+    # variant would mismatch the toggle and duplicate-render on GitHub.
+    theme-id: 0
+    pad: 16
+  }
+}
+
+# Semantic classes shared across diagrams. Strokes carry the meaning; fills are
+# left to the active theme so light/dark switching keeps working.
+classes: {
+  # Resources a user applies directly.
+  user: {
+    style: {
+      stroke: "#2563eb"
+      stroke-width: 2
+      border-radius: 6
+    }
+  }
+  # Operator controllers / reconciliation logic.
+  operator: {
+    style: {
+      stroke: "#dc2626"
+      stroke-width: 2
+      border-radius: 6
+    }
+  }
+  # Resources the operator creates and manages.
+  managed: {
+    style: {
+      stroke: "#16a34a"
+      stroke-width: 2
+      border-radius: 6
+    }
+  }
+  # External infrastructure AIM Engine integrates with.
+  infra: {
+    style: {
+      stroke: "#6b7280"
+      stroke-width: 2
+      border-radius: 6
+    }
+  }
+  # A step in a linear pipeline / lifecycle.
+  step: {
+    style: {
+      stroke: "#7c3aed"
+      stroke-width: 2
+      border-radius: 6
+    }
+  }
+  # The resolved / terminal node of a flow.
+  resolved: {
+    style: {
+      stroke: "#0d9488"
+      stroke-width: 3
+      border-radius: 6
+      bold: true
+    }
+  }
+  # Container / grouping styling.
+  group: {
+    style: {
+      stroke: "#9ca3af"
+      stroke-width: 1
+      border-radius: 8
+      font-size: 18
+    }
+  }
+}

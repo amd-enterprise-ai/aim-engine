@@ -2,9 +2,11 @@
 
 `AIMModel` and `AIMClusterModel` are the entry point for getting a model onto the cluster. Each resource describes one model and produces a set of `AIMProfile` resources that `AIMService` can deploy.
 
-!!! info "v1alpha2"
-    This page documents the `aim.eai.amd.com/v1alpha2` API. For the v1alpha1 `AIMModel` shape (with `spec.custom`, `spec.modelSources`, `spec.discovery`, etc.) see [Legacy AIMModel](../legacy/aimmodel-v1alpha1.md).
+:::{admonition} v1alpha2
+:class: note
 
+This page documents the `aim.eai.amd.com/v1alpha2` API. For the v1alpha1 `AIMModel` shape (with `spec.custom`, `spec.modelSources`, `spec.discovery`, etc.) see [Legacy AIMModel](../legacy/aimmodel-v1alpha1.md).
+:::
 ## Three flows
 
 Every v1alpha2 AIMModel uses one of three flows. The flow is determined by which field you populate on the spec:

@@ -1,0 +1,13 @@
+...@_theme
+direction: right
+
+A: "Official AIMModel\nspec.image: aim-llama:0.9.0" {class: user}
+B: "Deployable AIMProfiles\naimId=meta-llama/Llama-3-8B-Instruct\ntuned for MI300X, MI325X, ..." {class: managed}
+C: "Fine-tune AIMModel\nspec.profiles.derivedFrom..." {class: user}
+D: "Deployable AIMProfiles\naimId inherited\nmodelSources overridden" {class: managed}
+E: AIMService {class: resolved}
+
+A -> B: emits deployable profiles
+B -> C: consumed by
+C -> D: emits deployable profiles
+D -> E: backs

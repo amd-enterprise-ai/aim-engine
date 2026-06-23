@@ -22,31 +22,37 @@ the mounted subtree at will. In `static` mode the set is fixed at creation and t
 disk is mounted only when at least one adapter is declared (a static service with
 no adapters serves nothing and needs no mount).
 
-!!! info "Both pipelines"
-    `spec.adapters` is supported on both the **profile** pipeline
-    (`aim.eai.amd.com/v1alpha2`, via `spec.profile`) and the **template**
-    pipeline (`aim.eai.amd.com/v1alpha1`, via `spec.template` / `spec.model`).
-    The staging mechanics are identical; only base-model resolution differs —
-    the profile pipeline resolves the parent through the `AIMProfileCache`, the
-    template pipeline through the `AIMTemplateCache`. On `v1alpha2`, adapters
-    still require `spec.profile`.
+:::{admonition} Both pipelines
+:class: note
 
-!!! warning "Minimal MVP scope"
-    This release ships **reference-only** adapter support: adapters are plain
-    references to existing `AIMArtifact` objects, and status reflects disk-side
-    staging only (`Pending` / `Downloading` / `Downloaded`). The list is editable
-    — adding an adapter stages it and the runtime hot-loads it. Removing an entry
-    is reconciled: a controller-managed subtree-sync Job prunes the removed
-    adapter's directory from the service subtree (the model-artifact reaper still
-    reclaims the *whole* subtree when the service is deleted). Note the in-pod
-    effect of a removal depends on the image running in dynamic mode (watcher);
-    in static mode the bytes are removed from disk but the running pod keeps the
-    adapter until restart. The controller already sets the `AIM_ADAPTER_*`
-    container env (`AIM_ADAPTER_SOURCE`, `AIM_ADAPTER_MODE`, the `MAX_*` caps, and
-    a dynamic-mode refresh interval), but the image honouring them (the in-pod
-    watcher), inline self-healing (`sourceUri` on the service), engine-reported
-    `Loaded` / `LoadRejected` states, dynamic namespace opt-in, and
-    `AIMProfileCache → adapterDisk` auto-propagation are deferred.
+`spec.adapters` is supported on both the **profile** pipeline
+(`aim.eai.amd.com/v1alpha2`, via `spec.profile`) and the **template**
+pipeline (`aim.eai.amd.com/v1alpha1`, via `spec.template` / `spec.model`).
+The staging mechanics are identical; only base-model resolution differs —
+the profile pipeline resolves the parent through the `AIMProfileCache`, the
+template pipeline through the `AIMTemplateCache`. On `v1alpha2`, adapters
+still require `spec.profile`.
+:::
+
+:::{admonition} Minimal MVP scope
+:class: warning
+
+This release ships **reference-only** adapter support: adapters are plain
+references to existing `AIMArtifact` objects, and status reflects disk-side
+staging only (`Pending` / `Downloading` / `Downloaded`). The list is editable
+— adding an adapter stages it and the runtime hot-loads it. Removing an entry
+is reconciled: a controller-managed subtree-sync Job prunes the removed
+adapter's directory from the service subtree (the model-artifact reaper still
+reclaims the *whole* subtree when the service is deleted). Note the in-pod
+effect of a removal depends on the image running in dynamic mode (watcher);
+in static mode the bytes are removed from disk but the running pod keeps the
+adapter until restart. The controller already sets the `AIM_ADAPTER_*`
+container env (`AIM_ADAPTER_SOURCE`, `AIM_ADAPTER_MODE`, the `MAX_*` caps, and
+a dynamic-mode refresh interval), but the image honouring them (the in-pod
+watcher), inline self-healing (`sourceUri` on the service), engine-reported
+`Loaded` / `LoadRejected` states, dynamic namespace opt-in, and
+`AIMProfileCache → adapterDisk` auto-propagation are deferred.
+:::
 
 ## Concepts
 

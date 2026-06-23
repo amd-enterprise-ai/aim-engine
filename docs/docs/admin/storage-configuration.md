@@ -2,9 +2,11 @@
 
 AIM Engine uses persistent volumes for model caching. This guide covers storage setup and sizing.
 
-!!! info "v1alpha2 vs v1alpha1"
-    `AIMRuntimeConfig` / `AIMClusterRuntimeConfig` remain `aim.eai.amd.com/v1alpha1` resources — they are consumed by both the v1alpha2 profile pipeline and the v1alpha1 template pipeline unchanged. Storage fields (`spec.storage`, `spec.artifactStorageQuota`, `spec.artifact.defaultRetentionPriority`) are the same regardless of which pipeline reads them.
+:::{admonition} v1alpha2 vs v1alpha1
+:class: note
 
+`AIMRuntimeConfig` / `AIMClusterRuntimeConfig` remain `aim.eai.amd.com/v1alpha1` resources — they are consumed by both the v1alpha2 profile pipeline and the v1alpha1 template pipeline unchanged. Storage fields (`spec.storage`, `spec.artifactStorageQuota`, `spec.artifact.defaultRetentionPriority`) are the same regardless of which pipeline reads them.
+:::
 ## Requirements
 
 Model caching requires `ReadWriteMany` (RWX) persistent volumes so that multiple pods can mount the same cached model data. You need a CSI driver that supports RWX access mode, such as:

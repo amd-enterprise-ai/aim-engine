@@ -1,0 +1,10 @@
+...@_theme
+direction: right
+
+Fetch: "Fetch\nGather referenced resources" {class: step}
+Compose: "Compose\nInterpret state, check health" {class: step}
+Plan: "Plan\nDecide what to create or update" {class: step}
+Apply: "Apply\nExecute changes against the cluster" {class: step}
+Status: "Status\nUpdate conditions and health" {class: step}
+
+Fetch -> Compose -> Plan -> Apply -> Status

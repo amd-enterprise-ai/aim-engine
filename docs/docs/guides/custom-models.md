@@ -2,9 +2,11 @@
 
 A **custom model** lets you deploy a model whose architecture isn't published in the AMD AIM catalog. You combine a generic AIM base image — which supplies the runtime, engine, and tested accelerator profiles — with your own model weights pulled from S3, HuggingFace, or any other supported source.
 
-!!! info "v1alpha2"
-    Custom models use the `aim.eai.amd.com/v1alpha2` API. The v1alpha1 `spec.custom` / `spec.modelSources` flow on `AIMModel` is deprecated and removed from v1alpha2.
+:::{admonition} v1alpha2
+:class: note
 
+Custom models use the `aim.eai.amd.com/v1alpha2` API. The v1alpha1 `spec.custom` / `spec.modelSources` flow on `AIMModel` is deprecated and removed from v1alpha2.
+:::
 ## When to use this flow
 
 | Goal | Use this flow? |
@@ -17,13 +19,10 @@ A **custom model** lets you deploy a model whose architecture isn't published in
 
 The flow has two AIMModels working together:
 
-```mermaid
-graph LR
-    A[Base-image AIMModel<br/>spec.image: aim-base:0.11] -->|emits base profiles| B[Base AIMProfiles<br/>role=base<br/>status.deployable=false]
-    B -->|consumed by| C[Custom-model AIMModel<br/>spec.profiles.derivedFrom...]
-    C -->|emits deployable profiles| D[Deployable AIMProfiles<br/>role=deployable<br/>status.deployable=true]
-    D -->|backs| E[AIMService<br/>spec.model.name: ...]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/custom-model-flow-dark.svg">
+  <img alt="Custom-model flow: a base-image AIMModel's base profiles are consumed by a custom-model AIMModel that emits deployable profiles backing an AIMService." src="../assets/diagrams/custom-model-flow.svg">
+</picture>
 
 1. **Base-image model** — points `spec.image` at an AIM base image and produces **base AIMProfiles**: one per accelerator/precision combination the base image ships, with no `aimId` or `modelSources` populated. Base profiles are not deployable on their own — they exist only as derivation sources.
 

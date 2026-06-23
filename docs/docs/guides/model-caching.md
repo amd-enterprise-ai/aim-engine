@@ -2,9 +2,11 @@
 
 Model caching pre-downloads model artifacts to shared persistent volumes, reducing startup time and bandwidth usage across service replicas and restarts.
 
-!!! info "v1alpha2"
-    Examples on this page use `aim.eai.amd.com/v1alpha2`. Caching is keyed by the **resolved profile** (via `AIMProfileCache`) instead of the v1alpha1 template (`AIMTemplateCache`). The `spec.caching.mode` field and its semantics are unchanged across versions. For the legacy template-based cache, see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+:::{admonition} v1alpha2
+:class: note
 
+Examples on this page use `aim.eai.amd.com/v1alpha2`. Caching is keyed by the **resolved profile** (via `AIMProfileCache`) instead of the v1alpha1 template (`AIMTemplateCache`). The `spec.caching.mode` field and its semantics are unchanged across versions. For the legacy template-based cache, see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+:::
 ## Caching Modes
 
 Control caching behavior with `spec.caching.mode`:
@@ -26,9 +28,9 @@ spec:
     mode: Shared
 ```
 
-!!! note
-    The caching mode is immutable after creation. Legacy values `Always`, `Auto`, and `Never` are accepted for backward compatibility (`Always`/`Auto` map to `Shared`, `Never` maps to `Dedicated`).
-
+:::{note}
+The caching mode is immutable after creation. Legacy values `Always`, `Auto`, and `Never` are accepted for backward compatibility (`Always`/`Auto` map to `Shared`, `Never` maps to `Dedicated`).
+:::
 ## How Caching Works
 
 When caching is active, AIM Engine creates a hierarchy of resources:

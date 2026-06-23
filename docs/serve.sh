@@ -1,26 +1,25 @@
 #!/bin/bash
 
-# This script sets up the environment and servers the site locally
+# Sets up the Python environment and serves the Sphinx docs locally with live
+# reload. Prefer `make docs-serve` from the repo root; this script is a
+# standalone equivalent.
 
 set -e
 
-# Define virtual environment directory
 VENV_DIR=".venv"
+PORT="${DOCS_PORT:-8000}"
 
-# Check if the virtual environment exists, if not, create one
 if [ ! -d "$VENV_DIR" ]; then
     echo "Creating virtual environment..."
     python3 -m venv "$VENV_DIR"
 fi
 
-# Activate the virtual environment
 echo "Activating virtual environment..."
 source "$VENV_DIR/bin/activate"
 
-# Install dependencies
 echo "Installing dependencies from requirements.txt..."
-pip install -r requirements.txt
+pip install -q -r requirements.txt
 
-# Serve the MkDocs site
-echo "Starting MkDocs server..."
-mkdocs serve
+echo "Starting Sphinx dev server on http://localhost:${PORT}/ ..."
+echo "Tip: in another terminal, run 'make diagrams-watch DIAGRAM=<name>' for live diagram editing."
+sphinx-autobuild docs docs/_build/html --host 0.0.0.0 --port "$PORT"

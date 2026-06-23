@@ -9,9 +9,11 @@ You'll encounter profile sets in two ways:
 
 The same internal primitive handles both — `AIMModel.spec.profiles` is translated into an `AIMProfileSetSpec` for the synthesised child set.
 
-!!! info "v1alpha2"
-    `AIMProfileSet`/`AIMClusterProfileSet` are new CRDs in `aim.eai.amd.com/v1alpha2` — v1alpha1 had no first-class derivation resource. The closest legacy primitive is `AIMModel.spec.profileCopy`, which performed an inline copy step against existing AIMServiceTemplates; v1alpha2 reshapes that into `AIMModel.spec.profiles` (which synthesises a child profile set), and `spec.profileCopy` is forbidden on v1alpha2. See [Migrating to v1alpha2 → AIMModel mapping](../legacy/migrating.md#aimmodel-mapping) for the full field-by-field translation.
+:::{admonition} v1alpha2
+:class: note
 
+`AIMProfileSet`/`AIMClusterProfileSet` are new CRDs in `aim.eai.amd.com/v1alpha2` — v1alpha1 had no first-class derivation resource. The closest legacy primitive is `AIMModel.spec.profileCopy`, which performed an inline copy step against existing AIMServiceTemplates; v1alpha2 reshapes that into `AIMModel.spec.profiles` (which synthesises a child profile set), and `spec.profileCopy` is forbidden on v1alpha2. See [Migrating to v1alpha2 → AIMModel mapping](../legacy/migrating.md#aimmodel-mapping) for the full field-by-field translation.
+:::
 ## Cluster vs namespace scope
 
 | Resource | Scope | Produces |

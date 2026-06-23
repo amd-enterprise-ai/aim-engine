@@ -2,9 +2,11 @@
 
 AIM Engine pre-downloads model artifacts to persistent volumes so inference services can start without waiting on registry pulls. The caching system is hierarchical, deduplicates downloads within a namespace, and is driven from each `AIMService`'s resolved profile.
 
-!!! info "v1alpha2"
-    This page documents the `AIMProfileCache` flow used by v1alpha2 services. For the v1alpha1 `AIMTemplateCache` shape, see [Service Templates (v1alpha1)](../legacy/service-templates.md). Both flows coexist in the same cluster.
+:::{admonition} v1alpha2
+:class: note
 
+This page documents the `AIMProfileCache` flow used by v1alpha2 services. For the v1alpha1 `AIMTemplateCache` shape, see [Service Templates (v1alpha1)](../legacy/service-templates.md). Both flows coexist in the same cluster.
+:::
 ## Resources
 
 The cache hierarchy uses three v1alpha2 resources plus the underlying Kubernetes objects:

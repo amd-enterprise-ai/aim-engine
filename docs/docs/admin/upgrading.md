@@ -51,9 +51,9 @@ Roll back to the previous Helm release:
 helm rollback aim-engine -n aim-system
 ```
 
-!!! note
-    Rolling back the operator does not roll back CRD changes. New CRD fields are additive and backward compatible. If a CRD change is not backward compatible, this will be noted in the release notes.
-
+:::{note}
+Rolling back the operator does not roll back CRD changes. New CRD fields are additive and backward compatible. If a CRD change is not backward compatible, this will be noted in the release notes.
+:::
 ## Version Compatibility
 
 AIM Engine follows semantic versioning. Within a major version:

@@ -143,7 +143,7 @@ clusterModelSource:
   # -- Name of the AIMClusterModelSource resource
   name: default
   # -- Spec fields for the AIMClusterModelSource.
-  # See [AIMClusterModelSource](../../concepts/model-discovery.md).
+  # See [AIMClusterModelSource](../concepts/model-sources.md).
   # @default -- `{}` (see examples below)
   # spec:
   #   registry: ghcr.io

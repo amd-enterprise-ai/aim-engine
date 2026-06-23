@@ -1,0 +1,31 @@
+...@_theme
+# Dagre's softer edge routing reads cleaner than elk's rigid right-angles for
+# this fan-out. Overrides only the engine; palette/themes stay from _theme.
+vars: {d2-config: {layout-engine: dagre}}
+direction: down
+
+Spec: AIMService spec {class: user}
+Name: By name {class: step}
+Model: By model {class: step}
+ModelSel: Model + selector {class: step}
+Selector: Global selector {class: step}
+ImageShape: "By image →\nauto-create AIMModel" {class: step}
+Rank: "Rank by\nprimary > type > version" {class: operator}
+Resolved: Resolved AIMProfile {class: resolved}
+Overlay: Materialise overlay AIMProfile {class: managed}
+Final: Profile used for deployment {class: resolved}
+
+Spec -> Name: spec.profile.name
+Spec -> Model: spec.model.name
+Spec -> ModelSel: spec.model + spec.profile.selector
+Spec -> Selector: spec.profile.selector
+Spec -> ImageShape: spec.model.image + annotation
+Name -> Resolved
+Model -> Rank
+ModelSel -> Rank
+Selector -> Rank
+ImageShape -> Model
+Rank -> Resolved
+Resolved -> Overlay: spec.profileOverrides?
+Overlay -> Final
+Resolved -> Final

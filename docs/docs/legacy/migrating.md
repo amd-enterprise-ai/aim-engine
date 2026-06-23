@@ -2,9 +2,9 @@
 
 This guide maps v1alpha1 concepts to their v1alpha2 equivalents and provides conversion recipes for the common deployment patterns.
 
-!!! note
-    Read the [Legacy Overview](index.md) first for context on coexistence rules and the deprecation timeline.
-
+:::{note}
+Read the [Legacy Overview](index.md) first for context on coexistence rules and the deprecation timeline.
+:::
 ## Resource mapping
 
 | v1alpha1 | v1alpha2 | Migration |

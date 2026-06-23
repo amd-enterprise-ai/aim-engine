@@ -2,19 +2,17 @@
 
 `AIMService` is the resource you create to deploy an inference endpoint. It binds an `AIMProfile` (the runtime configuration) to optional service-level concerns — caching, routing, autoscaling, resources — and produces a KServe `InferenceService` plus an optional Gateway API `HTTPRoute`.
 
-!!! info "v1alpha2"
-    This page documents the `aim.eai.amd.com/v1alpha2` API. For the v1alpha1 `spec.template` shape see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+:::{admonition} v1alpha2
+:class: note
 
+This page documents the `aim.eai.amd.com/v1alpha2` API. For the v1alpha1 `spec.template` shape see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+:::
 ## Lifecycle
 
-```mermaid
-flowchart LR
-    Spec[AIMService spec] -->|resolve| Profile[AIMProfile]
-    Profile -->|overlay?| Overlay[Service-owned overlay AIMProfile]
-    Profile --> Cache[AIMProfileCache]
-    Profile --> ISVC[KServe InferenceService]
-    ISVC --> Route[HTTPRoute]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/service-lifecycle-dark.svg">
+  <img alt="AIMService lifecycle: the resolved AIMProfile fans out to an optional overlay, a cache, and a KServe InferenceService with an HTTPRoute." src="../assets/diagrams/service-lifecycle.svg">
+</picture>
 
 On every reconcile the controller:
 

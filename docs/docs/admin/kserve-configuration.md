@@ -42,9 +42,9 @@ helm install kserve oci://ghcr.io/kserve/charts/kserve \
 
 ### Resource Limits (Critical)
 
-!!! warning
-    Without clearing the default resource limits, AIM Engine deployments will fail.
-
+:::{warning}
+Without clearing the default resource limits, AIM Engine deployments will fail.
+:::
 KServe applies default CPU and memory limits (`cpu: 1`, `memory: 2Gi`) to all InferenceService containers. AIM Engine sets CPU requests based on GPU count (4 CPUs per GPU) but intentionally does not set CPU limits, allowing inference workloads to burst and fully utilize available CPU for optimal throughput. KServe's default limit of `1` conflicts with the calculated request, causing Kubernetes to reject the pod.
 
 For GPU workloads, AIM Engine also sets memory defaults per GPU (`requests.memory: 32Gi`, `limits.memory: 48Gi`), unless overridden by profile/template/service resources. Clearing KServe defaults avoids accidental request/limit mismatches and hidden caps when resources are omitted or partially overridden.

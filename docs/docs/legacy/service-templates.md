@@ -1,10 +1,12 @@
 # Service Templates (v1alpha1)
 
-!!! warning "Deprecated — use Profiles in v1alpha2"
-    `AIMServiceTemplate` / `AIMClusterServiceTemplate` are part of `aim.eai.amd.com/v1alpha1` and will be removed in a future release. New deployments should use [Profiles](../concepts/profiles.md) (`v1alpha2`), which carry self-contained runtime configurations (image + accelerator + engine + model sources) without requiring an intermediate template lookup.
+:::{admonition} Deprecated — use Profiles in v1alpha2
+:class: warning
 
-    See [Migrating to v1alpha2](migrating.md) for field-by-field conversion recipes and [Admin → Upgrading → Migration window](../admin/upgrading.md#migration-window) for how the two API versions coexist.
+`AIMServiceTemplate` / `AIMClusterServiceTemplate` are part of `aim.eai.amd.com/v1alpha1` and will be removed in a future release. New deployments should use [Profiles](../concepts/profiles.md) (`v1alpha2`), which carry self-contained runtime configurations (image + accelerator + engine + model sources) without requiring an intermediate template lookup.
 
+See [Migrating to v1alpha2](migrating.md) for field-by-field conversion recipes and [Admin → Upgrading → Migration window](../admin/upgrading.md#migration-window) for how the two API versions coexist.
+:::
 This page is the operational reference for the legacy template shape. The advanced walkthroughs that used to live here (`customProfile`, `customTemplates`, `profileCopy`, fine-tuned template copies, auto-creation from model discovery) have v1alpha2 replacements documented in the [user guides](../guides/deploying-services.md) and the [migration recipes](migrating.md).
 
 ## Overview
@@ -66,7 +68,7 @@ spec:
 | `caching` | `caching.enabled: true` pre-warms model artifacts. Namespace-scoped only. | No |
 | `modelSources` | Static sources skipping discovery. See [Static model sources](#static-model-sources). | — |
 
-The v1alpha2 equivalent fields live on `AIMProfile` — see [Migrating to v1alpha2 → AIMServiceTemplate](migrating.md#aimservicetemplate-mapping).
+The v1alpha2 equivalent fields live on `AIMProfile` — see [Migrating to v1alpha2 → AIMServiceTemplate](migrating.md#aimservicetemplate-aimprofile).
 
 ## Discovery lifecycle
 

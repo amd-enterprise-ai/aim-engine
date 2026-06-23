@@ -80,20 +80,22 @@ These are set on inference containers by the operator. The "Source" column lists
 
 When the same variable is set at multiple levels, the most specific wins:
 
-=== "v1alpha2"
+::::{tab-set}
+:::{tab-item} v1alpha2
+1. `AIMService.spec.env` (highest priority)
+2. `AIMService.spec.profileOverrides.engineEnv` / `containerEnv` (overlay on top of the resolved profile)
+3. Resolved `AIMProfile` / `AIMClusterProfile` env (`spec.engineEnv`, `spec.containerEnv`, plus profile-derived vars such as metric/precision)
+4. Merged runtime config env (`AIMRuntimeConfig.spec.env` overriding `AIMClusterRuntimeConfig.spec.env`)
+5. Operator defaults (lowest priority)
+:::
 
-    1. `AIMService.spec.env` (highest priority)
-    2. `AIMService.spec.profileOverrides.engineEnv` / `containerEnv` (overlay on top of the resolved profile)
-    3. Resolved `AIMProfile` / `AIMClusterProfile` env (`spec.engineEnv`, `spec.containerEnv`, plus profile-derived vars such as metric/precision)
-    4. Merged runtime config env (`AIMRuntimeConfig.spec.env` overriding `AIMClusterRuntimeConfig.spec.env`)
-    5. Operator defaults (lowest priority)
-
-=== "v1alpha1 (legacy)"
-
-    1. `AIMService.spec.env` (highest priority)
-    2. `AIMServiceTemplate.spec.env` (plus template-derived vars such as metric/precision/profile)
-    3. Merged runtime config env (`AIMRuntimeConfig.spec.env` overriding `AIMClusterRuntimeConfig.spec.env`)
-    4. Operator defaults (lowest priority)
+:::{tab-item} v1alpha1 (legacy)
+1. `AIMService.spec.env` (highest priority)
+2. `AIMServiceTemplate.spec.env` (plus template-derived vars such as metric/precision/profile)
+3. Merged runtime config env (`AIMRuntimeConfig.spec.env` overriding `AIMClusterRuntimeConfig.spec.env`)
+4. Operator defaults (lowest priority)
+:::
+::::
 
 ## Next Steps
 

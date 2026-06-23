@@ -2,9 +2,11 @@
 
 AIM Engine maintains a catalog of available models as `AIMModel` and `AIMClusterModel` resources. This guide covers browsing, applying, and auto-discovering models.
 
-!!! info "v1alpha2"
-    All examples use `aim.eai.amd.com/v1alpha2`. For the deprecated v1alpha1 `AIMModel` shape with `spec.custom` / `spec.modelSources`, see [Legacy AIMModel](../legacy/aimmodel-v1alpha1.md).
+:::{admonition} v1alpha2
+:class: note
 
+All examples use `aim.eai.amd.com/v1alpha2`. For the deprecated v1alpha1 `AIMModel` shape with `spec.custom` / `spec.modelSources`, see [Legacy AIMModel](../legacy/aimmodel-v1alpha1.md).
+:::
 ## Browsing models
 
 ```bash
@@ -155,9 +157,11 @@ spec:
 
 The discovered `AIMClusterModel` resources are then reconciled the same way as manually-applied ones. They use the v1alpha2 spec shape (`spec.image` set).
 
-!!! note "v1alpha1 source resource"
-    `AIMClusterModelSource` itself remains under `v1alpha1` while the resources it creates use the v1alpha2 `AIMModel` shape. This intentionally avoids gating discovery on a migration.
+:::{admonition} v1alpha1 source resource
+:class: note
 
+`AIMClusterModelSource` itself remains under `v1alpha1` while the resources it creates use the v1alpha2 `AIMModel` shape. This intentionally avoids gating discovery on a migration.
+:::
 ### Selecting images
 
 Use `images` for simple explicit lists, or `filters` for per-image controls:

@@ -1,3 +1,10 @@
-mkdocs
-mkdocs-material
-click<8.2.2  # 8.2.2+ breaks mkdocs livereload (github.com/mkdocs/mkdocs/issues/4032)
+# Sphinx documentation toolchain.
+# rocm-docs-core is AMD's official docs theme (pydata-sphinx-theme +
+# sphinx-book-theme + MyST + sphinx-design + sphinx-external-toc), matching the
+# published umbrella site (https://enterprise-ai.docs.amd.com). It pulls in the
+# theme and all extensions we use.
+# Diagrams are authored in D2 (docs/diagrams/*.d2) and rendered to committed
+# SVGs via `make diagrams` (requires the `d2` CLI, provided by mise).
+rocm-docs-core>=1.35,<2
+sphinx-autobuild>=2024.10
+linkify-it-py>=2.0,<3

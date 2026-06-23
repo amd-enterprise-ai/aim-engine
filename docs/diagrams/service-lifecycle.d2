@@ -1,0 +1,15 @@
+...@_theme
+direction: right
+
+Spec: AIMService spec {class: user}
+Profile: AIMProfile {class: resolved}
+Overlay: Service-owned overlay AIMProfile {class: managed}
+Cache: AIMProfileCache {class: managed}
+ISVC: KServe InferenceService {class: managed}
+Route: HTTPRoute {class: managed}
+
+Spec -> Profile: resolve
+Profile -> Overlay: overlay?
+Profile -> Cache
+Profile -> ISVC
+ISVC -> Route

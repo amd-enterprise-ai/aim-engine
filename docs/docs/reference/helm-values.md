@@ -85,7 +85,7 @@ Cluster-wide AIMClusterModelSource for automatic model discovery. Creates an AIM
 |-----------|-------------|----------|
 | `clusterModelSource.enable` | Enable creation of the AIMClusterModelSource resource. Off by default so a fresh `helm install` succeeds without needing a registry pull secret in the operator namespace. | `false` |
 | `clusterModelSource.name` | Name of the AIMClusterModelSource resource | `default` |
-| `clusterModelSource.spec` | Spec fields for the AIMClusterModelSource. See [AIMClusterModelSource](../../concepts/model-discovery.md). | `{}` (see examples below) |
+| `clusterModelSource.spec` | Spec fields for the AIMClusterModelSource. See [AIMClusterModelSource](../concepts/model-sources.md). | `{}` (see examples below) |
 
 ## scaleFromZero
 

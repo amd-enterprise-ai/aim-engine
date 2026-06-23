@@ -1,0 +1,15 @@
+...@_theme
+direction: right
+
+Service: AIMService spec {class: user}
+Model: AIMModel {class: user}
+Template: AIMServiceTemplate {class: user}
+TemplateCache: AIMTemplateCache {class: managed}
+ISVC: KServe InferenceService {class: managed}
+Route: HTTPRoute {class: managed}
+
+Service -> Model: spec.model
+Service -> Template: spec.template
+Template -> TemplateCache
+TemplateCache -> ISVC
+ISVC -> Route

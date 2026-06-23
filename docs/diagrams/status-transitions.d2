@@ -1,0 +1,34 @@
+...@_theme
+# Dagre lays this state machine out more compactly than elk (which leaves it
+# tall and sparse). Overrides only the engine; palette/themes stay from _theme.
+vars: {d2-config: {layout-engine: dagre}}
+direction: down
+
+start: "" {
+  shape: circle
+  width: 28
+  height: 28
+  style: {fill: "#111827"; stroke: "#111827"}
+}
+Pending: Pending {class: step}
+Starting: Starting {class: step}
+Progressing: Progressing {class: step}
+Ready: Ready {class: resolved}
+Running: Running {class: resolved}
+Degraded: Degraded {class: operator}
+Failed: Failed {class: operator}
+NotAvailable: NotAvailable {class: infra}
+
+start -> Pending
+Pending -> Starting: Dependencies resolved
+Starting -> Progressing: Resources created
+Progressing -> Ready: All conditions met
+Progressing -> Running: AIMService only
+Ready -> Degraded: Partial failure
+Running -> Degraded: Partial failure
+Degraded -> Ready: Recovery
+Degraded -> Running: Recovery
+Pending -> Failed: Critical error
+Starting -> Failed: Critical error
+Progressing -> Failed: Critical error
+Pending -> NotAvailable: Infrastructure missing

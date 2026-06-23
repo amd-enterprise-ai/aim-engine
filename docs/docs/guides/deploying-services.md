@@ -2,9 +2,11 @@
 
 `AIMService` is the primary resource for deploying inference endpoints. This guide covers the common patterns — picking a profile, configuring scaling and routing, and verifying the deployment.
 
-!!! info "v1alpha2"
-    All examples on this page use `aim.eai.amd.com/v1alpha2`. For the deprecated v1alpha1 shape (`spec.template`), see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+:::{admonition} v1alpha2
+:class: note
 
+All examples on this page use `aim.eai.amd.com/v1alpha2`. For the deprecated v1alpha1 shape (`spec.template`), see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+:::
 ## Quick start
 
 The shortest path: name a model, let the controller pick a profile.
@@ -128,9 +130,11 @@ The shortest path when you only have a container image. With the annotation, the
 
 If you plan to share the image across many services, apply a long-lived `AIMModel`/`AIMClusterModel` once and reference it via `spec.model.name` instead — the same profiles back every service and the cache works in `Shared` mode without extra owner chains.
 
-!!! warning "Migration window"
-    Without `aim.eai.amd.com/reconciler-pipeline: profile`, `spec.model.image` is reconciled by the **legacy v1alpha1 template pipeline**. The annotation will be removed (and the profile pipeline made the default) when v1alpha1 is dropped. See [Migration window](../admin/upgrading.md#migration-window) for the full mechanics, including the auto-created `AIMModel` naming convention, labels, and GC behaviour.
+:::{admonition} Migration window
+:class: warning
 
+Without `aim.eai.amd.com/reconciler-pipeline: profile`, `spec.model.image` is reconciled by the **legacy v1alpha1 template pipeline**. The annotation will be removed (and the profile pipeline made the default) when v1alpha1 is dropped. See [Migration window](../admin/upgrading.md#migration-window) for the full mechanics, including the auto-created `AIMModel` naming convention, labels, and GC behaviour.
+:::
 ## Profile overlays
 
 To tweak a published profile for one service — typically to point it at fine-tune weights or override engine args — use `spec.profileOverrides`:

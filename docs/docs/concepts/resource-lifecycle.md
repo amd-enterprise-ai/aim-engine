@@ -57,22 +57,10 @@ The same Shared/Dedicated split applies to legacy `AIMTemplateCache` as to `AIMP
 
 All AIM resources follow a common status progression:
 
-```mermaid
-stateDiagram-v2
-    [*] --> Pending
-    Pending --> Starting : Dependencies resolved
-    Starting --> Progressing : Resources created
-    Progressing --> Ready : All conditions met
-    Progressing --> Running : (AIMService only)
-    Ready --> Degraded : Partial failure
-    Running --> Degraded : Partial failure
-    Degraded --> Ready : Recovery
-    Degraded --> Running : Recovery
-    Pending --> Failed : Critical error
-    Starting --> Failed : Critical error
-    Progressing --> Failed : Critical error
-    Pending --> NotAvailable : Infrastructure missing
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/status-transitions-dark.svg">
+  <img alt="Common status progression for AIM resources, from Pending through Ready/Running with Degraded, Failed, and NotAvailable transitions." src="../assets/diagrams/status-transitions.svg">
+</picture>
 
 | Status | Priority | Description |
 |---|---|---|
@@ -191,9 +179,9 @@ Domain logic validation runs during reconciliation and surfaces as condition upd
 
 These appear as condition changes rather than immediate API errors. Check `ConfigValid` and component conditions for reconciliation-time validation failures.
 
-!!! note
-    AIM Engine does **not** use admission webhooks. All immediate validation is via CEL rules in the CRD schema. The webhook flags in the operator binary exist for potential future use.
-
+:::{note}
+AIM Engine does **not** use admission webhooks. All immediate validation is via CEL rules in the CRD schema. The webhook flags in the operator binary exist for potential future use.
+:::
 ## Discovery and download jobs
 
 AIM Engine creates short-lived Kubernetes Jobs for image discovery and model artifact operations. These are the transient pods you may see in your namespaces.

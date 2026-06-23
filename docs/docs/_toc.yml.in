@@ -1,0 +1,70 @@
+# Table of contents for the AIM Engine docs (sphinx-external-toc).
+# Each section landing page also carries a hand-written bullet list of the same
+# links so navigation still works when browsing the Markdown on GitHub.
+defaults:
+  numbered: false
+  maxdepth: 2
+root: README
+subtrees:
+  - entries:
+      - file: getting-started/getting-started
+        subtrees:
+          - entries:
+              - file: getting-started/installation
+              - file: getting-started/quickstart
+              - file: getting-started/architecture
+      - file: guides/guides
+        subtrees:
+          - entries:
+              - file: guides/deploying-services
+              - file: guides/model-catalog
+              - file: guides/fine-tuned-models
+              - file: guides/custom-models
+              - file: guides/scaling-and-autoscaling
+              - file: guides/model-caching
+              - file: guides/lora-adapters
+              - file: guides/routing-and-ingress
+              - file: guides/private-registries
+              - file: guides/multi-tenancy
+      - file: concepts/concepts
+        subtrees:
+          - entries:
+              - file: concepts/services
+              - file: concepts/models
+              - file: concepts/profiles
+              - file: concepts/profilesets
+              - file: concepts/model-sources
+              - file: concepts/runtime-config
+              - file: concepts/caching
+              - file: concepts/accelerator-detection
+              - file: concepts/resource-lifecycle
+      - file: admin/admin
+        subtrees:
+          - entries:
+              - file: admin/installation
+              - file: admin/kserve-configuration
+              - file: admin/gpu-management
+              - file: admin/storage-configuration
+              - file: admin/upgrading
+              - file: admin/monitoring
+              - file: admin/troubleshooting
+              - file: admin/security
+      - file: reference/reference
+        subtrees:
+          - entries:
+              - file: reference/api/v1alpha2
+              - file: reference/api/v1alpha1
+              - file: reference/helm-values
+              - file: reference/cli
+              - file: reference/environment-variables
+              - file: reference/naming-and-labels
+              - file: reference/conditions
+      - file: legacy/index
+        subtrees:
+          - entries:
+              - file: legacy/migrating
+              - file: legacy/aimservice-v1alpha1
+              - file: legacy/aimmodel-v1alpha1
+              - file: legacy/service-templates
+              - file: legacy/conditions-v1alpha1
+      - file: changelog

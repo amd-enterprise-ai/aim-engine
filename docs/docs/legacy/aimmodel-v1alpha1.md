@@ -1,8 +1,10 @@
 # AIMModel (v1alpha1)
 
-!!! warning "Deprecated"
-    The v1alpha1 `AIMModel` shape (`spec.custom`, `spec.modelSources`, `spec.customTemplates`, `spec.profileCopy`, ...) is deprecated. New deployments should use [v1alpha2 AIMModel](../concepts/models.md), which expresses the same outcomes through the three flows (official / fine-tuned / custom). See [Migrating to v1alpha2](migrating.md) for conversion recipes.
+:::{admonition} Deprecated
+:class: warning
 
+The v1alpha1 `AIMModel` shape (`spec.custom`, `spec.modelSources`, `spec.customTemplates`, `spec.profileCopy`, ...) is deprecated. New deployments should use [v1alpha2 AIMModel](../concepts/models.md), which expresses the same outcomes through the three flows (official / fine-tuned / custom). See [Migrating to v1alpha2](migrating.md) for conversion recipes.
+:::
 This page documents the legacy `AIMModel` spec fields and their replacements.
 
 ## Overview

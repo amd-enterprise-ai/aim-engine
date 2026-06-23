@@ -568,10 +568,46 @@ generate-helm-docs: ## Generate Helm chart values reference from config/helm/val
 .PHONY: generate-docs
 generate-docs: generate-crd-docs generate-helm-docs ## Generate all documentation (CRD API reference + Helm values).
 
+# ---------------------------------------------------------------------------
+# Documentation (Sphinx + D2)
+# ---------------------------------------------------------------------------
 DOCS_PORT ?= 8000
+DOCS_BUILD := docs/docs/_build/html
+DIAGRAM_SRC_DIR := docs/diagrams
+DIAGRAM_OUT_DIR := docs/docs/assets/diagrams
 
-.PHONY: docs-serve
-docs-serve:
+.PHONY: diagrams
+diagrams: ## Render D2 diagram sources (docs/diagrams/*.d2) to committed SVGs.
+	@mkdir -p $(DIAGRAM_OUT_DIR)
+	@for f in $(DIAGRAM_SRC_DIR)/*.d2; do \
+		base=$$(basename $$f .d2); \
+		case $$base in _*) continue ;; esac; \
+		echo "d2: $$f -> $$base.svg + $$base-dark.svg"; \
+		d2 fmt $$f >/dev/null; \
+		d2 $$f $(DIAGRAM_OUT_DIR)/$$base.svg || exit 1; \
+		d2 --theme 200 $$f $(DIAGRAM_OUT_DIR)/$$base-dark.svg || exit 1; \
+	done
+
+.PHONY: diagrams-watch
+diagrams-watch: ## Live-preview one diagram: make diagrams-watch DIAGRAM=architecture-overview
+	@if [ -z "$(DIAGRAM)" ]; then \
+		echo "Usage: make diagrams-watch DIAGRAM=<name>  (a file in $(DIAGRAM_SRC_DIR) without .d2)"; \
+		echo "Available diagrams:"; \
+		ls $(DIAGRAM_SRC_DIR)/*.d2 | sed 's#.*/##; s#\.d2$$##; /^_/d' | sed 's/^/  /'; \
+		exit 1; \
+	fi
+	d2 --watch $(DIAGRAM_SRC_DIR)/$(DIAGRAM).d2 $(DIAGRAM_OUT_DIR)/$(DIAGRAM).svg
+
+.PHONY: diagrams-check
+diagrams-check: diagrams ## Fail if committed SVGs drift from their D2 sources (used by CI / pre-commit).
+	@if [ -n "$$(git status --porcelain -- $(DIAGRAM_OUT_DIR))" ]; then \
+		echo "ERROR: rendered diagrams are out of date or uncommitted. Run 'make diagrams' and commit the result."; \
+		git --no-pager status --porcelain -- $(DIAGRAM_OUT_DIR); \
+		exit 1; \
+	fi
+
+.PHONY: docs-deps
+docs-deps:
 	@cd docs && \
 	if [ ! -d ".venv" ]; then \
 		echo "Creating virtual environment in docs/.venv..."; \
@@ -579,9 +615,19 @@ docs-serve:
 	fi && \
 	. .venv/bin/activate && \
 	echo "Installing dependencies..." && \
-	pip install -q -r requirements.txt && \
+	pip install -q -r requirements.txt
+
+.PHONY: docs-serve
+docs-serve: docs-deps ## Live-reloading Sphinx dev server (rebuilds on save; pair with diagrams-watch).
+	@cd docs && . .venv/bin/activate && \
 	WSL_IP=$$(hostname -I | awk '{print $$1}') && \
-	echo "Starting MkDocs dev server..." && \
+	echo "Starting Sphinx dev server..." && \
 	echo "  http://localhost:$(DOCS_PORT)/" && \
 	echo "  http://$$WSL_IP:$(DOCS_PORT)/" && \
-	mkdocs serve -a 0.0.0.0:$(DOCS_PORT)
+	sphinx-autobuild docs docs/_build/html --host 0.0.0.0 --port $(DOCS_PORT)
+
+.PHONY: docs-build
+docs-build: docs-deps ## Build the docs site, treating warnings (broken refs, etc.) as errors.
+	@cd docs && . .venv/bin/activate && \
+	sphinx-build -b html -W --keep-going docs docs/_build/html
+	@echo "Docs built to $(DOCS_BUILD)"

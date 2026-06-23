@@ -43,6 +43,13 @@ repos:
     pass_filenames: false
     files: ^config/(helm/values\.yaml|accelerator-detector/kustomization\.yaml)$
 
+  - id: render-diagrams
+    name: Render D2 diagrams to committed SVGs
+    entry: mise exec -- make diagrams
+    language: system
+    pass_filenames: false
+    files: ^docs/diagrams/.*\.d2$
+
   # - id: build-crds
   #   name: Build CRDs for Helm chart
   #   entry: bash -lc 'kubectl kustomize config/crd/ > crd/crds.yaml'
@@ -69,4 +76,4 @@ repos:
   hooks:
   - id: yamlfmt
     args: [ --offset, "0", --sequence, "2", --mapping, "2", "--width", "4096", "--preserve-quotes", "--implicit_start", "--preserve_null" ]
-    exclude: "(^config/prometheus/.*\\.ya?ml$)|(^docs/mkdocs\\.ya?ml$)|(^config/crd/.*\\.ya?ml$)||(^install.ya?ml$)|(^crd/.*\\.ya?ml$)|(^chart/templates/.*\\.(ya?ml|tpl)$)|(^.*/templates/.*\\.(ya?ml|tpl)$)"
+    exclude: "(^config/prometheus/.*\\.ya?ml$)|(^config/crd/.*\\.ya?ml$)||(^install.ya?ml$)|(^crd/.*\\.ya?ml$)|(^chart/templates/.*\\.(ya?ml|tpl)$)|(^.*/templates/.*\\.(ya?ml|tpl)$)"

@@ -1,0 +1,27 @@
+...@_theme
+direction: right
+
+Service: AIMService {class: user}
+ServiceCtrl: Service controller {class: operator}
+CacheCtrl: Cache controller {class: operator}
+Profile: "AIMProfile\n(resolved)" {class: resolved}
+Cache: AIMProfileCache {class: managed}
+Artifact: AIMArtifact {class: managed}
+ISVC: "KServe\nInferenceService" {class: managed}
+Route: "Gateway API\nHTTPRoute" {class: managed}
+KServe: KServe {class: infra}
+Gateway: Gateway API {class: infra}
+PVC: Persistent Volumes {class: infra}
+GPU: AMD GPUs {class: infra}
+
+Service -> ServiceCtrl
+ServiceCtrl -> Profile: resolves
+ServiceCtrl -> CacheCtrl
+CacheCtrl -> Cache
+Cache -> Artifact
+Artifact -> PVC
+ServiceCtrl -> ISVC
+ISVC -> KServe
+KServe -> GPU
+ServiceCtrl -> Route
+Route -> Gateway

@@ -1,20 +1,18 @@
 # AIMService (v1alpha1)
 
-!!! warning "Deprecated"
-    The v1alpha1 `AIMService` shape (`spec.template`, `spec.overrides`) is deprecated. New deployments should use [v1alpha2 AIMService](../concepts/services.md), which references profiles instead of templates. See [Migrating to v1alpha2](migrating.md) for conversion recipes.
+:::{admonition} Deprecated
+:class: warning
 
+The v1alpha1 `AIMService` shape (`spec.template`, `spec.overrides`) is deprecated. New deployments should use [v1alpha2 AIMService](../concepts/services.md), which references profiles instead of templates. See [Migrating to v1alpha2](migrating.md) for conversion recipes.
+:::
 This page documents the legacy template-based `AIMService` shape. The v1alpha2 service shape (`spec.profile`) coexists in the same CRD — see [Services](../concepts/services.md) for the current model.
 
 ## v1alpha1 lifecycle
 
-```mermaid
-flowchart LR
-    Service[AIMService spec] -->|spec.model| Model[AIMModel]
-    Service -->|spec.template| Template[AIMServiceTemplate]
-    Template --> TemplateCache[AIMTemplateCache]
-    TemplateCache --> ISVC[KServe InferenceService]
-    ISVC --> Route[HTTPRoute]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/aimservice-v1alpha1-lifecycle-dark.svg">
+  <img alt="Legacy v1alpha1 AIMService lifecycle: a service resolves a model and a template, optionally creating a template cache, then a KServe InferenceService and HTTPRoute." src="../assets/diagrams/aimservice-v1alpha1-lifecycle.svg">
+</picture>
 
 The controller resolves a model and a template, optionally creates a template cache, and produces a KServe `InferenceService`.
 

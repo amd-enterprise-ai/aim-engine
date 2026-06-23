@@ -1,0 +1,45 @@
+# Copyright © Advanced Micro Devices, Inc., or its affiliates.
+#
+# SPDX-License-Identifier: MIT
+
+name: Docs
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "config/helm/values.yaml"
+      - ".github/workflows/docs.yml"
+
+permissions:
+  contents: read
+
+# Opt JavaScript actions onto Node 24 ahead of GitHub's June 16, 2026 default
+# flip. See https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  docs:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+        env:
+          # Skip mise.local.toml which contains dev-only tools not needed in CI
+          MISE_LOCAL_CONFIG_ALLOWED: "0"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check diagrams are up to date
+        run: mise exec -- make diagrams-check
+
+      - name: Build docs (warnings as errors)
+        run: mise exec -- make docs-build

@@ -2,9 +2,11 @@
 
 AIM Engine supports static replica scaling and KEDA-based autoscaling with OpenTelemetry metrics.
 
-!!! info "v1alpha2"
-    Examples on this page use `aim.eai.amd.com/v1alpha2`. The `spec.replicas`, `spec.minReplicas`, `spec.maxReplicas`, and `spec.autoScaling` fields are identical across versions — only the resolution shape differs (`spec.profile` and `spec.model` instead of `spec.template`). For the legacy template-shaped service, see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+:::{admonition} v1alpha2
+:class: note
 
+Examples on this page use `aim.eai.amd.com/v1alpha2`. The `spec.replicas`, `spec.minReplicas`, `spec.maxReplicas`, and `spec.autoScaling` fields are identical across versions — only the resolution shape differs (`spec.profile` and `spec.model` instead of `spec.template`). For the legacy template-shaped service, see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+:::
 ## Static Scaling
 
 Set a fixed number of replicas:
@@ -26,9 +28,11 @@ spec:
   replicas: 3
 ```
 
-!!! note "Migration window"
-    Until v1alpha1 is removed, the `aim.eai.amd.com/reconciler-pipeline: profile` annotation is required on `spec.model.image` services that should be reconciled by the v1alpha2 profile pipeline. See [Migration window](../admin/upgrading.md#migration-window). To skip the annotation, reference an existing AIMProfile (`spec.profile.name`) or AIMModel (`spec.model.name`) instead.
+:::{admonition} Migration window
+:class: note
 
+Until v1alpha1 is removed, the `aim.eai.amd.com/reconciler-pipeline: profile` annotation is required on `spec.model.image` services that should be reconciled by the v1alpha2 profile pipeline. See [Migration window](../admin/upgrading.md#migration-window). To skip the annotation, reference an existing AIMProfile (`spec.profile.name`) or AIMModel (`spec.model.name`) instead.
+:::
 ## Autoscaling with KEDA
 
 For demand-based scaling, use `minReplicas` and `maxReplicas` instead of `replicas`. AIM Engine stamps the InferenceService with `autoscalerClass=external` and creates a controller-owned KEDA `ScaledObject` that manages scaling. At least one scaling trigger is required: a custom metric (`autoScaling.metrics`) or scale-from-zero (`minReplicas: 0`, which supplies a gateway activation trigger). Configuring `minReplicas`/`maxReplicas` with `minReplicas >= 1` and no metric is rejected with `ConfigValid=False` (reason `AutoscalingRequiresMetrics`).
@@ -104,18 +108,20 @@ AIM Engine automatically:
 Set `minReplicas: 0` to let KEDA idle the predictor down to zero replicas when no
 traffic is observed and bring it back up on the next request. Note: without `autoScaling.metrics`, the service activates from 0 -> 1 but will not scale from 1 -> N.
 
-!!! warning "Routing must be enabled for scale-to-zero"
-    `minReplicas: 0` **requires routing to be enabled** on the service
-    (`spec.routing.enabled: true`, or a cluster-wide default via
-    `runtimeConfig.routing.enabled`). The 0->1 activation trigger queries
-    gateway-side Envoy metrics that only exist once an `HTTPRoute` is wired up,
-    so with routing disabled the service can never wake from zero. AIM Engine
-    rejects this combination at validation time: the AIMService reports
-    `ConfigValid=False` with reason
-    [`RoutingRequiredForScaleToZero`](../reference/conditions.md#scaletozeroconfig)
-    and emits an `InvalidSpec` event. Either enable routing (below) or set
-    `minReplicas >= 1`.
+:::{admonition} Routing must be enabled for scale-to-zero
+:class: warning
 
+`minReplicas: 0` **requires routing to be enabled** on the service
+(`spec.routing.enabled: true`, or a cluster-wide default via
+`runtimeConfig.routing.enabled`). The 0->1 activation trigger queries
+gateway-side Envoy metrics that only exist once an `HTTPRoute` is wired up,
+so with routing disabled the service can never wake from zero. AIM Engine
+rejects this combination at validation time: the AIMService reports
+`ConfigValid=False` with reason
+[`RoutingRequiredForScaleToZero`](../reference/conditions.md#scaletozeroconfig)
+and emits an `InvalidSpec` event. Either enable routing (below) or set
+`minReplicas >= 1`.
+:::
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
@@ -136,9 +142,11 @@ spec:
     pathTemplate: "/{.metadata.namespace}/{.metadata.name}"
 ```
 
-!!! warning "The first request seeds the activation metric"
-    On a fresh cluster the gateway activation series (`envoy_cluster_external_upstream_rq_completed`) does not exist until a request has passed through kgateway, so the **first** `minReplicas: 0` service reports `Ready=False reason=TriggerError` and stays at its initial replica instead of idling to zero. Send a single request (even a cold-start `503` counts) to seed the metric — afterwards scale-to-zero works normally for that service and later ones inherit the now-known metric.
+:::{admonition} The first request seeds the activation metric
+:class: warning
 
+On a fresh cluster the gateway activation series (`envoy_cluster_external_upstream_rq_completed`) does not exist until a request has passed through kgateway, so the **first** `minReplicas: 0` service reports `Ready=False reason=TriggerError` and stays at its initial replica instead of idling to zero. Send a single request (even a cold-start `503` counts) to seed the metric — afterwards scale-to-zero works normally for that service and later ones inherit the now-known metric.
+:::
 Notes:
 
 - Routing (`spec.routing.enabled`, or a cluster-wide

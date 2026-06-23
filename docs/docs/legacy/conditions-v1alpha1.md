@@ -1,8 +1,10 @@
 # Conditions Reference (v1alpha1)
 
-!!! warning "Deprecated"
-    These conditions are emitted by v1alpha1 controllers. See [Conditions](../reference/conditions.md) for the v1alpha2 catalog.
+:::{admonition} Deprecated
+:class: warning
 
+These conditions are emitted by v1alpha1 controllers. See [Conditions](../reference/conditions.md) for the v1alpha2 catalog.
+:::
 This page catalogs the conditions emitted by v1alpha1 controllers — template-based `AIMService`, `AIMServiceTemplate`, `AIMTemplateCache`, and template-emitting `AIMModel`.
 
 The framework-level conditions (`DependenciesReachable`, `AuthValid`, `ConfigValid`, `Ready`) are unchanged from v1alpha2 — see the [main conditions reference](../reference/conditions.md#framework-conditions).

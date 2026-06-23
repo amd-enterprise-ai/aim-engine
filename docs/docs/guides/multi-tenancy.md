@@ -2,9 +2,11 @@
 
 AIM Engine supports multi-tenant deployments through a combination of cluster-scoped and namespace-scoped resources.
 
-!!! info "v1alpha2"
-    The resource-scoping table below covers both v1alpha2 (Profiles / ProfileSets) and v1alpha1 (Templates) variants. `AIMRuntimeConfig` / `AIMClusterRuntimeConfig` remain `aim.eai.amd.com/v1alpha1` resources consumed by both pipelines.
+:::{admonition} v1alpha2
+:class: note
 
+The resource-scoping table below covers both v1alpha2 (Profiles / ProfileSets) and v1alpha1 (Templates) variants. `AIMRuntimeConfig` / `AIMClusterRuntimeConfig` remain `aim.eai.amd.com/v1alpha1` resources consumed by both pipelines.
+:::
 ## Resource Scoping
 
 | Resource | Cluster-Scoped | Namespace-Scoped |

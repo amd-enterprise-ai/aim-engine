@@ -1,0 +1,74 @@
+# Copyright © Advanced Micro Devices, Inc., or its affiliates.
+#
+# SPDX-License-Identifier: MIT
+
+name: Docs - Sync to public docs
+# Mirrors docs/docs into the umbrella AMDEnterpriseAISuiteDocs site under
+# docs/aim-engine/ and opens a PR. The umbrella repo holds the Sphinx build
+# (conf.py, theme) and aggregates each stack under its own subtree, so only the
+# content (Markdown + committed diagram SVGs) is synced here.
+#
+# Only runs on release branches/tags so unreleased changes on main don't reach
+# the public documentation.
+
+on:
+  push:
+    branches:
+      - "release/**"
+    tags:
+      - "v*"
+    paths:
+      - "docs/docs/**"
+      - ".github/workflows/copy-docs-to-public-docs.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  copy-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout aim-engine
+        uses: actions/checkout@v4
+
+      - name: Sync docs into the public docs repo and open a PR
+        env:
+          DOCS_REPO_TOKEN: ${{ secrets.DOCS_REPO_TOKEN }}
+          GH_TOKEN: ${{ secrets.DOCS_REPO_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+          git clone "https://x-access-token:${DOCS_REPO_TOKEN}@github.com/silogen/AMDEnterpriseAISuiteDocs.git" target_eai_docs
+          cd target_eai_docs
+          branch="aim-engine-${REF_NAME}-${RUN_ID}"
+          git checkout -b "$branch"
+
+          # rsync the aim-engine content into the umbrella site's aim-engine
+          # subtree. Exclude the standalone Sphinx config and build artefacts;
+          # the umbrella repo builds with its own root conf.py.
+          mkdir -p docs/aim-engine
+          rsync -av --delete \
+            --exclude 'conf.py' \
+            --exclude '_build/' \
+            --exclude '.venv/' \
+            "${GITHUB_WORKSPACE}/docs/docs/" docs/aim-engine/
+
+          git add .
+          if git diff --staged --quiet; then
+            echo "No documentation changes to sync."
+            exit 0
+          fi
+
+          git commit -m "Sync documentation from aim-engine (${REF_NAME})"
+          git push origin "$branch"
+
+          gh pr create \
+            --repo silogen/AMDEnterpriseAISuiteDocs \
+            --base develop \
+            --head "$branch" \
+            --title "Docs sync from aim-engine (${REF_NAME})" \
+            --body "Automated documentation sync from the aim-engine repo (${REF_NAME})."

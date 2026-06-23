@@ -1,0 +1,59 @@
+/* Small tweaks on top of the rocm-docs-core (pydata) theme. */
+
+/* Remove the sparse secondary header bar (it only held GitHub/Support
+   cross-links). Doc navigation lives in the left sidebar. Also hide the mobile
+   hamburger that opened that menu and the GitHub/Support links wherever they
+   are mirrored; the left/right sidebar toggles are separate elements and
+   remain. */
+header.common-header .navbar.second-level-nav,
+header.common-header .navbar-toggler,
+.header-menu-links {
+  display: none !important;
+}
+
+/* On desktop the AMD top bar already shows the project name, so don't also
+   mirror the header items into the left sidebar (removes a duplicate
+   "AIM Engine"). Freeing this vertical space also stops the sidebar from
+   overflowing into a scrollbar. */
+@media (min-width: 960px) {
+  .bd-sidebar-primary .sidebar-header-items {
+    display: none;
+  }
+}
+
+/* Only show the sidebar scrollbar when the nav actually overflows. */
+.bd-sidebar-primary {
+  overflow-y: auto;
+}
+
+/* Tables: pydata's default row-hover is a saturated purple; tone it down to a
+   subtle neutral that works in both themes. */
+:root {
+  --pst-color-table-row-hover-bg: #eef0f3;
+}
+html[data-theme="dark"] {
+  --pst-color-table-row-hover-bg: #2b2b33;
+}
+
+/* pydata forces the first table column to never wrap (white-space: nowrap),
+   which pushes tables with long first-column values (field names, keys) wider
+   than the content column and shows a needless horizontal scrollbar. Let cells
+   wrap so only genuinely wide tables scroll. */
+.bd-content table.table td:first-child {
+  white-space: normal;
+}
+.bd-content table.table td,
+.bd-content table.table th {
+  overflow-wrap: break-word;
+}
+
+/* D2 diagrams ship as light + dark SVG pairs, swapped via <picture> +
+   prefers-color-scheme. Each SVG carries its own (light/dark) background, so we
+   only add a subtle bordered "figure card" frame and keep them from overflowing
+   on narrow viewports. */
+article img[src*="assets/diagrams/"] {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--pst-color-border, #d0d7de);
+  border-radius: 8px;
+}

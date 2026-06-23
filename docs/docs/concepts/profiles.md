@@ -10,9 +10,11 @@ An **AIM profile** is a self-contained runtime configuration for an inference wo
 
 `AIMProfile` and `AIMClusterProfile` carry this configuration. An `AIMService` resolves to exactly one of them and deploys it.
 
-!!! info "v1alpha2"
-    Profiles are part of `aim.eai.amd.com/v1alpha2`. They replace v1alpha1 [Service Templates](../legacy/service-templates.md), which are deprecated.
+:::{admonition} v1alpha2
+:class: note
 
+Profiles are part of `aim.eai.amd.com/v1alpha2`. They replace v1alpha1 [Service Templates](../legacy/service-templates.md), which are deprecated.
+:::
 ## Where profiles come from
 
 Most profiles aren't hand-authored. They're produced by `AIMModel` reconcilers in one of three flows:

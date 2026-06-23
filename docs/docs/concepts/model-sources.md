@@ -2,9 +2,11 @@
 
 `AIMClusterModelSource` automatically discovers and syncs AI model images from container registries, creating `AIMClusterModel` resources for matched images.
 
-!!! note "API version"
-    `AIMClusterModelSource` remains under `aim.eai.amd.com/v1alpha1`. The `AIMClusterModel` resources it creates use the v1alpha2 shape (`spec.image` set) so they participate in v1alpha2 discovery and produce `AIMProfile` resources. This deliberately decouples discovery from the v1alpha1 → v1alpha2 migration window.
+:::{admonition} API version
+:class: note
 
+`AIMClusterModelSource` remains under `aim.eai.amd.com/v1alpha1`. The `AIMClusterModel` resources it creates use the v1alpha2 shape (`spec.image` set) so they participate in v1alpha2 discovery and produce `AIMProfile` resources. This deliberately decouples discovery from the v1alpha1 → v1alpha2 migration window.
+:::
 ## Overview
 
 Model sources eliminate the need to manually create model resources for every image version. They continuously sync with container registries, automatically creating models when new images are published.
