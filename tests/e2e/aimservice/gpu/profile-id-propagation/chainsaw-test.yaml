@@ -19,23 +19,24 @@ metadata:
   name: aimservice-gpu-profile-id-propagation
   labels:
     requires: gpu
-    # Copies an hf-token secret from the aim-system namespace at runtime
-    # to authenticate against gated HF repos. Excluded from default
-    # selectors; opt-in by overriding the selector or pointing
-    # CHAINSAW_TEST_DIR here.
+    # Provisions the huggingface-creds secret (key "token") into the test
+    # namespace via tests/e2e/_shared/ensure-hf-secret.sh, which resolves
+    # ~/.config/aim-engine/huggingface-creds.yaml (or copies an existing
+    # secret). Excluded from default selectors; opt-in by overriding the
+    # selector or pointing CHAINSAW_TEST_DIR here.
     needs-secret: hf_token
 spec:
   description: Test that profileId from recommendedDeployments propagates to inference containers
   timeouts:
     assert: 600s
   steps:
-    - name: Copy hf-token secret into test namespace
+    - name: Ensure HF token secret in the test namespace
       try:
         - script:
-            content: |
-              kubectl get secret hf-token -n aim-system -o json \
-                | jq 'del(.metadata.namespace,.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' \
-                | kubectl apply -n $NAMESPACE -f -
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: bash ../../../_shared/ensure-hf-secret.sh
 
     - name: Create runtime config with routing
       try:

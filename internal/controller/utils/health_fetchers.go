@@ -79,6 +79,10 @@ var (
 		// HuggingFace auth errors (excluding "Repository not found" which is handled separately)
 		regexp.MustCompile(`(?i)Access to model .* is restricted`),
 		regexp.MustCompile(`(?i)Cannot access gated repo`),
+		// Gated repo without (valid) token: the HF CLI prints
+		// "Access denied. This repository requires approval." — distinct from
+		// "Repository Not Found" (handled above), so it is an auth failure.
+		regexp.MustCompile(`(?i)repository requires approval`),
 		regexp.MustCompile(`(?i)Invalid.*token.*huggingface`),
 		regexp.MustCompile(`(?i)huggingface.*authentication.*failed`),
 		regexp.MustCompile(`(?i)401.*Unauthorized.*hf\.co`),

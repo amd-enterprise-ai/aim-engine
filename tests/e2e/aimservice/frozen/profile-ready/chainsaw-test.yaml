@@ -172,7 +172,11 @@ spec:
                     - name: kserve-container
                       image: registry.example.com/test-image:1.0.0
 
-    - name: Assert service reaches Starting status (waiting for ISVC to become ready)
+    - name: Assert service reaches a runtime bring-up state (not Ready/Failed)
+      # The predictor image is intentionally fake, so the pod never runs and the
+      # exact rollup status depends on kubelet pull/back-off timing (Pending vs
+      # Starting vs Progressing). Assert the service is in any non-terminal
+      # bring-up state rather than a single transient value to avoid a timing race.
       try:
         - assert:
             resource:
@@ -181,4 +185,4 @@ spec:
               metadata:
                 name: test-service
               status:
-                status: Starting
+                (status == 'Starting' || status == 'Pending' || status == 'Progressing'): true

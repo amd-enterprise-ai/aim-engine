@@ -15,8 +15,8 @@ spec:
     - name: HF_TOKEN
       valueFrom:
         secretKeyRef:
-          name: hf-token
-          key: hf-token
+          name: huggingface-creds
+          key: token
   caching:
     mode: Never
   replicas: 1

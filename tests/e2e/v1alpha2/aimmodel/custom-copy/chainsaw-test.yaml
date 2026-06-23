@@ -70,11 +70,12 @@ spec:
                 profileId: cpu-latency
                 primary: true
                 manualSelectionOnly: true
-                # source-profile.yaml's base-image annotation is `aim-base:0.1.10`;
-                # the rebase intentionally truncates SemVer-shaped tags to MAJOR.MINOR
-                # (aimimage.NormalizeBaseImageTag) because aim-base is published only
-                # at its rolling MAJOR.MINOR tag.
-                image: ghcr.io/silogen/aim-base:0.1
+                # The derived image rebases source-profile.yaml's base-image
+                # annotation (`aim-base:0.1.10`): RebaseRegistry grafts the source
+                # image's registry+org (docker.io/amdenterpriseai, from spec.image)
+                # onto the base-image name, and NormalizeBaseImageTag truncates the
+                # SemVer tag to the MAJOR.MINOR rolling tag aim-base publishes (0.1).
+                image: docker.io/amdenterpriseai/aim-base:0.1
                 modelSources:
                   - modelId: custom-org/custom-copy-model
                     sourceUri: s3://models/custom-copy-model

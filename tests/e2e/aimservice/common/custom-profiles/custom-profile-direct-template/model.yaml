@@ -4,6 +4,6 @@ kind: AIMModel
 metadata:
   name: test-direct-cp-model
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.2.0
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
   discovery:
     createServiceTemplates: false

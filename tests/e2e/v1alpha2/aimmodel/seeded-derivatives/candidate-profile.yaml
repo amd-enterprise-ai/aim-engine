@@ -3,13 +3,13 @@ kind: AIMProfile
 metadata:
   name: seeded-derivative-source
   annotations:
-    aim.eai.amd.com/base-image: ghcr.io/silogen/aim-base:0.1.10
+    aim.eai.amd.com/base-image: docker.io/amdenterpriseai/aim-base:0.1.10
     aim.eai.amd.com/profile-copyable: "true"
 spec:
   aimId: seeded-org/seeded-model
   modelId: seeded-org/seeded-model
   profileId: cpu-default
-  image: ghcr.io/silogen/aim-dummy:0.2.0
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
   primary: true
   modelSources:
     - modelId: seeded-org/seeded-model

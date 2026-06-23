@@ -1,10 +1,9 @@
 apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMModel
+kind: AIMClusterModel
 metadata:
-  name: test-model-inline
+  name: clone-templates-gpu-model
 spec:
   image: docker.io/amdenterpriseai/aim-dummy:0.2.0
   discovery:
-    extractMetadata: false
-    createServiceTemplates: false
-
+    extractMetadata: true
+    createServiceTemplates: true

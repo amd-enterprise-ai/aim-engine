@@ -11,3 +11,12 @@ metadata:
 spec:
   model:
     name: custom-derived
+  profile:
+    selector:
+      # BYO custom-model profiles are untyped/general by nature: the user
+      # supplies weights on a base image and does not classify the
+      # optimization tier (hierarchy: optimized > general > preview >
+      # unoptimized). AIMService auto-selection defaults minimumType=optimized,
+      # which excludes the derived general profile; lower the floor to
+      # unoptimized so the general candidate is eligible.
+      minimumType: unoptimized

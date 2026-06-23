@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Minimum supported Kubernetes version raised to **1.32**, required for the `CustomResourceFieldSelectors` feature (GA in 1.32) that backs the new profile selectable field.
+- Serving containers now derive their `ImagePullPolicy` from the image tag (`PullAlways` for `:latest`/tagless, `IfNotPresent` for versioned/digest tags) instead of always pulling, matching kubelet's default and letting pre-loaded (e.g. `kind load`) images be used; re-pushed mutable versioned tags will no longer be re-pulled on nodes with a cached layer.
 
 ## [0.2.4] - 2026-05-26
 

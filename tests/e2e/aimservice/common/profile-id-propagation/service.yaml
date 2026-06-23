@@ -7,7 +7,7 @@ metadata:
   name: test-profile-id
 spec:
   model:
-    image: ghcr.io/silogen/aim-dummy:0.2.0
+    image: docker.io/amdenterpriseai/aim-dummy:0.2.0
   overrides:
     metric: latency
     precision: fp16

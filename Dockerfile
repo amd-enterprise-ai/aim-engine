@@ -15,13 +15,16 @@ USER 65532:65532
 FROM base AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
-# VERSION must be supplied by the caller (CI pipeline, Tiltfile, etc.). We
-# deliberately do not default to `latest` here because that tag's contents
-# rotate on every release, and `imagePullPolicy: IfNotPresent` on the
-# download Job would then resolve to an arbitrarily stale cached layer on
-# the node. Building without --build-arg VERSION=... will fail the explicit
-# guard in cmd/main.go at operator startup so the misconfiguration is loud.
-ARG VERSION=""
+# Empty by default on purpose: the `if [ -z "${VERSION}" ]` guard below refuses
+# to build without an explicit --build-arg VERSION=<release tag>, so a build can
+# never silently bake a rolling `:latest` artifact-downloader ref. Mirrors the
+# empty source default of DefaultDownloadImage in api/v1alpha1/aimartifact_types.go.
+ARG VERSION=
+# Compiled-in default for the artifact-downloader image the operator spawns.
+# Defaults to the public docker.io/amdenterpriseai mirror so binaries produced
+# by the public release flow work without further configuration. Silogen-private
+# builds override this via --build-arg to point at docker.io/silogenai.
+ARG ARTIFACT_DOWNLOADER_IMG=docker.io/amdenterpriseai/aim-artifact-downloader:${VERSION}
 
 # Build as root to use cache mounts (final image is non-root)
 USER root
@@ -37,7 +40,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     fi && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -a \
-    -ldflags "-X 'github.com/amd-enterprise-ai/aim-engine/api/v1alpha1.DefaultDownloadImage=ghcr.io/silogen/aim-artifact-downloader:${VERSION}'" \
+    -ldflags "-X 'github.com/amd-enterprise-ai/aim-engine/api/v1alpha1.DefaultDownloadImage=${ARTIFACT_DOWNLOADER_IMG}'" \
     -o manager ./cmd/main.go
 
 # Dev image for Tilt: full Go env + source + binary

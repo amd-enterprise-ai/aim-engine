@@ -39,7 +39,7 @@ spec:
                   aim.eai.amd.com/origin: auto-generated
                   aim.eai.amd.com/custom-model: "true"
               spec:
-                image: ghcr.io/silogen/aim-dummy:0.2.0
+                image: docker.io/amdenterpriseai/aim-dummy:0.2.0
                 modelSources:
                   - modelId: cpu/inline-model
                     sourceUri: hf://sshleifer/tiny-gpt2

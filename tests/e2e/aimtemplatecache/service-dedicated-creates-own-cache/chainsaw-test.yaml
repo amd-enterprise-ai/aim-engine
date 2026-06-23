@@ -45,7 +45,7 @@ spec:
                 name: dedicated-followup-service
               spec:
                 model:
-                  image: ghcr.io/silogen/aim-dummy:0.2.0
+                  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
                 template:
                   name: ${TEMPLATE_NAME}
                 caching:

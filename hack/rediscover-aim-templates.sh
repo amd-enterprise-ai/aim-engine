@@ -43,7 +43,7 @@
 #   Ready - see internal/v1alpha1/aimservice/reconcile.go PlanResources).
 #
 #   Verified end-to-end against a live cluster on 2026-04-23 with the
-#   ghcr.io/silogen/aim-dummy:0.1.10 model. Four variants were tested;
+#   aim-dummy:0.1.10 model. Four variants were tested;
 #   only flipping the component conditions actually triggers a new
 #   discovery job. See the related chat for the empirical evidence.
 #

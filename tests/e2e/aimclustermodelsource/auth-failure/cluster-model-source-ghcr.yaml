@@ -3,11 +3,11 @@ kind: AIMClusterModelSource
 metadata:
   name: test-ghcr-auth-failure
 spec:
-  registry: ghcr.io
+  registry: docker.io
   maxModels: 10
   images:
     # Private repository that requires authentication
-    - amd-enterprise-ai/aim-private-llama
+    - silogenai/aim-private-llama
   versions:
     - ">=0.8.0"
     - "<=0.9.0-rc1"

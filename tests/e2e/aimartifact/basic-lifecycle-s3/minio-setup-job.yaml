@@ -22,4 +22,15 @@ spec:
           done
           echo "Creating bucket 'models'..."
           mc mb myminio/models || true
-          echo "Bucket setup complete"
+          # Seed a synthetic model so the AIMArtifact has S3 objects to download.
+          # Content is irrelevant (readiness is gated on the download Job, not the
+          # bytes), so fabricate small files locally rather than pull a real model.
+          # Files sit at the prefix root because the default download filter
+          # (exclude */*) skips nested paths.
+          echo "Seeding synthetic model under models/SmolLM-135M ..."
+          mkdir -p /tmp/seed/SmolLM-135M
+          head -c 8388608 /dev/urandom > /tmp/seed/SmolLM-135M/model.safetensors
+          printf '{"model_type":"llama"}\n' > /tmp/seed/SmolLM-135M/config.json
+          printf 'tokenizer\n' > /tmp/seed/SmolLM-135M/tokenizer.json
+          mc cp --recursive /tmp/seed/SmolLM-135M/ myminio/models/SmolLM-135M/
+          echo "Bucket + seed complete"

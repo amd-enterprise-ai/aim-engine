@@ -788,7 +788,7 @@ func TestBuildFineTunedServiceTemplates_InlineModelSourcesNoEngineConfig(t *test
 	model := &aimv1alpha1.AIMModel{
 		ObjectMeta: metav1.ObjectMeta{Name: "ft-dummy", Namespace: "default"},
 		Spec: aimv1alpha1.AIMModelSpec{
-			Image: "ghcr.io/silogen/aim-dummy:0.1.10",
+			Image: "aim-dummy:0.1.10",
 			AimId: "test/cluster-base-model",
 			ModelSources: []aimv1alpha1.AIMModelSource{
 				{ModelID: "test/model-fp8", SourceURI: "hf://my-org/cluster-finetuned-weights"},

@@ -1,5 +1,5 @@
 # Namespaced AIMProfile for Qwen3-0.6B (CPU) with modelSources for cache testing.
-# Uses the real silogen CPU image. The profile controller will match nodes
+# Uses the real silogenai CPU image. The profile controller will match nodes
 # labeled with feature.node.kubernetes.io/aim-accelerator.EPYC_ZEN5 by the
 # AcceleratorDetector DaemonSet.
 #
@@ -17,7 +17,7 @@ spec:
   precision: bf16
   # Mirrors the embedded profile at
   # /workspace/aim-runtime/profiles/Qwen/Qwen3-0.6B/vllm-cpu-bf16-tp1-latency.yaml
-  # inside ghcr.io/silogen/aim-cpu-qwen-qwen3-0-6b:0.12.0-rc1.
+  # inside docker.io/silogenai/aim-cpu-qwen-qwen3-0-6b:0.12.0-rc1.
   # Once assembled and mounted under custom/<aimId>/, the AIM runtime uses this
   # copy instead of the embedded one.
   type: unoptimized
@@ -25,9 +25,9 @@ spec:
   acceleratorModel: EPYC_ZEN5
   acceleratorType: cpu
   acceleratorCount: 1
-  image: ghcr.io/silogen/aim-cpu-qwen-qwen3-0-6b:0.12.0-rc1
+  image: silogenai/aim-cpu-qwen-qwen3-0-6b:0.12.0-rc36
   imagePullSecrets:
-    - name: ghcr-regcred
+    - name: dockerhub-regcred
   modelSources:
     - modelId: Qwen/Qwen3-0.6B
       sourceUri: hf://Qwen/Qwen3-0.6B

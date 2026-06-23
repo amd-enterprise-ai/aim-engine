@@ -27,7 +27,7 @@
 # Requires (excluded from default selectors; run explicitly — see README below):
 # - GPU cluster with an MI300X node (amd.com/gpu schedulable).
 # - longhorn (RWX) for the shared adapter disk.
-# - huggingface-creds secret (copied in from HF_TOKEN_SECRET_FILE).
+# - huggingface-creds secret (provisioned by ensure-hf-secret.sh from ~/.config/aim-engine/).
 # - Docker Hub pull secret for docker.io/silogenai (DOCKER_PULL_SECRET_FILE).
 #
 # Run it:
@@ -49,20 +49,13 @@ spec:
   timeouts:
     assert: 600s
   steps:
-    - name: Copy HF token secret into the test namespace
+    - name: Ensure HF token secret in the test namespace
       try:
         - script:
             env:
               - name: NAMESPACE
                 value: ($namespace)
-            content: |
-              SRC="${HF_TOKEN_SECRET_FILE:-$HOME/workspace/silogen/hf-token-secret.yaml}"
-              if [ ! -f "$SRC" ]; then
-                echo "ERROR: HF token secret file not found at $SRC" >&2
-                echo "Set HF_TOKEN_SECRET_FILE to a v1 Secret named 'huggingface-creds' (key 'token')." >&2
-                exit 1
-              fi
-              kubectl -n "$NAMESPACE" apply -f "$SRC"
+            content: bash ../../../_shared/ensure-hf-secret.sh
 
     - name: Create the Docker Hub pull secret for the silogenai image
       try:

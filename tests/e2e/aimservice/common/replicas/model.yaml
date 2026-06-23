@@ -3,7 +3,7 @@ kind: AIMModel
 metadata:
   name: test-replicas-model
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.2.0
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
   resources:
     limits:
       memory: 1Gi

@@ -15,4 +15,4 @@ metadata:
     aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
-    image: ghcr.io/silogen/aim-dummy:0.2.0
+    image: docker.io/amdenterpriseai/aim-dummy:0.2.0

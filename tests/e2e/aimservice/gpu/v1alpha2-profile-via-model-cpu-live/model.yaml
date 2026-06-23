@@ -13,6 +13,6 @@ kind: AIMModel
 metadata:
   name: via-model-cpu
 spec:
-  image: ghcr.io/silogen/aim-cpu-qwen-qwen3-0-6b:0.12.0-rc16
+  image: silogenai/aim-epyc-qwen-qwen3-0-6b:0.12.0-rc12
   imagePullSecrets:
-    - name: ghcr-regcred
+    - name: dockerhub-regcred

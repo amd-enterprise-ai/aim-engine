@@ -26,10 +26,10 @@
 #
 # Requires:
 # - GPU infrastructure (real AIM image, real dry-run, real inference).
-# - `hf-token` secret in `aim-system` (meta-llama is a gated HF repo). Copied
-#   into the test namespace by the step below. The resolved base image
-#   (amdenterpriseai/aim-base:*) lives on public Docker Hub, so no registry
-#   pull secret is required.
+# - `huggingface-creds` secret (key `token`) provisioned into the test namespace
+#   by the shared ensure-hf-secret.sh helper from ~/.config/aim-engine/ (meta-llama
+#   is a gated HF repo). The resolved base image (amdenterpriseai/aim-base:*) lives
+#   on public Docker Hub, so no registry pull secret is required.
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
@@ -37,7 +37,7 @@ metadata:
   name: aimservice-gpu-finetuned-latest-no-image
   labels:
     requires: gpu
-    # Copies an hf-token secret from aim-system at runtime so the
+    # Provisions the huggingface-creds secret via ensure-hf-secret.sh so the
     # downloader can fetch gated meta-llama weights. Excluded from
     # default selectors; opt-in by overriding the selector or pointing
     # CHAINSAW_TEST_DIR at this directory.
@@ -52,17 +52,18 @@ spec:
   timeouts:
     assert: 600s
   steps:
-    # Copy the HF token (for the gated meta-llama weights) from aim-system
-    # into the ephemeral test namespace. Same pattern as
+    # Provision the HF token (for the gated meta-llama weights) into the
+    # ephemeral test namespace via the shared helper, which resolves
+    # ~/.config/aim-engine/huggingface-creds.yaml. Same pattern as
     # profile-id-propagation. No registry pull secret is needed: the resolved
     # base image is on public Docker Hub.
-    - name: Copy hf-token into the test namespace
+    - name: Ensure HF token secret in the test namespace
       try:
         - script:
-            content: |
-              kubectl get secret hf-token -n aim-system -o json \
-                | jq 'del(.metadata.namespace,.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields,.metadata.ownerReferences)' \
-                | kubectl apply -n "$NAMESPACE" -f -
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: bash ../../../_shared/ensure-hf-secret.sh
 
     - name: Apply the base AIMModel (real AIM image)
       try:
@@ -70,7 +71,7 @@ spec:
             file: base-model.yaml
 
     # The aim-meta-llama:0.11.0 image ships with
-    # AIM_BASE_IMAGE_REF=ghcr.io/silogen/aim-base:0.11
+    # AIM_BASE_IMAGE_REF=docker.io/amdenterpriseai/aim-base:0.11
     # baked into its OCI config. The AIMModel inspector must surface that on
     # status.imageMetadata.baseImageRef — that's what the fine-tuned flow keys
     # off of.
@@ -86,7 +87,7 @@ spec:
               status:
                 status: Ready
                 imageMetadata:
-                  baseImageRef: ghcr.io/silogen/aim-base:0.11
+                  baseImageRef: docker.io/amdenterpriseai/aim-base:0.11
 
     # The AIMServiceTemplate discovery (dry-run) job runs per auto-generated
     # template and late-binds spec.aimId / spec.modelId. We wait for at least
@@ -132,7 +133,7 @@ spec:
     # on its aim.eai.amd.com/deployment-image-ref annotation.
     #
     #   base spec.image:                amdenterpriseai/aim-meta-llama-…:0.11.0
-    #   base baseImageRef:              ghcr.io/silogen/aim-base:0.11
+    #   base baseImageRef:              docker.io/amdenterpriseai/aim-base:0.11
     #   rebased deployment-image-ref:   amdenterpriseai/aim-base:0.11
     - name: Fine-tuned template copy carries the rebased deployment image annotation
       try:

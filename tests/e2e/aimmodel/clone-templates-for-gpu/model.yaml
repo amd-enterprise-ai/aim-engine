@@ -8,7 +8,7 @@ kind: AIMModel
 metadata:
   name: clone-templates-gpu-model
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.2.0
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
   discovery:
     extractMetadata: true
     createServiceTemplates: true

@@ -18,8 +18,8 @@ spec:
     - name: HF_TOKEN
       valueFrom:
         secretKeyRef:
-          name: hf-token
-          key: hf-token
+          name: huggingface-creds
+          key: token
   template:
     # The auto-discovered base template's profile is flagged `unoptimized`, and
     # fine-tuned copies inherit that flag. Allow unoptimized profiles so the

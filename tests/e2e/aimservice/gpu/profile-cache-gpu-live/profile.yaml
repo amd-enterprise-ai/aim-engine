@@ -1,7 +1,7 @@
 # Namespaced AIMProfile for GLM-4.7 (MoE, MI300X, FP8, TP=2) with modelSources
 # for cache testing. Mirrors the embedded profile at
 # /workspace/aim-runtime/profiles/zai-org/GLM-4.7/vllm-mi300x-fp8-tp2-latency.yaml
-# inside ghcr.io/silogen/aim-zai-org-glm-4-7:0.12.0-rc3.
+# inside docker.io/amdenterpriseai/aim-zai-org-glm-4-7:0.12.0.
 #
 # GLM-4.7-FP8 is ~362 GiB across 93 shards and *requires* TP=2 to fit across
 # two MI300X GPUs (192 GiB HBM each) — this is the vendor-recommended
@@ -25,7 +25,7 @@ spec:
   acceleratorModel: MI300X
   acceleratorType: gpu
   acceleratorCount: 2
-  image: ghcr.io/silogen/aim-zai-org-glm-4-7:0.12.0-rc3
+  image: amdenterpriseai/aim-zai-org-glm-4-7:0.12.0
   modelSources:
     - modelId: zai-org/GLM-4.7-FP8
       sourceUri: hf://zai-org/GLM-4.7-FP8
@@ -47,7 +47,8 @@ spec:
     async-scheduling: null
     disable-uvicorn-access-log: null
     distributed_executor_backend: mp
-    gpu-memory-utilization: 0.9
+    # Nearly fills each MI300X at TP=2; 0.985 leaves enough headroom for the KV cache.
+    gpu-memory-utilization: 0.985
     kv-cache-dtype: fp8
     max-model-len: 32768
     max-num-batched-tokens: 1024
@@ -55,11 +56,10 @@ spec:
     no-enable-log-requests: null
     no-enable-prefix-caching: null
     no-trust-remote-code: null
-    swap-space: 64
     tensor-parallel-size: 2
   engineEnv:
     GPU_ARCHS: gfx942
     HSA_NO_SCRATCH_RECLAIM: "1"
     VLLM_ROCM_USE_AITER: "1"
     VLLM_ROCM_USE_AITER_RMSNORM: "1"
-    VLLM_USE_AITER_TRITON_ROPE: "1"
+

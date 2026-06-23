@@ -43,7 +43,7 @@ status:
   # AIM_BASE_IMAGE_REF the inspector extracted from the optimized image.
   # The weights-replaced derivation resolves back to this, rebased onto the
   # seed image's registry+org -> registry.example.com/aim-base:0.11.
-  baseImage: ghcr.io/silogen/aim-base:0.11
+  baseImage: docker.io/amdenterpriseai/aim-base:0.11
   conditions:
     - type: HardwareAvailable
       status: "True"

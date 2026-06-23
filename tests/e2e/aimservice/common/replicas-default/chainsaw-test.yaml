@@ -5,7 +5,7 @@
 # This test validates that when no replica configuration is specified,
 # the service defaults to 1 replica and status.runtime reflects this.
 #
-# Uses: ghcr.io/silogen/aim-dummy:0.2.0 (lightweight test image)
+# Uses: docker.io/amdenterpriseai/aim-dummy:0.2.0 (lightweight test image)
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test

@@ -386,3 +386,53 @@ func TestComponentHealth_ChildRef(t *testing.T) {
 		t.Errorf("ChildRef.Name = %v, want foo-123", ch.ChildRef.Name)
 	}
 }
+
+func TestCategorizeErrorFromLogs(t *testing.T) {
+	tests := []struct {
+		name     string
+		logs     string
+		expected errorCategory
+	}{
+		{
+			name: "HF gated repo without token -> auth",
+			// Current HF CLI phrasing for a gated repo accessed without an
+			// approved token. Regression guard for failure-auth-hf.
+			logs:     "Fetching 10 files: 0%\nError: Access denied. This repository requires approval.\n",
+			expected: errorCategoryAuth,
+		},
+		{
+			name:     "HF restricted model -> auth",
+			logs:     "Access to model meta-llama/Llama-3.2-1B is restricted. You must be authenticated.",
+			expected: errorCategoryAuth,
+		},
+		{
+			name:     "HF nonexistent repo -> resource not found (precedence over auth)",
+			logs:     "Repository Not Found for url: https://huggingface.co/api/models/foo/bar",
+			expected: errorCategoryResourceNotFound,
+		},
+		{
+			name:     "S3 access denied -> auth",
+			logs:     "An error occurred (AccessDenied) when calling s3 GetObject: access denied",
+			expected: errorCategoryAuth,
+		},
+		{
+			name:     "no space left -> storage full",
+			logs:     "OSError: [Errno 28] No space left on device",
+			expected: errorCategoryStorageFull,
+		},
+		{
+			name:     "clean logs -> unknown",
+			logs:     "Fetching 10 files: 100%\nDownload complete",
+			expected: errorCategoryUnknown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _ := categorizeErrorFromLogs(tt.logs)
+			if got != tt.expected {
+				t.Errorf("categorizeErrorFromLogs() category = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}

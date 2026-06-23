@@ -3,5 +3,5 @@ kind: AIMModel
 metadata:
   name: image-discovery-spec-change
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.2.0
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
   serviceAccountName: discovery-sa-a

@@ -3,7 +3,7 @@ kind: AIMModel
 metadata:
   name: ft-finetuned-pinned
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.2.0
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
   aimId: test/base-model-pinned
   modelSources:
     - modelId: test/model-fp8

@@ -60,11 +60,11 @@ Reference profiles from real AIM builds live at:
 ## Building locally
 
 ```bash
-docker build -t ghcr.io/silogen/aim-dummy:dev images/aim-dummy/
+docker build -t aim-dummy:dev images/aim-dummy/
 # For kind:
-kind load docker-image ghcr.io/silogen/aim-dummy:dev --name <your-cluster>
+kind load docker-image aim-dummy:dev --name <your-cluster>
 ```
 
-## Published image
+## CI usage
 
-CI publishes to `ghcr.io/silogen/aim-dummy` on every tag and on pushes to `main` under the `publish-main` tag. The name is unchanged from the previous `kaiwo/test/aimdummy/` source so existing test references continue to work.
+The image is built locally inside every CI run that needs it (`test-e2e.yml`, `compile-release.yaml`) and loaded into the Kind node cache under the tags the e2e fixtures reference (`aim-dummy:0.1.8`, `aim-dummy:0.1.9`, `aim-dummy:0.1.10`). It is not pushed to any registry; chainsaw fixtures rely on the kubelet's `IfNotPresent` pull policy finding the kind-loaded image locally.

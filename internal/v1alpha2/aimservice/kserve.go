@@ -140,7 +140,7 @@ func buildInferenceServiceFromProfile(
 						{
 							Name:            constants.ContainerKServe,
 							Image:           profileSpec.Image,
-							ImagePullPolicy: corev1.PullAlways,
+							ImagePullPolicy: utils.PullPolicyForImage(profileSpec.Image),
 							Env:             envVars,
 							Resources:       resources,
 							Ports: []corev1.ContainerPort{

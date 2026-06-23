@@ -3,10 +3,13 @@
 # AIMService E2E Test: Profile Cache CPU Live (GPU cluster)
 #
 # End-to-end test for the full v1alpha2 profile cache pipeline on real hardware.
-# Uses ghcr.io/silogen/aim-cpu-qwen-qwen3-0-6b:0.12.0-rc1 — a lightweight CPU model
-# that runs on any node with the CPU accelerator label. The image lives in the
-# private silogen GHCR org, so the test namespace needs a pull secret
-# (ghcr-regcred). By default we copy it from ${GHCR_PULL_SECRET_FILE:-~/workspace/silogen/ghcr_pull_secret_read_202604.yaml}.
+# Uses docker.io/silogenai/aim-cpu-qwen-qwen3-0-6b:0.12.0-rc1 — a lightweight CPU
+# model that runs on any node with the CPU accelerator label. The image lives in
+# the private silogenai Docker Hub org, so the test namespace needs a pull secret
+# (dockerhub-regcred). It is provisioned by ../../../_shared/ensure-pull-secret.sh,
+# which sources it from a local manifest (DOCKERHUB_PULL_SECRET_FILE) or an
+# existing secret in the `default` namespace, and warns-and-continues if neither
+# is present (so the test can still run where creds are wired in elsewhere).
 #
 # Flow:
 # 1. Create AIMClusterProfile with modelSources -> profile becomes Ready
@@ -26,48 +29,35 @@ metadata:
   name: profile-cache-cpu-live
   labels:
     requires: gpu
-    # Mounts a GHCR pull-secret manifest from a local path on the test
-    # runner (see GHCR_PULL_SECRET_FILE) plus an HF token secret. Both
-    # are environmental prerequisites that the default selectors strip
-    # out; opt-in by pointing CHAINSAW_TEST_DIR at this directory.
-    needs-secret: ghcr_pull_secret
+    # Needs a Docker Hub pull-secret (dockerhub-regcred) for the private
+    # silogenai image, plus an HF token secret. Both are environmental
+    # prerequisites that the default selectors strip out; opt-in by pointing
+    # CHAINSAW_TEST_DIR at this directory. See ../../../_shared/ensure-pull-secret.sh
+    # for how the pull secret is sourced (local file / cluster / warn).
+    needs-secret: dockerhub_pull_secret
 spec:
   description: Full profile cache pipeline with real CPU inference and endpoint validation
   timeouts:
     assert: 600s
   steps:
-    - name: Copy GHCR pull secret into the test namespace
+    - name: Ensure dockerhub pull secret in the test namespace
       try:
         - script:
             env:
               - name: NAMESPACE
                 value: ($namespace)
-            content: |
-              SRC="${GHCR_PULL_SECRET_FILE:-$HOME/workspace/silogen/ghcr_pull_secret_read_202604.yaml}"
-              if [ ! -f "$SRC" ]; then
-                echo "ERROR: Pull secret file not found at $SRC" >&2
-                echo "Set GHCR_PULL_SECRET_FILE to point at a dockerconfigjson Secret manifest." >&2
-                exit 1
-              fi
-              kubectl -n "$NAMESPACE" apply -f "$SRC"
+            content: bash ../../../_shared/ensure-pull-secret.sh
 
     # Even public HF repos hit anonymous rate limits on the XET backend, which
     # makes the downloader job stall. Inject a real user token so the download
     # job can authenticate. Referenced as HF_TOKEN via caching.env in profile.yaml.
-    - name: Copy HF token secret into the test namespace
+    - name: Ensure HF token secret in the test namespace
       try:
         - script:
             env:
               - name: NAMESPACE
                 value: ($namespace)
-            content: |
-              SRC="${HF_TOKEN_SECRET_FILE:-$HOME/workspace/silogen/hf-token-secret.yaml}"
-              if [ ! -f "$SRC" ]; then
-                echo "ERROR: HF token secret file not found at $SRC" >&2
-                echo "Set HF_TOKEN_SECRET_FILE to point at a v1 Secret named 'huggingface-creds' with key 'token'." >&2
-                exit 1
-              fi
-              kubectl -n "$NAMESPACE" apply -f "$SRC"
+            content: bash ../../../_shared/ensure-hf-secret.sh
 
     - name: Create runtime config with routing
       try:

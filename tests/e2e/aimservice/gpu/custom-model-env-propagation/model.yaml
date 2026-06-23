@@ -5,7 +5,7 @@ kind: AIMModel
 metadata:
   name: test-env-propagation-model
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.2.0
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
 
   modelSources:
     - modelId: test/env-propagation

@@ -34,8 +34,8 @@
 #
 # Requires:
 # - GPU cluster with the AMD device plugin (amd.com/gpu schedulable).
-# - HuggingFace token Secret (huggingface-creds, key "token") copied in from
-#   ${HF_TOKEN_SECRET_FILE:-~/workspace/silogen/hf-token-secret.yaml}.
+# - HuggingFace token Secret (huggingface-creds, key "token") provisioned by the
+#   shared ensure-hf-secret.sh helper from ~/.config/aim-engine/.
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
@@ -51,20 +51,13 @@ spec:
   timeouts:
     assert: 20m
   steps:
-    - name: Copy HF token secret into the test namespace
+    - name: Ensure HF token secret in the test namespace
       try:
         - script:
             env:
               - name: NAMESPACE
                 value: ($namespace)
-            content: |
-              SRC="${HF_TOKEN_SECRET_FILE:-$HOME/workspace/silogen/hf-token-secret.yaml}"
-              if [ ! -f "$SRC" ]; then
-                echo "ERROR: HF token secret file not found at $SRC" >&2
-                echo "Set HF_TOKEN_SECRET_FILE to point at a v1 Secret named 'huggingface-creds' with key 'token'." >&2
-                exit 1
-              fi
-              kubectl -n "$NAMESPACE" apply -f "$SRC"
+            content: bash ../../../_shared/ensure-hf-secret.sh
 
     - name: Create the smoke Pod (image + disk-staged LoRA)
       try:

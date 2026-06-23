@@ -16,6 +16,7 @@ Controller manager configuration
 | `manager.image.pullPolicy` | Image pull policy | `IfNotPresent` |
 | `manager.imagePullSecrets` | Secrets for pulling the operator image from private registries | `[]` |
 | `manager.args` | Controller command-line arguments | `["--leader-elect"]` |
+| `manager.artifactDownloaderImage` | Override the artifact-downloader image the operator spawns for model download and size-check Jobs. Empty uses the public mirror image baked into the operator binary at build time. Set this to install from a private downloader mirror instead. Per-resource (spec.modelDownloadImage) and runtime-config overrides still take precedence over this install-time default. | `` |
 | `manager.env` | Additional environment variables for the controller | `[]` |
 | `manager.podSecurityContext.runAsNonRoot` | Require non-root user | `true` |
 | `manager.podSecurityContext.seccompProfile.type` | Seccomp profile type | `RuntimeDefault` |

@@ -281,7 +281,7 @@ func buildInferenceService(
 						{
 							Name:            constants.ContainerKServe,
 							Image:           image,
-							ImagePullPolicy: corev1.PullAlways,
+							ImagePullPolicy: utils.PullPolicyForImage(image),
 							Env:             envVars,
 							Resources:       resources,
 							Ports: []corev1.ContainerPort{

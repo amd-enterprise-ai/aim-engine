@@ -3,7 +3,7 @@ kind: AIMModel
 metadata:
   name: test-custom-profile-model
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.2.0
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
   modelSources:
     - modelId: HuggingFaceTB/SmolLM2-135M
       sourceUri: hf://HuggingFaceTB/SmolLM2-135M

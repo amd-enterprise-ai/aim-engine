@@ -19,11 +19,12 @@ metadata:
   name: aimmodel-radeon-accelerator-template
   labels:
     requires: gpu
-    # Copies a ghcr-regcred secret from the default namespace at runtime
-    # to authenticate against ghcr.io/silogen. Excluded from default
-    # selectors via needs-secret notin (...); opt-in by overriding the
-    # selector or running the test dir directly.
-    needs-secret: ghcr_pull_secret
+    # Needs a Docker Hub pull secret (dockerhub-regcred) to authenticate against
+    # docker.io/silogenai for image inspection. Provisioned by
+    # ../../_shared/ensure-pull-secret.sh (local manifest / cluster / warn).
+    # Excluded from default selectors via needs-secret notin (...); opt-in by
+    # overriding the selector or running the test dir directly.
+    needs-secret: dockerhub_pull_secret
 spec:
   description: |
     Verify AIMModel auto-creates W7900 and R9700 AIMServiceTemplates with the
@@ -31,18 +32,14 @@ spec:
   timeouts:
     assert: 300s
   steps:
-    - name: Copy ghcr-regcred pull secret into test namespace
+    - name: Ensure dockerhub pull secret in test namespace
       try:
         - script:
             timeout: 30s
-            content: |
-              set -eu
-              # The ghcr-regcred dockerconfigjson secret lives in the default
-              # namespace on the test cluster; copy it here so image inspection
-              # can authenticate against ghcr.io/silogen.
-              kubectl get secret ghcr-regcred -n default -o json \
-                | jq 'del(.metadata.namespace,.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.managedFields)' \
-                | kubectl apply -n "$NAMESPACE" -f -
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: bash ../../_shared/ensure-pull-secret.sh
 
     - name: Create model with Radeon image
       try:

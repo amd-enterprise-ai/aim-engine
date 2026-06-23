@@ -31,17 +31,18 @@ jobs:
       BUILD_IMAGES: ${{ vars.BUILD_IMAGES }}
       PUSH_IMAGE_REPO: ${{ vars.PUSH_IMAGE_REPO }}
       PULL_IMAGE_REPO: ${{ vars.PULL_IMAGE_REPO }}
-      # Image repo baked into the published Helm chart's values.yaml. Set to
-      # docker.io/amdenterpriseai/aim-engine on both forks: the chart pushed
-      # by silogen is destined for manual promotion to the public
-      # amdenterpriseai OCI repo, where end users pull it from. Silogen-team
-      # consumers installing the silogenai-OCI chart pre-promotion override
-      # via --set manager.image.repository=docker.io/silogenai/aim-engine
-      # plus a dockerhub-regcred pull secret (the release notes built below
-      # document this path). Both forks must set this var explicitly — no
-      # fallback.
-      CHART_IMAGE_REPO: ${{ vars.CHART_IMAGE_REPO }}
-      CHART_OCI_REPO: ${{ vars.CHART_OCI_REPO }}
+      # Image repo baked into the published Helm chart's values.yaml. Falls back
+      # to a fork-aware default so the workflow works without per-repo Actions
+      # vars. Both forks point at the public docker.io/amdenterpriseai mirror
+      # that end users actually pull from; silogen-internal builds push the
+      # operator image to docker.io/silogenai (private) but the *chart* shipped
+      # to GitHub Releases keeps the public mirror reference so consumers of a
+      # release tarball don't need DockerHub-private credentials.
+      CHART_IMAGE_REPO: ${{ vars.CHART_IMAGE_REPO || 'docker.io/amdenterpriseai/aim-engine' }}
+      # OCI registry that receives the packaged Helm + CRDs charts. Both
+      # forks publish to DockerHub: silogen -> silogenai (private), everyone
+      # else -> amdenterpriseai (public). The Actions var always overrides.
+      CHART_OCI_REPO: ${{ vars.CHART_OCI_REPO || (github.repository_owner == 'silogen' && 'oci://registry-1.docker.io/silogenai' || 'oci://registry-1.docker.io/amdenterpriseai') }}
       CHART_NAME: aim-engine-chart
       # Static OCI chart version for integration tests (operator image tag stays dynamic via values).
       INT_TEST_CHART_VERSION: "0.0.0-int-test"
@@ -83,14 +84,27 @@ jobs:
           echo "int_test_image_tag=${INT_TEST_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "Using version: ${VERSION}, chart version: ${CHART_VERSION}, int-test image tag: ${INT_TEST_IMAGE_TAG}"
 
-      - name: Log in to DockerHub (Docker)
+      - name: Log in to DockerHub
         if: env.BUILD_IMAGES == 'true'
-        run: echo "${{ secrets.DOCKER_HUB_PUSH }}" | docker login docker.io -u "${{ secrets.DOCKER_HUB_PUSH_USER }}" --password-stdin
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKER_HUB_PUSH_USER }}
+          password: ${{ secrets.DOCKER_HUB_PUSH }}
 
       - name: Build and push Docker image
         if: env.BUILD_IMAGES == 'true'
         run: |
-          make docker-build IMG=${PUSH_IMAGE_REPO}:${VERSION} TAG=${VERSION}
+          # Bake the PUBLIC docker.io/amdenterpriseai artifact-downloader default
+          # (the Dockerfile default) into the binary, NOT the private silogenai
+          # one. This image is later promoted byte-for-byte to amdenterpriseai,
+          # so its compiled-in downloader ref must be publicly pullable for
+          # end users with no silogen credentials. Pre-promotion silogen tests
+          # point download Jobs back at docker.io/silogenai at *install* time via
+          # --set manager.artifactDownloaderImage (see the test-release job).
+          make docker-build \
+            IMG=${PUSH_IMAGE_REPO}:${VERSION} \
+            TAG=${VERSION}
           make docker-push IMG=${PUSH_IMAGE_REPO}:${VERSION}
           # Also tag and push with a SHA-suffixed tag so the static-name
           # int-test chart (packaged below) has an immutable image reference
@@ -137,12 +151,15 @@ jobs:
       - name: Push Helm chart to OCI registry
         if: env.BUILD_IMAGES == 'true'
         run: |
-          make helm-push-oci CHART_VERSION=${CHART_VERSION}
+          # CHART_OCI_REPO env (above) already carries the full destination
+          # (e.g. oci://registry-1.docker.io/silogenai), so override the
+          # CHART_OCI_OWNER fallback path entirely via CHART_OCI_REPO.
+          make helm-push-oci CHART_VERSION=${CHART_VERSION} CHART_OCI_REPO=${CHART_OCI_REPO}
 
       - name: Push CRDs chart to OCI registry
         if: env.BUILD_IMAGES == 'true'
         run: |
-          make crds-push-oci CHART_VERSION=${CHART_VERSION}
+          make crds-push-oci CHART_VERSION=${CHART_VERSION} CHART_OCI_REPO=${CHART_OCI_REPO}
 
       - name: Push Helm and CRDs charts to OCI (${{ env.INT_TEST_CHART_VERSION }} for integration tests)
         if: env.BUILD_IMAGES == 'true'
@@ -160,9 +177,9 @@ jobs:
             CHART_IMAGE_REPO=${PUSH_IMAGE_REPO} \
             CHART_IMAGE_TAG=${INT_TEST_IMAGE_TAG} \
             TAG=${VERSION}
-          make helm-push-oci CHART_VERSION=${INT_TEST_CHART_VERSION}
+          make helm-push-oci CHART_VERSION=${INT_TEST_CHART_VERSION} CHART_OCI_REPO=${CHART_OCI_REPO}
           make crds-package CHART_VERSION=${INT_TEST_CHART_VERSION} TAG=${VERSION}
-          make crds-push-oci CHART_VERSION=${INT_TEST_CHART_VERSION}
+          make crds-push-oci CHART_VERSION=${INT_TEST_CHART_VERSION} CHART_OCI_REPO=${CHART_OCI_REPO}
           rm -rf dist/chart
           cp -a "/tmp/aim-engine-dist-chart-${GITHUB_RUN_ID}" dist/chart
           rm -rf "/tmp/aim-engine-dist-chart-${GITHUB_RUN_ID}"
@@ -207,10 +224,12 @@ jobs:
           The chart's baked-in `manager.image.repository` points at the public
           `docker.io/amdenterpriseai/aim-engine`, which only carries this
           version *after* the manual silogenai → amdenterpriseai image
-          promotion has run. To install **before** promotion, provision a
-          `dockerhub-regcred` pull secret in the install namespace (skip if
-          it is already present) and override the image to point at the
-          private silogenai org.
+          promotion has run. The operator binary likewise bakes the public
+          `docker.io/amdenterpriseai/aim-artifact-downloader` default. To
+          install **before** promotion, provision a `dockerhub-regcred` pull
+          secret in the install namespace (skip if it is already present) and
+          override both the operator image and the artifact-downloader image to
+          point at the private silogenai org.
 
           ```bash
           kubectl create namespace aim-system --dry-run=client -o yaml | kubectl apply -f -
@@ -224,13 +243,21 @@ jobs:
             --version __CHART_VERSION__ \
             --namespace aim-system --create-namespace \
             --set manager.image.repository=docker.io/silogenai/aim-engine \
-            --set manager.imagePullSecrets[0].name=dockerhub-regcred
+            --set manager.imagePullSecrets[0].name=dockerhub-regcred \
+            --set manager.artifactDownloaderImage=docker.io/silogenai/aim-artifact-downloader:__VERSION__
           ```
 
           The attached `install.yaml` already references
-          `docker.io/silogenai/aim-engine:__VERSION__` directly, so applying
-          it only requires `dockerhub-regcred` in the install namespace (no
-          override needed).
+          `docker.io/silogenai/aim-engine:__VERSION__` directly, but the
+          operator binary still bakes the public downloader default. Until
+          promotion, prefer the Helm install above (which overrides
+          `manager.artifactDownloaderImage`), or patch the controller-manager
+          Deployment to add an `AIM_ARTIFACT_DOWNLOADER_IMAGE=docker.io/silogenai/aim-artifact-downloader:__VERSION__`
+          env var so download Jobs resolve against the private silogenai org.
+
+          Because these download Jobs run in your workload namespace, pulling the
+          private artifact-downloader image requires node-level (containerd)
+          registry credentials configured on each node.
 
           ---
 
@@ -340,10 +367,11 @@ jobs:
 
           The chart's `manager.image.repository` defaults to the public
           `docker.io/amdenterpriseai/aim-engine`, populated only after the
-          manual silogenai → amdenterpriseai image promotion. To install
-          pre-promotion, provision a `dockerhub-regcred` pull secret in the
-          install namespace (skip if it is already present) and override
-          the image:
+          manual silogenai → amdenterpriseai image promotion. The operator
+          binary likewise bakes the public artifact-downloader default. To
+          install pre-promotion, provision a `dockerhub-regcred` pull secret in
+          the install namespace (skip if it is already present) and override
+          both the operator image and the artifact-downloader image:
 
           ```bash
           kubectl create namespace aim-system --dry-run=client -o yaml | kubectl apply -f -
@@ -356,8 +384,13 @@ jobs:
           helm install aim-engine ./chart \
             --namespace aim-system --create-namespace \
             --set manager.image.repository=docker.io/silogenai/aim-engine \
-            --set manager.imagePullSecrets[0].name=dockerhub-regcred
+            --set manager.imagePullSecrets[0].name=dockerhub-regcred \
+            --set manager.artifactDownloaderImage=docker.io/silogenai/aim-artifact-downloader:__VERSION__
           ```
+
+          Because the download Jobs run in your workload namespace, pulling the
+          private artifact-downloader image requires node-level (containerd)
+          registry credentials configured on each node.
 
           ---
 
@@ -428,7 +461,11 @@ jobs:
       PULL_IMAGE_REPO: ${{ vars.PULL_IMAGE_REPO }}
       PUSH_IMAGE_REPO: ${{ vars.PUSH_IMAGE_REPO }}
       BUILD_IMAGES: ${{ vars.BUILD_IMAGES }}
-      CHART_OCI_REPO: ${{ vars.CHART_OCI_REPO }}
+      CHART_OCI_REPO: ${{ vars.CHART_OCI_REPO || (github.repository_owner == 'silogen' && 'oci://registry-1.docker.io/silogenai' || 'oci://registry-1.docker.io/amdenterpriseai') }}
+      # aim-dummy test image: built locally and kind-loaded under the exact public
+      # ref the e2e fixtures reference. Keep in sync with the Makefile and
+      # test-e2e.yml AIM_DUMMY_TAG.
+      AIM_DUMMY_TAG: "0.2.0"
       KIND_CLUSTER: aim-release-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Free up disk space
@@ -526,14 +563,22 @@ jobs:
             sleep 15
           done
 
-      # Match test-e2e.yml "Load images into Kind": pre-pull test model images so
-      # template-cache and discovery jobs do not depend on GHCR latency during Chainsaw.
-      - name: Pre-load test model images into Kind
-        run: |
-          for tag in 0.1.8 0.1.9 0.1.10; do
-            docker pull "ghcr.io/silogen/aim-dummy:${tag}" || true
-            kind load docker-image "ghcr.io/silogen/aim-dummy:${tag}" --name "${KIND_CLUSTER}" || true
-          done
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build the aim-dummy test image locally (no registry pull) and kind-load
+      # it under the exact public ref the e2e fixtures reference.
+      - name: Build aim-dummy test image
+        uses: docker/build-push-action@v6
+        with:
+          context: images/aim-dummy
+          load: true
+          tags: docker.io/amdenterpriseai/aim-dummy:${{ env.AIM_DUMMY_TAG }}
+          cache-from: type=gha,scope=aim-dummy
+          cache-to: type=gha,scope=aim-dummy,mode=max
+
+      - name: Load aim-dummy image into Kind
+        run: kind load docker-image "docker.io/amdenterpriseai/aim-dummy:${AIM_DUMMY_TAG}" --name "${KIND_CLUSTER}"
 
       - name: Create aim-system namespace
         run: kubectl create namespace aim-system --dry-run=client -o yaml | kubectl apply -f -
@@ -559,6 +604,7 @@ jobs:
 
       - name: Log in to DockerHub (Helm/OCI)
         if: env.BUILD_IMAGES == 'true'
+        # Pull-only credentials -- this stage only consumes charts.
         run: echo "${{ secrets.DOCKER_HUB_PULL }}" | helm registry login registry-1.docker.io -u "${{ secrets.DOCKER_HUB_PULL_USER }}" --password-stdin
 
       - name: Install CRDs via Helm OCI
@@ -586,16 +632,35 @@ jobs:
       - name: Pre-warm S3 artifact cache
         run: make cache-warm
 
+      - name: Create DockerHub pull secret for operator image
+        if: env.BUILD_IMAGES == 'true'
+        # The silogen build pushes the operator image to docker.io/silogenai
+        # (private), so the Kind cluster needs a docker-registry secret to
+        # pull. The amd-enterprise-ai path pulls from the public
+        # docker.io/amdenterpriseai mirror and does not need this.
+        run: |
+          kubectl -n aim-system create secret docker-registry regcred \
+            --docker-server=docker.io \
+            --docker-username="${{ secrets.DOCKER_HUB_PULL_USER }}" \
+            --docker-password="${{ secrets.DOCKER_HUB_PULL }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
       - name: Install operator via Helm OCI
         run: |
           # Override image.repository/tag to point at the just-pushed build,
           # bypassing any public-mirror PULL_IMAGE_REPO baked into the chart.
-          # silogenai/* images are private, so wire the dockerhub-regcred
-          # secret provisioned above through manager.imagePullSecrets — this
-          # proves the image really did land on DockerHub and is consumable.
+          # Inject the regcred imagePullSecret so the Kind cluster can pull
+          # the private docker.io/silogenai operator image.
+          # The operator binary bakes the PUBLIC downloader default, which is not
+          # promoted to amdenterpriseai yet at this point. Override it back to the
+          # just-pushed silogenai downloader so pre-promotion download Jobs pull
+          # from the private mirror the regcred secret covers.
           HELM_SET_ARGS=""
           if [ "${BUILD_IMAGES}" = "true" ]; then
-            HELM_SET_ARGS="--set manager.image.repository=${PUSH_IMAGE_REPO} --set manager.image.tag=${VERSION} --set manager.imagePullSecrets[0].name=dockerhub-regcred"
+            HELM_SET_ARGS="--set manager.image.repository=${PUSH_IMAGE_REPO} \
+              --set manager.image.tag=${VERSION} \
+              --set manager.imagePullSecrets[0].name=regcred \
+              --set manager.artifactDownloaderImage=docker.io/silogenai/aim-artifact-downloader:${VERSION}"
           fi
           helm install aim-engine ${CHART_OCI_REPO}/aim-engine-chart \
             --version ${CHART_VERSION} \
@@ -632,13 +697,13 @@ jobs:
           kubectl delete namespace "${NS}" --ignore-not-found --wait=true --timeout=120s || true
           kubectl create namespace "${NS}"
           trap 'kubectl delete namespace "${NS}" --ignore-not-found --wait=false 2>/dev/null || true' EXIT
-          cat <<'EOF' | kubectl apply -n "${NS}" -f -
+          cat <<EOF | kubectl apply -n "${NS}" -f -
           apiVersion: aim.eai.amd.com/v1alpha1
           kind: AIMModel
           metadata:
             name: reconcile-smoke-model
           spec:
-            image: ghcr.io/silogen/aim-dummy:0.1.10
+            image: docker.io/amdenterpriseai/aim-dummy:${AIM_DUMMY_TAG}
             discovery:
               extractMetadata: false
               createServiceTemplates: false

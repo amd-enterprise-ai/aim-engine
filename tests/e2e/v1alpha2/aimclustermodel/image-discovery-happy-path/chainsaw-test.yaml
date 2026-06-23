@@ -42,7 +42,7 @@ spec:
                 name: image-discovery-happy-path
               status:
                 aimId: HuggingFaceTB/SmolLM2-135M
-                baseImage: ghcr.io/silogen/aim-base:dummy
+                baseImage: docker.io/amdenterpriseai/aim-base:dummy
                 discoveryCacheRef:
                   namespace: aim-system
                 (discoveryCacheRef.name != ""): true
@@ -74,7 +74,7 @@ spec:
               fi
               echo "$METADATA" | jq -e '.aimId == "HuggingFaceTB/SmolLM2-135M"' >/dev/null \
                 || { echo "ERROR: metadata.aimId mismatch"; echo "$METADATA"; exit 1; }
-              echo "$METADATA" | jq -e '.sourceImage == "ghcr.io/silogen/aim-dummy:0.2.0"' >/dev/null \
+              echo "$METADATA" | jq -e '.sourceImage == "docker.io/amdenterpriseai/aim-dummy:0.2.2"' >/dev/null \
                 || { echo "ERROR: metadata.sourceImage mismatch"; echo "$METADATA"; exit 1; }
               echo "$METADATA" | jq -e '.profileIds | length >= 1' >/dev/null \
                 || { echo "ERROR: metadata.profileIds is empty"; echo "$METADATA"; exit 1; }

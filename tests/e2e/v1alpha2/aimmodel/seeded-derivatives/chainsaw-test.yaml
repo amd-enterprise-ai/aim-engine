@@ -75,7 +75,7 @@ spec:
                 aimId: seeded-org/seeded-model
                 modelId: seeded-org/seeded-model
                 profileId: gpu-ignored
-                image: ghcr.io/silogen/aim-dummy:0.2.0
+                image: docker.io/amdenterpriseai/aim-dummy:0.2.0
                 acceleratorModel: MI300X
                 acceleratorCount: 1
                 # Both aimId and modelSources are required by the v1alpha2

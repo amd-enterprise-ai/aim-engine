@@ -3,7 +3,7 @@ kind: AIMClusterModel
 metadata:
   name: test-model-discovery-cluster
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.2.0
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
   defaultServiceTemplate: test-template-discovery-cluster
   discovery:
     extractMetadata: false

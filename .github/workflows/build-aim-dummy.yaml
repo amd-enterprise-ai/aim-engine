@@ -21,7 +21,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 # Opt JavaScript actions onto Node 24 ahead of GitHub's June 16, 2026 default
 # flip. See https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
@@ -42,14 +41,19 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+      - name: Log in to DockerHub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKER_HUB_PUSH_USER }}
+          password: ${{ secrets.DOCKER_HUB_PUSH }}
+
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/silogen/aim-dummy
+          images: docker.io/silogenai/aim-dummy
           tags: |
             type=ref,event=branch
             type=ref,event=tag

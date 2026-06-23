@@ -96,7 +96,7 @@ spec:
                 # not on a rebased AIM_BASE_IMAGE_REF. Base sources have
                 # no meaningful "lighter runtime" to resolve back to —
                 # source.Image IS the runtime image.
-                image: ghcr.io/silogen/aim-dummy:0.2.0
+                image: docker.io/amdenterpriseai/aim-dummy:0.2.0
                 modelSources:
                   - modelId: acme/byo-transformer
                     sourceUri: hf://acme/byo-transformer

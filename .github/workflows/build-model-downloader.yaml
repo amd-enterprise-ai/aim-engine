@@ -22,7 +22,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 # Opt JavaScript actions onto Node 24 ahead of GitHub's June 16, 2026 default
 # flip. See https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
@@ -31,7 +30,9 @@ env:
 
 jobs:
   build:
-    if: vars.ACTIVATE_ARTIFACT_DOWNLOADER_WORKFLOW == 'true'
+    # Gate automatic triggers (tag push / PR) behind the repo variable, but
+    # always allow a manual run — dispatching the workflow is an explicit opt-in.
+    if: ${{ vars.ACTIVATE_ARTIFACT_DOWNLOADER_WORKFLOW == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -41,14 +42,19 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+      - name: Log in to DockerHub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKER_HUB_PUSH_USER }}
+          password: ${{ secrets.DOCKER_HUB_PUSH }}
+
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/aim-artifact-downloader
+          images: docker.io/silogenai/aim-artifact-downloader
           tags: |
             type=ref,event=branch
             type=ref,event=tag

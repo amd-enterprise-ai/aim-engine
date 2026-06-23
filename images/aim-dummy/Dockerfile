@@ -33,7 +33,7 @@ LABEL com.amd.aim.hfToken.required=False \
 # AIM_ID is redundant with the canonicalName label but kept as a fallback.
 # AIM_BASE_IMAGE_REF is copied into AIMModel.status.baseImage.
 ENV AIM_ID="HuggingFaceTB/SmolLM2-135M" \
-    AIM_BASE_IMAGE_REF="ghcr.io/silogen/aim-base:dummy" \
+    AIM_BASE_IMAGE_REF="docker.io/amdenterpriseai/aim-base:dummy" \
     PATH="/bin:/"
 
 # v1alpha2 discovery walks /workspace/aim-runtime/profiles/<aim_id>/**.yaml and

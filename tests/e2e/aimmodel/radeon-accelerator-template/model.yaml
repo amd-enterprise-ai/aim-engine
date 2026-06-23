@@ -3,6 +3,6 @@ kind: AIMModel
 metadata:
   name: test-model-radeon-accelerator
 spec:
-  image: ghcr.io/silogen/aim-radeon-qwen-qwen3-vl-8b-instruct:0.12.0-rc1
+  image: silogenai/aim-radeon-qwen-qwen3-vl-8b-instruct:0.12.0-rc11
   imagePullSecrets:
-    - name: ghcr-regcred
+    - name: dockerhub-regcred

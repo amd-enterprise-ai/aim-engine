@@ -4,7 +4,7 @@ metadata:
   name: legacy-always-service
 spec:
   model:
-    image: ghcr.io/silogen/aim-dummy:0.2.0
+    image: docker.io/amdenterpriseai/aim-dummy:0.2.0
   caching:
     mode: Always
   replicas: 1

@@ -116,6 +116,18 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
+	// Install-time override for the artifact-downloader image. The binary bakes
+	// in the public docker.io/amdenterpriseai mirror at build time (via LDFLAGS),
+	// so the promoted public operator is self-sufficient. Private installs that
+	// pull the downloader from a different registry (e.g. docker.io/silogenai)
+	// set this via the chart's manager.artifactDownloaderImage value, mirroring
+	// how manager.image.repository overrides the operator image itself. An
+	// explicit value here always wins over the compiled-in default.
+	if img := os.Getenv("AIM_ARTIFACT_DOWNLOADER_IMAGE"); img != "" {
+		setupLog.Info("overriding artifact-downloader image from environment", "image", img)
+		aimv1alpha1.DefaultDownloadImage = img
+	}
+
 	// Refuse to start without a versioned downloader image. The source
 	// default is intentionally empty so an LDFLAGS-less build (e.g. a
 	// developer running `go build` directly, or air without the

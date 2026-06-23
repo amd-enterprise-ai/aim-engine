@@ -4,7 +4,7 @@ kind: AIMModel
 metadata:
   name: model-source-env-test
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.2.0
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
 
   # Model sources with env vars for S3 authentication
   modelSources:

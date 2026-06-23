@@ -49,17 +49,39 @@ jobs:
           # mechanism to exclude the local config.
           MISE_OVERRIDE_CONFIG_FILENAMES: "mise.toml"
 
-      - name: Cache Go build
+      - name: Cache Go modules and build
         uses: actions/cache@v4
         with:
-          path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          # Key on go.sum (NOT every *.go file). A source-hash key changes on
+          # every commit, so the exact key never hits and actions/cache re-saves
+          # the whole ~/.cache/go-build at the end of every run. On the shared
+          # self-hosted runner that save races with the other job and with Go's
+          # own background cache trimming, producing a torn snapshot. Restoring
+          # that snapshot later surfaces as
+          # "link: ...: reference to nonexistent package ..." during `go test`.
+          # A go.sum key hits on most runs (so no save), and the v2 prefix
+          # abandons the already-poisoned cache namespace.
+          key: go-v2-${{ runner.os }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-build-${{ runner.os }}-
+            go-v2-${{ runner.os }}-
 
       # TODO: Consider adding -race flag for race detection (adds 2-10x build time)
       - name: Run tests
-        run: go test ./...
+        run: |
+          set -o pipefail
+          # Self-heal for a corrupt Go build cache.
+          if ! go test ./... 2>&1 | tee /tmp/go-test.log; then
+            if grep -q "reference to nonexistent package" /tmp/go-test.log; then
+              echo "::warning::Corrupt Go build cache detected; running 'go clean -cache' and retrying."
+              go clean -cache
+              go test ./...
+            else
+              exit 1
+            fi
+          fi
 
   test-e2e:
     name: test-e2e
@@ -70,14 +92,16 @@ jobs:
       cancel-in-progress: true
     env:
       KIND_CLUSTER: aim-${{ github.run_id }}-${{ github.run_attempt }}
-      ARTIFACT_DOWNLOADER_IMAGE: ghcr.io/silogen/aim-artifact-downloader:${{ github.run_id }}-${{ github.run_attempt }}
+      ARTIFACT_DOWNLOADER_IMAGE: aim-artifact-downloader:${{ github.run_id }}-${{ github.run_attempt }}
       OPERATOR_IMAGE_REPOSITORY: aim-engine
       OPERATOR_IMAGE_TAG: ${{ github.run_id }}-${{ github.run_attempt }}
       OPERATOR_IMAGE: aim-engine:${{ github.run_id }}-${{ github.run_attempt }}
-      # AIM_DUMMY_TAG is the version of the published `aim-dummy` image that
-      # serves as the kind-runnable test image (BYO base-image, custom-model
-      # fixtures). Pinned to a specific tag so test-fixture changes pulling
-      # `:latest` do not silently mutate behaviour mid-CI run.
+      # AIM_DUMMY_TAG pins the aim-dummy test image (BYO base-image, custom-model,
+      # discovery fixtures). It defines the canonical
+      # docker.io/amdenterpriseai/aim-dummy:<tag> ref the fixtures hardcode; the
+      # `make test-chainsaw-kind-ttl` step rewrites that ref to an ephemeral
+      # ttl.sh ref so the operator can read image metadata from a registry while
+      # the public mirror is unpublished. Keep in sync with the Makefile default.
       AIM_DUMMY_TAG: "0.2.0"
     steps:
       - name: Free up disk space
@@ -116,16 +140,40 @@ jobs:
           # mechanism to exclude the local config.
           MISE_OVERRIDE_CONFIG_FILENAMES: "mise.toml"
 
-      - name: Cache Go build
+      - name: Cache Go modules and build
         uses: actions/cache@v4
         with:
-          path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          # Key on go.sum (NOT every *.go file). A source-hash key changes on
+          # every commit, so the exact key never hits and actions/cache re-saves
+          # the whole ~/.cache/go-build at the end of every run. On the shared
+          # self-hosted runner that save races with the other job and with Go's
+          # own background cache trimming, producing a torn snapshot. Restoring
+          # that snapshot later surfaces as
+          # "link: ...: reference to nonexistent package ..." during `go test`.
+          # A go.sum key hits on most runs (so no save), and the v2 prefix
+          # abandons the already-poisoned cache namespace.
+          key: go-v2-${{ runner.os }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            go-build-${{ runner.os }}-
+            go-v2-${{ runner.os }}-
 
       - name: Set per-run kubeconfig path
         run: echo "KUBECONFIG=${RUNNER_TEMP}/kubeconfig-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_ENV}"
+
+      - name: Set per-run isolated Helm config
+        # Per-run isolated Helm config (job-scoped via GITHUB_ENV) so the GHCR login is shared across steps to prevent rate limiting.
+        run: |
+          HELM_BASE="${RUNNER_TEMP}/helm"
+          {
+            echo "HELM_CACHE_HOME=${HELM_BASE}/cache"
+            echo "HELM_CONFIG_HOME=${HELM_BASE}/config"
+            echo "HELM_DATA_HOME=${HELM_BASE}/data"
+            echo "HELM_REGISTRY_CONFIG=${HELM_BASE}/registry/config.json"
+          } >> "${GITHUB_ENV}"
+          mkdir -p "${HELM_BASE}/cache" "${HELM_BASE}/config" "${HELM_BASE}/data" "${HELM_BASE}/registry"
+          echo '{}' > "${HELM_BASE}/registry/config.json"
 
       - name: Create Kind cluster
         run: kind create cluster --name "${KIND_CLUSTER}" --config hack/kind/config.yaml
@@ -171,22 +219,16 @@ jobs:
           kubectl delete namespace storage-smoke --wait=false
 
       - name: Login to GHCR
-        # Authenticate helm to ghcr.io so OCI chart pulls aren't subject to
-        # GHCR's anonymous-pull rate limit (the shared self-hosted runner's IP
-        # gets denied with a 403 on the anonymous token endpoint under load).
+        # Authenticate helm to ghcr.io so the kserve / kserve-crd / kedify-otel
+        # OCI chart pulls in "Install core dependencies" aren't subject to GHCR's
+        # anonymous-pull rate limit (the shared self-hosted runner's IP gets
+        # denied with a 403 on the anonymous token endpoint under load). This
+        # writes into the per-run isolated HELM_REGISTRY_CONFIG set above, so the
+        # dependency sync actually uses these credentials.
         run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Install core dependencies
-        run: |
-          # Use an isolated Helm registry/config cache to avoid stale GHCR
-          # credentials on self-hosted runners interfering with public OCI pulls.
-          export HELM_CACHE_HOME="${RUNNER_TEMP}/helm/cache"
-          export HELM_CONFIG_HOME="${RUNNER_TEMP}/helm/config"
-          export HELM_DATA_HOME="${RUNNER_TEMP}/helm/data"
-          export HELM_REGISTRY_CONFIG="${RUNNER_TEMP}/helm/registry/config.json"
-          mkdir -p "${HELM_CACHE_HOME}" "${HELM_CONFIG_HOME}" "${HELM_DATA_HOME}" "$(dirname "${HELM_REGISTRY_CONFIG}")"
-          echo '{}' > "${HELM_REGISTRY_CONFIG}"
-          helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
+        run: helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -206,35 +248,29 @@ jobs:
           context: .
           load: true
           tags: ${{ env.OPERATOR_IMAGE }}
+          # Override the Dockerfile's public-mirror default so the operator
+          # binary's compiled-in DefaultDownloadImage matches the bare local
+          # tag we just built and will kind-load. With IfNotPresent pull policy,
+          # the spawned artifact-downloader pods find the local image and never
+          # contact any registry during chainsaw tests.
           build-args: |
             VERSION=${{ env.OPERATOR_IMAGE_TAG }}
+            ARTIFACT_DOWNLOADER_IMG=${{ env.ARTIFACT_DOWNLOADER_IMAGE }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Build the aim-dummy image from the PR's images/aim-dummy/ directory
-      # so test fixtures referencing it cover both the published-tag baseline
-      # AND any in-PR changes. We tag the local build with the same
-      # AIM_DUMMY_TAG used by fixtures, then load it into Kind. The Kind
-      # cache already containing a same-tagged image is fine — the second
-      # `kind load` overlays the local build deterministically.
-      - name: Build aim-dummy image (local override)
-        uses: docker/build-push-action@v6
-        with:
-          context: images/aim-dummy
-          load: true
-          tags: ghcr.io/silogen/aim-dummy:${{ env.AIM_DUMMY_TAG }}
-          cache-from: type=gha,scope=aim-dummy
-          cache-to: type=gha,scope=aim-dummy,mode=max
-
+      # NOTE: aim-dummy is built, pushed to ttl.sh, and kind-loaded by the
+      # `make test-chainsaw-kind-ttl` step below (see the Run Chainsaw tests
+      # step). It is NOT built/loaded here because AIMModel discovery reads the
+      # image's OCI labels from a registry inside the operator (remote.Get),
+      # which a bare `kind load` can't satisfy; ttl.sh gives us an anonymous,
+      # public, ephemeral registry to read from until the public
+      # docker.io/amdenterpriseai mirror is published.
       - name: Load images into Kind
         run: |
           set -euo pipefail
           kind load docker-image "${ARTIFACT_DOWNLOADER_IMAGE}" --name "${KIND_CLUSTER}"
           kind load docker-image "${OPERATOR_IMAGE}" --name "${KIND_CLUSTER}"
-          # AIM_DUMMY_TAG is required — fail loudly rather than silently
-          # falling back to a missing image, which used to surface as
-          # opaque ImagePullBackOff in e2e Pods.
-          kind load docker-image "ghcr.io/silogen/aim-dummy:${AIM_DUMMY_TAG}" --name "${KIND_CLUSTER}"
 
       - name: Generate CRDs
         run: make crds
@@ -321,7 +357,13 @@ jobs:
           kubectl get crds | grep aim || true
 
       - name: Run Chainsaw tests
-        run: make test-chainsaw-kind
+        # Builds aim-dummy, pushes it to an ephemeral ttl.sh ref, kind-loads it,
+        # and runs the kind suite against a throwaway copy of tests/e2e whose
+        # aim-dummy ref is rewritten to the ttl.sh ref. This lets discovery
+        # (which reads image labels from a registry inside the operator) work
+        # before aim-dummy is published to the public docker.io/amdenterpriseai
+        # mirror. Switch back to `make test-chainsaw-kind` once it's public.
+        run: make test-chainsaw-kind-ttl
 
       # Dump the poller's accumulated time-series (TS-marked metric snapshots).
       # Runs always() so we capture history for both passing and failing runs.

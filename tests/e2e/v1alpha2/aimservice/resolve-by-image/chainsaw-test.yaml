@@ -60,7 +60,7 @@ spec:
                 (ownerReferences[?kind == 'AIMService' && name == 'resolve-by-image-service']):
                   - controller: true
               spec:
-                image: ghcr.io/silogen/aim-dummy:0.2.0
+                image: docker.io/amdenterpriseai/aim-dummy:0.2.0
 
     - name: Wait for the auto-created model to publish discovered AIMProfiles
       description: |

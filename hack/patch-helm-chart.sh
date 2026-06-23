@@ -41,11 +41,15 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# Inject manager env block: scale-from-zero controller defaults plus any
-# operator-supplied overrides from .Values.manager.env. The kubebuilder
-# helm/v2-alpha plugin emits no env: stanza, so we splice one in here.
+# Inject manager env block: scale-from-zero controller defaults, the dedicated
+# manager.artifactDownloaderImage override (exposed as
+# AIM_ARTIFACT_DOWNLOADER_IMAGE), plus any operator-supplied passthrough from
+# .Values.manager.env. The kubebuilder helm/v2-alpha plugin emits no env:
+# stanza, so we splice one in here. The artifactDownloaderImage override lets
+# private installs point download Jobs at a non-public downloader mirror
+# without rebuilding the operator binary.
 # ------------------------------------------------------------------------------
-echo "  - Adding manager env injection (scale-from-zero controller config)..."
+echo "  - Adding manager env injection (scale-from-zero + artifactDownloaderImage)..."
 if [[ -f "${MANAGER_YAML}" ]]; then
     python3 - "${MANAGER_YAML}" <<'PYEOF'
 import sys
@@ -65,6 +69,10 @@ env_block = (
     "                      value: {{ .Values.scaleFromZero.scalerAddress | quote }}\n"
     "                    - name: AIM_COOLDOWN_SECONDS_PER_GI_MEMORY\n"
     "                      value: {{ .Values.scaleFromZero.cooldownSecondsPerGiMemory | quote }}\n"
+    "                    {{- if .Values.manager.artifactDownloaderImage }}\n"
+    "                    - name: AIM_ARTIFACT_DOWNLOADER_IMAGE\n"
+    "                      value: {{ .Values.manager.artifactDownloaderImage | quote }}\n"
+    "                    {{- end }}\n"
     "                    {{- with .Values.manager.env }}\n"
     "                    {{- toYaml . | nindent 20 }}\n"
     "                    {{- end }}\n"

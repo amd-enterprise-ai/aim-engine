@@ -31,6 +31,56 @@ make test-chainsaw CHAINSAW_TEST_DIR=tests/e2e/aimservice/frozen
 
 Tests are filtered by environment. When `ENV=kind` (default), tests tagged with `requires=longhorn` or other infrastructure requirements are excluded automatically.
 
+### Credentials for opt-in tests
+
+Some GPU / live tests need credentials that aren't universally provisioned (a private-registry pull secret, a HuggingFace token). These tests are tagged with a `needs-secret` label and **excluded from the default selectors**. Provide the secret(s) locally, then opt in (see below).
+
+Two shared helpers — `tests/e2e/_shared/ensure-pull-secret.sh` and `tests/e2e/_shared/ensure-hf-secret.sh` — resolve each secret at runtime in this order:
+
+1. A local Secret manifest under `~/.config/aim-engine/` (path overridable via env).
+2. An identically-named secret in the `default` namespace, copied into the test namespace (provision once per shared cluster).
+3. Otherwise: the pull-secret step **warns and continues**; the HF-token step **fails** (the token is required for gated / rate-limited downloads).
+
+| Secret | Default local path | Path override | Secret name / key |
+|--------|--------------------|---------------|-------------------|
+| Docker Hub pull secret | `~/.config/aim-engine/dockerhub-regcred.yaml` | `DOCKERHUB_PULL_SECRET_FILE` | `dockerhub-regcred` (`kubernetes.io/dockerconfigjson`) |
+| HuggingFace token | `~/.config/aim-engine/huggingface-creds.yaml` | `HF_TOKEN_SECRET_FILE` | `huggingface-creds`, key `token` |
+
+Create them once:
+
+```bash
+mkdir -p ~/.config/aim-engine
+
+# Docker Hub pull secret (private docker.io/silogenai images).
+# The manifest must NOT pin a namespace — the helper applies it with -n <test-ns>.
+kubectl create secret docker-registry dockerhub-regcred \
+  --docker-server=docker.io \
+  --docker-username=<user> --docker-password=<token-or-password> \
+  --dry-run=client -o yaml > ~/.config/aim-engine/dockerhub-regcred.yaml
+
+# HuggingFace token (gated / rate-limited model downloads)
+kubectl create secret generic huggingface-creds \
+  --from-literal=token=hf_xxx \
+  --dry-run=client -o yaml > ~/.config/aim-engine/huggingface-creds.yaml
+```
+
+Or, instead of local files, create the same-named secrets in the `default` namespace and the helpers will copy them in.
+
+Useful overrides: `PULL_SECRET_SOURCE_NS` / `HF_TOKEN_SOURCE_NS` (change the copy-from namespace), `PULL_SECRET_REQUIRED=1` (make a missing pull secret fail instead of warn), `HF_TOKEN_OPTIONAL=1` (make a missing HF token warn instead of fail).
+
+#### Running a `needs-secret` test
+
+The `needs-secret` exclusion lives in the ENV selector, so pointing `CHAINSAW_TEST_DIR` at the directory is **not** enough — it would still be filtered out (`0 passed / 0 failed / 0 skipped`). Clear the selector to opt in:
+
+```bash
+make test-chainsaw \
+  CHAINSAW_TEST_DIR=tests/e2e/aimservice/gpu/v1alpha2-profile-via-model-cpu-live \
+  CHAINSAW_ENV_SELECTOR=
+```
+
+!!! note
+    A few tests (`profile-id-propagation`, `finetuned-latest-no-image`) use a different HF secret — `hf-token` with key `hf-token`, copied from the `aim-system` namespace — rather than the `huggingface-creds` convention above.
+
 ### Test Reports
 
 JSON reports are written to `.tmp/chainsaw-reports/chainsaw-report.json`. Analyze failures:

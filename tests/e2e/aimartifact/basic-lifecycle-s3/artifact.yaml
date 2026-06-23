@@ -4,7 +4,9 @@ metadata:
   name: basic-lifecycle-s3
 spec:
   sourceUri: s3://models/SmolLM-135M
-  size: 2.2Gi
+  # PVC sizing only; the synthetic seed is a few MiB. Readiness is gated on the
+  # download Job succeeding, not on matching this size.
+  size: 64Mi
   env:
     - name: AWS_ACCESS_KEY_ID
       value: minioadmin

@@ -8,7 +8,7 @@ spec:
       restartPolicy: OnFailure
       initContainers:
         - name: downloader
-          image: ghcr.io/silogen/aim-artifact-downloader:0.1.1
+          image: docker.io/amdenterpriseai/aim-artifact-downloader:v0.2.4
           env:
             - name: TARGET_DIR
               value: /mnt/models

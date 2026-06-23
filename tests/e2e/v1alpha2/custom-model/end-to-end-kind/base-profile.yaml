@@ -40,7 +40,7 @@ spec:
   type: general
   acceleratorType: cpu
   acceleratorCount: 1
-  image: ghcr.io/silogen/aim-dummy:0.2.0
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
   containerEnv:
     - name: VLLM_TARGET_DEVICE
       value: cpu

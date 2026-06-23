@@ -6,7 +6,7 @@ metadata:
 spec:
   runtimeConfigName: test-gpu-custom-model-env
   imagePullSecrets:
-    - name: ghcr-regcred
+    - name: dockerhub-regcred
   model:
     name: test-env-propagation-model
   # Template auto-selected (only one optimized template exists for this model)

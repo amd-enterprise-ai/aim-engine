@@ -5,7 +5,7 @@ kind: AIMModel
 metadata:
   name: cpu-only-model-test
 spec:
-  image: ghcr.io/silogen/aim-dummy:0.2.0
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
 
   # Model sources - required for custom models
   modelSources:
