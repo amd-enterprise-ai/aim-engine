@@ -324,14 +324,16 @@ type AIMServiceOverrides struct {
 // AIMClusterProfile directly; Selector lists candidates by provenance and spec
 // fields (typically combined with `spec.model.name`, which the controller
 // treats as a shortcut for `selector.modelRef.name`).
-// +kubebuilder:validation:XValidation:rule="!(has(self.name) && has(self.selector))",message="spec.profile.name and spec.profile.selector are mutually exclusive"
-// +kubebuilder:validation:XValidation:rule="has(self.name) || has(self.selector)",message="spec.profile must set name or selector"
+//
+// An empty `name` ("") is treated as unset, so the rules below are value-based
+// (`size(self.name) > 0`) rather than presence-based (`has(self.name)`).
+// +kubebuilder:validation:XValidation:rule="!((has(self.name) && size(self.name) > 0) && has(self.selector))",message="spec.profile.name and spec.profile.selector are mutually exclusive"
+// +kubebuilder:validation:XValidation:rule="(has(self.name) && size(self.name) > 0) || has(self.selector)",message="spec.profile must set name or selector"
 type AIMServiceProfileConfig struct {
 	// Name is the name of the AIMProfile or AIMClusterProfile to use.
 	// The controller looks for a namespace-scoped AIMProfile first, then falls back to AIMClusterProfile.
-	// Mutually exclusive with Selector.
+	// Mutually exclusive with Selector. An empty string is treated as unset.
 	// +optional
-	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name,omitempty"`
 
 	// Selector narrows candidate AIMProfile / AIMClusterProfile objects via the

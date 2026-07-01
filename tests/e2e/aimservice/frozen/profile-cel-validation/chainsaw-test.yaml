@@ -97,6 +97,45 @@ spec:
                   name: some-template
                 replicas: 1
 
+    # profile.name and profile.selector are mutually exclusive. Empty name is
+    # treated as unset, so this must reject on the (non-empty) name below.
+    - name: Reject v1alpha2 profile with both name and selector
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-cel-profile-name-and-selector
+              spec:
+                profile:
+                  name: some-profile
+                  selector:
+                    modelRef:
+                      name: some-model
+                replicas: 1
+
+    # Empty name is treated as unset; with no selector either, the profile
+    # specifies nothing and must be rejected by the name-or-selector rule.
+    - name: Reject v1alpha2 profile with empty name and no selector
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-cel-profile-empty-name-no-selector
+              spec:
+                profile:
+                  name: ""
+                replicas: 1
+
     # spec.model satisfies the model-or-profile rule and there is no
     # spec.profile, so the only rule that can reject this create is the
     # template guard: supplying spec.template on a v1alpha2 create is rejected.
@@ -137,6 +176,32 @@ spec:
               kind: AIMService
               metadata:
                 name: test-cel-v1alpha2-profile
+
+    # Empty name is treated as unset, so a selector-only profile that also
+    # carries name: "" is accepted (tolerates clients that always serialize
+    # the field). The selector narrows on modelRef to satisfy the narrow rule.
+    - name: Accept v1alpha2 profile with empty name and selector
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-cel-profile-empty-name-selector
+              spec:
+                profile:
+                  name: ""
+                  selector:
+                    modelRef:
+                      name: some-model
+                    minimumType: any
+                replicas: 1
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-cel-profile-empty-name-selector
 
     - name: Accept v1alpha1 service with model and template
       try:

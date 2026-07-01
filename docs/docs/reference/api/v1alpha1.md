@@ -1814,6 +1814,9 @@ AIMClusterProfile directly; Selector lists candidates by provenance and spec
 fields (typically combined with `spec.model.name`, which the controller
 treats as a shortcut for `selector.modelRef.name`).
 
+An empty `name` ("") is treated as unset, so the rules below are value-based
+(`size(self.name) > 0`) rather than presence-based (`has(self.name)`).
+
 
 
 _Appears in:_
@@ -1821,7 +1824,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `name` _string_ | Name is the name of the AIMProfile or AIMClusterProfile to use.<br />The controller looks for a namespace-scoped AIMProfile first, then falls back to AIMClusterProfile.<br />Mutually exclusive with Selector. |  | MinLength: 1 <br />Optional: \{\} <br /> |
+| `name` _string_ | Name is the name of the AIMProfile or AIMClusterProfile to use.<br />The controller looks for a namespace-scoped AIMProfile first, then falls back to AIMClusterProfile.<br />Mutually exclusive with Selector. An empty string is treated as unset. |  | Optional: \{\} <br /> |
 | `selector` _[ProfileSelector](#profileselector)_ | Selector narrows candidate AIMProfile / AIMClusterProfile objects via the<br />shared provenance labels (role, source-model, origin) and spec filters<br />(aimId, precision, acceleratorModel, ...). The controller forces<br />`selector.role = Deployable` at evaluation time; user-supplied values<br />for that field are rejected by CEL on v1alpha2.<br />For every selector-driven AIMService the controller requires at least<br />one of `selector.aimId` or `selector.modelRef.name` so the watch<br />fan-out can reach the service via an O(1) index lookup. The top-level<br />`spec.model.name` shortcut is treated as if the user had set<br />`selector.modelRef.name` to the same value when not explicit. |  | Optional: \{\} <br /> |
 
 
