@@ -51,7 +51,7 @@ import (
 )
 
 const (
-	modelControllerName               = "model-v1alpha2"
+	modelControllerName               = "model"
 	modelProfilesCleanupFinalizerName = "aim.eai.amd.com/model-profiles-cleanup"
 
 	// legacyModelProfilesCleanupFinalizerName is an older finalizer name that

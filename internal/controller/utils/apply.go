@@ -88,16 +88,14 @@ func ApplyDesiredState(
 		gvk := obj.GetObjectKind().GroupVersionKind()
 		key := client.ObjectKeyFromObject(obj)
 
-		// Use Server-Side Apply (SSA) to create/update desired objects.
-		// The FieldOwner parameter ensures this controller owns only the fields it manages.
-		// SSA will automatically handle conflicts - if another manager has changed fields,
-		// this apply will only update fields owned by this controller's field manager.
-		// This allows proper cooperation with kubectl and other controllers.
+		// Server-Side Apply. ForceOwnership converges resources still owned by the
+		// previous version-suffixed field managers onto the stable ones.
 		if err := k8sClient.Patch(
 			ctx,
 			obj,
 			client.Apply,
 			client.FieldOwner(fieldOwner),
+			client.ForceOwnership,
 		); err != nil {
 			applyErrs = append(applyErrs, fmt.Errorf("failed to apply %s %s/%s: %w", gvk.Kind, key.Namespace, key.Name, err))
 		}

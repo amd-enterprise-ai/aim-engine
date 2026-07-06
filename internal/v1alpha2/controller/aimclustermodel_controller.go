@@ -52,7 +52,7 @@ import (
 )
 
 const (
-	clusterModelControllerName                = "cluster-model-v1alpha2"
+	clusterModelControllerName                = "cluster-model"
 	clusterModelDiscoveryCleanupFinalizerName = "aim.eai.amd.com/cluster-model-discovery-cache-cleanup"
 )
 
