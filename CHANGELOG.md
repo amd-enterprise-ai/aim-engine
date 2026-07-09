@@ -9,16 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Populate this section during release-prep, then rename to the release version -->
 
+## [0.2.5] - 2026-07-09
+
 ### Added
-- Server-side field-selector filtering of profiles by model architecture: `spec.aimId` is now a selectable field on `AIMProfile` and `AIMClusterProfile` (e.g. `kubectl get aimprofile --field-selector spec.aimId=qwen/qwen3-32b`).
-- `spec.routing.hostnames` on AIMService and RuntimeConfig to pin generated HTTPRoutes to specific Gateway listener hostnames (EAI-6951).
+- **v1alpha2 API (`aim.eai.amd.com/v1alpha2`)** — new `AIMModel`/`AIMClusterModel`, `AIMProfile`/`AIMClusterProfile`, `AIMProfileSet`/`AIMClusterProfileSet`, and `AIMProfileCache` resources, introducing a profile-based deployment path alongside the existing template path. `AIMService` can resolve a profile by `name` or by `selector`. (#111, #122)
+- **LoRA adapter serving** — `AIMArtifact` gains `spec.type: model|adapter` and a shared ReadWriteMany adapter disk (`spec.adapterDisk`) on the base-model artifact; `AIMService.spec.adapters` plus `spec.adapterMode` (`static`/`dynamic`) serve adapters, with dynamic mode hot-loading/unloading without restarting the pod. (#130)
+- **Scale-to-zero** — set `AIMService.spec.minReplicas: 0` to idle a service to zero replicas and reactivate on the next request via KEDA. Adds `spec.autoScaling.pollingInterval` and `spec.autoScaling.cooldownPeriod`, a memory-derived cooldown heuristic, and a chart-managed gateway-metrics OpenTelemetry collector. Requires routing to be enabled. (#117)
+- **GPU partitioning (ADR-009a/009b)** — profiles can target GPU partition slices via `acceleratorPartitioningMode`; the accelerator detector now publishes current partition state as NFD labels. (#120)
+- Server-side field-selector filtering of profiles by model architecture: `spec.aimId` is a selectable field on `AIMProfile`/`AIMClusterProfile` (e.g. `kubectl get aimprofile --field-selector spec.aimId=qwen/qwen3-32b`). (#133)
+- Expanded `AIMService.spec.profileOverrides` (v1alpha2): override `modelSources`, `acceleratorModel`, `acceleratorCount`, `acceleratorPartitioningMode`, and `engineEnv`, and merge `containerEnv`/`engineArgs` onto a referenced profile without forking it.
+- Helm: `manager.artifactDownloaderImage` install-time override, an optional `clusterModelSource` block for cluster-wide model discovery, and a `scaleFromZero` tuning block.
 
 ### Changed
-- Minimum supported Kubernetes version raised to **1.32**, required for the `CustomResourceFieldSelectors` feature (GA in 1.32) that backs the new profile selectable field.
-- Serving containers now derive their `ImagePullPolicy` from the image tag (`PullAlways` for `:latest`/tagless, `IfNotPresent` for versioned/digest tags) instead of always pulling, matching kubelet's default and letting pre-loaded (e.g. `kind load`) images be used; re-pushed mutable versioned tags will no longer be re-pulled on nodes with a cached layer.
+- **Minimum supported Kubernetes version raised to 1.32**, required for the `CustomResourceFieldSelectors` feature (GA in 1.32) that backs the new profile selectable field.
+- Serving containers now derive their `ImagePullPolicy` from the image tag (`Always` for `:latest`/tagless, `IfNotPresent` for versioned/digest tags) instead of always pulling, matching kubelet defaults and allowing pre-loaded (e.g. `kind load`) images to be used.
+- Template selection now uses a minimum-type floor instead of manual selection. (#139)
+- Autoscaling specs are validated more strictly: an empty `autoScaling` block and under-specified metric/target entries are now rejected by CEL.
+- `acceleratorCount` now matches guaranteed CPU QoS for EPYC CPU profiles. (#134)
+
+### Deprecated
+- v1alpha1 `AIMModel` and `AIMClusterModel` are deprecated in favor of their v1alpha2 equivalents. They still function (with a deprecation warning) but are scheduled for removal — the v1alpha1 reconciliation logic will be deleted in a future release and these resources will no longer be served. Plan your migration to v1alpha2 now. (#111)
 
 ### Fixed
-- Inference route auth bypass on multi-listener gateways (EAI-6951): generated HTTPRoutes were not pinned to a hostname, so they attached to every listener on the parent Gateway and could be reached on listeners that do not enforce authentication. Routes are now pinned to the configured `spec.routing.hostnames`, and a routing-enabled service on a Gateway with more than one listener now requires a hostname — without one no route is created and the service reports `ConfigValid=False` / `RouteHostnameRequired`. Single-listener gateways are unaffected.
+- Inference route auth bypass on multi-listener gateways (EAI-6951): generated HTTPRoutes are now pinned to the configured `spec.routing.hostnames`, and a routing-enabled service on a Gateway with more than one listener now requires a hostname — without one no route is created and the service reports `ConfigValid=False`/`RouteHostnameRequired`. Single-listener gateways are unaffected. (#142)
+- Empty `AIMService` profile name is now treated as omitted rather than a validation error. (#151)
+- Eliminated AIMClusterModelSource/AIMModel reconcile error loops. (#131)
+- Prevented AIMClusterModelSource from hammering the registry. (#123)
+- Fixed v1alpha2 cache download token handling. (#140)
+- Keep the optimized image when profile derivation leaves weights unchanged. (#136)
+- Allow zero-byte files in download verification. (#105)
+- Delete stale `*.lock` files on cleanup. (#135)
+- Artifact downloader: install `click` so the HuggingFace CLI runs (#127), and emit a warning if the disk-usage call hangs in the stall detector (#154).
+- v1alpha2 AIMService endpoint allows updating an existing v1alpha1 object. (#122)
+- Removed the API version from the controller name. (#153)
 
 ## [0.2.4] - 2026-05-26
 
