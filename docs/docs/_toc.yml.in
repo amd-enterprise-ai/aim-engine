@@ -1,6 +1,10 @@
 # Table of contents for the AIM Engine docs (sphinx-external-toc).
 # Each section landing page also carries a hand-written bullet list of the same
 # links so navigation still works when browsing the Markdown on GitHub.
+#
+# The `title:` on each entry is the nav label used to generate the Sphinx
+# toctrees (see docs/_scripts/build_toctree.py). Keep these in sync with the
+# bullet-list labels on the landing pages.
 defaults:
   numbered: false
   maxdepth: 2
@@ -8,63 +12,112 @@ root: README
 subtrees:
   - entries:
       - file: getting-started/getting-started
+        title: Getting Started
         subtrees:
           - entries:
               - file: getting-started/installation
+                title: Installation
               - file: getting-started/quickstart
+                title: Quickstart
               - file: getting-started/architecture
+                title: Architecture
       - file: guides/guides
+        title: Guides
         subtrees:
           - entries:
               - file: guides/deploying-services
+                title: Deploying Services
               - file: guides/model-catalog
+                title: Model Catalog
               - file: guides/fine-tuned-models
+                title: Fine-Tuned Models
               - file: guides/custom-models
+                title: Custom Models
               - file: guides/scaling-and-autoscaling
+                title: Scaling and Autoscaling
               - file: guides/model-caching
+                title: Model Caching
               - file: guides/lora-adapters
+                title: LoRA Adapters
               - file: guides/routing-and-ingress
+                title: Routing and Ingress
               - file: guides/private-registries
+                title: Private Registries
               - file: guides/multi-tenancy
+                title: Multi-Tenancy
       - file: concepts/concepts
+        title: Concepts
         subtrees:
           - entries:
               - file: concepts/services
+                title: AIM Services
               - file: concepts/models
+                title: AIM Models
               - file: concepts/profiles
+                title: Profiles
               - file: concepts/profilesets
+                title: AIM Profile Sets
               - file: concepts/model-sources
+                title: Model Sources
               - file: concepts/runtime-config
+                title: Runtime Configuration
               - file: concepts/caching
+                title: Model Caching
               - file: concepts/accelerator-detection
+                title: Accelerator Detection
               - file: concepts/resource-lifecycle
+                title: Resource Lifecycle
       - file: admin/admin
+        title: Administration
         subtrees:
           - entries:
               - file: admin/installation
+                title: Installation Reference
               - file: admin/kserve-configuration
+                title: KServe Configuration
               - file: admin/gpu-management
+                title: GPU Management
               - file: admin/storage-configuration
+                title: Storage Configuration
               - file: admin/upgrading
+                title: Upgrading
               - file: admin/monitoring
+                title: Monitoring
               - file: admin/troubleshooting
+                title: Troubleshooting
               - file: admin/security
+                title: Security
       - file: reference/reference
+        title: Reference
         subtrees:
           - entries:
               - file: reference/api/v1alpha2
+                title: CRD API (v1alpha2)
               - file: reference/api/v1alpha1
+                title: CRD API (v1alpha1)
               - file: reference/helm-values
+                title: Helm Chart Values
               - file: reference/cli
+                title: CLI and Operator Flags
               - file: reference/environment-variables
+                title: Environment Variables
               - file: reference/naming-and-labels
+                title: Naming and Labels
               - file: reference/conditions
+                title: Conditions
       - file: legacy/index
+        title: Legacy (v1alpha1)
         subtrees:
           - entries:
               - file: legacy/migrating
+                title: Migrating to v1alpha2
               - file: legacy/aimservice-v1alpha1
+                title: AIMService (v1alpha1)
               - file: legacy/aimmodel-v1alpha1
+                title: AIMModel (v1alpha1)
               - file: legacy/service-templates
+                title: Service Templates (v1alpha1)
               - file: legacy/conditions-v1alpha1
+                title: Conditions (v1alpha1)
       - file: changelog
+        title: Changelog
