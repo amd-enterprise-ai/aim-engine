@@ -2,8 +2,13 @@
 
 This is the review surface for ADR-0012, **not a feature release**. The following
 pages deliberately use final-product language so reviewers can evaluate the
-interface users will actually see. The operator, installable CRDs, and Helm chart
-in this branch do not implement these additions.
+interface users will actually see.
+
+The first implementation slice now adds installable `AIMComposition` and
+`AIMClusterComposition` CRDs plus runtime-config selector defaults and transport
+preset fields. It does **not** add `AIMService.spec.composition`, recipe
+reconciliation, profile resolution, or workload projection. No composition can
+start an inference workload in this slice.
 
 The proposal is based on `main` at
 `3f585b07c3d7fa215d6ceed20190a809e82dbe11` and the October 15, 2026
@@ -25,11 +30,11 @@ that separate specifications repository.
 6. [Implementation outline](implementation.md) — code seams and acceptance work.
 
 The [authoring schema](schema.yaml) and [example index](examples.md) accompany
-the prose. The schema is a **review-only JSON Schema**, not an installable
-Kubernetes CRD. It checks the new authoring shapes and examples without enabling
-an unsupported execution path in the production CRDs. Kubernetes admission,
-transition rules, and cross-object resolution need their own tests during
-implementation.
+the prose. The schema remains a **review-only JSON Schema** for the complete
+contract, including the service fields that are not implemented yet. Production
+recipe and runtime-config admission is generated from Go types and covered by
+generated-CRD/CEL tests. Service transition rules and cross-object resolution
+remain implementation work.
 
 ## Decisions captured from the discussion
 
@@ -108,6 +113,6 @@ shapes, local bounds/unique-name rules, and representative invalid objects. They
 do not simulate a resolver, admission server, or KServe; unchanged embedded
 Kubernetes/service types are checked only at their outer shape.
 
-Review the user-facing vocabulary and behavior before translating this schema
-into Go types and generated CRDs. In particular, approve the remaining choices
-above and the [admission boundaries](api.md#admission-and-reconciliation).
+Review the user-facing vocabulary and behavior before enabling service
+composition. In particular, approve the remaining choices above and the
+[admission boundaries](api.md#admission-and-reconciliation).

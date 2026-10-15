@@ -348,6 +348,12 @@ type AdditionalCABundleReference struct {
 type AIMRuntimeConfigCommon struct {
 	AIMServiceRuntimeConfig `json:",inline"`
 
+	// Composition configures profile-selector defaults and registered local
+	// transport presets for composition recipes and services. These settings are
+	// administrator-owned and intentionally are not embedded into AIMServiceSpec.
+	// +optional
+	Composition *AIMRuntimeCompositionConfig `json:"composition,omitempty"`
+
 	// AdditionalCABundleRef selects PEM CA certificates that AIM Engine adds to
 	// its standard public trust roots for outbound TLS from inference,
 	// artifact-download, size-check, and adapter-staging containers.

@@ -429,6 +429,283 @@ spec:
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
                 type: object
+              composition:
+                description: |-
+                  Composition configures profile-selector defaults and registered local
+                  transport presets for composition recipes and services. These settings are
+                  administrator-owned and intentionally are not embedded into AIMServiceSpec.
+                properties:
+                  defaultTransportPreset:
+                    description: DefaultTransportPreset is the default preset for
+                      PrefillDecode compositions.
+                    minLength: 1
+                    type: string
+                  selectorDefaults:
+                    description: SelectorDefaults fill selector fields left unconstrained
+                      by authored intent.
+                    properties:
+                      common:
+                        description: Common applies to every automatically selected
+                          composition position.
+                        properties:
+                          acceleratorCount:
+                            description: AcceleratorCount defaults the accelerator
+                              unit count.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                          acceleratorModel:
+                            description: AcceleratorModel defaults the accelerator
+                              identifier.
+                            minLength: 1
+                            type: string
+                          acceleratorPartitioningMode:
+                            description: AcceleratorPartitioningMode defaults the
+                              partition scheme.
+                            minLength: 1
+                            type: string
+                          acceleratorType:
+                            description: AcceleratorType defaults the accelerator
+                              resource type.
+                            enum:
+                            - gpu
+                            - cpu
+                            type: string
+                          acceleratorVendor:
+                            description: AcceleratorVendor defaults the accelerator
+                              vendor.
+                            enum:
+                            - amd
+                            - nvidia
+                            type: string
+                          engine:
+                            description: Engine defaults the inference engine.
+                            minLength: 1
+                            type: string
+                          metric:
+                            description: Metric defaults the optimization target.
+                            enum:
+                            - latency
+                            - throughput
+                            type: string
+                          precision:
+                            description: Precision defaults numeric precision.
+                            enum:
+                            - auto
+                            - fp4
+                            - fp8
+                            - fp16
+                            - fp32
+                            - fp64
+                            - bf16
+                            - int4
+                            - int8
+                            type: string
+                        type: object
+                      decode:
+                        description: Decode applies to the decode primary and worker
+                          positions.
+                        properties:
+                          acceleratorCount:
+                            description: AcceleratorCount defaults the accelerator
+                              unit count.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                          acceleratorModel:
+                            description: AcceleratorModel defaults the accelerator
+                              identifier.
+                            minLength: 1
+                            type: string
+                          acceleratorPartitioningMode:
+                            description: AcceleratorPartitioningMode defaults the
+                              partition scheme.
+                            minLength: 1
+                            type: string
+                          acceleratorType:
+                            description: AcceleratorType defaults the accelerator
+                              resource type.
+                            enum:
+                            - gpu
+                            - cpu
+                            type: string
+                          acceleratorVendor:
+                            description: AcceleratorVendor defaults the accelerator
+                              vendor.
+                            enum:
+                            - amd
+                            - nvidia
+                            type: string
+                          engine:
+                            description: Engine defaults the inference engine.
+                            minLength: 1
+                            type: string
+                          metric:
+                            description: Metric defaults the optimization target.
+                            enum:
+                            - latency
+                            - throughput
+                            type: string
+                          precision:
+                            description: Precision defaults numeric precision.
+                            enum:
+                            - auto
+                            - fp4
+                            - fp8
+                            - fp16
+                            - fp32
+                            - fp64
+                            - bf16
+                            - int4
+                            - int8
+                            type: string
+                        type: object
+                      main:
+                        description: Main applies to the aggregated primary role.
+                        properties:
+                          acceleratorCount:
+                            description: AcceleratorCount defaults the accelerator
+                              unit count.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                          acceleratorModel:
+                            description: AcceleratorModel defaults the accelerator
+                              identifier.
+                            minLength: 1
+                            type: string
+                          acceleratorPartitioningMode:
+                            description: AcceleratorPartitioningMode defaults the
+                              partition scheme.
+                            minLength: 1
+                            type: string
+                          acceleratorType:
+                            description: AcceleratorType defaults the accelerator
+                              resource type.
+                            enum:
+                            - gpu
+                            - cpu
+                            type: string
+                          acceleratorVendor:
+                            description: AcceleratorVendor defaults the accelerator
+                              vendor.
+                            enum:
+                            - amd
+                            - nvidia
+                            type: string
+                          engine:
+                            description: Engine defaults the inference engine.
+                            minLength: 1
+                            type: string
+                          metric:
+                            description: Metric defaults the optimization target.
+                            enum:
+                            - latency
+                            - throughput
+                            type: string
+                          precision:
+                            description: Precision defaults numeric precision.
+                            enum:
+                            - auto
+                            - fp4
+                            - fp8
+                            - fp16
+                            - fp32
+                            - fp64
+                            - bf16
+                            - int4
+                            - int8
+                            type: string
+                        type: object
+                      prefill:
+                        description: Prefill applies to the prefill primary and worker
+                          positions.
+                        properties:
+                          acceleratorCount:
+                            description: AcceleratorCount defaults the accelerator
+                              unit count.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                          acceleratorModel:
+                            description: AcceleratorModel defaults the accelerator
+                              identifier.
+                            minLength: 1
+                            type: string
+                          acceleratorPartitioningMode:
+                            description: AcceleratorPartitioningMode defaults the
+                              partition scheme.
+                            minLength: 1
+                            type: string
+                          acceleratorType:
+                            description: AcceleratorType defaults the accelerator
+                              resource type.
+                            enum:
+                            - gpu
+                            - cpu
+                            type: string
+                          acceleratorVendor:
+                            description: AcceleratorVendor defaults the accelerator
+                              vendor.
+                            enum:
+                            - amd
+                            - nvidia
+                            type: string
+                          engine:
+                            description: Engine defaults the inference engine.
+                            minLength: 1
+                            type: string
+                          metric:
+                            description: Metric defaults the optimization target.
+                            enum:
+                            - latency
+                            - throughput
+                            type: string
+                          precision:
+                            description: Precision defaults numeric precision.
+                            enum:
+                            - auto
+                            - fp4
+                            - fp8
+                            - fp16
+                            - fp32
+                            - fp64
+                            - bf16
+                            - int4
+                            - int8
+                            type: string
+                        type: object
+                    type: object
+                  transportPresets:
+                    description: |-
+                      TransportPresets maps names to registered local-transfer integrations.
+                      Namespace entries replace same-named cluster entries as complete values.
+                    items:
+                      description: AIMCompositionTransportPreset names a registered
+                        local-transfer integration.
+                      properties:
+                        integration:
+                          description: Integration identifies the registered, versioned
+                            integration contract.
+                          minLength: 1
+                          type: string
+                        name:
+                          description: Name is the preset key.
+                          minLength: 1
+                          type: string
+                      required:
+                      - integration
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                type: object
+                x-kubernetes-validations:
+                - message: transportPresets entries must have unique names
+                  rule: '!has(self.transportPresets) || self.transportPresets.all(p,
+                    self.transportPresets.exists_one(q, q.name == p.name))'
               defaultStorageClassName:
                 description: |-
                   DEPRECATED: Use Storage.DefaultStorageClassName instead. This field will be removed in a future version.

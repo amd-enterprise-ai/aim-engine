@@ -9,12 +9,16 @@
 Package v1alpha2 contains API Schema definitions for the aim v1alpha2 API group.
 
 ### Resource Types
+- [AIMClusterComposition](#aimclustercomposition)
+- [AIMClusterCompositionList](#aimclustercompositionlist)
 - [AIMClusterModel](#aimclustermodel)
 - [AIMClusterModelList](#aimclustermodellist)
 - [AIMClusterProfile](#aimclusterprofile)
 - [AIMClusterProfileList](#aimclusterprofilelist)
 - [AIMClusterProfileSet](#aimclusterprofileset)
 - [AIMClusterProfileSetList](#aimclusterprofilesetlist)
+- [AIMComposition](#aimcomposition)
+- [AIMCompositionList](#aimcompositionlist)
 - [AIMModel](#aimmodel)
 - [AIMModelList](#aimmodellist)
 - [AIMProfile](#aimprofile)
@@ -26,6 +30,44 @@ Package v1alpha2 contains API Schema definitions for the aim v1alpha2 API group.
 - [AIMService](#aimservice)
 - [AIMServiceList](#aimservicelist)
 
+
+
+#### AIMClusterComposition
+
+
+
+AIMClusterComposition publishes a reusable cluster-scoped serving recipe. Exact profile references in a cluster recipe must target AIMClusterProfile; selectors may still resolve namespace profiles when a service instantiates the recipe.
+
+
+
+_Appears in:_
+- [AIMClusterCompositionList](#aimclustercompositionlist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMClusterComposition` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMCompositionSpec](#aimcompositionspec)_ |  |  |  |
+| `status` _[AIMCompositionStatus](#aimcompositionstatus)_ |  |  |  |
+
+
+#### AIMClusterCompositionList
+
+
+
+AIMClusterCompositionList contains a list of AIMClusterComposition resources.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMClusterCompositionList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMClusterComposition](#aimclustercomposition) array_ |  |  |  |
 
 
 #### AIMClusterModel
@@ -182,6 +224,44 @@ _Appears in:_
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#localobjectreference-v1-core) array_ | ImagePullSecrets lists secrets for pulling container images. |  | Optional: \{\} |
 | `serviceAccountName` _string_ | ServiceAccountName specifies the service account for workloads. |  | Optional: \{\} |
 | `features` _string array_ | Features lists optional capabilities the profile's image honours, e.g. "adapters" for LoRA serving. A service declaring spec.adapters is rejected (ConfigValid=False) unless its resolved profile lists "adapters" here. |  | Optional: \{\} |
+
+
+#### AIMComposition
+
+
+
+AIMComposition publishes a reusable namespace-scoped serving recipe. Publishing a recipe does not create inference workloads.
+
+
+
+_Appears in:_
+- [AIMCompositionList](#aimcompositionlist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMComposition` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMCompositionSpec](#aimcompositionspec)_ |  |  |  |
+| `status` _[AIMCompositionStatus](#aimcompositionstatus)_ |  |  |  |
+
+
+#### AIMCompositionList
+
+
+
+AIMCompositionList contains a list of AIMComposition resources.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMCompositionList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMComposition](#aimcomposition) array_ |  |  |  |
 
 
 

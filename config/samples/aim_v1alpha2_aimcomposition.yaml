@@ -1,0 +1,15 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMComposition
+metadata:
+  name: local-prefill-decode
+spec:
+  mode: PrefillDecode
+  prefill:
+    profile:
+      selector:
+        metric: throughput
+  decode:
+    profile:
+      selector:
+        metric: latency
+    replicas: 2
