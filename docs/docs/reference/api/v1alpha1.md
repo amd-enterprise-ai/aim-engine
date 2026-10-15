@@ -898,7 +898,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `name` _string_ | Name is the preset key. |  | MinLength: 1 |
+| `name` _string_ | Name is the preset key. |  | MaxLength: 253 <br />MinLength: 1 |
 | `integration` _string_ | Integration identifies the registered, versioned integration contract. |  | MinLength: 1 |
 
 
@@ -1800,7 +1800,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `selectorDefaults` _[AIMCompositionSelectorDefaults](#aimcompositionselectordefaults)_ | SelectorDefaults fill selector fields left unconstrained by authored intent. |  | Optional: \{\} |
 | `defaultTransportPreset` _string_ | DefaultTransportPreset is the default preset for PrefillDecode compositions. |  | MinLength: 1 <br />Optional: \{\} |
-| `transportPresets` _[AIMCompositionTransportPreset](#aimcompositiontransportpreset) array_ | TransportPresets maps names to registered local-transfer integrations. Namespace entries replace same-named cluster entries as complete values. |  | Optional: \{\} |
+| `transportPresets` _[AIMCompositionTransportPreset](#aimcompositiontransportpreset) array_ | TransportPresets maps names to registered local-transfer integrations. Namespace entries replace same-named cluster entries as complete values. |  | MaxItems: 64 <br />Optional: \{\} |
 
 
 #### AIMRuntimeConfig

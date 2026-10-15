@@ -299,7 +299,7 @@ Both runtime-config kinds add `spec.composition`:
 | --- | --- | --- |
 | `selectorDefaults` | SelectorDefaults | Gap-filling criteria for automatic bindings. |
 | `defaultTransportPreset` | Non-empty string | Default P/D transport preset name. |
-| `transportPresets` | List of TransportPreset | Map-list keyed by `name`; namespace entry replaces a same-named cluster entry as a whole. |
+| `transportPresets` | List of TransportPreset | Map-list keyed by `name`, with at most 64 entries; namespace entry replaces a same-named cluster entry as a whole. |
 
 `SelectorDefaults` contains optional `common`, `main`, `prefill`, and `decode`
 objects. Each accepts only `engine`, `metric`, `precision`, `acceleratorType`,

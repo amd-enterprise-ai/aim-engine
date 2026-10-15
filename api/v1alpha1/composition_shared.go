@@ -318,6 +318,7 @@ type AIMCompositionSelectorDefaultFields struct {
 type AIMCompositionTransportPreset struct {
 	// Name is the preset key.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
 	Name string `json:"name"`
 
 	// Integration identifies the registered, versioned integration contract.
@@ -341,6 +342,7 @@ type AIMRuntimeCompositionConfig struct {
 	// TransportPresets maps names to registered local-transfer integrations.
 	// Namespace entries replace same-named cluster entries as complete values.
 	// +optional
+	// +kubebuilder:validation:MaxItems=64
 	// +listType=map
 	// +listMapKey=name
 	TransportPresets []AIMCompositionTransportPreset `json:"transportPresets,omitempty"`

@@ -691,12 +691,14 @@ spec:
                           type: string
                         name:
                           description: Name is the preset key.
+                          maxLength: 253
                           minLength: 1
                           type: string
                       required:
                       - integration
                       - name
                       type: object
+                    maxItems: 64
                     type: array
                     x-kubernetes-list-map-keys:
                     - name
