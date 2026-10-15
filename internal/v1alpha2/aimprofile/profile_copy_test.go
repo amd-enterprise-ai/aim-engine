@@ -31,6 +31,7 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 )
 
 func TestMatchesProfileCopySelector_PartialEngineArgs(t *testing.T) {
@@ -259,6 +260,7 @@ func TestApplyProfileCopyOverrides_IdentityFromOverrides(t *testing.T) {
 		},
 		"",
 		"",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("ApplyProfileCopyOverrides() error = %v", err)
@@ -298,6 +300,7 @@ func TestApplyProfileCopyOverrides_IdentityOverridesWinOverSource(t *testing.T) 
 		},
 		"",
 		"",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("ApplyProfileCopyOverrides() error = %v", err)
@@ -320,6 +323,7 @@ func TestApplyProfileCopyOverrides_AddsFeaturesAsSetUnion(t *testing.T) {
 		},
 		"",
 		"",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("ApplyProfileCopyOverrides() error = %v", err)
@@ -356,6 +360,7 @@ func TestApplyProfileCopyOverrides_ModelSourcesAutoDeriveFallback(t *testing.T) 
 		},
 		"",
 		"",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("ApplyProfileCopyOverrides() error = %v", err)
@@ -375,6 +380,7 @@ func TestApplyProfileCopyOverrides_ModelSourcesAutoDeriveFallback(t *testing.T) 
 		},
 		"",
 		"",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("ApplyProfileCopyOverrides() error = %v", err)
@@ -391,8 +397,8 @@ func TestApplyProfileCopyOverrides_MergesAndReplaces(t *testing.T) {
 	spec, err := ApplyProfileCopyOverrides(
 		aimv1alpha2.AIMProfileSpecCommon{
 			// Fine-tuned-style source: AimId + ModelSources make this a
-			// deployable seed (IsProfileDeployable == true), so the
-			// rebase from sourceBaseImage onto source.Image kicks in.
+			// deployable seed (IsProfileDeployable == true), so its
+			// sourceBaseImage becomes the derived runtime image.
 			AimId:            "official/model",
 			ModelId:          "official/model",
 			Image:            "ghcr.io/amd/full-image:0.9.1",
@@ -430,16 +436,15 @@ func TestApplyProfileCopyOverrides_MergesAndReplaces(t *testing.T) {
 		},
 		"",
 		"ghcr.io/amd/aim-base:0.9.1",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("ApplyProfileCopyOverrides() error = %v", err)
 	}
 
-	// Base image tag is normalised to MAJOR.MINOR (`0.9.1` → `0.9`) so the
-	// rebased reference points at the stable aim-base rolling tag that the
-	// registry actually publishes.
-	if spec.Image != "ghcr.io/amd/aim-base:0.9" {
-		t.Fatalf("Image = %q, want base image fallback normalised to MAJOR.MINOR", spec.Image)
+	// AIM_BASE_IMAGE_REF is a producer-owned reference and is preserved exactly.
+	if spec.Image != "ghcr.io/amd/aim-base:0.9.1" {
+		t.Fatalf("Image = %q, want exact producer-owned base image reference", spec.Image)
 	}
 	if spec.ModelId != "custom/model" {
 		t.Fatalf("ModelId = %q, want overridden model source model ID", spec.ModelId)
@@ -493,6 +498,7 @@ func TestApplyProfileCopyOverrides_OverlayOntoBaseProfileSourceProducesDeployabl
 		},
 		"",
 		"ghcr.io/silogen/aim-base-vllm:0.1.0",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("ApplyProfileCopyOverrides() error = %v", err)
@@ -647,7 +653,9 @@ func TestResolveDerivedProfileImage(t *testing.T) {
 		sourceImage        string
 		sourceIsDeployable bool
 		weightsChanged     bool
+		registryMappings   []aimimage.RegistryMapping
 		want               string
+		wantErr            bool
 	}{
 		{
 			name:               "imageOverride wins outright",
@@ -669,12 +677,12 @@ func TestResolveDerivedProfileImage(t *testing.T) {
 		{
 			// Weights replaced (modelSources overridden): resolve the
 			// optimized image back to its aim-base runtime.
-			name:               "deployable source + weights changed: sourceBaseImage rebased onto source registry+org",
+			name:               "deployable source + weights changed: exact sourceBaseImage is used",
 			sourceBaseImage:    "docker.io/amdenterpriseai/aim-base:0.11",
 			sourceImage:        "ghcr.io/silogen/qwen3:0.11",
 			sourceIsDeployable: true,
 			weightsChanged:     true,
-			want:               "ghcr.io/silogen/aim-base:0.11",
+			want:               "docker.io/amdenterpriseai/aim-base:0.11",
 		},
 		{
 			// The fix: weights untouched (no modelSources override) keeps
@@ -688,39 +696,30 @@ func TestResolveDerivedProfileImage(t *testing.T) {
 			want:               "ghcr.io/silogen/qwen3:0.11",
 		},
 		{
-			name:               "deployable source + weights changed: sourceBaseImage path keeps source registry+org",
+			name:               "deployable source + weights changed: sourceBaseImage registry is preserved",
 			sourceBaseImage:    "ghcr.io/silogen/aim-base:0.11",
 			sourceImage:        "docker.io/amdenterpriseai/qwen3:0.11",
-			sourceIsDeployable: true,
-			weightsChanged:     true,
-			want:               "docker.io/amdenterpriseai/aim-base:0.11",
-		},
-		{
-			// Build pipelines stamp release-candidate tags into
-			// AIM_BASE_IMAGE_REF (`0.11-rc21`) but aim-base is published
-			// under its stable MAJOR.MINOR rolling tag. Normalisation
-			// strips the RC suffix so the rebased reference resolves in
-			// the mirrored registry.
-			name:               "deployable source + weights changed: rc-tagged sourceBaseImage truncates to major.minor",
-			sourceBaseImage:    "ghcr.io/silogen/aim-base:0.11-rc21",
-			sourceImage:        "amdenterpriseai/aim-qwen-qwen3-32b:0.11.0",
-			sourceIsDeployable: true,
-			weightsChanged:     true,
-			want:               "amdenterpriseai/aim-base:0.11",
-		},
-		{
-			name:               "deployable source + weights changed: patch-tagged sourceBaseImage truncates to major.minor",
-			sourceBaseImage:    "ghcr.io/silogen/aim-base:0.11.2",
-			sourceImage:        "ghcr.io/silogen/qwen3:0.11.0",
 			sourceIsDeployable: true,
 			weightsChanged:     true,
 			want:               "ghcr.io/silogen/aim-base:0.11",
 		},
 		{
-			// Non-semver tags can't be normalised; we leave them alone
-			// rather than guess. This is rare in practice (real
-			// AIM_BASE_IMAGE_REF values come out of release tags) but
-			// keeps the resolver predictable.
+			name:               "deployable source + weights changed: rc-tagged sourceBaseImage is preserved",
+			sourceBaseImage:    "ghcr.io/silogen/aim-base:0.11-rc21",
+			sourceImage:        "amdenterpriseai/aim-qwen-qwen3-32b:0.11.0",
+			sourceIsDeployable: true,
+			weightsChanged:     true,
+			want:               "ghcr.io/silogen/aim-base:0.11-rc21",
+		},
+		{
+			name:               "deployable source + weights changed: patch-tagged sourceBaseImage is preserved",
+			sourceBaseImage:    "ghcr.io/silogen/aim-base:0.11.2",
+			sourceImage:        "ghcr.io/silogen/qwen3:0.11.0",
+			sourceIsDeployable: true,
+			weightsChanged:     true,
+			want:               "ghcr.io/silogen/aim-base:0.11.2",
+		},
+		{
 			name:               "deployable source + weights changed: non-semver sourceBaseImage tag preserved",
 			sourceBaseImage:    "ghcr.io/silogen/aim-base:nightly",
 			sourceImage:        "ghcr.io/silogen/qwen3:0.11",
@@ -729,18 +728,23 @@ func TestResolveDerivedProfileImage(t *testing.T) {
 			want:               "ghcr.io/silogen/aim-base:nightly",
 		},
 		{
-			name:               "deployable source + weights changed: legacy fallback synthesizes aim-base from semver tag",
+			name:               "deployable source + weights changed: missing base image fails gracefully without tag synthesis",
 			sourceImage:        "ghcr.io/silogen/qwen3:0.11.2",
 			sourceIsDeployable: true,
 			weightsChanged:     true,
-			want:               "ghcr.io/silogen/aim-base:0.11",
+			wantErr:            true,
 		},
 		{
-			name:               "deployable source + weights changed: no base image and unparseable tag returns sourceImage unchanged",
-			sourceImage:        "ghcr.io/silogen/qwen3:latest",
+			name:               "deployable source + weights changed: explicit repository mapping applies",
+			sourceBaseImage:    "docker.io/amdenterpriseai/aim-base:0.11.2",
+			sourceImage:        "ghcr.io/private-team/qwen3:0.11",
 			sourceIsDeployable: true,
 			weightsChanged:     true,
-			want:               "ghcr.io/silogen/qwen3:latest",
+			registryMappings: []aimimage.RegistryMapping{{
+				From: "docker.io/amdenterpriseai",
+				To:   "ghcr.io/private-team",
+			}},
+			want: "ghcr.io/private-team/aim-base:0.11.2",
 		},
 		{
 			name: "all empty returns empty",
@@ -765,7 +769,7 @@ func TestResolveDerivedProfileImage(t *testing.T) {
 			want:               "amdenterpriseai/aim-base:0.11",
 		},
 		{
-			name:               "base source: legacy aim-base synthesis is also skipped",
+			name:               "base source: missing base reference still keeps the declared runtime image",
 			sourceImage:        "ghcr.io/silogen/aim-base:0.11.2",
 			sourceIsDeployable: false,
 			weightsChanged:     true,
@@ -775,7 +779,23 @@ func TestResolveDerivedProfileImage(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := ResolveDerivedProfileImage(tc.imageOverride, tc.sourceBaseImage, tc.sourceImage, tc.sourceIsDeployable, tc.weightsChanged)
+			got, err := ResolveDerivedProfileImage(
+				tc.imageOverride,
+				tc.sourceBaseImage,
+				tc.sourceImage,
+				tc.sourceIsDeployable,
+				tc.weightsChanged,
+				tc.registryMappings,
+			)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("ResolveDerivedProfileImage() error = nil, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolveDerivedProfileImage() unexpected error = %v", err)
+			}
 			if got != tc.want {
 				t.Fatalf("ResolveDerivedProfileImage(%q, %q, %q, %v, %v) = %q, want %q",
 					tc.imageOverride, tc.sourceBaseImage, tc.sourceImage, tc.sourceIsDeployable, tc.weightsChanged, got, tc.want)
@@ -816,6 +836,7 @@ func TestApplyProfileCopyOverrides_BaseSourceImageNotRebased(t *testing.T) {
 		// The pre-fix bug grafted this onto amdenterpriseai/ and produced
 		// a nonexistent `amdenterpriseai/vllm-openai-rocm:v0.16.0`.
 		"docker.io/vllm/vllm-openai-rocm:v0.16.0",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("ApplyProfileCopyOverrides() error = %v", err)
@@ -861,6 +882,7 @@ func TestApplyProfileCopyOverrides_DeployableSourceKeepsImageWhenWeightsUnchange
 			&aimv1alpha1.ProfileOverrides{AcceleratorPartitioningMode: "CPX-NPS4"},
 			"", // no explicit image override
 			sourceBaseImage,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("ApplyProfileCopyOverrides() error = %v", err)
@@ -882,12 +904,13 @@ func TestApplyProfileCopyOverrides_DeployableSourceKeepsImageWhenWeightsUnchange
 			},
 			"", // no explicit image override
 			sourceBaseImage,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("ApplyProfileCopyOverrides() error = %v", err)
 		}
-		if derived.Image != "amdenterpriseai/aim-base:0.11" {
-			t.Fatalf("derived.Image = %q, want resolve back to aim-base when weights replaced", derived.Image)
+		if derived.Image != sourceBaseImage {
+			t.Fatalf("derived.Image = %q, want exact AIM_BASE_IMAGE_REF %q when weights are replaced", derived.Image, sourceBaseImage)
 		}
 	})
 }

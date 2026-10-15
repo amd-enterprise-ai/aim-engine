@@ -460,10 +460,8 @@ func TestExtractVersionFromImage(t *testing.T) {
 		{"registry.io/aim-qwen", ""},
 		{"registry.io:5000/aim-qwen:1.2.3", "1.2.3"},
 		{"registry.io/aim-qwen@sha256:abc123", ""},
-		// Pre-release / build-metadata suffixes survive unchanged — the
-		// profile Version column must reflect what's actually deployed,
-		// not a MAJOR.MINOR normalisation (that's a base-image concern,
-		// see aimimage.NormalizeBaseImageTag).
+		// Pre-release / build-metadata suffixes survive unchanged so the
+		// profile Version column reflects what's actually deployed.
 		{"registry.io/aim-qwen:0.11.0-rc1", "0.11.0-rc1"},
 		{"registry.io/aim-qwen:0.11-rc21", "0.11-rc21"},
 		{"registry.io/aim-qwen:0.11.0+build123", "0.11.0+build123"},

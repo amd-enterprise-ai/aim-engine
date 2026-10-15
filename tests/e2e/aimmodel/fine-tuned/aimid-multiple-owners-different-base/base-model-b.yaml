@@ -6,13 +6,8 @@
 #
 # Owner B deliberately uses a Docker Hub spec.image (no registry prefix means
 # docker.io/amdenterpriseai/...) while keeping baseImageRef on
-# ghcr.io/silogen/... . The rebaseImageRegistry logic in
-# internal/v1alpha1/aimmodel/finetune_image.go must then produce a
-# deployment-image-ref that takes the registry+org from spec.image and the
-# image-name+tag from baseImageRef — i.e.
-# `amdenterpriseai/aim-multi-cpu-base:0.11`. This proves the rebase works
-# across *different registry hosts*, not just different repo paths under
-# the same host.
+# ghcr.io/silogen/... . The resolver must preserve that baseImageRef exactly;
+# source-image placement does not imply a runtime-image mirror.
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMModel
 metadata:

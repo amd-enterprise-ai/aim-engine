@@ -17,7 +17,7 @@ Fine-tuned models use the `aim.eai.amd.com/v1alpha2` API. The v1alpha1 fine-tune
 
 ## Mental model
 
-A fine-tuned model is a single AIMModel that derives from an already-existing official AIMModel: you inherit the published model's tuned engine arguments, accelerator pairings, and benchmarked precisions, and swap in your weights via `modelSources`. Because the override replaces the weights, each derived profile's image resolves back to the official model's `aim-base` runtime (rebased onto its registry+org) — the model-optimized image is specific to the published weights, so your fine-tune loads onto the clean base runtime instead. See [Image resolution](../concepts/profilesets.md#image-resolution) for how the derived image is chosen.
+A fine-tuned model is a single AIMModel that derives from an already-existing official AIMModel: you inherit the published model's tuned engine arguments, accelerator pairings, and benchmarked precisions, and swap in your weights via `modelSources`. Because the override replaces the weights, each derived profile's image resolves back to the exact `AIM_BASE_IMAGE_REF` recorded for the official model. The model-optimized image is specific to the published weights, so your fine-tune loads onto the clean base runtime instead. Configure an explicit [image registry mapping](../concepts/runtime-config.md#image-repository-mappings) when that runtime is mirrored under another repository prefix. See [Image resolution](../concepts/profilesets.md#image-resolution) for how the derived image is chosen.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/fine-tuned-flow-dark.svg">

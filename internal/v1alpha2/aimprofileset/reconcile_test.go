@@ -37,6 +37,7 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
@@ -418,6 +419,74 @@ func TestPlanResources_SkipsDeletesWhenCandidatesFailToLoad(t *testing.T) {
 	}
 }
 
+func TestPlanResources_RetainsManagedProfilesWhenBaseImageIsMissing(t *testing.T) {
+	t.Parallel()
+
+	reconciler := &ProfileSetReconciler{}
+	set := &aimv1alpha2.AIMProfileSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "fine-tune", Namespace: "team-a", UID: "set-uid"},
+		Spec: aimv1alpha1.AIMProfileSetSpec{
+			Selector:      aimv1alpha1.ProfileSelector{AimId: "amd/optimized"},
+			VersionPolicy: aimv1alpha1.ProfileVersionPolicyAll,
+			Overrides: &aimv1alpha1.ProfileOverrides{
+				ModelSources: []aimv1alpha1.AIMModelSource{{
+					ModelID:   "team/fine-tune",
+					SourceURI: "s3://models/fine-tune",
+				}},
+			},
+		},
+	}
+	existing := &aimv1alpha2.AIMProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "existing-copy", Namespace: "team-a"},
+	}
+	fetch := ProfileSetFetchResult{
+		set: set,
+		candidates: controllerutils.FetchResult[[]profileSetCandidate]{Value: []profileSetCandidate{{
+			ProfileCopyCandidate: aimprofile.ProfileCopyCandidate{
+				Name:         "optimized",
+				SourceGroup:  "optimized-model",
+				YAMLContract: profileyaml.DefaultContract(),
+				Spec: aimv1alpha2.AIMProfileSpecCommon{
+					AimId:     "amd/optimized",
+					ModelId:   "amd/optimized",
+					ProfileId: "mi300x",
+					Image:     "ghcr.io/private-team/optimized:latest",
+					ModelSources: []aimv1alpha1.AIMModelSource{{
+						ModelID:   "amd/optimized",
+						SourceURI: "hf://amd/optimized",
+					}},
+				},
+			},
+			contractResolved: true,
+		}}},
+		managed: controllerutils.FetchResult[[]managedProfile]{Value: []managedProfile{{
+			Object: existing,
+		}}},
+	}
+
+	obs := reconciler.ComposeState(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileSet]{Object: set},
+		fetch,
+	)
+	plan := reconciler.PlanResources(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileSet]{Object: set},
+		obs,
+	)
+
+	if obs.buildErr == nil || !strings.Contains(obs.buildErr.Error(), "no AIM_BASE_IMAGE_REF") {
+		t.Fatalf("buildErr = %v, want controlled missing-base-image error", obs.buildErr)
+	}
+	if obs.pruneSafe {
+		t.Fatal("pruneSafe = true, want false when deployment image resolution is incomplete")
+	}
+	if len(plan.GetToApply()) != 0 || len(plan.GetToDelete()) != 0 {
+		t.Fatalf("plan = apply:%#v delete:%#v, want no writes while image resolution is incomplete",
+			plan.GetToApply(), plan.GetToDelete())
+	}
+}
+
 func TestBuildDesiredNamespaceProfiles_MarksCopiesWithProfileSource(t *testing.T) {
 	t.Parallel()
 
@@ -435,7 +504,7 @@ func TestBuildDesiredNamespaceProfiles_MarksCopiesWithProfileSource(t *testing.T
 			ModelId:   "qwen/Qwen3-32B",
 			ProfileId: "tp2",
 		},
-	}})
+	}}, nil)
 	if err != nil {
 		t.Fatalf("buildDesiredNamespaceProfiles() error = %v", err)
 	}
@@ -502,7 +571,7 @@ func TestBuildDesiredProfiles_OutputPolicyMarksCopiesCopyable(t *testing.T) {
 				return buildDesiredNamespaceProfiles(&aimv1alpha2.AIMProfileSet{
 					ObjectMeta: metav1.ObjectMeta{Name: "qwen-profiles", Namespace: "team-a", UID: "set-uid"},
 					Spec:       spec,
-				}, []aimprofile.ProfileCopyCandidate{source})
+				}, []aimprofile.ProfileCopyCandidate{source}, nil)
 			},
 		},
 		{
@@ -511,7 +580,7 @@ func TestBuildDesiredProfiles_OutputPolicyMarksCopiesCopyable(t *testing.T) {
 				return buildDesiredClusterProfiles(&aimv1alpha2.AIMClusterProfileSet{
 					ObjectMeta: metav1.ObjectMeta{Name: "qwen-profiles", UID: "set-uid"},
 					Spec:       spec,
-				}, []aimprofile.ProfileCopyCandidate{source})
+				}, []aimprofile.ProfileCopyCandidate{source}, nil)
 			},
 		},
 	}
@@ -534,6 +603,161 @@ func TestBuildDesiredProfiles_OutputPolicyMarksCopiesCopyable(t *testing.T) {
 				t.Fatalf("derived lineage = %q, want upstream-set-uid,set-uid", lineage)
 			}
 		})
+	}
+}
+
+func TestBuildDesiredNamespaceProfiles_FineTuneOfCustomModelKeepsAIMRuntimeImage(t *testing.T) {
+	t.Parallel()
+
+	const (
+		aimRuntimeImage = "amdenterpriseai/aim-base:2026.11.0"
+		upstreamImage   = "docker.io/vllm/vllm-openai-rocm:v0.16.0"
+	)
+	baseProfile := aimprofile.ProfileCopyCandidate{
+		Name:         "mi350x-base",
+		SourceID:     "base-profile",
+		SourceGroup:  "base-model",
+		BaseImage:    upstreamImage,
+		YAMLContract: profileyaml.DefaultContract(),
+		Spec: aimv1alpha2.AIMProfileSpecCommon{
+			ProfileId:        "mi350x-tp1",
+			Image:            aimRuntimeImage,
+			Engine:           "vllm",
+			AcceleratorModel: "MI350X",
+			AcceleratorCount: 1,
+		},
+	}
+	customSet := &aimv1alpha2.AIMProfileSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "custom-model-profiles", Namespace: "team-a", UID: "custom-set-uid"},
+		Spec: aimv1alpha1.AIMProfileSetSpec{
+			Selector: aimv1alpha1.ProfileSelector{
+				Engine: "vllm",
+				Role:   aimv1alpha1.ProfileSelectorRoleBase,
+			},
+			VersionPolicy: aimv1alpha1.ProfileVersionPolicyAll,
+			Overrides: &aimv1alpha1.ProfileOverrides{
+				AimId:   "acme/custom-model",
+				ModelId: "acme/custom-model",
+				ModelSources: []aimv1alpha1.AIMModelSource{{
+					ModelID:   "acme/custom-model",
+					SourceURI: "hf://acme/custom-model",
+				}},
+			},
+			OutputPolicy: &aimv1alpha1.ProfileOutputPolicy{Copyable: true},
+		},
+	}
+
+	customDesired, err := buildDesiredNamespaceProfiles(customSet, []aimprofile.ProfileCopyCandidate{baseProfile}, nil)
+	if err != nil {
+		t.Fatalf("build custom-model profile: %v", err)
+	}
+	if len(customDesired) != 1 {
+		t.Fatalf("custom-model profile count = %d, want 1", len(customDesired))
+	}
+	customProfile := customDesired[0].Object.(*aimv1alpha2.AIMProfile)
+
+	fineTuneSet := &aimv1alpha2.AIMProfileSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "fine-tune-profiles", Namespace: "team-a", UID: "fine-tune-set-uid"},
+		Spec: aimv1alpha1.AIMProfileSetSpec{
+			Selector: aimv1alpha1.ProfileSelector{
+				AimId: "acme/custom-model",
+				Role:  aimv1alpha1.ProfileSelectorRoleDeployable,
+			},
+			VersionPolicy: aimv1alpha1.ProfileVersionPolicyAll,
+			Overrides: &aimv1alpha1.ProfileOverrides{
+				ModelSources: []aimv1alpha1.AIMModelSource{{
+					ModelID:   "acme/custom-model-fine-tune",
+					SourceURI: "s3://models/custom-model-fine-tune",
+				}},
+			},
+		},
+	}
+
+	for _, statusBase := range []string{"", upstreamImage} {
+		t.Run("previous base="+statusBase, func(t *testing.T) {
+			// An upgraded custom profile still has the old status when its
+			// producer first applies the corrected annotation.
+			customProfile.Status.BaseImage = statusBase
+			customCandidate := liveSourceCandidate(
+				customProfile,
+				customProfile.Spec.AIMProfileSpecCommon,
+				customProfile.Status,
+				"AIMProfile",
+			).ProfileCopyCandidate
+			customCandidate.YAMLContract = profileyaml.CanonicalContract(&customProfile.Spec.AIMProfileSpecCommon)
+
+			fineTuneDesired, err := buildDesiredNamespaceProfiles(fineTuneSet, []aimprofile.ProfileCopyCandidate{customCandidate}, nil)
+			if err != nil {
+				t.Fatalf("build fine-tuned profile: %v", err)
+			}
+			if len(fineTuneDesired) != 1 {
+				t.Fatalf("fine-tuned profile count = %d, want 1", len(fineTuneDesired))
+			}
+			fineTuneProfile := fineTuneDesired[0].Object.(*aimv1alpha2.AIMProfile)
+			if got := fineTuneProfile.Spec.Image; got != aimRuntimeImage {
+				t.Fatalf("fine-tuned profile image = %q, want AIM runtime %q (must not descend to %q)", got, aimRuntimeImage, upstreamImage)
+			}
+			if got := fineTuneProfile.Annotations[aimprofile.AnnotationBaseImage]; got != aimRuntimeImage {
+				t.Fatalf("fine-tuned profile base image = %q, want reusable AIM runtime %q", got, aimRuntimeImage)
+			}
+		})
+	}
+}
+
+func TestBuildDesiredNamespaceProfiles_AppliesRegistryMappingWithoutChangingLineage(t *testing.T) {
+	t.Parallel()
+
+	const canonicalBase = "docker.io/amdenterpriseai/aim-base:0.11.2"
+	source := aimprofile.ProfileCopyCandidate{
+		Name:         "optimized",
+		SourceID:     "optimized-profile",
+		SourceGroup:  "optimized-model",
+		BaseImage:    canonicalBase,
+		YAMLContract: profileyaml.DefaultContract(),
+		Spec: aimv1alpha2.AIMProfileSpecCommon{
+			AimId:            "amd/optimized",
+			ModelId:          "amd/optimized",
+			ProfileId:        "mi300x",
+			Image:            "ghcr.io/private-team/optimized:0.11.2",
+			Engine:           "vllm",
+			AcceleratorModel: "MI300X",
+			AcceleratorCount: 1,
+			ModelSources: []aimv1alpha1.AIMModelSource{{
+				ModelID:   "amd/optimized",
+				SourceURI: "hf://amd/optimized",
+			}},
+		},
+	}
+	set := &aimv1alpha2.AIMProfileSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "fine-tune", Namespace: "team-a", UID: "fine-tune-set"},
+		Spec: aimv1alpha1.AIMProfileSetSpec{
+			Selector:      aimv1alpha1.ProfileSelector{AimId: "amd/optimized"},
+			VersionPolicy: aimv1alpha1.ProfileVersionPolicyAll,
+			Overrides: &aimv1alpha1.ProfileOverrides{
+				ModelSources: []aimv1alpha1.AIMModelSource{{
+					ModelID:   "team/fine-tune",
+					SourceURI: "s3://models/fine-tune",
+				}},
+			},
+		},
+	}
+
+	desired, err := buildDesiredNamespaceProfiles(set, []aimprofile.ProfileCopyCandidate{source}, []aimimage.RegistryMapping{{
+		From: "docker.io/amdenterpriseai",
+		To:   "ghcr.io/private-team",
+	}})
+	if err != nil {
+		t.Fatalf("build desired profiles: %v", err)
+	}
+	if len(desired) != 1 {
+		t.Fatalf("desired profile count = %d, want 1", len(desired))
+	}
+	profile := desired[0].Object.(*aimv1alpha2.AIMProfile)
+	if got, want := profile.Spec.Image, "ghcr.io/private-team/aim-base:0.11.2"; got != want {
+		t.Fatalf("derived image = %q, want mapped image %q", got, want)
+	}
+	if got := profile.Annotations[aimprofile.AnnotationBaseImage]; got != canonicalBase {
+		t.Fatalf("lineage base image = %q, want canonical reference %q", got, canonicalBase)
 	}
 }
 
@@ -662,7 +886,7 @@ env_vars: {}
 		},
 	}
 
-	desired, err := buildDesiredNamespaceProfiles(set, []aimprofile.ProfileCopyCandidate{baseProfile})
+	desired, err := buildDesiredNamespaceProfiles(set, []aimprofile.ProfileCopyCandidate{baseProfile}, nil)
 	if err != nil {
 		t.Fatalf("buildDesiredNamespaceProfiles() error = %v", err)
 	}

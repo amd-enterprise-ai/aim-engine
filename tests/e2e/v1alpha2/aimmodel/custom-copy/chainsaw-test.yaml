@@ -70,12 +70,9 @@ spec:
                 profileId: cpu-latency
                 primary: true
                 manualSelectionOnly: true
-                # The derived image rebases source-profile.yaml's base-image
-                # annotation (`aim-base:0.1.10`): RebaseRegistry grafts the source
-                # image's registry+org (docker.io/amdenterpriseai, from spec.image)
-                # onto the base-image name, and NormalizeBaseImageTag truncates the
-                # SemVer tag to the MAJOR.MINOR rolling tag aim-base publishes (0.1).
-                image: docker.io/amdenterpriseai/aim-base:0.1
+                # The derived image preserves source-profile.yaml's exact
+                # base-image annotation, including its producer-owned tag.
+                image: docker.io/amdenterpriseai/aim-base:0.1.10
                 modelSources:
                   - modelId: custom-org/custom-copy-model
                     sourceUri: s3://models/custom-copy-model

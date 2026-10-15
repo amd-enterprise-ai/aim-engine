@@ -26,6 +26,7 @@ package aimruntimeconfig
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -597,6 +598,44 @@ func TestMergeRuntimeConfigs_ProfileGenerationFallbacksByName(t *testing.T) {
 		if got[name] != image {
 			t.Fatalf("fallback %q image = %q, want %q", name, got[name], image)
 		}
+	}
+}
+
+func TestMergeRuntimeConfigs_ImageRegistryMappingsByFrom(t *testing.T) {
+	t.Parallel()
+
+	base := &aimv1alpha1.AIMRuntimeConfigCommon{
+		ImageRegistry: &aimv1alpha1.AIMImageRegistryConfig{
+			Mappings: []aimv1alpha1.AIMImageRegistryMapping{
+				{From: "docker.io/amdenterpriseai", To: "registry.cluster/amd"},
+				{From: "quay.io/amd", To: "registry.cluster/quay"},
+			},
+		},
+	}
+	priority := &aimv1alpha1.AIMRuntimeConfigCommon{
+		ImageRegistry: &aimv1alpha1.AIMImageRegistryConfig{
+			Mappings: []aimv1alpha1.AIMImageRegistryMapping{
+				{From: "docker.io/amdenterpriseai", To: "registry.namespace/amd"},
+				{From: "ghcr.io/amd", To: "registry.namespace/ghcr"},
+			},
+		},
+	}
+
+	merged := mergeRuntimeConfigs(priority, base)
+	if merged == nil || merged.ImageRegistry == nil {
+		t.Fatal("merged image registry config is nil")
+	}
+	got := make(map[string]string, len(merged.ImageRegistry.Mappings))
+	for _, mapping := range merged.ImageRegistry.Mappings {
+		got[mapping.From] = mapping.To
+	}
+	want := map[string]string{
+		"docker.io/amdenterpriseai": "registry.namespace/amd",
+		"quay.io/amd":               "registry.cluster/quay",
+		"ghcr.io/amd":               "registry.namespace/ghcr",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("merged mappings = %#v, want %#v", got, want)
 	}
 }
 

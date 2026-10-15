@@ -2,9 +2,9 @@
 
 Runtime configurations provide storage defaults, routing parameters,
 scale-from-zero activation queries, environment variables, additional CA
-trust, and label-propagation rules that apply to AIM workloads. They're
-optional — workloads run without them — but most production deployments set at
-least a cluster-scoped `default`.
+trust, image repository mappings, and label-propagation rules that apply to AIM
+workloads. They're optional — workloads run without them — but most production
+deployments set at least a cluster-scoped `default`.
 
 ## Resources
 
@@ -84,6 +84,43 @@ Each consuming resource independently resolves its RuntimeConfig and publishes
 the result. A named RuntimeConfig selected by an `AIMService` does not retarget
 a shared cache already owned by an `AIMProfile`; use `default` for policy that
 must apply to both.
+
+## Image repository mappings
+
+`spec.imageRegistry.mappings` explicitly redirects image repository prefixes.
+This is useful when an AIM image records a public `AIM_BASE_IMAGE_REF`, but the
+cluster must pull the corresponding runtime from an internal mirror:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: default
+spec:
+  imageRegistry:
+    mappings:
+      - from: docker.io/amdenterpriseai
+        to: registry.internal.example/amdenterpriseai
+```
+
+For example, the mapping above resolves
+`docker.io/amdenterpriseai/aim-base:0.11.2` to
+`registry.internal.example/amdenterpriseai/aim-base:0.11.2`. Tags and digests
+are preserved exactly.
+
+Mappings use repository-segment boundaries, and the longest matching `from`
+prefix wins. Namespace mappings replace cluster mappings with the same `from`
+value while preserving unrelated cluster mappings. If no mapping matches, AIM
+Engine uses the image reference exactly as recorded; it does not infer a mirror,
+probe registries, or fall back between registries.
+
+Profile derivation always uses the merged `default` namespace/cluster policy
+because `AIMProfileSet` does not select a named RuntimeConfig. Explicit image
+overrides remain authoritative and are not remapped.
+
+If an image does not contain `AIM_BASE_IMAGE_REF`, derivation reports a
+controlled resolution error and retains existing managed profiles rather than
+deriving a runtime from the source image's registry or truncating its tag.
 
 ## Additional CA trust
 

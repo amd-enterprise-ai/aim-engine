@@ -40,8 +40,8 @@ import (
 type ClusterModelReconciler struct {
 	// Client is needed in PlanResources to resolve fine-tuned template
 	// deployment images per-match (each copy needs its source owner's
-	// baseImageRef rebased onto the source registry; matches may span owners,
-	// so we GET them on demand with an in-memory cache).
+	// baseImageRef, with explicit RuntimeConfig mappings applied; matches may
+	// span owners, so we GET them on demand with an in-memory cache).
 	Client    client.Client
 	Clientset kubernetes.Interface
 	Scheme    *runtime.Scheme
@@ -501,7 +501,7 @@ func (r *ClusterModelReconciler) PlanResources(
 			logger.V(1).Info("aimId template matching complete",
 				"candidates", len(obs.aimIdClusterTemplates.Value.Items),
 				"matches", len(matches))
-			templates := BuildFineTunedClusterServiceTemplates(ctx, r.Client, model, matches)
+			templates := BuildFineTunedClusterServiceTemplates(ctx, r.Client, model, matches, obs.mergedRuntimeConfig.Value)
 			for _, template := range templates {
 				planResult.Apply(template)
 			}
@@ -576,7 +576,7 @@ func (r *ModelReconciler) PlanResources(
 			logger.V(1).Info("aimId template matching complete (namespace)",
 				"candidates", len(obs.aimIdTemplates.Value.Items),
 				"matches", len(matches))
-			templates := BuildFineTunedServiceTemplates(ctx, r.Client, model, matches)
+			templates := BuildFineTunedServiceTemplates(ctx, r.Client, model, matches, obs.mergedRuntimeConfig.Value)
 			for _, t := range templates {
 				planResult.Apply(t)
 			}
@@ -587,7 +587,7 @@ func (r *ModelReconciler) PlanResources(
 			logger.V(1).Info("aimId template matching complete (cluster)",
 				"candidates", len(obs.aimIdClusterTemplates.Value.Items),
 				"matches", len(matches))
-			templates := BuildFineTunedServiceTemplates(ctx, r.Client, model, matches)
+			templates := BuildFineTunedServiceTemplates(ctx, r.Client, model, matches, obs.mergedRuntimeConfig.Value)
 			for _, t := range templates {
 				planResult.Apply(t)
 			}

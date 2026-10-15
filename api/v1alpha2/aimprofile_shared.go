@@ -360,10 +360,11 @@ type AIMProfileStatus struct {
 
 	// BaseImage is the AIM_BASE_IMAGE_REF the inspector extracted from the
 	// source image when this profile was materialised by AIMModel discovery.
-	// Used by derivation flows (AIMService overlays, AIMProfileSet) to rebase
-	// the deployment image onto the source's base when overriding model
-	// sources, so private mirrors stay self-contained. Empty for
-	// user-authored profiles.
+	// Derivation flows that replace model sources use this reference exactly,
+	// subject only to explicit RuntimeConfig repository-prefix mappings. Empty
+	// for user-authored profiles and images that do not declare the metadata;
+	// weight-replacing derivations from deployable profiles then defer rather
+	// than guessing a runtime image.
 	// +optional
 	BaseImage string `json:"baseImage,omitempty"`
 

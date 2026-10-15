@@ -153,13 +153,17 @@ With neither `spec.image` nor `spec.overrides.image` set, the derived image depe
 
 | Source profile | Override replaces weights? | Resulting image |
 |---|---|---|
-| Deployable (`role=deployable`, a model-optimized image) | **Yes** (`modelSources` set) | Resolves back to the source's `status.baseImage` (`AIM_BASE_IMAGE_REF`), normalised to `MAJOR.MINOR` and rebased onto the source image's registry+org. The new weights load onto the clean aim-base runtime. |
+| Deployable (`role=deployable`, a model-optimized image) | **Yes** (`modelSources` set) | Resolves back to the source's `status.baseImage` (`AIM_BASE_IMAGE_REF`) exactly, unless the merged `default` RuntimeConfig contains an explicit matching `imageRegistry.mappings` entry. The new weights load onto the clean AIM runtime selected by the image producer. |
 | Deployable | **No** (partitioning-only / env-only / engineArgs-only override) | Keeps the optimized source image. |
 | Base (`role=base`, an aim-base image used for [Custom Models](../guides/custom-models.md)) | — | Keeps the source image unchanged. A base profile already *is* the runtime image; weights come from `overrides.modelSources`. |
 
 An explicit image override selects the deployment image; `overrides.image` takes precedence over top-level `spec.image`, preserving existing behavior.
 
-Derived profiles inherit the source profile's `status.baseImage` so subsequent derivations or overlays can rebase consistently.
+When a derivation replaces model weights or explicitly selects an image, its resolved deployment image becomes the reusable base-image lineage for subsequent copies. Configuration-only copies retain the source profile's `status.baseImage`. This keeps chains such as base profile → custom model → fine-tune on the effective AIM runtime instead of descending to that runtime image's own upstream base.
+
+If a deployable source does not expose `AIM_BASE_IMAGE_REF`, profile derivation
+reports a controlled error and retains existing managed profiles instead of
+guessing a runtime image from the source registry or tag.
 
 ### Profile YAML contract inheritance
 
