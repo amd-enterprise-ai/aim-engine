@@ -1,0 +1,26 @@
+# Requires a bundle that can map these particular primary/worker profiles and
+# parallelism to a complete same-node group. Not a qualified hardware fixture.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: chat-workers
+  namespace: team-a
+spec:
+  composition:
+    main:
+      parallelism:
+        tensor: 2
+        pipeline: 2
+      profile:
+        ref:
+          kind: AIMClusterProfile
+          name: qwen-primary
+      worker:
+        profile:
+          ref:
+            kind: AIMClusterProfile
+            name: qwen-worker
+        launch:
+          containerEnv:
+            - name: DEPLOYMENT_PURPOSE
+              value: cooperating-worker
