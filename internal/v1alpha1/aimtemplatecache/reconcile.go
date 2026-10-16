@@ -345,6 +345,10 @@ func matchArtifactForSource(
 			continue
 		}
 
+		if !downloadFilterMatches(cached.Spec.DownloadFilter, modelSource.DownloadFilter) {
+			continue
+		}
+
 		// Must precede the empty-status guard: an artifact deleted before its first
 		// status still has to be waited out, and an apply over a deletionTimestamp is
 		// accepted silently, so classifying it as missing writes to the dying object.
@@ -413,6 +417,7 @@ func (r *TemplateCacheReconciler) PlanResources(
 				// Merge base-level env with per-source env (source takes precedence)
 				Env:              utils.MergeEnvVars(tc.Spec.Env, cache.Env),
 				RuntimeConfigRef: tc.Spec.RuntimeConfigRef,
+				DownloadFilter:   cache.DownloadFilter,
 			},
 		}
 
@@ -442,6 +447,9 @@ func generateArtifactName(tc *aimv1alpha1.AIMTemplateCache, modelSource aimv1alp
 	}
 	if strings.HasPrefix(modelSource.SourceURI, "s3://") {
 		hashInputs = append(hashInputs, normalizedRuntimeConfigName(tc.Spec.RuntimeConfigRef))
+	}
+	if modelSource.DownloadFilter != nil {
+		hashInputs = append(hashInputs, canonicalDownloadFilter(modelSource.DownloadFilter))
 	}
 
 	if tc.Spec.Mode == aimv1alpha1.TemplateCacheModeDedicated {
@@ -490,6 +498,35 @@ func s3RuntimeConfigMatches(
 ) bool {
 	return !strings.HasPrefix(sourceURI, "s3://") ||
 		normalizedRuntimeConfigName(left) == normalizedRuntimeConfigName(right)
+}
+
+// downloadFilterMatches reports whether an artifact's filter selects the same file
+// set as a source's declared filter. Nil (fall back to runtime config or default)
+// and an empty filter (download everything) are deliberately distinct.
+func downloadFilterMatches(left, right *aimv1alpha1.AIMDownloadFilter) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	l, r := canonicalDownloadFilter(left), canonicalDownloadFilter(right)
+	return slices.Equal(l.Include, r.Include) && slices.Equal(l.Exclude, r.Exclude)
+}
+
+// canonicalDownloadFilter sorts and deduplicates the globs so that filters selecting
+// the same file set hash to the same artifact name regardless of declaration order.
+func canonicalDownloadFilter(filter *aimv1alpha1.AIMDownloadFilter) aimv1alpha1.AIMDownloadFilter {
+	return aimv1alpha1.AIMDownloadFilter{
+		Include: canonicalGlobs(filter.Include),
+		Exclude: canonicalGlobs(filter.Exclude),
+	}
+}
+
+func canonicalGlobs(globs []string) []string {
+	if len(globs) == 0 {
+		return nil
+	}
+	sorted := slices.Clone(globs)
+	slices.Sort(sorted)
+	return slices.Compact(sorted)
 }
 
 func normalizedRuntimeConfigName(ref aimv1alpha1.RuntimeConfigRef) string {
