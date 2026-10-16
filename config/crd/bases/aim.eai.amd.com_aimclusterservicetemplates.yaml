@@ -380,6 +380,30 @@ spec:
                     AIMModelSource describes a model artifact that must be downloaded for inference.
                     Discovery extracts these from the container's configuration to enable caching and validation.
                   properties:
+                    downloadFilter:
+                      description: |-
+                        DownloadFilter declares which files of this source to download, overriding the
+                        runtime config filter and the hf:// subdirectory-exclude default.
+                        An empty object downloads every file.
+                      properties:
+                        exclude:
+                          description: |-
+                            Exclude specifies glob patterns for files to skip.
+                            Files matching any exclude pattern are removed after include filtering.
+                            Patterns use fnmatch syntax (e.g., ["*/*", "*.bin"]).
+                          items:
+                            type: string
+                          type: array
+                        include:
+                          description: |-
+                            Include specifies glob patterns for files to download.
+                            Only files matching at least one pattern are considered.
+                            If empty, all files pass the include check.
+                            Patterns use fnmatch syntax (e.g., ["*.safetensors", "config.json"]).
+                          items:
+                            type: string
+                          type: array
+                      type: object
                     env:
                       description: |-
                         Env specifies per-source credential overrides.
@@ -858,6 +882,30 @@ spec:
                     AIMModelSource describes a model artifact that must be downloaded for inference.
                     Discovery extracts these from the container's configuration to enable caching and validation.
                   properties:
+                    downloadFilter:
+                      description: |-
+                        DownloadFilter declares which files of this source to download, overriding the
+                        runtime config filter and the hf:// subdirectory-exclude default.
+                        An empty object downloads every file.
+                      properties:
+                        exclude:
+                          description: |-
+                            Exclude specifies glob patterns for files to skip.
+                            Files matching any exclude pattern are removed after include filtering.
+                            Patterns use fnmatch syntax (e.g., ["*/*", "*.bin"]).
+                          items:
+                            type: string
+                          type: array
+                        include:
+                          description: |-
+                            Include specifies glob patterns for files to download.
+                            Only files matching at least one pattern are considered.
+                            If empty, all files pass the include check.
+                            Patterns use fnmatch syntax (e.g., ["*.safetensors", "config.json"]).
+                          items:
+                            type: string
+                          type: array
+                      type: object
                     env:
                       description: |-
                         Env specifies per-source credential overrides.
