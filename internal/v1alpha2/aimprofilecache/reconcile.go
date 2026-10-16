@@ -295,7 +295,7 @@ func matchArtifactForSource(
 			continue
 		}
 
-		if !downloadFilterMatches(cached.Spec.DownloadFilter, modelSource.DownloadFilter) {
+		if !DownloadFilterMatches(cached.Spec.DownloadFilter, modelSource.DownloadFilter) {
 			continue
 		}
 
@@ -535,10 +535,10 @@ func s3RuntimeConfigMatches(
 		normalizedRuntimeConfigName(left) == normalizedRuntimeConfigName(right)
 }
 
-// downloadFilterMatches reports whether an artifact's filter selects the same file
+// DownloadFilterMatches reports whether an artifact's filter selects the same file
 // set as a source's declared filter. Nil (fall back to runtime config or default)
 // and an empty filter (download everything) are deliberately distinct.
-func downloadFilterMatches(left, right *aimv1alpha1.AIMDownloadFilter) bool {
+func DownloadFilterMatches(left, right *aimv1alpha1.AIMDownloadFilter) bool {
 	if left == nil || right == nil {
 		return left == right
 	}
