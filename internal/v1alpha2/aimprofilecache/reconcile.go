@@ -295,6 +295,10 @@ func matchArtifactForSource(
 			continue
 		}
 
+		if !downloadFilterMatches(cached.Spec.DownloadFilter, modelSource.DownloadFilter) {
+			continue
+		}
+
 		// Must precede the empty-status guard: an artifact deleted before its first
 		// status still has to be waited out, and an apply over a deletionTimestamp is
 		// accepted silently, so classifying it as missing writes to the dying object.
@@ -350,6 +354,7 @@ func (r *ProfileCacheReconciler) PlanResources(
 				Size:             getSizeOrZero(model.Size),
 				Env:              utils.MergeEnvVars(pc.Spec.Env, model.Env),
 				RuntimeConfigRef: pc.Spec.RuntimeConfigRef,
+				DownloadFilter:   model.DownloadFilter,
 			},
 		}
 
@@ -471,6 +476,9 @@ func generateArtifactName(pc *aimv1alpha2.AIMProfileCache, modelSource aimv1alph
 	if strings.HasPrefix(modelSource.SourceURI, "s3://") {
 		hashInputs = append(hashInputs, normalizedRuntimeConfigName(pc.Spec.RuntimeConfigRef))
 	}
+	if modelSource.DownloadFilter != nil {
+		hashInputs = append(hashInputs, canonicalDownloadFilter(modelSource.DownloadFilter))
+	}
 
 	if pc.Spec.Mode == aimv1alpha2.ProfileCacheModeDedicated {
 		hashInputs = append(hashInputs, "dedicated", pc.Name)
@@ -525,6 +533,35 @@ func s3RuntimeConfigMatches(
 ) bool {
 	return !strings.HasPrefix(sourceURI, "s3://") ||
 		normalizedRuntimeConfigName(left) == normalizedRuntimeConfigName(right)
+}
+
+// downloadFilterMatches reports whether an artifact's filter selects the same file
+// set as a source's declared filter. Nil (fall back to runtime config or default)
+// and an empty filter (download everything) are deliberately distinct.
+func downloadFilterMatches(left, right *aimv1alpha1.AIMDownloadFilter) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	l, r := canonicalDownloadFilter(left), canonicalDownloadFilter(right)
+	return slices.Equal(l.Include, r.Include) && slices.Equal(l.Exclude, r.Exclude)
+}
+
+// canonicalDownloadFilter sorts and deduplicates the globs so that filters selecting
+// the same file set hash to the same artifact name regardless of declaration order.
+func canonicalDownloadFilter(filter *aimv1alpha1.AIMDownloadFilter) aimv1alpha1.AIMDownloadFilter {
+	return aimv1alpha1.AIMDownloadFilter{
+		Include: canonicalGlobs(filter.Include),
+		Exclude: canonicalGlobs(filter.Exclude),
+	}
+}
+
+func canonicalGlobs(globs []string) []string {
+	if len(globs) == 0 {
+		return nil
+	}
+	sorted := slices.Clone(globs)
+	slices.Sort(sorted)
+	return slices.Compact(sorted)
 }
 
 func normalizedRuntimeConfigName(ref aimv1alpha1.RuntimeConfigRef) string {

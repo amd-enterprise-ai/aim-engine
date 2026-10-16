@@ -1117,6 +1117,11 @@ func (in *AIMModelSource) DeepCopyInto(out *AIMModelSource) {
 		x := (*in).DeepCopy()
 		*out = &x
 	}
+	if in.DownloadFilter != nil {
+		in, out := &in.DownloadFilter, &out.DownloadFilter
+		*out = new(AIMDownloadFilter)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.Env != nil {
 		in, out := &in.Env, &out.Env
 		*out = make([]v1.EnvVar, len(*in))
