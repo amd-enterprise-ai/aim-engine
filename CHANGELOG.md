@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Populate this section during release-prep, then rename to the release version -->
 
+### Added
+- Hand-authored `AIMProfile` and `AIMClusterProfile` resources can declare `spec.baseImageRef`, the supported clean-runtime lineage used when ProfileSets or service overlays replace model weights.
+
+### Changed
+- Weight-replacing profile derivations now use the producer's exact `AIM_BASE_IMAGE_REF` or `spec.baseImageRef`. Registry changes require explicit RuntimeConfig repository mappings, and tags or digests are no longer truncated or synthesized.
+
+### Fixed
+- Cached v1alpha1 image metadata from older operators is re-inspected to recover `AIM_BASE_IMAGE_REF`. Reinspection failures retain cached metadata and normal readiness while reporting a non-gating diagnostic that can recover on a later reconcile; images that genuinely omit the field are recorded without repeated registry polling.
+- Missing runtime lineage now reports `BaseImageUnresolved` instead of the misleading `InvalidProfileOverrides`, while existing ProfileSet and AIMService resources remain untouched.
+- ProfileSet controllers no longer requeue every set for RuntimeConfig status-only updates.
+
 ## [0.2.7] - 2026-10-08
 
 ### Added

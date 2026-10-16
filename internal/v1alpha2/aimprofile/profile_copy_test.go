@@ -753,15 +753,14 @@ func TestResolveDerivedProfileImage(t *testing.T) {
 		// is a base-role profile, source.Image IS already the runtime
 		// image (e.g. aim-base itself). Its sourceBaseImage is the
 		// AIM_BASE_IMAGE_REF of aim-base (vllm-openai-rocm), which is the
-		// upstream FROM line — not a deployable AIM image. Rebasing onto
-		// the source registry+org used to produce
-		// `amdenterpriseai/vllm-openai-rocm:v0.16.0`, a nonexistent
-		// mirror that broke the predictor pod. The fix returns
-		// sourceImage unchanged for base-role candidates so the derived
-		// profile deploys on the base image declared by its base
-		// AIMModel.
+		// upstream FROM line — not a deployable AIM image. The old implicit
+		// registry rewrite produced
+		// `amdenterpriseai/vllm-openai-rocm:v0.16.0`, a nonexistent mirror
+		// that broke the predictor pod. Base-role candidates instead keep
+		// sourceImage so the derived profile deploys on the runtime declared
+		// by its base AIMModel.
 		{
-			name:               "base source: AIM_BASE_IMAGE_REF rebase is skipped (BYO custom-model)",
+			name:               "base source: upstream AIM_BASE_IMAGE_REF is skipped (BYO custom-model)",
 			sourceBaseImage:    "docker.io/vllm/vllm-openai-rocm:v0.16.0",
 			sourceImage:        "amdenterpriseai/aim-base:0.11",
 			sourceIsDeployable: false,
@@ -833,8 +832,8 @@ func TestApplyProfileCopyOverrides_BaseSourceImageNotRebased(t *testing.T) {
 		},
 		"", // no service-level image override
 		// sourceBaseImage is the FROM line of aim-base (vllm-openai-rocm).
-		// The pre-fix bug grafted this onto amdenterpriseai/ and produced
-		// a nonexistent `amdenterpriseai/vllm-openai-rocm:v0.16.0`.
+		// The old implicit registry rewrite produced a nonexistent
+		// `amdenterpriseai/vllm-openai-rocm:v0.16.0`.
 		"docker.io/vllm/vllm-openai-rocm:v0.16.0",
 		nil,
 	)
@@ -842,7 +841,7 @@ func TestApplyProfileCopyOverrides_BaseSourceImageNotRebased(t *testing.T) {
 		t.Fatalf("ApplyProfileCopyOverrides() error = %v", err)
 	}
 	if derived.Image != "amdenterpriseai/aim-base:0.11" {
-		t.Fatalf("derived.Image = %q, want base source image preserved (got the broken rebase result?)", derived.Image)
+		t.Fatalf("derived.Image = %q, want base source image preserved (got the old implicit rewrite result?)", derived.Image)
 	}
 }
 

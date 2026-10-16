@@ -345,12 +345,11 @@ func BuildFineTunedClusterServiceTemplates(
 // apiserver immediately rejects.
 //
 // customProfile is stamped only when discovery emitted engine config
-// (engineArgs / envVars). The resolved aim-base image has no baked-in
-// catalog so the runtime needs the engine config to resolve a profile;
-// for inline-modelSources sources (which never run discovery and have
-// no engine config in status), the rebased image is the same image
-// family and the runtime resolves the original profile against the
-// unchanged catalog — no customProfile needed.
+// (engineArgs / envVars). A resolved clean AIM runtime may not carry the
+// source model image's baked-in catalog, so the runtime needs that discovered
+// engine config to resolve a profile. Inline-modelSources sources never run
+// discovery and have no engine config in status; they continue using their
+// explicitly selected image and original profile identity.
 //
 // Non-discovery engine knobs (container resources, runtime config
 // selection, pull secrets, service account) have no analogue in

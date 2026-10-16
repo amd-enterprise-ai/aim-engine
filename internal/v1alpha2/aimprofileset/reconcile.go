@@ -216,6 +216,9 @@ func (r *ProfileSetReconciler) ComposeState(
 		)
 		obs.buildErr = errors.Join(obs.buildErr, buildErr)
 	}
+	// ProfileSet output is atomic across source groups. If any selected source
+	// cannot resolve its runtime lineage, retain every existing managed profile
+	// until the producer metadata or RuntimeConfig is fixed.
 	obs.pruneSafe = fetch.runtimeConfig.Error == nil && fetch.candidates.Error == nil && fetch.managed.Error == nil && obs.buildErr == nil
 	if fetch.managed.Error == nil {
 		obs.existingManaged = fetch.managed.Value
@@ -246,6 +249,9 @@ func (r *ClusterProfileSetReconciler) ComposeState(
 		)
 		obs.buildErr = errors.Join(obs.buildErr, buildErr)
 	}
+	// ProfileSet output is atomic across source groups. If any selected source
+	// cannot resolve its runtime lineage, retain every existing managed profile
+	// until the producer metadata or RuntimeConfig is fixed.
 	obs.pruneSafe = fetch.runtimeConfig.Error == nil && fetch.candidates.Error == nil && fetch.managed.Error == nil && obs.buildErr == nil
 	if fetch.managed.Error == nil {
 		obs.existingManaged = fetch.managed.Value
@@ -333,9 +339,7 @@ func buildDesiredNamespaceProfiles(
 		}
 		copiedSpec, err := aimprofile.ApplyProfileCopyOverrides(source.Spec, set.Spec.Overrides, set.Spec.Image, source.BaseImage, registryMappings)
 		if err != nil {
-			failures.add(source.SourceGroup, controllerutils.NewInvalidSpecError(
-				"InvalidProfileOverrides", err.Error(), err,
-			))
+			failures.add(source.SourceGroup, profileCopyError(err))
 			continue
 		}
 		derivedBaseImage := aimprofile.ResolveDerivedProfileBaseImage(
@@ -345,6 +349,7 @@ func buildDesiredNamespaceProfiles(
 			set.Spec.Overrides,
 			aimprofile.IsProfileDeployable(source.Spec),
 		)
+		copiedSpec.BaseImageRef = derivedBaseImage
 		profile := &aimv1alpha2.AIMProfile{}
 		profile.Namespace = set.Namespace
 		profile.Name = name
@@ -392,9 +397,7 @@ func buildDesiredClusterProfiles(
 		}
 		copiedSpec, err := aimprofile.ApplyProfileCopyOverrides(source.Spec, set.Spec.Overrides, set.Spec.Image, source.BaseImage, registryMappings)
 		if err != nil {
-			failures.add(source.SourceGroup, controllerutils.NewInvalidSpecError(
-				"InvalidProfileOverrides", err.Error(), err,
-			))
+			failures.add(source.SourceGroup, profileCopyError(err))
 			continue
 		}
 		derivedBaseImage := aimprofile.ResolveDerivedProfileBaseImage(
@@ -404,6 +407,7 @@ func buildDesiredClusterProfiles(
 			set.Spec.Overrides,
 			aimprofile.IsProfileDeployable(source.Spec),
 		)
+		copiedSpec.BaseImageRef = derivedBaseImage
 		profile := &aimv1alpha2.AIMClusterProfile{}
 		profile.Name = name
 		profile.Annotations = aimprofile.MarkProfileSource(map[string]string{
@@ -427,6 +431,17 @@ func buildDesiredClusterProfiles(
 		desired = append(desired, desiredProfile{Object: profile})
 	}
 	return desired, errors.Join(failures.err(), validateDerivedNames(desired))
+}
+
+func profileCopyError(err error) error {
+	if aimprofile.IsBaseImageUnresolved(err) {
+		return controllerutils.NewMissingUpstreamDependencyError(
+			aimprofile.ReasonBaseImageUnresolved,
+			err.Error(),
+			err,
+		)
+	}
+	return controllerutils.NewInvalidSpecError("InvalidProfileOverrides", err.Error(), err)
 }
 
 func appendProfileSetLineage(lineage []string, uid string) string {

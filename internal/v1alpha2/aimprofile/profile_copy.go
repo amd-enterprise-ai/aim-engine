@@ -24,6 +24,7 @@ package aimprofile
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -37,6 +38,27 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
 )
+
+const ReasonBaseImageUnresolved = "BaseImageUnresolved"
+
+// BaseImageUnresolvedError means a weight-replacing copy has no explicit or
+// producer-owned AIM runtime reference. Callers surface this separately from
+// malformed overrides so users receive the correct remediation.
+type BaseImageUnresolvedError struct {
+	SourceImage string
+}
+
+func (e *BaseImageUnresolvedError) Error() string {
+	return fmt.Sprintf(
+		"source image %q has no AIM_BASE_IMAGE_REF or spec.baseImageRef; refusing to guess a runtime image",
+		e.SourceImage,
+	)
+}
+
+func IsBaseImageUnresolved(err error) bool {
+	var unresolved *BaseImageUnresolvedError
+	return errors.As(err, &unresolved)
+}
 
 // ProfileCopyCandidate is a resource-neutral profile source used by derivation hosts such as AIMModel.
 type ProfileCopyCandidate struct {
@@ -313,10 +335,8 @@ func ApplyProfileCopyOverrides(
 	//     what lets a partitioning-only or env-only override stay on the
 	//     model-optimized image instead of silently falling back to base.
 	//   - A base source (BYO custom-model flow) already IS the runtime
-	//     image and must not be resolved to a base image (its AIM_BASE_IMAGE_REF is
-	//     the FROM line of aim-base itself, e.g. vllm-openai-rocm —
-	//     rebasing onto the source registry+org produces a nonexistent
-	//     mirror).
+	//     image and must not descend to its own AIM_BASE_IMAGE_REF (the FROM
+	//     line of aim-base itself, e.g. vllm-openai-rocm).
 	weightsChanged := overrides != nil && len(overrides.ModelSources) > 0
 	resolvedImage, err := ResolveDerivedProfileImage(
 		resolvedImageOverride,
@@ -489,15 +509,14 @@ func MergeEngineArgs(base, overrides *apiextensionsv1.JSON) (*apiextensionsv1.JS
 //  2. When sourceIsDeployable is false (the BYO custom-model flow: the
 //     source profile is itself a `base`-role profile emitted from an
 //     aim-base image), sourceImage IS already the runtime image we want.
-//     Skipping the rebase here is essential: a base profile's
+//     Skipping base-image resolution here is essential: a base profile's
 //     sourceBaseImage is the FROM line of aim-base itself
 //     (e.g. `docker.io/vllm/vllm-openai-rocm:v0.16.0`), which is *not* a
-//     deployable AIM image. Rebasing onto sourceImage's registry+org
-//     would produce a nonexistent mirror like
-//     `amdenterpriseai/vllm-openai-rocm:v0.16.0` and break the predictor
-//     pod. Custom-model derivations therefore deploy on the base image
+//     deployable AIM image. Deploying that upstream image would bypass the AIM
+//     runtime contract and break the predictor pod. Custom-model derivations
+//     therefore deploy on the base image
 //     declared by their base AIMModel; weights come from
-//     `overrides.modelSources`, not from a rebased image.
+//     `overrides.modelSources`, not from the upstream base image.
 //  3. When the source is deployable but the derivation does NOT change the
 //     weights (weightsChanged is false, i.e. overrides supply no
 //     modelSources), keep the optimized sourceImage. The model-optimized
@@ -541,22 +560,21 @@ func ResolveDerivedProfileImage(
 		}
 		return resolved, nil
 	}
-	return "", fmt.Errorf(
-		"source image %q has no AIM_BASE_IMAGE_REF; refusing to guess a runtime image",
-		sourceImage,
-	)
+	return "", &BaseImageUnresolvedError{SourceImage: sourceImage}
 }
 
 // ResolveDerivedProfileBaseImage returns the runtime image that a subsequent
 // weight-replacing derivation should use.
 //
-// A derivation that replaces model weights resolves its deployment image to
-// the reusable runtime (normally aim-base). That resolved image becomes the
-// new lineage base; carrying the source image's own AIM_BASE_IMAGE_REF would
-// descend one layer too far on the next copy (for example from aim-base to its
-// upstream vllm-openai-rocm FROM image). An explicit image override likewise
-// establishes the runtime chosen by the producer. Configuration-only copies
-// keep the source lineage unchanged.
+// For a deployable source, a weight-replacing derivation keeps the producer's
+// canonical sourceBaseImage as lineage even when RuntimeConfig maps the
+// deployment image. This lets each downstream owner apply its own mapping and
+// avoids mapping an already-mapped reference. For a base-role source, the
+// source image itself becomes the reusable lineage; carrying that image's own
+// AIM_BASE_IMAGE_REF would descend one layer too far on the next copy (for
+// example from aim-base to its upstream vLLM FROM image). An explicit image
+// override likewise establishes the runtime chosen by the producer.
+// Configuration-only copies keep the source lineage unchanged.
 func ResolveDerivedProfileBaseImage(
 	sourceBaseImage string,
 	derivedImage string,

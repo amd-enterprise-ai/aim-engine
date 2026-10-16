@@ -70,10 +70,18 @@ const (
 )
 
 // BaseImageFromProfile returns the current producer-owned base image.
-// A present annotation is authoritative, including an explicitly empty value.
-// Status is a compatibility fallback only for profiles without the annotation.
+// The typed spec field is the supported input for user-authored profiles. A
+// present legacy producer annotation remains authoritative over status,
+// including an explicitly empty value. Status is a compatibility fallback.
 func BaseImageFromProfile(profile client.Object, currentStatusBaseImage string) string {
 	if profile != nil {
+		if typed, ok := profile.(interface {
+			GetProfileSpecCommon() aimv1alpha2.AIMProfileSpecCommon
+		}); ok {
+			if baseImage := typed.GetProfileSpecCommon().BaseImageRef; baseImage != "" {
+				return baseImage
+			}
+		}
 		if baseImage, present := profile.GetAnnotations()[AnnotationBaseImage]; present {
 			return baseImage
 		}

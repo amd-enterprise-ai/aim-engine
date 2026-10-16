@@ -451,7 +451,7 @@ func TestSourceFailurePipelineDoesNotWriteProfiles(t *testing.T) {
 	}
 }
 
-func TestProfileSetPipeline_MissingBaseImageIsConfigurationError(t *testing.T) {
+func TestProfileSetPipeline_MissingBaseImageIsMissingUpstreamDependency(t *testing.T) {
 	t.Parallel()
 
 	for _, namespace := range []string{"team", ""} {
@@ -518,7 +518,7 @@ func TestProfileSetPipeline_MissingBaseImageIsConfigurationError(t *testing.T) {
 					t.Fatalf("missing lineage must not retry: result=%+v error=%v", result, err)
 				}
 				condition := meta.FindStatusCondition(status.Conditions, controllerutils.ConditionTypeConfigValid)
-				if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != controllerutils.ReasonInvalidSpec {
+				if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != controllerutils.ReasonMissingRef {
 					t.Fatalf("missing ConfigValid=False: %+v", status.Conditions)
 				}
 				if condition := meta.FindStatusCondition(status.Conditions, controllerutils.ConditionTypeDependenciesReachable); condition != nil && condition.Status == metav1.ConditionFalse {

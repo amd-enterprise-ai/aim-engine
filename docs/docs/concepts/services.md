@@ -206,6 +206,14 @@ used by AIMProfileSet derivation — the same internal primitive applies both.
 Feature overrides are additive and can explicitly assert capabilities such as
 `adapters` when a legacy or custom profile omits the corresponding metadata.
 
+When `profileOverrides.modelSources` replaces the seed's weights, the seed must
+identify its clean AIM runtime. Discovered profiles receive this from
+`AIM_BASE_IMAGE_REF`; hand-authored deployable profiles set
+`spec.baseImageRef`. If it is absent, the service reports
+`BaseImageUnresolved`, retains any existing inference resources, and does not
+guess from the seed image's registry or tag. Configuration-only overlays do
+not require the field.
+
 `spec.profileOverrides` requires `spec.profile.name`; it can't be combined with a selector-based resolution shape.
 
 ## Caching

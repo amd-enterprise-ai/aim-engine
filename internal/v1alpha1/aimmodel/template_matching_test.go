@@ -690,8 +690,8 @@ func TestBuildFineTunedServiceTemplates_BuildsFromProfileMetadata(t *testing.T) 
 
 	tpl := BuildFineTunedServiceTemplates(context.Background(), newFakeClient(), model, matches, nil)[0]
 
-	// CustomProfile carries the discovered engine config across to the
-	// rebased aim-base image (which has no baked-in catalog).
+	// CustomProfile carries the discovered engine config across to the clean
+	// AIM runtime (which has no baked-in catalog).
 	if tpl.Spec.CustomProfile == nil {
 		t.Fatal("expected CustomProfile to be populated from source profile")
 	}
@@ -714,7 +714,7 @@ func TestBuildFineTunedServiceTemplates_BuildsFromProfileMetadata(t *testing.T) 
 		t.Errorf("expected Precision from metadata, got %+v", tpl.Spec.Precision)
 	}
 	// ProfileId from the source spec is dropped — it points at the source
-	// image's baked-in catalog, which the rebased aim-base image doesn't
+	// image's baked-in catalog, which the clean AIM runtime doesn't
 	// ship; keeping it would emit a conflicting AIM_PROFILE_ID.
 	if tpl.Spec.ProfileId != "" {
 		t.Errorf("expected ProfileId to be empty on the clone, got %q", tpl.Spec.ProfileId)
@@ -782,7 +782,7 @@ func TestBuildFineTunedServiceTemplates_DefersWhenDiscoveryNotReady(t *testing.T
 // the inline-modelSources flow: the source template has no discovery job, so
 // status.profile carries identity / shape metadata synthesised from spec but
 // no engineArgs / envVars. The clone gets the metadata fields but no
-// customProfile (the rebased image is the same image family — the runtime
+// customProfile (the resolved image is the same image family — the runtime
 // resolves the original profile against the unchanged catalog).
 func TestBuildFineTunedServiceTemplates_InlineModelSourcesNoEngineConfig(t *testing.T) {
 	model := &aimv1alpha1.AIMModel{

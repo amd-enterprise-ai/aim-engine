@@ -159,11 +159,36 @@ With neither `spec.image` nor `spec.overrides.image` set, the derived image depe
 
 An explicit image override selects the deployment image; `overrides.image` takes precedence over top-level `spec.image`, preserving existing behavior.
 
-When a derivation replaces model weights or explicitly selects an image, its resolved deployment image becomes the reusable base-image lineage for subsequent copies. Configuration-only copies retain the source profile's `status.baseImage`. This keeps chains such as base profile → custom model → fine-tune on the effective AIM runtime instead of descending to that runtime image's own upstream base.
+For a deployable source, a weight-replacing derivation retains the producer's
+canonical `baseImageRef` as lineage while applying the selected RuntimeConfig
+mapping only to the deployment image. Subsequent copies therefore apply their
+own selected RuntimeConfig policy without mapping an already-mapped reference.
+For a base-role source, the source image itself becomes the lineage; an
+explicit image override likewise establishes the selected image as lineage.
+Configuration-only copies retain the source lineage unchanged. This keeps
+chains such as base profile → custom model → fine-tune on the effective AIM
+runtime instead of descending to that runtime image's own upstream base.
 
 If a deployable source does not expose `AIM_BASE_IMAGE_REF`, profile derivation
 reports a controlled error and retains existing managed profiles instead of
 guessing a runtime image from the source registry or tag.
+
+For a hand-authored deployable source, declare that lineage in the profile
+itself:
+
+```yaml
+spec:
+  image: ghcr.io/company/optimized-model:1.0
+  baseImageRef: ghcr.io/company/aim-base:0.11.2
+  aimId: company/model
+  modelSources:
+    - modelId: company/model
+      sourceUri: hf://company/model
+```
+
+`spec.baseImageRef` is required only when the deployable profile will seed a
+copy that replaces `modelSources`. A base-role profile already names its
+runtime in `spec.image`, and a configuration-only copy keeps the source image.
 
 ### Profile YAML contract inheritance
 

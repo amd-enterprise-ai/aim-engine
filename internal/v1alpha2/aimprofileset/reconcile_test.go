@@ -478,6 +478,13 @@ func TestPlanResources_RetainsManagedProfilesWhenBaseImageIsMissing(t *testing.T
 	if obs.buildErr == nil || !strings.Contains(obs.buildErr.Error(), "no AIM_BASE_IMAGE_REF") {
 		t.Fatalf("buildErr = %v, want controlled missing-base-image error", obs.buildErr)
 	}
+	categorized := controllerutils.CategorizeError(obs.buildErr)
+	if categorized.Reason() != aimprofile.ReasonBaseImageUnresolved {
+		t.Fatalf("buildErr reason = %q, want %q", categorized.Reason(), aimprofile.ReasonBaseImageUnresolved)
+	}
+	if categorized.Category() != controllerutils.ErrorCategoryMissingUpstreamDependency {
+		t.Fatalf("buildErr category = %s, want MissingReference", categorized.Category())
+	}
 	if obs.pruneSafe {
 		t.Fatal("pruneSafe = true, want false when deployment image resolution is incomplete")
 	}
@@ -700,6 +707,9 @@ func TestBuildDesiredNamespaceProfiles_FineTuneOfCustomModelKeepsAIMRuntimeImage
 			if got := fineTuneProfile.Annotations[aimprofile.AnnotationBaseImage]; got != aimRuntimeImage {
 				t.Fatalf("fine-tuned profile base image = %q, want reusable AIM runtime %q", got, aimRuntimeImage)
 			}
+			if got := fineTuneProfile.Spec.BaseImageRef; got != aimRuntimeImage {
+				t.Fatalf("fine-tuned profile spec.baseImageRef = %q, want reusable AIM runtime %q", got, aimRuntimeImage)
+			}
 		})
 	}
 }
@@ -758,6 +768,9 @@ func TestBuildDesiredNamespaceProfiles_AppliesRegistryMappingWithoutChangingLine
 	}
 	if got := profile.Annotations[aimprofile.AnnotationBaseImage]; got != canonicalBase {
 		t.Fatalf("lineage base image = %q, want canonical reference %q", got, canonicalBase)
+	}
+	if got := profile.Spec.BaseImageRef; got != canonicalBase {
+		t.Fatalf("spec.baseImageRef = %q, want canonical reference %q", got, canonicalBase)
 	}
 }
 

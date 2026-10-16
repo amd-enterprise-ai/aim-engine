@@ -179,8 +179,16 @@ func (r *AIMProfileSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&aimv1alpha2.AIMClusterProfile{}, profileHandler).
 		Watches(&aimv1alpha2.AIMModel{}, modelHandler, builder.WithPredicates(modelDefinitionPredicate())).
 		Watches(&aimv1alpha2.AIMClusterModel{}, modelHandler, builder.WithPredicates(modelDefinitionPredicate())).
-		Watches(&aimv1alpha1.AIMRuntimeConfig{}, runtimeConfigHandler).
-		Watches(&aimv1alpha1.AIMClusterRuntimeConfig{}, runtimeConfigHandler).
+		Watches(
+			&aimv1alpha1.AIMRuntimeConfig{},
+			runtimeConfigHandler,
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
+		).
+		Watches(
+			&aimv1alpha1.AIMClusterRuntimeConfig{},
+			runtimeConfigHandler,
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
+		).
 		Watches(
 			&corev1.ConfigMap{},
 			configMapHandler,

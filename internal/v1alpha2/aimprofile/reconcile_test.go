@@ -46,9 +46,17 @@ func TestReconcileBaseImageLineage(t *testing.T) {
 	tests := []struct {
 		name        string
 		annotations map[string]string
+		specBase    string
 		statusBase  string
 		want        string
 	}{
+		{
+			name:        "hand-authored spec is authoritative",
+			annotations: map[string]string{AnnotationBaseImage: oldBase},
+			specBase:    newBase,
+			statusBase:  oldBase,
+			want:        newBase,
+		},
 		{
 			name:        "fresh lineage",
 			annotations: map[string]string{AnnotationBaseImage: newBase},
@@ -77,6 +85,7 @@ func TestReconcileBaseImageLineage(t *testing.T) {
 				objectMeta := metav1.ObjectMeta{Name: "custom-profile", Namespace: namespace, Annotations: tt.annotations}
 				spec := aimv1alpha2.AIMProfileSpecCommon{
 					Image: newBase, AimId: "team/custom", AcceleratorModel: "MI300X",
+					BaseImageRef: tt.specBase,
 					ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "team/custom", SourceURI: "hf://team/custom"}},
 				}
 				status := aimv1alpha2.AIMProfileStatus{BaseImage: tt.statusBase}

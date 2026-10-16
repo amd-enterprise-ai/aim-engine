@@ -233,6 +233,20 @@ type AIMProfileSpecCommon struct {
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
 
+	// BaseImageRef is the clean AIM runtime image to use when a derivation or
+	// service overlay replaces this deployable profile's modelSources. Image
+	// discovery populates it from AIM_BASE_IMAGE_REF. User-authored profiles
+	// should set it explicitly when they are intended to seed weight-replacing
+	// copies. RuntimeConfig repository mappings may redirect the reference, but
+	// its tag or digest is otherwise preserved exactly.
+	//
+	// Base profiles may omit this field because their Image already names the
+	// runtime. Deployable profiles may also omit it when they will never seed a
+	// weight-replacing copy.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	BaseImageRef string `json:"baseImageRef,omitempty"`
+
 	// ModelSources specifies model artifact sources for this profile.
 	// Populated during discovery or set by user.
 	// +optional

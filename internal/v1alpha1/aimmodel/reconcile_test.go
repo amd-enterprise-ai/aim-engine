@@ -374,6 +374,7 @@ func TestFetchImageMetadata_AlreadyCached(t *testing.T) {
 				CanonicalName: "cached-model",
 			},
 		},
+		ImageMetadataVersion: currentImageMetadataVersion,
 	}
 
 	result := fetchImageMetadata(context.Background(), nil, spec, status, "default")
@@ -473,6 +474,90 @@ func TestImageMetadataComponentHealth_AuthError(t *testing.T) {
 	// The error should be passed through for state engine categorization
 	if !errors.Is(imageMetadataHealth.Errors[0], authErr) {
 		t.Errorf("expected auth error to be passed through, got %v", imageMetadataHealth.Errors[0])
+	}
+}
+
+func TestImageMetadataComponentHealth_LegacyMigrationErrorUsesCachedMetadata(t *testing.T) {
+	authErr := &utils.ImageRegistryError{
+		Type:    utils.ImagePullErrorAuth,
+		Message: "401 unauthorized",
+	}
+	model := &aimv1alpha1.AIMModel{
+		Status: aimv1alpha1.AIMModelStatus{
+			ImageMetadata: &aimv1alpha1.ImageMetadata{
+				Model: &aimv1alpha1.ModelMetadata{CanonicalName: "cached-model"},
+			},
+		},
+	}
+	result := ModelFetchResult{
+		model: model,
+		imageMetadata: controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{
+			Error: authErr,
+		},
+		serviceTemplates: controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplateList]{
+			Value: &aimv1alpha1.AIMServiceTemplateList{},
+		},
+	}
+
+	health := result.GetComponentHealth()
+	var imageMetadataHealth *controllerutils.ComponentHealth
+	for i := range health {
+		if health[i].Component == testComponentImageMetadata {
+			imageMetadataHealth = &health[i]
+			break
+		}
+	}
+
+	if imageMetadataHealth == nil {
+		t.Fatal("expected ImageMetadata component health")
+	}
+	if imageMetadataHealth.GetState() != constants.AIMStatusReady {
+		t.Fatalf("state = %q, want cached metadata to keep normal usage Ready", imageMetadataHealth.GetState())
+	}
+	if len(imageMetadataHealth.Errors) != 0 {
+		t.Fatalf("migration error unexpectedly gated normal usage: %v", imageMetadataHealth.Errors)
+	}
+}
+
+func TestClusterImageMetadataComponentHealth_LegacyMigrationErrorUsesCachedMetadata(t *testing.T) {
+	authErr := &utils.ImageRegistryError{
+		Type:    utils.ImagePullErrorAuth,
+		Message: "401 unauthorized",
+	}
+	model := &aimv1alpha1.AIMClusterModel{
+		Status: aimv1alpha1.AIMModelStatus{
+			ImageMetadata: &aimv1alpha1.ImageMetadata{
+				Model: &aimv1alpha1.ModelMetadata{CanonicalName: "cached-model"},
+			},
+		},
+	}
+	result := ClusterModelFetchResult{
+		model: model,
+		imageMetadata: controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{
+			Error: authErr,
+		},
+		clusterServiceTemplates: controllerutils.FetchResult[*aimv1alpha1.AIMClusterServiceTemplateList]{
+			Value: &aimv1alpha1.AIMClusterServiceTemplateList{},
+		},
+	}
+
+	health := result.GetComponentHealth()
+	var imageMetadataHealth *controllerutils.ComponentHealth
+	for i := range health {
+		if health[i].Component == testComponentImageMetadata {
+			imageMetadataHealth = &health[i]
+			break
+		}
+	}
+
+	if imageMetadataHealth == nil {
+		t.Fatal("expected ImageMetadata component health")
+	}
+	if imageMetadataHealth.GetState() != constants.AIMStatusReady {
+		t.Fatalf("state = %q, want cached metadata to keep normal usage Ready", imageMetadataHealth.GetState())
+	}
+	if len(imageMetadataHealth.Errors) != 0 {
+		t.Fatalf("migration error unexpectedly gated normal usage: %v", imageMetadataHealth.Errors)
 	}
 }
 

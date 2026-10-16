@@ -259,6 +259,12 @@ their original registry, repository, tag, and digest. See
 [Image repository mappings](../concepts/runtime-config.md#image-repository-mappings)
 for merge and missing-reference behavior.
 
+Mappings are literal: a `from: docker.io/amdenterpriseai` entry does not match
+the short reference `amdenterpriseai/aim-base:0.11.2`. Use the prefix exactly
+as the image producer recorded it. Services and legacy fine-tuned models that
+select a named RuntimeConfig use mappings from that selected configuration,
+not mappings present only on `default`.
+
 When `AIMProfile.spec.caching.enabled` creates a profile-owned shared cache,
 that cache resolves the `default` RuntimeConfig. Setting
 `AIMService.spec.runtimeConfigName` to another name does not retarget the

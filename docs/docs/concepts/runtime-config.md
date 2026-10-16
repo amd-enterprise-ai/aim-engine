@@ -114,13 +114,30 @@ value while preserving unrelated cluster mappings. If no mapping matches, AIM
 Engine uses the image reference exactly as recorded; it does not infer a mirror,
 probe registries, or fall back between registries.
 
-Profile derivation always uses the merged `default` namespace/cluster policy
-because `AIMProfileSet` does not select a named RuntimeConfig. Explicit image
-overrides remain authoritative and are not remapped.
+Matching is literal. AIM Engine does not treat `amdenterpriseai/aim-base`,
+`docker.io/amdenterpriseai/aim-base`, and
+`index.docker.io/amdenterpriseai/aim-base` as aliases. Set `from` to the
+repository prefix exactly as it appears in `AIM_BASE_IMAGE_REF` or
+`AIMProfile.spec.baseImageRef`.
+
+The RuntimeConfig supplying mappings depends on the derivation owner:
+
+| Path | RuntimeConfig used |
+|---|---|
+| `AIMProfileSet`, `AIMClusterProfileSet`, and v1alpha2 `AIMModel.spec.profiles.derivedFrom` | Merged `default` configuration for the applicable scope |
+| v1alpha2 `AIMService.spec.profileOverrides` | The RuntimeConfig selected by that service |
+| v1alpha1 fine-tuned `AIMModel` / `AIMClusterModel` template copies | The RuntimeConfig selected by that model |
+
+Explicit derivation image overrides remain authoritative and are not remapped.
+If a service or model selects a named RuntimeConfig, mappings placed only on
+`default` do not apply to that path; repeat the infrastructure mapping on the
+selected configuration.
 
 If an image does not contain `AIM_BASE_IMAGE_REF`, derivation reports a
 controlled resolution error and retains existing managed profiles rather than
 deriving a runtime from the source image's registry or truncating its tag.
+Hand-authored deployable profiles can supply the same lineage explicitly with
+`spec.baseImageRef`.
 
 ## Additional CA trust
 

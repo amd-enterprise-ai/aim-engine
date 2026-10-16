@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -156,7 +157,11 @@ func (r *AIMClusterProfileSetReconciler) SetupWithManager(mgr ctrl.Manager) erro
 		For(&aimv1alpha2.AIMClusterProfileSet{}).
 		Watches(&aimv1alpha2.AIMClusterProfile{}, profileHandler).
 		Watches(&aimv1alpha2.AIMClusterModel{}, modelHandler, builder.WithPredicates(modelDefinitionPredicate())).
-		Watches(&aimv1alpha1.AIMClusterRuntimeConfig{}, runtimeConfigHandler).
+		Watches(
+			&aimv1alpha1.AIMClusterRuntimeConfig{},
+			runtimeConfigHandler,
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
+		).
 		Watches(
 			&corev1.ConfigMap{},
 			configMapHandler,

@@ -2,12 +2,10 @@ apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMProfile
 metadata:
   name: overlay-seed-profile
-  annotations:
-    # Simulate the producer-owned AIM_BASE_IMAGE_REF metadata that image
-    # discovery stamps. The profile reconciler copies this into status and
-    # the service overlay can also consume it immediately.
-    aim.eai.amd.com/base-image: registry.example.com/aim-cpu-base:0.12.0
 spec:
+  # Hand-authored deployable profiles use the typed field rather than the
+  # producer-only discovery annotation.
+  baseImageRef: registry.example.com/aim-cpu-base:0.12.0
   aimId: overlay-test/model
   modelId: overlay-test/model
   profileId: cpu-default

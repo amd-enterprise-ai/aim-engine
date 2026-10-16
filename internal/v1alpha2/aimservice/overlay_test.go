@@ -427,6 +427,56 @@ func TestComposeState_WeightsReplacementAppliesRuntimeConfigImageMapping(t *test
 	if got, want := obs.desiredOverlayProfile.Spec.Image, "ghcr.io/private-team/aim-base:0.11.2"; got != want {
 		t.Fatalf("overlay image = %q, want mapped AIM_BASE_IMAGE_REF %q", got, want)
 	}
+	if got, want := obs.desiredOverlayProfile.Spec.BaseImageRef, "docker.io/amdenterpriseai/aim-base:0.11.2"; got != want {
+		t.Fatalf("overlay baseImageRef = %q, want canonical producer reference %q", got, want)
+	}
+}
+
+func TestComposeState_HandAuthoredBaseImageRefSupportsWeightReplacement(t *testing.T) {
+	seedSpec := sampleProfileSpec()
+	seedSpec.Image = "ghcr.io/private-team/optimized:0.11"
+	seedSpec.BaseImageRef = "ghcr.io/private-team/aim-base:0.11.2"
+	seedSpec.ModelSources = []aimv1alpha1.AIMModelSource{
+		{ModelID: "base/model", SourceURI: "hf://base/model"},
+	}
+	seedProfile := &aimv1alpha2.AIMProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: testProfileA, Namespace: "ns"},
+		Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *seedSpec},
+	}
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			ProfileOverrides: &aimv1alpha1.AIMServiceProfileOverrides{
+				ModelSources: []aimv1alpha1.AIMModelSource{
+					{ModelID: "user/weights", SourceURI: "s3://bucket/weights"},
+				},
+			},
+		},
+	}
+	fetch := ServiceFetchResult{
+		service: service,
+		profile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: seedProfile},
+	}
+
+	obs := (&ProfileServiceReconciler{}).ComposeState(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{},
+		fetch,
+	)
+
+	if obs.configErr != nil {
+		t.Fatalf("ComposeState returned config error: %v", obs.configErr)
+	}
+	if obs.desiredOverlayProfile == nil {
+		t.Fatal("hand-authored baseImageRef must allow the overlay to materialise")
+	}
+	if got, want := obs.desiredOverlayProfile.Spec.Image, seedSpec.BaseImageRef; got != want {
+		t.Fatalf("overlay image = %q, want declared baseImageRef %q", got, want)
+	}
+	if got, want := obs.desiredOverlayProfile.Spec.BaseImageRef, seedSpec.BaseImageRef; got != want {
+		t.Fatalf("overlay baseImageRef = %q, want %q", got, want)
+	}
 }
 
 func TestComposeState_WeightsReplacementWithoutBaseImageFailsGracefully(t *testing.T) {
@@ -467,6 +517,20 @@ func TestComposeState_WeightsReplacementWithoutBaseImageFailsGracefully(t *testi
 	}
 	if !strings.Contains(obs.configErr.Error(), "has no AIM_BASE_IMAGE_REF") {
 		t.Fatalf("ComposeState config error = %q, want missing AIM_BASE_IMAGE_REF", obs.configErr)
+	}
+	health := obs.getConfigHealth()
+	if len(health.Errors) != 1 {
+		t.Fatalf("config health errors = %v, want one actionable error", health.Errors)
+	}
+	categorized := controllerutils.CategorizeError(health.Errors[0])
+	if categorized.Reason() != aimprofile.ReasonBaseImageUnresolved {
+		t.Fatalf("config health reason = %q, want %q", categorized.Reason(), aimprofile.ReasonBaseImageUnresolved)
+	}
+	if categorized.Category() != controllerutils.ErrorCategoryMissingUpstreamDependency {
+		t.Fatalf("config health category = %s, want MissingReference", categorized.Category())
+	}
+	if health.State != constants.AIMStatusDegraded {
+		t.Fatalf("config health state = %q, want %q", health.State, constants.AIMStatusDegraded)
 	}
 	if obs.desiredOverlayProfile != nil {
 		t.Fatal("missing AIM_BASE_IMAGE_REF must not materialise an overlay")

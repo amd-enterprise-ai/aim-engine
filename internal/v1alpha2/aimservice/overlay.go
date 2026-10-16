@@ -141,10 +141,10 @@ func buildServiceOverlayProfile(
 
 	overrides := asProfileOverrides(service.Spec.ProfileOverrides)
 
-	// Pull baseImage from the seed profile's annotations (set by AIMModel
-	// discovery when it materialised the seed). aimprofile uses it exactly,
-	// subject only to explicit mappings from the service's merged
-	// RuntimeConfig, when this overlay replaces the weights
+	// Pull baseImage from the seed profile's typed spec, producer annotation,
+	// or legacy status. aimprofile uses it exactly, subject only to explicit
+	// mappings from the service's merged RuntimeConfig, when this overlay
+	// replaces the weights
 	// (spec.profileOverrides.modelSources). A partitioning-only or env-only
 	// overlay leaves the weights untouched, so it keeps the optimized seed
 	// image. If a deployable seed has no base image, resolution fails
@@ -161,6 +161,13 @@ func buildServiceOverlayProfile(
 	if err != nil {
 		return nil, aimv1alpha2.AIMProfileSpecCommon{}, err
 	}
+	overlaySpec.BaseImageRef = aimprofile.ResolveDerivedProfileBaseImage(
+		seedBaseImage,
+		overlaySpec.Image,
+		"",
+		overrides,
+		aimprofile.IsProfileDeployable(*obs.resolvedProfileSpec),
+	)
 
 	overlayName, err := utils.GenerateDerivedName(
 		[]string{obs.profileName, service.Name, "overlay"},
@@ -277,11 +284,10 @@ func inheritedOverlayServiceAccount(seed aimv1alpha2.AIMProfileSpecCommon) strin
 	return seed.ServiceAccountName
 }
 
-// seedBaseImageFromObservation reads the AIM_BASE_IMAGE_REF the AIMModel
-// inspector recorded on the seed profile. The producer's annotation takes
-// precedence so overlays immediately see corrected lineage even while profile
-// status is stale. Status remains a fallback for profiles without the
-// annotation.
+// seedBaseImageFromObservation reads the supported spec.baseImageRef or the
+// producer lineage AIMModel discovery recorded on the seed profile. The typed
+// spec wins, the producer annotation remains a migration bridge, and status is
+// the final compatibility fallback.
 func seedBaseImageFromObservation(obs ServiceObservation) string {
 	if obs.profile.Value != nil {
 		return aimprofile.BaseImageFromProfile(obs.profile.Value, obs.profile.Value.Status.BaseImage)
