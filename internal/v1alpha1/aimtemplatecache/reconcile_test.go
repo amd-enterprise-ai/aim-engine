@@ -24,6 +24,7 @@ package aimtemplatecache
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -430,5 +431,154 @@ func TestS3ArtifactIdentityNormalizesDefaultRuntimeConfig(t *testing.T) {
 		aimv1alpha1.RuntimeConfigRef{Name: "default"},
 	) {
 		t.Fatal("empty and explicit default runtime config references must match")
+	}
+}
+
+func TestPlanResources_CopiesDeclaredDownloadFilter(t *testing.T) {
+	declared := &aimv1alpha1.AIMDownloadFilter{Exclude: []string{"*.bin"}}
+	tests := []struct {
+		name   string
+		filter *aimv1alpha1.AIMDownloadFilter
+	}{
+		{name: "declared filter", filter: declared},
+		{name: "no filter", filter: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := testTemplateCache("cache", aimv1alpha1.TemplateCacheModeShared)
+			obs := TemplateCacheObservation{
+				TemplateCacheFetchResult: TemplateCacheFetchResult{templateCache: tc},
+				MissingCaches: []aimv1alpha1.AIMModelSource{
+					{ModelID: testModelID, SourceURI: testSourceURI, DownloadFilter: tt.filter},
+				},
+			}
+
+			result := (&TemplateCacheReconciler{}).PlanResources(
+				context.Background(),
+				controllerutils.ReconcileContext[*aimv1alpha1.AIMTemplateCache]{Object: tc},
+				obs,
+			)
+			planned := result.GetToApplyWithoutOwnerRef()
+			if len(planned) != 1 {
+				t.Fatalf("expected 1 artifact, got %d", len(planned))
+			}
+			art := planned[0].(*aimv1alpha1.AIMArtifact)
+			if !reflect.DeepEqual(art.Spec.DownloadFilter, tt.filter) {
+				t.Errorf("artifact downloadFilter = %+v, want %+v", art.Spec.DownloadFilter, tt.filter)
+			}
+		})
+	}
+}
+
+// The golden names pin today's identity for sources without a declared filter:
+// any drift renames every existing shared artifact and orphans its cache.
+func TestArtifactName_StableWithoutDeclaredFilter(t *testing.T) {
+	source := aimv1alpha1.AIMModelSource{ModelID: "org/model", SourceURI: "hf://org/model"}
+	tests := []struct {
+		mode aimv1alpha1.AIMTemplateCacheMode
+		want string
+	}{
+		{mode: aimv1alpha1.TemplateCacheModeShared, want: "hf---org-model-04cea1e1c0"},
+		{mode: aimv1alpha1.TemplateCacheModeDedicated, want: "hf---org-model-a12a99747c"},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.mode), func(t *testing.T) {
+			tc := &aimv1alpha1.AIMTemplateCache{
+				ObjectMeta: metav1.ObjectMeta{Name: "tc"},
+				Spec:       aimv1alpha1.AIMTemplateCacheSpec{Mode: tt.mode},
+			}
+			got, err := generateArtifactName(tc, source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("artifact name = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestArtifactName_DivergesByDeclaredFilter(t *testing.T) {
+	tc := &aimv1alpha1.AIMTemplateCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "tc"},
+		Spec:       aimv1alpha1.AIMTemplateCacheSpec{Mode: aimv1alpha1.TemplateCacheModeShared},
+	}
+	nameFor := func(filter *aimv1alpha1.AIMDownloadFilter) string {
+		t.Helper()
+		name, err := generateArtifactName(tc, aimv1alpha1.AIMModelSource{
+			ModelID: "org/model", SourceURI: "hf://org/model", DownloadFilter: filter,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return name
+	}
+
+	filters := map[string]*aimv1alpha1.AIMDownloadFilter{
+		"nil":            nil,
+		"empty":          {},
+		"exclude subdir": {Exclude: []string{"*/*"}},
+		"include only":   {Include: []string{"*.safetensors"}},
+	}
+	seen := map[string]string{}
+	for label, filter := range filters {
+		name := nameFor(filter)
+		if other, ok := seen[name]; ok {
+			t.Errorf("filters %q and %q share artifact name %q", label, other, name)
+		}
+		seen[name] = label
+	}
+
+	ordered := nameFor(&aimv1alpha1.AIMDownloadFilter{Include: []string{"a/*", "b/*"}, Exclude: []string{"*.bin", "*.md"}})
+	reordered := nameFor(&aimv1alpha1.AIMDownloadFilter{Include: []string{"b/*", "a/*"}, Exclude: []string{"*.md", "*.bin"}})
+	if ordered != reordered {
+		t.Errorf("glob order changed the artifact name: %q vs %q", ordered, reordered)
+	}
+}
+
+func TestComposeState_MatchesArtifactByDownloadFilter(t *testing.T) {
+	tests := []struct {
+		name           string
+		artifactFilter *aimv1alpha1.AIMDownloadFilter
+		sourceFilter   *aimv1alpha1.AIMDownloadFilter
+		wantAdopted    bool
+	}{
+		{name: "both absent", wantAdopted: true},
+		{name: "source declares, artifact has none", sourceFilter: &aimv1alpha1.AIMDownloadFilter{}},
+		{name: "artifact has one, source declares none", artifactFilter: &aimv1alpha1.AIMDownloadFilter{}},
+		{
+			name:           "different filters",
+			artifactFilter: &aimv1alpha1.AIMDownloadFilter{Exclude: []string{"*/*"}},
+			sourceFilter:   &aimv1alpha1.AIMDownloadFilter{Include: []string{"*.safetensors"}},
+		},
+		{
+			name:           "equal filters in different order",
+			artifactFilter: &aimv1alpha1.AIMDownloadFilter{Exclude: []string{"*.bin", "*.md"}},
+			sourceFilter:   &aimv1alpha1.AIMDownloadFilter{Include: []string{}, Exclude: []string{"*.md", "*.bin"}},
+			wantAdopted:    true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := testTemplateCache("cache", aimv1alpha1.TemplateCacheModeShared)
+			artifact := testArtifact("artifact", constants.AIMStatusReady)
+			artifact.Spec.DownloadFilter = tt.artifactFilter
+			fetch := testFetchResult(tc, artifact)
+			fetch.serviceTemplate.Value.Status.ModelSources[0].DownloadFilter = tt.sourceFilter
+
+			obs := (&TemplateCacheReconciler{}).ComposeState(
+				context.Background(),
+				controllerutils.ReconcileContext[*aimv1alpha1.AIMTemplateCache]{Object: tc},
+				fetch,
+			)
+
+			_, adopted := obs.BestArtifacts[testModelID]
+			if adopted != tt.wantAdopted {
+				t.Errorf("adopted = %v, want %v", adopted, tt.wantAdopted)
+			}
+			if wantMissing := !tt.wantAdopted; (len(obs.MissingCaches) == 1) != wantMissing {
+				t.Errorf("missing caches = %d, want missing=%v", len(obs.MissingCaches), wantMissing)
+			}
+		})
 	}
 }
