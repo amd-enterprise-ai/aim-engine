@@ -1,0 +1,135 @@
+# Copyright © Advanced Micro Devices, Inc., or its affiliates.
+#
+# SPDX-License-Identifier: MIT
+
+name: Docs - Sync to central repo
+# Sync docs/docs into the central AMDEnterpriseAISuiteDocs repo under its
+# aim-engine/ subtree, normalize it for that repo's Sphinx/MyST build, push to
+# a dedicated sync branch, and open (or reuse) a pull request against develop.
+# The central repo holds the Sphinx build (conf.py, theme) and aggregates each
+# stack under its own subtree, so only content is synced here.
+#
+# Only runs on release branches/tags so unreleased changes on main don't reach
+# the public documentation.
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serialize runs so overlapping syncs do not race on the force-push / PR.
+  group: sync-docs-to-central-repo
+  cancel-in-progress: false
+
+on:
+  push:
+    branches:
+      - "release/**"
+    tags:
+      - "v*"
+    paths:
+      - "docs/docs/**"
+      - ".github/workflows/sync-docs-to-central-repo.yml"
+
+jobs:
+  copy-docs:
+    runs-on: ubuntu-latest
+    env:
+      DOCS_REPO: silogen/AMDEnterpriseAISuiteDocs
+      CHECKOUT_PATH: AMDEnterpriseAISuiteDocs
+      BASE_BRANCH: develop
+      SYNC_BRANCH: feature/docs-from-aim-engine-repo
+    steps:
+      - name: Verify docs repo token is set
+        env:
+          DOCS_REPO_TOKEN: ${{ secrets.DOCS_REPO_TOKEN }}
+        run: |
+          if [ -z "${DOCS_REPO_TOKEN}" ]; then
+            echo "::error::DOCS_REPO_TOKEN secret is empty or not set in this repo."
+            exit 1
+          fi
+
+      - name: Checkout aim-engine repo
+        uses: actions/checkout@v4
+        with:
+          # Avoid leaving a github.com credential header behind: it would collide
+          # with the token used below for the separate docs repo checkout.
+          persist-credentials: false
+
+      - name: Checkout docs repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DOCS_REPO }}
+          token: ${{ secrets.DOCS_REPO_TOKEN }}
+          ref: ${{ env.BASE_BRANCH }}
+          path: ${{ env.CHECKOUT_PATH }}
+
+      - name: Normalize synced docs
+        run: |
+          set -euo pipefail
+
+          # rsync the aim-engine content into the central site's subtree.
+          # Exclude the standalone Sphinx config and build artefacts; the central
+          # repo builds with its own root conf.py.
+          rsync -av --delete \
+            --exclude 'conf.py' \
+            --exclude '_build/' \
+            --exclude '.venv/' \
+            docs/docs/ "${CHECKOUT_PATH}/docs/aim-engine/"
+
+          # Preprocess the synced content to fit the central repo's Sphinx/MyST
+          # build. The script lives in the docs repo; fail loudly if it has moved
+          # so a rename there does not silently skip normalization.
+          normalize="${CHECKOUT_PATH}/docs/_scripts/normalize-synced-docs.py"
+          if [ ! -f "${normalize}" ]; then
+            echo "::error::Normalization script missing at ${normalize} (renamed in ${DOCS_REPO}?); update this workflow."
+            exit 1
+          fi
+          python3 "${normalize}" "${CHECKOUT_PATH}/docs/aim-engine"
+
+      - name: Push to the docs sync branch
+        id: push
+        # No token in env here: the docs repo was checked out with the token,
+        # so git push uses those persisted credentials.
+        run: |
+          set -euo pipefail
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+          cd "${CHECKOUT_PATH}"
+          git checkout -B "${SYNC_BRANCH}" "origin/${BASE_BRANCH}"
+          git add .
+          if git diff --staged --quiet; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+          else
+            git commit -m "Update documentation from aim-engine repo"
+            # Push only when there is a change: a no-op run would otherwise
+            # force-reset the remote sync branch to BASE_BRANCH.
+            git push --force origin "${SYNC_BRANCH}"
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create pull request
+        if: steps.push.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_REPO_TOKEN }}
+        run: |
+          existing=$(gh pr list --repo "${DOCS_REPO}" --state open --head "${SYNC_BRANCH}" --json number --jq 'length')
+          if [ "${existing}" -gt 0 ]; then
+            echo "An open PR already exists for ${SYNC_BRANCH}, nothing to create."
+          else
+            body=$(cat <<'EOF'
+          Automated documentation update synced from the aim-engine repository.
+
+          > [!IMPORTANT]
+          > A later sync force-pushes this branch, so **any commits added here
+          > will be lost**. PR comments persist, but make content fixes in the
+          > upstream aim-engine repo and do detailed line-by-line review there.
+          EOF
+            )
+            gh pr create \
+              --repo "${DOCS_REPO}" \
+              --base "${BASE_BRANCH}" \
+              --head "${SYNC_BRANCH}" \
+              --title "Update documentation from aim-engine repo" \
+              --body "${body}"
+          fi

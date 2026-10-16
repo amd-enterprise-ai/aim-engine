@@ -90,6 +90,12 @@ const (
 	// promote `needsAutoModel=true` into a resolved profile.
 	ServiceModelImageIndex = ".spec.model.image"
 
+	// ServiceResolvedProfileIndex maps `.status.resolvedProfile` as
+	// "<scope>/<name>" onto the AIMService. It routes profile and cache
+	// events to every service that resolved the profile, whatever the
+	// spec shape (for example spec.model.image with an auto-created model).
+	ServiceResolvedProfileIndex = ".status.resolvedProfile"
+
 	// ServiceResourceNodeMatchIndex selects profile-pipeline services whose
 	// spec.resources must be re-evaluated directly against Nodes. The profile's
 	// own status may remain NotAvailable when a smaller service override starts
@@ -109,6 +115,7 @@ const (
 //   - ServiceModelNameIndex: spec.model.name shortcut.
 //   - ServiceSelectorModelRefIndex: explicit selector.modelRef.name.
 //   - ServiceSelectorAimIdIndex: selector.aimId.
+//   - ServiceResolvedProfileIndex: status.resolvedProfile (any spec shape).
 //   - ServiceResourceNodeMatchIndex: profile services with spec.resources.
 //
 // Watch sources:
@@ -175,6 +182,7 @@ func registerServiceIndexes(ctx context.Context, mgr manager.Manager) error {
 		{ServiceSelectorModelRefIndex, indexServiceSelectorModelRef},
 		{ServiceSelectorAimIdIndex, indexServiceSelectorAimID},
 		{ServiceModelImageIndex, indexServiceModelImage},
+		{ServiceResolvedProfileIndex, indexServiceResolvedProfile},
 		{ServiceResourceNodeMatchIndex, indexServiceResourceNodeMatch},
 		{aimv1alpha1.AIMServiceAdapterArtifactIndexKey, indexServiceAdapterArtifacts},
 	}
@@ -232,6 +240,20 @@ func indexServiceModelImage(obj client.Object) []string {
 		return nil
 	}
 	return []string{*svc.Spec.Model.Image}
+}
+
+func indexServiceResolvedProfile(obj client.Object) []string {
+	svc, ok := profilePipelineService(obj)
+	if !ok || svc.Status.ResolvedProfile == nil || svc.Status.ResolvedProfile.Name == "" {
+		return nil
+	}
+	return []string{resolvedProfileKey(svc.Status.ResolvedProfile.Scope, svc.Status.ResolvedProfile.Name)}
+}
+
+// resolvedProfileKey includes the scope because a namespace profile and a
+// cluster profile can have the same name.
+func resolvedProfileKey(scope aimv1alpha1.AIMResolutionScope, name string) string {
+	return string(scope) + "/" + name
 }
 
 func indexServiceResourceNodeMatch(obj client.Object) []string {
@@ -501,6 +523,8 @@ func findServicesForProfile(c client.Client) handler.MapFunc {
 		}
 		requests := map[types.NamespacedName]struct{}{}
 		collectServicesByField(ctx, c, requests, aimv1alpha1.AIMServiceProfileIndexKey, profile.Name, profile.Namespace)
+		collectServicesByField(ctx, c, requests, ServiceResolvedProfileIndex,
+			resolvedProfileKey(aimv1alpha1.AIMResolutionScopeNamespace, profile.Name), profile.Namespace)
 		if sourceModel := profile.Labels[constants.LabelKeySourceModel]; sourceModel != "" {
 			collectServicesByField(ctx, c, requests, ServiceModelNameIndex, sourceModel, profile.Namespace)
 			collectServicesByField(ctx, c, requests, ServiceSelectorModelRefIndex, sourceModel, profile.Namespace)
@@ -522,6 +546,8 @@ func findServicesForClusterProfile(c client.Client) handler.MapFunc {
 		// queries omit the InNamespace filter.
 		requests := map[types.NamespacedName]struct{}{}
 		collectServicesByField(ctx, c, requests, aimv1alpha1.AIMServiceProfileIndexKey, profile.Name, "")
+		collectServicesByField(ctx, c, requests, ServiceResolvedProfileIndex,
+			resolvedProfileKey(aimv1alpha1.AIMResolutionScopeCluster, profile.Name), "")
 		if sourceModel := profile.Labels[constants.LabelKeySourceModel]; sourceModel != "" {
 			collectServicesByField(ctx, c, requests, ServiceModelNameIndex, sourceModel, "")
 			collectServicesByField(ctx, c, requests, ServiceSelectorModelRefIndex, sourceModel, "")
@@ -673,6 +699,11 @@ func findServicesForProfileCache(c client.Client) handler.MapFunc {
 
 		// Name-driven services: `spec.profile.name == cache.Spec.ProfileName`.
 		collectServicesByField(ctx, c, requests, aimv1alpha1.AIMServiceProfileIndexKey, cache.Spec.ProfileName, cache.Namespace)
+
+		// Services that already resolved this profile, whatever their spec
+		// shape. This also covers every consumer of a Shared cache.
+		collectServicesByField(ctx, c, requests, ServiceResolvedProfileIndex,
+			resolvedProfileKey(cache.Spec.ProfileScope, cache.Spec.ProfileName), cache.Namespace)
 
 		// Model-driven services: the cache feeds a resolved AIMProfile;
 		// look up that profile's source-model label / aimId / overlay

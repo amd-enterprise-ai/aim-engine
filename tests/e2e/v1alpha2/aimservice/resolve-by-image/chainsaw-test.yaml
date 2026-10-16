@@ -7,10 +7,10 @@
 #
 # This is the canonical "image + annotation" flow documented in
 # admin/upgrading.md (Migration window) and concepts/services.md.
-# Asserting all five outcomes (auto-model exists, has the right labels,
+# Asserting all six outcomes (auto-model exists, has the right labels,
 # is owned by the service, profile resolves, service reports
-# ProfileReady=True) guards against silent regressions in any one of the
-# resolver/plan/watch wiring pieces that together make this work.
+# ProfileReady=True and ProfileCacheReady=True) guards against silent
+# regressions in any one of the resolver/plan/watch wiring pieces that together make this work.
 #
 # Service readiness (InferenceService Ready) is intentionally NOT asserted
 # because the aim-dummy image's predictor lifecycle depends on cache
@@ -110,3 +110,23 @@ spec:
                   - status: "True"
                     reason: ProfileResolved
                 (resolvedProfile.name != ""): true
+
+    - name: Assert the AIMService observes its Ready profile cache
+      description: |
+        The profile of this service comes from the auto-created model,
+        which no spec-based watch index finds. Only the
+        status.resolvedProfile index routes the cache Ready event back to
+        the service. Without it the service stays at
+        ProfileCacheNotReady after the cache is Ready.
+      try:
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: resolve-by-image-service
+              status:
+                (conditions[?type == 'ProfileCacheReady']):
+                  - status: "True"
+                    reason: ProfileCacheReady

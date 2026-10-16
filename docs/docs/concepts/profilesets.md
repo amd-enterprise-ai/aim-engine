@@ -39,7 +39,7 @@ With `spec.sourceRef` omitted, a selector evaluates a combined logical pool:
 |---|---|
 | Image-backed `AIMModel` / `AIMClusterModel` | All definitions in the current discovered catalog, including hardware-unsupported entries. Discovery-disabled and legacy custom/derivation models continue to use resource-backed sources. |
 | Direct `AIMProfile` / `AIMClusterProfile` | Existing resources marked `aim.eai.amd.com/profile-copyable: "true"`, including hand-authored profiles. |
-| Generated or other derived profiles | Existing copyable resources, subject to the same selector and eligibility rules. |
+| Generated or other derived profiles | Existing copyable resources, subject to the same selector and eligibility rules. Profile-set outputs are copyable when their producer sets `outputPolicy.copyable: true`. |
 
 Use any combination of source filters: accelerator model, partitioning mode, counts, `modelId`, `aimId`, engine, precision, and the other selector fields below. `selector.modelRef` is optional and narrows the selection to one producing model. A selector without it can derive every matching profile across models in the selected scope.
 
@@ -330,10 +330,12 @@ A profile contributes to readiness only when it is not being deleted, its spec a
 
 | Condition | Reasons |
 |---|---|
-| `DerivationReady` | `ManagedProfilesReady`, `ManagedProfilesPartiallyReady`, `NoMatchingProfiles`, `Progressing`, `Degraded` |
+| `DerivationReady` | `ManagedProfilesReady`, `ManagedProfilesPartiallyReady`, `NoMatchingProfiles`, `NoEligibleProfiles`, `Progressing`, `Degraded` |
 | `Ready` | `AllComponentsReady`, `ComponentsNotReady`, `Progressing` |
 
 `DerivationReady=False / NoMatchingProfiles` means source evaluation completed and the selector matched zero candidates. Pending discovery or an unreadable source is reported separately from a confirmed empty selection.
+
+`DerivationReady=False / NoEligibleProfiles` means one or more profiles matched the selector and version policy, but all matching resource-backed profiles were excluded because they were not published as copyable.
 
 ## Derived-profile labels and annotations
 
@@ -348,7 +350,17 @@ Profiles produced by an `AIMProfileSet` carry this metadata:
 | Label | `aim.eai.amd.com/source-model` | Name of the AIM(Cluster)Model that owns the profile set (when applicable) |
 | Label | `aim.eai.amd.com/source-model-scope` | `namespace` or `cluster` |
 
-Standalone derived profiles require explicit `aim.eai.amd.com/profile-copyable: "true"` opt-in to participate as resource-backed sources.
+Derived profiles are non-copyable by default. Set `spec.outputPolicy.copyable: true` on a standalone profile set, or `spec.profiles.outputPolicy.copyable: true` on a model-managed derivation, to publish its outputs as eligible sources for a later derivation:
+
+```yaml
+spec:
+  outputPolicy:
+    copyable: true
+```
+
+For the compatibility `AIMModel.spec.profileCopy` shape, use `spec.profileCopy.outputPolicy.copyable: true`.
+
+Copyability is live source policy, not a one-time export. Turning it off, deleting the producing set or model, or narrowing the producer's selection makes those profiles disappear from downstream source pools. Downstream sets then prune the copies that depended on them, which can remove profiles currently selected by running services.
 
 ## Source eligibility
 
@@ -357,7 +369,7 @@ Source eligibility and provenance are separate:
 - Image-backed models publish their discovered definitions. Image-discovery-produced profile resources are copyable by default.
 - A materialised model profile's explicit copyability opt-out applies to its logical catalog source as well. An owned, opted-out profile is retained when matching hardware disappears, preserving that policy. Removing its catalog entry or explicitly deleting the profile removes the opt-out; there is no separate persistent policy store.
 - Direct profiles, including hand-authored and generated profiles, participate when marked copyable.
-- Standalone derived profiles participate only with explicit copyability opt-in. A profile set always excludes its own outputs.
+- Derived profiles participate only with explicit copyability opt-in. Prefer the producer's declarative `outputPolicy.copyable: true` over manually annotating generated profiles. Profile-set lineage prevents a set from consuming a descendant that was previously derived from that same set.
 - `origin` filters preserve source provenance across catalog and resource representations.
 
 To include a hand-authored profile in ordinary selector-based derivation:
@@ -407,10 +419,27 @@ Common causes:
 
 - A selector field is too restrictive — relax `precision`, `acceleratorModel`, etc.
 - `modelRef.name` typo or wrong scope.
-- Source profiles lack the `aim.eai.amd.com/profile-copyable: "true"` annotation.
 - The requested version does not match, or a versionless source needs `versionPolicy: all`.
 
 Also inspect the source models' `DiscoveryReady` conditions and `status.discoveredProfiles`. Resource listings show only materialised profiles; a model can supply definitions when that listing is empty.
+
+### `DerivationReady=False / NoEligibleProfiles`
+
+The selector and version policy matched one or more profile resources, but none were published as copyable.
+
+- For a hand-authored source profile, add `aim.eai.amd.com/profile-copyable: "true"` to that profile.
+- If the source is produced by another profile set or derived model and the chain is intentional, set `outputPolicy.copyable: true` on that producer. This makes the policy durable across reconciliation:
+
+```yaml
+spec:
+  profiles:
+    outputPolicy:
+      copyable: true
+```
+
+Use `spec.outputPolicy` for a standalone `AIMProfileSet`, or `spec.profileCopy.outputPolicy` for the compatibility model shape. Do not patch generated profiles directly; manual annotations can obscure whether the producer intended its hardware overrides to be reused.
+
+If producer copyability is later disabled, downstream copies are pruned as soon as their source disappears from the eligible pool. Check affected services before changing this policy.
 
 ### Source discovery or catalog is unavailable
 

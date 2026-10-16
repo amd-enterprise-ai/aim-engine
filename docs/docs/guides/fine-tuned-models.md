@@ -231,6 +231,21 @@ The selector matched zero source profiles. Common causes:
 - `versionPolicy: pinned` is set but `version` doesn't match any source's version tag. Check the source model's image and any materialised profiles' `status.version`.
 - An accelerator or precision filter excluded every candidate — relax it or check that the official model ships those combinations.
 
+### AIMModel is `NotAvailable` with `NoEligibleProfiles`
+
+The selector and version policy matched source profiles, but none were published as copyable. For a hand-authored source, add the `aim.eai.amd.com/profile-copyable: "true"` annotation. If the source was produced by another derivation and chaining is intentional, enable it on the source model:
+
+```yaml
+spec:
+  profiles:
+    outputPolicy:
+      copyable: true
+```
+
+For a source model using the compatibility `profileCopy` shape, set `spec.profileCopy.outputPolicy.copyable: true` instead. This is preferred over manually annotating generated profiles because it records the producer's intent and survives reconciliation.
+
+Disabling copyability later removes the source from downstream selection and causes dependent derived profiles to be pruned. Confirm that no running services depend on those profiles before changing the producer policy.
+
 ### AIMService stuck in `Pending` with `ProfileNotFound`
 
 Confirm the derivation produced deployable profiles before debugging the service. If `managedProfiles.deployable > 0` but the service can't find them, check that the service's `spec.model.name` matches the fine-tune AIMModel's name exactly.

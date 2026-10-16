@@ -360,6 +360,17 @@ type ProfileOverrides struct {
 	EngineArgs *apiextensionsv1.JSON `json:"engineArgs,omitempty"`
 }
 
+// ProfileOutputPolicy controls whether profiles produced by a derivation may
+// be used as sources for a later derivation.
+type ProfileOutputPolicy struct {
+	// Copyable publishes derived profiles as eligible sources for subsequent
+	// profile derivations. It is disabled by default so each derivation boundary
+	// remains explicit. Disabling copyability, deleting the producer, or changing
+	// its selection can remove downstream derived profiles immediately.
+	// +optional
+	Copyable bool `json:"copyable,omitempty"`
+}
+
 // AIMProfileSetSpec defines the desired state of AIMProfileSet and is also reused by AIMModel.profileCopy.
 //
 // The selector-non-empty rule accepts every documented narrowing field
@@ -416,6 +427,11 @@ type AIMProfileSetSpec struct {
 	// Overrides mutates the copied profile spec after selection and version filtering.
 	// +optional
 	Overrides *ProfileOverrides `json:"overrides,omitempty"`
+
+	// OutputPolicy controls whether profiles produced by this set may be used
+	// as sources for subsequent derivations.
+	// +optional
+	OutputPolicy *ProfileOutputPolicy `json:"outputPolicy,omitempty"`
 
 	// ImagePullSecrets lists secrets used for inspecting and pulling container images.
 	// +optional

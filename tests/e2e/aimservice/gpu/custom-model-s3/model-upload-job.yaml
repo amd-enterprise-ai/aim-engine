@@ -29,7 +29,7 @@ spec:
               mountPath: /mnt/models
       containers:
         - name: uploader
-          image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+          image: docker.io/pgsty/mc:RELEASE.2026-09-16T00-00-00Z
           command:
             - /bin/sh
             - -c

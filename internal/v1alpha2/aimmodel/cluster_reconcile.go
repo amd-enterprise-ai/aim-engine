@@ -89,6 +89,8 @@ type ClusterModelObservation struct {
 	ExistingDesiredCount            int32
 	ProfileSetCurrent               bool
 	ProfileSetStatus                constants.AIMStatus
+	ProfileSetReason                string
+	ProfileSetMessage               string
 	DesiredProfiles                 []desiredProfile
 	ProfileGeneration               *aimv1alpha1.AIMModelProfileGenerationStatus
 	ProfileGenerationFailureMessage string
@@ -300,10 +302,13 @@ func (r *ClusterModelReconciler) ComposeState(
 			obs.ProfileSetRef = &aimv1alpha1.ProfileSetReference{Name: childName}
 			obs.DesiredProfileSet = buildDesiredClusterProfileSet(fetch.model, obs.DiscoveryCacheRef, childName)
 		}
-		obs.ManagedProfiles,
-			obs.ExistingDesiredCount,
-			obs.ProfileSetCurrent,
-			obs.ProfileSetStatus = observedClusterProfileSet(fetch.childProfileSet, obs.DesiredProfileSet, fetch.model)
+		child := observedClusterProfileSet(fetch.childProfileSet, obs.DesiredProfileSet, fetch.model)
+		obs.ManagedProfiles = child.managedProfiles
+		obs.ExistingDesiredCount = child.existingDesiredCount
+		obs.ProfileSetCurrent = child.current
+		obs.ProfileSetStatus = child.status
+		obs.ProfileSetReason = child.reason
+		obs.ProfileSetMessage = child.message
 	} else if fetch.existingClusterProfiles.OK() {
 		obs.ManagedProfiles, obs.ExistingDesiredCount = summarizeManagedProfiles(obs.DesiredProfiles, fetch.existingClusterProfiles.Value)
 	}
@@ -434,6 +439,8 @@ func buildClusterModelComponentHealth(obs ClusterModelObservation) []controlleru
 		ExistingDesiredCount:            obs.ExistingDesiredCount,
 		ProfileSetCurrent:               obs.ProfileSetCurrent,
 		ProfileSetStatus:                obs.ProfileSetStatus,
+		ProfileSetReason:                obs.ProfileSetReason,
+		ProfileSetMessage:               obs.ProfileSetMessage,
 		ProfileGenerationFailureMessage: obs.ProfileGenerationFailureMessage,
 		BuildErr:                        obs.BuildErr,
 		componentHealth:                 obs.componentHealth,

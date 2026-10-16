@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfileSet
+metadata:
+  name: output-policy-private-producer
+spec:
+  selector:
+    aimId: output-policy/source
+    modelId: output-policy/source
+    profileId: cpu-default
+  versionPolicy: all
+  overrides:
+    aimId: output-policy/private
+    modelId: output-policy/private
+    modelSources:
+      - modelId: output-policy/private
+        sourceUri: hf://output-policy/private

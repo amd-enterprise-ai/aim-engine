@@ -168,6 +168,24 @@ func TestHasLegacyInputs_PureProfileCopyDoesNotTrigger(t *testing.T) {
 	}
 }
 
+func TestProfilesSpecToProfileSet_PropagatesOutputPolicy(t *testing.T) {
+	t.Parallel()
+
+	profiles := &aimv1alpha1.AIMModelProfilesSpec{
+		DerivedFrom: &aimv1alpha1.AIMModelProfilesDerivedFrom{
+			Selector: aimv1alpha1.ProfileSelector{AimId: "aim/one"},
+		},
+		OutputPolicy: &aimv1alpha1.ProfileOutputPolicy{
+			Copyable: true,
+		},
+	}
+
+	set := profilesSpecToProfileSet(profiles)
+	if set == nil || set.OutputPolicy == nil || !set.OutputPolicy.Copyable {
+		t.Fatalf("translated profile set output policy = %#v, want copyable=true", set)
+	}
+}
+
 // TestClassifyModelKind covers the three v1alpha2 onboarding flows
 // surfaced as status.kind. The classifier is the source of truth for
 // the discriminator field that users read from kubectl printcolumns,

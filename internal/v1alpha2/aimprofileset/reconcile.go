@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -48,6 +49,7 @@ const (
 	annotationProfileSetUID       = constants.AimLabelDomain + "/profile-set-uid"
 	annotationProfileSetName      = constants.AimLabelDomain + "/profile-set-name"
 	annotationProfileSetNamespace = constants.AimLabelDomain + "/profile-set-namespace"
+	annotationProfileSetLineage   = constants.AimLabelDomain + "/profile-set-lineage"
 	ManagedProfileSetUIDIndexKey  = ".metadata.annotations." + annotationProfileSetUID
 
 	componentDerivation      = "Derivation"
@@ -112,15 +114,17 @@ type profileSetCandidate struct {
 }
 
 type ProfileSetFetchResult struct {
-	set        *aimv1alpha2.AIMProfileSet
-	candidates controllerutils.FetchResult[[]profileSetCandidate]
-	managed    controllerutils.FetchResult[[]managedProfile]
+	set                  *aimv1alpha2.AIMProfileSet
+	candidates           controllerutils.FetchResult[[]profileSetCandidate]
+	ineligibleCandidates []profileSetCandidate
+	managed              controllerutils.FetchResult[[]managedProfile]
 }
 
 type ClusterProfileSetFetchResult struct {
-	set        *aimv1alpha2.AIMClusterProfileSet
-	candidates controllerutils.FetchResult[[]profileSetCandidate]
-	managed    controllerutils.FetchResult[[]managedProfile]
+	set                  *aimv1alpha2.AIMClusterProfileSet
+	candidates           controllerutils.FetchResult[[]profileSetCandidate]
+	ineligibleCandidates []profileSetCandidate
+	managed              controllerutils.FetchResult[[]managedProfile]
 }
 
 type ProfileSetObservation struct {
@@ -130,6 +134,7 @@ type ProfileSetObservation struct {
 	existingDesiredCount int32
 	pruneSafe            bool
 	buildErr             error
+	ineligibleMatchCount int
 	componentHealth      []controllerutils.ComponentHealth
 }
 
@@ -144,6 +149,7 @@ type ClusterProfileSetObservation struct {
 	existingDesiredCount int32
 	pruneSafe            bool
 	buildErr             error
+	ineligibleMatchCount int
 	componentHealth      []controllerutils.ComponentHealth
 }
 
@@ -157,12 +163,13 @@ func (r *ProfileSetReconciler) FetchRemoteState(
 	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileSet],
 ) ProfileSetFetchResult {
 	set := reconcileCtx.Object
-	candidates, candidateErr := loadNamespaceCandidates(ctx, c, catalogReader(r.APIReader, c), set)
+	candidatePools, candidateErr := loadNamespaceCandidatePools(ctx, c, catalogReader(r.APIReader, c), set)
 	managed, managedErr := listManagedNamespaceProfiles(ctx, c, set.Namespace, string(set.UID))
 	return ProfileSetFetchResult{
-		set:        set,
-		candidates: controllerutils.FetchResult[[]profileSetCandidate]{Value: candidates, Error: candidateErr},
-		managed:    controllerutils.FetchResult[[]managedProfile]{Value: managed, Error: managedErr},
+		set:                  set,
+		candidates:           controllerutils.FetchResult[[]profileSetCandidate]{Value: candidatePools.eligible, Error: candidateErr},
+		ineligibleCandidates: candidatePools.excludedByCopyable,
+		managed:              controllerutils.FetchResult[[]managedProfile]{Value: managed, Error: managedErr},
 	}
 }
 
@@ -172,12 +179,13 @@ func (r *ClusterProfileSetReconciler) FetchRemoteState(
 	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha2.AIMClusterProfileSet],
 ) ClusterProfileSetFetchResult {
 	set := reconcileCtx.Object
-	candidates, candidateErr := loadClusterCandidates(ctx, c, catalogReader(r.APIReader, c), set)
+	candidatePools, candidateErr := loadClusterCandidatePools(ctx, c, catalogReader(r.APIReader, c), set)
 	managed, managedErr := listManagedClusterProfiles(ctx, c, string(set.UID))
 	return ClusterProfileSetFetchResult{
-		set:        set,
-		candidates: controllerutils.FetchResult[[]profileSetCandidate]{Value: candidates, Error: candidateErr},
-		managed:    controllerutils.FetchResult[[]managedProfile]{Value: managed, Error: managedErr},
+		set:                  set,
+		candidates:           controllerutils.FetchResult[[]profileSetCandidate]{Value: candidatePools.eligible, Error: candidateErr},
+		ineligibleCandidates: candidatePools.excludedByCopyable,
+		managed:              controllerutils.FetchResult[[]managedProfile]{Value: managed, Error: managedErr},
 	}
 }
 
@@ -189,7 +197,11 @@ func (r *ProfileSetReconciler) ComposeState(
 	obs := ProfileSetObservation{}
 	if fetch.candidates.Error == nil && fetch.managed.Error == nil {
 		var selected []aimprofile.ProfileCopyCandidate
-		selected, obs.buildErr = resolveSelectedProfileSetCandidates(fetch.candidates.Value, profileCopyRequest(fetch.set.Spec))
+		req := profileCopyRequest(fetch.set.Spec)
+		selected, obs.buildErr = resolveSelectedProfileSetCandidates(fetch.candidates.Value, req)
+		var matchErr error
+		obs.ineligibleMatchCount, matchErr = matchingProfileSetCandidateCount(fetch.ineligibleCandidates, req)
+		obs.buildErr = errors.Join(obs.buildErr, matchErr)
 		var buildErr error
 		obs.desiredProfiles, buildErr = buildDesiredNamespaceProfiles(fetch.set, selected)
 		obs.buildErr = errors.Join(obs.buildErr, buildErr)
@@ -199,7 +211,7 @@ func (r *ProfileSetReconciler) ComposeState(
 		obs.existingManaged = fetch.managed.Value
 		obs.managedProfiles, obs.existingDesiredCount = summarizeManagedProfiles(obs.desiredProfiles, fetch.managed.Value)
 	}
-	obs.componentHealth = buildComponentHealth(collectErrors(fetch.candidates.Error, fetch.managed.Error), obs.buildErr, obs.managedProfiles, obs.existingDesiredCount)
+	obs.componentHealth = buildComponentHealth(collectErrors(fetch.candidates.Error, fetch.managed.Error), obs.buildErr, obs.managedProfiles, obs.existingDesiredCount, obs.ineligibleMatchCount)
 	return obs
 }
 
@@ -211,7 +223,11 @@ func (r *ClusterProfileSetReconciler) ComposeState(
 	obs := ClusterProfileSetObservation{}
 	if fetch.candidates.Error == nil && fetch.managed.Error == nil {
 		var selected []aimprofile.ProfileCopyCandidate
-		selected, obs.buildErr = resolveSelectedProfileSetCandidates(fetch.candidates.Value, profileCopyRequest(fetch.set.Spec))
+		req := profileCopyRequest(fetch.set.Spec)
+		selected, obs.buildErr = resolveSelectedProfileSetCandidates(fetch.candidates.Value, req)
+		var matchErr error
+		obs.ineligibleMatchCount, matchErr = matchingProfileSetCandidateCount(fetch.ineligibleCandidates, req)
+		obs.buildErr = errors.Join(obs.buildErr, matchErr)
 		var buildErr error
 		obs.desiredProfiles, buildErr = buildDesiredClusterProfiles(fetch.set, selected)
 		obs.buildErr = errors.Join(obs.buildErr, buildErr)
@@ -221,7 +237,7 @@ func (r *ClusterProfileSetReconciler) ComposeState(
 		obs.existingManaged = fetch.managed.Value
 		obs.managedProfiles, obs.existingDesiredCount = summarizeManagedProfiles(obs.desiredProfiles, fetch.managed.Value)
 	}
-	obs.componentHealth = buildComponentHealth(collectErrors(fetch.candidates.Error, fetch.managed.Error), obs.buildErr, obs.managedProfiles, obs.existingDesiredCount)
+	obs.componentHealth = buildComponentHealth(collectErrors(fetch.candidates.Error, fetch.managed.Error), obs.buildErr, obs.managedProfiles, obs.existingDesiredCount, obs.ineligibleMatchCount)
 	return obs
 }
 
@@ -309,11 +325,15 @@ func buildDesiredNamespaceProfiles(set *aimv1alpha2.AIMProfileSet, candidates []
 			annotationProfileSetUID:          string(set.UID),
 			annotationProfileSetName:         set.Name,
 			annotationProfileSetNamespace:    set.Namespace,
+			annotationProfileSetLineage:      appendProfileSetLineage(source.ProfileSetUIDs, string(set.UID)),
 			aimprofile.AnnotationSourceID:    source.SourceID,
 			aimprofile.AnnotationSourceGroup: source.SourceGroup,
 			aimprofile.AnnotationBaseImage:   source.BaseImage,
 		}, aimprofile.ProfileSourceCopy)
 		profile.Annotations = profileyaml.Mark(profile.Annotations, source.YAMLContract)
+		if set.Spec.OutputPolicy != nil && set.Spec.OutputPolicy.Copyable {
+			profile.Annotations = aimprofile.MarkProfileCopyable(profile.Annotations, true)
+		}
 		if inheritsLegacyCatalogNaming(source, set.Spec) {
 			profile.Annotations[aimprofile.AnnotationLegacyCatalogNaming] = legacyCatalogNamingValue
 		}
@@ -349,11 +369,15 @@ func buildDesiredClusterProfiles(set *aimv1alpha2.AIMClusterProfileSet, candidat
 		profile.Annotations = aimprofile.MarkProfileSource(map[string]string{
 			annotationProfileSetUID:          string(set.UID),
 			annotationProfileSetName:         set.Name,
+			annotationProfileSetLineage:      appendProfileSetLineage(source.ProfileSetUIDs, string(set.UID)),
 			aimprofile.AnnotationSourceID:    source.SourceID,
 			aimprofile.AnnotationSourceGroup: source.SourceGroup,
 			aimprofile.AnnotationBaseImage:   source.BaseImage,
 		}, aimprofile.ProfileSourceCopy)
 		profile.Annotations = profileyaml.Mark(profile.Annotations, source.YAMLContract)
+		if set.Spec.OutputPolicy != nil && set.Spec.OutputPolicy.Copyable {
+			profile.Annotations = aimprofile.MarkProfileCopyable(profile.Annotations, true)
+		}
 		if inheritsLegacyCatalogNaming(source, set.Spec) {
 			profile.Annotations[aimprofile.AnnotationLegacyCatalogNaming] = legacyCatalogNamingValue
 		}
@@ -363,6 +387,23 @@ func buildDesiredClusterProfiles(set *aimv1alpha2.AIMClusterProfileSet, candidat
 		desired = append(desired, desiredProfile{Object: profile})
 	}
 	return desired, errors.Join(failures.err(), validateDerivedNames(desired))
+}
+
+func appendProfileSetLineage(lineage []string, uid string) string {
+	seen := make(map[string]bool, len(lineage)+1)
+	ordered := make([]string, 0, len(lineage)+1)
+	for _, ancestor := range lineage {
+		ancestor = strings.TrimSpace(ancestor)
+		if ancestor == "" || seen[ancestor] {
+			continue
+		}
+		seen[ancestor] = true
+		ordered = append(ordered, ancestor)
+	}
+	if uid != "" && !seen[uid] {
+		ordered = append(ordered, uid)
+	}
+	return strings.Join(ordered, ",")
 }
 
 func validateDerivedNames(profiles []desiredProfile) error {
@@ -432,6 +473,21 @@ func resolveSelectedProfileSetCandidates(
 		resolved = append(resolved, candidate)
 	}
 	return resolved, failures.err()
+}
+
+func matchingProfileSetCandidateCount(
+	candidates []profileSetCandidate,
+	req aimprofile.ProfileCopyRequest,
+) (int, error) {
+	plain := make([]aimprofile.ProfileCopyCandidate, len(candidates))
+	for i := range candidates {
+		plain[i] = candidates[i].ProfileCopyCandidate
+	}
+	matches, err := aimprofile.FilterProfileCopyCandidateIndexes(plain, req)
+	if err != nil {
+		return 0, controllerutils.NewInvalidSpecError("InvalidProfileSelection", err.Error(), err)
+	}
+	return len(matches), nil
 }
 
 func (candidate profileSetCandidate) resolved() (aimprofile.ProfileCopyCandidate, error) {
@@ -554,7 +610,7 @@ func profileSpecCommon(obj client.Object) (aimv1alpha2.AIMProfileSpecCommon, boo
 	}
 }
 
-func buildComponentHealth(fetchErrs []error, buildErr error, managed aimv1alpha1.ManagedProfileCounts, existingDesiredCount int32) []controllerutils.ComponentHealth {
+func buildComponentHealth(fetchErrs []error, buildErr error, managed aimv1alpha1.ManagedProfileCounts, existingDesiredCount int32, ineligibleMatchCount int) []controllerutils.ComponentHealth {
 	if len(fetchErrs) > 0 {
 		return []controllerutils.ComponentHealth{{
 			Component:      componentDerivation,
@@ -576,6 +632,19 @@ func buildComponentHealth(fetchErrs []error, buildErr error, managed aimv1alpha1
 		}}
 	}
 	if managed.Total == 0 {
+		if ineligibleMatchCount > 0 {
+			message := fmt.Sprintf("%d source profiles match the selection but are not published as copyable", ineligibleMatchCount)
+			if ineligibleMatchCount == 1 {
+				message = "1 source profile matches the selection but is not published as copyable"
+			}
+			message += "; annotate a hand-authored source with aim.eai.amd.com/profile-copyable=true, or set outputPolicy.copyable=true on its producing derivation"
+			return []controllerutils.ComponentHealth{{
+				Component: componentDerivation,
+				State:     constants.AIMStatusNotAvailable,
+				Reason:    "NoEligibleProfiles",
+				Message:   message,
+			}}
+		}
 		return []controllerutils.ComponentHealth{{
 			Component: componentDerivation,
 			State:     constants.AIMStatusNotAvailable,
@@ -618,12 +687,18 @@ func buildComponentHealth(fetchErrs []error, buildErr error, managed aimv1alpha1
 }
 
 func loadNamespaceCandidates(ctx context.Context, c client.Client, reader client.Reader, set *aimv1alpha2.AIMProfileSet) ([]profileSetCandidate, error) {
+	pools, err := loadNamespaceCandidatePools(ctx, c, reader, set)
+	return pools.eligible, err
+}
+
+func loadNamespaceCandidatePools(ctx context.Context, c client.Client, reader client.Reader, set *aimv1alpha2.AIMProfileSet) (candidatePools, error) {
 	if set.Spec.SourceRef != nil {
-		return loadExplicitCatalog(ctx, reader, set.Spec, set.Namespace)
+		candidates, err := loadExplicitCatalog(ctx, reader, set.Spec, set.Namespace)
+		return candidatePools{eligible: candidates}, err
 	}
 	_, scope, err := aimprofile.ProvenanceLabelSelector(set.Spec.Selector)
 	if err != nil {
-		return nil, err
+		return candidatePools{}, err
 	}
 	// selector.aimId is always a strict source-side filter now. CEL on
 	// AIMProfileSetSpec / AIMModelProfilesSpec rejects selector.aimId
@@ -632,47 +707,58 @@ func loadNamespaceCandidates(ctx context.Context, c client.Client, reader client
 	// is supplied via overrides.aimId (see ApplyProfileCopyOverrides).
 	// Selector.modelRef.scope==Cluster skips namespace AIMProfiles entirely.
 	if scope == aimprofile.SelectorScopeCluster {
-		return loadDefaultScope(ctx, c, "", true, set.Spec, string(set.UID))
+		return loadDefaultScopePools(ctx, c, "", true, set.Spec, string(set.UID))
 	}
-	namespaceCandidates, err := loadDefaultScope(ctx, c, set.Namespace, false, set.Spec, string(set.UID))
+	namespacePools, err := loadDefaultScopePools(ctx, c, set.Namespace, false, set.Spec, string(set.UID))
 	if err != nil {
-		return namespaceCandidates, err
+		return namespacePools, err
 	}
 	// Selector.modelRef.scope==Namespace already restricts to namespace
 	// profiles via the source-model-scope label, so no cluster fallback is
 	// needed there. SelectorScopeAny (the default) falls back to cluster
 	// profiles when no namespace match was found.
-	plain := make([]aimprofile.ProfileCopyCandidate, len(namespaceCandidates))
-	for i := range namespaceCandidates {
-		plain[i] = namespaceCandidates[i].ProfileCopyCandidate
+	plain := make([]aimprofile.ProfileCopyCandidate, len(namespacePools.eligible))
+	for i := range namespacePools.eligible {
+		plain[i] = namespacePools.eligible[i].ProfileCopyCandidate
 	}
 	// Empty version policy is tolerated by direct unit callers; API admission
 	// defaults and validates it before reconciliation.
 	matches, err := aimprofile.FilterProfileCopyCandidateIndexes(plain, aimprofile.ProfileCopyRequest{Selector: set.Spec.Selector, VersionPolicy: set.Spec.VersionPolicy, Version: set.Spec.Version})
 	if err != nil {
-		return nil, err
+		return candidatePools{}, err
 	}
 	if scope == aimprofile.SelectorScopeNamespace || len(matches) > 0 {
-		return namespaceCandidates, nil
+		return namespacePools, nil
 	}
-	return loadDefaultScope(ctx, c, "", true, set.Spec, string(set.UID))
+	clusterPools, err := loadDefaultScopePools(ctx, c, "", true, set.Spec, string(set.UID))
+	if err != nil {
+		return clusterPools, err
+	}
+	clusterPools.excludedByCopyable = append(namespacePools.excludedByCopyable, clusterPools.excludedByCopyable...)
+	return clusterPools, nil
 }
 
 func loadClusterCandidates(ctx context.Context, c client.Client, reader client.Reader, set *aimv1alpha2.AIMClusterProfileSet) ([]profileSetCandidate, error) {
+	pools, err := loadClusterCandidatePools(ctx, c, reader, set)
+	return pools.eligible, err
+}
+
+func loadClusterCandidatePools(ctx context.Context, c client.Client, reader client.Reader, set *aimv1alpha2.AIMClusterProfileSet) (candidatePools, error) {
 	if set.Spec.SourceRef != nil {
 		namespace := constants.GetOperatorNamespace()
-		return loadExplicitCatalog(ctx, reader, set.Spec, namespace)
+		candidates, err := loadExplicitCatalog(ctx, reader, set.Spec, namespace)
+		return candidatePools{eligible: candidates}, err
 	}
 	_, scope, err := aimprofile.ProvenanceLabelSelector(set.Spec.Selector)
 	if err != nil {
-		return nil, err
+		return candidatePools{}, err
 	}
 	// See loadNamespaceCandidates: Base-role selectors target aimId-less
 	// base profiles; the index filter on selector.AimId would exclude them.
 	if scope == aimprofile.SelectorScopeNamespace {
-		return nil, nil
+		return candidatePools{}, nil
 	}
-	return loadDefaultScope(ctx, c, "", true, set.Spec, string(set.UID))
+	return loadDefaultScopePools(ctx, c, "", true, set.Spec, string(set.UID))
 }
 
 func mergeCandidates(clusterCandidates, namespaceCandidates []aimprofile.ProfileCopyCandidate) []aimprofile.ProfileCopyCandidate {

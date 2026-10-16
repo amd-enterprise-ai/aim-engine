@@ -126,7 +126,7 @@ spec:
                       fsGroup: 1000
                     containers:
                       - name: uploader
-                        image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+                        image: docker.io/pgsty/mc:RELEASE.2026-09-16T00-00-00Z
                         env:
                           - name: MC_CONFIG_DIR
                             value: /tmp/.mc

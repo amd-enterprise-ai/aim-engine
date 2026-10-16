@@ -44,6 +44,7 @@ func TestDerivedModelAvailabilityUsesCurrentChild(t *testing.T) {
 				edit         func(*aimv1alpha2.AIMModel, *aimv1alpha2.AIMProfileSet)
 				inventoryErr error
 				want         constants.AIMStatus
+				wantReason   string
 				current      bool
 				prune        bool
 			}{
@@ -61,7 +62,17 @@ func TestDerivedModelAvailabilityUsesCurrentChild(t *testing.T) {
 				{name: "empty-selection", edit: func(_ *aimv1alpha2.AIMModel, s *aimv1alpha2.AIMProfileSet) {
 					s.Status.Status = constants.AIMStatusNotAvailable
 					s.Status.ManagedProfiles = aimv1alpha1.ManagedProfileCounts{}
-				}, want: constants.AIMStatusNotAvailable, current: true},
+				}, want: constants.AIMStatusNotAvailable, wantReason: "NoMatchingProfiles", current: true},
+				{name: "copyability-excluded-selection", edit: func(_ *aimv1alpha2.AIMModel, s *aimv1alpha2.AIMProfileSet) {
+					s.Status.Status = constants.AIMStatusNotAvailable
+					s.Status.ManagedProfiles = aimv1alpha1.ManagedProfileCounts{}
+					s.Status.Conditions = []metav1.Condition{{
+						Type:    "DerivationReady",
+						Status:  metav1.ConditionFalse,
+						Reason:  "NoEligibleProfiles",
+						Message: "1 source profile matches the selection but is not published as copyable",
+					}}
+				}, want: constants.AIMStatusNotAvailable, wantReason: "NoEligibleProfiles", current: true},
 				{name: "degraded-child-with-old-ready-count", edit: func(_ *aimv1alpha2.AIMModel, s *aimv1alpha2.AIMProfileSet) {
 					s.Status.Status = constants.AIMStatusDegraded
 				}, want: constants.AIMStatusDegraded, current: true},
@@ -156,6 +167,9 @@ func TestDerivedModelAvailabilityUsesCurrentChild(t *testing.T) {
 					}
 					if len(health) != 1 || health[0].State != tt.want {
 						t.Errorf("health = %+v, want %s", health, tt.want)
+					}
+					if tt.wantReason != "" && (len(health) != 1 || health[0].Reason != tt.wantReason) {
+						t.Errorf("health = %+v, want reason %s", health, tt.wantReason)
 					}
 					if current != tt.current {
 						t.Errorf("child current = %v, want %v", current, tt.current)

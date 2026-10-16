@@ -229,6 +229,7 @@ Set when `spec.profiles` is configured, including image-backed inline overrides.
 | `True` | `ManagedProfilesReady` | All derived profiles are ready |
 | `False` | `Progressing` | Derivation in progress |
 | `False` | `NoMatchingProfiles` | Selector matched zero source candidates |
+| `False` | `NoEligibleProfiles` | Profiles matched the selector and version policy, but none were published as copyable |
 | `False` | `Degraded` | One or more derived profiles failed |
 
 ### Ready (managed profile rollup)
@@ -255,11 +256,12 @@ With inline `spec.profiles`, readiness follows the selected transformed outputs.
 | `True` | `ManagedProfilesReady` | All managed derived profiles are ready |
 | `False` | `Progressing` | Derivation in progress |
 | `False` | `NoMatchingProfiles` | Selector matched zero source candidates |
+| `False` | `NoEligibleProfiles` | Profiles matched the selector and version policy, but none were published as copyable |
 | `False` | `Degraded` | One or more derived profiles failed |
 
 `status.managedProfiles.{total,ready,deployable,base,notAvailable}` are always populated (zero values serialised explicitly).
 
-`NoMatchingProfiles` describes a completed source evaluation with no matches. Pending discovery and source-read or parsing failures are reported separately. Outputs for an unresolved source remain in place while healthy sources continue to reconcile.
+`NoMatchingProfiles` describes a completed source evaluation with no selector/version matches. `NoEligibleProfiles` means matches exist but copyability policy excluded all of them. Pending discovery and source-read or parsing failures are reported separately. Outputs for an unresolved source remain in place while healthy sources continue to reconcile.
 
 ## AIMProfile / AIMClusterProfile conditions
 

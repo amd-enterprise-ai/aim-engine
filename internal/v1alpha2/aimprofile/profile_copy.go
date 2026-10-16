@@ -53,6 +53,9 @@ type ProfileCopyCandidate struct {
 	Status              aimv1alpha2.AIMProfileStatus
 	BaseImage           string
 	YAMLContract        profileyaml.Contract
+	// ProfileSetUIDs records the profile-set derivation lineage for loop
+	// prevention when profile-set outputs are explicitly made copyable.
+	ProfileSetUIDs []string
 }
 
 // ProfileCopyRequest describes a resource-neutral profile derivation request.

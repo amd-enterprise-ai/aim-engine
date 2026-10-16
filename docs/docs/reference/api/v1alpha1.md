@@ -1001,6 +1001,7 @@ _Appears in:_
 | `versionPolicy` _[ProfileVersionPolicy](#profileversionpolicy)_ | VersionPolicy controls matching source versions (defaults to pinned). | pinned | Enum: [pinned latest all] <br />Optional: \{\} |
 | `version` _string_ | Version pins matching to a specific source profile version when VersionPolicy is `pinned`. |  | Optional: \{\} |
 | `overrides` _[ProfileOverrides](#profileoverrides)_ | Overrides mutates the copied profile spec after selection and version filtering. Use overrides.image to override the deployment container image used by the derived profiles. |  | Optional: \{\} |
+| `outputPolicy` _[ProfileOutputPolicy](#profileoutputpolicy)_ | OutputPolicy controls whether profiles produced for this model may be used as sources for subsequent derivations. |  | Optional: \{\} |
 
 
 #### AIMModelSource
@@ -1321,6 +1322,7 @@ _Appears in:_
 | `version` _string_ | Version pins matching to a specific source profile version when VersionPolicy is pinned. |  | Optional: \{\} |
 | `image` _string_ | Image overrides the runtime image used by the derived profiles. |  | Optional: \{\} |
 | `overrides` _[ProfileOverrides](#profileoverrides)_ | Overrides mutates the copied profile spec after selection and version filtering. |  | Optional: \{\} |
+| `outputPolicy` _[ProfileOutputPolicy](#profileoutputpolicy)_ | OutputPolicy controls whether profiles produced by this set may be used as sources for subsequent derivations. |  | Optional: \{\} |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#localobjectreference-v1-core) array_ | ImagePullSecrets lists secrets used for inspecting and pulling container images. |  | Optional: \{\} |
 | `serviceAccountName` _string_ | ServiceAccountName is propagated to managed profiles for downstream workloads. |  | Optional: \{\} |
 
@@ -2837,6 +2839,23 @@ _Appears in:_
 | `derived` | ProfileOriginDerived indicates the profile was produced by a derivation flow (AIMModel.spec.profiles.derivedFrom or an AIMProfileSet). |
 | `generated` | ProfileOriginGenerated indicates the profile was generated from a modelId declaration and a RuntimeConfig fallback. |
 | `user-authored` | ProfileOriginUserAuthored indicates the profile was created independently by a user (no AIM controller owner reference). |
+
+
+#### ProfileOutputPolicy
+
+
+
+ProfileOutputPolicy controls whether profiles produced by a derivation may be used as sources for a later derivation.
+
+
+
+_Appears in:_
+- [AIMModelProfilesSpec](#aimmodelprofilesspec)
+- [AIMProfileSetSpec](#aimprofilesetspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `copyable` _boolean_ | Copyable publishes derived profiles as eligible sources for subsequent profile derivations. It is disabled by default so each derivation boundary remains explicit. Disabling copyability, deleting the producer, or changing its selection can remove downstream derived profiles immediately. |  | Optional: \{\} |
 
 
 #### ProfileOverrides

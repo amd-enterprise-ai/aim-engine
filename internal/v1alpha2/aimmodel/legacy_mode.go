@@ -121,6 +121,7 @@ func profilesSpecToProfileSet(profiles *aimv1alpha1.AIMModelProfilesSpec) *aimv1
 		VersionPolicy: profiles.VersionPolicy,
 		Version:       profiles.Version,
 		Overrides:     profiles.Overrides,
+		OutputPolicy:  profiles.OutputPolicy,
 	}
 	// The deployment-image override migrated from
 	// spec.derivedFrom.image to spec.profiles.overrides.image. Keep the

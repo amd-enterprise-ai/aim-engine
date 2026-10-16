@@ -504,6 +504,11 @@ type AIMModelProfilesSpec struct {
 	// image used by the derived profiles.
 	// +optional
 	Overrides *ProfileOverrides `json:"overrides,omitempty"`
+
+	// OutputPolicy controls whether profiles produced for this model may be
+	// used as sources for subsequent derivations.
+	// +optional
+	OutputPolicy *ProfileOutputPolicy `json:"outputPolicy,omitempty"`
 }
 
 // AIMModelProfilesDerivedFrom selects source profile definitions.

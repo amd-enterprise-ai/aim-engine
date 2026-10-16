@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfileSet
+metadata:
+  name: output-policy-copyable-consumer
+spec:
+  selector:
+    aimId: output-policy/copyable
+    modelId: output-policy/copyable
+    profileId: cpu-default
+  versionPolicy: all

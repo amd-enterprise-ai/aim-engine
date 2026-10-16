@@ -685,6 +685,53 @@ func TestDirectAndOptedInDerivedSourcesRemainIndependent(t *testing.T) {
 	if err != nil || len(sources) != 3 {
 		t.Fatalf("want model + direct + opted-in derived, got %d: %v", len(sources), err)
 	}
+	pools, err := loadNamespaceCandidatePools(ctx, c, c, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pools.eligible) != 3 || len(pools.excludedByCopyable) != 1 || pools.excludedByCopyable[0].Name != "private" {
+		t.Fatalf("candidate pools = eligible:%v excluded:%v, want private derived profile retained only for diagnosis", pools.eligible, pools.excludedByCopyable)
+	}
+}
+
+func TestDefaultScopeExcludesProfilesWhoseLineageContainsCurrentSet(t *testing.T) {
+	ctx := context.Background()
+	set := partitionSet("team")
+	spec := aimv1alpha2.AIMProfileSpecCommon{
+		AcceleratorModel:            testSourceAccelerator,
+		AcceleratorCount:            1,
+		AcceleratorPartitioningMode: "unpartitioned",
+		EngineArgs:                  &apiextensionsv1.JSON{Raw: []byte(`{"tensor-parallel-size":1}`)},
+	}
+	profile := func(name, owner, lineage string) *aimv1alpha2.AIMProfile {
+		annotations := map[string]string{
+			aimprofile.AnnotationProfileCopyable: "true",
+			annotationProfileSetUID:              owner,
+		}
+		if lineage != "" {
+			annotations[annotationProfileSetLineage] = lineage
+		}
+		return &aimv1alpha2.AIMProfile{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name, Namespace: "team", UID: types.UID(name + "-uid"),
+				Annotations: annotations,
+			},
+			Spec: aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: spec},
+		}
+	}
+	c := sourceClient(t,
+		profile("direct", "", ""),
+		profile("sibling", "set-b", ""),
+		profile("descendant", "set-b", "set-uid,set-b"),
+	)
+
+	candidates, err := loadNamespaceCandidates(ctx, c, c, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 2 || candidates[0].Name != "direct" || candidates[1].Name != "sibling" {
+		t.Fatalf("candidates = %v, want direct and sibling only", candidates)
+	}
 }
 
 func TestNamespaceFallbackUsesCompleteSelectionAndVersion(t *testing.T) {

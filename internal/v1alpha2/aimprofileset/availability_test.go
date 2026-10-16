@@ -103,7 +103,7 @@ func TestProfileSetAvailabilityUsesCurrentAlternatives(t *testing.T) {
 					if counts.Ready != tt.wantReady || counts.Total != 2 || counts.Deployable != 2 {
 						t.Fatalf("counts = %+v, want %d ready and 2 deployable", counts, tt.wantReady)
 					}
-					health := buildComponentHealth(nil, nil, counts, current)
+					health := buildComponentHealth(nil, nil, counts, current, 0)
 					if len(health) != 1 || health[0].State != tt.want {
 						t.Fatalf("health = %+v, want %s", health, tt.want)
 					}
@@ -130,7 +130,7 @@ func TestProfileSetAvailabilityDoesNotMaskSetErrors(t *testing.T) {
 		{name: "invalid-derivation", buildErr: errors.New("invalid overrides"), reason: "DerivationFailed"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			health := buildComponentHealth(tt.fetchErrs, tt.buildErr, aimv1alpha1.ManagedProfileCounts{Total: 2, Ready: 1}, 2)
+			health := buildComponentHealth(tt.fetchErrs, tt.buildErr, aimv1alpha1.ManagedProfileCounts{Total: 2, Ready: 1}, 2, 0)
 			if len(health) != 1 || health[0].State != constants.AIMStatusDegraded || health[0].Reason != tt.reason {
 				t.Fatalf("set-wide error hidden by a ready profile: %+v", health)
 			}

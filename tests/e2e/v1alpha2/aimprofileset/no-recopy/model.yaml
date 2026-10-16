@@ -1,6 +1,0 @@
-apiVersion: aim.eai.amd.com/v1alpha2
-kind: AIMModel
-metadata:
-  name: profileset-no-recopy-model
-spec:
-  image: docker.io/amdenterpriseai/aim-dummy:0.2.0

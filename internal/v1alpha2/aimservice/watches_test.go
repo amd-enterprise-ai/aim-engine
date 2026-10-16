@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
@@ -261,6 +262,7 @@ func newWatchTestClient(t *testing.T, scheme *runtime.Scheme, objs ...client.Obj
 			}
 			return names
 		}).
+		WithIndex(&aimv1alpha2.AIMService{}, ServiceResolvedProfileIndex, indexServiceResolvedProfile).
 		WithIndex(&aimv1alpha1.AIMArtifact{}, aimv1alpha1.ArtifactParentIndexKey, func(obj client.Object) []string {
 			artifact, ok := obj.(*aimv1alpha1.AIMArtifact)
 			if !ok || artifact.Spec.ParentArtifact == "" {
@@ -742,4 +744,119 @@ func TestAdapterArtifactRelevantChangePredicate_RankChange(t *testing.T) {
 			t.Error("an equal rank must not fire the predicate")
 		}
 	})
+}
+
+// imageShapeService builds a service that resolves its model by image:
+// spec.model.image plus a selector without modelRef or aimId. None of the
+// spec-based indexes match it, so only the resolved-profile index can route
+// profile events to it.
+func imageShapeService(name, namespace, profile string, scope aimv1alpha1.AIMResolutionScope) *aimv1alpha2.AIMService {
+	return &aimv1alpha2.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Model: &aimv1alpha1.AIMServiceModel{Image: ptr.To("docker.io/amdenterpriseai/aim-dummy:0.1")},
+			Profile: &aimv1alpha1.AIMServiceProfileConfig{
+				Selector: &aimv1alpha1.ProfileSelector{AcceleratorCount: ptr.To[int32](1)},
+			},
+		},
+		Status: aimv1alpha1.AIMServiceStatus{
+			ResolvedProfile: &aimv1alpha1.AIMResolvedReference{Name: profile, Scope: scope},
+		},
+	}
+}
+
+func requestSet(requests []reconcile.Request) map[string]struct{} {
+	got := map[string]struct{}{}
+	for _, r := range requests {
+		got[r.String()] = struct{}{}
+	}
+	return got
+}
+
+func assertRequests(t *testing.T, requests []reconcile.Request, want ...string) {
+	t.Helper()
+	got := requestSet(requests)
+	if len(got) != len(want) {
+		t.Errorf("expected requests %v, got %v", want, got)
+		return
+	}
+	for _, w := range want {
+		if _, ok := got[w]; !ok {
+			t.Errorf("expected requests %v, got %v", want, got)
+			return
+		}
+	}
+}
+
+func TestFindServicesForProfileCache_FansOutByResolvedProfile(t *testing.T) {
+	scheme := newWatchTestScheme(t)
+	profile := &aimv1alpha2.AIMProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "p",
+			Namespace: "ns",
+			Labels:    map[string]string{constants.LabelKeySourceModel: "svc-a-auto-1234"},
+		},
+		Spec: aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: aimv1alpha2.AIMProfileSpecCommon{Image: "img"}},
+	}
+	cache := &aimv1alpha2.AIMProfileCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "p-cache", Namespace: "ns"},
+		Spec: aimv1alpha2.AIMProfileCacheSpec{
+			ProfileName:  "p",
+			ProfileScope: aimv1alpha1.AIMResolutionScopeNamespace,
+		},
+	}
+
+	t.Run("dedicated cache reaches image-shape service", func(t *testing.T) {
+		c := newWatchTestClient(t, scheme, profile,
+			imageShapeService("svc-a", "ns", "p", aimv1alpha1.AIMResolutionScopeNamespace))
+		assertRequests(t, findServicesForProfileCache(c)(context.Background(), cache), "ns/svc-a")
+	})
+
+	t.Run("same name in other scope does not match", func(t *testing.T) {
+		c := newWatchTestClient(t, scheme, profile,
+			imageShapeService("svc-a", "ns", "p", aimv1alpha1.AIMResolutionScopeCluster))
+		assertRequests(t, findServicesForProfileCache(c)(context.Background(), cache))
+	})
+
+	t.Run("shared cache reaches every resolved service", func(t *testing.T) {
+		c := newWatchTestClient(t, scheme, profile,
+			imageShapeService("svc-a", "ns", "p", aimv1alpha1.AIMResolutionScopeNamespace),
+			imageShapeService("svc-b", "ns", "p", aimv1alpha1.AIMResolutionScopeNamespace))
+		assertRequests(t, findServicesForProfileCache(c)(context.Background(), cache), "ns/svc-a", "ns/svc-b")
+	})
+}
+
+func TestFindServicesForProfile_FansOutByResolvedProfile(t *testing.T) {
+	scheme := newWatchTestScheme(t)
+	c := newWatchTestClient(t, scheme,
+		imageShapeService("svc-a", "ns", "p", aimv1alpha1.AIMResolutionScopeNamespace))
+	profile := &aimv1alpha2.AIMProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns"},
+		Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: aimv1alpha2.AIMProfileSpecCommon{Image: "img"}},
+	}
+	assertRequests(t, findServicesForProfile(c)(context.Background(), profile), "ns/svc-a")
+}
+
+func TestFindServicesForClusterProfile_FansOutByResolvedProfile(t *testing.T) {
+	scheme := newWatchTestScheme(t)
+	c := newWatchTestClient(t, scheme,
+		imageShapeService("svc-alpha", "alpha", "cluster-p", aimv1alpha1.AIMResolutionScopeCluster),
+		imageShapeService("svc-beta", "beta", "cluster-p", aimv1alpha1.AIMResolutionScopeCluster),
+		imageShapeService("svc-ns-scoped", "alpha", "cluster-p", aimv1alpha1.AIMResolutionScopeNamespace))
+	clusterProfile := &aimv1alpha2.AIMClusterProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-p"},
+		Spec:       aimv1alpha2.AIMClusterProfileSpec{AIMProfileSpecCommon: aimv1alpha2.AIMProfileSpecCommon{Image: "img"}},
+	}
+
+	assertRequests(t, findServicesForClusterProfile(c)(context.Background(), clusterProfile),
+		"alpha/svc-alpha", "beta/svc-beta")
+
+	cache := &aimv1alpha2.AIMProfileCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-p-cache", Namespace: "alpha"},
+		Spec: aimv1alpha2.AIMProfileCacheSpec{
+			ProfileName:  "cluster-p",
+			ProfileScope: aimv1alpha1.AIMResolutionScopeCluster,
+		},
+	}
+	assertRequests(t, findServicesForProfileCache(c)(context.Background(), cache), "alpha/svc-alpha")
 }

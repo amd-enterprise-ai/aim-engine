@@ -4,33 +4,28 @@ metadata:
   name: v1alpha2-aimprofileset-no-recopy
 spec:
   description: |
-    Verifies that AIMProfileSet ignores profiles already derived by another
-    AIMProfileSet. A native AIMModel discovers the source AIMProfile, the first
-    AIMProfileSet copies it, and a second AIMProfileSet with the same selector
-    must still manage exactly one profile rather than re-copying the first set's
-    derived profile.
+    Verifies that two copyable AIMProfileSets with the same selector do not
+    amplify each other's outputs forever. Each set may copy the original source
+    and one acyclic output from its sibling, but lineage prevents either set
+    from consuming a descendant that already includes its own UID.
   timeouts:
     assert: 180s
   steps:
-    - name: Create the source AIMModel
+    - name: Create a copyable source AIMProfile
       try:
         - apply:
-            file: model.yaml
+            file: source-profile.yaml
 
-    - name: Wait for the source AIMProfile discovered from the image
+    - name: Wait for the source AIMProfile
       try:
-        # Match by the image-source annotation + spec rather than the derived
-        # name (which carries an internal hash). The image-sourced profile is
-        # the only one carrying profile-source=image, so this uniquely
-        # identifies the discovered source profile.
         - assert:
-            timeout: 180s
+            timeout: 60s
             resource:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfile
               metadata:
+                name: profileset-no-recopy-source
                 annotations:
-                  aim.eai.amd.com/profile-source: image
                   aim.eai.amd.com/profile-copyable: "true"
               spec:
                 aimId: HuggingFaceTB/SmolLM2-135M
@@ -83,7 +78,7 @@ spec:
         - apply:
             file: second-profileset.yaml
 
-    - name: Assert the second set also copies exactly one profile
+    - name: Assert both sets converge at two profiles
       try:
         - assert:
             timeout: 60s
@@ -95,12 +90,20 @@ spec:
               status:
                 status: Ready
                 managedProfiles:
-                  total: 1
-                  ready: 1
-        # Pin to the second set via profile-set-name. Combined with the per-set
-        # managedProfiles.total=1 assertion above, this proves the second set
-        # created its own single copy rather than re-copying the first set's
-        # derived profile (the behaviour under test).
+                  total: 2
+                  ready: 2
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileSet
+              metadata:
+                name: first-copy-profiles
+              status:
+                status: Ready
+                managedProfiles:
+                  total: 2
+                  ready: 2
         - assert:
             timeout: 60s
             resource:
@@ -110,9 +113,29 @@ spec:
                 annotations:
                   aim.eai.amd.com/profile-source: copy
                   aim.eai.amd.com/profile-set-name: second-copy-profiles
+                  aim.eai.amd.com/profile-copyable: "true"
               spec:
                 aimId: HuggingFaceTB/SmolLM2-135M
                 modelId: HuggingFaceTB/SmolLM2-135M
                 profileId: cpu-bf16-latency
               status:
                 status: Ready
+
+    - name: Assert both totals remain bounded
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              set -eu
+              sleep 10
+
+              for name in first-copy-profiles second-copy-profiles; do
+                total=$(kubectl get aimprofileset -n "$NAMESPACE" "$name" \
+                  -o jsonpath='{.status.managedProfiles.total}')
+                ready=$(kubectl get aimprofileset -n "$NAMESPACE" "$name" \
+                  -o jsonpath='{.status.managedProfiles.ready}')
+                if [ "$total" != "2" ] || [ "$ready" != "2" ]; then
+                  echo "ERROR: $name did not remain bounded at 2 ready profiles: total=$total ready=$ready"
+                  exit 1
+                fi
+              done

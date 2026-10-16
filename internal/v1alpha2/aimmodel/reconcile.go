@@ -33,6 +33,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -68,6 +69,8 @@ const (
 	componentNodeInventory = "NodeInventory"
 	componentProfiles      = "ManagedProfiles"
 	componentProfileSet    = "ProfileSet"
+
+	profileSetDerivationConditionType = "DerivationReady"
 )
 
 func AnnotationModelName() string { return annotationModelName }
@@ -132,6 +135,8 @@ type ModelObservation struct {
 	ExistingDesiredCount            int32
 	ProfileSetCurrent               bool
 	ProfileSetStatus                constants.AIMStatus
+	ProfileSetReason                string
+	ProfileSetMessage               string
 	DesiredProfiles                 []desiredProfile
 	ProfileGeneration               *aimv1alpha1.AIMModelProfileGenerationStatus
 	ProfileGenerationFailureMessage string
@@ -398,10 +403,13 @@ func (r *ModelReconciler) ComposeState(
 			obs.ProfileSetRef = &aimv1alpha1.ProfileSetReference{Name: childName, Namespace: fetch.model.Namespace}
 			obs.DesiredProfileSet = buildDesiredProfileSet(fetch.model, obs.DiscoveryCacheRef, childName)
 		}
-		obs.ManagedProfiles,
-			obs.ExistingDesiredCount,
-			obs.ProfileSetCurrent,
-			obs.ProfileSetStatus = observedNamespaceProfileSet(fetch.childProfileSet, obs.DesiredProfileSet, fetch.model)
+		child := observedNamespaceProfileSet(fetch.childProfileSet, obs.DesiredProfileSet, fetch.model)
+		obs.ManagedProfiles = child.managedProfiles
+		obs.ExistingDesiredCount = child.existingDesiredCount
+		obs.ProfileSetCurrent = child.current
+		obs.ProfileSetStatus = child.status
+		obs.ProfileSetReason = child.reason
+		obs.ProfileSetMessage = child.message
 	} else if fetch.existingProfiles.OK() {
 		obs.ManagedProfiles, obs.ExistingDesiredCount = summarizeManagedProfiles(obs.DesiredProfiles, fetch.existingProfiles.Value)
 	}
@@ -604,38 +612,48 @@ func profileInventoryReadError(
 	return nil
 }
 
+type observedProfileSetState struct {
+	managedProfiles      aimv1alpha1.ManagedProfileCounts
+	existingDesiredCount int32
+	current              bool
+	status               constants.AIMStatus
+	reason               string
+	message              string
+}
+
 func observedProfileSet(
 	profileSet client.Object,
 	status aimv1alpha1.AIMProfileSetStatus,
 	matchesDesired bool,
-) (
-	aimv1alpha1.ManagedProfileCounts,
-	int32,
-	bool,
-	constants.AIMStatus,
-) {
+) observedProfileSetState {
 	if profileSet == nil {
-		return aimv1alpha1.ManagedProfileCounts{}, 0, false, ""
+		return observedProfileSetState{}
 	}
 	current := matchesDesired && profileSetStatusCurrent(profileSet, status)
 	if !current {
-		return aimv1alpha1.ManagedProfileCounts{}, 1, false, status.Status
+		return observedProfileSetState{existingDesiredCount: 1, status: status.Status}
 	}
-	return status.ManagedProfiles, 1, true, status.Status
+	result := observedProfileSetState{
+		managedProfiles:      status.ManagedProfiles,
+		existingDesiredCount: 1,
+		current:              true,
+		status:               status.Status,
+	}
+	condition := meta.FindStatusCondition(status.Conditions, profileSetDerivationConditionType)
+	if condition != nil {
+		result.reason = condition.Reason
+		result.message = condition.Message
+	}
+	return result
 }
 
 func observedNamespaceProfileSet(
 	result controllerutils.FetchResult[*aimv1alpha2.AIMProfileSet],
 	desired *aimv1alpha2.AIMProfileSet,
 	model *aimv1alpha2.AIMModel,
-) (
-	aimv1alpha1.ManagedProfileCounts,
-	int32,
-	bool,
-	constants.AIMStatus,
-) {
+) observedProfileSetState {
 	if !result.OK() || result.Value == nil {
-		return aimv1alpha1.ManagedProfileCounts{}, 0, false, ""
+		return observedProfileSetState{}
 	}
 	matchesDesired := desired != nil &&
 		metav1.IsControlledBy(result.Value, model) &&
@@ -647,14 +665,9 @@ func observedClusterProfileSet(
 	result controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfileSet],
 	desired *aimv1alpha2.AIMClusterProfileSet,
 	model *aimv1alpha2.AIMClusterModel,
-) (
-	aimv1alpha1.ManagedProfileCounts,
-	int32,
-	bool,
-	constants.AIMStatus,
-) {
+) observedProfileSetState {
 	if !result.OK() || result.Value == nil {
-		return aimv1alpha1.ManagedProfileCounts{}, 0, false, ""
+		return observedProfileSetState{}
 	}
 	matchesDesired := desired != nil &&
 		metav1.IsControlledBy(result.Value, model) &&
@@ -704,10 +717,13 @@ func profilePruneSafe(
 		managedProfiles.Ready == managedProfiles.Total
 }
 
-func classifyProfileSetTerminalStatus(status constants.AIMStatus, total int32) (reason, message string, terminal bool) {
+func classifyProfileSetTerminalStatus(status constants.AIMStatus, total int32, childReason, childMessage string) (reason, message string, terminal bool) {
 	switch status {
 	case constants.AIMStatusNotAvailable:
 		if total == 0 {
+			if childReason == "NoEligibleProfiles" {
+				return childReason, childMessage, true
+			}
 			return "NoMatchingProfiles", "No source profiles match the model's profile selection", true
 		}
 		return "ManagedProfilesNotAvailable", "No ready derived profiles available for this model", true
@@ -829,7 +845,7 @@ func buildModelComponentHealth(obs ModelObservation) []controllerutils.Component
 			})
 			return health
 		}
-		if reason, message, terminal := classifyProfileSetTerminalStatus(obs.ProfileSetStatus, obs.ManagedProfiles.Total); terminal {
+		if reason, message, terminal := classifyProfileSetTerminalStatus(obs.ProfileSetStatus, obs.ManagedProfiles.Total, obs.ProfileSetReason, obs.ProfileSetMessage); terminal {
 			health = append(health, controllerutils.ComponentHealth{
 				Component: componentProfileSet,
 				State:     obs.ProfileSetStatus,

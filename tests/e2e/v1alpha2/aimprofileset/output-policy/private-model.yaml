@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: output-policy-private-model
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        aimId: output-policy/private
+        modelId: output-policy/private
+        profileId: cpu-default
+    versionPolicy: all
+    overrides:
+      modelSources:
+        - modelId: output-policy/private-finetune
+          sourceUri: s3://models/output-policy-private-finetune

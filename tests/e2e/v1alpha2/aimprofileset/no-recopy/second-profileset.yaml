@@ -8,3 +8,5 @@ spec:
     modelId: HuggingFaceTB/SmolLM2-135M
     profileId: cpu-bf16-latency
   versionPolicy: all
+  outputPolicy:
+    copyable: true

@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -212,13 +213,14 @@ func listSourceModels(ctx context.Context, c client.Client, namespace string, cl
 
 func liveSourceCandidate(obj client.Object, spec aimv1alpha2.AIMProfileSpecCommon, status aimv1alpha2.AIMProfileStatus, kind string) profileSetCandidate {
 	group := fmt.Sprintf("%s/%s/%s/%s", kind, obj.GetNamespace(), obj.GetName(), obj.GetUID())
+	annotations := obj.GetAnnotations()
 	candidate := profileSetCandidate{
 		ProfileCopyCandidate: aimprofile.ProfileCopyCandidate{
 			Name: obj.GetName(), SourceID: group, SourceGroup: group, Spec: spec, Status: status,
 			BaseImage:           aimprofile.BaseImageFromProfile(obj, status.BaseImage),
-			LegacyCatalogNaming: obj.GetAnnotations()[aimprofile.AnnotationLegacyCatalogNaming] == legacyCatalogNamingValue,
+			LegacyCatalogNaming: annotations[aimprofile.AnnotationLegacyCatalogNaming] == legacyCatalogNamingValue,
 		},
-		annotations: obj.GetAnnotations(), labels: obj.GetLabels(), sourceKind: kind,
+		annotations: annotations, labels: obj.GetLabels(), sourceKind: kind,
 	}
 	if owner := metav1.GetControllerOf(obj); owner != nil {
 		switch owner.Kind {
@@ -228,7 +230,44 @@ func liveSourceCandidate(obj client.Object, spec aimv1alpha2.AIMProfileSpecCommo
 			candidate.profileSetOwnerUID = string(owner.UID)
 		}
 	}
+	candidate.ProfileSetUIDs = parseProfileSetLineage(annotations[annotationProfileSetLineage])
+	if len(candidate.ProfileSetUIDs) == 0 {
+		ownerUID := annotations[annotationProfileSetUID]
+		if ownerUID == "" {
+			ownerUID = candidate.profileSetOwnerUID
+		}
+		if ownerUID != "" {
+			candidate.ProfileSetUIDs = []string{ownerUID}
+		}
+	}
 	return candidate
+}
+
+func parseProfileSetLineage(value string) []string {
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	lineage := make([]string, 0, len(parts))
+	seen := make(map[string]bool, len(parts))
+	for _, part := range parts {
+		uid := strings.TrimSpace(part)
+		if uid == "" || seen[uid] {
+			continue
+		}
+		seen[uid] = true
+		lineage = append(lineage, uid)
+	}
+	return lineage
+}
+
+func containsProfileSetUID(lineage []string, uid string) bool {
+	for _, ancestor := range lineage {
+		if ancestor == uid {
+			return true
+		}
+	}
+	return false
 }
 
 func listLiveSources(ctx context.Context, c client.Client, namespace string, cluster bool) ([]profileSetCandidate, error) {
@@ -255,23 +294,34 @@ func listLiveSources(ctx context.Context, c client.Client, namespace string, clu
 	return live, nil
 }
 
+type candidatePools struct {
+	eligible           []profileSetCandidate
+	excludedByCopyable []profileSetCandidate
+}
+
 // loadDefaultScope reads informer-backed inventories once per scope. Unsupported
 // raw definitions never create API resources; they participate only in selection.
 func loadDefaultScope(ctx context.Context, c client.Client, namespace string, cluster bool, spec aimv1alpha1.AIMProfileSetSpec, selfUID string) ([]profileSetCandidate, error) {
+	pools, err := loadDefaultScopePools(ctx, c, namespace, cluster, spec, selfUID)
+	return pools.eligible, err
+}
+
+func loadDefaultScopePools(ctx context.Context, c client.Client, namespace string, cluster bool, spec aimv1alpha1.AIMProfileSetSpec, selfUID string) (candidatePools, error) {
 	failures := &sourceErrors{}
 	provenance, _, err := aimprofile.ProvenanceLabelSelector(spec.Selector)
 	if err != nil {
-		return nil, err
+		return candidatePools{}, err
 	}
 	live, err := listLiveSources(ctx, c, namespace, cluster)
 	if err != nil {
-		return nil, err
+		return candidatePools{}, err
 	}
 	models, modelErr := listSourceModels(ctx, c, namespace, cluster, spec.Selector)
 	if modelErr != nil {
 		failures.add("model inventory", modelErr)
 	}
 	byID := make(map[string]profileSetCandidate)
+	excludedByID := make(map[string]profileSetCandidate)
 	// Associate both current and old materialized names with the model whose
 	// definitions replace them. Do not consume stale raw profiles from an
 	// unreadable model catalog.
@@ -302,7 +352,10 @@ func loadDefaultScope(ctx context.Context, c client.Client, namespace string, cl
 		if id := liveNames[candidate.Name]; id != "" &&
 			(modelUIDs[candidate.modelOwnerUID] || modelUIDs[annotations[aimmodel.AnnotationModelUID()]]) {
 			if _, explicit := annotations[aimprofile.AnnotationProfileCopyable]; explicit && !aimprofile.IsProfileCopyable(annotations) {
-				delete(byID, id)
+				if definition, ok := byID[id]; ok {
+					excludedByID[id] = definition
+					delete(byID, id)
+				}
 			}
 			continue
 		}
@@ -312,21 +365,35 @@ func loadDefaultScope(ctx context.Context, c client.Client, namespace string, cl
 		if selfUID != "" && annotations[annotationProfileSetUID] == selfUID {
 			continue
 		}
-		if !aimprofile.IsProfileCopyable(annotations) || !provenance.Matches(labels.Set(candidate.labels)) {
+		if selfUID != "" && containsProfileSetUID(candidate.ProfileSetUIDs, selfUID) {
 			continue
 		}
-		byID[candidate.SourceID] = candidate
+		if !provenance.Matches(labels.Set(candidate.labels)) {
+			continue
+		}
+		if aimprofile.IsProfileCopyable(annotations) {
+			byID[candidate.SourceID] = candidate
+			delete(excludedByID, candidate.SourceID)
+		} else {
+			excludedByID[candidate.SourceID] = candidate
+		}
 	}
-	keys := make([]string, 0, len(byID))
-	for id := range byID {
-		keys = append(keys, id)
+	sorted := func(candidates map[string]profileSetCandidate) []profileSetCandidate {
+		keys := make([]string, 0, len(candidates))
+		for id := range candidates {
+			keys = append(keys, id)
+		}
+		sort.Strings(keys)
+		out := make([]profileSetCandidate, 0, len(keys))
+		for _, id := range keys {
+			out = append(out, candidates[id])
+		}
+		return out
 	}
-	sort.Strings(keys)
-	out := make([]profileSetCandidate, 0, len(keys))
-	for _, id := range keys {
-		out = append(out, byID[id])
-	}
-	return out, failures.err()
+	return candidatePools{
+		eligible:           sorted(byID),
+		excludedByCopyable: sorted(excludedByID),
+	}, failures.err()
 }
 
 // Explicit catalogs retain their raw pre-catalog-selection representation and
