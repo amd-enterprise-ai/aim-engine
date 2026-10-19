@@ -8,13 +8,11 @@ AIM Engine has two cooperating flows that meet at the `AIMProfile`: **onboarding
 
 ### Onboarding: from models to profiles
 
-Official models (via image discovery), generated models (via RuntimeConfig
-fallbacks), profile sets (via derivation), and hand-authored profiles all
-converge on a deployable `AIMProfile`.
+Official models (via image discovery), generated models (via RuntimeConfig fallbacks), profile sets (via derivation), and hand-authored profiles all converge on a deployable `AIMProfile`.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/model-onboarding-dark.svg">
-  <img alt="Model onboarding flow: AIMClusterModelSource discovers images or declares model IDs; the Model controller runs image discovery, generated-profile resolution through RuntimeConfig fallbacks, or profile derivation; profile sets and hand-authored profiles also resolve to deployable AIMProfiles." src="../assets/diagrams/model-onboarding.svg">
+  <img alt="Model onboarding flow: image discovery publishes complete definitions; separate profile sets select across those definitions and copyable profiles. Supported discoveries, generated profiles, derived outputs, and hand-authored profiles supply AIMServices." src="../assets/diagrams/model-onboarding.svg">
 </picture>
 
 ### Serving: from profile to endpoint
@@ -35,7 +33,7 @@ v1alpha2 is the current API. v1alpha1 resources remain supported during the depr
 | `AIMService` | Namespace | Deploys an inference endpoint by resolving a profile and creating a KServe InferenceService. |
 | `AIMModel` / `AIMClusterModel` | Namespace / Cluster | Onboards a model — four flows (official, generated, fine-tuned, custom). Produces profiles. |
 | `AIMProfile` / `AIMClusterProfile` | Namespace / Cluster | Self-contained runtime configuration (image, accelerator, engine args, model sources). The unit a service resolves to. |
-| `AIMProfileSet` / `AIMClusterProfileSet` | Namespace / Cluster | Derives profiles by selector + overrides. Usually synthesised by `AIMModel.spec.profiles`, also usable standalone. |
+| `AIMProfileSet` / `AIMClusterProfileSet` | Namespace / Cluster | Selects across model definitions and copyable profile resources, applies overrides, and materialises derived profiles. Also synthesised by `AIMModel.spec.profiles`. |
 | `AIMProfileCache` | Namespace | Pre-warms a profile's `modelSources` to a PVC for fast service start. |
 | `AIMArtifact` | Namespace | Manages a single model artifact download to a PVC. |
 | `AIMClusterModelSource` | Cluster | Auto-discovers AIM images from a registry (`spec.filters`/`spec.images`) or materializes declared model IDs (`spec.models`). Declared models are created as v1alpha2 `AIMClusterModel`, since `spec.modelId` is a v1alpha2-only field; discovered images are created as v1alpha1. Both are the same stored object — v1alpha2 is the storage version. |
@@ -47,13 +45,14 @@ Every `AIMModel` resolves to one of four flows, selected by which spec field is 
 
 | Flow | Spec | Source of profiles |
 |---|---|---|
-| **Official** | `spec.image` (AIM image) | Image discovery — profile YAMLs inside the container |
+| **Image-backed** | `spec.image` | Image discovery and hardware-supported profile materialisation |
 | **Generated** | `spec.modelId` | Hardware-matched RuntimeConfig fallbacks |
 | **Fine-tuned** | `spec.profiles.derivedFrom` (selecting deployable profiles) | A previously-applied official AIMModel |
 | **Custom** | `spec.profiles.derivedFrom` (selecting base-image base profiles) | A previously-applied base-image AIMModel |
 
-CRD validation enforces exactly one of `spec.image`, `spec.modelId`, or
-`spec.profiles`.
+An image-backed model accepts `profiles.overrides` on its own or with `profiles.derivedFrom.selector` to narrow the image's definitions. Without `image`, `profiles` requires `derivedFrom` and selects external sources. `modelId` is exclusive with `image` and `profiles`.
+
+Image discovery retains all profile definitions for derivation. Ordinary image onboarding materialises hardware-supported entries. Separate profile sets and derived models select across published definitions and existing copyable profiles with the same filters, including when the source hardware is absent. Services resolve actual profile resources.
 
 ## Service resolution
 

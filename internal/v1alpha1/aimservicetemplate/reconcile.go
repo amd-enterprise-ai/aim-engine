@@ -836,6 +836,8 @@ func decorateTemplateStatusCommon(
 	needsIdentityRediscovery bool,
 	identityCheckHash string,
 ) {
+	controllerutils.SetTemplateMigrationRequired(cm, true)
+
 	// Handle inline model sources - copy from spec to status
 	// This takes precedence over discovery results
 	if len(spec.ModelSources) > 0 {

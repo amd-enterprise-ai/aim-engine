@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
@@ -519,6 +520,7 @@ func NewModelSourceWithoutSize(uri string) aimv1alpha1.AIMModelSource {
 func newFakeClient(objs ...client.Object) client.Client {
 	scheme := runtime.NewScheme()
 	_ = aimv1alpha1.AddToScheme(scheme)
+	_ = aimv1alpha2.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
 	return fake.NewClientBuilder().

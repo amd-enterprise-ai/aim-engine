@@ -37,6 +37,32 @@ import (
 
 const testVariant = "usp4"
 
+func TestRuntimeYAMLHardwareOverridesRespectSourcePresence(t *testing.T) {
+	contract := sourceContract(t, "  accelerator_vendor: amd\n  accelerator_partitioning_mode: unpartitioned\n")
+	spec := sampleSpec()
+	spec.AcceleratorVendor = aimv1alpha1.AcceleratorVendorNVIDIA
+	spec.AcceleratorPartitioningMode = "CPX-NPS4"
+	raw, _, err := AssembleProfileYAMLForContract(spec, contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	metadata := doc["metadata"].(map[string]any)
+	if metadata["accelerator_vendor"] != "nvidia" || metadata["accelerator_partitioning_mode"] != "CPX-NPS4" {
+		t.Fatalf("source extension values escaped overrides: %v", metadata)
+	}
+	raw, _, err = AssembleProfileYAMLForContract(spec, profileyaml.DefaultContract())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "accelerator_vendor") || strings.Contains(string(raw), "accelerator_partitioning_mode") {
+		t.Fatal("renderer added fields absent from the source schema")
+	}
+}
+
 func sampleSpec() *aimv1alpha2.AIMProfileSpecCommon {
 	return &aimv1alpha2.AIMProfileSpecCommon{
 		AimId:            "qwen/qwen3-32b",

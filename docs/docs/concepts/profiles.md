@@ -17,18 +17,25 @@ Profiles are part of `aim.eai.amd.com/v1alpha2`. They replace v1alpha1 [Service 
 :::
 ## Where profiles come from
 
-Most profiles aren't hand-authored. They're produced by model discovery,
-model-ID profile generation, or profile derivation:
+Most profiles aren't hand-authored. They're produced by model discovery, model-ID profile generation, or profile derivation:
 
 | Source | Profile origin | Typical labels |
 |---|---|---|
 | Image discovery on an official AIM image | `origin: discovered`, `role: deployable` | `source-model=<official-model>` |
 | Image discovery on a base AIM image | `origin: discovered`, `role: base` | `source-model=<base-model>` |
 | `AIMModel.spec.modelId` plus a RuntimeConfig fallback | `origin: generated`, `role: deployable` | `source-model=<generated-model>` |
-| `AIMProfileSet` derivation (fine-tune or custom-model) | `origin: derived`, `role: deployable` | `source-model=<derivation-model>` |
+| `AIMProfileSet` derivation | `origin: derived`, `role: deployable` | `source-model=<owning-model>` for a model-owned set |
 | Hand-authored by a user | `origin: user-authored`, `role: deployable` | (none of the `source-model*` labels) |
 
 See [AIM Models](models.md) for the four model flows that produce these profiles.
+
+### Definitions and materialised profiles
+
+Image-backed models publish complete profile definitions for derivation. Hardware-supported definitions become `AIMProfile` resources, while unsupported definitions remain in the model's catalog. Separate profile sets or derived models select definitions and apply overrides.
+
+[AIM Profile Sets](profilesets.md#source-selection) select across these definitions and existing copyable profiles. The catalog and resource representations of a model definition count as one source. A hand-authored profile participates when annotated `aim.eai.amd.com/profile-copyable: "true"`; generated and standalone derived resources use the same opt-in rule.
+
+`AIMService` resolves actual profile resources. Logical catalog definitions supply derivation inputs, and resource listings such as `kubectl get aimprofile` show only materialised profiles.
 
 ## Cluster vs namespace scope
 
@@ -63,7 +70,7 @@ Two provenance markers are **annotations**, not labels — nothing selects on th
 | Annotation | Values |
 |---|---|
 | `aim.eai.amd.com/profile-source` | `image` (discovery), `copy` (AIMProfileSet derivation), `generated` (modelId + RuntimeConfig fallback) |
-| `aim.eai.amd.com/profile-copyable` | `"true"` (eligible to be a derivation source) |
+| `aim.eai.amd.com/profile-copyable` | `"true"` makes a profile resource eligible for derivation; an explicit `"false"` on a model profile also excludes its corresponding logical definition |
 
 The matching `status` fields mirror the labels for kubectl-friendly access:
 
@@ -195,10 +202,7 @@ spec:
 | `imagePullSecrets` | Secrets for pulling the deployment image. |
 | `serviceAccountName` | Workload service account. |
 
-For engine-specific behavior—including shared-memory sizing and vLLM-Omni USP
-variants—see [Inference Engines](inference-engines.md). To require a specific
-variant, select the profile by `spec.profile.name`; automatic selection does not
-filter or rank on `variant`.
+For engine-specific behavior—including shared-memory sizing and vLLM-Omni USP variants—see [Inference Engines](inference-engines.md). To require a specific variant, select the profile by `spec.profile.name`; automatic selection does not filter or rank on `variant`.
 
 Namespace-scoped `AIMProfile` adds one more field:
 
@@ -250,7 +254,7 @@ spec:
   acceleratorModel: MI300X
 ```
 
-You don't normally author these profiles by hand — the `AIMModel` discovers the AIM image and publishes one profile per supported (hardware, precision, metric) combination, each stamped with the `spec.acceleratorModel` it was built for. See [Where profiles come from](#where-profiles-come-from). To target specific hardware you therefore pick among the *already-discovered* profiles rather than inventing a new accelerator value.
+The `AIMModel` discovers the AIM image and retains every profile definition. It materialises hardware-supported entries with their declared `spec.acceleratorModel`. To map definitions to another accelerator or partitioning mode, use [profile sets](profilesets.md#examples) or a separate derived model, then validate the workload on the target hardware.
 
 An `AIMService` selects a profile with that value through `spec.profile.selector.acceleratorModel` — the selector matches against the profiles' `spec.acceleratorModel` and resolves the service to a profile carrying it:
 
@@ -297,15 +301,9 @@ The profile itself does not need `spec.caching`. An `AIMService` selecting the p
 
 The vendor resolver is also the extension point for partition-specific device-plugin resources. In the current implementation, AMD partition modes still derive `amd.com/gpu`; a later resource-naming strategy can map a concrete mode such as `CPX-NPS4` to `amd.com/cpx_nps4` without changing profile selection or runtime projection.
 
-For recognized AMD compute partition modes, generated host CPU and memory
-defaults scale with slice density: SPX=1, DPX=2, QPX=4, and CPX=8 slices per
-physical GPU. For example, eight `CPX-NPS4` accelerator units receive the same
-aggregate host defaults as one unpartitioned GPU. The geometry-agnostic
-`partitioned` value and unknown schemes do not receive host defaults; specify
-`resources` explicitly for those profiles.
+For recognized AMD compute partition modes, generated host CPU and memory defaults scale with slice density: SPX=1, DPX=2, QPX=4, and CPX=8 slices per physical GPU. For example, eight `CPX-NPS4` accelerator units receive the same aggregate host defaults as one unpartitioned GPU. The geometry-agnostic `partitioned` value and unknown schemes do not receive host defaults; specify `resources` explicitly for those profiles.
 
-Until partition-specific resource mapping is enabled, a cluster that advertises
-such a resource can override the derived device resource explicitly:
+Until partition-specific resource mapping is enabled, a cluster that advertises such a resource can override the derived device resource explicitly:
 
 ```yaml
 spec:
@@ -376,12 +374,7 @@ When a service uses `spec.model.name` resolution (which produces multiple candid
 
 ## Optimization tier and the `minimumType` floor
 
-A profile's `spec.type` (`optimized > general > preview > unoptimized`) is both
-a ranking signal and a selection gate. Automatic selection
-(`spec.model.name` / selector resolution) first considers profiles whose `type`
-is at or above the selector's `spec.profile.selector.minimumType` floor. For
-AIMServices that floor **defaults to `optimized`**, so lower-tier profiles are
-excluded from the optimized pass unless the service opts in:
+A profile's `spec.type` (`optimized > general > preview > unoptimized`) is both a ranking signal and a selection gate. Automatic selection (`spec.model.name` / selector resolution) first considers profiles whose `type` is at or above the selector's `spec.profile.selector.minimumType` floor. For AIMServices that floor **defaults to `optimized`**, so lower-tier profiles are excluded from the optimized pass unless the service opts in:
 
 ```yaml
 # AIMService — accept lower tiers (e.g. an EPYC unoptimized profile)
@@ -395,23 +388,12 @@ spec:
 
 Any profile — including lower tiers — also remains addressable by explicit `spec.profile.name`, which bypasses the floor entirely.
 
-`spec.autoSelectionPolicy: any` is a platform/profile-publisher opt-in for
-automatic selection regardless of optimization tier. If the service did not
-explicitly set `minimumType` and no optimized profile matched in either scope,
-the resolver performs a second pass containing only `any` profiles. This allows
-a generic runtime such as the chart-provided NVIDIA vLLM profile to remain
-truthfully `unoptimized` without requiring every service to lower its floor.
-The default policy is `optimized`, so existing AMD preview and unoptimized
-profiles remain excluded.
+`spec.autoSelectionPolicy: any` is a platform/profile-publisher opt-in for automatic selection regardless of optimization tier. If the service did not explicitly set `minimumType` and no optimized profile matched in either scope, the resolver performs a second pass containing only `any` profiles. This allows a generic runtime such as the chart-provided NVIDIA vLLM profile to remain truthfully `unoptimized` without requiring every service to lower its floor. The default policy is `optimized`, so existing AMD preview and unoptimized profiles remain excluded.
 
 :::{warning}
 `manualSelectionOnly` is deprecated
 
-`spec.manualSelectionOnly` is no longer honored. Use `type` + `minimumType` for
-service-authored optimization-tier consent and `autoSelectionPolicy` for
-platform-authored automatic eligibility. The field is still accepted for
-backward compatibility but has no effect and will be removed in a future API
-version.
+`spec.manualSelectionOnly` is no longer honored. Use `type` + `minimumType` for service-authored optimization-tier consent and `autoSelectionPolicy` for platform-authored automatic eligibility. The field is still accepted for backward compatibility but has no effect and will be removed in a future API version.
 :::
 
 ## Examples

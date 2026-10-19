@@ -16,17 +16,16 @@ v1alpha1 `AIMModel` had a wide spec that supported several overlapping flows:
 - **Profile-copy** — `spec.profileCopy` for replicating a published profile onto custom weights.
 - **Defaults** — `spec.defaultServiceTemplate`, `spec.runtimeConfigName`, `spec.env` to influence downstream resources.
 
-v1alpha2 replaces these with four flows, each driven by exactly one of
-`spec.image`, `spec.modelId`, or `spec.profiles`.
+v1alpha2 supports image discovery through `spec.image`, external derivation through `spec.profiles.derivedFrom`, and generated onboarding through `spec.modelId`. These flows are mutually exclusive.
 
 ## v1alpha1 spec fields
 
 | Field | Purpose | v1alpha2 equivalent |
 |---|---|---|
 | `spec.image` | AIM container image to discover | `spec.image` (unchanged for official flow) |
-| `spec.aimId` | Model architecture identifier | Resolved from image discovery, or supplied by `profiles.derivedFrom.overrides.aimId` |
+| `spec.aimId` | Model architecture identifier | Resolved from image discovery, supplied by `profiles.overrides.aimId`, or set with `spec.modelId` for generated onboarding |
 | `spec.modelSources` | Static model artifact sources | Lives on `AIMProfile.spec.modelSources` |
-| `spec.custom.image` | Base image for a custom model | `spec.image` on a separate base-image AIMModel |
+| `spec.custom.image` | Base image for a custom model | `spec.image` on a shared base-image AIMModel |
 | `spec.custom.engineArgs` | Engine arguments for the custom model | `spec.profiles.overrides.engineArgs` (or pre-baked into base-image profiles) |
 | `spec.customTemplates` | Inline runtime profiles for a custom model | `AIMProfileSet` derivation (or `AIMModel.spec.profiles`) |
 | `spec.profileCopy.selector` | Select source profiles to copy | `spec.profiles.derivedFrom.selector` |
@@ -90,11 +89,12 @@ spec:
     derivedFrom:
       selector:
         role: base
-        aimId: acme/custom-transformer
         modelRef:
           name: aim-base-vllm
     versionPolicy: all
     overrides:
+      aimId: acme/custom-transformer
+      modelId: acme/custom-transformer
       modelSources:
         - modelId: acme/custom-transformer
           sourceUri: s3://acme-models/custom-transformer
@@ -148,7 +148,7 @@ The selector and overrides shape is unchanged — only the wrapping field name. 
 
 v1alpha2 explicitly forbids the legacy fields. Admission rejects:
 
-- `spec.aimId` (was top-level on v1alpha1 — now resolved via discovery or `derivedFrom.overrides.aimId`).
+- `spec.aimId` with `spec.profiles` (use `profiles.overrides.aimId`; top-level `aimId` is valid with generated `spec.modelId` onboarding).
 - `spec.modelSources` (now on `AIMProfile.spec.modelSources`).
 - `spec.custom` and `spec.customTemplates` (replaced by base-image + derivation).
 - `spec.profileCopy` (replaced by `derivedFrom`).
@@ -158,9 +158,7 @@ Each rejection produces a targeted error message naming the v1alpha2 equivalent.
 
 ## Coexistence
 
-Both API versions share a single controller and may be applied to the same cluster simultaneously. The dispatch table for AIMService spec shapes and the full migration-window mechanics live in [Admin → Upgrading → Migration window](../admin/upgrading.md#migration-window).
-
-For AIMModel specifically: v1alpha1 objects continue to produce `AIMServiceTemplate` resources via the OCI-discovery path; image-backed v1alpha2 objects produce `AIMProfile` resources via the v1alpha2 discovery Job. If you update an existing v1alpha1 AIMModel to use v1alpha2-only fields, the controller transitions to the v1alpha2 flow on the next reconcile. Existing template children continue to exist until you delete them.
+Both API versions share one v1alpha2-rooted controller and may be applied to the same cluster simultaneously. Output follows the retained spec shape, not the endpoint used to read or write the object: legacy inputs continue to produce `AIMServiceTemplate` resources, native inputs produce `AIMProfile` resources, and a grandfathered image-backed object may retain both outputs when both paths apply. See [Admin → Upgrading → Migration window](../admin/upgrading.md#migration-window) for readiness and ownership behavior. The bridge does not authorize automatic template cleanup.
 
 ## Related documentation
 

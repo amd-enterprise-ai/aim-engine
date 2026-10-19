@@ -519,6 +519,8 @@ func (r *TemplateCacheReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs TemplateCacheObservation,
 ) {
+	controllerutils.SetTemplateMigrationRequired(cm, true)
+
 	// Must run ahead of the early returns below: an artifact this cache advertised
 	// until now has to stop being advertised, PVC included, the moment it starts
 	// being deleted.

@@ -4,9 +4,10 @@ metadata:
   name: s3-tls
 spec:
   description: >
-    Verifies private CA bundles from ConfigMaps and Secrets, rejection of an
-    untrusted CA and hostname mismatch, and the explicit insecure diagnostic
-    escape hatch against a real HTTPS MinIO endpoint.
+    Verifies RuntimeConfig combined trust and S3-specific CA bundles from
+    ConfigMaps and Secrets, rejection of an untrusted CA and hostname mismatch,
+    and the explicit insecure diagnostic escape hatch against a cert-manager
+    issued HTTPS MinIO endpoint.
   steps:
   - name: Issue private CA and MinIO serving certificate
     try:
@@ -110,6 +111,46 @@ spec:
             status: Ready
             progress:
               percentage: 100
+
+  - name: Assert RuntimeConfig trust is projected without PEM environment transport
+    try:
+    - script:
+        timeout: 1m
+        env:
+        - name: NAMESPACE
+          value: ($namespace)
+        content: |
+          set -eu
+          job="$(kubectl get jobs -n "$NAMESPACE" \
+            -l aim.eai.amd.com/cache.name=tls-configmap,aim.eai.amd.com/component=download \
+            -o jsonpath='{.items[0].metadata.name}')"
+          test -n "$job"
+          pod="$(kubectl get job -n "$NAMESPACE" "$job" -o json)"
+
+          echo "$pod" | jq -e '
+            .spec.template.spec.initContainers[]
+            | select(.name == "aim-ca-bundle-init")
+            | .command == ["/combine-ca.sh"]
+              and (.args | length == 2)
+              and ((.env // []) | all(.name != "AIM_TRUST_BUNDLE_HASH"))
+          ' >/dev/null
+          echo "$pod" | jq -e '
+            .spec.template.spec.volumes[]
+            | select(.configMap.name == "s3-root-ca")
+            | .configMap.items == [{"key":"ca.crt","path":"ca.crt"}]
+          ' >/dev/null
+          echo "$pod" | jq -e '
+            .spec.template.spec.containers[]
+            | select(.name == "model-download")
+            | ([.env[] | select(
+                (.name == "SSL_CERT_FILE"
+                 or .name == "REQUESTS_CA_BUNDLE"
+                 or .name == "CURL_CA_BUNDLE"
+                 or .name == "AWS_CA_BUNDLE")
+                and .value == "/etc/aim/trust/ca-bundle.crt"
+              )] | length == 4)
+              and ([.env[] | select(.name == "AIM_CA_BUNDLE")] | length == 0)
+          ' >/dev/null
 
   - name: Assert insecure TLS emits an explicit warning
     try:

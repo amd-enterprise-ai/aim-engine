@@ -60,20 +60,22 @@ const (
 	// payload needs a referenced object rather than a larger annotation.
 	MaxContractAnnotationBytes = 64 * 1024
 
-	fieldEngine              = "engine"
-	fieldGPU                 = "gpu"
-	fieldGPUCount            = "gpu_count"
-	fieldAcceleratorModel    = "accelerator_model"
-	fieldAcceleratorType     = "accelerator_type"
-	fieldAcceleratorCount    = "accelerator_count"
-	fieldManualSelectionOnly = "manual_selection_only"
-	fieldMetric              = "metric"
-	fieldPrecision           = "precision"
-	fieldType                = "type"
-	fieldVariant             = "variant"
-	fieldFeatures            = "features"
-	fieldPrimary             = "primary"
-	fieldAutoSelectionPolicy = "auto_selection_policy"
+	fieldEngine                      = "engine"
+	fieldGPU                         = "gpu"
+	fieldGPUCount                    = "gpu_count"
+	fieldAcceleratorModel            = "accelerator_model"
+	fieldAcceleratorType             = "accelerator_type"
+	fieldAcceleratorCount            = "accelerator_count"
+	fieldAcceleratorVendor           = "accelerator_vendor"
+	fieldAcceleratorPartitioningMode = "accelerator_partitioning_mode"
+	fieldManualSelectionOnly         = "manual_selection_only"
+	fieldMetric                      = "metric"
+	fieldPrecision                   = "precision"
+	fieldType                        = "type"
+	fieldVariant                     = "variant"
+	fieldFeatures                    = "features"
+	fieldPrimary                     = "primary"
+	fieldAutoSelectionPolicy         = "auto_selection_policy"
 )
 
 var (
@@ -85,20 +87,22 @@ var (
 	}
 
 	v1OwnedMetadataFields = map[string]struct{}{
-		fieldEngine:              {},
-		fieldGPU:                 {},
-		fieldGPUCount:            {},
-		fieldAcceleratorModel:    {},
-		fieldAcceleratorType:     {},
-		fieldAcceleratorCount:    {},
-		fieldManualSelectionOnly: {},
-		fieldMetric:              {},
-		fieldPrecision:           {},
-		fieldType:                {},
-		fieldVariant:             {},
-		fieldFeatures:            {},
-		fieldPrimary:             {},
-		fieldAutoSelectionPolicy: {},
+		fieldEngine:                      {},
+		fieldGPU:                         {},
+		fieldGPUCount:                    {},
+		fieldAcceleratorModel:            {},
+		fieldAcceleratorType:             {},
+		fieldAcceleratorCount:            {},
+		fieldAcceleratorVendor:           {},
+		fieldAcceleratorPartitioningMode: {},
+		fieldManualSelectionOnly:         {},
+		fieldMetric:                      {},
+		fieldPrecision:                   {},
+		fieldType:                        {},
+		fieldVariant:                     {},
+		fieldFeatures:                    {},
+		fieldPrimary:                     {},
+		fieldAutoSelectionPolicy:         {},
 	}
 
 	v1OwnedTopLevelFields = map[string]struct{}{

@@ -34,6 +34,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 	v1alpha1utils "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/utils"
@@ -64,6 +65,7 @@ type ArtifactFetchResult struct {
 	artifact *aimv1alpha1.AIMArtifact
 
 	mergedRuntimeConfig controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
+	additionalCABundle  controllerutils.FetchResult[*corev1.ConfigMap]
 	cachePvc            controllerutils.FetchResult[*corev1.PersistentVolumeClaim]
 
 	// adapterPvc is the shared adapter disk PVC, fetched only for type=model
@@ -223,6 +225,16 @@ func (r *ArtifactReconciler) FetchRemoteState(
 			&rbacv1.RoleBinding{},
 		),
 	}
+	bundleReader := client.Reader(c)
+	if r.APIReader != nil {
+		bundleReader = r.APIReader
+	}
+	result.additionalCABundle = trust.FetchAdditionalCABundle(
+		ctx,
+		bundleReader,
+		mc.Namespace,
+		result.mergedRuntimeConfig.Value,
+	)
 
 	// Model artifacts that declare an adapter disk provision a second shared RWX PVC.
 	if mc.Spec.AdapterDisk != nil {
@@ -370,6 +382,25 @@ func (obs ArtifactObservation) GetComponentHealth(ctx context.Context, clientset
 
 	health := []controllerutils.ComponentHealth{
 		obs.mergedRuntimeConfig.ToUpstreamComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth),
+	}
+	if obs.mergedRuntimeConfig.Value != nil &&
+		obs.mergedRuntimeConfig.Value.AdditionalCABundleRef != nil {
+		health = append(health, obs.additionalCABundle.ToUpstreamComponentHealth(
+			"AdditionalCABundle",
+			func(bundle *corev1.ConfigMap) controllerutils.ComponentHealth {
+				if bundle == nil {
+					return controllerutils.ComponentHealth{
+						State:   constants.AIMStatusReady,
+						Reason:  "AdditionalCABundleSkipped",
+						Message: "Configured CA bundle was unavailable during reconciliation; using public roots only",
+					}
+				}
+				return controllerutils.ComponentHealth{
+					State:  constants.AIMStatusReady,
+					Reason: "AdditionalCABundleResolved",
+				}
+			},
+		))
 	}
 	if obs.transferConfigErr != nil {
 		health = append(health, controllerutils.ComponentHealth{
@@ -709,6 +740,7 @@ func (r *ArtifactReconciler) PlanResources(
 
 	// Use runtime config if available, otherwise use nil (functions should handle defaults)
 	runtimeConfig := obs.mergedRuntimeConfig.Value
+	includeAdditionalCABundle := obs.additionalCABundle.Value != nil
 
 	// Phase 0: Rolebinding creation - if not found
 	if obs.roleBinding.IsNotFound() {
@@ -719,7 +751,7 @@ func (r *ArtifactReconciler) PlanResources(
 	// Phase 1: Size discovery (when spec.size is empty)
 	if !obs.IsSizeKnown() {
 		if obs.checkSizeJob != nil && obs.checkSizeJob.IsNotFound() {
-			checkSizeJob := buildCheckSizeJob(mc, runtimeConfig)
+			checkSizeJob := buildCheckSizeJob(mc, runtimeConfig, includeAdditionalCABundle)
 			r.warnIfS3TLSVerificationDisabled(mc, runtimeConfig)
 			result.Apply(checkSizeJob)
 		}
@@ -736,7 +768,7 @@ func (r *ArtifactReconciler) PlanResources(
 	// Phase 3: Download job creation - size is known and PVC, rolebinding exists
 	if mc.Status.Status != constants.AIMStatusReady &&
 		obs.downloadJob != nil && obs.downloadJob.IsNotFound() && obs.roleBinding.OK() {
-		downloadJob := buildDownloadJob(mc, runtimeConfig, obs.GetEffectiveSize())
+		downloadJob := buildDownloadJob(mc, runtimeConfig, obs.GetEffectiveSize(), includeAdditionalCABundle)
 		r.warnIfS3TLSVerificationDisabled(mc, runtimeConfig)
 		result.Apply(downloadJob)
 	}

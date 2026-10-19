@@ -29,11 +29,7 @@ llama-3-8b-official     Ready    Image   meta-llama/Llama-3-8B-Instruct         
 aim-base-vllm           Ready    Image                                           0.11      8         8       8      1d
 ```
 
-`KIND` identifies the model onboarding flow: `Image`, `Generated`, `Derived`,
-or `Custom`. `VERSION` is the effective image tag and can be empty for flows
-without an image. `BASE > 0` identifies a base-image model (which also has
-`KIND=Image`). See [AIM Models](../concepts/models.md) for the model flows and
-status-field details.
+`KIND` identifies the model onboarding flow: `Image`, `Generated`, `Derived`, or `Custom`. `VERSION` is the effective image tag and can be empty for flows without an image. `BASE > 0` identifies a base-image model (which also has `KIND=Image`). See [AIM Models](../concepts/models.md) for the model flows and status-field details.
 
 ### View model details
 
@@ -83,8 +79,7 @@ spec:
 
 ### Generated flow
 
-Apply a canonical model ID when the platform provides a generic runtime for the
-cluster hardware:
+Apply a canonical model ID when the platform provides a generic runtime for the cluster hardware:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
@@ -96,9 +91,7 @@ spec:
   modelId: Qwen/Qwen3.5-0.8B
 ```
 
-By default, `aimId` is the same as `modelId`, the source URI is
-`hf://<modelId>`, and one accelerator is requested. Override those fields when
-the weights or hardware shape differ:
+By default, `aimId` is the same as `modelId`, the source URI is `hf://<modelId>`, and one accelerator is requested. Override those fields when the weights or hardware shape differ:
 
 ```yaml
 spec:
@@ -112,20 +105,13 @@ spec:
     count: 4
 ```
 
-The model becomes ready when a matching
-`AIMRuntimeConfig`/`AIMClusterRuntimeConfig` profile-generation fallback and
-compatible hardware are available. The default Helm installation includes a
-generic NVIDIA vLLM fallback; platform administrators can replace or extend it
-for their fleet.
+The model becomes ready when a matching `AIMRuntimeConfig`/`AIMClusterRuntimeConfig` profile-generation fallback and compatible hardware are available. The default Helm installation includes a generic NVIDIA vLLM fallback; platform administrators can replace or extend it for their fleet.
 
-See [AIM Models](../concepts/models.md#flow-2-generated-runtime-profile) for
-status and resolution details, and
-[Runtime Configuration](../concepts/runtime-config.md#model-profile-generation-fallbacks)
-for fallback configuration.
+See [AIM Models](../concepts/models.md#flow-2-generated-runtime-profile) for status and resolution details, and [Runtime Configuration](../concepts/runtime-config.md#model-profile-generation-fallbacks) for fallback configuration.
 
 ### Fine-tuned flow
 
-Derive deployable profiles from an `AIMModel` / `AIMClusterModel` that is already applied to the cluster and has produced deployable profiles (verify with `kubectl get aimmodel <name> -o jsonpath='{.status.managedProfiles.deployable}'`). The fine-tune resource selects those in-cluster profiles by `aimId` — it does not pull from a registry by itself.
+Derive deployable profiles from an image-backed `AIMModel` / `AIMClusterModel` with complete discovery. Verify its `DiscoveryReady` condition and `status.discoveredProfiles`. The fine-tune selects published definitions by `aimId`, including definitions without materialised profile resources.
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
@@ -184,6 +170,10 @@ spec:
 
 See [Custom Models](custom-models.md) for the full walkthrough.
 
+### Inline image overrides
+
+Use a separate profile set or derived model to select and transform an image model's catalog definitions. See [Deriving hardware variants](../concepts/models.md#deriving-hardware-variants) for GPU remapping and [profile sets](../concepts/profilesets.md#examples) for partitioning examples.
+
 ## Automatic discovery from a registry
 
 `AIMClusterModelSource` discovers official AIM images from a container registry and creates an `AIMClusterModel` for each match.
@@ -209,10 +199,7 @@ The discovered `AIMClusterModel` resources are then reconciled the same way as m
 :::{admonition} v1alpha1 source resource
 :class: note
 
-`AIMClusterModelSource` itself remains under `v1alpha1`. Registry-discovered
-images are also created through v1alpha1, while entries declared under
-`spec.models` are created through v1alpha2 because `spec.modelId` is
-v1alpha2-only. Both API versions address the same stored v1alpha2 object.
+`AIMClusterModelSource` itself remains under `v1alpha1`. Registry-discovered images are also created through v1alpha1, while entries declared under `spec.models` are created through v1alpha2 because `spec.modelId` is v1alpha2-only. Both API versions address the same stored v1alpha2 object.
 :::
 ### Selecting images
 
@@ -285,7 +272,7 @@ kubectl get aimmodel -A -o json | jq -r '
 '
 ```
 
-These are the models that produce base profiles for [custom-model derivation](custom-models.md).
+This query lists models with materialised base profiles. Models with zero supported base profiles still publish their discovered base definitions for [custom-model derivation](custom-models.md). Check their discovery status and select them with `role: base`.
 
 ## Next steps
 

@@ -43,7 +43,7 @@ spec:
               APIVersion defines the versioned schema of this representation of an object.
               Servers should convert recognized schemas to the latest internal value, and
               may reject unrecognized values.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+              More info: https://git.k8s.
             type: string
           kind:
             description: |-
@@ -51,18 +51,13 @@ spec:
               Servers may infer this from the endpoint the client submits requests to.
               Cannot be updated.
               In CamelCase.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+              More info: https://git.k8s.
             type: string
           metadata:
             type: object
           spec:
-            description: |-
-              AIMProfileSetSpec defines the desired state of AIMProfileSet and is also reused by AIMModel.profileCopy.
-
-              The selector-non-empty rule accepts every documented narrowing field
-              (including modelRef and origin) and lets sourceRef-only specs through:
-              when sourceRef is set, the discovery cache itself acts as the source
-              scope and a separate selector is not required.
+            description: AIMProfileSetSpec defines the desired state of AIMProfileSet
+              and is also reused by AIMModel.profileCopy.
             properties:
               image:
                 description: Image overrides the runtime image used by the derived
@@ -83,11 +78,23 @@ spec:
                         This field is effectively required, but due to backwards compatibility is
                         allowed to be empty. Instances of this type with an empty value here are
                         almost certainly wrong.
-                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        More info: https://kubernetes.
                       type: string
                   type: object
                   x-kubernetes-map-type: atomic
                 type: array
+              outputPolicy:
+                description: |-
+                  OutputPolicy controls whether profiles produced by this set may be used
+                  as sources for subsequent derivations.
+                properties:
+                  copyable:
+                    description: |-
+                      Copyable publishes derived profiles as eligible sources for subsequent
+                      profile derivations. It is disabled by default so each derivation boundary
+                      remains explicit.
+                    type: boolean
+                type: object
               overrides:
                 description: Overrides mutates the copied profile spec after selection
                   and version filtering.
@@ -101,15 +108,9 @@ spec:
                     type: string
                   acceleratorPartitioningMode:
                     description: |-
-                      AcceleratorPartitioningMode replaces the copied profile's
-                      acceleratorPartitioningMode. Complete replacement, not a merge; an empty
-                      override string leaves the source profile's mode untouched. Same reserved
-                      values as AIMProfileSpecCommon.AcceleratorPartitioningMode. Whenever this
-                      override is set (to any value, including "unpartitioned"), the CEL rule on the
-                      enclosing spec also requires AcceleratorCount to be set: partition mode
-                      changes the per-unit interpretation of acceleratorCount, and CEL cannot
-                      read the base profile to tell whether the meaning actually changed, so it
-                      conservatively requires the count be restated.
+                      AcceleratorPartitioningMode replaces the source partitioning mode.
+                      An empty override leaves the source mode unchanged. Uses the same values
+                      as AIMProfileSpecCommon.acceleratorPartitioningMode.
                     type: string
                   acceleratorVendor:
                     description: AcceleratorVendor replaces the copied profile's acceleratorVendor.
@@ -140,12 +141,7 @@ spec:
                             Variable references $(VAR_NAME) are expanded
                             using the previously defined environment variables in the container and
                             any service environment variables. If a variable cannot be resolved,
-                            the reference in the input string will be unchanged. Double $$ are reduced
-                            to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                            "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                            Escaped references will never be expanded, regardless of whether the variable
-                            exists or not.
-                            Defaults to "".
+                            the reference in the input string will be unchanged.
                           type: string
                         valueFrom:
                           description: Source for the environment variable's value.
@@ -164,7 +160,7 @@ spec:
                                     This field is effectively required, but due to backwards compatibility is
                                     allowed to be empty. Instances of this type with an empty value here are
                                     almost certainly wrong.
-                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    More info: https://kubernetes.
                                   type: string
                                 optional:
                                   description: Specify whether the ConfigMap or its
@@ -200,18 +196,12 @@ spec:
                                   description: |-
                                     The key within the env file. An invalid key will prevent the pod from starting.
                                     The keys defined within a source may consist of any printable ASCII characters except '='.
-                                    During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                                   type: string
                                 optional:
                                   default: false
                                   description: |-
                                     Specify whether the file or its key must be defined. If the file or key
                                     does not exist, then the env var is not published.
-                                    If optional is set to true and the specified key does not exist,
-                                    the environment variable will not be set in the Pod's containers.
-
-                                    If optional is set to false and the specified key does not exist,
-                                    an error will be returned during Pod creation.
                                   type: boolean
                                 path:
                                   description: |-
@@ -267,7 +257,7 @@ spec:
                                     This field is effectively required, but due to backwards compatibility is
                                     allowed to be empty. Instances of this type with an empty value here are
                                     almost certainly wrong.
-                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    More info: https://kubernetes.
                                   type: string
                                 optional:
                                   description: Specify whether the Secret or its key
@@ -307,10 +297,10 @@ spec:
                     x-kubernetes-list-type: set
                   image:
                     description: |-
-                      Image overrides the runtime container image used by the derived
-                      profiles. When empty the deployment image is rebased onto the source
-                      profile's base-image (status.baseImage) so private mirrors stay
-                      self-contained.
+                      Image overrides the runtime container image. With no explicit image
+                      override, replacing modelSources on a deployable source resolves its
+                      base runtime; hardware-only and environment-only overrides retain the
+                      source image.
                     type: string
                   modelId:
                     description: |-
@@ -349,12 +339,7 @@ spec:
                                   Variable references $(VAR_NAME) are expanded
                                   using the previously defined environment variables in the container and
                                   any service environment variables. If a variable cannot be resolved,
-                                  the reference in the input string will be unchanged. Double $$ are reduced
-                                  to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                                  "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                                  Escaped references will never be expanded, regardless of whether the variable
-                                  exists or not.
-                                  Defaults to "".
+                                  the reference in the input string will be unchanged.
                                 type: string
                               valueFrom:
                                 description: Source for the environment variable's
@@ -373,7 +358,7 @@ spec:
                                           This field is effectively required, but due to backwards compatibility is
                                           allowed to be empty. Instances of this type with an empty value here are
                                           almost certainly wrong.
-                                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                          More info: https://kubernetes.
                                         type: string
                                       optional:
                                         description: Specify whether the ConfigMap
@@ -409,18 +394,12 @@ spec:
                                         description: |-
                                           The key within the env file. An invalid key will prevent the pod from starting.
                                           The keys defined within a source may consist of any printable ASCII characters except '='.
-                                          During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                                         type: string
                                       optional:
                                         default: false
                                         description: |-
                                           Specify whether the file or its key must be defined. If the file or key
                                           does not exist, then the env var is not published.
-                                          If optional is set to true and the specified key does not exist,
-                                          the environment variable will not be set in the Pod's containers.
-
-                                          If optional is set to false and the specified key does not exist,
-                                          an error will be returned during Pod creation.
                                         type: boolean
                                       path:
                                         description: |-
@@ -476,7 +455,7 @@ spec:
                                           This field is effectively required, but due to backwards compatibility is
                                           allowed to be empty. Instances of this type with an empty value here are
                                           almost certainly wrong.
-                                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                          More info: https://kubernetes.
                                         type: string
                                       optional:
                                         description: Specify whether the Secret or
@@ -499,7 +478,6 @@ spec:
                             ModelID is the canonical identifier in {org}/{name} format.
                             Determines the cache mount path: /workspace/cache/{modelId}
                             For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
-                            For S3 sources, users define their own organizational structure.
                           pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                           type: string
                         precision:
@@ -535,7 +513,6 @@ spec:
                             Size is the expected storage space required for this model artifact.
                             Used for PVC sizing and capacity planning during cache creation.
                             Optional - if not specified, the download job will discover the size automatically.
-                            Can be set explicitly to pre-allocate storage or override auto-discovery.
                           pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                           x-kubernetes-int-or-string: true
                         sourceUri:
@@ -574,12 +551,6 @@ spec:
                       partitioning mode. Partial-order match (NOT strict equality):
                         ""              - no filter on this field.
                         "unpartitioned" - matches profiles with mode "" or "unpartitioned".
-                        "partitioned"   - matches profiles whose mode is non-trivial (anything
-                                          other than "" / "unpartitioned").
-                        "<C>"           - selector-only convenience: matches profiles with mode
-                                          "<C>-*" (prefix on the scheme). Not a valid profile-spec
-                                          value (e.g. selector "CPX" matches "CPX-NPS1", "CPX-NPS4").
-                        "<C>-<M>"       - exact-string match on the scheme.
                     type: string
                   acceleratorType:
                     description: AcceleratorType filters by accelerator resource type.
@@ -617,17 +588,7 @@ spec:
                     description: |-
                       MinimumType filters by a minimum optimization level: candidates whose
                       type is this tier OR BETTER are accepted (hierarchy: optimized > general
-                      > preview > unoptimized). This is the floor counterpart to the exact-match
-                      Type field; the two AND together when both are set.
-
-                      The sentinel "any" disables the floor (accept every tier). When this
-                      field is empty the AIMService resolver applies a default floor of
-                      "optimized" so auto-selection prefers production-grade profiles and never
-                      silently picks an unoptimized one; to opt a service into lower tiers
-                      (e.g. CPU/EPYC profiles published as unoptimized) set minimumType
-                      explicitly to "unoptimized" or "any". Derivation selectors
-                      (AIMProfileSet / AIMModel.profiles) treat empty as "any" so copying is
-                      never tier-restricted by default.
+                      > preview > unoptimized).
                     enum:
                     - optimized
                     - general
@@ -641,9 +602,8 @@ spec:
                     type: string
                   modelRef:
                     description: |-
-                      ModelRef narrows candidates to those produced by a specific
-                      AIM(Cluster)Model, matched via the `aim.eai.amd.com/source-model[-scope]`
-                      labels stamped by the AIMModel reconcilers. Iteration 1 (v1alpha2 only).
+                      ModelRef optionally narrows candidates to definitions and profiles
+                      published by a specific AIM(Cluster)Model. Omit to select across models.
                     properties:
                       name:
                         description: Name is the owning AIM(Cluster)Model name. Required.
@@ -663,9 +623,9 @@ spec:
                     type: object
                   origin:
                     description: |-
-                      Origin filters by the `aim.eai.amd.com/profile-origin` label. When unset
-                      (empty) the selector does not filter by origin. Iteration 1 (v1alpha2
-                      only).
+                      Origin filters source provenance across catalog and resource
+                      representations.
+                      Empty means no origin filter.
                     enum:
                     - discovered
                     - derived
@@ -715,9 +675,8 @@ spec:
               sourceRef:
                 description: |-
                   SourceRef points to an alternate discovery cache source.
-                  When omitted, derivation uses visible AIMProfile and AIMClusterProfile objects.
-                  For AIMProfileSet, the referenced ConfigMap is read from the same namespace.
-                  For AIMClusterProfileSet, it is read from the operator namespace.
+                  When omitted, derivation uses published image-model definitions and visible
+                  copyable AIMProfile and AIMClusterProfile objects, with namespace-first fallback.
                 properties:
                   name:
                     description: Name is the discovery cache ConfigMap name.
@@ -743,10 +702,13 @@ spec:
             - message: selector must set at least one matching field, or set sourceRef
               rule: has(self.sourceRef) || has(self.selector.aimId) || has(self.selector.modelId)
                 || has(self.selector.profileId) || has(self.selector.engine) || has(self.selector.metric)
-                || has(self.selector.precision) || has(self.selector.type) || has(self.selector.acceleratorModel)
-                || has(self.selector.acceleratorVendor) || has(self.selector.acceleratorType)
+                || has(self.selector.precision) || has(self.selector.type) || has(self.selector.minimumType)
+                || has(self.selector.acceleratorModel) || has(self.selector.acceleratorVendor)
+                || has(self.selector.acceleratorPartitioningMode) || has(self.selector.acceleratorType)
                 || has(self.selector.acceleratorCount) || has(self.selector.engineArgs)
                 || has(self.selector.modelRef) || has(self.selector.origin)
+            - message: sourceRef and selector.modelRef are mutually exclusive
+              rule: '!has(self.sourceRef) || !has(self.selector) || !has(self.selector.modelRef)'
             - message: version is required when versionPolicy is pinned
               rule: has(self.version) || (has(self.versionPolicy) && self.versionPolicy
                 != 'pinned')
@@ -756,12 +718,14 @@ spec:
             - message: selector.aimId/modelId/profileId are not allowed when selector.role=base;
                 set overrides.aimId/modelId/profileId instead (base profiles have
                 no source identity to filter on)
-              rule: '!(has(self.selector.role) && self.selector.role == ''base'')
-                || (!has(self.selector.aimId) && !has(self.selector.modelId) && !has(self.selector.profileId))'
+              rule: '!has(self.selector) || !(has(self.selector.role) && self.selector.role
+                == ''base'') || (!has(self.selector.aimId) && !has(self.selector.modelId)
+                && !has(self.selector.profileId))'
             - message: selector.role=base requires overrides.aimId and overrides.modelId
                 (base profiles carry no identity of their own; overrides supply it)
-              rule: '!(has(self.selector.role) && self.selector.role == ''base'')
-                || (has(self.overrides) && has(self.overrides.aimId) && has(self.overrides.modelId))'
+              rule: '!has(self.selector) || !(has(self.selector.role) && self.selector.role
+                == ''base'') || (has(self.overrides) && has(self.overrides.aimId)
+                && has(self.overrides.modelId))'
             - message: overrides.acceleratorCount must be specified together with
                 any overrides.acceleratorPartitioningMode; partition mode changes
                 the per-unit interpretation of acceleratorCount
@@ -793,8 +757,7 @@ spec:
                     observedGeneration:
                       description: |-
                         observedGeneration represents the .metadata.generation that the condition was set based upon.
-                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
-                        with respect to the current state of the instance.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].
                       format: int64
                       minimum: 0
                       type: integer
@@ -803,8 +766,6 @@ spec:
                         reason contains a programmatic identifier indicating the reason for the condition's last transition.
                         Producers of specific condition types may define expected values and meanings for this field,
                         and whether the values are considered a guaranteed API.
-                        The value should be a CamelCase string.
-                        This field may not be empty.
                       maxLength: 1024
                       minLength: 1
                       pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
@@ -838,23 +799,16 @@ spec:
                 properties:
                   base:
                     description: |-
-                      Base is the number of managed profiles whose spec is structurally
-                      incomplete (missing aimId or modelSources). Base profiles cannot back
-                      an AIMService directly and exist purely as source material for
-                      derivation via AIMModel.spec.profiles.derivedFrom with
-                      selector.role=base. A non-zero value is the canonical operational
-                      signal that this model is a base-image model (the source of
-                      custom-model derivation).
+                      Base counts managed base profile resources with empty aimId and
+                      modelSources. They supply custom-model derivation with selector.role=base.
+                      Catalog base definitions remain selectable when this materialised count is zero.
                     format: int32
                     type: integer
                   deployable:
                     description: |-
                       Deployable is the number of managed profiles whose spec is materialised
                       enough to back an AIMService (carries aimId and modelSources). For a
-                      normal officially-discovered AIMModel this equals Total. For a
-                      base-image AIMModel used as a source for custom-model derivation
-                      this is 0 — the model only emits base profiles that callers must
-                      derive into deployable profiles.
+                      normal officially-discovered AIMModel this equals Total.
                     format: int32
                     type: integer
                   notAvailable:

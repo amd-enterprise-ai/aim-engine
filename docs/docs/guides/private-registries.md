@@ -2,12 +2,76 @@
 
 This guide covers configuring authentication for private container registries, HuggingFace Hub, and S3-compatible storage.
 
+:::{important}
+Container image pulls are a Kubernetes platform responsibility
+
+AIM Engine configures image references and Kubernetes pull secrets for
+official or privately published AIM images. Kubernetes performs the actual
+image pull before the workload—or any init container—can start. The platform
+administrator must therefore ensure that the referenced registry is reachable,
+make pull credentials available through the appropriate namespaces or
+ServiceAccounts, and configure each node/container runtime to trust the
+registry certificate.
+
+For air-gapped deployments, mirror every required AIM operator, downloader,
+runtime, and model image into a registry available to the cluster and configure
+AIM Engine to use those mirrored references. Provisioning and operating a
+general-purpose container registry is outside the scope of AIM Engine and this
+guide; follow the documentation for the deployed Kubernetes platform and
+container runtime.
+
+Consequently, `additionalCABundleRef` cannot affect container image pulls; it
+configures outbound TLS only after the workload has started.
+:::
+
 :::{admonition} v1alpha2
 :class: note
 
 `AIMService` examples use `aim.eai.amd.com/v1alpha2`. `AIMRuntimeConfig` / `AIMClusterRuntimeConfig` remain `aim.eai.amd.com/v1alpha1` resources — both pipelines consume them unchanged. `spec.imagePullSecrets`, `spec.serviceAccountName`, and the runtime-config env fields are identical regardless of pipeline.
 :::
 ## Container Image Pull Secrets
+
+### Artifact-downloader image
+
+The operator uses a release-matched artifact-downloader image in model download
+and size-check Jobs and as the custom-CA init container for artifact and
+inference workloads. For an air-gapped installation, mirror the official image
+into the internal container registry and set the Helm install-time default:
+
+```bash
+helm upgrade --install aim-engine oci://registry.internal/aim-engine-chart \
+  --version <version> \
+  --namespace aim-system \
+  --set manager.artifactDownloaderImage=registry.internal/aim-artifact-downloader:vX.Y.Z
+```
+
+Use the tag or digest matching the AIM Engine release. This setting is
+preferred when changing only the registry location because it applies to every
+artifact workload, including typed S3 workloads. It also ensures trust init
+containers do not retain a reference to the public `docker.io` image.
+
+The downloader image runs in workload namespaces. Ensure the Kubernetes
+platform can pull the mirrored image there; `manager.imagePullSecrets`
+configures the operator pod and is not a cluster-wide registry credential.
+
+An administrator can instead select a downloader image through RuntimeConfig:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: default
+spec:
+  artifact:
+    modelDownloadImage: registry.internal/aim-artifact-downloader:vX.Y.Z
+```
+
+This is useful when different RuntimeConfigs intentionally select different
+downloader implementations. `AIMRuntimeConfig` supports the same field, and
+`AIMArtifact.spec.modelDownloadImage` provides a per-artifact override. Direct
+S3 artifacts using typed S3 configuration intentionally ignore those
+RuntimeConfig and artifact overrides so administrator-managed credentials are
+not exposed to arbitrary images; they use the Helm/install-time default.
 
 ### Per-Service Secrets
 
@@ -48,7 +112,7 @@ also needs usable credentials in its own namespace. You can create a secret
 with the same name in every consumer namespace, or set a namespace-local secret
 through `AIMService.spec.imagePullSecrets`.
 
-For `AIMClusterModelSource` pulling from private registries, the same
+For `AIMClusterModelSource` pulling from private container registries, the same
 operator-namespace rule applies:
 
 ```yaml
@@ -90,6 +154,174 @@ kubectl create secret generic hf-credentials \
   --from-literal=token=hf_your_token_here \
   -n ml-team
 ```
+
+### Self-hosted Hugging Face mirrors
+
+AIM Engine can use a self-hosted endpoint that implements the Hugging Face Hub
+HTTP API. This may be a synchronized mirror or a pull-through cache:
+
+- A **mirror** is populated independently and can operate without upstream
+  network access.
+- A **pull-through cache** fetches missing content from an upstream Hub. In a
+  disconnected environment it must be pre-populated; otherwise a cache miss
+  cannot succeed.
+
+AIM Engine does not manage or populate the endpoint. From the workload's point
+of view it is another Hugging Face Hub: `HF_ENDPOINT` selects it, `HF_TOKEN`
+optionally supplies its bearer credential, and the endpoint must serve all
+model metadata and files required by the installed Hugging Face and inference
+client versions.
+
+Configure endpoint and credential variables on the profile for inference and
+artifact caching:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: internal-model
+  namespace: ml-team
+spec:
+  # Other model, image, and accelerator fields are omitted.
+  containerEnv:
+    - name: HF_ENDPOINT
+      value: https://huggingface.example.com
+    - name: HF_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: hf-credentials
+          key: token
+  caching:
+    enabled: true
+    env:
+      - name: HF_ENDPOINT
+        value: https://huggingface.example.com
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: hf-credentials
+            key: token
+      - name: AIM_DOWNLOADER_PROTOCOL
+        value: HTTP
+```
+
+Most compatible mirrors implement the standard HTTP API but not the XET or
+HF_TRANSFER data paths. Use `AIM_DOWNLOADER_PROTOCOL=HTTP` unless the endpoint
+explicitly documents support for another protocol.
+
+For any endpoint signed by an internal certificate authority, put the public
+PEM CA certificates in a ConfigMap in every workload namespace:
+
+```bash
+kubectl create configmap company-ca \
+  --from-file=ca.crt=/path/to/company-ca-bundle.pem \
+  -n ml-team
+```
+
+Select the bundle once on the namespace RuntimeConfig:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+  namespace: ml-team
+spec:
+  additionalCABundleRef:
+    name: company-ca
+    key: ca.crt
+```
+
+The `default` RuntimeConfig applies when a service, cache, or artifact does not
+name a different RuntimeConfig. A namespace `AIMRuntimeConfig` overrides an
+`AIMClusterRuntimeConfig` with the same name.
+
+When `AIMProfile.spec.caching.enabled` creates a profile-owned shared cache,
+that cache resolves the `default` RuntimeConfig. Setting
+`AIMService.spec.runtimeConfigName` to another name does not retarget the
+profile-owned cache. Put namespace-wide trust in the `default` RuntimeConfig so
+both the profile cache and services inherit it. Service-owned caches continue
+to use the service's selected RuntimeConfig.
+
+AIM Engine does not replace public trust with this ConfigMap. A pod init
+container starts with the standard public roots from the resolved
+artifact-downloader image, validates and appends the selected certificates,
+then mounts the combined bundle into inference, artifact download, size-check,
+and adapter staging containers. The init container uses the same resolved
+downloader image as its workload path, including supported
+`modelDownloadImage` overrides. A custom downloader image used with additional
+trust must therefore contain `/combine-ca.sh`, Python 3, and a public root
+bundle at `/etc/ssl/certs/ca-certificates.crt`.
+
+Common TLS environment variables contain only the mounted file path; PEM
+content is never transported through environment variables. Malformed
+additions produce an init-container warning and are skipped without removing
+public roots. Trust projection does not add or change pod-level security
+settings such as `fsGroup`; the init container has its own non-root security
+context.
+
+ConfigMap references are namespace-local even when selected by an
+`AIMClusterRuntimeConfig`. Create the same ConfigMap name and key in every
+consuming namespace. A controller such as
+[trust-manager](https://cert-manager.io/docs/trust/trust-manager/) can distribute
+one organization bundle to those namespaces.
+
+AIM Engine reads `additionalCABundleRef` directly from the API server while
+reconciling a service or artifact. If the ConfigMap or selected key is missing
+at that moment, AIM Engine omits the additional-CA volume and continues with
+public roots. It does not watch the ConfigMap or hash its contents.
+
+:::{note}
+CA contents are a workload-creation snapshot. After rotating an additional or
+S3-specific CA, recreate the affected workload so its trust init container
+runs again. Delete an inference pod to have its owning workload replace it.
+Delete unfinished artifact or adapter Jobs so the corresponding controller
+recreates them:
+
+```bash
+kubectl delete pod -n <namespace> <inference-pod>
+kubectl delete job -n <namespace> <unfinished-artifact-job>
+kubectl get jobs -n <namespace> \
+  -l aim.eai.amd.com/component=adapter-stage,aim.eai.amd.com/service=<service-name>
+kubectl delete job -n <namespace> <unfinished-adapter-staging-job>
+```
+
+Ready artifacts are not downloaded again solely because a CA changed.
+Restarting an inference pod does not restart adapter staging, and deleting the
+AIMService is unnecessary.
+:::
+
+The inference container does not need the mirror endpoint or its CA when it is
+guaranteed to start entirely from cached local content. That guarantee must
+cover every runtime dependency—not only the tokenizer, but also model
+configuration, remote code, and auxiliary files—and the runtime must not make
+other startup requests to the endpoint. In that case, omit the mirror settings
+from `containerEnv`.
+
+Production CA material should normally come from your organization's PKI. For
+test environments, OpenSSL's
+[`req` documentation](https://docs.openssl.org/master/man1/openssl-req/)
+describes its certificate-request and self-signed certificate facilities.
+
+`additionalCABundleRef` is general workload trust. A typed
+`artifact.s3.tls.caBundleRef` remains available when an S3 endpoint requires a
+different CA; S3 Jobs then combine public roots, the RuntimeConfig additional
+bundle, and the S3-specific bundle.
+
+Model discovery uses separate trust paths. Legacy v1alpha1 image metadata
+inspection connects to the registry from the operator process; custom CA trust
+for that deprecated discovery path is not supported by
+`additionalCABundleRef`. Native v1alpha2 discovery starts a Job from the model
+image and walks the profiles embedded in that image. The platform
+kubelet/container runtime pulls the image before an init container could run,
+so configure private-container-registry credentials as described above and
+install any private container registry CA in the platform's
+node/container-runtime trust configuration.
+
+Local-only adapter sync/reap also does not use this workload trust mechanism.
+
+`HF_ENDPOINT` affects only Hugging Face clients. Container image pulls and
+`s3://` model sources use their own registry and S3 configuration.
 
 ## S3-Compatible Storage
 

@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
@@ -69,8 +70,9 @@ func (t *testObject) GetStatus() *testStatus {
 }
 
 type testStatus struct {
-	Status     string             `json:"status"`
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
+	Status             string             `json:"status"`
+	Conditions         []metav1.Condition `json:"conditions,omitempty"`
 }
 
 func (t *testStatus) GetConditions() []metav1.Condition {
@@ -83,6 +85,10 @@ func (t *testStatus) SetConditions(conds []metav1.Condition) {
 
 func (t *testStatus) SetStatus(status string) {
 	t.Status = status
+}
+
+func (t *testStatus) SetObservedGeneration(generation int64) {
+	t.ObservedGeneration = generation
 }
 
 type testFetch struct {
@@ -383,6 +389,158 @@ func TestPipeline_processStateEngine_InfrastructureError(t *testing.T) {
 
 	if decision.RequeueError == nil {
 		t.Error("RequeueError should not be nil for infrastructure error")
+	}
+}
+
+func TestPipeline_processStateEngine_NonBlockingFailureRemainsVisible(t *testing.T) {
+	infraErr := NewInfrastructureError(
+		"CatalogUnavailable",
+		"Native catalog unavailable",
+		errors.New("catalog unavailable"),
+	)
+	obs := testObservationCustomHealth{health: []ComponentHealth{
+		{
+			Component: "ActivePath",
+			State:     constants.AIMStatusReady,
+			Reason:    "ServingOutputReady",
+		},
+		{
+			Component:   "InactivePath",
+			Errors:      []error{infraErr},
+			NonBlocking: true,
+		},
+	}}
+	cm := NewConditionManager(nil)
+	status := &testStatus{}
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	decision, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	inactiveReady := cm.Get("InactivePathReady")
+	if inactiveReady == nil || inactiveReady.Status != metav1.ConditionFalse {
+		t.Fatalf("InactivePathReady = %#v, want visible false condition", inactiveReady)
+	}
+	ready := cm.Get(ConditionTypeReady)
+	if ready == nil || ready.Status != metav1.ConditionTrue {
+		t.Fatalf("Ready = %#v, want true when only the inactive path failed", ready)
+	}
+	if status.Status != string(constants.AIMStatusReady) {
+		t.Fatalf("status = %q, want %q", status.Status, constants.AIMStatusReady)
+	}
+	if !decision.ShouldApply || decision.ShouldRequeue || decision.RequeueError != nil {
+		t.Fatalf("decision = %+v, want apply without requeue", decision)
+	}
+}
+
+func TestTemplateMigrationRequiredConditionDoesNotGateAIMServiceReadiness(t *testing.T) {
+	const wantMessage = "This resource depends on deprecated template APIs; inventory affected or dependent AIMServices and review the bounded template migration runbook before API removal"
+
+	cm := NewConditionManager(nil)
+	SetTemplateMigrationRequired(cm, true)
+
+	migration := cm.Get(ConditionTypeMigrationRequired)
+	if migration == nil ||
+		migration.Status != metav1.ConditionTrue ||
+		migration.Reason != ReasonTemplateAPIDeprecated ||
+		migration.Message != wantMessage {
+		t.Fatalf("MigrationRequired = %#v, want True/%s with message %q", migration, ReasonTemplateAPIDeprecated, wantMessage)
+	}
+	if strings.HasSuffix(ConditionTypeMigrationRequired, ComponentConditionSuffix) {
+		t.Fatalf("%q must not be a readiness component", ConditionTypeMigrationRequired)
+	}
+
+	health := []ComponentHealth{{
+		Component: "InferenceService",
+		State:     constants.AIMStatusReady,
+		Reason:    "RuntimeReady",
+	}}
+	setComponentConditions(cm, health, false)
+	serviceStatus := &aimv1alpha1.AIMServiceStatus{}
+	serviceStatus.SetStatus(string(deriveStatusAndSetReadyCondition(cm, errorCategories{}, health)))
+
+	if serviceStatus.Status != constants.AIMStatusRunning {
+		t.Fatalf("AIMService status = %q, want %q", serviceStatus.Status, constants.AIMStatusRunning)
+	}
+	ready := cm.Get(ConditionTypeReady)
+	if ready == nil || ready.Status != metav1.ConditionTrue {
+		t.Fatalf("Ready = %#v, want True", ready)
+	}
+
+	SetTemplateMigrationRequired(cm, false)
+	if stale := cm.Get(ConditionTypeMigrationRequired); stale != nil {
+		t.Fatalf("MigrationRequired was not retired: %#v", stale)
+	}
+}
+
+func TestPipeline_processStateEngine_AllNonBlockingCannotEstablishReadiness(t *testing.T) {
+	obs := testObservationCustomHealth{health: []ComponentHealth{{
+		Component:   "InactivePath",
+		State:       constants.AIMStatusNotAvailable,
+		Reason:      "Unavailable",
+		NonBlocking: true,
+	}}}
+	cm := NewConditionManager(nil)
+	status := &testStatus{}
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	decision, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Status != string(constants.AIMStatusProgressing) {
+		t.Fatalf("status = %q, want Progressing without an active readiness witness", status.Status)
+	}
+	ready := cm.Get(ConditionTypeReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse {
+		t.Fatalf("Ready condition = %#v, want False", ready)
+	}
+	if !decision.ShouldApply || decision.ShouldRequeue || decision.RequeueError != nil {
+		t.Fatalf("decision = %+v, want apply without requeue", decision)
+	}
+}
+
+func TestPipeline_processStateEngine_NonBlockingPathDoesNotRelaxActiveRequirements(t *testing.T) {
+	obs := testObservationCustomHealth{health: []ComponentHealth{
+		{
+			Component:   "InactivePath",
+			State:       constants.AIMStatusNotAvailable,
+			Reason:      "CatalogUnavailable",
+			NonBlocking: true,
+		},
+		{
+			Component: "ActivePath",
+			Errors: []error{
+				NewInvalidSpecError("InvalidServingOutput", "Active serving output is invalid", nil),
+			},
+		},
+	}}
+	cm := NewConditionManager(nil)
+	status := &testStatus{}
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	decision, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatalf("processStateEngine returned error: %v", err)
+	}
+
+	ready := cm.Get(ConditionTypeReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse {
+		t.Fatalf("Ready = %#v, want false when the active path fails", ready)
+	}
+	if status.Status != string(constants.AIMStatusFailed) {
+		t.Fatalf("status = %q, want %q", status.Status, constants.AIMStatusFailed)
+	}
+	if decision.ShouldApply || decision.ShouldRequeue {
+		t.Fatalf("decision = %+v, want active failure to block apply without requeue", decision)
 	}
 }
 
@@ -716,8 +874,9 @@ func TestPipeline_Run_Success(t *testing.T) {
 			Kind:       "testObject",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-obj",
-			Namespace: "default",
+			Name:       "test-obj",
+			Namespace:  "default",
+			Generation: 7,
 		},
 	}
 
@@ -749,6 +908,13 @@ func TestPipeline_Run_Success(t *testing.T) {
 	// Verify status was set in memory (even though update to fake client failed)
 	if obj.Status.Status == "" {
 		t.Error("Status.Status should be set")
+	}
+	if obj.Status.ObservedGeneration != obj.Generation {
+		t.Errorf(
+			"Status.ObservedGeneration = %d, want %d",
+			obj.Status.ObservedGeneration,
+			obj.Generation,
+		)
 	}
 
 	// Verify conditions were set in memory
@@ -809,8 +975,12 @@ func TestPipeline_Run_WithInfrastructureError(t *testing.T) {
 			Kind:       "testObject",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-obj",
-			Namespace: "default",
+			Name:       "test-obj",
+			Namespace:  "default",
+			Generation: 7,
+		},
+		Status: testStatus{
+			ObservedGeneration: 6,
 		},
 	}
 
@@ -842,6 +1012,9 @@ func TestPipeline_Run_WithInfrastructureError(t *testing.T) {
 	// Status should still be updated (even on error)
 	if len(obj.Status.Conditions) == 0 {
 		t.Error("Conditions should be set even when returning error")
+	}
+	if obj.Status.ObservedGeneration != 6 {
+		t.Errorf("ObservedGeneration = %d, want 6 after infrastructure requeue", obj.Status.ObservedGeneration)
 	}
 
 	// Verify that ModelReady condition uses AsError (recurring) since it has an infrastructure error
@@ -893,7 +1066,6 @@ func (c *conflictStatusWriter) Update(ctx context.Context, obj client.Object, op
 }
 
 func TestPipeline_Run_StatusConflict(t *testing.T) {
-	// Test that status update conflicts are handled gracefully without returning an error
 	scheme := runtime.NewScheme()
 	_ = metav1.AddMetaToScheme(scheme)
 	scheme.AddKnownTypes(metav1.SchemeGroupVersion, &testObject{})
@@ -926,9 +1098,8 @@ func TestPipeline_Run_StatusConflict(t *testing.T) {
 	}
 
 	_, err := pipeline.Run(context.Background(), obj)
-	// Conflict errors should be swallowed - no error returned
-	if err != nil {
-		t.Errorf("Expected nil error for status conflict, got: %v", err)
+	if !apierrors.IsConflict(err) {
+		t.Fatalf("Run() error = %v, want retryable status conflict", err)
 	}
 
 	// Status should still be set in memory (even though update failed)
@@ -1747,6 +1918,10 @@ func TestPipeline_Run_ApplyError_SetsDependenciesReachable(t *testing.T) {
 			Name:              "test-obj",
 			Namespace:         "default",
 			CreationTimestamp: now,
+			Generation:        7,
+		},
+		Status: testStatus{
+			ObservedGeneration: 6,
 		},
 	}
 
@@ -1798,8 +1973,16 @@ func TestPipeline_Run_ApplyError_SetsDependenciesReachable(t *testing.T) {
 		t.Errorf("Expected 1 infrastructure error, got %d", infraErr.Count)
 	}
 
-	// Verify DependenciesReachable is False
-	depReachable := findCondition(obj.Status.Conditions, ConditionTypeDependenciesReachable)
+	persisted := &testObject{}
+	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(obj), persisted); err != nil {
+		t.Fatalf("Failed to get persisted object: %v", err)
+	}
+	if persisted.Status.ObservedGeneration != 6 {
+		t.Errorf("ObservedGeneration = %d, want 6 after apply error", persisted.Status.ObservedGeneration)
+	}
+
+	// Verify DependenciesReachable=False was persisted
+	depReachable := findCondition(persisted.Status.Conditions, ConditionTypeDependenciesReachable)
 	if depReachable == nil {
 		t.Fatal("DependenciesReachable condition should be set")
 	}
@@ -1808,6 +1991,93 @@ func TestPipeline_Run_ApplyError_SetsDependenciesReachable(t *testing.T) {
 	}
 	if !strings.Contains(depReachable.Message, "Failed to apply") {
 		t.Errorf("DependenciesReachable message should mention apply failure, got: %s", depReachable.Message)
+	}
+}
+
+func TestPipeline_Run_CreateCollisionRequeuesWithoutApplyingSiblings(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = metav1.AddMetaToScheme(scheme)
+	groupVersion := schema.GroupVersion{Group: "test.k8s.io", Version: "v1"}
+	scheme.AddKnownTypes(groupVersion, &testObject{})
+
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{APIVersion: groupVersion.String(), Kind: "TestObject"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-obj",
+			Namespace: "default",
+		},
+	}
+	winner := &testObject{
+		TypeMeta: metav1.TypeMeta{APIVersion: groupVersion.String(), Kind: "TestObject"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "collision",
+			Namespace: "default",
+			Labels:    map[string]string{"winner": "first"},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(obj, winner).
+		WithStatusSubresource(obj).
+		Build()
+	reconciler := &testReconcilerWithPlan{
+		fetchResult: testFetch{ModelReady: true},
+		planResult: PlanResult{
+			toCreate: []client.Object{&testObject{
+				TypeMeta: metav1.TypeMeta{APIVersion: groupVersion.String(), Kind: "TestObject"},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "collision",
+					Namespace: "default",
+					Labels:    map[string]string{"winner": "second"},
+				},
+			}},
+			toApply: []client.Object{&testObject{
+				TypeMeta: metav1.TypeMeta{APIVersion: groupVersion.String(), Kind: "TestObject"},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "must-not-apply",
+					Namespace: "default",
+				},
+			}},
+		},
+	}
+	pipeline := &Pipeline[*testObject, *testStatus, testFetch, testObservation]{
+		Client:         fakeClient,
+		StatusClient:   fakeClient.Status(),
+		Recorder:       record.NewFakeRecorder(10),
+		Reconciler:     reconciler,
+		Scheme:         scheme,
+		ControllerName: "test",
+	}
+
+	_, err := pipeline.Run(context.Background(), obj)
+	if err == nil || !apierrors.IsAlreadyExists(err) {
+		t.Fatalf("Run() error = %v, want retriable AlreadyExists collision", err)
+	}
+
+	currentWinner := &testObject{}
+	if getErr := fakeClient.Get(
+		context.Background(),
+		client.ObjectKeyFromObject(winner),
+		currentWinner,
+	); getErr != nil {
+		t.Fatal(getErr)
+	}
+	if got := currentWinner.Labels["winner"]; got != "first" {
+		t.Fatalf("collision winner label = %q, want first", got)
+	}
+	unapplied := &testObject{}
+	getErr := fakeClient.Get(
+		context.Background(),
+		client.ObjectKey{Namespace: "default", Name: "must-not-apply"},
+		unapplied,
+	)
+	if !apierrors.IsNotFound(getErr) {
+		t.Fatalf("later apply error = %v, want NotFound", getErr)
+	}
+
+	depReachable := findCondition(obj.Status.Conditions, ConditionTypeDependenciesReachable)
+	if depReachable == nil || depReachable.Status != metav1.ConditionFalse {
+		t.Fatalf("DependenciesReachable = %#v, want False", depReachable)
 	}
 }
 
@@ -1827,6 +2097,10 @@ func TestPipeline_Run_DeleteError_SetsDependenciesReachable(t *testing.T) {
 			Name:              "test-obj",
 			Namespace:         "default",
 			CreationTimestamp: now,
+			Generation:        7,
+		},
+		Status: testStatus{
+			ObservedGeneration: 6,
 		},
 	}
 
@@ -1878,8 +2152,16 @@ func TestPipeline_Run_DeleteError_SetsDependenciesReachable(t *testing.T) {
 		t.Errorf("Expected 1 infrastructure error, got %d", infraErr.Count)
 	}
 
-	// Verify DependenciesReachable is False
-	depReachable := findCondition(obj.Status.Conditions, ConditionTypeDependenciesReachable)
+	persisted := &testObject{}
+	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(obj), persisted); err != nil {
+		t.Fatalf("Failed to get persisted object: %v", err)
+	}
+	if persisted.Status.ObservedGeneration != 6 {
+		t.Errorf("ObservedGeneration = %d, want 6 after delete error", persisted.Status.ObservedGeneration)
+	}
+
+	// Verify DependenciesReachable=False was persisted
+	depReachable := findCondition(persisted.Status.Conditions, ConditionTypeDependenciesReachable)
 	if depReachable == nil {
 		t.Fatal("DependenciesReachable condition should be set")
 	}

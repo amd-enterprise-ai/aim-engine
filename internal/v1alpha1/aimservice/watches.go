@@ -34,6 +34,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
+	servicepolicy "github.com/amd-enterprise-ai/aim-engine/internal/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
@@ -45,9 +47,9 @@ import (
 // The caller passes the Manager (for field indexers), the current Builder
 // (so watches can chain), and the read client used by the map funcs.
 func RegisterWatches(ctx context.Context, mgr manager.Manager, b *builder.Builder, c client.Client) (*builder.Builder, error) {
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMService{}, aimv1alpha1.AIMServiceTemplateIndexKey, func(obj client.Object) []string {
-		svc, ok := obj.(*aimv1alpha1.AIMService)
-		if !ok {
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha2.AIMService{}, aimv1alpha1.AIMServiceTemplateIndexKey, func(obj client.Object) []string {
+		svc, ok := obj.(*aimv1alpha2.AIMService)
+		if !ok || !usesTemplatePipeline(svc) {
 			return nil
 		}
 		if svc.Spec.Template == nil || svc.Spec.Template.Name == "" {
@@ -58,9 +60,9 @@ func RegisterWatches(ctx context.Context, mgr manager.Manager, b *builder.Builde
 		return nil, err
 	}
 
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMService{}, aimv1alpha1.AIMServiceResolvedTemplateIndexKey, func(obj client.Object) []string {
-		svc, ok := obj.(*aimv1alpha1.AIMService)
-		if !ok {
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha2.AIMService{}, aimv1alpha1.AIMServiceResolvedTemplateIndexKey, func(obj client.Object) []string {
+		svc, ok := obj.(*aimv1alpha2.AIMService)
+		if !ok || !usesTemplatePipeline(svc) {
 			return nil
 		}
 		if svc.Status.ResolvedTemplate == nil || svc.Status.ResolvedTemplate.Name == "" {
@@ -81,13 +83,17 @@ func RegisterWatches(ctx context.Context, mgr manager.Manager, b *builder.Builde
 		Watches(&aimv1alpha1.AIMTemplateCache{}, handler.EnqueueRequestsFromMapFunc(findServicesForTemplateCache(c))), nil
 }
 
+func usesTemplatePipeline(service *aimv1alpha2.AIMService) bool {
+	return servicepolicy.UsesPipeline(servicepolicy.LegacyView(service), servicepolicy.PipelineTemplate)
+}
+
 func findServicesForTemplate(c client.Client) handler.MapFunc {
 	return func(ctx context.Context, obj client.Object) []reconcile.Request {
 		template, ok := obj.(*aimv1alpha1.AIMServiceTemplate)
 		if !ok {
 			return nil
 		}
-		var services aimv1alpha1.AIMServiceList
+		var services aimv1alpha2.AIMServiceList
 		if err := c.List(ctx, &services,
 			client.InNamespace(template.Namespace),
 			client.MatchingFields{aimv1alpha1.AIMServiceTemplateIndexKey: template.Name},
@@ -95,7 +101,7 @@ func findServicesForTemplate(c client.Client) handler.MapFunc {
 			log.FromContext(ctx).Error(err, "failed to list AIMServices for template", "template", template.Name)
 			return nil
 		}
-		return requestsForServices(services.Items)
+		return requestsForTemplateServices(services.Items)
 	}
 }
 
@@ -105,14 +111,14 @@ func findServicesForClusterTemplate(c client.Client) handler.MapFunc {
 		if !ok {
 			return nil
 		}
-		var services aimv1alpha1.AIMServiceList
+		var services aimv1alpha2.AIMServiceList
 		if err := c.List(ctx, &services,
 			client.MatchingFields{aimv1alpha1.AIMServiceTemplateIndexKey: template.Name},
 		); err != nil {
 			log.FromContext(ctx).Error(err, "failed to list AIMServices for cluster template", "template", template.Name)
 			return nil
 		}
-		return requestsForServices(services.Items)
+		return requestsForTemplateServices(services.Items)
 	}
 }
 
@@ -124,12 +130,18 @@ func findServicesForModel(c client.Client) handler.MapFunc {
 		}
 
 		if svcName, ok := model.Labels[constants.LabelKeyService]; ok && svcName != "" {
+			var service aimv1alpha2.AIMService
+			key := types.NamespacedName{Name: svcName, Namespace: model.Namespace}
+			if err := c.Get(ctx, key, &service); err != nil ||
+				!usesTemplatePipeline(&service) {
+				return nil
+			}
 			return []reconcile.Request{{
-				NamespacedName: types.NamespacedName{Name: svcName, Namespace: model.Namespace},
+				NamespacedName: key,
 			}}
 		}
 
-		var services aimv1alpha1.AIMServiceList
+		var services aimv1alpha2.AIMServiceList
 		if err := c.List(ctx, &services, client.InNamespace(model.Namespace)); err != nil {
 			log.FromContext(ctx).Error(err, "failed to list AIMServices for model", "model", model.Name)
 			return nil
@@ -137,7 +149,8 @@ func findServicesForModel(c client.Client) handler.MapFunc {
 
 		var requests []reconcile.Request
 		for _, svc := range services.Items {
-			if svc.Spec.Model == nil {
+			if !usesTemplatePipeline(&svc) ||
+				svc.Spec.Model == nil {
 				continue
 			}
 			if svc.Spec.Model.Name != nil && *svc.Spec.Model.Name == model.Name {
@@ -162,14 +175,15 @@ func findServicesForClusterModel(c client.Client) handler.MapFunc {
 		if !ok {
 			return nil
 		}
-		var services aimv1alpha1.AIMServiceList
+		var services aimv1alpha2.AIMServiceList
 		if err := c.List(ctx, &services); err != nil {
 			log.FromContext(ctx).Error(err, "failed to list AIMServices for cluster model", "model", model.Name)
 			return nil
 		}
 		var requests []reconcile.Request
 		for _, svc := range services.Items {
-			if svc.Spec.Model == nil {
+			if !usesTemplatePipeline(&svc) ||
+				svc.Spec.Model == nil {
 				continue
 			}
 			if svc.Spec.Model.Name != nil && *svc.Spec.Model.Name == model.Name {
@@ -194,7 +208,7 @@ func findServicesForRuntimeConfig(c client.Client) handler.MapFunc {
 		if !ok {
 			return nil
 		}
-		var services aimv1alpha1.AIMServiceList
+		var services aimv1alpha2.AIMServiceList
 		if err := c.List(ctx, &services, client.InNamespace(config.Namespace)); err != nil {
 			log.FromContext(ctx).Error(err, "failed to list AIMServices for RuntimeConfig", "config", config.Name)
 			return nil
@@ -217,7 +231,7 @@ func findServicesForClusterRuntimeConfig(c client.Client) handler.MapFunc {
 		if !ok {
 			return nil
 		}
-		var services aimv1alpha1.AIMServiceList
+		var services aimv1alpha2.AIMServiceList
 		if err := c.List(ctx, &services); err != nil {
 			log.FromContext(ctx).Error(err, "failed to list AIMServices for ClusterRuntimeConfig", "config", config.Name)
 			return nil
@@ -240,7 +254,7 @@ func findServicesForTemplateCache(c client.Client) handler.MapFunc {
 		if !ok {
 			return nil
 		}
-		var services aimv1alpha1.AIMServiceList
+		var services aimv1alpha2.AIMServiceList
 		if err := c.List(ctx, &services,
 			client.InNamespace(cache.Namespace),
 			client.MatchingFields{aimv1alpha1.AIMServiceResolvedTemplateIndexKey: cache.Spec.TemplateName},
@@ -249,17 +263,22 @@ func findServicesForTemplateCache(c client.Client) handler.MapFunc {
 				"cache", cache.Name, "templateName", cache.Spec.TemplateName)
 			return nil
 		}
-		return requestsForServices(services.Items)
+		return requestsForTemplateServices(services.Items)
 	}
 }
 
-// requestsForServices is a small helper to keep the map funcs uniform.
-func requestsForServices(items []aimv1alpha1.AIMService) []reconcile.Request {
-	requests := make([]reconcile.Request, len(items))
-	for i, svc := range items {
-		requests[i] = reconcile.Request{
-			NamespacedName: types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace},
+// requestsForTemplateServices filters template-owned watches through the same
+// pipeline selection contract used by controller dispatch.
+func requestsForTemplateServices(items []aimv1alpha2.AIMService) []reconcile.Request {
+	requests := make([]reconcile.Request, 0, len(items))
+	for i := range items {
+		service := &items[i]
+		if !usesTemplatePipeline(service) {
+			continue
 		}
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: service.Name, Namespace: service.Namespace},
+		})
 	}
 	return requests
 }

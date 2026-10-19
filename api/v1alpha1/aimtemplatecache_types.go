@@ -146,6 +146,10 @@ func (s *AIMTemplateCacheStatus) SetConditions(conditions []metav1.Condition) {
 	s.Conditions = conditions
 }
 
+func (s *AIMTemplateCacheStatus) SetObservedGeneration(generation int64) {
+	s.ObservedGeneration = generation
+}
+
 func (s *AIMTemplateCacheStatus) SetStatus(status string) {
 	s.Status = constants.AIMStatus(status)
 }

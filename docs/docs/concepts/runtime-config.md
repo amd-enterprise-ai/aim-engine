@@ -1,19 +1,22 @@
 # Runtime Configuration
 
 Runtime configurations provide storage defaults, routing parameters,
-scale-from-zero activation queries, environment variables, and
-label-propagation rules that apply to AIM workloads. They're optional —
-workloads run without them — but most production deployments set at least a
-cluster-scoped `default`.
+scale-from-zero activation queries, environment variables, additional CA
+trust, and label-propagation rules that apply to AIM workloads. They're
+optional — workloads run without them — but most production deployments set at
+least a cluster-scoped `default`.
 
 ## Resources
 
 | Resource | Scope | Typical contents |
 |---|---|---|
 | `AIMClusterRuntimeConfig` | Cluster | Non-secret defaults shared across all namespaces |
-| `AIMRuntimeConfig` | Namespace | Namespace overrides, registry credentials, routing policy |
+| `AIMRuntimeConfig` | Namespace | Namespace overrides, registry credentials, additional trust, routing policy |
 
-Both resources are part of `aim.eai.amd.com/v1alpha1`. They continue unchanged in v1alpha2 — services, profiles, models, and caches all consume them through the same `runtimeConfigName` field.
+Both resources are part of `aim.eai.amd.com/v1alpha1` and continue unchanged in
+v1alpha2. Services, models, profile caches, and artifacts that expose
+`runtimeConfigName` use the same resolution rules. Profiles do not expose that
+field; a profile-owned shared cache resolves the `default` RuntimeConfig.
 
 ## Resolution algorithm
 
@@ -70,13 +73,39 @@ Only one reference is present — namespace or cluster, never both. When the two
 |---|---|---|
 | `AIMService` | Yes (resolved per service) | Yes |
 | `AIMModel` / `AIMClusterModel` | Yes (used by discovery Job) | Yes |
-| `AIMProfile` / `AIMClusterProfile` | Yes (used when caching is enabled) | n/a |
+| `AIMProfile` | Indirectly: profile-owned caching creates a cache that resolves `default` | n/a |
+| `AIMClusterProfile` | No | n/a |
 | `AIMProfileCache` | Yes (downloader env, storage defaults) | n/a |
 | `AIMServiceTemplate` / `AIMClusterServiceTemplate` | n/a | Yes (legacy) |
 | `AIMTemplateCache` | n/a | Yes (legacy) |
 | `AIMArtifact` | Yes (downloader env) | Yes |
 
-Each resource independently resolves its runtime config and publishes the result.
+Each consuming resource independently resolves its RuntimeConfig and publishes
+the result. A named RuntimeConfig selected by an `AIMService` does not retarget
+a shared cache already owned by an `AIMProfile`; use `default` for policy that
+must apply to both.
+
+## Additional CA trust
+
+`spec.additionalCABundleRef` selects namespace-local PEM certificates to append
+to the public roots used by inference, artifact download, size-check, and
+adapter staging workloads. AIM Engine adds the trust init container only when
+the referenced ConfigMap and key are present during reconciliation. A missing
+bundle is skipped, so the workload continues with public roots. The projection
+does not add or change a pod-level `fsGroup`.
+
+CA contents are a workload-creation snapshot. AIM Engine reads administrator
+CA ConfigMaps directly from the API server, but does not cache or watch them
+and does not replace workloads when their contents change. Recreate affected
+inference pods or unfinished transfer/staging Jobs after rotating a CA.
+
+Profile-owned caches resolve `default`, so namespace-wide private endpoint
+trust should normally be configured on `AIMRuntimeConfig/default` (or
+`AIMClusterRuntimeConfig/default` with the referenced ConfigMap copied into
+each workload namespace). See
+[Private Registries](../guides/private-registries.md#self-hosted-hugging-face-mirrors)
+for configuration, image requirements, snapshot behavior, and discovery
+limitations.
 
 ## Model profile-generation fallbacks
 

@@ -225,7 +225,7 @@ func TestBuildCheckSizeJobIncludesFilter(t *testing.T) {
 		},
 	}
 
-	job := buildCheckSizeJob(mc, nil)
+	job := buildCheckSizeJob(mc, nil, false)
 	envMap := envToMap(job.Spec.Template.Spec.Containers[0].Env)
 
 	if val, ok := envMap["AIM_HF_EXCLUDE"]; !ok {
@@ -244,7 +244,7 @@ func TestBuildDownloadJobIncludesFilter(t *testing.T) {
 		},
 	}
 
-	job := buildDownloadJob(mc, nil, 1000)
+	job := buildDownloadJob(mc, nil, 1000, false)
 	envMap := envToMap(job.Spec.Template.Spec.Containers[0].Env)
 
 	if val, ok := envMap["AIM_HF_EXCLUDE"]; !ok {
@@ -260,7 +260,7 @@ func TestBuildDownloadJobHasActiveDeadline(t *testing.T) {
 		Spec:       aimv1alpha1.AIMArtifactSpec{SourceURI: "hf://org/model"},
 	}
 
-	job := buildDownloadJob(mc, nil, 1000)
+	job := buildDownloadJob(mc, nil, 1000, false)
 
 	if job.Spec.ActiveDeadlineSeconds == nil {
 		t.Fatal("download job missing ActiveDeadlineSeconds (hard backstop for a wedged filesystem)")
@@ -276,8 +276,8 @@ func TestBothJobsGetSameFilterEnvVars(t *testing.T) {
 		Spec:       aimv1alpha1.AIMArtifactSpec{SourceURI: "hf://org/model"},
 	}
 
-	checkJob := buildCheckSizeJob(mc, nil)
-	downloadJob := buildDownloadJob(mc, nil, 1000)
+	checkJob := buildCheckSizeJob(mc, nil, false)
+	downloadJob := buildDownloadJob(mc, nil, 1000, false)
 
 	checkEnv := envToMap(checkJob.Spec.Template.Spec.Containers[0].Env)
 	downloadEnv := envToMap(downloadJob.Spec.Template.Spec.Containers[0].Env)
@@ -302,6 +302,10 @@ func TestBothS3JobsUseTypedConnectionAndTrustedImage(t *testing.T) {
 		},
 	}
 	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{
+			Name: "company-ca",
+			Key:  "ca.crt",
+		},
 		Artifact: &aimv1alpha1.AIMArtifactConfig{
 			S3: &aimv1alpha1.S3ConnectionConfig{
 				Endpoint: "https://s3.internal.example",
@@ -323,8 +327,8 @@ func TestBothS3JobsUseTypedConnectionAndTrustedImage(t *testing.T) {
 	}
 
 	jobs := []*batchv1.Job{
-		buildCheckSizeJob(mc, config),
-		buildDownloadJob(mc, config, 1000),
+		buildCheckSizeJob(mc, config, true),
+		buildDownloadJob(mc, config, 1000, true),
 	}
 	for _, job := range jobs {
 		container := job.Spec.Template.Spec.Containers[0]
@@ -351,11 +355,11 @@ func TestBothS3JobsUseTypedConnectionAndTrustedImage(t *testing.T) {
 			env["AWS_SECRET_ACCESS_KEY_FILE"] == "" {
 			t.Errorf("%s does not use mounted static credentials", job.Name)
 		}
-		if env["AWS_CA_BUNDLE"] != "/etc/aim/s3/ca.crt" {
+		if env["AWS_CA_BUNDLE"] != "/etc/aim/trust/ca-bundle.crt" {
 			t.Errorf("%s CA path = %q", job.Name, env["AWS_CA_BUNDLE"])
 		}
 
-		var sawCredentials, sawCA bool
+		var sawCredentials, sawCA, sawAdditionalCA bool
 		for _, volume := range job.Spec.Template.Spec.Volumes {
 			if volume.Secret != nil && volume.Secret.SecretName == "s3-credentials" {
 				sawCredentials = true
@@ -363,14 +367,87 @@ func TestBothS3JobsUseTypedConnectionAndTrustedImage(t *testing.T) {
 			if volume.ConfigMap != nil && volume.ConfigMap.Name == "s3-ca" {
 				sawCA = true
 			}
+			if volume.ConfigMap != nil && volume.ConfigMap.Name == "company-ca" {
+				sawAdditionalCA = true
+			}
 		}
-		if !sawCredentials || !sawCA {
+		if !sawCredentials || !sawCA || !sawAdditionalCA {
 			t.Errorf(
-				"%s volumes credentials=%v CA=%v, want both",
+				"%s volumes credentials=%v s3CA=%v additionalCA=%v, want all",
 				job.Name,
 				sawCredentials,
 				sawCA,
+				sawAdditionalCA,
 			)
+		}
+		if len(job.Spec.Template.Spec.InitContainers) != 1 ||
+			len(job.Spec.Template.Spec.InitContainers[0].Args) != 3 {
+			t.Errorf("%s combined trust init = %#v", job.Name, job.Spec.Template.Spec.InitContainers)
+		}
+		if got := job.Spec.Template.Spec.InitContainers[0].Env; len(got) != 0 {
+			t.Errorf("%s trust init env = %#v, want no rollout metadata", job.Name, got)
+		}
+	}
+}
+
+func TestTrustInitUsesResolvedDownloadImage(t *testing.T) {
+	const image = "registry.example.test/downloader:v2"
+	mc := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec: aimv1alpha1.AIMArtifactSpec{
+			SourceURI:          "hf://org/model",
+			ModelDownloadImage: image,
+		},
+	}
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{
+			Name: "company-ca",
+			Key:  "ca.crt",
+		},
+	}
+
+	jobs := []*batchv1.Job{
+		buildCheckSizeJob(mc, config, true),
+		buildDownloadJob(mc, config, 1000, true),
+	}
+	for _, job := range jobs {
+		if got := job.Spec.Template.Spec.Containers[0].Image; got != image {
+			t.Errorf("%s workload image = %q, want %q", job.Name, got, image)
+		}
+		if len(job.Spec.Template.Spec.InitContainers) != 1 {
+			t.Fatalf("%s init containers = %d, want 1", job.Name, len(job.Spec.Template.Spec.InitContainers))
+		}
+		if got := job.Spec.Template.Spec.InitContainers[0].Image; got != image {
+			t.Errorf("%s trust init image = %q, want %q", job.Name, got, image)
+		}
+	}
+}
+
+func TestDownloadJobsSkipUnavailableAdditionalCABundle(t *testing.T) {
+	mc := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "model", Namespace: "team-a"},
+		Spec: aimv1alpha1.AIMArtifactSpec{
+			SourceURI: "hf://org/model",
+		},
+	}
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{
+			Name: "missing-ca",
+			Key:  "ca.crt",
+		},
+	}
+
+	for _, job := range []*batchv1.Job{
+		buildCheckSizeJob(mc, config, false),
+		buildDownloadJob(mc, config, 1000, false),
+	} {
+		if len(job.Spec.Template.Spec.InitContainers) != 0 {
+			t.Errorf("%s init containers = %#v, want no trust projection", job.Name, job.Spec.Template.Spec.InitContainers)
+		}
+		for _, volume := range job.Spec.Template.Spec.Volumes {
+			if volume.ConfigMap != nil && volume.ConfigMap.Name == "missing-ca" {
+				t.Errorf("%s projected unavailable ConfigMap", job.Name)
+			}
 		}
 	}
 }

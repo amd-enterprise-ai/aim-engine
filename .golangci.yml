@@ -16,7 +16,11 @@ linters:
   - unparam
   settings:
     goheader:
-      template-path: .copyright-template
+      values:
+        regexp:
+          COPYRIGHT_YEAR: '20[0-9]{2}'
+      # Keep lint placeholders out of the literal license used by SVG generation.
+      template-path: .goheader-template
     lll:
       line-length: 500
   exclusions:

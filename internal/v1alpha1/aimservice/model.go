@@ -34,9 +34,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+	legacyaimmodel "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimmodel"
 )
 
 // ErrMultipleModelsFound is returned when multiple models exist with the same image URI
@@ -50,6 +52,9 @@ type ModelFetchResult struct {
 	ImageURI string
 	// CustomSpec is set when Model.Custom is specified (needed for building the model in PlanResources).
 	CustomSpec *aimv1alpha1.AIMServiceModelCustom
+	// CustomPayload is the validated compatibility encoding persisted on a
+	// v1alpha2-valid model when CustomSpec is set.
+	CustomPayload string
 }
 
 // fetchModel resolves the model for the service.
@@ -77,9 +82,13 @@ func fetchModel(
 		return result
 	}
 
-	// Try to use previously resolved model if Ready
-	if result, shouldContinue := tryFetchResolvedModel(ctx, c, service); !shouldContinue {
-		return result
+	// Inline-custom compatibility state must be validated against the live
+	// source service on every reconcile; a cached Ready reference is not
+	// sufficient provenance.
+	if service.Spec.Model.Custom == nil {
+		if result, shouldContinue := tryFetchResolvedModel(ctx, c, service); !shouldContinue {
+			return result
+		}
 	}
 
 	var result ModelFetchResult
@@ -142,6 +151,16 @@ func fetchModel(
 	if service.Spec.Model.Custom != nil {
 		logger.V(1).Info("resolving custom model")
 		result.CustomSpec = service.Spec.Model.Custom
+		payload, err := legacyaimmodel.EncodeLegacyAutoCustomSpec(service.Spec.Model.Custom)
+		if err != nil {
+			result.Model.Error = controllerutils.NewInvalidSpecError(
+				"InvalidLegacyAutoCustomSpec",
+				fmt.Sprintf("inline custom model cannot be represented safely: %v", err),
+				err,
+			)
+			return result
+		}
+		result.CustomPayload = payload
 		result.Model = resolveCustomModel(ctx, c, service, service.Spec.Model.Custom)
 		return result
 	}
@@ -345,7 +364,7 @@ func planModel(
 
 	// Custom model case
 	if obs.modelResult.CustomSpec != nil {
-		return buildModelForCustom(service, obs.modelResult.CustomSpec, obs.pendingModelName)
+		return buildModelForCustom(service, obs.modelResult.CustomSpec, obs.modelResult.CustomPayload, obs.pendingModelName)
 	}
 
 	// Image URI case - model name was validated in ComposeState
@@ -410,9 +429,9 @@ func resolveCustomModel(
 	var modelResult controllerutils.FetchResult[*aimv1alpha1.AIMModel]
 
 	// Search for existing matching model
-	existingModel, err := FindMatchingCustomModel(ctx, c, service.Namespace, custom)
+	existingModel, err := FindMatchingCustomModel(ctx, c, service, custom)
 	if err != nil {
-		modelResult.Error = fmt.Errorf("failed to search for matching custom model: %w", err)
+		modelResult.Error = err
 		return modelResult
 	}
 
@@ -433,12 +452,13 @@ func resolveCustomModel(
 func buildModelForCustom(
 	service *aimv1alpha1.AIMService,
 	custom *aimv1alpha1.AIMServiceModelCustom,
+	payload string,
 	modelName string,
-) *aimv1alpha1.AIMModel {
+) *aimv1alpha2.AIMModel {
 	// Build namespace-scoped model with service label for reconciliation tracking
-	model := &aimv1alpha1.AIMModel{
+	model := &aimv1alpha2.AIMModel{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: aimv1alpha1.GroupVersion.String(),
+			APIVersion: aimv1alpha2.GroupVersion.String(),
 			Kind:       "AIMModel",
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -449,13 +469,13 @@ func buildModelForCustom(
 				constants.LabelKeyCustomModel: "true",
 				constants.LabelKeyService:     service.Name,
 			},
+			Annotations: map[string]string{
+				legacyaimmodel.AnnotationLegacyAutoCustomSpec: payload,
+			},
+			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(service, aimv1alpha2.GroupVersion.WithKind("AIMService"))},
 		},
 		Spec: aimv1alpha1.AIMModelSpec{
-			Image:        custom.BaseImage,
-			ModelSources: custom.ModelSources,
-			Custom: &aimv1alpha1.AIMCustomModelSpec{
-				Hardware: &custom.Hardware,
-			},
+			Image:              custom.BaseImage,
 			RuntimeConfigRef:   service.Spec.RuntimeConfigRef,
 			ImagePullSecrets:   utils.CopyPullSecrets(service.Spec.ImagePullSecrets),
 			ServiceAccountName: service.Spec.ServiceAccountName,

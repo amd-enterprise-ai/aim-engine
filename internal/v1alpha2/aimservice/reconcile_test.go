@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
+	duckv1 "knative.dev/pkg/apis/duck/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -50,6 +51,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	v1alpha1service "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservice"
+	v1alpha1utils "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/serving"
 )
@@ -66,6 +68,27 @@ const (
 	componentNameHTTPRoute        = "HTTPRoute"
 	componentNameProfileCache     = "ProfileCache"
 )
+
+func TestDecorateStatus_RetiresTemplateMigrationSignal(t *testing.T) {
+	cm := controllerutils.NewConditionManager([]metav1.Condition{{
+		Type:   controllerutils.ConditionTypeMigrationRequired,
+		Status: metav1.ConditionTrue,
+		Reason: controllerutils.ReasonTemplateAPIDeprecated,
+	}})
+	(&ProfileServiceReconciler{}).DecorateStatus(
+		&aimv1alpha1.AIMServiceStatus{},
+		cm,
+		ServiceObservation{ServiceFetchResult: ServiceFetchResult{
+			service: &aimv1alpha1.AIMService{Spec: aimv1alpha1.AIMServiceSpec{
+				Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			}},
+		}},
+	)
+
+	if condition := cm.Get(controllerutils.ConditionTypeMigrationRequired); condition != nil {
+		t.Fatalf("MigrationRequired was not retired: %#v", condition)
+	}
+}
 
 func TestGenerateProfileCacheName_SharedDeterministic(t *testing.T) {
 	a, err := GenerateProfileCacheName("my-profile", "ns-alpha", "svc-a", "uid-a", aimv1alpha1.CachingModeShared, aimv1alpha1.AIMResolutionScopeNamespace)
@@ -543,6 +566,226 @@ func TestPlanResources_MaterializesProfileRuntimeBeforeInferenceService(t *testi
 
 	if !planAppliesType[*servingv1beta1.InferenceService](secondPlan.GetToApply()) {
 		t.Fatal("InferenceService must be planned after the ServingRuntime and ConfigMap are observed")
+	}
+}
+
+func TestPlanResources_MigrationHandoffPreservesLegacyInferenceServiceAtPinnedGeneration(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       testServiceName,
+			Namespace:  "ns",
+			UID:        "service-uid",
+			Generation: 7,
+			Annotations: map[string]string{
+				constants.AnnotationReconcilerPipeline:                          constants.ReconcilerPipelineProfile,
+				constants.AnnotationMigrationPreserveInferenceServiceGeneration: "7",
+				constants.AnnotationMigrationPreserveInferenceServiceUID:        "legacy-isvc-uid",
+			},
+		},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testClusterProfileName},
+		},
+	}
+	clusterProfile := &aimv1alpha2.AIMClusterProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: testClusterProfileName,
+			UID:  "profile-uid",
+		},
+		Spec: aimv1alpha2.AIMClusterProfileSpec{
+			AIMProfileSpecCommon: *sampleProfileSpec(),
+		},
+		Status: aimv1alpha2.AIMProfileStatus{
+			Status:     constants.AIMStatusReady,
+			Deployable: true,
+		},
+	}
+	isvcName, err := v1alpha1service.GenerateInferenceServiceName(service.Name, service.Namespace)
+	if err != nil {
+		t.Fatalf("generate InferenceService name: %v", err)
+	}
+	legacyConfigMapName := v1alpha1utils.ServiceCustomProfileConfigMapName(service.Name)
+	legacyISVC := currentReadyInferenceService(service.Namespace, legacyConfigMapName)
+	legacyISVC.Name = isvcName
+	legacyISVC.UID = "legacy-isvc-uid"
+	legacyISVC.Labels = map[string]string{
+		constants.LabelTemplate: "legacy-template",
+	}
+	legacyISVC.Spec.Predictor.Containers = []corev1.Container{{
+		Name:  constants.ContainerKServe,
+		Image: "example.invalid/legacy-inline:1",
+	}}
+	legacyConfigMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      legacyConfigMapName,
+			Namespace: service.Namespace,
+			Labels: map[string]string{
+				constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
+			},
+			OwnerReferences: []metav1.OwnerReference{{
+				Kind: "AIMService",
+				UID:  service.UID,
+			}},
+		},
+	}
+	notFound := func(resource, name string) error {
+		return apierrors.NewNotFound(schema.GroupResource{
+			Group:    "test",
+			Resource: resource,
+		}, name)
+	}
+	reconciler := &ProfileServiceReconciler{}
+	reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service}
+	first := reconciler.ComposeState(
+		context.Background(),
+		reconcileCtx,
+		ServiceFetchResult{
+			service:                service,
+			clusterProfile:         controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]{Value: clusterProfile},
+			inferenceService:       controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: legacyISVC},
+			legacyProfileConfigMap: controllerutils.FetchResult[*corev1.ConfigMap]{Value: legacyConfigMap},
+			profileRuntime: controllerutils.FetchResult[*kservev1alpha1.ServingRuntime]{
+				Error: notFound("servingruntimes", serving.RuntimeName(testClusterProfileName)),
+			},
+			profileRuntimeConfigMap: controllerutils.FetchResult[*corev1.ConfigMap]{
+				Error: notFound("configmaps", serving.RuntimeName(testClusterProfileName)),
+			},
+		},
+	)
+	if first.configErr != nil {
+		t.Fatalf("ComposeState returned config error: %v", first.configErr)
+	}
+	firstPlan := reconciler.PlanResources(context.Background(), reconcileCtx, first)
+	runtime, configMap := assertInitialProfileRuntimePlan(t, service, clusterProfile, &firstPlan)
+
+	second := first
+	second.profileRuntime = controllerutils.FetchResult[*kservev1alpha1.ServingRuntime]{Value: runtime}
+	second.profileRuntimeConfigMap = controllerutils.FetchResult[*corev1.ConfigMap]{Value: configMap}
+	secondPlan := reconciler.PlanResources(context.Background(), reconcileCtx, second)
+
+	if planAppliesType[*servingv1beta1.InferenceService](secondPlan.GetToApply()) {
+		t.Fatal("generation-pinned migration handoff must observe, not rewrite, the legacy InferenceService")
+	}
+	if count := legacyConfigMapDeleteCount(t, secondPlan, service.Namespace, legacyConfigMapName); count != 0 {
+		t.Fatalf("generation-pinned migration handoff deleted referenced legacy ConfigMap")
+	}
+
+	service.Generation++
+	afterServiceChange := reconciler.PlanResources(context.Background(), reconcileCtx, second)
+	if !planAppliesType[*servingv1beta1.InferenceService](afterServiceChange.GetToApply()) {
+		t.Fatal("a later AIMService spec generation must resume normal profile InferenceService rendering")
+	}
+	if count := legacyConfigMapDeleteCount(t, afterServiceChange, service.Namespace, legacyConfigMapName); count != 0 {
+		t.Fatal("a planned replacement must not make the observed legacy ConfigMap safe to delete")
+	}
+}
+
+func TestPlanResources_ActiveMigrationPinFailsClosed(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*aimv1alpha1.AIMService, *controllerutils.FetchResult[*servingv1beta1.InferenceService])
+	}{
+		{
+			name: "missing UID pin",
+			edit: func(service *aimv1alpha1.AIMService, _ *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
+				delete(service.Annotations, constants.AnnotationMigrationPreserveInferenceServiceUID)
+			},
+		},
+		{
+			name: "wrong UID pin",
+			edit: func(service *aimv1alpha1.AIMService, _ *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
+				service.Annotations[constants.AnnotationMigrationPreserveInferenceServiceUID] = "other-isvc-uid"
+			},
+		},
+		{
+			name: "missing InferenceService",
+			edit: func(_ *aimv1alpha1.AIMService, inferenceService *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
+				inferenceService.Value = nil
+				inferenceService.Error = apierrors.NewNotFound(
+					schema.GroupResource{Group: "serving.kserve.io", Resource: "inferenceservices"},
+					testServiceName,
+				)
+			},
+		},
+		{
+			name: "terminating InferenceService",
+			edit: func(_ *aimv1alpha1.AIMService, inferenceService *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
+				deletionTimestamp := metav1.Now()
+				inferenceService.Value.DeletionTimestamp = &deletionTimestamp
+			},
+		},
+		{
+			name: "missing template label",
+			edit: func(_ *aimv1alpha1.AIMService, inferenceService *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
+				delete(inferenceService.Value.Labels, constants.LabelTemplate)
+			},
+		},
+		{
+			name: "profile label present",
+			edit: func(_ *aimv1alpha1.AIMService, inferenceService *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
+				inferenceService.Value.Labels[constants.LabelProfile] = testClusterProfileName
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := &aimv1alpha1.AIMService{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       testServiceName,
+					Namespace:  "ns",
+					Generation: 7,
+					Annotations: map[string]string{
+						constants.AnnotationMigrationPreserveInferenceServiceGeneration: "7",
+						constants.AnnotationMigrationPreserveInferenceServiceUID:        "legacy-isvc-uid",
+					},
+				},
+				Spec: aimv1alpha1.AIMServiceSpec{
+					Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testClusterProfileName},
+				},
+			}
+			clusterProfile := &aimv1alpha2.AIMClusterProfile{
+				ObjectMeta: metav1.ObjectMeta{Name: testClusterProfileName, UID: "profile-uid"},
+				Spec: aimv1alpha2.AIMClusterProfileSpec{
+					AIMProfileSpecCommon: *sampleProfileSpec(),
+				},
+				Status: aimv1alpha2.AIMProfileStatus{
+					Status:     constants.AIMStatusReady,
+					Deployable: true,
+				},
+			}
+			inferenceService := controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+				Value: &servingv1beta1.InferenceService{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      testServiceName,
+						Namespace: service.Namespace,
+						UID:       "legacy-isvc-uid",
+						Labels: map[string]string{
+							constants.LabelTemplate: "legacy-template",
+						},
+					},
+				},
+			}
+			test.edit(service, &inferenceService)
+
+			reconciler := &ProfileServiceReconciler{}
+			reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service}
+			obs := reconciler.ComposeState(context.Background(), reconcileCtx, ServiceFetchResult{
+				service:          service,
+				clusterProfile:   controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]{Value: clusterProfile},
+				inferenceService: inferenceService,
+			})
+			if obs.configErr == nil {
+				t.Fatal("invalid active migration preservation pin did not surface a configuration error")
+			}
+			if health := obs.getConfigHealth(); len(health.Errors) != 1 {
+				t.Fatalf("migration preservation health = %#v", health)
+			}
+
+			plan := reconciler.PlanResources(context.Background(), reconcileCtx, obs)
+			if planAppliesType[*servingv1beta1.InferenceService](plan.GetToApply()) {
+				t.Fatal("invalid active migration preservation pin planned an InferenceService mutation")
+			}
+		})
 	}
 }
 
@@ -1754,6 +1997,52 @@ func TestGetComponentHealth_ScaleToZeroIdleReportsReady(t *testing.T) {
 	}
 }
 
+func TestGetInferenceServiceHealth_ReadyPodsOverrideStaleGeneration(t *testing.T) {
+	inferenceService := &servingv1beta1.InferenceService{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       testServiceName,
+			Namespace:  "ns",
+			Generation: 2,
+		},
+		Status: servingv1beta1.InferenceServiceStatus{
+			Status: duckv1.Status{
+				ObservedGeneration: 1,
+				Conditions: duckv1.Conditions{{
+					Type:   "Ready",
+					Status: corev1.ConditionTrue,
+				}},
+			},
+		},
+	}
+	readyPods := &corev1.PodList{Items: []corev1.Pod{{
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{{
+				Type:   corev1.PodReady,
+				Status: corev1.ConditionTrue,
+			}},
+		},
+	}}}
+
+	obs := ServiceObservation{ServiceFetchResult: ServiceFetchResult{
+		inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: inferenceService},
+		inferenceServicePods: &controllerutils.FetchResult[*corev1.PodList]{
+			Value: readyPods,
+		},
+	}}
+	health := obs.getInferenceServiceHealth()
+	if health.State != constants.AIMStatusReady ||
+		health.Reason != aimv1alpha1.AIMServiceReasonRuntimeScaling {
+		t.Fatalf("health = %#v, want Ready/RuntimeScaling", health)
+	}
+
+	obs.inferenceServicePods.Value.Items[0].Status.Conditions[0].Status = corev1.ConditionFalse
+	health = obs.getInferenceServiceHealth()
+	if health.State != constants.AIMStatusProgressing ||
+		health.Reason != aimv1alpha1.AIMServiceReasonCreatingRuntime {
+		t.Fatalf("health without a ready pod = %#v, want Progressing/CreatingRuntime", health)
+	}
+}
+
 func TestPlanProfileCache_SkipsWhenExisting(t *testing.T) {
 	service := &aimv1alpha1.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
@@ -2579,114 +2868,205 @@ func TestPlanProfileCache_DedicatedHonorsServiceCachingMode(t *testing.T) {
 	}
 }
 
-// TestPlanResources_LegacyProfileConfigMapCleanup is the upgrade regression: a
-// service upgraded from the old inline path left an orphaned
-// <service>-profile-<hash> ConfigMap the new reconcile no longer plans.
-// PlanResources must GC exactly that orphan — guarded by owner-ref UID AND the
-// managed-by label AND the legacy name shape — and never touch a
-// coincidentally-named ConfigMap missing a guard, since a false-positive delete
-// of a user object is the worst-case regression.
-func TestPlanResources_LegacyProfileConfigMapCleanup(t *testing.T) {
+func TestPlanResources_LegacyProfileConfigMapCleanupRequiresSafeTransition(t *testing.T) {
+	service, configMap := legacyProfileConfigMapCleanupFixture(t)
+
+	stale := currentReadyInferenceService(service.Namespace)
+	stale.Generation++
+	notReady := currentReadyInferenceService(service.Namespace)
+	notReady.Status.Conditions[0].Status = corev1.ConditionFalse
+
+	tests := []struct {
+		name             string
+		inferenceService controllerutils.FetchResult[*servingv1beta1.InferenceService]
+		wantDelete       bool
+	}{
+		{
+			name: "current Ready InferenceService without reference",
+			inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+				Value: currentReadyInferenceService(service.Namespace, "unrelated-config-map"),
+			},
+			wantDelete: true,
+		},
+		{
+			name: "current Ready InferenceService with legacy reference",
+			inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+				Value: currentReadyInferenceService(service.Namespace, "unrelated-config-map", configMap.Name),
+			},
+		},
+		{
+			name: "missing InferenceService",
+			inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+				Error: apierrors.NewNotFound(
+					schema.GroupResource{Group: "serving.kserve.io", Resource: "inferenceservices"},
+					service.Name,
+				),
+			},
+		},
+		{
+			name: "InferenceService fetch failed",
+			inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+				Error: errors.New("fetch InferenceService"),
+			},
+		},
+		{
+			name:             "stale InferenceService generation",
+			inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: stale},
+		},
+		{
+			name:             "InferenceService Ready False",
+			inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: notReady},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			plan := planLegacyProfileConfigMapCleanupForTest(service, configMap, test.inferenceService)
+			got := legacyConfigMapDeleteCount(t, plan, service.Namespace, configMap.Name)
+			if test.wantDelete && got != 1 {
+				t.Fatalf("legacy ConfigMap deletes = %d, want 1", got)
+			}
+			if !test.wantDelete && got != 0 {
+				t.Fatalf("legacy ConfigMap deletes = %d, want 0", got)
+			}
+		})
+	}
+}
+
+func TestPlanResources_LegacyProfileConfigMapCleanupSafetyGuards(t *testing.T) {
+	service, configMap := legacyProfileConfigMapCleanupFixture(t)
+	withoutOwner := configMap.DeepCopy()
+	withoutOwner.OwnerReferences = nil
+	wrongOwner := configMap.DeepCopy()
+	wrongOwner.OwnerReferences[0].UID = "different-service-uid"
+	withoutManagedBy := configMap.DeepCopy()
+	withoutManagedBy.Labels = nil
+
+	tests := []struct {
+		name      string
+		configMap *corev1.ConfigMap
+	}{
+		{name: "no owner reference", configMap: withoutOwner},
+		{name: "wrong owner UID", configMap: wrongOwner},
+		{name: "missing managed-by label", configMap: withoutManagedBy},
+		{name: "no legacy ConfigMap observed", configMap: nil},
+	}
+
+	inferenceService := controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+		Value: currentReadyInferenceService(service.Namespace),
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			plan := planLegacyProfileConfigMapCleanupForTest(service, test.configMap, inferenceService)
+			if got := legacyConfigMapDeleteCount(t, plan, service.Namespace, configMap.Name); got != 0 {
+				t.Fatalf("legacy ConfigMap deletes = %d, want 0", got)
+			}
+		})
+	}
+}
+
+func legacyProfileConfigMapCleanupFixture(t *testing.T) (*aimv1alpha1.AIMService, *corev1.ConfigMap) {
+	t.Helper()
+
 	const serviceUID = "svc-uid-legacy-1"
 	service := &aimv1alpha1.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: serviceUID},
 	}
-
 	legacyName, err := legacyProfileConfigMapName(service.Name)
 	if err != nil {
 		t.Fatalf("legacyProfileConfigMapName: %v", err)
 	}
-
-	ownedByService := []metav1.OwnerReference{{
-		APIVersion: "aim.eai.amd.com/v1alpha1",
-		Kind:       "AIMService",
-		Name:       service.Name,
-		UID:        serviceUID,
-		Controller: ptr.To(true),
-	}}
-	ownedByOther := []metav1.OwnerReference{{
-		APIVersion: "aim.eai.amd.com/v1alpha1",
-		Kind:       "AIMService",
-		Name:       "some-other-service",
-		UID:        "a-different-uid",
-		Controller: ptr.To(true),
-	}}
-	managedByAIM := map[string]string{constants.LabelK8sManagedBy: constants.LabelValueManagedBy}
-
-	makeConfigMap := func(owners []metav1.OwnerReference, labels map[string]string) *corev1.ConfigMap {
-		return &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:            legacyName,
-				Namespace:       service.Namespace,
-				OwnerReferences: owners,
-				Labels:          labels,
+	return service, &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      legacyName,
+			Namespace: service.Namespace,
+			Labels: map[string]string{
+				constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
 			},
-		}
-	}
-
-	tests := []struct {
-		name       string
-		configMap  *corev1.ConfigMap
-		wantDelete bool
-	}{
-		{
-			name:       "owned by this service + managed-by label + legacy name is deleted",
-			configMap:  makeConfigMap(ownedByService, managedByAIM),
-			wantDelete: true,
-		},
-		{
-			name:       "legacy name but no owner reference is untouched",
-			configMap:  makeConfigMap(nil, managedByAIM),
-			wantDelete: false,
-		},
-		{
-			name:       "legacy name and owner reference but missing managed-by label is untouched",
-			configMap:  makeConfigMap(ownedByService, nil),
-			wantDelete: false,
-		},
-		{
-			name:       "legacy name owned by a different service is untouched",
-			configMap:  makeConfigMap(ownedByOther, managedByAIM),
-			wantDelete: false,
-		},
-		{
-			name:       "no legacy ConfigMap observed (post-rewrite service) deletes nothing",
-			configMap:  nil,
-			wantDelete: false,
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "aim.eai.amd.com/v1alpha1",
+				Kind:       "AIMService",
+				Name:       service.Name,
+				UID:        serviceUID,
+				Controller: ptr.To(true),
+			}},
 		},
 	}
+}
 
-	r := &ProfileServiceReconciler{}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			obs := ServiceObservation{
-				ServiceFetchResult: ServiceFetchResult{
-					service:                service,
-					legacyProfileConfigMap: controllerutils.FetchResult[*corev1.ConfigMap]{Value: tc.configMap},
+func currentReadyInferenceService(namespace string, configMapNames ...string) *servingv1beta1.InferenceService {
+	volumes := make([]corev1.Volume, 0, len(configMapNames))
+	for _, name := range configMapNames {
+		volumes = append(volumes, corev1.Volume{
+			Name: "config-map-" + name,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: name},
 				},
-			}
-
-			plan := r.PlanResources(context.Background(),
-				controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service}, obs)
-
-			var deletedConfigMaps int
-			for _, obj := range plan.GetToDelete() {
-				configMap, ok := obj.(*corev1.ConfigMap)
-				if !ok {
-					continue
-				}
-				if configMap.Name != legacyName || configMap.Namespace != service.Namespace {
-					t.Fatalf("plan queued deletion of an unexpected ConfigMap %s/%s", configMap.Namespace, configMap.Name)
-				}
-				deletedConfigMaps++
-			}
-
-			if tc.wantDelete && deletedConfigMaps != 1 {
-				t.Fatalf("expected exactly one legacy ConfigMap delete, got %d", deletedConfigMaps)
-			}
-			if !tc.wantDelete && deletedConfigMaps != 0 {
-				t.Fatalf("expected no ConfigMap delete, got %d", deletedConfigMaps)
-			}
+			},
 		})
 	}
+	return &servingv1beta1.InferenceService{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       testServiceName,
+			Namespace:  namespace,
+			Generation: 1,
+		},
+		Spec: servingv1beta1.InferenceServiceSpec{
+			Predictor: servingv1beta1.PredictorSpec{
+				PodSpec: servingv1beta1.PodSpec{Volumes: volumes},
+			},
+		},
+		Status: servingv1beta1.InferenceServiceStatus{
+			Status: duckv1.Status{
+				ObservedGeneration: 1,
+				Conditions: duckv1.Conditions{{
+					Type:   "Ready",
+					Status: corev1.ConditionTrue,
+				}},
+			},
+		},
+	}
+}
+
+func planLegacyProfileConfigMapCleanupForTest(
+	service *aimv1alpha1.AIMService,
+	configMap *corev1.ConfigMap,
+	inferenceService controllerutils.FetchResult[*servingv1beta1.InferenceService],
+) controllerutils.PlanResult {
+	reconciler := &ProfileServiceReconciler{}
+	obs := ServiceObservation{
+		ServiceFetchResult: ServiceFetchResult{
+			service:                service,
+			inferenceService:       inferenceService,
+			legacyProfileConfigMap: controllerutils.FetchResult[*corev1.ConfigMap]{Value: configMap},
+		},
+	}
+	return reconciler.PlanResources(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+		obs,
+	)
+}
+
+func legacyConfigMapDeleteCount(
+	t *testing.T,
+	plan controllerutils.PlanResult,
+	namespace string,
+	name string,
+) int {
+	t.Helper()
+
+	count := 0
+	for _, obj := range plan.GetToDelete() {
+		configMap, ok := obj.(*corev1.ConfigMap)
+		if !ok {
+			continue
+		}
+		if configMap.Name != name || configMap.Namespace != namespace {
+			t.Fatalf("plan queued deletion of unexpected ConfigMap %s/%s", configMap.Namespace, configMap.Name)
+		}
+		count++
+	}
+	return count
 }

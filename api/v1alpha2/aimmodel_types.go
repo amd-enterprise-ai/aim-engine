@@ -46,9 +46,9 @@ import (
 // +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.managedProfiles.ready`
 // +kubebuilder:printcolumn:name="Base",type=integer,JSONPath=`.status.managedProfiles.base`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
-// v1alpha2 onboarding contract: exactly one of spec.image (official
-// discovery), spec.modelId (generated profiles), or spec.profiles
-// (fine-tune / custom-model derivation); legacy
+// v1alpha2 onboarding accepts exactly one of spec.image for discovery,
+// spec.profiles for external derivation, or spec.modelId for generated profiles.
+// Legacy
 // v1alpha1 onboarding fields and the deprecated flat spec.derivedFrom shape
 // are forbidden on NEW v1alpha2 objects. Each "forbidden" rule uses
 // optionalOldSelf so that objects originally created via v1alpha1 (which

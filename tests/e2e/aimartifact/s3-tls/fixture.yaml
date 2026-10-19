@@ -17,7 +17,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: seed
-        image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+        image: docker.io/pgsty/mc:RELEASE.2026-09-16T00-00-00Z
         imagePullPolicy: IfNotPresent
         command:
         - /bin/sh
@@ -39,6 +39,9 @@ kind: AIMRuntimeConfig
 metadata:
   name: tls-configmap
 spec:
+  additionalCABundleRef:
+    name: s3-root-ca
+    key: ca.crt
   artifact:
     s3:
       endpoint: https://minio-admin:9000
@@ -49,11 +52,6 @@ spec:
         mode: static
         credentialsSecretRef:
           name: minio-credentials
-      tls:
-        caBundleRef:
-          kind: ConfigMap
-          name: s3-root-ca
-          key: ca.crt
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMRuntimeConfig

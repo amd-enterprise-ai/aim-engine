@@ -26,7 +26,7 @@ Derived resource names are **not** predictable from the parent name alone. Alway
 |---|---|---|---|
 | `AIMProfileSet` (child of model) | `AIMModel.spec.profiles` | `[modelName, "profiles"]` | model UID + derivation spec |
 | `AIMClusterProfileSet` (child of cluster model) | `AIMClusterModel.spec.profiles` | `[modelName, "profiles"]` | cluster model UID + derivation spec |
-| Derived `AIMProfile` | `AIMProfileSet` | `[profileSetName, accelOrAlias]` | source profile + overrides |
+| Derived `AIMProfile` | `AIMProfileSet` | `[profileSetName, accelOrAlias]` | logical source identity + effective configuration and overrides |
 | Overlay `AIMProfile` | `AIMService.spec.profileOverrides` | `[seedName, serviceName, "overlay"]` | service UID + overrides |
 | `AIMProfileCache` | `AIMService` (when caching enabled) | `[profileName]` | namespace |
 | `AIMArtifact` | `AIMProfileCache` | `[sourceURI]` | source URI + env + storage |
@@ -36,6 +36,8 @@ Derived resource names are **not** predictable from the parent name alone. Alway
 | `HTTPRoute` | `AIMService` | `[serviceName]` | namespace |
 | PVC | `AIMArtifact` | `[artifactName, "cache"]` | artifact UID |
 | Download `Job` | `AIMArtifact` | `[artifactName, "download"]` | artifact UID |
+
+Image-model definitions retain the same logical source identity when a corresponding profile resource is materialised or removed by hardware reconciliation. Derived output names are stable across that transition. Definitions from independent models and direct profiles remain distinct even when they share runtime fields or a `profileId`.
 
 ### v1alpha1 derived resource names
 
@@ -71,11 +73,13 @@ These carry provenance or controller compatibility state that nothing selects on
 | Annotation | Values | Set by | Used by |
 |---|---|---|---|
 | `aim.eai.amd.com/profile-source` | `image`, `copy`, `generated` | AIMModel discovery/generation or AIMProfileSet derivation | Origin classification (`status.origin`) |
-| `aim.eai.amd.com/profile-copyable` | `"true"` | Image discovery (default); manual opt-in for hand-authored profiles | AIMProfileSet candidate eligibility |
+| `aim.eai.amd.com/profile-copyable` | `"true"` / explicit `"false"` | Image discovery (default true); opt-in for other resource-backed sources | AIMProfileSet candidate eligibility; an explicit model-profile opt-out also applies to its logical definition |
 | `aim.eai.amd.com/profile-generation-fallback` | RuntimeConfig fallback name | AIMModel generation | Retaining a generated profile when its hardware disappears |
 | `aim.eai.amd.com/profile-yaml-contract` | JSON object with `codec`, `metadataFields`, and optional `extensions` | Image discovery; inherited by AIMProfileSet derivation and AIMService overlays | Rendering the source-compatible profile YAML mounted into the runtime |
 
 `profile-yaml-contract` is controller-owned diagnostic state. Typical values identify the `aim-profile/v1` codec and list the metadata fields present in the source. The optional `extensions` object retains source-owned fields that AIM Engine does not model, for example `metadata.capabilities`. Profiles without source YAML provenance use the strict canonical accelerator v1 format. Discovered and derived profiles require the annotation; projection waits for their producer to backfill it instead of guessing. Unknown fields in the contract envelope, unknown codec identifiers, malformed contracts, and contracts larger than 64 KiB are rejected explicitly during derivation or runtime projection.
+
+Image-backed model definitions carry equivalent role, origin, model provenance, and YAML-contract information before materialisation. Inline-transformed definitions have origin `derived` and the identity of the publishing model. A standalone derived resource participates as a source only when explicitly marked copyable.
 
 :::{admonition} Hand-authored profiles
 :class: important

@@ -40,11 +40,22 @@ import (
 
 // ProfileCopyCandidate is a resource-neutral profile source used by derivation hosts such as AIMModel.
 type ProfileCopyCandidate struct {
-	Name         string
-	Spec         aimv1alpha2.AIMProfileSpecCommon
-	Status       aimv1alpha2.AIMProfileStatus
-	BaseImage    string
-	YAMLContract profileyaml.Contract
+	// SourceID identifies a logical definition independently of materialization.
+	// SourceGroup identifies the catalog/model or direct resource for provenance
+	// and source-load diagnostics.
+	SourceID    string
+	SourceGroup string
+	// LegacyCatalogNaming preserves the old catalog parser's naming inputs,
+	// including through explicitly opted-in chains of derived profiles.
+	LegacyCatalogNaming bool
+	Name                string
+	Spec                aimv1alpha2.AIMProfileSpecCommon
+	Status              aimv1alpha2.AIMProfileStatus
+	BaseImage           string
+	YAMLContract        profileyaml.Contract
+	// ProfileSetUIDs records the profile-set derivation lineage for loop
+	// prevention when profile-set outputs are explicitly made copyable.
+	ProfileSetUIDs []string
 }
 
 // ProfileCopyRequest describes a resource-neutral profile derivation request.
@@ -243,17 +254,15 @@ func FilterProfileCopyCandidateIndexes(candidates []ProfileCopyCandidate, req Pr
 
 	switch req.VersionPolicy {
 	case aimv1alpha1.ProfileVersionPolicyLatest:
-		matchedCandidates := make([]ProfileCopyCandidate, 0, len(matched))
+		version := ""
 		for _, index := range matched {
-			matchedCandidates = append(matchedCandidates, candidates[index])
-		}
-		version := latestProfileCopyVersion(matchedCandidates)
-		if version == "" {
-			return matched[:0], nil
+			if compareProfileVersions(candidates[index].Status.Version, version) > 0 {
+				version = candidates[index].Status.Version
+			}
 		}
 		filtered := matched[:0]
 		for _, index := range matched {
-			if candidates[index].Status.Version == version {
+			if version != "" && candidates[index].Status.Version == version {
 				filtered = append(filtered, index)
 			}
 		}
@@ -277,8 +286,7 @@ func FilterProfileCopyCandidateIndexes(candidates []ProfileCopyCandidate, req Pr
 // ApplyProfileCopyOverrides mutates a source profile spec according to typed profileCopy overrides.
 //
 // imageOverride and overrides.Image both name the deployment-image override
-// for the derived profile; overrides.Image (the modern shape used by
-// AIMModel.spec.profiles) wins when both are set.
+// for the derived profile; overrides.Image wins when both are set.
 func ApplyProfileCopyOverrides(
 	source aimv1alpha2.AIMProfileSpecCommon,
 	overrides *aimv1alpha1.ProfileOverrides,
@@ -521,18 +529,6 @@ func ResolveDerivedProfileImage(imageOverride, sourceBaseImage, sourceImage stri
 		return aimimage.RebaseRegistry(sourceImage, legacy)
 	}
 	return sourceImage
-}
-
-func latestProfileCopyVersion(profiles []ProfileCopyCandidate) string {
-	bestVersion := ""
-	for _, profile := range profiles {
-		version := profile.Status.Version
-		if compareProfileVersions(version, bestVersion) > 0 {
-			bestVersion = version
-		}
-	}
-
-	return bestVersion
 }
 
 func compareVersionStrings(left, right string) int {

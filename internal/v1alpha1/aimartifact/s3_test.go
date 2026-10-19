@@ -95,11 +95,11 @@ func TestResolveS3PodSettingsAppliesTypedStaticConnection(t *testing.T) {
 	assertEnvValue(t, settings.Env, "AWS_SESSION_TOKEN_FILE", s3CredentialsMountPath+"/session-token")
 	assertEnvValue(t, settings.Env, "AWS_ENDPOINT_URL_S3", "")
 	assertEnvValue(t, settings.Env, "AIM_S3_INSECURE_SKIP_VERIFY", "false")
-	assertEnvValue(t, settings.Env, "AWS_CA_BUNDLE", s3CABundleFilePath)
+	assertEnvValue(t, settings.Env, "AWS_CA_BUNDLE", "")
 
-	if len(settings.Volumes) != 2 || len(settings.VolumeMounts) != 2 {
+	if len(settings.Volumes) != 1 || len(settings.VolumeMounts) != 1 {
 		t.Fatalf(
-			"volumes/mounts = %d/%d, want 2/2",
+			"volumes/mounts = %d/%d, want 1/1",
 			len(settings.Volumes),
 			len(settings.VolumeMounts),
 		)
@@ -107,10 +107,6 @@ func TestResolveS3PodSettingsAppliesTypedStaticConnection(t *testing.T) {
 	if settings.Volumes[0].Secret == nil ||
 		settings.Volumes[0].Secret.SecretName != "s3-credentials" {
 		t.Fatalf("credential volume = %#v", settings.Volumes[0])
-	}
-	if settings.Volumes[1].ConfigMap == nil ||
-		settings.Volumes[1].ConfigMap.Name != "s3-ca" {
-		t.Fatalf("CA volume = %#v", settings.Volumes[1])
 	}
 }
 

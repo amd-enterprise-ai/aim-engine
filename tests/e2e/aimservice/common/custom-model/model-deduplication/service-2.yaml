@@ -1,12 +1,12 @@
 # Second service with IDENTICAL custom model spec
-# Should reuse the AIMModel created by first service
+# Receives its own service-owned compatibility AIMModel despite identical input
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: test-dedup-service-2
 spec:
   model:
-    # Identical custom spec - should find and reuse existing model
+    # Identical custom spec; ownership remains scoped to this service UID
     custom:
       baseImage: docker.io/amdenterpriseai/aim-dummy:0.2.0
       modelSources:

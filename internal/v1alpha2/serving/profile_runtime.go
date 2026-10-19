@@ -153,6 +153,14 @@ func AssembleProfileYAMLForContract(
 	if contract.HasMetadataField("accelerator_count") {
 		metadata["accelerator_count"] = accCount
 	}
+	// Older persisted contracts recorded these fields as opaque extensions.
+	// Honor their presence too, so typed overrides replace the original values.
+	if _, present := metadata["accelerator_vendor"]; contract.HasMetadataField("accelerator_vendor") || (present && spec.AcceleratorVendor != "") {
+		metadata["accelerator_vendor"] = string(spec.AcceleratorVendor)
+	}
+	if _, present := metadata["accelerator_partitioning_mode"]; contract.HasMetadataField("accelerator_partitioning_mode") || (present && spec.AcceleratorPartitioningMode != "") {
+		metadata["accelerator_partitioning_mode"] = spec.AcceleratorPartitioningMode
+	}
 	if contract.HasMetadataField("manual_selection_only") {
 		// The resolver ignores this deprecated field, but legacy/transitional
 		// runtime schemas still require its serialized value when the source

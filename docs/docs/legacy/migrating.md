@@ -3,7 +3,10 @@
 This guide maps v1alpha1 concepts to their v1alpha2 equivalents and provides conversion recipes for the common deployment patterns.
 
 :::{note}
-Read the [Legacy Overview](index.md) first for context on coexistence rules and the deprecation timeline.
+Read the [Legacy Overview](index.md) first for coexistence rules and the migration/removal boundary.
+:::
+:::{warning}
+This page maps fields and target shapes; it is not a migration execution or cleanup runbook. Install and verify the bridge first. The bounded administrator-run Plan/Apply behavior and manual outcomes are governed by [ADR-0002](https://github.com/amd-enterprise-ai/aim-engine/blob/main/ADR-0002-bounded-plan-apply-template-migration.md).
 :::
 ## Resource mapping
 
@@ -14,7 +17,7 @@ Read the [Legacy Overview](index.md) first for context on coexistence rules and 
 | `AIMService.spec.template` | `AIMService.spec.profile` | Reference a profile instead of a template. |
 | `AIMService.spec.overrides` | `AIMService.spec.profileOverrides` | Override shape changed (see below). |
 | `AIMService.spec.model.image` | `AIMModel.spec.image` (then `AIMService.spec.model.name`) | Image-based services should onboard an explicit AIMModel. |
-| `AIMModel.spec.custom` | `AIMModel.spec.image` (base) + `AIMModel.spec.profiles` | Two-step custom-model flow. |
+| `AIMModel.spec.custom` | `AIMModel.spec.image` (base) + `AIMModel.spec.profiles` | Inline on one model, or derived from a shared base-image model. |
 | `AIMModel.spec.customTemplates` | `AIMProfileSet` | Standalone derivation resource. |
 | `AIMModel.spec.profileCopy` | `AIMModel.spec.profiles` | Profile-copy is now first-class (groups derivedFrom + version + overrides). |
 | `AIMModel.spec.modelSources` | `AIMProfile.spec.modelSources` | Sources live on each profile. |
@@ -116,7 +119,7 @@ Notice the JSON value is now a typed integer rather than a string — `engineArg
 
 ### Custom models
 
-The v1alpha1 `AIMModel.spec.custom + spec.customTemplates` pattern is replaced by a two-step flow:
+The v1alpha2 custom-model flow selects base definitions and overrides identity and weights. This example uses a shared base-image model:
 
 **Before (v1alpha1):**
 
@@ -161,17 +164,18 @@ spec:
     derivedFrom:
       selector:
         role: base
-        aimId: acme/custom-transformer
         modelRef:
           name: aim-base-vllm
     versionPolicy: all
     overrides:
+      aimId: acme/custom-transformer
+      modelId: acme/custom-transformer
       modelSources:
         - modelId: acme/custom-transformer
           sourceUri: s3://acme-models/custom-transformer
 ```
 
-The base-image AIMModel produces base profiles (one per accelerator/precision/metric combination the base image supports). The custom-model AIMModel's derivation promotes those base profiles to deployable profiles by overriding `modelSources` and supplying the target `aimId`.
+The base-image AIMModel publishes all base definitions, including those without materialised profiles. A separate custom-model AIMModel selects those definitions and supplies target identity and weights.
 
 See [Custom Models](../guides/custom-models.md) for the full walkthrough.
 
@@ -293,18 +297,11 @@ Cluster-scoped profiles cannot enable caching directly (cluster-scoped caches no
 
 ## Migration order
 
-The recommended sequence:
-
-1. **Cluster admins first** — onboard cluster-scoped models via `AIMClusterModel` with `spec.image`. Verify deployable profiles materialise.
-2. **Namespace admins** — migrate namespace-scoped `AIMServiceTemplate` to `AIMProfile` (or rebuild from a namespace `AIMModel`).
-3. **Services last** — switch `AIMService.spec.template` to `spec.profile` (or `spec.model.name`).
-4. **Verify** with `kubectl get aimservice <name> -o jsonpath='{.status.resolvedProfile}'`.
-5. **Clean up** — delete v1alpha1 templates after confirming no service references remain.
+Install the bridge CRDs before the matching operator and verify predecessor serving before planning any changes. Use ADR-0002 for operation ordering, dry-run, partial-failure recovery, and manual outcomes. These field mappings do not authorize template/cache deletion, storage rewriting, or automatic handling of custom and ambiguous resources.
 
 ## Validation traps
 
-The v1alpha2 CRD rejects legacy-only fields and invalid combinations of the
-three onboarding spec shapes:
+The v1alpha2 CRD rejects legacy-only fields and invalid combinations of the onboarding spec shapes:
 
 | Rejected on v1alpha2 | Resource | Why |
 |---|---|---|
@@ -313,8 +310,10 @@ three onboarding spec shapes:
 | `spec.customTemplates` | `AIMModel` | Replaced by `AIMProfileSet` / `derivedFrom`. |
 | `spec.profileCopy` | `AIMModel` | Replaced by `derivedFrom`. |
 | Flat `spec.derivedFrom` | `AIMModel` | Use `spec.profiles.derivedFrom`. |
-| Any combination of two or more of `spec.image`, `spec.modelId`, and `spec.profiles` | `AIMModel` | Exactly one onboarding flow is required. |
+| `spec.modelId` with `spec.image` or `spec.profiles` | `AIMModel` | Generated onboarding is separate from image discovery and profile derivation. |
 | None of `spec.image`, `spec.modelId`, or `spec.profiles` | `AIMModel` | Exactly one onboarding flow is required. |
+| `spec.profiles` without `spec.image` or `profiles.derivedFrom` | `AIMModel` | External derivation requires a source selector or alternate catalog. |
+| `profiles.derivedFrom.sourceRef` or `profiles.derivedFrom.selector.modelRef` with `spec.image` | `AIMModel` | Inline profiles select from the model's own image. |
 | `spec.source` or `spec.accelerator` without `spec.modelId` | `AIMModel` | These fields configure generated model-ID onboarding only. |
 | `spec.aimId`, `spec.source`, or `spec.runtimeConfigName` with `spec.profiles` | `AIMModel` | Derivation identity and runtime come from the selected source profiles and overrides. |
 | Image-discovery/runtime fields such as `spec.discovery`, `spec.env`, `spec.imagePullSecrets`, `spec.serviceAccountName`, or `spec.resources` with `spec.modelId` | `AIMModel` | Configure the generated profile runtime on the referenced RuntimeConfig fallback. |

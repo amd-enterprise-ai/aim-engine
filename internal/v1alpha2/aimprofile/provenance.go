@@ -40,7 +40,14 @@ import (
 const (
 	AnnotationProfileSource   = constants.AimLabelDomain + "/profile-source"
 	AnnotationProfileCopyable = constants.AimLabelDomain + "/profile-copyable"
+	AnnotationSourceID        = constants.AimLabelDomain + "/profile-source-id"
+	AnnotationSourceGroup     = constants.AimLabelDomain + "/profile-source-group"
 	annotationProfileSetUID   = constants.AimLabelDomain + "/profile-set-uid"
+
+	// AnnotationLegacyCatalogNaming carries reproducible catalog lineage through
+	// derived resources. It is not an adopted name: deleting/recreating the whole
+	// chain reconstructs it from the catalog, without a persistent name map.
+	AnnotationLegacyCatalogNaming = constants.AimLabelDomain + "/legacy-catalog-naming"
 
 	// AnnotationOverlayService marks an AIMProfile as a private overlay
 	// owned by a specific AIMService. Mirrors aimservice.AnnotationOverlayService

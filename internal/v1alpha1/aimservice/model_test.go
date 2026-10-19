@@ -180,6 +180,29 @@ func TestFetchModel_ByName_ClusterScoped(t *testing.T) {
 	}
 }
 
+func TestFetchModel_CustomCredentialLiteralIsInvalid(t *testing.T) {
+	ctx := testContext()
+	service := NewService("credential-literal").Build()
+	service.Spec.Model = &aimv1alpha1.AIMServiceModel{
+		Custom: &aimv1alpha1.AIMServiceModelCustom{
+			BaseImage: "ghcr.io/amd/aim-base:v1",
+			ModelSources: []aimv1alpha1.AIMModelSource{{
+				ModelID:   "acme/model",
+				SourceURI: "s3://models/model?X-Amz-Signature=fixture-signature",
+			}},
+		},
+	}
+
+	result := fetchModel(ctx, newFakeClient(), service)
+
+	if result.Model.Error == nil {
+		t.Fatal("fetchModel() accepted a credential-bearing inline custom source")
+	}
+	if result.CustomPayload != "" {
+		t.Fatalf("fetchModel() produced compatibility payload %q", result.CustomPayload)
+	}
+}
+
 func TestFetchModel_ByName_NamespacePrecedence(t *testing.T) {
 	ctx := testContext()
 

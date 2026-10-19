@@ -23,6 +23,8 @@
 package aimmodel
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,9 +32,55 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
 )
+
+func TestClusterComposeState_ProfileSetReadFailureBlocksNativeMutation(t *testing.T) {
+	model := &aimv1alpha2.AIMClusterModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "derived", UID: "model-uid"},
+		Spec: aimv1alpha1.AIMModelSpec{
+			DerivedFrom: &aimv1alpha1.AIMProfileSetSpec{
+				Selector: aimv1alpha1.ProfileSelector{AimId: "qwen/qwen3"},
+			},
+		},
+	}
+	fetch := ClusterModelFetchResult{
+		model: model,
+		existingClusterProfiles: controllerutils.FetchResult[[]managedProfile]{
+			Value: []managedProfile{{
+				Object: &aimv1alpha2.AIMClusterProfile{
+					ObjectMeta: metav1.ObjectMeta{Name: "existing"},
+				},
+			}},
+		},
+		childProfileSet: controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfileSet]{
+			Error: errors.New("profile set read failed"),
+		},
+	}
+	reconciler := &ClusterModelReconciler{}
+	obs := reconciler.ComposeState(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMClusterModel]{Object: model},
+		fetch,
+	)
+	plan := reconciler.PlanResources(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMClusterModel]{Object: model},
+		obs,
+	)
+
+	if obs.BuildErr == nil || obs.pruneSafe {
+		t.Fatalf("observation did not preserve child read failure: %#v", obs)
+	}
+	if len(plan.GetToApply()) != 0 ||
+		len(plan.GetToApplyWithoutOwnerRef()) != 0 ||
+		len(plan.GetToApplyWithForce()) != 0 ||
+		len(plan.GetToDelete()) != 0 {
+		t.Fatalf("child read failure allowed cluster mutation: %#v", plan)
+	}
+}
 
 func TestBuildDesiredOfficialClusterModelProfiles_StampsRoleAndOriginLabels(t *testing.T) {
 	t.Parallel()

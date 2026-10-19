@@ -2,9 +2,10 @@
 #
 # Custom Model Test: No Dedup Across Different AWS_ENDPOINT_URL
 #
-# This test validates custom model matching semantics:
-# two services with identical baseImage/modelId/sourceUri but different
-# modelSources[].env[AWS_ENDPOINT_URL] must create two distinct AIMModels.
+# Compatibility AIMModels are service-owned. This test validates that two
+# services with identical baseImage/modelId/sourceUri but different
+# modelSources[].env[AWS_ENDPOINT_URL] retain distinct canonical compatibility
+# payloads and resolve their respective UID-bound models.
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
@@ -57,7 +58,7 @@ spec:
                   - status: "True"
                     reason: ModelResolved
 
-    - name: Verify custom model for service-1 preserves endpoint A
+    - name: Verify service-1 model persists endpoint A in its compatibility payload
       try:
         - assert:
             timeout: 60s
@@ -66,20 +67,23 @@ spec:
               kind: AIMModel
               metadata:
                 labels:
+                  aim.eai.amd.com/origin: auto-generated
                   aim.eai.amd.com/custom-model: "true"
                   aim.eai.amd.com/service: test-dedup-endpoint-service-1
+                annotations:
+                  aim.eai.amd.com/legacy-auto-custom-spec: '{"baseImage":"docker.io/amdenterpriseai/aim-dummy:0.2.0","modelSources":[{"modelId":"shared/s3-endpoint-model","sourceUri":"s3://test-bucket/model","env":[{"name":"AWS_ENDPOINT_URL","value":"https://minio-a.example.com"}]}],"hardware":{"cpu":{"requests":"500m"}}}'
+                (ownerReferences[?apiVersion == 'aim.eai.amd.com/v1alpha2' && kind == 'AIMService' && name == 'test-dedup-endpoint-service-1']):
+                  - controller: true
+                    blockOwnerDeletion: true
               spec:
-                modelSources:
-                  - modelId: shared/s3-endpoint-model
-                    sourceUri: s3://test-bucket/model
-                    env:
-                      - name: AWS_ENDPOINT_URL
-                        value: https://minio-a.example.com
+                image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+                (modelSources == null): true
+                (custom == null): true
               status:
                 status: Ready
                 sourceType: Custom
 
-    - name: Verify custom model for service-2 preserves endpoint B
+    - name: Verify service-2 model persists endpoint B in its compatibility payload
       try:
         - assert:
             timeout: 60s
@@ -88,15 +92,53 @@ spec:
               kind: AIMModel
               metadata:
                 labels:
+                  aim.eai.amd.com/origin: auto-generated
                   aim.eai.amd.com/custom-model: "true"
                   aim.eai.amd.com/service: test-dedup-endpoint-service-2
+                annotations:
+                  aim.eai.amd.com/legacy-auto-custom-spec: '{"baseImage":"docker.io/amdenterpriseai/aim-dummy:0.2.0","modelSources":[{"modelId":"shared/s3-endpoint-model","sourceUri":"s3://test-bucket/model","env":[{"name":"AWS_ENDPOINT_URL","value":"https://minio-b.example.com"}]}],"hardware":{"cpu":{"requests":"500m"}}}'
+                (ownerReferences[?apiVersion == 'aim.eai.amd.com/v1alpha2' && kind == 'AIMService' && name == 'test-dedup-endpoint-service-2']):
+                  - controller: true
+                    blockOwnerDeletion: true
               spec:
-                modelSources:
-                  - modelId: shared/s3-endpoint-model
-                    sourceUri: s3://test-bucket/model
-                    env:
-                      - name: AWS_ENDPOINT_URL
-                        value: https://minio-b.example.com
+                image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+                (modelSources == null): true
+                (custom == null): true
               status:
                 status: Ready
                 sourceType: Custom
+
+    - name: Verify endpoint identities resolve to distinct UID-bound models
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              FIRST_SERVICE=test-dedup-endpoint-service-1
+              SECOND_SERVICE=test-dedup-endpoint-service-2
+              FIRST_MODEL=$(kubectl get aimservice "$FIRST_SERVICE" -n "$NAMESPACE" \
+                -o jsonpath='{.status.resolvedModel.name}')
+              SECOND_MODEL=$(kubectl get aimservice "$SECOND_SERVICE" -n "$NAMESPACE" \
+                -o jsonpath='{.status.resolvedModel.name}')
+              [ "$FIRST_MODEL" != "$SECOND_MODEL" ] || {
+                echo "ERROR: endpoint-distinct services resolved to the same model $FIRST_MODEL"
+                exit 1
+              }
+
+              for PAIR in "$FIRST_SERVICE:$FIRST_MODEL" "$SECOND_SERVICE:$SECOND_MODEL"; do
+                SERVICE=${PAIR%%:*}
+                MODEL=${PAIR#*:}
+                SERVICE_UID=$(kubectl get aimservice "$SERVICE" -n "$NAMESPACE" \
+                  -o jsonpath='{.metadata.uid}')
+                kubectl get aimmodel "$MODEL" -n "$NAMESPACE" -o json |
+                  jq -e --arg service "$SERVICE" --arg uid "$SERVICE_UID" '
+                    (.metadata.ownerReferences | length) == 1 and
+                    .metadata.ownerReferences[0].kind == "AIMService" and
+                    .metadata.ownerReferences[0].name == $service and
+                    .metadata.ownerReferences[0].uid == $uid and
+                    .metadata.ownerReferences[0].controller == true and
+                    .metadata.ownerReferences[0].blockOwnerDeletion == true
+                  ' >/dev/null
+              done

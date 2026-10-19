@@ -267,6 +267,11 @@ func (s *AIMClusterModelSourceStatus) SetConditions(conditions []metav1.Conditio
 	s.Conditions = conditions
 }
 
+// SetObservedGeneration records the source generation processed by the controller.
+func (s *AIMClusterModelSourceStatus) SetObservedGeneration(generation int64) {
+	s.ObservedGeneration = generation
+}
+
 // SetStatus sets the overall status string.
 func (s *AIMClusterModelSourceStatus) SetStatus(status string) {
 	s.Status = status

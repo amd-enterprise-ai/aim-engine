@@ -130,8 +130,12 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 	cache := fetch.Cache.Value
 	// If the cache exists and matches the current spec hash, load the catalog
 	// straight from it — no Job required.
-	if cache != nil && CacheHasMatchingSpecHash(cache, specHash) && aimprofile.HasRawProfileKeys(cache) {
-		catalog, err := aimprofile.ParseDiscoveryCatalog(cache)
+	if cache != nil && CacheOwnedByModel(cache, in.ModelUID) && CacheHasMatchingSpecHash(cache, specHash) &&
+		(aimprofile.HasRawProfileKeys(cache) || cache.Data[aimprofile.DiscoveryCacheMetadataKey] != "") {
+		catalog, err := aimprofile.CachedDiscoveryCatalog(cache)
+		if err == nil && catalog.SourceImage != in.Image {
+			err = fmt.Errorf("catalog source image does not match current discovery inputs")
+		}
 		if err != nil {
 			logger.Error(err, "discovery cache is malformed, falling back to re-discovery", "cache", client.ObjectKeyFromObject(cache))
 		} else {
@@ -146,6 +150,20 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 
 	job := fetch.Job.Value
 	if job != nil {
+		owner := metav1.GetControllerOf(job)
+		if owner == nil || owner.Name != in.ModelName || owner.Kind != in.OwnerRef.Kind {
+			return DiscoveryDecision{
+				State: nextState, Reason: "DiscoveryJobOwnershipMismatch",
+				BuildErr: fmt.Errorf("discovery job %s is not owned by model %s", job.Name, in.ModelName),
+			}
+		}
+		if string(owner.UID) != in.ModelUID || job.Name != discoveryJobName(in.Kind, in.ModelName, specHash) {
+			return DiscoveryDecision{
+				State: nextState, CompletedJobToDelete: job, Progressing: true,
+				RequeueAfter: 5 * time.Second, Reason: "DiscoveryInputsChanged",
+				Message: "Replacing discovery job for previous model ownership or discovery inputs",
+			}
+		}
 		if !IsDiscoveryJobComplete(job) {
 			// Job is still running; just wait.
 			return DiscoveryDecision{
@@ -179,7 +197,7 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 			nextState.Attempts = 0
 			nextState.LastFailureReason = ""
 			nextState.LastAttemptTime = nil
-			catalog, err := aimprofile.ParseDiscoveryCatalog(cm)
+			catalog, err := aimprofile.CachedDiscoveryCatalog(cm)
 			if err != nil {
 				return DiscoveryDecision{
 					State:                nextState,

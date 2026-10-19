@@ -39,8 +39,10 @@ import (
 	duckv1 "knative.dev/pkg/apis/duck/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	legacyaimmodel "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimmodel"
 )
 
 // ============================================================================
@@ -660,6 +662,76 @@ func TestPlanResources_ModelCreation(t *testing.T) {
 	}
 }
 
+func TestPlanResources_InlineCustomCompatibilityModel(t *testing.T) {
+	custom := &aimv1alpha1.AIMServiceModelCustom{
+		BaseImage: "ghcr.io/amd/aim-base:v1",
+		ModelSources: []aimv1alpha1.AIMModelSource{{
+			ModelID:   "acme/model",
+			SourceURI: "s3://models/model",
+		}},
+		Hardware: aimv1alpha1.AIMHardwareRequirements{
+			GPU: &aimv1alpha1.AIMGpuRequirements{},
+		},
+	}
+	service := NewService("custom-source").Build()
+	service.Spec.Model = &aimv1alpha1.AIMServiceModel{Custom: custom}
+
+	fetch := ServiceFetchResult{
+		service:     service,
+		modelResult: fetchModel(context.Background(), newFakeClient(), service),
+	}
+	obs := (&ServiceReconciler{}).ComposeState(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+		fetch,
+	)
+	if !obs.needsModelCreation {
+		t.Fatalf("expected fresh custom model creation, model error: %v", obs.modelResult.Model.Error)
+	}
+
+	plan := (&ServiceReconciler{}).PlanResources(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+		obs,
+	)
+	var planned *aimv1alpha2.AIMModel
+	for _, object := range plan.GetToCreate() {
+		if model, ok := object.(*aimv1alpha2.AIMModel); ok {
+			planned = model
+			break
+		}
+	}
+	if planned == nil {
+		t.Fatal("expected create-only v1alpha2 compatibility AIMModel in plan")
+	}
+	if planned.APIVersion != aimv1alpha2.GroupVersion.String() {
+		t.Fatalf("planned apiVersion = %q, want %q", planned.APIVersion, aimv1alpha2.GroupVersion)
+	}
+	if want := GenerateCustomModelName(service, custom); planned.Name != want {
+		t.Fatalf("planned name = %q, want service-scoped name %q", planned.Name, want)
+	}
+	if len(planned.Spec.ModelSources) != 0 || planned.Spec.Custom != nil {
+		t.Fatalf("planned persisted spec restored predecessor-only fields: %#v", planned.Spec)
+	}
+	decoded, found, err := legacyaimmodel.DecodeLegacyAutoCustomModel(planned)
+	if err != nil || !found {
+		t.Fatalf("decode planned compatibility model = (%#v, %t, %v)", decoded, found, err)
+	}
+	if decoded.BaseImage != custom.BaseImage ||
+		len(decoded.ModelSources) != 1 ||
+		decoded.ModelSources[0].SourceURI != custom.ModelSources[0].SourceURI {
+		t.Fatalf("decoded compatibility payload does not round trip: %#v", decoded)
+	}
+	controller := metav1.GetControllerOf(planned)
+	if controller == nil || controller.UID != service.UID {
+		t.Fatalf("planned model lacks UID-bound source ownership: %#v", planned.OwnerReferences)
+	}
+	if controller.APIVersion != aimv1alpha2.GroupVersion.String() || controller.Kind != "AIMService" {
+		t.Fatalf("planned model owner = %s %s, want production AIMService root",
+			controller.APIVersion, controller.Kind)
+	}
+}
+
 func TestPlanResources_SkipsWithoutReadyTemplate(t *testing.T) {
 	r := &ServiceReconciler{}
 
@@ -723,7 +795,9 @@ func TestPlanResources_SkipsWithoutReadyTemplate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			plan := r.PlanResources(testContext(), controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{}, tt.obs)
 
-			totalResources := len(plan.GetToApply()) + len(plan.GetToApplyWithoutOwnerRef())
+			totalResources := len(plan.GetToCreate()) +
+				len(plan.GetToApply()) +
+				len(plan.GetToApplyWithoutOwnerRef())
 			if tt.expectResources == 0 && totalResources > 0 {
 				t.Errorf("expected no resources planned, got %d", totalResources)
 			}
@@ -784,6 +858,22 @@ func TestPlanResources_CustomProfileAssemblyFailureSkipsRuntimeResources(t *test
 // ============================================================================
 // DECORATE STATUS TESTS
 // ============================================================================
+
+func TestDecorateStatus_SignalsTemplateMigration(t *testing.T) {
+	cm := controllerutils.NewConditionManager(nil)
+	(&ServiceReconciler{}).DecorateStatus(
+		&aimv1alpha1.AIMServiceStatus{},
+		cm,
+		ServiceObservation{ServiceFetchResult: ServiceFetchResult{
+			service: NewService("legacy").WithModelImage("test-image:v1").Build(),
+		}},
+	)
+
+	condition := cm.Get(controllerutils.ConditionTypeMigrationRequired)
+	if condition == nil || condition.Status != metav1.ConditionTrue {
+		t.Fatalf("MigrationRequired = %#v, want True", condition)
+	}
+}
 
 func TestDecorateStatus_ResolvedReferences(t *testing.T) {
 	r := &ServiceReconciler{}
@@ -1921,11 +2011,71 @@ func TestSetActivationMetricCondition(t *testing.T) {
 	})
 }
 
+func TestInferenceServiceReadyRequiresCurrentGeneration(t *testing.T) {
+	isvc := readyISVC("stale")
+	isvc.Generation = 2
+
+	if inferenceServiceReady(controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+		Value: isvc,
+	}) {
+		t.Fatal("inferenceServiceReady() accepted stale Ready=True")
+	}
+
+	isvc.Status.ObservedGeneration = isvc.Generation
+	if !inferenceServiceReady(controllerutils.FetchResult[*servingv1beta1.InferenceService]{
+		Value: isvc,
+	}) {
+		t.Fatal("inferenceServiceReady() rejected current Ready=True")
+	}
+}
+
+func TestGetInferenceServiceHealth_ReadyPodsOverrideStaleGeneration(t *testing.T) {
+	isvc := readyISVC("activating")
+	isvc.Generation = 2
+
+	tests := []struct {
+		name      string
+		pods      *corev1.PodList
+		wantState constants.AIMStatus
+	}{
+		{
+			name:      "ready predictor pod proves service is running",
+			pods:      podsWithReady(1, 1),
+			wantState: constants.AIMStatusReady,
+		},
+		{
+			name:      "no ready predictor pod preserves generation guard",
+			pods:      podsWithReady(1, 0),
+			wantState: constants.AIMStatusProgressing,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fetch := ServiceFetchResult{
+				inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: isvc},
+				inferenceServicePods: &controllerutils.FetchResult[*corev1.PodList]{
+					Value: tt.pods,
+				},
+			}
+
+			health := fetch.getInferenceServiceHealth()
+			if health.State != tt.wantState {
+				t.Fatalf("state = %q, want %q: %#v", health.State, tt.wantState, health)
+			}
+		})
+	}
+}
+
 // readyISVC returns an InferenceService whose Ready condition is True.
 func readyISVC(name string) *servingv1beta1.InferenceService {
 	isvc := &servingv1beta1.InferenceService{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       name,
+			Namespace:  testNamespace,
+			Generation: 1,
+		},
 	}
+	isvc.Status.ObservedGeneration = isvc.Generation
 	isvc.Status.Conditions = duckv1.Conditions{
 		{Type: "Ready", Status: corev1.ConditionTrue},
 	}

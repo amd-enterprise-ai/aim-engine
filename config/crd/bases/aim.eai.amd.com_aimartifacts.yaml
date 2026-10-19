@@ -57,7 +57,7 @@ spec:
               APIVersion defines the versioned schema of this representation of an object.
               Servers should convert recognized schemas to the latest internal value, and
               may reject unrecognized values.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+              More info: https://git.k8s.
             type: string
           kind:
             description: |-
@@ -65,7 +65,7 @@ spec:
               Servers may infer this from the endpoint the client submits requests to.
               Cannot be updated.
               In CamelCase.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+              More info: https://git.k8s.
             type: string
           metadata:
             type: object
@@ -99,8 +99,6 @@ spec:
                   CompatibleWith lists canonical base model IDs this adapter can be mounted
                   with. It is an alternative to parentArtifact: compatibility is checked
                   against the concrete base artifact resolved by each consuming AIMService.
-                  The adapter remains independent of the lifecycle and current availability
-                  of compatible model artifacts.
                 items:
                   pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                   type: string
@@ -114,16 +112,12 @@ spec:
                 description: |-
                   DownloadFilter controls which files are included or excluded when downloading from HuggingFace.
                   Overrides any filter set in the runtime config's storage.downloadFilter.
-                  When neither is set, subdirectory files are excluded by default (equivalent to exclude: ["*/*"]).
-                  To download all files including subdirectories, set this to an empty object: downloadFilter: {}.
-                  This field is immutable — to change the filter, recreate the artifact.
                 properties:
                   exclude:
                     description: |-
                       Exclude specifies glob patterns for files to skip.
                       Files matching any exclude pattern are removed after include filtering.
                       Patterns use fnmatch syntax (e.g., ["*/*", "*.bin"]).
-                      Use ["*/*"] to exclude all files in subdirectories (the default when no filter is set).
                     items:
                       type: string
                     type: array
@@ -141,11 +135,8 @@ spec:
                 - message: downloadFilter is immutable
                   rule: self == oldSelf
               env:
-                description: |-
-                  Env lists environment variables used when downloading the artifact.
-                  For a typed S3 connection, artifact-level env is restricted to bounded
-                  downloader tuning; configure proxy, transport, trust, and credential
-                  providers through the administrator-owned RuntimeConfig.
+                description: Env lists environment variables used when downloading
+                  the artifact.
                 items:
                   description: EnvVar represents an environment variable present in
                     a Container.
@@ -160,12 +151,7 @@ spec:
                         Variable references $(VAR_NAME) are expanded
                         using the previously defined environment variables in the container and
                         any service environment variables. If a variable cannot be resolved,
-                        the reference in the input string will be unchanged. Double $$ are reduced
-                        to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                        "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                        Escaped references will never be expanded, regardless of whether the variable
-                        exists or not.
-                        Defaults to "".
+                        the reference in the input string will be unchanged.
                       type: string
                     valueFrom:
                       description: Source for the environment variable's value. Cannot
@@ -184,7 +170,7 @@ spec:
                                 This field is effectively required, but due to backwards compatibility is
                                 allowed to be empty. Instances of this type with an empty value here are
                                 almost certainly wrong.
-                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                More info: https://kubernetes.
                               type: string
                             optional:
                               description: Specify whether the ConfigMap or its key
@@ -220,18 +206,12 @@ spec:
                               description: |-
                                 The key within the env file. An invalid key will prevent the pod from starting.
                                 The keys defined within a source may consist of any printable ASCII characters except '='.
-                                During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                               type: string
                             optional:
                               default: false
                               description: |-
                                 Specify whether the file or its key must be defined. If the file or key
                                 does not exist, then the env var is not published.
-                                If optional is set to true and the specified key does not exist,
-                                the environment variable will not be set in the Pod's containers.
-
-                                If optional is set to false and the specified key does not exist,
-                                an error will be returned during Pod creation.
                               type: boolean
                             path:
                               description: |-
@@ -286,7 +266,7 @@ spec:
                                 This field is effectively required, but due to backwards compatibility is
                                 allowed to be empty. Instances of this type with an empty value here are
                                 almost certainly wrong.
-                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                More info: https://kubernetes.
                               type: string
                             optional:
                               description: Specify whether the Secret or its key must
@@ -319,7 +299,7 @@ spec:
                         This field is effectively required, but due to backwards compatibility is
                         allowed to be empty. Instances of this type with an empty value here are
                         almost certainly wrong.
-                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        More info: https://kubernetes.
                       type: string
                   type: object
                   x-kubernetes-map-type: atomic
@@ -327,18 +307,13 @@ spec:
               modelDownloadImage:
                 description: |-
                   ModelDownloadImage specifies the container image used to download and
-                  initialize the artifact. Direct S3 artifacts using typed S3 configuration
-                  always use the controller's built-in image so administrator-managed
-                  credentials and trust settings are not exposed to an arbitrary image.
-                  When not specified, the controller uses its built-in default.
+                  initialize the artifact.
                 type: string
               modelId:
                 description: |-
                   ModelID is the canonical identifier in {org}/{name} format.
                   Determines the cache download path: /workspace/cache/{modelId}
                   For HuggingFace sources, this is typically derived from the URI (e.g., "meta-llama/Llama-3-8B").
-                  For S3 sources, this must be explicitly provided (e.g., "my-team/fine-tuned-llama").
-                  When not specified, derived from SourceURI for HuggingFace sources.
                 pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                 type: string
               parentArtifact:
@@ -362,18 +337,12 @@ spec:
                 description: |-
                   RetentionPriority marks this artifact as eligible for automatic eviction
                   when storage quota is exceeded. Lower values are evicted first.
-                  Artifacts without this field are only evictable if a defaultRetentionPriority
-                  is configured in the runtime config. Use the aim.eai.amd.com/eviction-protected
-                  annotation to exempt an artifact from eviction entirely.
                 format: int32
                 minimum: 0
                 type: integer
               runtimeConfigName:
-                description: |-
-                  Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both
-                  as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority
-                  over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster
-                  runtime config with the name `default` is used, if it exists.
+                description: Name is the name of the runtime config to use for this
+                  resource.
                 type: string
               size:
                 anyOf:
@@ -387,7 +356,6 @@ spec:
                   SourceURI specifies the source location of the model to download.
                   Supported protocols: hf:// (HuggingFace) and s3:// (S3-compatible storage).
                   This field uniquely identifies the artifact and is immutable after creation.
-                  Example: hf://meta-llama/Llama-3-8B
                 minLength: 1
                 pattern: ^(hf|s3)://[^ \t\r\n]+$
                 type: string
@@ -404,8 +372,6 @@ spec:
                 description: |-
                   Type discriminates a base model artifact (`model`) from a LoRA adapter
                   definition (`adapter`). Defaults to `model`; immutable after creation.
-                  Adapter artifacts require modelId and exactly one of parentArtifact or
-                  compatibleWith, and do not get their own cache PVC.
                 enum:
                 - model
                 - adapter
@@ -458,8 +424,7 @@ spec:
                     observedGeneration:
                       description: |-
                         observedGeneration represents the .metadata.generation that the condition was set based upon.
-                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
-                        with respect to the current state of the instance.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].
                       format: int64
                       minimum: 0
                       type: integer
@@ -468,8 +433,6 @@ spec:
                         reason contains a programmatic identifier indicating the reason for the condition's last transition.
                         Producers of specific condition types may define expected values and meanings for this field,
                         and whether the values are considered a guaranteed API.
-                        The value should be a CamelCase string.
-                        This field may not be empty.
                       maxLength: 1024
                       minLength: 1
                       pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$

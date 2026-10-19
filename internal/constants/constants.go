@@ -593,6 +593,18 @@ const (
 	// that forces the v1alpha2 profile-based pipeline.
 	ReconcilerPipelineProfile = "profile"
 
+	// AnnotationMigrationPreserveInferenceServiceGeneration pins the legacy
+	// inline InferenceService during a no-rollout template-to-profile migration.
+	// The profile pipeline honors it only when its decimal value equals the
+	// AIMService generation and AnnotationMigrationPreserveInferenceServiceUID
+	// matches an existing InferenceService with legacy template labels. A later
+	// spec update advances generation and resumes normal profile rendering.
+	AnnotationMigrationPreserveInferenceServiceGeneration = AimLabelDomain + "/migration-preserve-inference-service-generation"
+
+	// AnnotationMigrationPreserveInferenceServiceUID binds an active migration
+	// preservation generation to the exact legacy InferenceService UID.
+	AnnotationMigrationPreserveInferenceServiceUID = AimLabelDomain + "/migration-preserve-inference-service-uid"
+
 	// AnnotationForceRebind, when present (any non-empty value), forces
 	// the v1alpha2 AIMService profile resolver to ignore the current
 	// status.resolvedProfile sticky binding and re-rank candidates from

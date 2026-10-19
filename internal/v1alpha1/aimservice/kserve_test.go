@@ -37,6 +37,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
 )
 
 // ============================================================================
@@ -1599,4 +1600,75 @@ func TestConfigureReplicasAndAutoscaling_SidecarAnnotations(t *testing.T) {
 	if got := isvc.Annotations[constants.AnnotationPrometheusPort]; got != constants.DefaultPrometheusPort {
 		t.Errorf("expected Prometheus port annotation %q; got %q", constants.DefaultPrometheusPort, got)
 	}
+}
+
+func TestAddRuntimeTrustProjectsCombinedBundle(t *testing.T) {
+	isvc := &servingv1beta1.InferenceService{}
+	isvc.Spec.Predictor.Containers = []corev1.Container{{
+		Name: "kserve-container",
+		Env:  []corev1.EnvVar{{Name: "SSL_CERT_FILE", Value: "/vendor/roots.pem"}},
+	}}
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{
+			Name: "company-ca",
+			Key:  "ca.crt",
+		},
+		Artifact: &aimv1alpha1.AIMArtifactConfig{
+			ModelDownloadImage: "registry.example.test/downloader:v1",
+		},
+	}
+	configMap := &corev1.ConfigMap{Data: map[string]string{"ca.crt": "rotation-one"}}
+
+	addRuntimeTrust(isvc, config, configMap)
+
+	if len(isvc.Spec.Predictor.InitContainers) != 1 {
+		t.Fatalf("init containers = %d, want 1", len(isvc.Spec.Predictor.InitContainers))
+	}
+	if got := isvc.Spec.Predictor.InitContainers[0].Image; got != "registry.example.test/downloader:v1" {
+		t.Errorf("init image = %q", got)
+	}
+	if got := isvc.Spec.Predictor.InitContainers[0].Env; len(got) != 0 {
+		t.Errorf("trust init env = %#v, want no rollout metadata", got)
+	}
+	if got := testEnvValue(isvc.Spec.Predictor.Containers[0].Env, "SSL_CERT_FILE"); got != trust.OutputFilePath {
+		t.Errorf("SSL_CERT_FILE = %q", got)
+	}
+	if len(isvc.Spec.Predictor.Containers[0].VolumeMounts) != 1 {
+		t.Fatal("combined trust output was not mounted")
+	}
+	if isvc.Spec.Predictor.SecurityContext != nil {
+		t.Fatalf("trust projection changed predictor security context: %#v", isvc.Spec.Predictor.SecurityContext)
+	}
+}
+
+func TestAddRuntimeTrustSkipsUnavailableBundle(t *testing.T) {
+	isvc := &servingv1beta1.InferenceService{}
+	isvc.Spec.Predictor.Containers = []corev1.Container{{
+		Name: "kserve-container",
+		Env:  []corev1.EnvVar{{Name: "SSL_CERT_FILE", Value: "/vendor/roots.pem"}},
+	}}
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{
+			Name: "missing-ca",
+			Key:  "ca.crt",
+		},
+	}
+
+	addRuntimeTrust(isvc, config, nil)
+
+	if len(isvc.Spec.Predictor.InitContainers) != 0 || len(isvc.Spec.Predictor.Volumes) != 0 {
+		t.Fatalf("unavailable trust bundle changed pod spec: %#v", isvc.Spec.Predictor)
+	}
+	if got := testEnvValue(isvc.Spec.Predictor.Containers[0].Env, "SSL_CERT_FILE"); got != "/vendor/roots.pem" {
+		t.Errorf("SSL_CERT_FILE = %q, want existing public roots unchanged", got)
+	}
+}
+
+func testEnvValue(env []corev1.EnvVar, name string) string {
+	for _, item := range env {
+		if item.Name == name {
+			return item.Value
+		}
+	}
+	return ""
 }

@@ -375,6 +375,10 @@ func TestDecorateStatus_terminatingArtifactIsNotReady(t *testing.T) {
 	if status.Artifacts != nil {
 		t.Fatalf("status.Artifacts = %v, want the doomed artifact and its PVC withdrawn", status.Artifacts)
 	}
+	migration := cm.Get(controllerutils.ConditionTypeMigrationRequired)
+	if migration == nil || migration.Status != metav1.ConditionTrue {
+		t.Fatalf("MigrationRequired = %#v, want True", migration)
+	}
 }
 
 func TestS3ArtifactIdentityIncludesRuntimeConfig(t *testing.T) {

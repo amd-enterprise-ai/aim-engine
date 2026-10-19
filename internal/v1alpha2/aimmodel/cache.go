@@ -176,8 +176,13 @@ func CacheHasMatchingSpecHash(cm *corev1.ConfigMap, specHash string) bool {
 // CacheOwnedByModel reports whether the cache was created by the operator on
 // behalf of this specific AIMModel / AIMClusterModel (same UID annotation).
 func CacheOwnedByModel(cm *corev1.ConfigMap, modelUID string) bool {
-	if cm == nil {
+	if cm == nil || modelUID == "" {
 		return false
+	}
+	for _, owner := range cm.OwnerReferences {
+		if owner.Controller != nil && *owner.Controller && string(owner.UID) != modelUID {
+			return false
+		}
 	}
 	return cm.Annotations[annotationModelUID] == modelUID
 }

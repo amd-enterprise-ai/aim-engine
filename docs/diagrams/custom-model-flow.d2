@@ -2,12 +2,12 @@
 direction: right
 
 A: "Base-image AIMModel\nspec.image: aim-base:0.11" {class: user}
-B: "Base AIMProfiles\nrole=base\nstatus.deployable=false" {class: managed}
+B: "Base profile definitions\nrole=base\nall discovered hardware variants" {class: managed}
 C: "Custom-model AIMModel\nspec.profiles.derivedFrom..." {class: user}
 D: "Deployable AIMProfiles\nrole=deployable\nstatus.deployable=true" {class: managed}
 E: "AIMService\nspec.model.name: ..." {class: resolved}
 
-A -> B: emits base profiles
-B -> C: consumed by
+A -> B: publishes definitions
+B -> C: selected by
 C -> D: emits deployable profiles
 D -> E: backs

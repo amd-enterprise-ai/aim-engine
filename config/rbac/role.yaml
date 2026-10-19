@@ -52,13 +52,11 @@ rules:
   - aimclustermodelsources
   - aimclusterprofiles
   - aimclusterprofilesets
-  - aimclusterruntimeconfigs
   - aimclusterservicetemplates
   - aimmodels
   - aimprofilecaches
   - aimprofiles
   - aimprofilesets
-  - aimruntimeconfigs
   - aimservices
   - aimservicetemplates
   - aimtemplatecaches
@@ -108,6 +106,15 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - aim.eai.amd.com
+  resources:
+  - aimclusterruntimeconfigs
+  - aimruntimeconfigs
+  verbs:
+  - get
+  - list
+  - watch
 - apiGroups:
   - autoscaling
   resources:

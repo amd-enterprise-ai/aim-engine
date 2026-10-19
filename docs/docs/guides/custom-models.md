@@ -21,14 +21,16 @@ The flow has two AIMModels working together:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/custom-model-flow-dark.svg">
-  <img alt="Custom-model flow: a base-image AIMModel's base profiles are consumed by a custom-model AIMModel that emits deployable profiles backing an AIMService." src="../assets/diagrams/custom-model-flow.svg">
+  <img alt="Custom-model flow: a base-image AIMModel publishes base definitions; a custom-model AIMModel selects them and produces deployable profiles backing an AIMService." src="../assets/diagrams/custom-model-flow.svg">
 </picture>
 
-1. **Base-image model** — points `spec.image` at an AIM base image and produces **base AIMProfiles**: one per accelerator/precision combination the base image ships, with no `aimId` or `modelSources` populated. Base profiles are not deployable on their own — they exist only as derivation sources.
+1. **Base-image model** — points `spec.image` at an AIM base image and publishes **base profile definitions** for every combination the image ships, with no `aimId` or `modelSources` populated. Hardware-supported definitions also become base AIMProfile resources.
 
 2. **Custom-model AIMModel** — uses `spec.profiles.derivedFrom` to select those base profiles and overlay your model identity and weights. The result is a set of regular **deployable AIMProfiles** that an `AIMService` can resolve through.
 
 The base-image model is typically applied once by the platform team and reused across many custom-model derivations.
+
+Keep the base-image model and custom derived model separate. The derived model selects `role: base` and supplies identity and weights through its overrides.
 
 ## Prerequisites
 
@@ -58,17 +60,18 @@ spec:
 
 Discovery runs as a Kubernetes Job that inspects the image and writes its profile catalog into a `ConfigMap` (referenced by `status.discoveryCacheRef`). For each supported profile in the catalog, the model controller creates a base `AIMProfile`.
 
-Wait for discovery to complete and base profiles to materialise:
+Wait for discovery to complete:
 
 ```bash
+kubectl -n ml-team wait aimmodel/aim-base-vllm \
+  --for=condition=DiscoveryReady --timeout=120s
 kubectl -n ml-team get aimmodel aim-base-vllm \
-  -o jsonpath='{.status.managedProfiles}'
-# {"deployable":0,"notAvailable":0,"ready":8,"base":8,"total":8}
+  -o jsonpath='{.status.discoveredProfiles}'
 ```
 
-`base > 0` and `deployable == 0` is the canonical "this is a base-image model" signal.
+The complete discovered base definitions are available for derivation even when `status.managedProfiles.total` is zero. An override can map their hardware requirements to the target cluster.
 
-The base profiles themselves carry distinct labels and status:
+Materialised base profiles carry distinct labels and status:
 
 ```bash
 kubectl -n ml-team get aimprofile \
@@ -130,7 +133,7 @@ kubectl -n ml-team get aimmodel acme-custom-transformer \
 # {"deployable":8,"notAvailable":0,"ready":8,"base":0,"total":8}
 ```
 
-`kubectl get aimmodel` shows the resolved flow under the `KIND` column — a correctly-configured custom model surfaces as `Custom`. If you see `Image` there, your spec is using `spec.image` (the official flow) rather than `spec.profiles.derivedFrom`; if you see `Derived`, the selector is matching deployable rather than base profiles. See [`status.kind`](../concepts/models.md#status-fields) for the full discriminator table.
+`kubectl get aimmodel` shows this base-profile derivation as `Custom` in the `KIND` column. An image model has kind `Image`; a derivation from deployable sources has kind `Derived`. See [`status.kind`](../concepts/models.md#status-fields).
 
 ## Step 3: Deploy with an AIMService
 
@@ -190,6 +193,7 @@ spec:
           name: aim-base-vllm
         acceleratorModel: MI300X
         acceleratorCount: 2
+    versionPolicy: all
     overrides:
       aimId: acme/custom-transformer
       modelId: acme/custom-transformer
@@ -210,6 +214,7 @@ spec:
           name: aim-base-vllm
         precision: fp8
         metric: latency
+    versionPolicy: all
     overrides:
       aimId: acme/custom-transformer
       modelId: acme/custom-transformer
@@ -230,6 +235,7 @@ spec:
         role: base
         modelRef:
           name: aim-base-vllm
+    versionPolicy: all
     overrides:
       aimId: acme/custom-transformer
       modelId: acme/custom-transformer
@@ -257,8 +263,9 @@ For platform-managed custom models that should be visible across namespaces, use
 
 ### Base-image model status shows `base: 0`
 
-Discovery hasn't found any profiles to materialise. Common causes:
+`managedProfiles.base` counts materialised resources, not the complete catalog. Check `DiscoveryReady` and `discoveredProfiles` first. Common causes:
 
+- The catalog contains base definitions whose hardware is absent. They remain available to derivation selectors.
 - The base image's profile YAMLs aren't under `/workspace/aim-runtime/profiles/general/`.
 - The image has `AIM_ID` set, so discovery is looking under `$AIM_ID/` instead of `general/`.
 - The profile YAMLs populate `model_id` or `model_sources` — they're treated as deployable, not base.
@@ -277,9 +284,8 @@ kubectl -n ml-team get configmap aim-base-vllm-discovery-<hash> -o yaml
 The selector matched zero base profiles. Verify:
 
 ```bash
-# Check that base profiles exist under the modelRef
-kubectl -n ml-team get aimprofile \
-  -l aim.eai.amd.com/source-model=aim-base-vllm,aim.eai.amd.com/profile-role=base
+# Check discovery and the base model's published configuration
+kubectl -n ml-team get aimmodel aim-base-vllm -o yaml
 
 # Check the derivation's profile set
 kubectl -n ml-team get aimmodel acme-custom-transformer \

@@ -255,23 +255,12 @@ func main() {
 		// memory / watch-traffic cost — even though the operator only ever needs
 		// its own (discovery caches, projected ServingRuntime shadow ConfigMaps,
 		// custom-profile and profile ConfigMaps all carry managed-by=aim-engine).
-		// The two reads
-		// that can legitimately target an unlabeled ConfigMap — a user
-		// pre-populated AIMProfileSet sourceRef catalog and a hand-authored
-		// KServe ServingRuntime's colocated ConfigMap — go through the uncached APIReader
-		// instead (see LoadDiscoveryCatalog and namespaceRuntimeComplete). A
-		// user pre-populated sourceRef catalog is therefore still read on demand,
-		// but its edits are only picked up on the next reconcile rather than via
-		// a live watch — acceptable for a user-managed input.
-		Cache: cache.Options{
-			ByObject: map[client.Object]cache.ByObject{
-				&corev1.ConfigMap{}: {
-					Label: labels.SelectorFromSet(labels.Set{
-						constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
-					}),
-				},
-			},
-		},
+		// Reads that can legitimately target an unlabeled ConfigMap — a user
+		// pre-populated AIMProfileSet sourceRef catalog, a hand-authored KServe
+		// ServingRuntime's colocated ConfigMap, and an administrator CA bundle —
+		// go through the uncached APIReader instead. User-managed inputs are read
+		// on demand, but their edits do not create a live watch event.
+		Cache:                  configMapCacheOptions(),
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
@@ -451,5 +440,17 @@ func main() {
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
+	}
+}
+
+func configMapCacheOptions() cache.Options {
+	return cache.Options{
+		ByObject: map[client.Object]cache.ByObject{
+			&corev1.ConfigMap{}: {
+				Label: labels.SelectorFromSet(labels.Set{
+					constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
+				}),
+			},
+		},
 	}
 }

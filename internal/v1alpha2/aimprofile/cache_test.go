@@ -140,7 +140,7 @@ func TestPlanResources_EmitsProfileOwnedCacheWhenEnabled(t *testing.T) {
 		t.Errorf("Profile-owned cache must use Shared mode so artifacts dedupe by weights, got %q", cache.Spec.Mode)
 	}
 	if len(cache.Spec.Env) != 1 || cache.Spec.Env[0].Name != "HF_TOKEN" {
-		t.Errorf("cache.spec.env must inherit profile.spec.caching.env, got %+v", cache.Spec.Env)
+		t.Fatalf("cache.spec.env must inherit profile caching env, got %+v", cache.Spec.Env)
 	}
 }
 

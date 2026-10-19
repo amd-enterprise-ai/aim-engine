@@ -85,6 +85,8 @@ subtrees:
                 title: Storage Configuration
               - file: admin/upgrading
                 title: Upgrading
+              - file: admin/template-migration
+                title: Bounded Template Migration
               - file: admin/monitoring
                 title: Monitoring
               - file: admin/troubleshooting

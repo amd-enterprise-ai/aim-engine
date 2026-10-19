@@ -535,12 +535,13 @@ metadata:
 	}
 }
 
-func TestParseDiscoveryCatalog_RejectsEmptyConfigMap(t *testing.T) {
+func TestParseDiscoveryCatalog_EmptyConfigMapHasNoDefinitions(t *testing.T) {
 	t.Parallel()
 
 	cm := &corev1.ConfigMap{Data: map[string]string{}}
-	if _, err := ParseDiscoveryCatalog(cm); err == nil {
-		t.Fatal("ParseDiscoveryCatalog() err = nil, want error on empty configmap")
+	catalog, err := ParseDiscoveryCatalog(cm)
+	if err != nil || len(catalog.Profiles) != 0 {
+		t.Fatalf("readable empty catalog must permit pruning removed entries: %+v, %v", catalog, err)
 	}
 }
 

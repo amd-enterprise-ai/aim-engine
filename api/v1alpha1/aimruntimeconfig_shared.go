@@ -326,11 +326,42 @@ type AIMArtifactConfig struct {
 	S3 *S3ConnectionConfig `json:"s3,omitempty"`
 }
 
+// AdditionalCABundleReference identifies additional PEM CA certificates in a
+// namespace-local ConfigMap.
+type AdditionalCABundleReference struct {
+	// Name is the ConfigMap name in the workload namespace.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	Name string `json:"name"`
+
+	// Key is the ConfigMap data key containing PEM CA certificates.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[-._a-zA-Z0-9]+$`
+	Key string `json:"key"`
+}
+
 // AIMRuntimeConfigCommon captures configuration fields shared across cluster and namespace scopes.
 // These settings apply to both AIMRuntimeConfig (namespace-scoped) and AIMClusterRuntimeConfig (cluster-scoped).
 // It embeds AIMServiceRuntimeConfig which contains fields that can also be overridden at the service level.
 type AIMRuntimeConfigCommon struct {
 	AIMServiceRuntimeConfig `json:",inline"`
+
+	// AdditionalCABundleRef selects PEM CA certificates that AIM Engine adds to
+	// its standard public trust roots for outbound TLS from inference,
+	// artifact-download, size-check, and adapter-staging containers.
+	//
+	// The ConfigMap is resolved in each workload namespace. When configured on
+	// an AIMClusterRuntimeConfig, each consuming namespace needs a ConfigMap
+	// with the same name and key to receive the additional trust.
+	//
+	// AIM Engine checks the reference directly during reconciliation and omits
+	// the projection when the ConfigMap or key is absent. Certificate parsing
+	// occurs only in a workload init container. CA changes are consumed when
+	// workloads are recreated; the ConfigMap is not watched for rotation.
+	// +optional
+	AdditionalCABundleRef *AdditionalCABundleReference `json:"additionalCABundleRef,omitempty"`
 
 	// Model controls model creation and discovery defaults.
 	// This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services.

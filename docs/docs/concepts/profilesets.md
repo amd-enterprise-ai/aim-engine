@@ -1,10 +1,10 @@
 # AIM Profile Sets
 
-`AIMProfileSet` and `AIMClusterProfileSet` are the **derivation engine** of v1alpha2. They select source profiles (by label and spec criteria), apply overrides, and produce derived `AIMProfile` / `AIMClusterProfile` resources.
+`AIMProfileSet` and `AIMClusterProfileSet` select profile definitions, apply overrides, and produce derived `AIMProfile` / `AIMClusterProfile` resources. Selection spans image-backed model catalogs and copyable profile resources, including definitions whose original hardware is absent from the cluster.
 
 You'll encounter profile sets in two ways:
 
-1. **Implicitly**, as children of `AIMModel.spec.profiles` — every fine-tuned or custom-model `AIMModel` synthesises an `AIMProfileSet` named `<model>-profiles-<hash>` and summarises its output.
+1. **Implicitly**, as children of `AIMModel.spec.profiles` — externally derived models synthesise an `AIMProfileSet` named `<model>-profiles-<hash>` and summarise its output.
 2. **Directly**, as standalone resources you author yourself when you want to derive profiles without creating an owning `AIMModel`.
 
 The same internal primitive handles both — `AIMModel.spec.profiles` is translated into an `AIMProfileSetSpec` for the synthesised child set.
@@ -12,7 +12,7 @@ The same internal primitive handles both — `AIMModel.spec.profiles` is transla
 :::{admonition} v1alpha2
 :class: note
 
-`AIMProfileSet`/`AIMClusterProfileSet` are new CRDs in `aim.eai.amd.com/v1alpha2` — v1alpha1 had no first-class derivation resource. The closest legacy primitive is `AIMModel.spec.profileCopy`, which performed an inline copy step against existing AIMServiceTemplates; v1alpha2 reshapes that into `AIMModel.spec.profiles` (which synthesises a child profile set), and `spec.profileCopy` is forbidden on v1alpha2. See [Migrating to v1alpha2 → AIMModel mapping](../legacy/migrating.md#aimmodel-mapping) for the full field-by-field translation.
+Profile sets use the `aim.eai.amd.com/v1alpha2` API. Models configure derivation through `spec.profiles`; standalone sets expose selection and overrides directly.
 :::
 ## Cluster vs namespace scope
 
@@ -23,30 +23,47 @@ The same internal primitive handles both — `AIMModel.spec.profiles` is transla
 
 For sourcing:
 
-- `AIMProfileSet` selects from namespace-scoped `AIMProfile` objects in its own namespace.
-- `AIMClusterProfileSet` selects from cluster-scoped `AIMClusterProfile` objects.
-- Cache-backed sources (`spec.sourceRef`) are read from the same namespace for `AIMProfileSet` and from the operator namespace for `AIMClusterProfileSet`.
+- `AIMProfileSet` evaluates model definitions and copyable profiles in its own namespace first. It falls back to cluster-scoped sources when no local candidate satisfies the complete selector, eligibility rules, and version policy.
+- `AIMClusterProfileSet` selects only cluster-scoped model definitions and profiles.
+- `selector.modelRef.scope: Namespace` restricts selection to the set's namespace; `Cluster` selects only cluster sources. `Auto` uses namespace-first fallback.
+- Namespace-first selection returns one scope's matches. Other namespaces are outside the source pool.
+- Explicit catalog sources (`spec.sourceRef`) are read from the same namespace for `AIMProfileSet` and from the operator namespace for `AIMClusterProfileSet`.
 
-## Two source modes
+For example, a local MI325X definition does not suppress a cluster MI300X match for `selector.acceleratorModel: MI300X`. A fully matching local definition takes precedence even when its source hardware is unavailable.
 
-A profile set selects sources in one of two modes — set by whether `spec.sourceRef` is populated.
+## Source selection
 
-| Mode | `spec.sourceRef` | Source pool |
-|---|---|---|
-| **Real-profile-backed** | omitted | Existing `AIMProfile` / `AIMClusterProfile` objects in the set's scope |
-| **Cache-backed** | set | Entries from a discovery cache `ConfigMap` (typically published by an `AIMModel`) |
+With `spec.sourceRef` omitted, a selector evaluates a combined logical pool:
 
-The two modes are mutually exclusive — the controller doesn't mix them in a single reconcile.
+| Source | Available definitions |
+|---|---|
+| Image-backed `AIMModel` / `AIMClusterModel` | All definitions in the current discovered catalog, including hardware-unsupported entries. Discovery-disabled and legacy custom/derivation models continue to use resource-backed sources. |
+| Direct `AIMProfile` / `AIMClusterProfile` | Existing resources marked `aim.eai.amd.com/profile-copyable: "true"`, including hand-authored profiles. |
+| Generated or other derived profiles | Existing copyable resources, subject to the same selector and eligibility rules. Profile-set outputs are copyable when their producer sets `outputPolicy.copyable: true`. |
 
-Cache-backed mode is mainly used by `AIMModel.spec.profiles.derivedFrom.sourceRef` when the source is an image's discovery output rather than already-materialised profiles. For standalone use, you'll almost always omit `sourceRef`.
+Use any combination of source filters: accelerator model, partitioning mode, counts, `modelId`, `aimId`, engine, precision, and the other selector fields below. `selector.modelRef` is optional and narrows the selection to one producing model. A selector without it can derive every matching profile across models in the selected scope.
+
+Each model definition and its corresponding materialised resource represent one logical source. Independent model definitions and direct profiles remain distinct even when they share a `profileId` or identical runtime settings. Hardware changes and source materialisation leave logical source identity and derived names stable.
+
+Derived names preserve the previous release's naming inputs. The controller carries an internal `aim.eai.amd.com/legacy-catalog-naming` annotation through catalog-derived profiles so newly decoded vendor metadata does not rename downstream, explicitly opted-in derivations. Explicit vendor overrides retain their existing naming behavior. This marker is regenerated from source lineage if children are recreated; it is not an adopted-name map and should not be edited by users.
+
+Current, valid discovery makes image definitions available independently of the source model's overall `Ready` status. Selected outputs are materialised with the requested overrides and evaluated against their target hardware. Source hardware availability does not filter the derivation pool.
+
+Image models publish discovered definitions without transformation. Apply overrides in a separate profile set or derived model; `image` and `profiles` remain mutually exclusive on new v1alpha2 models.
+
+### Explicit catalog source
+
+`spec.sourceRef: {name: <configmap-name>}` selects an alternate catalog ConfigMap in place of the default source pool. The reference identifies a ConfigMap, not a model. Model-based narrowing uses `selector.modelRef`.
+
+`sourceRef` and `selector.modelRef` are mutually exclusive, even if the catalog is owned by the named model. Other selector fields can filter the explicit catalog's contents, and the selector may be omitted. The same restriction applies under `AIMModel.spec.profiles.derivedFrom` and `AIMClusterModel.spec.profiles.derivedFrom`.
 
 :::{note}
-**Editing a user pre-populated `sourceRef` catalog is not reactive.** The operator watches the ConfigMaps it manages (including discovery caches published by an `AIMModel`), so those changes reconcile the profile set immediately. A catalog `ConfigMap` you create and maintain yourself is read on demand but not live-watched — edits are picked up on the profile set's next reconcile. To apply an edit promptly, re-apply or re-annotate the `AIMProfileSet` / `AIMClusterProfileSet` to trigger a reconcile.
+Managed catalog ConfigMap updates reconcile affected profile sets. User-maintained alternate catalogs are read on reconciliation; re-annotate the profile set to pick up an edit promptly.
 :::
 
 ## Selector
 
-`spec.selector` chooses candidates from the source pool. At least one matching field must be set (validated by CRD CEL).
+`spec.selector` chooses candidates from the source pool. Default source selection requires at least one matching field. An explicit `sourceRef` scopes selection to that catalog and permits an omitted selector.
 
 | Field | Description |
 |---|---|
@@ -59,13 +76,19 @@ Cache-backed mode is mainly used by `AIMModel.spec.profiles.derivedFrom.sourceRe
 | `type` | Match optimization level exactly (`optimized`, `general`, `preview`, `unoptimized`). |
 | `minimumType` | Match optimization level as a floor — that tier or better (`optimized > general > preview > unoptimized`), or `any` for no floor. Empty means no floor for derivation selectors (AIMService auto-selection defaults this floor to `optimized` instead). ANDs with `type` when both are set. |
 | `acceleratorModel` | Match by accelerator identifier (`MI300X`, `MI325X`, ...). |
+| `acceleratorVendor` | Match by accelerator vendor (`amd`, `nvidia`). |
 | `acceleratorType` | Match `gpu` or `cpu`. |
 | `acceleratorCount` | Match by accelerator unit count. |
+| `acceleratorPartitioningMode` | Match source partitioning: `unpartitioned`, `partitioned`, or a specific scheme such as `CPX-NPS4`. |
 | `engineArgs` | Partial match on engine args — every provided top-level key must exist on the source with an equal value. |
-| `modelRef.name` | Narrow to profiles produced by a specific AIM(Cluster)Model (matched via the `source-model` label). |
-| `modelRef.scope` | `Auto` (try namespace first, then cluster), `Namespace`, or `Cluster`. Default `Auto`. |
+| `modelRef.name` | Narrow to definitions and profiles produced by a specific AIM(Cluster)Model. Mutually exclusive with `sourceRef`. |
+| `modelRef.scope` | `Auto` (fully matching namespace candidates first, then cluster), `Namespace`, or `Cluster`. Default `Auto`. |
 | `role` | `base` or `deployable`. Default `deployable`. |
-| `origin` | `discovered`, `derived`, or `user-authored`. When unset, doesn't filter by origin. |
+| `origin` | `discovered`, `derived`, `generated`, or `user-authored`. When unset, doesn't filter by origin. |
+
+All provided fields are ANDed together. Engine-argument matching uses literal keys and values: `tensor-parallel-size` and `tensor_parallel_size` are distinct keys, and a missing TP setting does not imply TP=1.
+
+Derivation preserves the source's optimization type, including an unspecified value; it never promotes an unspecified type to `optimized`. An unspecified type ranks like `unoptimized` for `minimumType`, but does not satisfy an exact `type` filter. With neither tier filter set, derivation can copy these profiles; service auto-selection still follows its own optimization-tier policy.
 
 ### Identity stamping
 
@@ -75,9 +98,9 @@ When `selector.role: base`, CEL on `AIMProfileSetSpec` and `AIMModelProfilesSpec
 
 | Rule | Effect |
 |---|---|
-| `selector.aimId/modelId/profileId` rejected | Base profiles have no source identity to filter on. The fields would silently do nothing useful. |
-| `overrides.aimId` required | Base profiles ship with empty `spec.aimId`. The derived profile would otherwise have no identity to bind against from an `AIMService.spec.profile.selector.aimId`. |
-| `overrides.modelId` required | Same reasoning for the model-level identifier. (`modelSources[0].modelId` auto-derivation is bypassed for `role: base` — explicit is required.) |
+| `selector.aimId/modelId/profileId` rejected | Base selection uses runtime and hardware filters; overrides supply target identity. |
+| `overrides.aimId` required | Supplies the target architecture identity. |
+| `overrides.modelId` required | Supplies the target model identity explicitly, including when `modelSources[0].modelId` is set. |
 | `overrides.profileId` optional | Most callers don't pin a profileId; the AIMProfile reconciler synthesises one if unset. |
 
 For `role: deployable` derivations (the AIMProfileSet remix case where you're re-deriving an already-deployable profile into accelerator/engine variants), all three identity overrides are optional — the source profile's existing identity carries through unchanged unless you explicitly override it.
@@ -91,41 +114,58 @@ The same shape applies to [`AIMModel.spec.profiles.derivedFrom`](../guides/custo
 | Policy | Behavior |
 |---|---|
 | `pinned` (default) | Only match profiles whose version (extracted from `spec.image` tag) equals `spec.version`. Requires `version` to be set. |
-| `latest` | Within each (accelerator, precision, metric) group, only match the highest-version profile. |
-| `all` | Match every profile that satisfies the selector, regardless of version. |
+| `latest` | Select the highest version across all matching sources; retain every match at that version. Narrow the selector to avoid comparing unrelated models. |
+| `all` | Match every profile that satisfies the selector, including versionless profiles. |
 
-`pinned` is the typical choice for reproducibility. `latest` auto-tracks upstream improvements. `all` is common for custom-model derivation (where each version represents a different accelerator/precision combo rather than a temporal sequence).
+`pinned` selects a specific source version. `latest` tracks the highest matching version. `all` retains all matching runtime and hardware variants across versions.
+
+Versions describe the selected sources, before overrides. Use `all` to include versionless sources such as digest-only images.
 
 ## Overrides
 
-`spec.overrides` mutates selected sources before writing them out as derived profiles.
+`spec.overrides` modifies a copy of each selected definition before writing it as a derived profile. Source definitions and resources remain unchanged.
 
 | Field | Merge semantics |
 |---|---|
-| `modelSources` | Replaces source `modelSources` entirely. The first source's `modelId` is auto-copied into the derived profile's `spec.modelId`. |
+| `aimId`, `modelId`, `profileId` | Replace source identity fields. An explicit `modelId` wins over derivation from `modelSources`. |
+| `modelSources` | Replaces source `modelSources` entirely. The first source's `modelId` supplies the derived profile's `spec.modelId` when no explicit `modelId` override is set. |
+| `image` | Replaces the runtime image; takes precedence over top-level `spec.image`. |
 | `acceleratorModel` | Replaces source `acceleratorModel`. |
+| `acceleratorVendor` | Replaces source `acceleratorVendor`. |
 | `acceleratorCount` | Replaces source `acceleratorCount`. |
+| `acceleratorPartitioningMode` | Replaces source partitioning mode; standalone sets require an explicit target count. Explicit source and target counts are recommended. |
 | `containerEnv` | Merges by env-var name; matching names override, new names append. |
 | `engineEnv` | Merges by key; matching keys override, new keys append. |
 | `engineArgs` | Shallow merge on top of source `engineArgs`; matching top-level keys override, new keys append. |
+| `features` | Unions with source features. |
+
+### Partitioning and topology
+
+For a partitioning override, explicitly set both `selector.acceleratorCount` and `overrides.acceleratorCount`. The selector identifies the source device topology; the override states the number of target devices or partitions. Standalone profile sets require the target count; source-count selection is recommended rather than enforced. The existing model-derivation admission rules are unchanged.
+
+For a single-partition workload, select a single-device TP=1 source and preserve its TP setting. Accelerator count, partitioning mode, and tensor-parallel size are independent values. Mapping profiles with TP greater than one requires a matching target topology and engine configuration.
+
+Overrides express the requested configuration. GPU memory fit, model support on the target accelerator, and runtime compatibility require workload validation. The operator evaluates target hardware availability; it does not size models or automatically retune tensor parallelism.
 
 ### Image resolution
 
-When the profile set's top-level `spec.image` is unset, the derived profile's image depends on the source profile's role and whether the override replaces the model weights (`overrides.modelSources`):
+With neither `spec.image` nor `spec.overrides.image` set, the derived image depends on the source role and whether the override replaces model weights (`overrides.modelSources`):
 
 | Source profile | Override replaces weights? | Resulting image |
 |---|---|---|
 | Deployable (`role=deployable`, a model-optimized image) | **Yes** (`modelSources` set) | Resolves back to the source's `status.baseImage` (`AIM_BASE_IMAGE_REF`), normalised to `MAJOR.MINOR` and rebased onto the source image's registry+org. The new weights load onto the clean aim-base runtime. |
-| Deployable | **No** (partitioning-only / env-only / engineArgs-only override) | **Keeps the optimized source image.** The model optimizations and tuning still apply, so a re-partition or env tweak stays on the model-optimized image instead of silently downgrading to the base runtime. |
+| Deployable | **No** (partitioning-only / env-only / engineArgs-only override) | Keeps the optimized source image. |
 | Base (`role=base`, an aim-base image used for [Custom Models](../guides/custom-models.md)) | — | Keeps the source image unchanged. A base profile already *is* the runtime image; weights come from `overrides.modelSources`. |
 
-An explicit top-level `spec.image` always wins outright, regardless of the above.
+An explicit image override selects the deployment image; `overrides.image` takes precedence over top-level `spec.image`, preserving existing behavior.
 
 Derived profiles inherit the source profile's `status.baseImage` so subsequent derivations or overlays can rebase consistently.
 
 ### Profile YAML contract inheritance
 
-Derived profiles also inherit the source profile's complete runtime-YAML contract. For real-profile-backed derivation, the contract comes from the source profile's `aim.eai.amd.com/profile-yaml-contract` annotation. For cache-backed derivation, it is inferred directly from each raw profile YAML in the discovery cache. The derived profile carries the same codec, modeled-field presence, and opaque source extensions. Runtime projection uses that information to choose between legacy `gpu` fields, transitional accelerator fields, and strict canonical accelerator fields while retaining runtime-only additions that are not part of `AIMProfile.spec`.
+Derived profiles inherit the source's complete runtime configuration: image, model sources, primary defaults, engine arguments, environment, pull credentials, service account, and runtime-YAML contract, with explicit overrides applied. A catalog definition and its corresponding profile resource supply equivalent inputs.
+
+For resource-backed sources, the YAML contract comes from the `aim.eai.amd.com/profile-yaml-contract` annotation. For image definitions, it is decoded from the raw profile YAML. The derived profile carries the same codec, modeled-field presence, and opaque source extensions. Runtime projection uses that information to choose between legacy `gpu` fields, transitional accelerator fields, and strict canonical accelerator fields while retaining runtime-only additions that are not part of `AIMProfile.spec`. Referenced secrets and service accounts must exist in the consuming namespace.
 
 Neither profile derivation nor runtime projection infers compatibility from an image name or tag. In particular, setting the profile set's top-level `spec.image` changes the container image but does **not** inspect that replacement image or choose a new YAML contract. The replacement image must accept the source profile's inherited format.
 
@@ -148,8 +188,8 @@ spec:
     engineArgs:
       tensor-parallel-size: 2
   versionPolicy: latest
+  image: quay.io/acme/aim-base-vllm:0.9.0
   overrides:
-    image: quay.io/acme/aim-base-vllm:0.9.0
     acceleratorModel: MI308X
     acceleratorCount: 4
     engineArgs:
@@ -159,7 +199,7 @@ spec:
 
 | Field | Description |
 |---|---|
-| `sourceRef` | Optional reference to a discovery-cache `ConfigMap`. If omitted, source selection uses same-scope real profiles. |
+| `sourceRef` | Optional alternate catalog `ConfigMap`, mutually exclusive with `selector.modelRef`. If omitted, selects from model definitions and copyable profile resources using namespace/cluster scope rules. |
 | `selector` | Match criteria — see [Selector](#selector). |
 | `versionPolicy` | `pinned`, `latest`, `all` — see [Version policy](#version-policy). |
 | `version` | Required when `versionPolicy: pinned`. |
@@ -168,13 +208,38 @@ spec:
 | `imagePullSecrets` | Propagated to derived profiles. |
 | `serviceAccountName` | Propagated to derived profiles. |
 
-See the [CRD API Reference](../reference/api/v1alpha2.md#aimprofilesetspec) for the full schema.
+See the [API reference for AIMProfileSetSpec](../reference/api/v1alpha1.md#aimprofilesetspec) for the shared spec fields.
 
 ## Examples
 
-### Real-profile-backed derivation
+### Derive across models on a partitioned cluster
 
-Standalone profile set that derives MI308X variants from existing MI300X profiles owned by `llama-3-8b-official`:
+This cluster profile set maps every matching unpartitioned, single-device TP=1 definition to one CPX-NPS4 partition. It selects across all cluster models and copyable direct cluster profiles, including on a cluster with only partitioned GPUs:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterProfileSet
+metadata:
+  name: mi300x-cpx
+spec:
+  selector:
+    engine: vllm
+    acceleratorModel: MI300X
+    acceleratorCount: 1
+    acceleratorPartitioningMode: unpartitioned
+    engineArgs:
+      tensor-parallel-size: 1
+  versionPolicy: all
+  overrides:
+    acceleratorCount: 1
+    acceleratorPartitioningMode: CPX-NPS4
+```
+
+`role` defaults to `deployable`. Add `modelId`, `aimId`, or other selector fields to narrow the selection. The source definitions remain available even when none has a materialised unpartitioned profile.
+
+### Narrow to one model
+
+Derive MI308X variants from MI300X definitions published by `llama-3-8b-official`:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
@@ -193,9 +258,9 @@ spec:
     acceleratorCount: 4
 ```
 
-### Cache-backed derivation
+### Alternate catalog
 
-Profile set that derives directly from an `AIMModel`'s discovery cache without going through materialised profiles:
+Derive from an explicitly maintained catalog ConfigMap named `team-runtime-catalog`:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
@@ -205,14 +270,14 @@ metadata:
   namespace: ml-team
 spec:
   sourceRef:
-    name: qwen3-32b-custom-discovery
+    name: team-runtime-catalog
   selector:
     aimId: qwen/Qwen3-32B
     acceleratorModel: MI300X
   versionPolicy: pinned
   version: "0.9.0"
+  image: quay.io/acme/aim-base-vllm:0.9.0
   overrides:
-    image: quay.io/acme/aim-base-vllm:0.9.0
     modelSources:
       - modelId: acme/qwen3-32b-custom
         sourceUri: s3://models/qwen3-32b-custom/
@@ -257,14 +322,20 @@ spec:
 
 Zero values serialise explicitly (no `omitempty`), so `kubectl` printcolumns and assertions on count fields are always present.
 
+`Ready` means that source evaluation and derivation succeeded and at least one current derived profile is ready. Profiles are alternatives: other selected profiles may be unavailable on this cluster, still reconciling, or failed without blocking a ready alternative. Their individual statuses and conditions remain unchanged, and `managedProfiles.ready` need not equal `managedProfiles.total`. A partially ready set reports `ManagedProfilesPartiallyReady` with its ready/total counts.
+
+A profile contributes to readiness only when it is not being deleted, its spec and YAML contract match the desired output, and its status observes its current generation. An unreadable source or profile inventory, or an invalid derivation, still prevents readiness even if an older output is ready. An empty selection or a fully observed set with no ready profiles remains `NotAvailable`; missing or stale outputs with no ready alternative remain `Progressing`.
+
 ### Conditions
 
 | Condition | Reasons |
 |---|---|
-| `DerivationReady` | `ManagedProfilesReady`, `NoMatchingProfiles`, `Progressing`, `Degraded` |
+| `DerivationReady` | `ManagedProfilesReady`, `ManagedProfilesPartiallyReady`, `NoMatchingProfiles`, `NoEligibleProfiles`, `Progressing`, `Degraded` |
 | `Ready` | `AllComponentsReady`, `ComponentsNotReady`, `Progressing` |
 
-`DerivationReady=False / NoMatchingProfiles` means the selector matched zero source candidates. This is by far the most common failure mode; see troubleshooting below.
+`DerivationReady=False / NoMatchingProfiles` means source evaluation completed and the selector matched zero candidates. Pending discovery or an unreadable source is reported separately from a confirmed empty selection.
+
+`DerivationReady=False / NoEligibleProfiles` means one or more profiles matched the selector and version policy, but all matching resource-backed profiles were excluded because they were not published as copyable.
 
 ## Derived-profile labels and annotations
 
@@ -279,17 +350,50 @@ Profiles produced by an `AIMProfileSet` carry this metadata:
 | Label | `aim.eai.amd.com/source-model` | Name of the AIM(Cluster)Model that owns the profile set (when applicable) |
 | Label | `aim.eai.amd.com/source-model-scope` | `namespace` or `cluster` |
 
-By default, derived profiles are **not** marked `profile-copyable`, which prevents accidental cascading copy chains. If you want a derived profile to itself be a valid derivation source, set the `aim.eai.amd.com/profile-copyable: "true"` annotation explicitly.
+Derived profiles are non-copyable by default. Set `spec.outputPolicy.copyable: true` on a standalone profile set, or `spec.profiles.outputPolicy.copyable: true` on a model-managed derivation, to publish its outputs as eligible sources for a later derivation:
+
+```yaml
+spec:
+  outputPolicy:
+    copyable: true
+```
+
+For the compatibility `AIMModel.spec.profileCopy` shape, use `spec.profileCopy.outputPolicy.copyable: true`.
+
+Copyability is live source policy, not a one-time export. Turning it off, deleting the producing set or model, or narrowing the producer's selection makes those profiles disappear from downstream source pools. Downstream sets then prune the copies that depended on them, which can remove profiles currently selected by running services.
 
 ## Source eligibility
 
-For real-profile-backed mode, a source profile must carry `aim.eai.amd.com/profile-copyable="true"` to be considered. This separates provenance ("where did this come from") from source eligibility ("can this be copied"):
+Source eligibility and provenance are separate:
 
-- Image-discovery-produced profiles owned by AIM(Cluster)Models are marked copyable by default.
-- Derived profiles are not marked copyable by default — opt in explicitly if you want chained derivation.
-- Hand-authored profiles need the annotation added explicitly to participate.
+- Image-backed models publish their discovered definitions. Image-discovery-produced profile resources are copyable by default.
+- A materialised model profile's explicit copyability opt-out applies to its logical catalog source as well. An owned, opted-out profile is retained when matching hardware disappears, preserving that policy. Removing its catalog entry or explicitly deleting the profile removes the opt-out; there is no separate persistent policy store.
+- Direct profiles, including hand-authored and generated profiles, participate when marked copyable.
+- Derived profiles participate only with explicit copyability opt-in. Prefer the producer's declarative `outputPolicy.copyable: true` over manually annotating generated profiles. Profile-set lineage prevents a set from consuming a descendant that was previously derived from that same set.
+- `origin` filters preserve source provenance across catalog and resource representations.
 
-Cache-backed mode bypasses this — the entries are taken directly from the discovery catalog.
+To include a hand-authored profile in ordinary selector-based derivation:
+
+```bash
+kubectl -n ml-team annotate aimprofile my-profile \
+  aim.eai.amd.com/profile-copyable=true
+```
+
+An explicit `sourceRef` selects entries from that catalog. Eligibility for model-derived default selection is resolved through the owning model and any corresponding live-profile opt-out.
+
+## Reconciliation and resource use
+
+Model, managed-catalog, and direct-profile changes reconcile affected sets, including sets whose sources have no materialised profile resources. Catalog identity includes the current model ownership and discovery inputs, so model recreation and operator restarts resolve the current source.
+
+If discovery is pending or any source cannot be read or parsed, the entire set retains its outputs without applying or pruning profiles. Healthy-source progress waits for a complete source snapshot. A missing explicit catalog is also an unresolved dependency, not an empty catalog. Confirmed model deletion, removed catalog entries, and selector narrowing prune outputs once all remaining sources resolve. Namespace fallback is evaluated from a complete source result; an unavailable local source is not treated as an empty scope.
+
+Each operator process shares parsed, immutable catalogs across reconcilers. Cached resource reads and scope/model indexes narrow source enumeration. Catalogs are parsed once per revision and relevant input state; only selected output definitions are copied for overrides.
+
+Broad selectors still require work proportional to the candidate definitions they examine. Creating and reconciling outputs scales with the number of matches per set, so overlapping sets each incur their own output-resource cost. Hardware-unsupported raw definitions occupy catalog memory, without creating profile CRs, projected runtimes, or per-profile reconcile work.
+
+The source pool includes complete image-backed definitions and existing copyable resources. RuntimeConfig fallback expansion remains part of generated-model onboarding. Each set applies one selector and one overrides block; it evaluates published definitions and opted-in resources rather than traversing a recursive derivation graph.
+
+Standalone sets own their outputs and report their readiness. Source-model provenance alone does not add those outputs to the source model's managed counts. A model's child set reports its outputs through the owning model. Services resolve materialised profile resources.
 
 ## Troubleshooting
 
@@ -301,7 +405,7 @@ The selector matched zero source candidates. Diagnose by listing candidates and 
 # What did the selector look for?
 kubectl get aimprofileset <name> -o jsonpath='{.spec.selector}'
 
-# What profiles are in the pool?
+# Which materialised profiles can participate?
 kubectl get aimprofile -n <namespace> -o custom-columns=\
 NAME:.metadata.name,\
 AIMID:.spec.aimId,\
@@ -315,12 +419,39 @@ Common causes:
 
 - A selector field is too restrictive — relax `precision`, `acceleratorModel`, etc.
 - `modelRef.name` typo or wrong scope.
-- Source profiles lack the `aim.eai.amd.com/profile-copyable: "true"` annotation.
-- For cache-backed mode: `spec.sourceRef.name` doesn't reference an existing ConfigMap.
+- The requested version does not match, or a versionless source needs `versionPolicy: all`.
+
+Also inspect the source models' `DiscoveryReady` conditions and `status.discoveredProfiles`. Resource listings show only materialised profiles; a model can supply definitions when that listing is empty.
+
+### `DerivationReady=False / NoEligibleProfiles`
+
+The selector and version policy matched one or more profile resources, but none were published as copyable.
+
+- For a hand-authored source profile, add `aim.eai.amd.com/profile-copyable: "true"` to that profile.
+- If the source is produced by another profile set or derived model and the chain is intentional, set `outputPolicy.copyable: true` on that producer. This makes the policy durable across reconciliation:
+
+```yaml
+spec:
+  profiles:
+    outputPolicy:
+      copyable: true
+```
+
+Use `spec.outputPolicy` for a standalone `AIMProfileSet`, or `spec.profileCopy.outputPolicy` for the compatibility model shape. Do not patch generated profiles directly; manual annotations can obscure whether the producer intended its hardware overrides to be reused.
+
+If producer copyability is later disabled, downstream copies are pruned as soon as their source disappears from the eligible pool. Check affected services before changing this policy.
+
+### Source discovery or catalog is unavailable
+
+Inspect the affected model's discovery conditions and `status.discoveryCacheRef`. For an explicit alternate catalog, verify `spec.sourceRef.name` in the set's namespace (or operator namespace for a cluster set). All existing outputs of the set remain in place while reconciliation retries.
+
+### `sourceRef and selector.modelRef are mutually exclusive`
+
+New requests combining these fields are rejected at admission. If an existing profile set contains both fields, reconciliation reports an invalid configuration and retains all derived profiles without applying or pruning them. Remove `selector.modelRef` to continue using the same explicit catalog. For model-managed derivation, make the correction in the parent model's `spec.profiles.derivedFrom`.
 
 ### `managedProfiles.total == 0` after applying
 
-Either the set hasn't been reconciled yet (look at `status.conditions[?(@.type=='DerivationReady')]`) or every candidate was filtered out before the derived-profile build step. The selector is the most common culprit.
+Inspect `status.conditions[?(@.type=='DerivationReady')]` to distinguish pending source discovery, source evaluation errors, and a completed selection with zero matches.
 
 ### Model-managed derivation is stuck
 

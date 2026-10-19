@@ -35,6 +35,7 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
@@ -48,7 +49,7 @@ func ResolveDownloadImage(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1a
 // resolveDownloadImage picks the container image for download and size-check
 // jobs. Precedence: artifact spec > runtime config > build-time default.
 func resolveDownloadImage(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon) string {
-	if len(mc.Spec.ModelDownloadImage) > 0 {
+	if mc != nil && len(mc.Spec.ModelDownloadImage) > 0 {
 		return mc.Spec.ModelDownloadImage
 	}
 	if runtimeConfigSpec != nil && runtimeConfigSpec.Artifact != nil && runtimeConfigSpec.Artifact.ModelDownloadImage != "" {
@@ -144,7 +145,12 @@ func getDownloadJobName(mc *aimv1alpha1.AIMArtifact) string {
 	return name
 }
 
-func buildDownloadJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon, expectedSizeBytes int64) *batchv1.Job {
+func buildDownloadJob(
+	mc *aimv1alpha1.AIMArtifact,
+	runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon,
+	expectedSizeBytes int64,
+	includeAdditionalCABundle bool,
+) *batchv1.Job {
 	mountPath := "/cache/models"
 	downloadImage := resolveDownloadImage(mc, runtimeConfigSpec)
 	var s3Connection *aimv1alpha1.S3ConnectionConfig
@@ -201,7 +207,7 @@ func buildDownloadJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha
 	volumeMounts := []corev1.VolumeMount{{Name: "cache", MountPath: mountPath}}
 	volumeMounts = append(volumeMounts, s3Settings.VolumeMounts...)
 
-	return &batchv1.Job{
+	job := &batchv1.Job{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: batchv1.SchemeGroupVersion.String(),
 			Kind:       "Job",
@@ -255,6 +261,12 @@ func buildDownloadJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha
 			},
 		},
 	}
+	trust.ApplyToPod(
+		&job.Spec.Template.Spec,
+		&job.Spec.Template.Spec.Containers[0],
+		ResolveTrustProjection(runtimeConfigSpec, mc.Spec.SourceURI, includeAdditionalCABundle, downloadImage),
+	)
+	return job
 }
 
 func getCheckSizeJobName(mc *aimv1alpha1.AIMArtifact) string {
@@ -262,7 +274,11 @@ func getCheckSizeJobName(mc *aimv1alpha1.AIMArtifact) string {
 	return name
 }
 
-func buildCheckSizeJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon) *batchv1.Job {
+func buildCheckSizeJob(
+	mc *aimv1alpha1.AIMArtifact,
+	runtimeConfigSpec *aimv1alpha1.AIMRuntimeConfigCommon,
+	includeAdditionalCABundle bool,
+) *batchv1.Job {
 	downloadImage := resolveDownloadImage(mc, runtimeConfigSpec)
 	var s3Connection *aimv1alpha1.S3ConnectionConfig
 	if strings.HasPrefix(mc.Spec.SourceURI, "s3://") {
@@ -285,7 +301,7 @@ func buildCheckSizeJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alph
 		mc.Spec.Env,
 	)
 
-	return &batchv1.Job{
+	job := &batchv1.Job{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: batchv1.SchemeGroupVersion.String(),
 			Kind:       "Job",
@@ -334,4 +350,10 @@ func buildCheckSizeJob(mc *aimv1alpha1.AIMArtifact, runtimeConfigSpec *aimv1alph
 			},
 		},
 	}
+	trust.ApplyToPod(
+		&job.Spec.Template.Spec,
+		&job.Spec.Template.Spec.Containers[0],
+		ResolveTrustProjection(runtimeConfigSpec, mc.Spec.SourceURI, includeAdditionalCABundle, downloadImage),
+	)
+	return job
 }

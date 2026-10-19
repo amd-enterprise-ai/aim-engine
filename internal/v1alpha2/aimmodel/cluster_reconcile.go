@@ -87,6 +87,10 @@ type ClusterModelObservation struct {
 	ProfileSetRef                   *aimv1alpha1.ProfileSetReference
 	ManagedProfiles                 aimv1alpha1.ManagedProfileCounts
 	ExistingDesiredCount            int32
+	ProfileSetCurrent               bool
+	ProfileSetStatus                constants.AIMStatus
+	ProfileSetReason                string
+	ProfileSetMessage               string
 	DesiredProfiles                 []desiredProfile
 	ProfileGeneration               *aimv1alpha1.AIMModelProfileGenerationStatus
 	ProfileGenerationFailureMessage string
@@ -201,6 +205,13 @@ func (r *ClusterModelReconciler) ComposeState(
 	obs.Kind = classifyModelKind(&fetch.model.Spec)
 	derivation := derivationSpec(&fetch.model.Spec)
 	desiredProfilesKnown := derivation != nil
+	obs.BuildErr = profileInventoryReadError(
+		fetch.existingClusterProfiles.Error,
+		fetch.childProfileSet.Error,
+		derivation != nil,
+		"failed to list cluster profiles managed by this AIMClusterModel",
+		"failed to read the child AIMClusterProfileSet",
+	)
 	if derivation != nil {
 		// For role=base derivations the target aimId lives on
 		// overrides.aimId (CEL forbids selector.aimId then); for
@@ -252,6 +263,7 @@ func (r *ClusterModelReconciler) ComposeState(
 					obs.DesiredProfiles, obs.BuildErr = buildDesiredOfficialClusterModelProfiles(
 						fetch.model, catalog, fetch.nodes.Value,
 						recommendedDeploymentsFrom(legacyMetadata),
+						fetch.existingClusterProfiles.Value...,
 					)
 					desiredProfilesKnown = obs.BuildErr == nil
 				}
@@ -262,6 +274,7 @@ func (r *ClusterModelReconciler) ComposeState(
 	if fetch.model.Spec.ModelID != "" {
 		obs.ResolvedAimID = effectiveAimID(&fetch.model.Spec)
 		switch {
+		case obs.BuildErr != nil:
 		case fetch.runtimeConfig.Error != nil:
 			obs.BuildErr = fetch.runtimeConfig.Error
 		case fetch.nodes.Error != nil:
@@ -289,18 +302,36 @@ func (r *ClusterModelReconciler) ComposeState(
 			obs.ProfileSetRef = &aimv1alpha1.ProfileSetReference{Name: childName}
 			obs.DesiredProfileSet = buildDesiredClusterProfileSet(fetch.model, obs.DiscoveryCacheRef, childName)
 		}
-		if fetch.childProfileSet.OK() {
-			obs.ManagedProfiles = fetch.childProfileSet.Value.Status.ManagedProfiles
-			obs.ExistingDesiredCount = 1
-		}
+		child := observedClusterProfileSet(fetch.childProfileSet, obs.DesiredProfileSet, fetch.model)
+		obs.ManagedProfiles = child.managedProfiles
+		obs.ExistingDesiredCount = child.existingDesiredCount
+		obs.ProfileSetCurrent = child.current
+		obs.ProfileSetStatus = child.status
+		obs.ProfileSetReason = child.reason
+		obs.ProfileSetMessage = child.message
 	} else if fetch.existingClusterProfiles.OK() {
 		obs.ManagedProfiles, obs.ExistingDesiredCount = summarizeManagedProfiles(obs.DesiredProfiles, fetch.existingClusterProfiles.Value)
 	}
-	obs.pruneSafe = desiredProfilesKnown && obs.BuildErr == nil && fetch.existingClusterProfiles.Error == nil
+	obs.pruneSafe = profilePruneSafe(
+		desiredProfilesKnown,
+		obs.BuildErr,
+		fetch.existingClusterProfiles.Error,
+		derivation != nil,
+		obs.ProfileSetCurrent,
+		obs.ProfileSetStatus,
+		obs.ManagedProfiles,
+	)
+	preserveCopyability(obs.DesiredProfiles, fetch.existingClusterProfiles.Value)
 	obs.componentHealth = buildClusterModelComponentHealth(obs)
 	if obs.legacyObservation != nil {
 		obs.componentHealth = append(obs.componentHealth, obs.legacyObservation.GetComponentHealth()...)
 	}
+	applyModelServingPathPolicy(
+		&fetch.model.Spec,
+		obs.legacyObservation != nil,
+		componentClusterServiceTemplates,
+		obs.componentHealth,
+	)
 	return obs
 }
 
@@ -358,7 +389,8 @@ func (r *ClusterModelReconciler) PlanResources(
 			}
 		}
 	}
-	if derivation == nil && obs.childProfileSet.OK() && obs.childProfileSet.Value != nil {
+	if derivation == nil && obs.childProfileSet.OK() && obs.childProfileSet.Value != nil &&
+		metav1.IsControlledBy(obs.childProfileSet.Value, obs.model) {
 		plan.Delete(obs.childProfileSet.Value)
 	}
 	return plan
@@ -383,6 +415,15 @@ func (r *ClusterModelReconciler) DecorateStatus(
 	if obs.DiscoveryState != nil {
 		status.Discovery = obs.DiscoveryState
 	}
+	controllerutils.SetTemplateMigrationRequired(cm, requiresTemplateMigration(&obs.model.Spec))
+	retireRemovedModelPathState(
+		status,
+		cm,
+		&obs.model.Spec,
+		obs.legacyObservation != nil,
+		componentClusterServiceTemplates,
+		obs.componentHealth,
+	)
 	EnsureBaseImageBridge(&obs.model.Spec, status)
 }
 
@@ -396,6 +437,10 @@ func buildClusterModelComponentHealth(obs ClusterModelObservation) []controlleru
 		ProfileSetRef:                   obs.ProfileSetRef,
 		ManagedProfiles:                 obs.ManagedProfiles,
 		ExistingDesiredCount:            obs.ExistingDesiredCount,
+		ProfileSetCurrent:               obs.ProfileSetCurrent,
+		ProfileSetStatus:                obs.ProfileSetStatus,
+		ProfileSetReason:                obs.ProfileSetReason,
+		ProfileSetMessage:               obs.ProfileSetMessage,
 		ProfileGenerationFailureMessage: obs.ProfileGenerationFailureMessage,
 		BuildErr:                        obs.BuildErr,
 		componentHealth:                 obs.componentHealth,
@@ -413,18 +458,20 @@ func buildDesiredOfficialClusterModelProfiles(
 	catalog aimprofile.DiscoveryCatalog,
 	nodes []corev1.Node,
 	recommendedDeployments []aimv1alpha1.RecommendedDeployment,
+	existing ...managedProfile,
 ) ([]desiredProfile, error) {
 	desired := make([]desiredProfile, 0, len(catalog.Profiles))
+	optedOut := ownedCopyabilityOptOuts(model, existing)
 	for _, entry := range catalog.Profiles {
-		if !isSupportedProfile(entry.Spec, nodes) {
-			continue
-		}
 		name, err := utils.GenerateDerivedName(
 			[]string{model.Name, entry.Spec.ProfileId},
 			utils.WithHashSource(model.Name, entry.Spec.ProfileId),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("generate discovered profile name: %w", err)
+		}
+		if !isSupportedProfile(entry.Spec, nodes) && !optedOut[name] {
+			continue
 		}
 		clusterProfile := &aimv1alpha2.AIMClusterProfile{}
 		clusterProfile.Name = name
@@ -435,6 +482,10 @@ func buildDesiredOfficialClusterModelProfiles(
 			annotationBaseImage: entry.BaseImage,
 		}, aimprofile.ProfileSourceImage), true)
 		clusterProfile.Annotations = profileyaml.Mark(clusterProfile.Annotations, entry.YAMLContract)
+		group := CatalogSourceGroup("AIMClusterModel", "", model.Name, string(model.UID))
+		clusterProfile.Annotations[aimprofile.AnnotationSourceGroup] = group
+		clusterProfile.Annotations[aimprofile.AnnotationSourceID] = group + "/" + entry.RelPath
+		clusterProfile.Annotations[aimprofile.AnnotationLegacyCatalogNaming] = "true"
 		// See buildDesiredOfficialProfiles for why the role label is
 		// derived from the spec rather than hardcoded — a base-image
 		// AIMClusterModel emits entries that classify as `base`.
@@ -447,15 +498,10 @@ func buildDesiredOfficialClusterModelProfiles(
 				Kind: aimv1alpha2.ProfileSourceModelKindAIMClusterModel,
 			},
 		)
-		spec := *entry.Spec.DeepCopy()
-		spec.ImagePullSecrets = copyPullSecrets(model.Spec.ImagePullSecrets)
-		spec.ServiceAccountName = model.Spec.ServiceAccountName
 		// See buildDesiredOfficialProfiles for the rationale on the
 		// recommended-deployment fallback.
-		if !entry.PrimaryExplicit {
-			spec.Primary = matchesRecommendedDeployment(spec, recommendedDeployments)
-		}
-		clusterProfile.Spec = aimv1alpha2.AIMClusterProfileSpec{AIMProfileSpecCommon: spec}
+		spec := CatalogProfileSpec(entry, &model.Spec, recommendedDeployments)
+		clusterProfile.Spec = aimv1alpha2.AIMClusterProfileSpec{AIMProfileSpecCommon: *spec.DeepCopy()}
 		desired = append(desired, desiredProfile{Object: clusterProfile})
 	}
 	return desired, nil

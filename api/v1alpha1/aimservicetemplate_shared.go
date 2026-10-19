@@ -295,6 +295,10 @@ func (s *AIMServiceTemplateStatus) SetConditions(conditions []metav1.Condition) 
 	s.Conditions = conditions
 }
 
+func (s *AIMServiceTemplateStatus) SetObservedGeneration(generation int64) {
+	s.ObservedGeneration = generation
+}
+
 func (s *AIMServiceTemplateStatus) SetStatus(status string) {
 	s.Status = constants.AIMStatus(status)
 }

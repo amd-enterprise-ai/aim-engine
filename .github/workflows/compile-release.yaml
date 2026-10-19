@@ -84,6 +84,15 @@ jobs:
           echo "int_test_image_tag=${INT_TEST_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "Using version: ${VERSION}, chart version: ${CHART_VERSION}, int-test image tag: ${INT_TEST_IMAGE_TAG}"
 
+      - name: Generate CRDs
+        run: make crds
+
+      - name: Verify generated CRD and RBAC are current
+        run: git diff --exit-code -- config/crd/bases config/rbac/role.yaml
+
+      - name: Verify minimal v1alpha1 bridge contract
+        run: make test-bridge-contract
+
       - name: Log in to DockerHub
         if: env.BUILD_IMAGES == 'true'
         uses: docker/login-action@v3
@@ -118,9 +127,6 @@ jobs:
         run: |
           echo "Verifying image ${PULL_IMAGE_REPO}:${VERSION} is available..."
           docker pull ${PULL_IMAGE_REPO}:${VERSION}
-
-      - name: Generate CRDs
-        run: make crds
 
       - name: Package Helm chart
         run: |

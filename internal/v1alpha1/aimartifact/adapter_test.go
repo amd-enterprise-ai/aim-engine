@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
@@ -377,8 +378,11 @@ func TestListLiveAdapterServiceIDs(t *testing.T) {
 	if err := aimv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add scheme: %v", err)
 	}
+	if err := aimv1alpha2.AddToScheme(scheme); err != nil {
+		t.Fatalf("add v1alpha2 scheme: %v", err)
+	}
 
-	withAdapters := &aimv1alpha1.AIMService{
+	withAdapters := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-a", Namespace: "default", UID: types.UID("uid-a")},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Adapters: []aimv1alpha1.AIMServiceAdapterReference{
@@ -386,7 +390,7 @@ func TestListLiveAdapterServiceIDs(t *testing.T) {
 			},
 		},
 	}
-	noAdapters := &aimv1alpha1.AIMService{
+	noAdapters := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-b", Namespace: "default", UID: types.UID("uid-b")},
 	}
 

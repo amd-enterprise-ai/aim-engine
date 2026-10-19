@@ -39,7 +39,9 @@ import (
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimartifact"
 	v1alpha1svc "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/serving"
@@ -168,8 +170,38 @@ func buildInferenceServiceFromProfile(
 	// A service-owned (Dedicated) cache is overlaid onto the referenced runtime;
 	// a profile-owned (Shared) cache is mounted by the runtime itself.
 	addServiceOwnedCacheOverlay(isvc, service, obs)
+	addRuntimeTrustOverlay(
+		isvc,
+		obs.mergedRuntimeConfig.Value,
+		obs.additionalCABundle.Value,
+	)
 
 	return isvc
+}
+
+func addRuntimeTrustOverlay(
+	isvc *servingv1beta1.InferenceService,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	caConfigMap *corev1.ConfigMap,
+) {
+	if runtimeConfig == nil ||
+		runtimeConfig.AdditionalCABundleRef == nil ||
+		caConfigMap == nil ||
+		isvc.Spec.Predictor.Model == nil {
+		return
+	}
+	projection := trust.BuildProjection(trust.Options{
+		AdditionalCABundleRef: runtimeConfig.AdditionalCABundleRef,
+		Image:                 aimartifact.ResolveDownloadImage(nil, runtimeConfig),
+	})
+	if projection == nil {
+		return
+	}
+	predictor := &isvc.Spec.Predictor
+	predictor.InitContainers = append(predictor.InitContainers, projection.InitContainer)
+	predictor.Volumes = append(predictor.Volumes, projection.Volumes...)
+	predictor.Model.VolumeMounts = append(predictor.Model.VolumeMounts, projection.VolumeMounts...)
+	predictor.Model.Env = trust.UpsertEnv(predictor.Model.Env, projection.Env)
 }
 
 // buildInferenceServiceLabels builds the correlator labels stamped on the

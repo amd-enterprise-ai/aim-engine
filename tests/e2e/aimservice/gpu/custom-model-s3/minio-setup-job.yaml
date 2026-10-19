@@ -8,7 +8,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: mc
-          image: minio/mc:latest
+          image: docker.io/pgsty/mc:RELEASE.2026-09-16T00-00-00Z
           command:
             - /bin/sh
             - -c

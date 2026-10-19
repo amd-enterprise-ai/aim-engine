@@ -1,6 +1,6 @@
 # Fine-Tuned Models
 
-A **fine-tuned model** reuses an existing official AIM model's runtime profiles — its `aim-base` runtime, tuned engine arguments, accelerator pairings, and benchmarked precisions — and swaps in your fine-tune weights. You get the same performance characteristics as the published model with no re-tuning work.
+A **fine-tuned model** reuses an official AIM model's profile definitions — its `aim-base` runtime, tuned engine arguments, accelerator pairings, and benchmarked precisions — and supplies your fine-tune weights. Validate the resulting workload with those settings and any hardware overrides.
 
 :::{admonition} v1alpha2
 :class: note
@@ -21,26 +21,28 @@ A fine-tuned model is a single AIMModel that derives from an already-existing of
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/fine-tuned-flow-dark.svg">
-  <img alt="Fine-tune flow: an official AIMModel's deployable profiles are consumed by a fine-tune AIMModel that emits new deployable profiles backing an AIMService." src="../assets/diagrams/fine-tuned-flow.svg">
+  <img alt="Fine-tune flow: an official AIMModel publishes deployable profile definitions; a fine-tune AIMModel selects them and produces profiles with replacement weights backing an AIMService." src="../assets/diagrams/fine-tuned-flow.svg">
 </picture>
 
 The official AIMModel is typically applied once by the platform team or auto-discovered via `AIMClusterModelSource`. Your fine-tune AIMModel reuses its profiles read-only.
 
+The source definitions are available after discovery even when the original hardware is absent and no source profiles are materialised. Keep the image model and fine-tuned model separate; the fine-tuned model selects the image model's definitions through `profiles.derivedFrom`.
+
 ## Prerequisites
 
-- An existing official `AIMModel` or `AIMClusterModel` whose architecture matches your fine-tune. Confirm it has at least one deployable profile:
+- An existing official `AIMModel` or `AIMClusterModel` whose architecture matches your fine-tune and whose current discovery is complete:
 
   ```bash
+  kubectl wait aimmodel/<official-model> \
+    --for=condition=DiscoveryReady --timeout=120s
   kubectl get aimmodel <official-model> \
-    -o jsonpath='{.status.managedProfiles}'
-  # {"deployable":5,"notAvailable":0,"ready":5,"base":0,"total":5}
+    -o jsonpath='{.status.discoveredProfiles}'
   ```
 
-- The `aimId` value the official model uses (this is your match key). Read it from any of its profiles:
+- The `aimId` value the official model uses (this is your match key). Read it from the model:
 
   ```bash
-  kubectl get aimprofile -l aim.eai.amd.com/source-model=<official-model> \
-    -o jsonpath='{.items[0].spec.aimId}'
+  kubectl get aimmodel <official-model> -o jsonpath='{.status.aimId}'
   # meta-llama/Llama-3-8B-Instruct
   ```
 
@@ -78,7 +80,8 @@ Optional selector fields narrow the candidate pool:
 | Field | Purpose |
 |---|---|
 | `acceleratorModel` | Match profiles tuned for a specific GPU (`MI300X`, `MI325X`, …) |
-| `acceleratorCount` | Match a specific tensor-parallel topology |
+| `acceleratorCount` | Match the source device count; select tensor-parallel size separately with `engineArgs` |
+| `acceleratorPartitioningMode` | Match unpartitioned sources or a particular partitioning scheme |
 | `precision` | Match a specific precision (`fp8`, `fp16`, …) |
 | `metric` | Match `latency` or `throughput` profiles |
 | `engineArgs` | Partial match on engine args; every provided key must equal the source's value |
@@ -90,9 +93,9 @@ Optional selector fields narrow the candidate pool:
 
 | Policy | Behavior |
 |---|---|
-| `pinned` | Match only profiles whose version (extracted from `spec.image` tag) equals `spec.version`. Requires `version` to be set. |
-| `latest` | Match only the highest-version profile in each (accelerator, precision, metric) group. |
-| `all` | Match every profile that satisfies the selector, regardless of version. |
+| `pinned` | Match only profiles whose source version equals `spec.profiles.version`. Requires `version` to be set. |
+| `latest` | Select the highest version across all matching sources; retain all matches at that version. Narrow the selector when sources have unrelated version streams. |
+| `all` | Match every profile that satisfies the selector, including versionless profiles. |
 
 `pinned` gives reproducibility — your fine-tune always uses the same upstream tuning. `latest` auto-tracks upstream improvements as new official profiles are published. `all` is rarely useful for fine-tunes and is more common for the [custom-model](custom-models.md) flow.
 
@@ -108,6 +111,7 @@ Additional overrides:
 | `engineEnv` | Same merge semantics as `containerEnv` |
 | `engineArgs` | Shallow merge over source `engineArgs`; matching keys are replaced |
 | `acceleratorModel` / `acceleratorCount` | Replaces the source values outright |
+| `acceleratorPartitioningMode` | Replaces the partitioning mode; requires explicit source and target accelerator counts |
 
 ## Step 2: Verify deployable profiles
 
@@ -176,7 +180,7 @@ spec:
           sourceUri: hf://acme/llama-3-8b-finetune
 ```
 
-Every MI300X profile from the latest upstream version is derived.
+The latest matching definitions are selected independently across model/profile families and their runtime variants.
 
 ### Override engine args for fine-tune-specific tuning
 
@@ -221,13 +225,26 @@ The selector matched zero source profiles. Common causes:
 - `selector.aimId` doesn't exactly match the official model's profiles. Verify:
 
   ```bash
-  kubectl get aimprofile -A \
-    -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}: {.spec.aimId}{"\n"}{end}' \
-    | grep -i llama
+  kubectl get aimmodel <official-model> -o jsonpath='{.status.aimId}'
   ```
 
-- `versionPolicy: pinned` is set but `version` doesn't match any source's version tag. Check the source profiles' `status.version`.
+- `versionPolicy: pinned` is set but `version` doesn't match any source's version tag. Check the source model's image and any materialised profiles' `status.version`.
 - An accelerator or precision filter excluded every candidate — relax it or check that the official model ships those combinations.
+
+### AIMModel is `NotAvailable` with `NoEligibleProfiles`
+
+The selector and version policy matched source profiles, but none were published as copyable. For a hand-authored source, add the `aim.eai.amd.com/profile-copyable: "true"` annotation. If the source was produced by another derivation and chaining is intentional, enable it on the source model:
+
+```yaml
+spec:
+  profiles:
+    outputPolicy:
+      copyable: true
+```
+
+For a source model using the compatibility `profileCopy` shape, set `spec.profileCopy.outputPolicy.copyable: true` instead. This is preferred over manually annotating generated profiles because it records the producer's intent and survives reconciliation.
+
+Disabling copyability later removes the source from downstream selection and causes dependent derived profiles to be pruned. Confirm that no running services depend on those profiles before changing the producer policy.
 
 ### AIMService stuck in `Pending` with `ProfileNotFound`
 
@@ -235,7 +252,7 @@ Confirm the derivation produced deployable profiles before debugging the service
 
 ### Source profile updates not reflected in derived profiles
 
-With `versionPolicy: pinned`, the derivation is locked to a specific upstream version. To pick up upstream changes, either bump `spec.version` on the fine-tune AIMModel or switch to `versionPolicy: latest`.
+With `versionPolicy: pinned`, the derivation selects a specific upstream version. To select another version, update `spec.profiles.version` on the fine-tune AIMModel or use `versionPolicy: latest`. Definition updates within the selected version still reconcile derived profiles.
 
 ## Next Steps
 

@@ -42,6 +42,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimadapter"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 	v1alpha1utils "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/utils"
 )
@@ -50,6 +51,7 @@ import (
 type ServiceReconciler struct {
 	Clientset kubernetes.Interface
 	Scheme    *runtime.Scheme
+	APIReader client.Reader
 }
 
 func (r *ServiceReconciler) GetApplyOptions(obs ServiceObservation) controllerutils.ApplyOptions {
@@ -66,6 +68,7 @@ type ServiceFetchResult struct {
 
 	// Merged runtime config (provided by reconcile context)
 	mergedRuntimeConfig controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
+	additionalCABundle  controllerutils.FetchResult[*corev1.ConfigMap]
 
 	// Model resolution result (includes existing model or signals creation needed)
 	modelResult ModelFetchResult
@@ -114,6 +117,16 @@ func (r *ServiceReconciler) FetchRemoteState(
 		service:             service,
 		mergedRuntimeConfig: aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, runtimeConfigRef.Name, service.Namespace),
 	}
+	bundleReader := client.Reader(c)
+	if r.APIReader != nil {
+		bundleReader = r.APIReader
+	}
+	result.additionalCABundle = trust.FetchAdditionalCABundle(
+		ctx,
+		bundleReader,
+		service.Namespace,
+		result.mergedRuntimeConfig.Value,
+	)
 
 	// 1. Fetch existing InferenceService first (gates other fetches)
 	result.inferenceService = fetchInferenceService(ctx, c, service)
@@ -203,6 +216,25 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 				return controllerutils.ComponentHealth{
 					State:  constants.AIMStatusReady,
 					Reason: "RuntimeConfigResolved",
+				}
+			},
+		))
+	}
+	if obs.mergedRuntimeConfig.Value != nil &&
+		obs.mergedRuntimeConfig.Value.AdditionalCABundleRef != nil {
+		health = append(health, obs.additionalCABundle.ToUpstreamComponentHealth(
+			"AdditionalCABundle",
+			func(bundle *corev1.ConfigMap) controllerutils.ComponentHealth {
+				if bundle == nil {
+					return controllerutils.ComponentHealth{
+						State:   constants.AIMStatusReady,
+						Reason:  "AdditionalCABundleSkipped",
+						Message: "Configured CA bundle was unavailable during reconciliation; using public roots only",
+					}
+				}
+				return controllerutils.ComponentHealth{
+					State:  constants.AIMStatusReady,
+					Reason: "AdditionalCABundleResolved",
 				}
 			},
 		))
@@ -473,27 +505,10 @@ func evaluateTemplateStatus(status constants.AIMStatus, kind, name string) contr
 }
 
 func (f ServiceFetchResult) getInferenceServiceHealth() controllerutils.ComponentHealth {
-	health := controllerutils.ComponentHealth{
-		Component:      "InferenceService",
-		DependencyType: controllerutils.DependencyTypeDownstream,
-	}
-
-	// Check if InferenceService exists
-	if !f.inferenceService.OK() {
-		if f.inferenceService.IsNotFound() {
-			health.State = constants.AIMStatusProgressing
-			health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
-			health.Message = "InferenceService not found"
-			return health
-		}
-		health.State = constants.AIMStatusFailed
-		health.Reason = "FetchError"
-		health.Message = f.inferenceService.Error.Error()
-		health.Errors = []error{f.inferenceService.Error}
+	health := inferenceServiceComponentHealth(f.inferenceService, f.inferenceServicePods)
+	if !f.inferenceService.OK() || f.inferenceService.Value == nil {
 		return health
 	}
-
-	isvc := f.inferenceService.Value
 
 	// Check for fatal configuration errors in events (e.g., ServerlessModeRejected, InternalError)
 	if f.inferenceServiceEvents.OK() && f.inferenceServiceEvents.Value != nil {
@@ -517,16 +532,41 @@ func (f ServiceFetchResult) getInferenceServiceHealth() controllerutils.Componen
 		}
 	}
 
-	// Check InferenceService conditions
-	ready := false
-	for _, cond := range isvc.Status.Conditions {
-		if cond.Type == "Ready" && cond.Status == "True" {
-			ready = true
-			break
-		}
+	return health
+}
+
+func inferenceServiceComponentHealth(
+	inferenceService controllerutils.FetchResult[*servingv1beta1.InferenceService],
+	inferenceServicePods *controllerutils.FetchResult[*corev1.PodList],
+) controllerutils.ComponentHealth {
+	health := controllerutils.ComponentHealth{
+		Component:      "InferenceService",
+		DependencyType: controllerutils.DependencyTypeDownstream,
 	}
 
-	if ready {
+	if !inferenceService.OK() {
+		if inferenceService.IsNotFound() {
+			health.State = constants.AIMStatusProgressing
+			health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
+			health.Message = "InferenceService not found"
+			return health
+		}
+		health.State = constants.AIMStatusFailed
+		health.Reason = "FetchError"
+		health.Message = inferenceService.Error.Error()
+		health.Errors = []error{inferenceService.Error}
+		return health
+	}
+
+	isvc := inferenceService.Value
+	if isvc == nil {
+		health.State = constants.AIMStatusProgressing
+		health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
+		health.Message = "InferenceService not found"
+		return health
+	}
+
+	if inferenceServiceReady(inferenceService) {
 		health.State = constants.AIMStatusReady
 		health.Reason = aimv1alpha1.AIMServiceReasonRuntimeReady
 		health.Message = "InferenceService is ready"
@@ -534,9 +574,9 @@ func (f ServiceFetchResult) getInferenceServiceHealth() controllerutils.Componen
 	}
 
 	// If pods are still serving traffic, keep status running.
-	if f.inferenceServicePods != nil && f.inferenceServicePods.OK() && f.inferenceServicePods.Value != nil {
+	if inferenceServicePods != nil && inferenceServicePods.OK() && inferenceServicePods.Value != nil {
 		readyPodCount := 0
-		for _, pod := range f.inferenceServicePods.Value.Items {
+		for _, pod := range inferenceServicePods.Value.Items {
 			for _, cond := range pod.Status.Conditions {
 				if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
 					readyPodCount++
@@ -550,6 +590,13 @@ func (f ServiceFetchResult) getInferenceServiceHealth() controllerutils.Componen
 			health.Message = fmt.Sprintf("InferenceService has %d ready pod(s), scaling in progress", readyPodCount)
 			return health
 		}
+	}
+
+	if isvc.Generation <= 0 || isvc.Status.ObservedGeneration != isvc.Generation {
+		health.State = constants.AIMStatusProgressing
+		health.Reason = aimv1alpha1.AIMServiceReasonCreatingRuntime
+		health.Message = "InferenceService has not observed its current generation"
+		return health
 	}
 
 	health.State = constants.AIMStatusProgressing
@@ -775,6 +822,10 @@ func inferenceServiceReady(
 	isvc controllerutils.FetchResult[*servingv1beta1.InferenceService],
 ) bool {
 	if isvc.Error != nil || isvc.Value == nil {
+		return false
+	}
+	if isvc.Value.Generation <= 0 ||
+		isvc.Value.Status.ObservedGeneration != isvc.Value.Generation {
 		return false
 	}
 	for _, cond := range isvc.Value.Status.Conditions {
@@ -1350,7 +1401,7 @@ func (r *ServiceReconciler) ComposeState(
 	// If no model is found AND no error occurred during search, create a new AIMModel.
 	// Custom models are created with owner references to the AIMService.
 	if mr.CustomSpec != nil && mr.Model.Value == nil && mr.ClusterModel.Value == nil && mr.Model.Error == nil && mr.ClusterModel.Error == nil {
-		modelName := GenerateCustomModelName(mr.CustomSpec)
+		modelName := GenerateCustomModelName(fetch.service, mr.CustomSpec)
 		obs.needsModelCreation = true
 		obs.pendingModelName = modelName
 	}
@@ -1396,11 +1447,16 @@ func (r *ServiceReconciler) PlanResources(
 		planResult.RequestRequeueAfter(requeueAfter)
 	}
 
-	// 0. Plan model creation if needed (before template check - model can be created independently)
-	// Both custom and image-based models are shared (no owner reference)
-	// Custom models use service label for reconciliation tracking
+	// 0. Plan model creation if needed (before template check - model can be created independently).
+	// Image-based models are shared. Inline-custom compatibility models carry
+	// a prebuilt controller reference to their single authoritative service and
+	// use create-only semantics so a concurrent occupant cannot be overwritten.
 	if model := planModel(service, obs); model != nil {
-		planResult.ApplyWithoutOwnerRef(model)
+		if obs.modelResult.CustomSpec != nil {
+			planResult.Create(model)
+		} else {
+			planResult.ApplyWithoutOwnerRef(model)
+		}
 	}
 
 	// 1. Plan HTTPRoute if routing is enabled (independent of template resolution)
@@ -1485,7 +1541,14 @@ func (r *ServiceReconciler) PlanResources(
 	// (a removal — including dropping the last adapter — drives its prune Job to
 	// completion via status-carried Deleting entries).
 	if aimadapter.IsActive(service) {
-		aimadapter.Plan(&planResult, service, obs.adapterDeps, obs.adapterState, obs.mergedRuntimeConfig.Value)
+		aimadapter.Plan(
+			&planResult,
+			service,
+			obs.adapterDeps,
+			obs.adapterState,
+			obs.mergedRuntimeConfig.Value,
+			obs.additionalCABundle.Value != nil,
+		)
 	}
 	// ISVC creation is gated whenever the service needs the adapter disk —
 	// adapters declared, or dynamic mode (which mounts even at zero adapters) —
@@ -1570,6 +1633,8 @@ func (r *ServiceReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ServiceObservation,
 ) {
+	controllerutils.SetTemplateMigrationRequired(cm, true)
+
 	// Report-only: whether KEDA can read the scale-from-zero activation
 	// trigger. Never gates readiness.
 	setActivationMetricCondition(

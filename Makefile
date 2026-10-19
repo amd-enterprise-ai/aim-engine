@@ -159,7 +159,8 @@ help: ## Display this help.
 
 .PHONY: manifests
 manifests: ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	controller-gen rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	# maxDescLen keeps the Helm CRDs release Secret under Kubernetes' 1MiB limit.
+	controller-gen rbac:roleName=manager-role crd:maxDescLen=250 webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
 generate: ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -174,8 +175,17 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet ## Run tests.
+test: manifests generate fmt vet test-artifact-downloader ## Run tests.
 	go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+
+.PHONY: test-bridge-contract
+test-bridge-contract: ## Verify the minimal v1alpha1 bridge contract.
+	go test ./internal/bridgecontract -run '^TestBridgeContract$$' -count=1
+
+.PHONY: test-artifact-downloader
+test-artifact-downloader: ## Run dependency-free artifact-downloader script tests.
+	PYTHONPATH=images/artifact-downloader python3 -m unittest discover \
+		-s images/artifact-downloader/tests -p 'test_combine_ca.py'
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
@@ -847,6 +857,8 @@ generate-crd-docs:
 	go install github.com/elastic/crd-ref-docs@latest
 	crd-ref-docs --source-path api/v1alpha1/ --renderer=markdown --output-path=docs/docs/reference/api/v1alpha1.md --config docs/crd-ref-docs-config.yaml
 	crd-ref-docs --source-path api/v1alpha2/ --renderer=markdown --output-path=docs/docs/reference/api/v1alpha2.md --config docs/crd-ref-docs-config.yaml
+	python3 -B hack/test_format_crd_docs.py
+	python3 hack/format-crd-docs.py docs/docs/reference/api/v1alpha1.md docs/docs/reference/api/v1alpha2.md
 
 .PHONY: generate-helm-docs
 generate-helm-docs: ## Generate Helm chart values reference from config/helm/values.yaml.

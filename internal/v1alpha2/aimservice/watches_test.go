@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
@@ -211,45 +212,45 @@ func newWatchTestClient(t *testing.T, scheme *runtime.Scheme, objs ...client.Obj
 	return fakeclient.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(objs...).
-		WithIndex(&aimv1alpha1.AIMService{}, aimv1alpha1.AIMServiceProfileIndexKey, func(obj client.Object) []string {
-			svc, ok := obj.(*aimv1alpha1.AIMService)
+		WithIndex(&aimv1alpha2.AIMService{}, aimv1alpha1.AIMServiceProfileIndexKey, func(obj client.Object) []string {
+			svc, ok := obj.(*aimv1alpha2.AIMService)
 			if !ok || svc.Spec.Profile == nil || svc.Spec.Profile.Name == "" {
 				return nil
 			}
 			return []string{svc.Spec.Profile.Name}
 		}).
-		WithIndex(&aimv1alpha1.AIMService{}, ServiceModelNameIndex, func(obj client.Object) []string {
-			svc, ok := obj.(*aimv1alpha1.AIMService)
+		WithIndex(&aimv1alpha2.AIMService{}, ServiceModelNameIndex, func(obj client.Object) []string {
+			svc, ok := obj.(*aimv1alpha2.AIMService)
 			if !ok || svc.Spec.Model == nil || svc.Spec.Model.Name == nil || *svc.Spec.Model.Name == "" {
 				return nil
 			}
 			return []string{*svc.Spec.Model.Name}
 		}).
-		WithIndex(&aimv1alpha1.AIMService{}, ServiceSelectorModelRefIndex, func(obj client.Object) []string {
-			svc, ok := obj.(*aimv1alpha1.AIMService)
+		WithIndex(&aimv1alpha2.AIMService{}, ServiceSelectorModelRefIndex, func(obj client.Object) []string {
+			svc, ok := obj.(*aimv1alpha2.AIMService)
 			if !ok || svc.Spec.Profile == nil || svc.Spec.Profile.Selector == nil ||
 				svc.Spec.Profile.Selector.ModelRef == nil || svc.Spec.Profile.Selector.ModelRef.Name == "" {
 				return nil
 			}
 			return []string{svc.Spec.Profile.Selector.ModelRef.Name}
 		}).
-		WithIndex(&aimv1alpha1.AIMService{}, ServiceSelectorAimIdIndex, func(obj client.Object) []string {
-			svc, ok := obj.(*aimv1alpha1.AIMService)
+		WithIndex(&aimv1alpha2.AIMService{}, ServiceSelectorAimIdIndex, func(obj client.Object) []string {
+			svc, ok := obj.(*aimv1alpha2.AIMService)
 			if !ok || svc.Spec.Profile == nil || svc.Spec.Profile.Selector == nil ||
 				svc.Spec.Profile.Selector.AimId == "" {
 				return nil
 			}
 			return []string{svc.Spec.Profile.Selector.AimId}
 		}).
-		WithIndex(&aimv1alpha1.AIMService{}, ServiceResourceNodeMatchIndex, func(obj client.Object) []string {
-			svc, ok := obj.(*aimv1alpha1.AIMService)
+		WithIndex(&aimv1alpha2.AIMService{}, ServiceResourceNodeMatchIndex, func(obj client.Object) []string {
+			svc, ok := obj.(*aimv1alpha2.AIMService)
 			if !ok || svc.Spec.Resources == nil || !usesProfilePipeline(svc) {
 				return nil
 			}
 			return []string{serviceResourceNodeMatchIndexValue}
 		}).
-		WithIndex(&aimv1alpha1.AIMService{}, aimv1alpha1.AIMServiceAdapterArtifactIndexKey, func(obj client.Object) []string {
-			svc, ok := obj.(*aimv1alpha1.AIMService)
+		WithIndex(&aimv1alpha2.AIMService{}, aimv1alpha1.AIMServiceAdapterArtifactIndexKey, func(obj client.Object) []string {
+			svc, ok := obj.(*aimv1alpha2.AIMService)
 			if !ok {
 				return nil
 			}
@@ -261,6 +262,7 @@ func newWatchTestClient(t *testing.T, scheme *runtime.Scheme, objs ...client.Obj
 			}
 			return names
 		}).
+		WithIndex(&aimv1alpha2.AIMService{}, ServiceResolvedProfileIndex, indexServiceResolvedProfile).
 		WithIndex(&aimv1alpha1.AIMArtifact{}, aimv1alpha1.ArtifactParentIndexKey, func(obj client.Object) []string {
 			artifact, ok := obj.(*aimv1alpha1.AIMArtifact)
 			if !ok || artifact.Spec.ParentArtifact == "" {
@@ -334,14 +336,14 @@ func TestFindServicesForResourceNodeChange(t *testing.T) {
 		Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("16Gi")},
 	}
 
-	profileService := &aimv1alpha1.AIMService{
+	profileService := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "profile", Namespace: "alpha"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile:   &aimv1alpha1.AIMServiceProfileConfig{Name: "p"},
 			Resources: resources,
 		},
 	}
-	forcedProfileService := &aimv1alpha1.AIMService{
+	forcedProfileService := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "forced-profile",
 			Namespace: "beta",
@@ -354,25 +356,39 @@ func TestFindServicesForResourceNodeChange(t *testing.T) {
 			Resources: resources,
 		},
 	}
-	noOverride := &aimv1alpha1.AIMService{
+	noOverride := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "no-override", Namespace: "alpha"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: "p"},
 		},
 	}
-	templateService := &aimv1alpha1.AIMService{
+	templateService := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "template", Namespace: "alpha"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Template:  &aimv1alpha1.AIMServiceTemplateConfig{Name: "template"},
 			Resources: resources,
 		},
 	}
-	forcedTemplateService := &aimv1alpha1.AIMService{
+	forcedTemplateService := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "forced-template",
 			Namespace: "alpha",
 			Annotations: map[string]string{
 				constants.AnnotationReconcilerPipeline: constants.ReconcilerPipelineTemplate,
+			},
+		},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Model:     &aimv1alpha1.AIMServiceModel{Name: ptr.To("model")},
+			Profile:   &aimv1alpha1.AIMServiceProfileConfig{Name: "p"},
+			Resources: resources,
+		},
+	}
+	grandfatheredProfileService := &aimv1alpha2.AIMService{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "grandfathered-profile",
+			Namespace: "alpha",
+			Annotations: map[string]string{
+				constants.AnnotationReconcilerPipeline: "historical",
 			},
 		},
 		Spec: aimv1alpha1.AIMServiceSpec{
@@ -389,6 +405,7 @@ func TestFindServicesForResourceNodeChange(t *testing.T) {
 		noOverride,
 		templateService,
 		forcedTemplateService,
+		grandfatheredProfileService,
 	)
 	requests := findServicesForResourceNodeChange(c)(
 		context.Background(),
@@ -402,12 +419,13 @@ func TestFindServicesForResourceNodeChange(t *testing.T) {
 	for _, want := range []types.NamespacedName{
 		{Name: "profile", Namespace: "alpha"},
 		{Name: "forced-profile", Namespace: "beta"},
+		{Name: "grandfathered-profile", Namespace: "alpha"},
 	} {
 		if _, exists := got[want]; !exists {
 			t.Errorf("missing Node-event enqueue for %s", want)
 		}
 	}
-	if len(got) != 2 {
+	if len(got) != 3 {
 		t.Fatalf("Node event enqueued unexpected services: %#v", got)
 	}
 }
@@ -424,19 +442,25 @@ func TestFindServicesForResourceNodeChange(t *testing.T) {
 func TestFindServicesForProfile_FansOutByNameModelAndAimId(t *testing.T) {
 	scheme := newWatchTestScheme(t)
 
-	byName := &aimv1alpha1.AIMService{
+	byName := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-by-name", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: "p"},
 		},
 	}
-	byModelShortcut := &aimv1alpha1.AIMService{
-		ObjectMeta: metav1.ObjectMeta{Name: "svc-by-model", Namespace: "ns"},
+	byModelShortcut := &aimv1alpha2.AIMService{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "svc-by-model",
+			Namespace: "ns",
+			Annotations: map[string]string{
+				constants.AnnotationReconcilerPipeline: constants.ReconcilerPipelineProfile,
+			},
+		},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Name: ptr.To("source-model")},
 		},
 	}
-	bySelectorModelRef := &aimv1alpha1.AIMService{
+	bySelectorModelRef := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-by-modelref", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -446,7 +470,7 @@ func TestFindServicesForProfile_FansOutByNameModelAndAimId(t *testing.T) {
 			},
 		},
 	}
-	bySelectorAimId := &aimv1alpha1.AIMService{
+	bySelectorAimId := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-by-aimid", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -456,7 +480,7 @@ func TestFindServicesForProfile_FansOutByNameModelAndAimId(t *testing.T) {
 	}
 	// Service in a different namespace must NOT be enqueued — namespace
 	// AIMProfile events fan out within the namespace only.
-	otherNamespace := &aimv1alpha1.AIMService{
+	otherNamespace := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-other-ns", Namespace: "other"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: "p"},
@@ -506,13 +530,13 @@ func TestFindServicesForProfile_FansOutByNameModelAndAimId(t *testing.T) {
 func TestFindServicesForClusterProfile_SpansAllNamespaces(t *testing.T) {
 	scheme := newWatchTestScheme(t)
 
-	nsAlpha := &aimv1alpha1.AIMService{
+	nsAlpha := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-alpha", Namespace: "alpha"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: "cluster-p"},
 		},
 	}
-	nsBeta := &aimv1alpha1.AIMService{
+	nsBeta := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-beta", Namespace: "beta"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: "cluster-p"},
@@ -542,13 +566,19 @@ func TestFindServicesForClusterProfile_SpansAllNamespaces(t *testing.T) {
 func TestFindServicesForModel_FansOutByShortcutAndSelector(t *testing.T) {
 	scheme := newWatchTestScheme(t)
 
-	byShortcut := &aimv1alpha1.AIMService{
-		ObjectMeta: metav1.ObjectMeta{Name: "svc-shortcut", Namespace: "ns"},
+	byShortcut := &aimv1alpha2.AIMService{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "svc-shortcut",
+			Namespace: "ns",
+			Annotations: map[string]string{
+				constants.AnnotationReconcilerPipeline: constants.ReconcilerPipelineProfile,
+			},
+		},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Name: ptr.To("my-model")},
 		},
 	}
-	byExplicit := &aimv1alpha1.AIMService{
+	byExplicit := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-explicit", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -558,13 +588,19 @@ func TestFindServicesForModel_FansOutByShortcutAndSelector(t *testing.T) {
 			},
 		},
 	}
-	unrelated := &aimv1alpha1.AIMService{
+	unrelated := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-unrelated", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Name: ptr.To("other-model")},
 		},
 	}
-	c := newWatchTestClient(t, scheme, byShortcut, byExplicit, unrelated)
+	inactiveTemplate := &aimv1alpha2.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-template", Namespace: "ns"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Model: &aimv1alpha1.AIMServiceModel{Name: ptr.To("my-model")},
+		},
+	}
+	c := newWatchTestClient(t, scheme, byShortcut, byExplicit, unrelated, inactiveTemplate)
 
 	model := &aimv1alpha2.AIMModel{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-model", Namespace: "ns"},
@@ -584,13 +620,16 @@ func TestFindServicesForModel_FansOutByShortcutAndSelector(t *testing.T) {
 	if _, ok := got["svc-unrelated"]; ok {
 		t.Errorf("unrelated service must not be enqueued")
 	}
+	if _, ok := got["svc-template"]; ok {
+		t.Errorf("profile watch must not enqueue a template-pipeline service")
+	}
 }
 
 func TestFindServicesForAdapterArtifact_FansOutByExactAndLogicalCompatibility(t *testing.T) {
 	scheme := newWatchTestScheme(t)
 
-	serviceFor := func(name, adapterName, namespace string) *aimv1alpha1.AIMService {
-		return &aimv1alpha1.AIMService{
+	serviceFor := func(name, adapterName, namespace string) *aimv1alpha2.AIMService {
+		return &aimv1alpha2.AIMService{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
 			Spec: aimv1alpha1.AIMServiceSpec{
 				Adapters: []aimv1alpha1.AIMServiceAdapterReference{{
@@ -705,4 +744,119 @@ func TestAdapterArtifactRelevantChangePredicate_RankChange(t *testing.T) {
 			t.Error("an equal rank must not fire the predicate")
 		}
 	})
+}
+
+// imageShapeService builds a service that resolves its model by image:
+// spec.model.image plus a selector without modelRef or aimId. None of the
+// spec-based indexes match it, so only the resolved-profile index can route
+// profile events to it.
+func imageShapeService(name, namespace, profile string, scope aimv1alpha1.AIMResolutionScope) *aimv1alpha2.AIMService {
+	return &aimv1alpha2.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Model: &aimv1alpha1.AIMServiceModel{Image: ptr.To("docker.io/amdenterpriseai/aim-dummy:0.1")},
+			Profile: &aimv1alpha1.AIMServiceProfileConfig{
+				Selector: &aimv1alpha1.ProfileSelector{AcceleratorCount: ptr.To[int32](1)},
+			},
+		},
+		Status: aimv1alpha1.AIMServiceStatus{
+			ResolvedProfile: &aimv1alpha1.AIMResolvedReference{Name: profile, Scope: scope},
+		},
+	}
+}
+
+func requestSet(requests []reconcile.Request) map[string]struct{} {
+	got := map[string]struct{}{}
+	for _, r := range requests {
+		got[r.String()] = struct{}{}
+	}
+	return got
+}
+
+func assertRequests(t *testing.T, requests []reconcile.Request, want ...string) {
+	t.Helper()
+	got := requestSet(requests)
+	if len(got) != len(want) {
+		t.Errorf("expected requests %v, got %v", want, got)
+		return
+	}
+	for _, w := range want {
+		if _, ok := got[w]; !ok {
+			t.Errorf("expected requests %v, got %v", want, got)
+			return
+		}
+	}
+}
+
+func TestFindServicesForProfileCache_FansOutByResolvedProfile(t *testing.T) {
+	scheme := newWatchTestScheme(t)
+	profile := &aimv1alpha2.AIMProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "p",
+			Namespace: "ns",
+			Labels:    map[string]string{constants.LabelKeySourceModel: "svc-a-auto-1234"},
+		},
+		Spec: aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: aimv1alpha2.AIMProfileSpecCommon{Image: "img"}},
+	}
+	cache := &aimv1alpha2.AIMProfileCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "p-cache", Namespace: "ns"},
+		Spec: aimv1alpha2.AIMProfileCacheSpec{
+			ProfileName:  "p",
+			ProfileScope: aimv1alpha1.AIMResolutionScopeNamespace,
+		},
+	}
+
+	t.Run("dedicated cache reaches image-shape service", func(t *testing.T) {
+		c := newWatchTestClient(t, scheme, profile,
+			imageShapeService("svc-a", "ns", "p", aimv1alpha1.AIMResolutionScopeNamespace))
+		assertRequests(t, findServicesForProfileCache(c)(context.Background(), cache), "ns/svc-a")
+	})
+
+	t.Run("same name in other scope does not match", func(t *testing.T) {
+		c := newWatchTestClient(t, scheme, profile,
+			imageShapeService("svc-a", "ns", "p", aimv1alpha1.AIMResolutionScopeCluster))
+		assertRequests(t, findServicesForProfileCache(c)(context.Background(), cache))
+	})
+
+	t.Run("shared cache reaches every resolved service", func(t *testing.T) {
+		c := newWatchTestClient(t, scheme, profile,
+			imageShapeService("svc-a", "ns", "p", aimv1alpha1.AIMResolutionScopeNamespace),
+			imageShapeService("svc-b", "ns", "p", aimv1alpha1.AIMResolutionScopeNamespace))
+		assertRequests(t, findServicesForProfileCache(c)(context.Background(), cache), "ns/svc-a", "ns/svc-b")
+	})
+}
+
+func TestFindServicesForProfile_FansOutByResolvedProfile(t *testing.T) {
+	scheme := newWatchTestScheme(t)
+	c := newWatchTestClient(t, scheme,
+		imageShapeService("svc-a", "ns", "p", aimv1alpha1.AIMResolutionScopeNamespace))
+	profile := &aimv1alpha2.AIMProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns"},
+		Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: aimv1alpha2.AIMProfileSpecCommon{Image: "img"}},
+	}
+	assertRequests(t, findServicesForProfile(c)(context.Background(), profile), "ns/svc-a")
+}
+
+func TestFindServicesForClusterProfile_FansOutByResolvedProfile(t *testing.T) {
+	scheme := newWatchTestScheme(t)
+	c := newWatchTestClient(t, scheme,
+		imageShapeService("svc-alpha", "alpha", "cluster-p", aimv1alpha1.AIMResolutionScopeCluster),
+		imageShapeService("svc-beta", "beta", "cluster-p", aimv1alpha1.AIMResolutionScopeCluster),
+		imageShapeService("svc-ns-scoped", "alpha", "cluster-p", aimv1alpha1.AIMResolutionScopeNamespace))
+	clusterProfile := &aimv1alpha2.AIMClusterProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-p"},
+		Spec:       aimv1alpha2.AIMClusterProfileSpec{AIMProfileSpecCommon: aimv1alpha2.AIMProfileSpecCommon{Image: "img"}},
+	}
+
+	assertRequests(t, findServicesForClusterProfile(c)(context.Background(), clusterProfile),
+		"alpha/svc-alpha", "beta/svc-beta")
+
+	cache := &aimv1alpha2.AIMProfileCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-p-cache", Namespace: "alpha"},
+		Spec: aimv1alpha2.AIMProfileCacheSpec{
+			ProfileName:  "cluster-p",
+			ProfileScope: aimv1alpha1.AIMResolutionScopeCluster,
+		},
+	}
+	assertRequests(t, findServicesForProfileCache(c)(context.Background(), cache), "alpha/svc-alpha")
 }

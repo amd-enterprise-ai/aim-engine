@@ -30,6 +30,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -216,5 +217,44 @@ func TestTypedS3DisallowedAdapterEnvironmentIsInvalid(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("adapter transfer configuration error was not surfaced")
+	}
+}
+
+func TestPlanResourcesDoesNotReplaceExistingDownloadJobWhenTrustChanges(t *testing.T) {
+	oldImage := aimv1alpha1.DefaultDownloadImage
+	aimv1alpha1.DefaultDownloadImage = "example.test/downloader:v1"
+	t.Cleanup(func() { aimv1alpha1.DefaultDownloadImage = oldImage })
+
+	artifact := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "model", Namespace: "team-a"},
+		Spec: aimv1alpha1.AIMArtifactSpec{
+			SourceURI: "hf://org/model",
+			Size:      resource.MustParse("1Mi"),
+		},
+	}
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{
+			Name: "company-ca",
+			Key:  "ca.crt",
+		},
+	}
+	oldJob := buildDownloadJob(artifact, config, artifact.Spec.Size.Value(), true)
+	jobFetch := controllerutils.FetchResult[*batchv1.Job]{Value: oldJob}
+	obs := ArtifactObservation{ArtifactFetchResult: ArtifactFetchResult{
+		artifact:            artifact,
+		mergedRuntimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{Value: config},
+		additionalCABundle: controllerutils.FetchResult[*corev1.ConfigMap]{
+			Value: &corev1.ConfigMap{Data: map[string]string{"ca.crt": "new-certificates"}},
+		},
+		downloadJob: &jobFetch,
+	}}
+
+	plan := (&ArtifactReconciler{}).PlanResources(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha1.AIMArtifact]{Object: artifact},
+		obs,
+	)
+	if len(plan.GetToDelete()) != 0 {
+		t.Fatalf("trust snapshot replaced existing download Job: %#v", plan.GetToDelete())
 	}
 }

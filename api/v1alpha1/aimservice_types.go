@@ -584,6 +584,13 @@ type AIMServiceStatus struct {
 	// ObservedGeneration is the most recent generation observed by the controller.
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
+	// ReconcilerPipeline records which pipeline owns pipeline-specific status.
+	// The controller persists this before dispatch so transitions can retire old
+	// resolved references and conditions before the new pipeline fetches state.
+	// +optional
+	// +kubebuilder:validation:Enum=template;profile
+	ReconcilerPipeline string `json:"reconcilerPipeline,omitempty"`
+
 	// Conditions represent the latest observations of template state.
 	// +listType=map
 	// +listMapKey=type
@@ -721,6 +728,10 @@ func (s *AIMServiceStatus) GetConditions() []metav1.Condition {
 
 func (s *AIMServiceStatus) SetConditions(conditions []metav1.Condition) {
 	s.Conditions = conditions
+}
+
+func (s *AIMServiceStatus) SetObservedGeneration(generation int64) {
+	s.ObservedGeneration = generation
 }
 
 func (s *AIMServiceStatus) SetStatus(status string) {

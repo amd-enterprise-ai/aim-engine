@@ -81,10 +81,7 @@ func derivationSpec(spec *aimv1alpha1.AIMModelSpec) *aimv1alpha1.AIMProfileSetSp
 // spec shape. Returns one of AIMModelKindImage, AIMModelKindDerived,
 // AIMModelKindCustom, or empty when the spec doesn't match any known flow.
 //
-// Precedence: spec.image wins over spec.profiles when both are somehow
-// set (CEL should prevent this, but if it leaks through we treat the
-// image as authoritative since image discovery would dominate the
-// resulting profile set).
+// Image and profiles are mutually exclusive on new v1alpha2 objects.
 //
 // Within the derivation flows, the discriminator is the source profile's
 // role: a `base`-role selector means "overlay onto a generic base
@@ -124,6 +121,7 @@ func profilesSpecToProfileSet(profiles *aimv1alpha1.AIMModelProfilesSpec) *aimv1
 		VersionPolicy: profiles.VersionPolicy,
 		Version:       profiles.Version,
 		Overrides:     profiles.Overrides,
+		OutputPolicy:  profiles.OutputPolicy,
 	}
 	// The deployment-image override migrated from
 	// spec.derivedFrom.image to spec.profiles.overrides.image. Keep the
@@ -188,6 +186,30 @@ func hasLegacyInputs(spec aimv1alpha1.AIMModelSpec) bool {
 	// runtime config to be misclassified as legacy and routed through the
 	// OCI inspection path with an empty image.
 	return false
+}
+
+// requiresTemplateMigration reports whether a model still emits deprecated
+// templates or carries a model field whose v1alpha2 replacement is
+// profile-based. RuntimeConfigRef, image pull secrets, and service accounts
+// are intentionally excluded because native model/profile flows use them too.
+func requiresTemplateMigration(spec *aimv1alpha1.AIMModelSpec) bool {
+	if spec == nil {
+		return false
+	}
+	emitsDeprecatedTemplates := spec.Image != "" && spec.ShouldCreateTemplates()
+	usesDeprecatedShape := spec.ProfileCopy != nil ||
+		spec.DerivedFrom != nil ||
+		spec.Custom != nil ||
+		len(spec.CustomTemplates) > 0 ||
+		len(spec.ModelSources) > 0 ||
+		(spec.AimId != "" && spec.ModelID == "") ||
+		spec.DefaultServiceTemplate != "" ||
+		len(spec.Env) > 0 ||
+		len(spec.Resources.Limits) > 0 ||
+		len(spec.Resources.Requests) > 0 ||
+		len(spec.Resources.Claims) > 0 ||
+		spec.ImageMetadata != nil
+	return emitsDeprecatedTemplates || usesDeprecatedShape
 }
 
 // shouldRunNativeDiscovery reports whether the v1alpha2 native discovery

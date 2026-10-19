@@ -53,6 +53,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimartifact"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
@@ -760,6 +761,7 @@ func Plan(
 	deps Dependencies,
 	st State,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	additionalCABundleAvailable ...bool,
 ) {
 	if st.ConfigErr != nil || st.AdapterDiskPVC == "" || st.AdapterDiskPVCUID == "" {
 		return
@@ -782,6 +784,8 @@ func Plan(
 			runtimeConfig,
 		))
 	}
+
+	includeAdditionalCABundle := len(additionalCABundleAvailable) > 0 && additionalCABundleAvailable[0]
 
 	// Stage adapters independently of the subtree gate (the staging Job creates
 	// the subtree itself if needed before promoting).
@@ -822,6 +826,7 @@ func Plan(
 			st.AdapterDiskPVCUID,
 			ad,
 			stagingRuntimeConfig,
+			includeAdditionalCABundle,
 		))
 	}
 }
@@ -972,7 +977,9 @@ func BuildStagingJob(
 	adapterDiskPVCUID string,
 	ad Observation,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	additionalCABundleAvailable ...bool,
 ) *batchv1.Job {
+	includeAdditionalCABundle := len(additionalCABundleAvailable) > 0 && additionalCABundleAvailable[0]
 	image := aimartifact.ResolveDownloadImage(artifact, runtimeConfig)
 	serviceID := ServiceSubtreeID(service)
 	jobID, _ := utils.GenerateDerivedName([]string{ad.AdapterPath}, utils.WithHashSource(serviceID, ad.AdapterPath))
@@ -1027,7 +1034,7 @@ func BuildStagingJob(
 		constants.LabelKeyComponent: "adapter-stage",
 	}
 
-	return &batchv1.Job{
+	job := &batchv1.Job{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: batchv1.SchemeGroupVersion.String(),
 			Kind:       "Job",
@@ -1081,6 +1088,12 @@ func BuildStagingJob(
 			},
 		},
 	}
+	trust.ApplyToPod(
+		&job.Spec.Template.Spec,
+		&job.Spec.Template.Spec.Containers[0],
+		aimartifact.ResolveTrustProjection(runtimeConfig, ad.SourceURI, includeAdditionalCABundle, image),
+	)
+	return job
 }
 
 // AddVolumeMount mounts the shared adapter disk into the inference container,

@@ -1,0 +1,18 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfileSet
+metadata:
+  name: output-policy-copyable-producer
+spec:
+  selector:
+    aimId: output-policy/source
+    modelId: output-policy/source
+    profileId: cpu-default
+  versionPolicy: all
+  overrides:
+    aimId: output-policy/copyable
+    modelId: output-policy/copyable
+    modelSources:
+      - modelId: output-policy/copyable
+        sourceUri: hf://output-policy/copyable
+  outputPolicy:
+    copyable: true

@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfileSet
+metadata:
+  name: output-policy-private-consumer
+spec:
+  selector:
+    aimId: output-policy/private
+    modelId: output-policy/private
+    profileId: cpu-default
+  versionPolicy: all

@@ -44,6 +44,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
@@ -273,7 +274,7 @@ func (r *AIMArtifactReconciler) findAdaptersForParent(ctx context.Context, obj c
 // promptly. Only narrows the staleness window; the reaper's grace guard is the
 // real safety net against deletion races.
 func (r *AIMArtifactReconciler) findAdapterDiskArtifactsForService(ctx context.Context, obj client.Object) []ctrl.Request {
-	svc, ok := obj.(*aimv1alpha1.AIMService)
+	svc, ok := obj.(*aimv1alpha2.AIMService)
 	if !ok || !svc.Spec.AdaptersEnabled() {
 		return nil
 	}
@@ -298,7 +299,7 @@ func (r *AIMArtifactReconciler) findAdapterDiskArtifactsForService(ctx context.C
 // so unrelated service churn does not wake the artifact controller.
 func adapterServicePredicate() predicate.Predicate {
 	enabled := func(obj client.Object) bool {
-		svc, ok := obj.(*aimv1alpha1.AIMService)
+		svc, ok := obj.(*aimv1alpha2.AIMService)
 		return ok && svc.Spec.AdaptersEnabled()
 	}
 	return predicate.Funcs{
@@ -622,7 +623,7 @@ func (r *AIMArtifactReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(clusterQuotaPredicate()),
 		).
 		Watches(
-			&aimv1alpha1.AIMService{},
+			&aimv1alpha2.AIMService{},
 			handler.EnqueueRequestsFromMapFunc(r.findAdapterDiskArtifactsForService),
 			builder.WithPredicates(adapterServicePredicate()),
 		).

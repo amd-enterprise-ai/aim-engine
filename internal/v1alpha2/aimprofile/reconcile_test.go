@@ -37,7 +37,7 @@ import (
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
-func TestDecorateStatusRecordsObservedGeneration(t *testing.T) {
+func TestDecorateStatusPreservesObservedGeneration(t *testing.T) {
 	t.Run("namespace profile", func(t *testing.T) {
 		profile := &aimv1alpha2.AIMProfile{
 			ObjectMeta: metav1.ObjectMeta{Generation: 7},
@@ -45,7 +45,7 @@ func TestDecorateStatusRecordsObservedGeneration(t *testing.T) {
 		obs := ProfileObservation{
 			ProfileFetchResult: ProfileFetchResult{profile: profile},
 		}
-		status := &aimv1alpha2.AIMProfileStatus{}
+		status := &aimv1alpha2.AIMProfileStatus{ObservedGeneration: 6}
 
 		(&ProfileReconciler{}).DecorateStatus(
 			status,
@@ -53,8 +53,8 @@ func TestDecorateStatusRecordsObservedGeneration(t *testing.T) {
 			obs,
 		)
 
-		if status.ObservedGeneration != profile.Generation {
-			t.Errorf("ObservedGeneration = %d, want %d", status.ObservedGeneration, profile.Generation)
+		if status.ObservedGeneration != 6 {
+			t.Errorf("ObservedGeneration = %d, want 6", status.ObservedGeneration)
 		}
 	})
 
@@ -65,7 +65,7 @@ func TestDecorateStatusRecordsObservedGeneration(t *testing.T) {
 		obs := ClusterProfileObservation{
 			ClusterProfileFetchResult: ClusterProfileFetchResult{profile: profile},
 		}
-		status := &aimv1alpha2.AIMProfileStatus{}
+		status := &aimv1alpha2.AIMProfileStatus{ObservedGeneration: 10}
 
 		(&ClusterProfileReconciler{}).DecorateStatus(
 			status,
@@ -73,8 +73,8 @@ func TestDecorateStatusRecordsObservedGeneration(t *testing.T) {
 			obs,
 		)
 
-		if status.ObservedGeneration != profile.Generation {
-			t.Errorf("ObservedGeneration = %d, want %d", status.ObservedGeneration, profile.Generation)
+		if status.ObservedGeneration != 10 {
+			t.Errorf("ObservedGeneration = %d, want 10", status.ObservedGeneration)
 		}
 	})
 }

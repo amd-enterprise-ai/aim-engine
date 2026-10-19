@@ -4,10 +4,9 @@
 # builder can turn it into a complete namespace runtime and the consuming
 # AIMService stands up a profile-owned (Shared) cache for it.
 #
-# The image is a placeholder (registry.example.com): this test asserts the
-# UPGRADE contract (inline ISVC rewritten to a runtime reference + orphan
-# ConfigMap GC) which is decided at render time, not that the predictor pod
-# pulls and serves. See the test's pod-readiness note.
+# The locally built aim-dummy image is reachable in kind and serves health
+# checks on the projected runtime's port. This lets the rewritten
+# InferenceService become current and Ready before guarded orphan cleanup.
 apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterProfile
 metadata:
@@ -19,7 +18,7 @@ spec:
   metric: latency
   precision: bf16
   type: general
-  image: registry.example.com/aim-cpu-base:0.12.0
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
   modelSources:
     - modelId: Qwen/Qwen3-0.6B
       sourceUri: hf://Qwen/Qwen3-0.6B

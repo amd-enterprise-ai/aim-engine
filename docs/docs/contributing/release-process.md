@@ -49,12 +49,18 @@ make docker-push IMG=docker.io/amdenterpriseai/aim-engine:v0.8.5
 Tagged releases are produced by the `compile-release` workflow on every `v*`
 tag. The workflow:
 
+- regenerates CRDs, then runs `make test-bridge-contract` before packaging or
+  publishing Helm/CRD artifacts
 - attaches `install.yaml`, `crds.yaml`, the Helm chart tarball, and the CRDs
   chart tarball to a draft GitHub Release
 - pushes the `aim-engine-chart` and `aim-engine-crds-chart` charts to an OCI
   registry
 - force-pushes the rendered chart and CRDs to the `artifacts` branch as a
   browseable mirror
+
+The bridge contract is static: it checks API markers and generated CRDs,
+controller roots, owner-reference semantics, RBAC, and release ordering. It
+does not qualify a migration, artifact preservation, GPU serving, or inference.
 
 Between releases, the `publish-main` workflow snapshots `main` on every commit
 (when `vars.ACTIVATE_PUBLISH_MAIN_WORKFLOW == 'true'`). It pushes a chart

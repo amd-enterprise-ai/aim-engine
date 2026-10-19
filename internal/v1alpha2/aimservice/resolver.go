@@ -713,10 +713,10 @@ func composeServiceSelector(service *aimv1alpha1.AIMService) aimv1alpha1.Profile
 			Scope: aimv1alpha1.ProfileSelectorScopeAuto,
 		}
 	}
-	// Default the optimization floor for auto-selection. Unset means "prefer
-	// production-grade": only optimized (or better/untyped) profiles are
-	// auto-selected, so a service never silently lands on a preview/unoptimized
-	// profile. A service opts into lower tiers (e.g. CPU/EPYC profiles published
+	// Default the optimization floor for the first auto-selection pass.
+	// Unset means "prefer production-grade": only optimized profiles meet
+	// this floor; an unspecified profile type is treated as unoptimized.
+	// A service opts into lower tiers (e.g. CPU/EPYC profiles published
 	// as unoptimized) by setting spec.profile.selector.minimumType explicitly
 	// (e.g. "unoptimized" or "any"). This default lives here, not as a CRD
 	// default, so derivation selectors (AIMProfileSet / AIMModel.profiles) keep

@@ -115,6 +115,7 @@ Task-oriented walkthroughs for common workflows:
 - [GPU Management](admin/gpu-management.md) — GPU allocation, node selectors, topology
 - [Storage Configuration](admin/storage-configuration.md) — PVCs, shared storage for caching
 - [Upgrading](admin/upgrading.md) — Version migration and CRD upgrades
+- [Bounded v1alpha1 Template Migration](admin/template-migration.md) — Controlled Plan/Apply and manual recovery
 - [Monitoring](admin/monitoring.md) — Metrics, observability, log formats
 - [Troubleshooting](admin/troubleshooting.md) — Common issues and diagnostic steps
 - [Security](admin/security.md) — RBAC, network policies, secrets management

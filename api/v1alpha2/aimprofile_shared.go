@@ -424,6 +424,10 @@ func (s *AIMProfileStatus) SetConditions(conditions []metav1.Condition) {
 	s.Conditions = conditions
 }
 
+func (s *AIMProfileStatus) SetObservedGeneration(generation int64) {
+	s.ObservedGeneration = generation
+}
+
 func (s *AIMProfileStatus) SetStatus(status string) {
 	s.Status = sanitizeAIMStatus(status)
 }

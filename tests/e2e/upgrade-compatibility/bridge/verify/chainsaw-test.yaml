@@ -1,0 +1,82 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha1-bridge-verify
+  labels:
+    requires: upgrade-workflow
+spec:
+  description: |
+    Verifies that the candidate bridge adopts every predecessor service without
+    a resource poke. Detailed identity and structural checks run immediately
+    afterward in hack/ci/upgrade/verify-bridge-upgrade.sh.
+  timeouts:
+    assert: 300s
+  steps:
+    - name: Verify migration cohorts remain on the template pipeline
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: bridge-shared
+              status:
+                status: Running
+                reconcilerPipeline: template
+                (conditions[?type == 'MigrationRequired']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: bridge-dedicated
+              status:
+                status: Running
+                reconcilerPipeline: template
+                (conditions[?type == 'MigrationRequired']):
+                  - status: "True"
+
+    - name: Verify inline-custom remains on the compatibility path
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: bridge-inline-custom
+                namespace: aim-upgrade-inline-custom
+              status:
+                status: Running
+                reconcilerPipeline: template
+                (conditions[?type == 'MigrationRequired']):
+                  - status: "True"
+
+    - name: Verify predecessor caches remain Ready
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: bridge-shared
+              spec:
+                mode: Shared
+              status:
+                status: Ready
+                (conditions[?type == 'MigrationRequired']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: bridge-dedicated
+              spec:
+                mode: Dedicated
+              status:
+                status: Ready
+                (conditions[?type == 'MigrationRequired']):
+                  - status: "True"

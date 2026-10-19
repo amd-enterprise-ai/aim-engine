@@ -41,7 +41,15 @@ When caching is active, AIM Engine creates a hierarchy of resources:
 2. **AIMArtifact** — Manages the download of individual model sources
 3. **PVC + Download Job** — The actual storage and download execution
 
-The profile cache is owned by the profile (not the service), so multiple services sharing the same profile reuse the same cache. With `caching.mode: Dedicated`, the cache is owned by the service and is garbage-collected with it.
+When `AIMProfile.spec.caching.enabled` is set, the shared profile cache is owned
+by the profile, so multiple services using that profile reuse it. A dedicated
+cache is owned by its service and is garbage-collected with the service.
+
+A profile-owned cache resolves the namespace or cluster RuntimeConfig named
+`default`; `AIMProfile.spec.caching` has no `runtimeConfigName` selector.
+Consequently, selecting a different RuntimeConfig on an `AIMService` does not
+retarget that shared cache. Service-owned caches use the service's selected
+RuntimeConfig.
 
 ## Download Protocols
 
@@ -105,16 +113,19 @@ spec:
     downloadFilter: {}
 ```
 
-Reference that runtime config from the relevant `AIMService`:
+For a service-owned cache, reference that RuntimeConfig from the relevant
+`AIMService`:
 
 ```yaml
 spec:
   runtimeConfigName: diffusers-model
 ```
 
-Prefer a scoped runtime config over changing the cluster-wide default:
-downloading every nested file can increase transfer time and storage usage for
-unrelated models.
+For a profile-owned shared cache, configure the download filter on the
+namespace or cluster RuntimeConfig named `default` instead. Avoid changing the
+cluster-wide default unless every affected model needs nested files:
+downloading them can increase transfer time and storage usage for unrelated
+models.
 
 This setting is based on repository layout, not inference engine. For example,
 a Diffusers model served by vLLM-Omni needs it, while a flat repository served

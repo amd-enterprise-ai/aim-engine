@@ -30,6 +30,15 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
+const (
+	// ConditionTypeMigrationRequired identifies resources that still depend on
+	// the deprecated template API or pipeline. It deliberately does not end in
+	// ComponentConditionSuffix, so it never participates in readiness rollup.
+	ConditionTypeMigrationRequired = "MigrationRequired"
+	ReasonTemplateAPIDeprecated    = "TemplateAPIDeprecated"
+	MessageTemplateAPIDeprecated   = "This resource depends on deprecated template APIs; inventory affected or dependent AIMServices and review the bounded template migration runbook before API removal"
+)
+
 // ConfiguredCondition extends the metav1.Condition with observability configuration that
 // determines how this condition or a change in its state should be reported.
 type ConfiguredCondition struct {
@@ -125,6 +134,24 @@ func (m *ConditionManager) MarkUnknown(condType, reason, message string, opts ..
 		Reason:  reason,
 		Message: message,
 	}, opts...)
+}
+
+// SetTemplateMigrationRequired publishes the template-migration signal while
+// the legacy shape applies and removes stale signal after an overlapping
+// resource moves to its native profile shape.
+func SetTemplateMigrationRequired(m *ConditionManager, required bool) {
+	if m == nil {
+		return
+	}
+	if required {
+		m.MarkTrue(
+			ConditionTypeMigrationRequired,
+			ReasonTemplateAPIDeprecated,
+			MessageTemplateAPIDeprecated,
+		)
+		return
+	}
+	m.Delete(ConditionTypeMigrationRequired)
 }
 
 // Delete removes a condition by type if it exists.

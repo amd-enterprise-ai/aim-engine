@@ -1157,6 +1157,10 @@ func TestBuildStagingJobUsesTypedAdapterS3Connection(t *testing.T) {
 				{Name: "AWS_PROFILE", Value: "admin-profile"},
 			},
 		},
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{
+			Name: "company-ca",
+			Key:  "ca.crt",
+		},
 		Artifact: &aimv1alpha1.AIMArtifactConfig{
 			S3: &aimv1alpha1.S3ConnectionConfig{
 				Endpoint: "https://s3.internal.example",
@@ -1177,7 +1181,7 @@ func TestBuildStagingJobUsesTypedAdapterS3Connection(t *testing.T) {
 		},
 	}
 
-	job := BuildStagingJob(svc, artifact, testAdapterPVC, testAdapterPVCUID, ad, config)
+	job := BuildStagingJob(svc, artifact, testAdapterPVC, testAdapterPVCUID, ad, config, true)
 	container := job.Spec.Template.Spec.Containers[0]
 	env := envMap(container.Env)
 
@@ -1195,7 +1199,7 @@ func TestBuildStagingJobUsesTypedAdapterS3Connection(t *testing.T) {
 		env["AWS_ACCESS_KEY_ID_FILE"] == "" {
 		t.Error("typed credentials must replace artifact credential values with mounted files")
 	}
-	if env["AWS_CA_BUNDLE"] != "/etc/aim/s3/ca.crt" {
+	if env["AWS_CA_BUNDLE"] != "/etc/aim/trust/ca-bundle.crt" {
 		t.Errorf("AWS_CA_BUNDLE = %q, want mounted CA path", env["AWS_CA_BUNDLE"])
 	}
 	if env["HTTPS_PROXY"] != "http://admin-proxy:8080" {
@@ -1210,8 +1214,15 @@ func TestBuildStagingJobUsesTypedAdapterS3Connection(t *testing.T) {
 	if _, ok := env["PYTHONPATH"]; ok {
 		t.Error("artifact PYTHONPATH survived typed S3 filtering")
 	}
-	if len(job.Spec.Template.Spec.Volumes) != 3 {
-		t.Fatalf("volumes = %d, want adapter disk, credentials, and CA", len(job.Spec.Template.Spec.Volumes))
+	if len(job.Spec.Template.Spec.Volumes) != 5 {
+		t.Fatalf("volumes = %d, want adapter disk, credentials, two CA inputs, and combined CA output", len(job.Spec.Template.Spec.Volumes))
+	}
+	if len(job.Spec.Template.Spec.InitContainers) != 1 ||
+		len(job.Spec.Template.Spec.InitContainers[0].Args) != 3 {
+		t.Fatalf("combined trust init = %#v", job.Spec.Template.Spec.InitContainers)
+	}
+	if got := job.Spec.Template.Spec.InitContainers[0].Env; len(got) != 0 {
+		t.Errorf("trust init env = %#v, want no rollout metadata", got)
 	}
 }
 

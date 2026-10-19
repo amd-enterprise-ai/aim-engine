@@ -46,7 +46,7 @@ spec:
               APIVersion defines the versioned schema of this representation of an object.
               Servers should convert recognized schemas to the latest internal value, and
               may reject unrecognized values.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+              More info: https://git.k8s.
             type: string
           kind:
             description: |-
@@ -54,7 +54,7 @@ spec:
               Servers may infer this from the endpoint the client submits requests to.
               Cannot be updated.
               In CamelCase.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+              More info: https://git.k8s.
             type: string
           metadata:
             type: object
@@ -63,9 +63,7 @@ spec:
               AIMServiceTemplateSpec defines the desired state of AIMServiceTemplate (namespace-scoped).
 
               A namespaced and versioned template that selects a runtime profile
-              for a given AIM model (by canonical name). Templates are intentionally
-              narrow: they describe runtime selection knobs for the AIM container and do
-              not redefine the full Kubernetes deployment shape.
+              for a given AIM model (by canonical name).
             properties:
               aimId:
                 description: |-
@@ -90,7 +88,6 @@ spec:
                       Env specifies environment variables to use when downloading the model for caching.
                       These variables are available to the model download process and can be used
                       to configure download behavior, authentication, proxies, etc.
-                      If not set, falls back to the template's top-level Env field.
                     items:
                       description: EnvVar represents an environment variable present
                         in a Container.
@@ -105,12 +102,7 @@ spec:
                             Variable references $(VAR_NAME) are expanded
                             using the previously defined environment variables in the container and
                             any service environment variables. If a variable cannot be resolved,
-                            the reference in the input string will be unchanged. Double $$ are reduced
-                            to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                            "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                            Escaped references will never be expanded, regardless of whether the variable
-                            exists or not.
-                            Defaults to "".
+                            the reference in the input string will be unchanged.
                           type: string
                         valueFrom:
                           description: Source for the environment variable's value.
@@ -129,7 +121,7 @@ spec:
                                     This field is effectively required, but due to backwards compatibility is
                                     allowed to be empty. Instances of this type with an empty value here are
                                     almost certainly wrong.
-                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    More info: https://kubernetes.
                                   type: string
                                 optional:
                                   description: Specify whether the ConfigMap or its
@@ -165,18 +157,12 @@ spec:
                                   description: |-
                                     The key within the env file. An invalid key will prevent the pod from starting.
                                     The keys defined within a source may consist of any printable ASCII characters except '='.
-                                    During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                                   type: string
                                 optional:
                                   default: false
                                   description: |-
                                     Specify whether the file or its key must be defined. If the file or key
                                     does not exist, then the env var is not published.
-                                    If optional is set to true and the specified key does not exist,
-                                    the environment variable will not be set in the Pod's containers.
-
-                                    If optional is set to false and the specified key does not exist,
-                                    an error will be returned during Pod creation.
                                   type: boolean
                                 path:
                                   description: |-
@@ -232,7 +218,7 @@ spec:
                                     This field is effectively required, but due to backwards compatibility is
                                     allowed to be empty. Instances of this type with an empty value here are
                                     almost certainly wrong.
-                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    More info: https://kubernetes.
                                   type: string
                                 optional:
                                   description: Specify whether the Secret or its key
@@ -256,7 +242,6 @@ spec:
                   CustomProfile defines inline custom profile data for the inference engine.
                   When set, the controller assembles a profile YAML from this data and template metadata,
                   creates a ConfigMap, and mounts it into discovery and inference containers.
-                  Requires aimId, modelId, hardware, metric, and precision to also be set.
                 properties:
                   engineArgs:
                     description: |-
@@ -271,7 +256,6 @@ spec:
                       EnvVars contains environment variables applied to the inference engine process.
                       These are written into the profile YAML and applied by the AIM runtime via os.execv,
                       distinct from container-level Env which targets the AIM runtime container itself.
-                      Keys must match ^[A-Z0-9_]+$ (uppercase with underscores).
                     type: object
                 type: object
               env:
@@ -293,12 +277,7 @@ spec:
                         Variable references $(VAR_NAME) are expanded
                         using the previously defined environment variables in the container and
                         any service environment variables. If a variable cannot be resolved,
-                        the reference in the input string will be unchanged. Double $$ are reduced
-                        to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                        "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                        Escaped references will never be expanded, regardless of whether the variable
-                        exists or not.
-                        Defaults to "".
+                        the reference in the input string will be unchanged.
                       type: string
                     valueFrom:
                       description: Source for the environment variable's value. Cannot
@@ -317,7 +296,7 @@ spec:
                                 This field is effectively required, but due to backwards compatibility is
                                 allowed to be empty. Instances of this type with an empty value here are
                                 almost certainly wrong.
-                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                More info: https://kubernetes.
                               type: string
                             optional:
                               description: Specify whether the ConfigMap or its key
@@ -353,18 +332,12 @@ spec:
                               description: |-
                                 The key within the env file. An invalid key will prevent the pod from starting.
                                 The keys defined within a source may consist of any printable ASCII characters except '='.
-                                During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                               type: string
                             optional:
                               default: false
                               description: |-
                                 Specify whether the file or its key must be defined. If the file or key
                                 does not exist, then the env var is not published.
-                                If optional is set to true and the specified key does not exist,
-                                the environment variable will not be set in the Pod's containers.
-
-                                If optional is set to false and the specified key does not exist,
-                                an error will be returned during Pod creation.
                               type: boolean
                             path:
                               description: |-
@@ -419,7 +392,7 @@ spec:
                                 This field is effectively required, but due to backwards compatibility is
                                 allowed to be empty. Instances of this type with an empty value here are
                                 almost certainly wrong.
-                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                More info: https://kubernetes.
                               type: string
                             optional:
                               description: Specify whether the Secret or its key must
@@ -513,14 +486,8 @@ spec:
                 - message: at least one of gpu or cpu must be specified
                   rule: has(self.gpu) || has(self.cpu)
               imagePullSecrets:
-                description: |-
-                  ImagePullSecrets lists secrets containing credentials for pulling container images.
-                  These secrets are used for:
-                  - Discovery dry-run jobs that inspect the model container
-                  - Pulling the image for inference services
-                  The secrets are merged with any model or runtime config defaults.
-                  For namespace-scoped templates, secrets must exist in the same namespace.
-                  For cluster-scoped templates, secrets must exist in the operator namespace.
+                description: ImagePullSecrets lists secrets containing credentials
+                  for pulling container images.
                 items:
                   description: |-
                     LocalObjectReference contains enough information to let you locate the
@@ -533,7 +500,7 @@ spec:
                         This field is effectively required, but due to backwards compatibility is
                         allowed to be empty. Instances of this type with an empty value here are
                         almost certainly wrong.
-                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        More info: https://kubernetes.
                       type: string
                   type: object
                   x-kubernetes-map-type: atomic
@@ -575,8 +542,6 @@ spec:
                 description: |-
                   ModelSources specifies the model sources required to run this template.
                   When provided, the discovery dry-run will be skipped and these sources will be used directly.
-                  This allows users to explicitly declare model dependencies without requiring a discovery job.
-                  If omitted, a discovery job will be run to automatically determine the required model sources.
                 items:
                   description: |-
                     AIMModelSource describes a model artifact that must be downloaded for inference.
@@ -601,12 +566,7 @@ spec:
                               Variable references $(VAR_NAME) are expanded
                               using the previously defined environment variables in the container and
                               any service environment variables. If a variable cannot be resolved,
-                              the reference in the input string will be unchanged. Double $$ are reduced
-                              to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                              "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                              Escaped references will never be expanded, regardless of whether the variable
-                              exists or not.
-                              Defaults to "".
+                              the reference in the input string will be unchanged.
                             type: string
                           valueFrom:
                             description: Source for the environment variable's value.
@@ -625,7 +585,7 @@ spec:
                                       This field is effectively required, but due to backwards compatibility is
                                       allowed to be empty. Instances of this type with an empty value here are
                                       almost certainly wrong.
-                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                      More info: https://kubernetes.
                                     type: string
                                   optional:
                                     description: Specify whether the ConfigMap or
@@ -661,18 +621,12 @@ spec:
                                     description: |-
                                       The key within the env file. An invalid key will prevent the pod from starting.
                                       The keys defined within a source may consist of any printable ASCII characters except '='.
-                                      During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                                     type: string
                                   optional:
                                     default: false
                                     description: |-
                                       Specify whether the file or its key must be defined. If the file or key
                                       does not exist, then the env var is not published.
-                                      If optional is set to true and the specified key does not exist,
-                                      the environment variable will not be set in the Pod's containers.
-
-                                      If optional is set to false and the specified key does not exist,
-                                      an error will be returned during Pod creation.
                                     type: boolean
                                   path:
                                     description: |-
@@ -728,7 +682,7 @@ spec:
                                       This field is effectively required, but due to backwards compatibility is
                                       allowed to be empty. Instances of this type with an empty value here are
                                       almost certainly wrong.
-                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                      More info: https://kubernetes.
                                     type: string
                                   optional:
                                     description: Specify whether the Secret or its
@@ -751,7 +705,6 @@ spec:
                         ModelID is the canonical identifier in {org}/{name} format.
                         Determines the cache mount path: /workspace/cache/{modelId}
                         For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
-                        For S3 sources, users define their own organizational structure.
                       pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                       type: string
                     precision:
@@ -787,7 +740,6 @@ spec:
                         Size is the expected storage space required for this model artifact.
                         Used for PVC sizing and capacity planning during cache creation.
                         Optional - if not specified, the download job will discover the size automatically.
-                        Can be set explicitly to pre-allocate storage or override auto-discovery.
                       pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                       x-kubernetes-int-or-string: true
                     sourceUri:
@@ -893,21 +845,16 @@ spec:
                       Requests describes the minimum amount of compute resources required.
                       If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
                       otherwise to an implementation-defined value. Requests cannot exceed Limits.
-                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
               runtimeConfigName:
-                description: |-
-                  Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both
-                  as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority
-                  over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster
-                  runtime config with the name `default` is used, if it exists.
+                description: Name is the name of the runtime config to use for this
+                  resource.
                 type: string
               serviceAccountName:
                 description: |-
                   ServiceAccountName specifies the Kubernetes service account to use for workloads related to this template.
                   This includes discovery dry-run jobs and inference services created from this template.
-                  If empty, the default service account for the namespace is used.
                 type: string
               type:
                 allOf:
@@ -921,13 +868,7 @@ spec:
                   - general
                   - preview
                   - unoptimized
-                description: |-
-                  Type indicates the optimization level of this template.
-                  - optimized: Template has been tuned for performance
-                  - preview: Template is experimental/pre-release
-                  - general: General-purpose tuning between optimized and preview
-                  - unoptimized: Default, no specific optimizations applied
-                  When nil, the type is determined by discovery. When set, overrides discovery.
+                description: Type indicates the optimization level of this template.
                 type: string
             required:
             - modelName
@@ -962,8 +903,7 @@ spec:
                     observedGeneration:
                       description: |-
                         observedGeneration represents the .metadata.generation that the condition was set based upon.
-                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
-                        with respect to the current state of the instance.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].
                       format: int64
                       minimum: 0
                       type: integer
@@ -972,8 +912,6 @@ spec:
                         reason contains a programmatic identifier indicating the reason for the condition's last transition.
                         Producers of specific condition types may define expected values and meanings for this field,
                         and whether the values are considered a guaranteed API.
-                        The value should be a CamelCase string.
-                        This field may not be empty.
                       maxLength: 1024
                       minLength: 1
                       pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
@@ -1015,11 +953,7 @@ spec:
                   identityCheckHash:
                     description: |-
                       IdentityCheckHash records the hash from the most recent identity
-                      rediscovery attempt for a Ready template. When the current hash matches
-                      this value, the controller will not invalidate a Ready template just to
-                      retry identity (aimId/modelId) extraction. Bumping the operator-internal
-                      hash version forces a one-shot revisit across all eligible templates
-                      without operator intervention.
+                      rediscovery attempt for a Ready template.
                     type: string
                   lastAttemptTime:
                     description: |-
@@ -1110,12 +1044,7 @@ spec:
                               Variable references $(VAR_NAME) are expanded
                               using the previously defined environment variables in the container and
                               any service environment variables. If a variable cannot be resolved,
-                              the reference in the input string will be unchanged. Double $$ are reduced
-                              to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                              "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                              Escaped references will never be expanded, regardless of whether the variable
-                              exists or not.
-                              Defaults to "".
+                              the reference in the input string will be unchanged.
                             type: string
                           valueFrom:
                             description: Source for the environment variable's value.
@@ -1134,7 +1063,7 @@ spec:
                                       This field is effectively required, but due to backwards compatibility is
                                       allowed to be empty. Instances of this type with an empty value here are
                                       almost certainly wrong.
-                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                      More info: https://kubernetes.
                                     type: string
                                   optional:
                                     description: Specify whether the ConfigMap or
@@ -1170,18 +1099,12 @@ spec:
                                     description: |-
                                       The key within the env file. An invalid key will prevent the pod from starting.
                                       The keys defined within a source may consist of any printable ASCII characters except '='.
-                                      During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                                     type: string
                                   optional:
                                     default: false
                                     description: |-
                                       Specify whether the file or its key must be defined. If the file or key
                                       does not exist, then the env var is not published.
-                                      If optional is set to true and the specified key does not exist,
-                                      the environment variable will not be set in the Pod's containers.
-
-                                      If optional is set to false and the specified key does not exist,
-                                      an error will be returned during Pod creation.
                                     type: boolean
                                   path:
                                     description: |-
@@ -1237,7 +1160,7 @@ spec:
                                       This field is effectively required, but due to backwards compatibility is
                                       allowed to be empty. Instances of this type with an empty value here are
                                       almost certainly wrong.
-                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                      More info: https://kubernetes.
                                     type: string
                                   optional:
                                     description: Specify whether the Secret or its
@@ -1260,7 +1183,6 @@ spec:
                         ModelID is the canonical identifier in {org}/{name} format.
                         Determines the cache mount path: /workspace/cache/{modelId}
                         For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
-                        For S3 sources, users define their own organizational structure.
                       pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                       type: string
                     precision:
@@ -1296,7 +1218,6 @@ spec:
                         Size is the expected storage space required for this model artifact.
                         Used for PVC sizing and capacity planning during cache creation.
                         Optional - if not specified, the download job will discover the size automatically.
-                        Can be set explicitly to pre-allocate storage or override auto-discovery.
                       pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                       x-kubernetes-int-or-string: true
                     sourceUri:
@@ -1326,7 +1247,6 @@ spec:
                     description: |-
                       EngineArgs contains runtime-specific engine configuration as a free-form JSON object.
                       The structure depends on the inference engine being used (e.g., vLLM, TGI).
-                      These arguments are passed to the runtime container to configure model loading and inference.
                     x-kubernetes-preserve-unknown-fields: true
                   env_vars:
                     additionalProperties:
@@ -1434,7 +1354,6 @@ spec:
                   ResolvedHardware contains the resolved hardware requirements for this template.
                   These values are computed from discovery results and spec defaults, and represent
                   what will actually be used when creating InferenceServices.
-                  Resolution order: discovery output > spec values > defaults.
                 properties:
                   cpu:
                     description: CPU specifies CPU requirements.
@@ -1536,19 +1455,13 @@ spec:
                 description: |-
                   ResolvedNodeAffinity contains the computed node affinity rules for GPU scheduling.
                   This is derived from GPU model and minVRAM requirements, merged with any user-specified
-                  affinity from the spec. The service controller uses this directly when creating InferenceServices.
+                  affinity from the spec.
                 properties:
                   preferredDuringSchedulingIgnoredDuringExecution:
                     description: |-
                       The scheduler will prefer to schedule pods to nodes that satisfy
                       the affinity expressions specified by this field, but it may choose
-                      a node that violates one or more of the expressions. The node that is
-                      most preferred is the one with the greatest sum of weights, i.e.
-                      for each node that meets all of the scheduling requirements (resource
-                      request, requiredDuringScheduling affinity expressions, etc.),
-                      compute a sum by iterating through the elements of this field and adding
-                      "weight" to the sum if the node matches the corresponding matchExpressions; the
-                      node(s) with the highest sum are the most preferred.
+                      a node that violates one or more of the expressions.
                     items:
                       description: |-
                         An empty preferred scheduling term matches all objects with implicit weight 0
@@ -1579,9 +1492,7 @@ spec:
                                     description: |-
                                       An array of string values. If the operator is In or NotIn,
                                       the values array must be non-empty. If the operator is Exists or DoesNotExist,
-                                      the values array must be empty. If the operator is Gt or Lt, the values
-                                      array must have a single element, which will be interpreted as an integer.
-                                      This array is replaced during a strategic merge patch.
+                                      the values array must be empty.
                                     items:
                                       type: string
                                     type: array
@@ -1613,9 +1524,7 @@ spec:
                                     description: |-
                                       An array of string values. If the operator is In or NotIn,
                                       the values array must be non-empty. If the operator is Exists or DoesNotExist,
-                                      the values array must be empty. If the operator is Gt or Lt, the values
-                                      array must have a single element, which will be interpreted as an integer.
-                                      This array is replaced during a strategic merge patch.
+                                      the values array must be empty.
                                     items:
                                       type: string
                                     type: array
@@ -1644,8 +1553,7 @@ spec:
                       If the affinity requirements specified by this field are not met at
                       scheduling time, the pod will not be scheduled onto the node.
                       If the affinity requirements specified by this field cease to be met
-                      at some point during pod execution (e.g. due to an update), the system
-                      may or may not try to eventually evict the pod from its node.
+                      at some point during pod execution (e.g.
                     properties:
                       nodeSelectorTerms:
                         description: Required. A list of node selector terms. The
@@ -1677,9 +1585,7 @@ spec:
                                     description: |-
                                       An array of string values. If the operator is In or NotIn,
                                       the values array must be non-empty. If the operator is Exists or DoesNotExist,
-                                      the values array must be empty. If the operator is Gt or Lt, the values
-                                      array must have a single element, which will be interpreted as an integer.
-                                      This array is replaced during a strategic merge patch.
+                                      the values array must be empty.
                                     items:
                                       type: string
                                     type: array
@@ -1711,9 +1617,7 @@ spec:
                                     description: |-
                                       An array of string values. If the operator is In or NotIn,
                                       the values array must be non-empty. If the operator is Exists or DoesNotExist,
-                                      the values array must be empty. If the operator is Gt or Lt, the values
-                                      array must have a single element, which will be interpreted as an integer.
-                                      This array is replaced during a strategic merge patch.
+                                      the values array must be empty.
                                     items:
                                       type: string
                                     type: array

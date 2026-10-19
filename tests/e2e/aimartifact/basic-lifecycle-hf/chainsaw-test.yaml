@@ -8,6 +8,10 @@ metadata:
     requires: external-network
     hf-access: live
 spec:
+  description: >
+    Verifies that adding a private CA through RuntimeConfig does not replace
+    public roots: the same combined bundle can still download a model from the
+    public Hugging Face HTTPS endpoint.
   steps:
     - use:
         template: ../../_shared/hf-token-step.yaml
@@ -35,6 +39,28 @@ spec:
                   aim.eai.amd.com/cache.name: basic-lifecycle-hf
               status:
                 phase: Bound
+        - script:
+            timeout: 1m
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              job="$(kubectl get jobs -n "$NAMESPACE" \
+                -l aim.eai.amd.com/cache.name=basic-lifecycle-hf,aim.eai.amd.com/component=download \
+                -o json)"
+              echo "$job" | jq -e '
+                .items[0].spec.template.spec.initContainers[]
+                | select(.name == "aim-ca-bundle-init")
+                | .args == [
+                    "/etc/aim/trust/ca-bundle.crt",
+                    "/var/run/aim-ca/additional/ca.crt"
+                  ]
+              ' >/dev/null
+              echo "$job" | jq -e '
+                .items[0].spec.template.spec.volumes[]
+                | select(.configMap.name == "private-s3-ca")
+              ' >/dev/null
 
     - name: Assert the cache gets ready
       try:

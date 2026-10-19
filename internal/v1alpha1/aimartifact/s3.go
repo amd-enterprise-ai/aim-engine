@@ -31,15 +31,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
 const (
-	s3CABundleVolumeName    = "aim-s3-ca"
 	s3CredentialsVolumeName = "aim-s3-credentials"
 
-	s3CABundleMountPath    = "/etc/aim/s3"
-	s3CABundleFilePath     = s3CABundleMountPath + "/ca.crt"
 	s3CredentialsMountPath = "/var/run/secrets/aim-s3"
 )
 
@@ -185,22 +183,32 @@ func ResolveS3PodSettings(
 			"AIM_S3_INSECURE_SKIP_VERIFY",
 			strconv.FormatBool(connection.TLS.InsecureSkipVerify),
 		)
-		if connection.TLS.CABundleRef != nil {
-			setTypedEnv("AWS_CA_BUNDLE", s3CABundleFilePath)
-			settings.Volumes = append(
-				settings.Volumes,
-				s3CABundleVolume(connection.TLS.CABundleRef),
-			)
-			settings.VolumeMounts = append(settings.VolumeMounts, corev1.VolumeMount{
-				Name:      s3CABundleVolumeName,
-				MountPath: s3CABundleMountPath,
-				ReadOnly:  true,
-			})
-		}
 	}
 
 	settings.Env = utils.MergeEnvVars(settings.Env, typedEnv)
 	return settings
+}
+
+// ResolveTrustProjection builds the additional trust contract for a transfer
+// workload. S3-specific trust is additive to the RuntimeConfig-wide bundle.
+func ResolveTrustProjection(
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	sourceURI string,
+	includeAdditionalCABundle bool,
+	image string,
+) *trust.Projection {
+	options := trust.Options{Image: image}
+	if runtimeConfig != nil && includeAdditionalCABundle {
+		options.AdditionalCABundleRef = runtimeConfig.AdditionalCABundleRef
+	}
+	if strings.HasPrefix(sourceURI, "s3://") {
+		options.IncludeS3Env = true
+		connection := DirectS3Connection(runtimeConfig)
+		if connection != nil && connection.TLS != nil {
+			options.S3CABundleRef = connection.TLS.CABundleRef
+		}
+	}
+	return trust.BuildProjection(options)
 }
 
 // ValidateTypedS3ArtifactEnv rejects process, transport, trust, and credential
@@ -276,28 +284,4 @@ func filterTypedS3ArtifactEnv(artifactEnv []corev1.EnvVar) []corev1.EnvVar {
 		}
 	}
 	return filtered
-}
-
-func s3CABundleVolume(ref *aimv1alpha1.S3CABundleReference) corev1.Volume {
-	item := corev1.KeyToPath{Key: ref.Key, Path: "ca.crt"}
-	if ref.Kind == "Secret" {
-		return corev1.Volume{
-			Name: s3CABundleVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName: ref.Name,
-					Items:      []corev1.KeyToPath{item},
-				},
-			},
-		}
-	}
-	return corev1.Volume{
-		Name: s3CABundleVolumeName,
-		VolumeSource: corev1.VolumeSource{
-			ConfigMap: &corev1.ConfigMapVolumeSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: ref.Name},
-				Items:                []corev1.KeyToPath{item},
-			},
-		},
-	}
 }

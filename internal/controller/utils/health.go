@@ -82,6 +82,10 @@ type ComponentHealth struct {
 	// When set, this ComponentHealth represents a specific pod/deployment/etc.
 	// When nil, this represents an aggregated component view.
 	ChildRef *ChildRef
+
+	// NonBlocking keeps this component's condition visible without allowing its
+	// state or errors to gate root readiness, apply, or requeue decisions.
+	NonBlocking bool
 }
 
 // ChildRef identifies a child resource (e.g., Pod, Deployment, Service).

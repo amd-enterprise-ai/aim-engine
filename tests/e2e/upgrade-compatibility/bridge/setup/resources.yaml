@@ -1,0 +1,106 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMModel
+metadata:
+  name: bridge-template-model
+spec:
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  discovery:
+    extractMetadata: false
+    createServiceTemplates: false
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: bridge-template
+spec:
+  modelName: bridge-template-model
+  aimId: example/bridge-model
+  modelId: example/bridge-model
+  metric: latency
+  precision: fp16
+  type: unoptimized
+  hardware:
+    # A zero-count legacy GPU shape keeps the exact v1alpha1 custom-profile
+    # wire contract while requesting no accelerator on the CPU-only Kind node.
+    gpu:
+      requests: 0
+  customProfile:
+    engineArgs:
+      dtype: float16
+    envVars:
+      AIM_BRIDGE_FIXTURE: "true"
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+  modelSources:
+    - modelId: example/bridge-model
+      sourceUri: hf://example/bridge-model
+      size: 1Mi
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: bridge-shared
+spec:
+  replicas: 1
+  model:
+    name: bridge-template-model
+  template:
+    name: bridge-template
+    allowUnoptimized: true
+  caching:
+    mode: Shared
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "1"
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: bridge-dedicated
+spec:
+  replicas: 1
+  model:
+    name: bridge-template-model
+  template:
+    name: bridge-template
+    allowUnoptimized: true
+  caching:
+    mode: Dedicated
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "1"
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: bridge-inline-custom
+  namespace: aim-upgrade-inline-custom
+spec:
+  replicas: 1
+  model:
+    custom:
+      baseImage: docker.io/amdenterpriseai/aim-dummy:0.2.0
+      modelSources:
+        - modelId: example/bridge-inline-custom
+          sourceUri: hf://example/bridge-inline-custom
+          size: 1Mi
+      # This predecessor-generated compatibility model must remain legacy-shaped
+      # across the bridge. Zero requests keep its predictor Kind-runnable.
+      hardware:
+        gpu:
+          requests: 0
+  template:
+    allowUnoptimized: true
+  caching:
+    mode: Shared
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "1"

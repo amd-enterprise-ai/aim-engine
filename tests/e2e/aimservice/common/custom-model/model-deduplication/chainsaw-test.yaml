@@ -1,24 +1,25 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
 #
-# Custom Model Test: Model Deduplication
+# Custom Model Test: Service-Scoped Model Identity
 #
 # This test validates that when multiple AIMServices use the same spec.model.custom
-# configuration, only one AIMModel is created and shared between them.
+# configuration, each gets its own UID-bound compatibility AIMModel. Sharing one
+# controller-owned model would create a cross-service ownership collision.
 #
 # Tested behavior:
-# - First service creates an AIMModel
-# - Second service with identical custom spec reuses the existing AIMModel
-# - Both services resolve to the same model name
-# - Only one AIMModel exists in the namespace
+# - Each service creates and resolves its own AIMModel
+# - The model names and object UIDs are distinct
+# - Each model has exactly one controller owner matching its source service UID
+# - Exactly two compatibility AIMModels exist in the namespace
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
-  name: custom-model-deduplication
+  name: custom-model-service-scoped-identity
   labels:
     hf-access: live
 spec:
-  description: Test that identical custom model specs reuse a single AIMModel
+  description: Test that identical custom model specs create distinct UID-bound AIMModels
   timeouts:
     apply: 30s
     assert: 180s
@@ -46,21 +47,6 @@ spec:
                 (conditions[?type == 'ModelReady']):
                   - status: "True"
 
-    - name: Get the model name created by first service
-      try:
-        - script:
-            env:
-              - name: NAMESPACE
-                value: ($namespace)
-            content: |
-              MODEL_NAME=$(kubectl get aimservice test-dedup-service-1 -n "$NAMESPACE" -o jsonpath='{.status.resolvedModel.name}')
-              echo "First service resolved to model: $MODEL_NAME"
-              # Namespace-scoped temp file so concurrent / repeated runs on
-              # the same host don't collide on /tmp ownership (a global
-              # /tmp/first-model-name owned by a previous user trips
-              # permission-denied → silent sh exit 2).
-              echo "$MODEL_NAME" > "/tmp/${NAMESPACE}-first-model-name"
-
     - name: Create second service with identical custom model spec
       try:
         - apply:
@@ -81,36 +67,60 @@ spec:
                 (conditions[?type == 'ModelReady']):
                   - status: "True"
 
-    - name: Verify both services use the same model
+    - name: Verify each service resolves its own UID-bound model
       try:
         - script:
             env:
               - name: NAMESPACE
                 value: ($namespace)
             content: |
-              FIRST_MODEL=$(cat "/tmp/${NAMESPACE}-first-model-name")
-              SECOND_MODEL=$(kubectl get aimservice test-dedup-service-2 -n "$NAMESPACE" -o jsonpath='{.status.resolvedModel.name}')
+              set -eu
+              FIRST_SERVICE=test-dedup-service-1
+              SECOND_SERVICE=test-dedup-service-2
+              FIRST_MODEL=$(kubectl get aimservice "$FIRST_SERVICE" -n "$NAMESPACE" \
+                -o jsonpath='{.status.resolvedModel.name}')
+              SECOND_MODEL=$(kubectl get aimservice "$SECOND_SERVICE" -n "$NAMESPACE" \
+                -o jsonpath='{.status.resolvedModel.name}')
               echo "First service model: $FIRST_MODEL"
               echo "Second service model: $SECOND_MODEL"
-              if [ "$FIRST_MODEL" != "$SECOND_MODEL" ]; then
-                echo "ERROR: Services resolved to different models!"
+
+              if [ "$FIRST_MODEL" = "$SECOND_MODEL" ]; then
+                echo "ERROR: service-scoped compatibility models unexpectedly share the name $FIRST_MODEL"
                 exit 1
               fi
-              echo "SUCCESS: Both services share the same model"
 
-    - name: Verify only one AIMModel exists with managed-by label
-      try:
-        - script:
-            env:
-              - name: NAMESPACE
-                value: ($namespace)
-            content: |
-              # Count models with the managed-by label (auto-created for custom models)
-              count=$(kubectl get aimmodels -n "$NAMESPACE" -l aim.eai.amd.com/custom-model=true -o json | jq '.items | length')
-              echo "Found $count auto-created AIMModel(s)"
-              if [ "$count" -ne 1 ]; then
-                echo "ERROR: Expected exactly 1 auto-created model, found $count"
+              FIRST_MODEL_UID=$(kubectl get aimmodel "$FIRST_MODEL" -n "$NAMESPACE" \
+                -o jsonpath='{.metadata.uid}')
+              SECOND_MODEL_UID=$(kubectl get aimmodel "$SECOND_MODEL" -n "$NAMESPACE" \
+                -o jsonpath='{.metadata.uid}')
+              if [ "$FIRST_MODEL_UID" = "$SECOND_MODEL_UID" ]; then
+                echo "ERROR: distinct model names unexpectedly have the same UID $FIRST_MODEL_UID"
+                exit 1
+              fi
+
+              for PAIR in "$FIRST_SERVICE:$FIRST_MODEL" "$SECOND_SERVICE:$SECOND_MODEL"; do
+                SERVICE=${PAIR%%:*}
+                MODEL=${PAIR#*:}
+                SERVICE_UID=$(kubectl get aimservice "$SERVICE" -n "$NAMESPACE" \
+                  -o jsonpath='{.metadata.uid}')
+                kubectl get aimmodel "$MODEL" -n "$NAMESPACE" -o json |
+                  jq -e --arg service "$SERVICE" --arg uid "$SERVICE_UID" '
+                    .metadata.labels["aim.eai.amd.com/service"] == $service and
+                    (.metadata.ownerReferences | length) == 1 and
+                    .metadata.ownerReferences[0].kind == "AIMService" and
+                    .metadata.ownerReferences[0].name == $service and
+                    .metadata.ownerReferences[0].uid == $uid and
+                    .metadata.ownerReferences[0].controller == true and
+                    .metadata.ownerReferences[0].blockOwnerDeletion == true
+                  ' >/dev/null
+              done
+
+              COUNT=$(kubectl get aimmodels -n "$NAMESPACE" \
+                -l aim.eai.amd.com/custom-model=true -o json |
+                jq '.items | length')
+              echo "Found $COUNT service-scoped compatibility AIMModels"
+              if [ "$COUNT" -ne 2 ]; then
+                echo "ERROR: expected exactly 2 service-scoped models, found $COUNT"
                 kubectl get aimmodels -n "$NAMESPACE" -l aim.eai.amd.com/custom-model=true
                 exit 1
               fi
-              echo "SUCCESS: Only 1 AIMModel was created for both services"

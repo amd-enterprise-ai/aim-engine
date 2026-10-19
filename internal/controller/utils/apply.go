@@ -31,8 +31,11 @@ import (
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -87,6 +90,50 @@ func ApplyDesiredStateWithForceFailFast(
 	return applyDesiredState(ctx, k8sClient, fieldOwner, scheme, desired, owner, true, true)
 }
 
+// CreateDesiredState creates owned objects atomically and never updates an
+// existing object. It is reserved for deterministic names where AlreadyExists
+// is a collision signal that the next reconciliation must re-observe.
+func CreateDesiredState(
+	ctx context.Context,
+	k8sClient client.Client,
+	scheme *runtime.Scheme,
+	desired []client.Object,
+	owner client.Object,
+) error {
+	if len(desired) == 0 {
+		return nil
+	}
+	for _, obj := range desired {
+		if err := stampGVK(obj, scheme); err != nil {
+			return fmt.Errorf("failed to stamp GVK: %w", err)
+		}
+	}
+	if owner != nil {
+		if err := stampGVK(owner, scheme); err != nil {
+			return fmt.Errorf("failed to stamp GVK on owner: %w", err)
+		}
+		for _, obj := range desired {
+			if err := setOwnerReference(owner, obj, scheme); err != nil {
+				return fmt.Errorf("failed to set owner reference: %w", err)
+			}
+		}
+	}
+	for _, obj := range sortObjects(desired) {
+		gvk := obj.GetObjectKind().GroupVersionKind()
+		key := client.ObjectKeyFromObject(obj)
+		if err := k8sClient.Create(ctx, obj); err != nil {
+			return fmt.Errorf(
+				"failed to create %s %s/%s: %w",
+				gvk.Kind,
+				key.Namespace,
+				key.Name,
+				err,
+			)
+		}
+	}
+	return nil
+}
+
 func applyDesiredState(
 	ctx context.Context,
 	k8sClient client.Client,
@@ -116,6 +163,15 @@ func applyDesiredState(
 		}
 
 		for _, obj := range desired {
+			if err := preserveExistingOwnerSemantics(ctx, k8sClient, owner, obj); err != nil {
+				key := client.ObjectKeyFromObject(obj)
+				return fmt.Errorf(
+					"failed to preserve existing owner semantics for %s/%s: %w",
+					key.Namespace,
+					key.Name,
+					err,
+				)
+			}
 			if err := setOwnerReference(owner, obj, scheme); err != nil {
 				return fmt.Errorf("failed to set owner reference: %w", err)
 			}
@@ -176,6 +232,44 @@ func applyDesiredState(
 	return nil
 }
 
+func preserveExistingOwnerSemantics(
+	ctx context.Context,
+	k8sClient client.Client,
+	owner client.Object,
+	desired client.Object,
+) error {
+	current := &unstructured.Unstructured{}
+	current.SetGroupVersionKind(desired.GetObjectKind().GroupVersionKind())
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(desired), current); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+
+	for _, currentRef := range current.GetOwnerReferences() {
+		if currentRef.UID != owner.GetUID() {
+			continue
+		}
+
+		desiredRefs := desired.GetOwnerReferences()
+		for i := range desiredRefs {
+			if desiredRefs[i].UID != owner.GetUID() {
+				continue
+			}
+			desiredRefs[i].Controller = currentRef.Controller
+			desiredRefs[i].BlockOwnerDeletion = currentRef.BlockOwnerDeletion
+			desired.SetOwnerReferences(desiredRefs)
+			return nil
+		}
+
+		desired.SetOwnerReferences(append(desiredRefs, currentRef))
+		return nil
+	}
+
+	return nil
+}
+
 // stampGVK ensures the object has its GVK set from the scheme
 func stampGVK(obj client.Object, scheme *runtime.Scheme) error {
 	gvks, _, err := scheme.ObjectKinds(obj)
@@ -192,7 +286,7 @@ func stampGVK(obj client.Object, scheme *runtime.Scheme) error {
 // setOwnerReference sets an owner reference on the object.
 // The owner and object must both have GVK set before calling this function.
 func setOwnerReference(owner, obj client.Object, _ *runtime.Scheme) error {
-	ownerGVK := owner.GetObjectKind().GroupVersionKind()
+	ownerGVK := canonicalOwnerGVK(owner.GetObjectKind().GroupVersionKind())
 	if ownerGVK.Empty() {
 		return fmt.Errorf("owner GVK is not set")
 	}
@@ -204,12 +298,12 @@ func setOwnerReference(owner, obj client.Object, _ *runtime.Scheme) error {
 
 	// Create owner reference
 	ownerRef := metav1.OwnerReference{
-		APIVersion: ownerGVK.GroupVersion().String(),
-		Kind:       ownerGVK.Kind,
-		Name:       owner.GetName(),
-		UID:        owner.GetUID(),
-		Controller: ptr.To(true),
-		// BlockOwnerDeletion: ptr.To(true),  // TODO make configurable
+		APIVersion:         ownerGVK.GroupVersion().String(),
+		Kind:               ownerGVK.Kind,
+		Name:               owner.GetName(),
+		UID:                owner.GetUID(),
+		Controller:         ptr.To(true),
+		BlockOwnerDeletion: ptr.To(true),
 	}
 
 	// Get current owner references and append
@@ -219,7 +313,11 @@ func setOwnerReference(owner, obj client.Object, _ *runtime.Scheme) error {
 	found := false
 	for i := range ownerRefs {
 		if ownerRefs[i].UID == ownerRef.UID {
-			// Update existing reference
+			// Preserve ownership and deletion semantics while converging the
+			// GVK. Promoting a secondary owner here could conflict with the
+			// object's controller or change garbage-collection behavior.
+			ownerRef.Controller = ownerRefs[i].Controller
+			ownerRef.BlockOwnerDeletion = ownerRefs[i].BlockOwnerDeletion
 			ownerRefs[i] = ownerRef
 			found = true
 			break
@@ -232,6 +330,19 @@ func setOwnerReference(owner, obj client.Object, _ *runtime.Scheme) error {
 
 	obj.SetOwnerReferences(ownerRefs)
 	return nil
+}
+
+// canonicalOwnerGVK keeps bridge ownership on the production root even while
+// legacy reconciliation code still supplies a v1alpha1 view of the same object.
+func canonicalOwnerGVK(ownerGVK schema.GroupVersionKind) schema.GroupVersionKind {
+	if ownerGVK.Group != "aim.eai.amd.com" || ownerGVK.Version != "v1alpha1" {
+		return ownerGVK
+	}
+	switch ownerGVK.Kind {
+	case "AIMService", "AIMModel", "AIMClusterModel":
+		ownerGVK.Version = "v1alpha2"
+	}
+	return ownerGVK
 }
 
 // sortObjects returns objects sorted by GVK, namespace, name for determinism
@@ -264,6 +375,12 @@ func sortObjects(objects []client.Object) []client.Object {
 }
 
 func PropagateLabelsForResult(parent client.Object, planResult *PlanResult, config *LabelPropagationSettings) {
+	for _, obj := range planResult.toCreate {
+		if _, skip := planResult.labelPropagationSkips[obj]; skip {
+			continue
+		}
+		PropagateLabels(parent, obj, config)
+	}
 	for _, obj := range planResult.toApply {
 		if _, skip := planResult.labelPropagationSkips[obj]; skip {
 			continue
@@ -288,6 +405,9 @@ func PropagateLabelsForResult(parent client.Object, planResult *PlanResult, conf
 // These labels are added to both the resource metadata and to Job pod templates (if applicable).
 // Labels are merged with existing labels - existing labels are not overwritten.
 func ApplyControllerLabelsToResult(planResult *PlanResult, labels map[string]string) {
+	for _, obj := range planResult.toCreate {
+		applyControllerLabels(obj, labels)
+	}
 	for _, obj := range planResult.toApply {
 		applyControllerLabels(obj, labels)
 	}

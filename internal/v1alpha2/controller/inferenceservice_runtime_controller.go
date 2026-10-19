@@ -89,10 +89,9 @@ type RuntimeProjectionReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
-	// APIReader is the uncached, direct-to-API reader. It is used only where a
-	// read may target an unlabeled ConfigMap the label-scoped cache does not
-	// hold (a hand-authored KServe ServingRuntime's colocated ConfigMap in
-	// namespaceRuntimeComplete). Nil in unit tests, which fall back to Client.
+	// APIReader is the uncached, direct-to-API reader used for the authoritative
+	// completeness check of a hand-authored KServe ServingRuntime's colocated
+	// ConfigMap. Nil in unit tests, which fall back to Client.
 	APIReader client.Reader
 	Clientset kubernetes.Interface
 }

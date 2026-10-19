@@ -61,6 +61,14 @@ Overall readiness — the aggregate of all other conditions and component health
 | `False` | `ComponentsNotReady` | One or more components are not ready |
 | `False` | `Progressing` | Waiting for components to become ready |
 
+## Migration condition
+
+### MigrationRequired
+
+`MigrationRequired=True` with reason `TemplateAPIDeprecated` identifies a live resource that still uses the deprecated template API or produces template outputs. It appears on template-pipeline `AIMService` objects, legacy-shaped `AIMModel` / `AIMClusterModel` objects (including deprecated `profileCopy` and flat `derivedFrom` shapes, plus image models that still emit templates), `AIMServiceTemplate`, `AIMClusterServiceTemplate`, and `AIMTemplateCache`. Follow the [bounded template migration runbook](../admin/template-migration.md) before removing the v1alpha1 template APIs.
+
+This condition is informational and does not participate in the `Ready` rollup. It is removed when an overlapping service uses the profile pipeline or a model uses only native profile inputs and no longer emits templates. `AIMArtifact`, `AIMRuntimeConfig`, `AIMClusterRuntimeConfig`, and `AIMClusterModelSource` do not report it because native profile pipelines still use those APIs or their outputs.
+
 ## AIMService conditions (v1alpha2)
 
 `AIMService` reports per-component conditions in addition to the framework conditions. The condition catalog covers profile resolution, cache, KServe runtime, routing, and autoscaling.
@@ -109,8 +117,7 @@ Replaces v1alpha1's `CacheReady`. Tracks the `AIMProfileCache` lifecycle.
 
 ### ProfileRuntimeReady
 
-Tracks the namespaced profile `ServingRuntime` and its same-name ConfigMap
-before AIM Engine creates or updates the InferenceService.
+Tracks the namespaced profile `ServingRuntime` and its same-name ConfigMap before AIM Engine creates or updates the InferenceService.
 
 | Status | Reason | Description |
 |---|---|---|
@@ -119,10 +126,7 @@ before AIM Engine creates or updates the InferenceService.
 | `False` | `ProfileRuntimeConverging` | Both siblings exist, but one or both have not converged to the expected content hash |
 | `False` | `FetchError` | AIM Engine could not read one of the projection siblings |
 
-`ProfileRuntimeConverging` can be transient because the two resources are
-updated independently. If it persists, check for unsupported out-of-band
-changes to generated `aim-*` resources. See
-[Consistency and rollout guarantees](../guides/bring-your-own-kserve.md#consistency-and-rollout-guarantees).
+`ProfileRuntimeConverging` can be transient because the two resources are updated independently. If it persists, check for unsupported out-of-band changes to generated `aim-*` resources. See [Consistency and rollout guarantees](../guides/bring-your-own-kserve.md#consistency-and-rollout-guarantees).
 
 ### InferenceServiceReady
 
@@ -177,9 +181,7 @@ When `ActivationMetricUnavailable` is reported, compare the HPA's `s0-*` spec me
 
 ### ScaleToZeroConfig
 
-Validates that routing is enabled when `spec.minReplicas: 0` is set. The
-scale-from-zero trigger depends on a gateway metric associated with an
-`HTTPRoute`; without routing, the service could not wake from zero replicas.
+Validates that routing is enabled when `spec.minReplicas: 0` is set. The scale-from-zero trigger depends on a gateway metric associated with an `HTTPRoute`; without routing, the service could not wake from zero replicas.
 
 | Status | Reason | Description |
 |---|---|---|
@@ -202,7 +204,7 @@ When valid, this check is silent — no condition or component-health entry is e
 
 ### DiscoveryReady
 
-Set only for the official and base-image flows (`spec.image` set). Tracks the in-cluster discovery Job.
+Set for image-backed models (`spec.image` set), including models with inline `spec.profiles`. Tracks the in-cluster discovery Job.
 
 | Status | Reason | Description |
 |---|---|---|
@@ -220,13 +222,14 @@ Set only for the official and base-image flows (`spec.image` set). Tracks the in
 
 ### DerivationReady
 
-Set only for the fine-tuned and custom flows (`spec.profiles` set). Mirrors the child `AIMProfileSet`'s `DerivationReady`.
+Set when `spec.profiles` is configured, including image-backed inline overrides. Mirrors the child `AIMProfileSet`'s `DerivationReady`.
 
 | Status | Reason | Description |
 |---|---|---|
 | `True` | `ManagedProfilesReady` | All derived profiles are ready |
 | `False` | `Progressing` | Derivation in progress |
 | `False` | `NoMatchingProfiles` | Selector matched zero source candidates |
+| `False` | `NoEligibleProfiles` | Profiles matched the selector and version policy, but none were published as copyable |
 | `False` | `Degraded` | One or more derived profiles failed |
 
 ### Ready (managed profile rollup)
@@ -242,6 +245,8 @@ Set only for the fine-tuned and custom flows (`spec.profiles` set). Mirrors the 
 | `False` | `BuildFailed` | Building the desired profile set failed |
 | `False` | `NodeInventoryAvailable` | Node-inventory snapshot built (intermediate state) |
 
+With inline `spec.profiles`, readiness follows the selected transformed outputs. `discoveredProfiles` continues to report raw catalog hardware support; source hardware availability is independent of derivation eligibility. A valid current catalog is available to selectors even when the source model's overall `Ready` condition is false.
+
 ## AIMProfileSet / AIMClusterProfileSet conditions
 
 ### DerivationReady
@@ -251,9 +256,12 @@ Set only for the fine-tuned and custom flows (`spec.profiles` set). Mirrors the 
 | `True` | `ManagedProfilesReady` | All managed derived profiles are ready |
 | `False` | `Progressing` | Derivation in progress |
 | `False` | `NoMatchingProfiles` | Selector matched zero source candidates |
+| `False` | `NoEligibleProfiles` | Profiles matched the selector and version policy, but none were published as copyable |
 | `False` | `Degraded` | One or more derived profiles failed |
 
 `status.managedProfiles.{total,ready,deployable,base,notAvailable}` are always populated (zero values serialised explicitly).
+
+`NoMatchingProfiles` describes a completed source evaluation with no selector/version matches. `NoEligibleProfiles` means matches exist but copyability policy excluded all of them. Pending discovery and source-read or parsing failures are reported separately. Outputs for an unresolved source remain in place while healthy sources continue to reconcile.
 
 ## AIMProfile / AIMClusterProfile conditions
 
@@ -289,8 +297,7 @@ Projection is additive with **asymmetric teardown**: a runtime is created only w
 
 ### RuntimeProjectionReady
 
-Appears only while runtime construction or its shared-cache lookup is failing,
-and gates aggregate `Ready`. It is removed after recovery.
+Appears only while runtime construction or its shared-cache lookup is failing, and gates aggregate `Ready`. It is removed after recovery.
 
 | Status | Reason | Description |
 |---|---|---|
@@ -299,9 +306,7 @@ and gates aggregate `Ready`. It is removed after recovery.
 
 ### RuntimeProjectionElectionReady
 
-Appears only when AIM Engine cannot list the profiles needed to elect a
-model-slug runtime winner, and gates aggregate `Ready`. The reason reflects the
-categorized dependency error. It is removed after election succeeds.
+Appears only when AIM Engine cannot list the profiles needed to elect a model-slug runtime winner, and gates aggregate `Ready`. The reason reflects the categorized dependency error. It is removed after election succeeds.
 
 ## AIMProfileCache conditions
 
@@ -344,7 +349,7 @@ When an AIMModel still emits `AIMServiceTemplate` resources, its `Ready` rollup 
 
 ## Condition polarity
 
-All AIM conditions follow positive polarity — `status: True` means healthy. When building dashboards or alerting:
+Readiness and health conditions follow positive polarity — `status: True` means healthy. `MigrationRequired` is the explicit non-health exception: `True` means administrator action is still required, and it never gates readiness. When building dashboards or alerting:
 
 - **Green** — condition `status: True`
 - **Yellow** — condition `status: False` with reason containing `Progressing`, `Creating`, `Awaiting`, `Started`

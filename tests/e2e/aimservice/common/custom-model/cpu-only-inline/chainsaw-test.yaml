@@ -7,7 +7,8 @@
 #
 # Tested behavior:
 # - AIMService with custom.hardware.cpu creates AIMModel
-# - Auto-created model has CPU-only hardware
+# - Auto-created model persists a canonical CPU-only compatibility payload
+#   without writing predecessor-only fields back to spec
 # - Template has hardwareSummary: "CPU"
 # - No GPU node affinity is applied
 # - Service progresses normally
@@ -32,7 +33,7 @@ spec:
         - apply:
             file: service.yaml
 
-    - name: Assert AIMModel is created with CPU hardware
+    - name: Assert AIMModel persists the supported CPU compatibility contract
       try:
         - assert:
             timeout: 60s
@@ -43,18 +44,42 @@ spec:
                 labels:
                   aim.eai.amd.com/origin: auto-generated
                   aim.eai.amd.com/custom-model: "true"
+                  aim.eai.amd.com/service: test-cpu-only-inline
+                annotations:
+                  aim.eai.amd.com/legacy-auto-custom-spec: '{"baseImage":"docker.io/amdenterpriseai/aim-dummy:0.2.0","modelSources":[{"modelId":"cpu/inline-model","sourceUri":"hf://sshleifer/tiny-gpt2"}],"hardware":{"cpu":{"requests":"500m"}}}'
+                (ownerReferences[?apiVersion == 'aim.eai.amd.com/v1alpha2' && kind == 'AIMService' && name == 'test-cpu-only-inline']):
+                  - controller: true
+                    blockOwnerDeletion: true
               spec:
                 image: docker.io/amdenterpriseai/aim-dummy:0.2.0
-                modelSources:
-                  - modelId: cpu/inline-model
-                    sourceUri: hf://sshleifer/tiny-gpt2
-                custom:
-                  hardware:
-                    cpu:
-                      requests: 500m
+                (modelSources == null): true
+                (custom == null): true
               status:
                 status: Ready
                 sourceType: Custom
+
+    - name: Assert model ownership is bound to the source service UID
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              SERVICE=test-cpu-only-inline
+              MODEL=$(kubectl get aimservice "$SERVICE" -n "$NAMESPACE" \
+                -o jsonpath='{.status.resolvedModel.name}')
+              SERVICE_UID=$(kubectl get aimservice "$SERVICE" -n "$NAMESPACE" \
+                -o jsonpath='{.metadata.uid}')
+              kubectl get aimmodel "$MODEL" -n "$NAMESPACE" -o json |
+                jq -e --arg service "$SERVICE" --arg uid "$SERVICE_UID" '
+                  (.metadata.ownerReferences | length) == 1 and
+                  .metadata.ownerReferences[0].kind == "AIMService" and
+                  .metadata.ownerReferences[0].name == $service and
+                  .metadata.ownerReferences[0].uid == $uid and
+                  .metadata.ownerReferences[0].controller == true and
+                  .metadata.ownerReferences[0].blockOwnerDeletion == true
+                ' >/dev/null
 
     - name: Assert template has CPU hardware and summary
       try:

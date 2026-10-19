@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Populate this section during release-prep, then rename to the release version -->
 
+## [0.2.7] - 2026-10-08
+
+### Added
+- **Template-to-profile migration.** Existing template-based services keep running after upgrading, and resources that still use the template API now show a `MigrationRequired` condition. A new `aim-template-migration` tool plans the move to profile-based serving and applies it without restarting running models. It is a dry run unless you pass `--commit`. See `docs/docs/admin/template-migration.md`. (#197)
+- **Private CA certificates.** Set `spec.additionalCABundleRef` in a runtime config to a ConfigMap containing your CA certificates. Inference pods and download jobs will trust them alongside the standard public roots, which helps in air-gapped clusters with internal Hugging Face or S3 endpoints. (#199)
+- **More flexible profile derivation.** Profile sets and `AIMModel.spec.profiles` can now derive from any profile in a model's discovery catalog, even when the cluster has no hardware matching that source profile. For example, you can derive partitioned-GPU profiles for your cluster from a model that only ships unpartitioned profiles. Existing derived profile names are preserved. (#201, #203)
+- **Chained derivations.** Set `outputPolicy.copyable: true` on a profile set or model to let other derivations build on its profiles. (#211)
+
+### Changed
+- **Upgrade the CRDs chart before the operator.** Upgrade `aim-engine-crds`, wait for the CRDs to be `Established`, then upgrade `aim-engine`. (#197)
+
+### Fixed
+- The `aim-engine-crds` Helm chart can be installed and upgraded again; it had grown past Kubernetes' 1 MiB release limit. As a side effect, `kubectl explain` now shows shortened field descriptions. (#206)
+- Services deployed by image (`spec.model.image`) no longer get stuck in `Starting` after their model cache is ready. (#208)
+
+### Known limitations
+- `aim-template-migration` is not yet intended for production. Services using a Dedicated cache must be migrated manually, and there is no rollback.
+- Changes to the CA ConfigMap only take effect when pods are recreated.
+
 ## [0.2.6] - 2026-09-15
 
 ### Added

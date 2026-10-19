@@ -40,6 +40,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimmodel"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofileset"
 )
@@ -47,6 +48,7 @@ import (
 const (
 	profileSetControllerName = "profile-set-v1alpha2"
 	profileSetAimIDWildcard  = "*"
+	profileSetModelRefIndex  = ".spec.selector.modelRef.name"
 )
 
 type AIMProfileSetReconciler struct {
@@ -74,6 +76,7 @@ type AIMProfileSetReconciler struct {
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimprofilesets/finalizers,verbs=update
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimprofiles,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterprofiles,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimmodels;aimclustermodels,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
@@ -118,6 +121,11 @@ func (r *AIMProfileSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}); err != nil {
 		return err
 	}
+	if err := registerObjectIndex(ctx, mgr, &aimv1alpha2.AIMProfileSet{}, profileSetModelRefIndex, func(set *aimv1alpha2.AIMProfileSet) []string {
+		return profileSetModelIndexValues(set.Spec)
+	}); err != nil {
+		return err
+	}
 
 	profileHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
 		var requests []reconcile.Request
@@ -137,13 +145,22 @@ func (r *AIMProfileSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		if !ok {
 			return nil
 		}
-		return profileSetsForSourceRef(ctx, r.Client, profileSourceRefIndexValue(configMap.Namespace, configMap.Name))
+		requests := profileSetsForSourceRef(ctx, r.Client, profileSourceRefIndexValue(configMap.Namespace, configMap.Name))
+		if model := catalogModelEvent(configMap); model != nil {
+			requests = append(requests, profileSetsForModel(ctx, r.Client, model)...)
+		}
+		return dedupeRequests(requests)
+	})
+	modelHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		return profileSetsForModel(ctx, r.Client, obj)
 	})
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha2.AIMProfileSet{}).
 		Watches(&aimv1alpha2.AIMProfile{}, profileHandler).
 		Watches(&aimv1alpha2.AIMClusterProfile{}, profileHandler).
+		Watches(&aimv1alpha2.AIMModel{}, modelHandler, builder.WithPredicates(modelDefinitionPredicate())).
+		Watches(&aimv1alpha2.AIMClusterModel{}, modelHandler, builder.WithPredicates(modelDefinitionPredicate())).
 		Watches(
 			&corev1.ConfigMap{},
 			configMapHandler,
@@ -207,7 +224,9 @@ func isDiscoveryCatalogConfigMap(obj client.Object) bool {
 	if !ok {
 		return false
 	}
-	return aimprofile.HasRawProfileKeys(configMap)
+	return aimprofile.HasRawProfileKeys(configMap) ||
+		configMap.Data[aimprofile.DiscoveryCacheMetadataKey] != "" ||
+		configMap.Annotations[aimmodel.AnnotationModelUID()] != ""
 }
 
 // discoveryCatalogConfigMapPredicate fires reconciles for any ConfigMap

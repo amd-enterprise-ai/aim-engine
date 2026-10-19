@@ -13,6 +13,7 @@ Operate and maintain an AIM Engine installation.
 - [GPU Management](gpu-management.md) — GPU allocation, node selectors, topology
 - [Storage Configuration](storage-configuration.md) — PVCs, shared storage for caching
 - [Upgrading](upgrading.md) — Version migration and CRD upgrades
+- [Bounded v1alpha1 Template Migration](template-migration.md) — Review, dry-run, commit, and manually recover the local Plan/Apply utility
 - [Monitoring](monitoring.md) — Metrics, observability, log formats
 - [Troubleshooting](troubleshooting.md) — Common issues and diagnostic steps
 - [Security](security.md) — RBAC, network policies, secrets management

@@ -1,9 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: private-s3-ca
+data:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIDKzCCAhOgAwIBAgIUJPLBP5ZLJTRb9z4x4CHtdlmeAMswDQYJKoZIhvcNAQEL
+    BQAwJTEjMCEGA1UEAwwaQUlNIEUyRSBQcml2YXRlIFMzIFRlc3QgQ0EwHhcNMjYw
+    OTE2MTQwNjAzWhcNMzYwOTEzMTQwNjAzWjAlMSMwIQYDVQQDDBpBSU0gRTJFIFBy
+    aXZhdGUgUzMgVGVzdCBDQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEB
+    ALOcw6Pn6ceA4w7JBJaPlBJnuzV3CaTpJDDIqLdZvPbMDC/kNRevxbPF9y2naY7C
+    L1ES6qTIv6E7czJ5wn1BxEBncJur1zUExWTQNj8HzIeL63n+M/tBaCiWcm14d/Zq
+    rVCi+BqMo9h8D3mNq0/Cc/FPHz3yLzPx5TSZ7+8gPKAtLvXAfbw1iAg6sikm3WDi
+    WLTSYnvZdnFMdU+7Xg9aF/GbV1D220cXF7PuWNBrKcSuCrbRO5On5vFraGFjaqsd
+    qn/YiD11msg/spFZF8MPpFE0jJ1oyJ+Ju+op6UR3jmhSpZSQT9lPwpjmoTj5EtSn
+    ckqdXGpBq+8s8AOZxJ9UuVcCAwEAAaNTMFEwHQYDVR0OBBYEFEjJP49I9KBnWpEz
+    C3ZHsAVdW41RMB8GA1UdIwQYMBaAFEjJP49I9KBnWpEzC3ZHsAVdW41RMA8GA1Ud
+    EwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggEBAEFl+NaaD5L2gqb8DtbrXbYb
+    gVFGlyg2I/HsSDXV8MYiIUCQANGXhr5v1+mvZio3Hzxs+p2hoLsHhNqwwPoAyOhp
+    GG44dFM4qGj/HDnvIF6Hc1Y+7C4t5mv4xg5XdX+Z0zWEKlrtS4cyhajqs/heHOA5
+    nFnqm8/m2xWSpvvKjj+DbJ3NRwrzSt6xaeGqFt9GJLXvLguAS10RtFp1RgLw9Qz5
+    +vnkeUz1IJ+K3G9LGDXNJ2W+SGgkxFhhH/IgB1658AqRCu6zozd7dsYZw6bpZyHz
+    6Px6f1xvvlK3CjdTEPVMiENxWACDrraj1OtYqqKMyX08UY6h9wQkkKIV8CJG9OM=
+    -----END CERTIFICATE-----
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: hf-with-private-s3-ca
+spec:
+  additionalCABundleRef:
+    name: private-s3-ca
+    key: ca.crt
+---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMArtifact
 metadata:
   name: basic-lifecycle-hf
 spec:
   sourceUri: hf://sshleifer/tiny-gpt2
+  runtimeConfigName: hf-with-private-s3-ca
   size: 100Mi
   env:
     - name: HF_TOKEN

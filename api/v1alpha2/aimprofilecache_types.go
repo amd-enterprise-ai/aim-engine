@@ -128,6 +128,10 @@ func (s *AIMProfileCacheStatus) SetConditions(conditions []metav1.Condition) {
 	s.Conditions = conditions
 }
 
+func (s *AIMProfileCacheStatus) SetObservedGeneration(generation int64) {
+	s.ObservedGeneration = generation
+}
+
 func (s *AIMProfileCacheStatus) SetStatus(status string) {
 	s.Status = constants.AIMStatus(status)
 }

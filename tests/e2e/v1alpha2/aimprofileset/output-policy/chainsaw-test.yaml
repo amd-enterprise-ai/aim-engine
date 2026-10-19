@@ -1,0 +1,183 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimprofileset-output-policy
+spec:
+  description: |
+    Verifies both sides of derived-profile copyability. A copyable producer
+    feeds a downstream profile set that reaches Ready. A non-copyable producer
+    is visible as a matching but ineligible source, so both a standalone set
+    and a model-owned set report NoEligibleProfiles.
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Seed a copyable source profile
+      try:
+        - apply:
+            file: source-profile.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: output-policy-source
+              status:
+                status: Ready
+                version: 0.2.0
+
+    - name: Positive case - create a copyable producer
+      try:
+        - apply:
+            file: copyable-producer.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileSet
+              metadata:
+                name: output-policy-copyable-producer
+              status:
+                status: Ready
+                managedProfiles:
+                  total: 1
+                  ready: 1
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                annotations:
+                  aim.eai.amd.com/profile-set-name: output-policy-copyable-producer
+                  aim.eai.amd.com/profile-copyable: "true"
+              spec:
+                aimId: output-policy/copyable
+                modelId: output-policy/copyable
+              status:
+                status: Ready
+
+    - name: Positive case - downstream set reaches Ready
+      try:
+        - apply:
+            file: copyable-consumer.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileSet
+              metadata:
+                name: output-policy-copyable-consumer
+              status:
+                status: Ready
+                managedProfiles:
+                  total: 1
+                  ready: 1
+
+    - name: Negative case - create a non-copyable producer
+      try:
+        - apply:
+            file: private-producer.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileSet
+              metadata:
+                name: output-policy-private-producer
+              status:
+                status: Ready
+                managedProfiles:
+                  total: 1
+                  ready: 1
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                annotations:
+                  aim.eai.amd.com/profile-set-name: output-policy-private-producer
+                (annotations."aim.eai.amd.com/profile-copyable" == null): true
+              spec:
+                aimId: output-policy/private
+                modelId: output-policy/private
+              status:
+                status: Ready
+
+    - name: Negative case - create standalone and model-owned consumers
+      try:
+        - apply:
+            file: private-consumer.yaml
+        - apply:
+            file: private-model.yaml
+
+    - name: Negative case - both consumers report NoEligibleProfiles
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileSet
+              metadata:
+                name: output-policy-private-consumer
+              status:
+                status: NotAvailable
+                managedProfiles:
+                  total: 0
+                  ready: 0
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileSet
+              metadata:
+                labels:
+                  aim.eai.amd.com/source-model: output-policy-private-model
+                  aim.eai.amd.com/source-model-scope: namespace
+              status:
+                status: NotAvailable
+                managedProfiles:
+                  total: 0
+                  ready: 0
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: output-policy-private-model
+              status:
+                status: NotAvailable
+                managedProfiles:
+                  total: 0
+                  ready: 0
+        - script:
+            timeout: 60s
+            content: |
+              set -eu
+
+              standalone_reason=$(kubectl get aimprofileset -n "$NAMESPACE" \
+                output-policy-private-consumer \
+                -o jsonpath='{.status.conditions[?(@.type=="DerivationReady")].reason}')
+              child=$(kubectl get aimprofileset -n "$NAMESPACE" \
+                -l aim.eai.amd.com/source-model=output-policy-private-model \
+                -o jsonpath='{.items[0].metadata.name}')
+              child_reason=$(kubectl get aimprofileset -n "$NAMESPACE" "$child" \
+                -o jsonpath='{.status.conditions[?(@.type=="DerivationReady")].reason}')
+              model_reason=$(kubectl get aimmodel -n "$NAMESPACE" \
+                output-policy-private-model \
+                -o jsonpath='{.status.conditions[?(@.type=="ProfileSetReady")].reason}')
+
+              if [ "$standalone_reason" != "NoEligibleProfiles" ]; then
+                echo "ERROR: standalone set reason=$standalone_reason"
+                exit 1
+              fi
+              if [ "$child_reason" != "NoEligibleProfiles" ]; then
+                echo "ERROR: model-owned set reason=$child_reason"
+                exit 1
+              fi
+              if [ "$model_reason" != "NoEligibleProfiles" ]; then
+                echo "ERROR: parent model reason=$model_reason"
+                exit 1
+              fi

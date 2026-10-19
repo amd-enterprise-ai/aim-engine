@@ -1,6 +1,6 @@
 # AIM Models
 
-`AIMModel` and `AIMClusterModel` are the entry point for getting a model onto the cluster. Each resource describes one model and produces a set of `AIMProfile` resources that `AIMService` can deploy.
+`AIMModel` and `AIMClusterModel` are the entry point for getting a model onto the cluster. Each resource describes one model and produces a set of `AIMProfile` resources that `AIMService` can deploy. Image-backed models also publish their complete profile definitions for selection by [AIM Profile Sets](profilesets.md), including definitions whose original hardware is absent from the cluster.
 
 :::{admonition} v1alpha2
 :class: note
@@ -13,14 +13,20 @@ Every v1alpha2 AIMModel uses one of four flows. The flow is determined by which 
 
 | Flow | When to use | Spec shape | Source of profiles | `status.kind` |
 |---|---|---|---|---|
-| **Official** | Deploying a published AMD-supported AIM model unmodified | `spec.image` set | The AIM container image itself (discovery) | `Image` |
+| **Image-backed** | Onboarding an AIM image | `spec.image` | The AIM container image itself (discovery) | `Image` |
 | **Generated** | Deploying model weights with a generic runtime configured for cluster hardware | `spec.modelId` set | RuntimeConfig `model.profileGeneration.fallbacks` | `Generated` |
 | **Fine-tuned** | Deploying a fine-tune of a published architecture | `spec.profiles.derivedFrom` selecting deployable profiles | A previously-applied official AIMModel | `Derived` |
 | **Custom** | Deploying a model whose architecture isn't in the catalog | `spec.profiles.derivedFrom` selecting base-image base profiles | A previously-applied base-image AIMModel | `Custom` |
 
-The onboarding contract is enforced by CRD validation: **exactly one** of `spec.image`, `spec.modelId`, or `spec.profiles` must be set. Mixing them — or setting none — is rejected at admission.
+The onboarding shapes are:
 
-The flow you used is surfaced as `status.kind` and shown as the `KIND` column in `kubectl get aimmodel`. Note that **base-image AIMModels classify as `Image`** (they're a sub-case of the Official flow with a generic image, not a fourth flow). To filter for base-image models specifically, combine `status.kind=Image` with `status.managedProfiles.base > 0` — see [Base-image models](#base-image-models) below.
+| Spec shape | Profile selection |
+|---|---|
+| `image` | All definitions discovered in the image; supported entries are materialised. |
+| `profiles` without `image` | External sources selected by the required `profiles.derivedFrom`. |
+| `modelId` | Generated profiles from RuntimeConfig fallbacks; exclusive with `image` and `profiles`. |
+
+`image`, `profiles`, and `modelId` are mutually exclusive. The flow is surfaced as `status.kind` and shown as the `KIND` column in `kubectl get aimmodel`. Image-backed models retain `kind: Image` for generic base images. See [Base-image models](#base-image-models) for base-profile selection.
 
 End-to-end guides for the two derivation flows:
 
@@ -57,12 +63,38 @@ spec:
 
 The controller:
 
-1. Runs an in-cluster **discovery Job** that inspects the image's profile YAMLs (`/workspace/aim-runtime/profiles/<aim_id>/*.yaml`) and writes a normalised catalog into a `ConfigMap` (`status.discoveryCacheRef`).
-2. Evaluates each discovered profile against the cluster's nodes — GPU model, accelerator count, resource capacity.
-3. Materialises one `AIMProfile` per supported entry. Unsupported entries (no matching nodes) are counted in `status.discoveredProfiles.unsupported` but not materialised.
-4. Watches node events and re-evaluates the catalog when nodes are added or removed.
+1. Runs an in-cluster **discovery Job** that inspects the image's profile YAMLs (`/workspace/aim-runtime/profiles/<aim_id>/*.yaml`) and writes the raw documents and discovery metadata into a `ConfigMap` (`status.discoveryCacheRef`).
+2. Normalises the complete catalog into profile definitions available to profile-set selectors.
+3. Evaluates each discovered profile against the cluster's nodes — GPU model, partitioning mode, accelerator count, and resource capacity.
+4. Materialises one `AIMProfile` per supported entry. Unsupported entries are counted in `status.discoveredProfiles.unsupported` and remain available as derivation sources.
+5. Watches node events and re-evaluates hardware support when nodes are added or removed.
 
 The resulting profiles are **deployable** (carry `aimId` and `modelSources`) and labelled `aim.eai.amd.com/profile-role=deployable`, `aim.eai.amd.com/profile-origin=discovered`.
+
+Profile sets select these definitions using ordinary filters such as `acceleratorModel`, `acceleratorCount`, `modelId`, and `engineArgs`. A model with successful discovery and zero materialised profiles can supply every matching definition. Source eligibility depends on current discovery, independently of the model's overall readiness or source hardware availability.
+
+### Deriving hardware variants
+
+Keep the source image model separate from its variants. For example, a standalone profile set maps the source model's definitions to a different GPU:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfileSet
+metadata:
+  name: llama-mi325x
+  namespace: ml-team
+spec:
+  selector:
+    modelRef:
+      name: llama-3-8b-official
+  versionPolicy: all
+  overrides:
+    acceleratorModel: MI325X
+```
+
+The source model's catalog remains unchanged, including when its hardware is unavailable. For a separately addressable derived model, put `profiles.derivedFrom` on a second AIMModel instead. Combining `image` and `profiles` is not supported.
+
+See [Partitioning and topology](profilesets.md#partitioning-and-topology) for explicit source/target counts and tensor-parallel settings. Overrides do not automatically retune the runtime or guarantee model fit.
 
 ### Status signal
 
@@ -83,8 +115,7 @@ kubectl get aimmodel llama-3-8b-official -o jsonpath='{.status}' | jq
 
 ## Flow 2 — Generated runtime profile
 
-Use this when model weights are identified by a model ID and the platform has
-configured a generic runtime for the available hardware:
+Use this when model weights are identified by a model ID and the platform has configured a generic runtime for the available hardware:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
@@ -96,8 +127,7 @@ spec:
   modelId: Qwen/Qwen3.5-0.8B
 ```
 
-The controller defaults `aimId` to `modelId` and the source URI to
-`hf://<modelId>`. Both may be overridden for fine-tuned or S3-hosted weights:
+The controller defaults `aimId` to `modelId` and the source URI to `hf://<modelId>`. Both may be overridden for fine-tuned or S3-hosted weights:
 
 ```yaml
 spec:
@@ -107,8 +137,7 @@ spec:
     uri: s3://customer-models/qwen-finetune
 ```
 
-The hardware shape is declared per-model. `spec.accelerator` sets how many
-devices the model needs and optionally narrows which fallback serves it:
+The hardware shape is declared per-model. `spec.accelerator` sets how many devices the model needs and optionally narrows which fallback serves it:
 
 ```yaml
 spec:
@@ -119,31 +148,17 @@ spec:
     model: H100           # optional
 ```
 
-Generated profiles are created only when a matching RuntimeConfig fallback and
-hardware are available. They are labelled `profile-origin=generated`. Existing
-profiles are retained and become unavailable if the matching nodes temporarily
-disappear.
+Generated profiles are created only when a matching RuntimeConfig fallback and hardware are available. They are labelled `profile-origin=generated`. Existing profiles are retained and become unavailable if the matching nodes temporarily disappear.
 
 :::{admonition} Generated profile selection is platform policy
 :class: important
 
-Generated profiles default to `type: unoptimized` — a generic runtime template
-is not tuned for any particular model. That is **below** the AIMService
-selection floor. RuntimeConfig fallbacks default to
-`autoSelectionPolicy: optimized`, which keeps that floor in force. A platform
-may set `autoSelectionPolicy: any` to admit the generated profile only when no
-optimized profile matches and the service did not explicitly set
-`minimumType`. The chart-provided NVIDIA fallback uses this policy for
-out-of-the-box model-ID onboarding. See
-[Optimization tier and auto-selection policy](runtime-config.md#optimization-tier-and-auto-selection-policy).
+Generated profiles default to `type: unoptimized` — a generic runtime template is not tuned for any particular model. That is **below** the AIMService selection floor. RuntimeConfig fallbacks default to `autoSelectionPolicy: optimized`, which keeps that floor in force. A platform may set `autoSelectionPolicy: any` to admit the generated profile only when no optimized profile matches and the service did not explicitly set `minimumType`. The chart-provided NVIDIA fallback uses this policy for out-of-the-box model-ID onboarding. See [Optimization tier and auto-selection policy](runtime-config.md#optimization-tier-and-auto-selection-policy).
 :::
 
 ### Resolution strategy
 
-`spec.modelId` is one flow with room for more than one resolution mechanism.
-`status.profileGeneration.strategy` reports which one ran, and
-`status.profileGeneration.matchedFallbacks` lists the fallbacks that produced a
-profile:
+`status.profileGeneration.strategy` reports the resolution mechanism, and `status.profileGeneration.matchedFallbacks` lists the fallbacks that produced a profile:
 
 ```yaml
 status:
@@ -153,12 +168,7 @@ status:
     matchedFallbacks: [nvidia-vllm]
 ```
 
-`RuntimeFallback` is the only strategy today: this flow does **not** yet perform
-an AMD catalog lookup, and AMD catalog onboarding remains the image-backed
-Official flow. When catalog lookup lands it will be tried first, with
-RuntimeConfig fallbacks second, and will report its own `strategy` value —
-`status.kind` stays `Generated` either way, so a model's classification does not
-change under it.
+`RuntimeFallback` resolves generated profiles from RuntimeConfig fallbacks. Existing copyable generated profiles also participate in profile-set source selection. The generated source pool consists of materialised profiles; RuntimeConfig fallback definitions belong to the generation flow.
 
 ## Flow 3 — Fine-tuned model
 
@@ -190,7 +200,7 @@ See [Fine-Tuned Models](../guides/fine-tuned-models.md) for the full walkthrough
 
 ## Flow 4 — Custom model
 
-Use this when your model's architecture isn't in the catalog. You apply a **base-image AIMModel** first to produce base profiles (generic runtime configs with no model identity), then a custom-model AIMModel that overlays your weights and identity on top.
+Use this when your model's architecture isn't in the catalog. Apply a **base-image AIMModel** to publish base definitions (generic runtime configs with no model identity), then a custom-model AIMModel that overlays your weights and identity.
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
@@ -232,7 +242,7 @@ See [Custom Models](../guides/custom-models.md) for the full walkthrough, the id
 
 ## Base-image models
 
-A **base-image AIMModel** is just an official-flow AIMModel whose image happens to be a generic AIM base image — one whose profile YAMLs declare runtime/engine/accelerator settings but leave `model_id` and `model_sources` empty. The controller materialises those entries as **base** AIMProfiles:
+A **base-image AIMModel** uses a generic AIM base image whose profile YAMLs declare runtime/engine/accelerator settings and leave model identity and sources empty. Its complete catalog supplies **base** definitions for derivation. When `spec.profiles` is omitted, hardware-supported entries are materialised as base AIMProfiles:
 
 - `status.deployable: false`
 - `aim.eai.amd.com/profile-role: base`
@@ -240,15 +250,16 @@ A **base-image AIMModel** is just an official-flow AIMModel whose image happens 
 
 Base profiles cannot back an `AIMService` directly. They exist as source material for a custom-model derivation (see [Flow 4](#flow-4-custom-model)).
 
-A model is a base-image AIMModel when `status.managedProfiles.base > 0` and `status.managedProfiles.deployable == 0` (with `status.kind: Image`). The `kind` is `Image` rather than its own value because — mechanically — a base image is just a regular image whose profile YAMLs happen to leave the model identity fields blank; the image-discovery flow is the same. The `managedProfiles.base > 0` count is what flags the profiles as base-only.
+`status.kind` is `Image`. A non-zero `status.managedProfiles.base` count identifies materialised base profiles; zero materialised profiles can still accompany a complete base catalog. Use `selector.role: base` on a separate derived model or profile set to select those definitions.
 
 ## Discovery cache
 
-For both official and base-image flows, the discovery Job writes its output into a `ConfigMap` that the controller treats as the normalised catalog. The cache stores:
+For image-backed models, the discovery Job writes its output into a `ConfigMap`. The cache stores:
 
-- Parsed profile YAMLs from the image
-- Normalised metadata in the same shape that real `AIMProfile` resources use
-- The base image extracted from `AIM_BASE_IMAGE_REF` when available
+- Raw profile YAML documents under `profiles.*.yaml` keys
+- Discovery metadata in `metadata.json`, including the base image extracted from `AIM_BASE_IMAGE_REF` when available
+
+The operator parses and normalises these documents in a shared in-process catalog cache. Profile-set selection resolves the owning model's current catalog automatically. The ConfigMap reference is useful for inspection; ordinary selectors operate across model definitions and copyable profile resources.
 
 `status.discoveryCacheRef` points at this `ConfigMap`. `status.discovery` tracks the job lifecycle:
 
@@ -259,11 +270,11 @@ For both official and base-image flows, the discovery Job writes its output into
 | `discovery.lastFailureReason` | Reason the most recent attempt failed (e.g. `LogParseFailed`, `ImagePullBackOff`) |
 | `discovery.specHash` | Hash of the inputs that invalidate the cache (image, imagePullSecrets, serviceAccountName, discovery command version) |
 
-When `specHash` changes — for example, you rotate `serviceAccountName` or upgrade the image tag — the operator drops the cache and re-runs discovery.
+When `specHash` changes — for example, you rotate `serviceAccountName` or upgrade the image tag — the operator invalidates the catalog and re-runs discovery. During discovery or a source-read failure, existing derived outputs are retained. Current model ownership and discovery inputs determine which catalog is valid, including after an operator restart or model recreation.
 
 ## Profile-set delegation
 
-For derivation flows (fine-tuned and custom), the controller synthesises a child `AIMProfileSet` (or `AIMClusterProfileSet`) named `<model>-profiles-<hash>` and lets it produce the derived profiles. The model summarises the profile-set output back onto its own status; see [AIM Profile Sets](profilesets.md) for the mechanics.
+For every model with `spec.profiles`, the controller synthesises a child `AIMProfileSet` (or `AIMClusterProfileSet`) named `<model>-profiles-<hash>` and lets it select external sources and produce derived profiles. The model summarises its child profile-set output back onto its own status; see [AIM Profile Sets](profilesets.md) for the mechanics.
 
 `status.profileSetRef` points at the child resource:
 
@@ -273,7 +284,7 @@ kubectl get aimmodel acme-custom-transformer \
 # acme-custom-transformer-profiles-2be25a47
 ```
 
-Official-flow models do not create a child profile set — `status.profileSetRef` is empty.
+Image-backed models without `spec.profiles` materialise supported discoveries directly; `status.profileSetRef` is empty. Standalone profile sets own their outputs independently, so their output counts and readiness belong to the set, not to the source model.
 
 ## Spec fields
 
@@ -281,19 +292,17 @@ The unified `spec` shape used by all four flows:
 
 | Field | Used by | Description |
 |---|---|---|
-| `image` | Official, Base | Source image to inspect for discovery. Mutually exclusive with `modelId` and `profiles`. |
+| `image` | Image-backed, Base | Source image to inspect for discovery. Exclusive with `profiles` and `modelId`. |
 | `modelId` | Generated | Canonical model identity used to generate profiles from RuntimeConfig fallbacks. |
 | `aimId` | Generated | Optional architecture identity override; defaults to `modelId`. |
 | `source` | Generated | Optional source URI and metadata override; URI defaults to `hf://<modelId>`. |
 | `accelerator` | Generated | Optional hardware request — `count` (default 1), `vendor`, `model`, `partitioningMode`. Narrows which RuntimeConfig fallback applies and is stamped on the generated profile. Rejected without `modelId`. |
 | `runtimeConfigName` | Generated | Optional RuntimeConfig name; defaults to `default`. |
-| `profiles` | Fine-tuned, Custom | Derivation spec — selector, version policy, overrides. Mutually exclusive with `image` and `modelId`. |
+| `profiles` | Image-backed, Fine-tuned, Custom | Profile selection and overrides. With `image`, `derivedFrom` is optional and selection is local to the image. Without `image`, `derivedFrom` is required and selects external sources using the version policy. Exclusive with `modelId`. |
 | `imagePullSecrets` | Official, Fine-tuned, Custom | Secrets used for image inspection and propagated to derived runtime profiles. `AIMModel` discovery resolves them in the model namespace; `AIMClusterModel` discovery resolves them in the operator namespace. Consumers of a cluster profile need corresponding credentials in their service namespace. Generated-flow pull secrets belong on the RuntimeConfig fallback. See [Private Registries](../guides/private-registries.md). |
 | `serviceAccountName` | Official, Fine-tuned, Custom | Service account propagated to managed child resources. Generated-flow service accounts belong on the RuntimeConfig fallback. |
 
-The v1alpha2 CRD explicitly forbids legacy fields such as `spec.modelSources`,
-`spec.custom`, `spec.customTemplates`, and `spec.profileCopy`. `spec.aimId`,
-`spec.source`, and `spec.runtimeConfigName` are valid for the generated flow.
+The v1alpha2 CRD explicitly forbids legacy fields such as `spec.modelSources`, `spec.custom`, `spec.customTemplates`, and `spec.profileCopy`. `spec.aimId`, `spec.source`, and `spec.runtimeConfigName` are valid for the generated flow.
 
 ## Status fields
 
@@ -305,13 +314,17 @@ The v1alpha2 CRD explicitly forbids legacy fields such as `spec.modelSources`,
 | `profileGeneration` | `Generated` models only: `strategy` (the resolution mechanism that ran — `RuntimeFallback` today) and `matchedFallbacks` (the RuntimeConfig fallbacks that produced a profile). |
 | `aimId` | Resolved architecture identifier — populated by discovery for `Image` models, defaulted from `modelId` for `Generated` models, and inherited or overridden for `Custom`/`Derived` models |
 | `baseImage` | Extracted `AIM_BASE_IMAGE_REF` when available |
-| `discoveryCacheRef` | Reference to the normalised discovery cache `ConfigMap` (official and base-image flows only) |
-| `discoveredProfiles` | Counts: `total`, `supported`, `unsupported`, plus `byHardware[]` listing each discovered hardware footprint with the `{metric, precision}` profiles shipped under it (so unsupported profiles surface explicitly). |
+| `discoveryCacheRef` | Reference to the raw discovery cache `ConfigMap` (image-backed flows) |
+| `discoveredProfiles` | Raw catalog counts: `total`, `supported`, `unsupported`, plus `byHardware[]` listing each discovered hardware footprint with its `{metric, precision}` profiles. Inline overrides leave these discovery counts unchanged. |
 | `discovery` | Discovery Job state: `attempts`, `lastAttemptTime`, `lastFailureReason`, `specHash` |
-| `profileSetRef` | Reference to the synthesised child profile set (derivation flows only) |
-| `managedProfiles` | Counts: `total`, `ready`, `notAvailable`, `deployable`, `base` |
+| `profileSetRef` | Reference to the synthesised child profile set when `spec.profiles` is set |
+| `managedProfiles` | Actual managed output counts: `total`, `ready`, `notAvailable`, `deployable`, `base`. |
 
 The `managedProfiles` counts always serialise zero values explicitly (no `omitempty`), so `kubectl` printcolumns and assertions on `.status.managedProfiles.{total,ready,...}` are stable.
+
+For models using `spec.profiles`, the child profile set provides alternative profiles, not a requirement that every hardware variant be available. A valid, current child set with at least one ready profile can make the model `Ready`, even if other alternatives are unavailable, failed, or still reconciling. The child must be controlled by this model, match the model's current requested profile-set spec, and have current observed status. Errors establishing that desired state still block readiness; individual alternative diagnostics remain on the profiles.
+
+Availability does not relax replacement safety: pruning predecessor profiles during a transition to derivation still waits for the complete current replacement set to be ready.
 
 ## Resolution and precedence
 
@@ -349,16 +362,16 @@ Common causes:
 
 `status.discovery.lastFailureReason` captures the most recent reason, and `status.conditions[?(@.type=='DiscoveryReady')]` carries the human-readable message including the next retry interval.
 
-### Model is `Ready` but no profiles materialised
+### Discovery succeeds but no profiles materialise
 
-`status.managedProfiles.total == 0` and `status.discoveredProfiles.unsupported > 0` means discovery succeeded but none of the discovered profiles are compatible with the cluster's hardware. Compare the cluster's accelerator labels:
+With `DiscoveryReady=True`, `status.managedProfiles.total == 0` and `status.discoveredProfiles.unsupported > 0` indicate that discovery found definitions whose hardware is unavailable. Compare the cluster's accelerator labels:
 
 ```bash
 kubectl get nodes -o jsonpath='{.items[*].metadata.labels}' \
   | tr ',' '\n' | grep aim-accelerator
 ```
 
-against the accelerator requirements in the discovery cache `ConfigMap`. Add matching nodes or, if the discovered profiles are wrong, fix the source image.
+against the accelerator requirements in `status.discoveredProfiles.byHardware` or the discovery cache. The complete definitions remain selectable by profile sets. Use a standalone set to derive hardware variants across models, or a separate derived model to expose the variant under its own model name.
 
 ### Derivation produces no profiles
 
@@ -370,6 +383,8 @@ kubectl get aimprofileset $(kubectl get aimmodel <name> \
 ```
 
 `DerivationReady=False / NoMatchingProfiles` means the selector matched zero source candidates. See the troubleshooting sections in [Fine-Tuned Models](../guides/fine-tuned-models.md#troubleshooting) and [Custom Models](../guides/custom-models.md#troubleshooting).
+
+`DerivationReady=False / NoEligibleProfiles` means matching profile resources exist but are not published as copyable. Annotate a hand-authored source profile with `aim.eai.amd.com/profile-copyable: "true"`. If the source is generated by another derivation and the chain is intentional, enable `outputPolicy.copyable` on that producer rather than annotating its generated profiles directly.
 
 ## Related documentation
 

@@ -1,0 +1,23 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: profileset-no-recopy-source
+  annotations:
+    aim.eai.amd.com/base-image: docker.io/amdenterpriseai/aim-base:0.1.10
+    aim.eai.amd.com/profile-copyable: "true"
+    aim.eai.amd.com/profile-yaml-contract: '{"codec":"aim-profile/v1","metadataFields":["accelerator_count","accelerator_type","engine","metric","precision","type"]}'
+spec:
+  aimId: HuggingFaceTB/SmolLM2-135M
+  modelId: HuggingFaceTB/SmolLM2-135M
+  profileId: cpu-bf16-latency
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  acceleratorType: cpu
+  acceleratorCount: 1
+  primary: true
+  modelSources:
+    - modelId: HuggingFaceTB/SmolLM2-135M
+      sourceUri: hf://HuggingFaceTB/SmolLM2-135M

@@ -410,7 +410,6 @@ func (r *ProfileReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ProfileObservation,
 ) {
-	status.ObservedGeneration = obs.profile.Generation
 	decorateProfileStatus(
 		status, cm,
 		obs.profile.Spec.AIMProfileSpecCommon,
@@ -448,7 +447,6 @@ func (r *ClusterProfileReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ClusterProfileObservation,
 ) {
-	status.ObservedGeneration = obs.profile.Generation
 	decorateProfileStatus(
 		status, cm,
 		obs.profile.Spec.AIMProfileSpecCommon,

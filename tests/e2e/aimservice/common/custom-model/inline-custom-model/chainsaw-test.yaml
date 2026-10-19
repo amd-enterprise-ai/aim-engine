@@ -7,8 +7,9 @@
 #
 # Tested behavior:
 # - AIMService with spec.model.custom auto-creates AIMModel
-# - Auto-created AIMModel has correct image, modelSources, and hardware
-# - Auto-created AIMModel has managed-by label
+# - Auto-created AIMModel persists the correct image and canonical compatibility
+#   payload without writing predecessor-only fields back to spec
+# - Auto-created AIMModel has provenance labels and UID-bound service ownership
 # - AIMServiceTemplate is auto-generated from model
 # - Service resolves to the auto-created model
 # - Service progresses to Starting status
@@ -33,7 +34,7 @@ spec:
         - apply:
             file: service.yaml
 
-    - name: Assert AIMModel is auto-created with correct spec
+    - name: Assert AIMModel persists the supported compatibility contract
       try:
         - assert:
             timeout: 120s
@@ -44,18 +45,39 @@ spec:
                 labels:
                   aim.eai.amd.com/origin: auto-generated
                   aim.eai.amd.com/custom-model: "true"
+                  aim.eai.amd.com/service: test-inline-custom-model
+                annotations:
+                  aim.eai.amd.com/legacy-auto-custom-spec: '{"baseImage":"docker.io/amdenterpriseai/aim-dummy:0.2.0","modelSources":[{"modelId":"inline/test-model","sourceUri":"hf://sshleifer/tiny-gpt2"}],"hardware":{"gpu":{"requests":1,"resourceName":"amd.com/gpu"}}}'
+                (ownerReferences[?apiVersion == 'aim.eai.amd.com/v1alpha2' && kind == 'AIMService' && name == 'test-inline-custom-model']):
+                  - controller: true
+                    blockOwnerDeletion: true
               spec:
-                # Image from custom.baseImage
                 image: docker.io/amdenterpriseai/aim-dummy:0.2.0
-                # ModelSources from custom.modelSources
-                modelSources:
-                  - modelId: inline/test-model
-                    sourceUri: hf://sshleifer/tiny-gpt2
-                # Hardware from custom.hardware
-                custom:
-                  hardware:
-                    gpu:
-                      requests: 1
+                (modelSources == null): true
+                (custom == null): true
+
+    - name: Assert model ownership is bound to the source service UID
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              SERVICE=test-inline-custom-model
+              MODEL=$(kubectl get aimservice "$SERVICE" -n "$NAMESPACE" \
+                -o jsonpath='{.status.resolvedModel.name}')
+              SERVICE_UID=$(kubectl get aimservice "$SERVICE" -n "$NAMESPACE" \
+                -o jsonpath='{.metadata.uid}')
+              kubectl get aimmodel "$MODEL" -n "$NAMESPACE" -o json |
+                jq -e --arg service "$SERVICE" --arg uid "$SERVICE_UID" '
+                  (.metadata.ownerReferences | length) == 1 and
+                  .metadata.ownerReferences[0].kind == "AIMService" and
+                  .metadata.ownerReferences[0].name == $service and
+                  .metadata.ownerReferences[0].uid == $uid and
+                  .metadata.ownerReferences[0].controller == true and
+                  .metadata.ownerReferences[0].blockOwnerDeletion == true
+                ' >/dev/null
 
     - name: Wait for auto-created AIMModel to become Ready
       try:

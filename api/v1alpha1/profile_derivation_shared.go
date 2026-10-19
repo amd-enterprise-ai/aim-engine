@@ -71,12 +71,16 @@ const (
 type ProfileVersionPolicy string
 
 const (
+	// ProfileVersionPolicyPinned matches the requested source version; requires version.
 	ProfileVersionPolicyPinned ProfileVersionPolicy = "pinned"
+	// ProfileVersionPolicyLatest selects the highest matching source version.
 	ProfileVersionPolicyLatest ProfileVersionPolicy = "latest"
-	ProfileVersionPolicyAll    ProfileVersionPolicy = "all"
+	// ProfileVersionPolicyAll selects all matching profiles, including versionless sources.
+	ProfileVersionPolicyAll ProfileVersionPolicy = "all"
 )
 
-// ProfileSourceRef identifies an alternate discovery cache source for derivation.
+// ProfileSourceRef identifies an alternate catalog ConfigMap for derivation.
+// It replaces default selection across model definitions and copyable profiles.
 type ProfileSourceRef struct {
 	// Name is the discovery cache ConfigMap name.
 	Name string `json:"name"`
@@ -90,8 +94,9 @@ type ProfileSourceRef struct {
 type ProfileSelectorScope string
 
 const (
-	// ProfileSelectorScopeAuto tries the namespace AIMModel first and then
-	// falls back to the cluster-scoped AIMClusterModel with the same name.
+	// ProfileSelectorScopeAuto selects fully matching namespace candidates
+	// first, then falls back to cluster candidates with the same model name
+	// when no local match exists. Cluster sets select cluster sources only.
 	ProfileSelectorScopeAuto ProfileSelectorScope = "Auto"
 	// ProfileSelectorScopeNamespace requires the source profile to come from
 	// an AIMModel in the same namespace as the selecting AIMProfileSet.
@@ -102,9 +107,9 @@ const (
 )
 
 // ProfileSelectorModelRef narrows derivation candidates by their owning
-// AIMModel / AIMClusterModel. The v1alpha2 AIMProfileSet reconciler matches
-// candidates by the `aim.eai.amd.com/source-model[-scope]` labels stamped by
-// AIMModel reconcilers.
+// AIMModel / AIMClusterModel. Definitions carry model ownership before
+// materialisation; profile resources expose that ownership through the
+// `aim.eai.amd.com/source-model[-scope]` labels.
 type ProfileSelectorModelRef struct {
 	// Name is the owning AIM(Cluster)Model name. Required.
 	// +kubebuilder:validation:MinLength=1
@@ -159,7 +164,10 @@ const (
 	ProfileOriginUserAuthored ProfileOrigin = "user-authored"
 )
 
-// ProfileSelector narrows the source profiles selected for derivation.
+// ProfileSelector filters by source identity, runtime, hardware, and provenance.
+// Derivation evaluates published model definitions and copyable profile resources;
+// AIMService evaluates materialised deployable profile resources.
+// All supplied criteria must match.
 type ProfileSelector struct {
 	// AimId filters by model architecture identifier (e.g., "qwen/qwen3-32b").
 	// +optional
@@ -241,9 +249,8 @@ type ProfileSelector struct {
 	// +optional
 	EngineArgs *apiextensionsv1.JSON `json:"engineArgs,omitempty"`
 
-	// ModelRef narrows candidates to those produced by a specific
-	// AIM(Cluster)Model, matched via the `aim.eai.amd.com/source-model[-scope]`
-	// labels stamped by the AIMModel reconcilers. Iteration 1 (v1alpha2 only).
+	// ModelRef optionally narrows candidates to definitions and profiles
+	// published by a specific AIM(Cluster)Model. Omit to select across models.
 	// +optional
 	ModelRef *ProfileSelectorModelRef `json:"modelRef,omitempty"`
 
@@ -254,9 +261,9 @@ type ProfileSelector struct {
 	// +kubebuilder:default=deployable
 	Role ProfileSelectorRole `json:"role,omitempty"`
 
-	// Origin filters by the `aim.eai.amd.com/profile-origin` label. When unset
-	// (empty) the selector does not filter by origin. Iteration 1 (v1alpha2
-	// only).
+	// Origin filters source provenance across catalog and resource
+	// representations.
+	// Empty means no origin filter.
 	// +optional
 	Origin ProfileOrigin `json:"origin,omitempty"`
 }
@@ -308,10 +315,10 @@ type ProfileOverrides struct {
 	// +listType=set
 	Features []string `json:"features,omitempty"`
 
-	// Image overrides the runtime container image used by the derived
-	// profiles. When empty the deployment image is rebased onto the source
-	// profile's base-image (status.baseImage) so private mirrors stay
-	// self-contained.
+	// Image overrides the runtime container image. With no explicit image
+	// override, replacing modelSources on a deployable source resolves its
+	// base runtime; hardware-only and environment-only overrides retain the
+	// source image. This takes precedence over a profile set's top-level image.
 	// +optional
 	Image string `json:"image,omitempty"`
 
@@ -327,15 +334,12 @@ type ProfileOverrides struct {
 	// +optional
 	AcceleratorCount *int32 `json:"acceleratorCount,omitempty"`
 
-	// AcceleratorPartitioningMode replaces the copied profile's
-	// acceleratorPartitioningMode. Complete replacement, not a merge; an empty
-	// override string leaves the source profile's mode untouched. Same reserved
-	// values as AIMProfileSpecCommon.AcceleratorPartitioningMode. Whenever this
-	// override is set (to any value, including "unpartitioned"), the CEL rule on the
-	// enclosing spec also requires AcceleratorCount to be set: partition mode
-	// changes the per-unit interpretation of acceleratorCount, and CEL cannot
-	// read the base profile to tell whether the meaning actually changed, so it
-	// conservatively requires the count be restated.
+	// AcceleratorPartitioningMode replaces the source partitioning mode.
+	// An empty override leaves the source mode unchanged. Uses the same values
+	// as AIMProfileSpecCommon.acceleratorPartitioningMode. When set,
+	// profile-set and model derivation require explicit source
+	// selector.acceleratorCount and target overrides.acceleratorCount.
+	// Tensor-parallel size remains an independent engine argument.
 	// +optional
 	AcceleratorPartitioningMode string `json:"acceleratorPartitioningMode,omitempty"`
 
@@ -356,6 +360,17 @@ type ProfileOverrides struct {
 	EngineArgs *apiextensionsv1.JSON `json:"engineArgs,omitempty"`
 }
 
+// ProfileOutputPolicy controls whether profiles produced by a derivation may
+// be used as sources for a later derivation.
+type ProfileOutputPolicy struct {
+	// Copyable publishes derived profiles as eligible sources for subsequent
+	// profile derivations. It is disabled by default so each derivation boundary
+	// remains explicit. Disabling copyability, deleting the producer, or changing
+	// its selection can remove downstream derived profiles immediately.
+	// +optional
+	Copyable bool `json:"copyable,omitempty"`
+}
+
 // AIMProfileSetSpec defines the desired state of AIMProfileSet and is also reused by AIMModel.profileCopy.
 //
 // The selector-non-empty rule accepts every documented narrowing field
@@ -363,19 +378,32 @@ type ProfileOverrides struct {
 // when sourceRef is set, the discovery cache itself acts as the source
 // scope and a separate selector is not required.
 //
-// +kubebuilder:validation:XValidation:rule="has(self.sourceRef) || has(self.selector.aimId) || has(self.selector.modelId) || has(self.selector.profileId) || has(self.selector.engine) || has(self.selector.metric) || has(self.selector.precision) || has(self.selector.type) || has(self.selector.acceleratorModel) || has(self.selector.acceleratorVendor) || has(self.selector.acceleratorType) || has(self.selector.acceleratorCount) || has(self.selector.engineArgs) || has(self.selector.modelRef) || has(self.selector.origin)",message="selector must set at least one matching field, or set sourceRef"
+// Default selection combines image-backed model definitions with existing
+// copyable profile resources. A model definition and its materialised profile
+// represent one logical source. Namespace sets use fully matching local
+// candidates, falling back to cluster sources only when no local match exists;
+// cluster sets use cluster sources only.
+//
+// Partitioning overrides require both selector.acceleratorCount and
+// overrides.acceleratorCount.
+//
+// +kubebuilder:validation:XValidation:rule="has(self.sourceRef) || has(self.selector.aimId) || has(self.selector.modelId) || has(self.selector.profileId) || has(self.selector.engine) || has(self.selector.metric) || has(self.selector.precision) || has(self.selector.type) || has(self.selector.minimumType) || has(self.selector.acceleratorModel) || has(self.selector.acceleratorVendor) || has(self.selector.acceleratorPartitioningMode) || has(self.selector.acceleratorType) || has(self.selector.acceleratorCount) || has(self.selector.engineArgs) || has(self.selector.modelRef) || has(self.selector.origin)",message="selector must set at least one matching field, or set sourceRef"
+// +kubebuilder:validation:XValidation:rule="!has(self.sourceRef) || !has(self.selector) || !has(self.selector.modelRef)",message="sourceRef and selector.modelRef are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="has(self.version) || (has(self.versionPolicy) && self.versionPolicy != 'pinned')",message="version is required when versionPolicy is pinned"
 // +kubebuilder:validation:XValidation:rule="!has(self.versionPolicy) || (self.versionPolicy != 'latest' && self.versionPolicy != 'all') || !has(self.version)",message="latest/all versionPolicy must not set version"
-// +kubebuilder:validation:XValidation:rule="!(has(self.selector.role) && self.selector.role == 'base') || (!has(self.selector.aimId) && !has(self.selector.modelId) && !has(self.selector.profileId))",message="selector.aimId/modelId/profileId are not allowed when selector.role=base; set overrides.aimId/modelId/profileId instead (base profiles have no source identity to filter on)"
-// +kubebuilder:validation:XValidation:rule="!(has(self.selector.role) && self.selector.role == 'base') || (has(self.overrides) && has(self.overrides.aimId) && has(self.overrides.modelId))",message="selector.role=base requires overrides.aimId and overrides.modelId (base profiles carry no identity of their own; overrides supply it)"
+// +kubebuilder:validation:XValidation:rule="!has(self.selector) || !(has(self.selector.role) && self.selector.role == 'base') || (!has(self.selector.aimId) && !has(self.selector.modelId) && !has(self.selector.profileId))",message="selector.aimId/modelId/profileId are not allowed when selector.role=base; set overrides.aimId/modelId/profileId instead (base profiles have no source identity to filter on)"
+// +kubebuilder:validation:XValidation:rule="!has(self.selector) || !(has(self.selector.role) && self.selector.role == 'base') || (has(self.overrides) && has(self.overrides.aimId) && has(self.overrides.modelId))",message="selector.role=base requires overrides.aimId and overrides.modelId (base profiles carry no identity of their own; overrides supply it)"
 // +kubebuilder:validation:XValidation:rule="!has(self.overrides) || !has(self.overrides.acceleratorPartitioningMode) || size(self.overrides.acceleratorPartitioningMode) == 0 || has(self.overrides.acceleratorCount)",message="overrides.acceleratorCount must be specified together with any overrides.acceleratorPartitioningMode; partition mode changes the per-unit interpretation of acceleratorCount"
 //
 //nolint:lll // kubebuilder marker; CEL rule cannot be wrapped across lines
 type AIMProfileSetSpec struct {
 	// SourceRef points to an alternate discovery cache source.
-	// When omitted, derivation uses visible AIMProfile and AIMClusterProfile objects.
+	// When omitted, derivation uses published image-model definitions and visible
+	// copyable AIMProfile and AIMClusterProfile objects, with namespace-first fallback.
 	// For AIMProfileSet, the referenced ConfigMap is read from the same namespace.
 	// For AIMClusterProfileSet, it is read from the operator namespace.
+	// Mutually exclusive with selector.modelRef; other selector fields may
+	// filter the catalog contents.
 	// +optional
 	SourceRef *ProfileSourceRef `json:"sourceRef,omitempty"`
 
@@ -399,6 +427,11 @@ type AIMProfileSetSpec struct {
 	// Overrides mutates the copied profile spec after selection and version filtering.
 	// +optional
 	Overrides *ProfileOverrides `json:"overrides,omitempty"`
+
+	// OutputPolicy controls whether profiles produced by this set may be used
+	// as sources for subsequent derivations.
+	// +optional
+	OutputPolicy *ProfileOutputPolicy `json:"outputPolicy,omitempty"`
 
 	// ImagePullSecrets lists secrets used for inspecting and pulling container images.
 	// +optional
@@ -433,13 +466,9 @@ type ManagedProfileCounts struct {
 	// derive into deployable profiles.
 	Deployable int32 `json:"deployable"`
 
-	// Base is the number of managed profiles whose spec is structurally
-	// incomplete (missing aimId or modelSources). Base profiles cannot back
-	// an AIMService directly and exist purely as source material for
-	// derivation via AIMModel.spec.profiles.derivedFrom with
-	// selector.role=base. A non-zero value is the canonical operational
-	// signal that this model is a base-image model (the source of
-	// custom-model derivation).
+	// Base counts managed base profile resources with empty aimId and
+	// modelSources. They supply custom-model derivation with selector.role=base.
+	// Catalog base definitions remain selectable when this materialised count is zero.
 	Base int32 `json:"base"`
 }
 
@@ -554,6 +583,10 @@ func (s *AIMProfileSetStatus) GetConditions() []metav1.Condition {
 
 func (s *AIMProfileSetStatus) SetConditions(conditions []metav1.Condition) {
 	s.Conditions = conditions
+}
+
+func (s *AIMProfileSetStatus) SetObservedGeneration(generation int64) {
+	s.ObservedGeneration = generation
 }
 
 func (s *AIMProfileSetStatus) SetStatus(status string) {

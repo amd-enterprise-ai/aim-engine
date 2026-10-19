@@ -17,15 +17,15 @@
 #      (aim-service-controller), the re-apply that omits containers drops the
 #      inline predictor and adds the runtime reference. The referenced runtime is
 #      materialized cross-scope by the always-on lazy InferenceService-watch
-#      projection, and KServe binds it. The test also confirms that a running
-#      predictor survives the transient runtime-resolution window.
+#      projection, and KServe binds it. The locally built aim-dummy image lets
+#      both old and new shapes become Ready, proving cleanup waits for a safe,
+#      current runtime transition.
 #
-# Pod readiness is intentionally NOT asserted: the placeholder image
-# (registry.example.com) never pulls and the cache download is simulated, so the
-# predictor pod cannot serve. Like the sibling runtime-projection tests, this
-# asserts the deterministic render-time contract — the reference rewrite, the
+# The cache download remains simulated; predictor readiness comes from the
+# reachable local test image. The test asserts the reference rewrite, the
 # dropped inline container, KServe binding, the projected-ConfigMap mount, and
-# the orphan-ConfigMap deletion.
+# orphan deletion only after InferenceService Ready=True observes the rewritten
+# generation.
 #
 # No accelerator is involved, so the cluster profile reaches Ready in any
 # cluster; the cache PVC only needs a default RWX StorageClass. No `requires`
@@ -100,15 +100,16 @@ spec:
                 predictor:
                   containers:
                     - name: kserve-container
-                      image: registry.example.com/aim-cpu-base:0.12.0
+                      image: docker.io/amdenterpriseai/aim-dummy:0.2.0
                       ports:
-                        - containerPort: 8080
+                        - containerPort: 8000
                           protocol: TCP
               EOF
 
-    - name: Assert the pre-upgrade ISVC is in the inline shape
+    - name: Assert the pre-upgrade ISVC is inline, current, and Ready
       try:
         - assert:
+            timeout: 120s
             resource:
               apiVersion: serving.kserve.io/v1beta1
               kind: InferenceService
@@ -119,6 +120,10 @@ spec:
                 predictor:
                   (containers[?name == 'kserve-container']):
                     - name: kserve-container
+              status:
+                observedGeneration: 1
+                (conditions[?type == 'Ready']):
+                  - status: "True"
 
     - name: Create the AIMService that references the cluster profile
       try:
@@ -319,6 +324,38 @@ spec:
                 exit 1
               fi
               echo "OK: predictor Deployment survives the rewrite and mounts the projected profile ConfigMap"
+
+    - name: Assert the rewritten InferenceService is current and Ready
+      description: |
+        Guarded legacy ConfigMap cleanup requires Ready=True on the current
+        rewritten generation. Poll both fields together so a stale pre-upgrade
+        Ready condition cannot satisfy the migration safety contract.
+      try:
+        - script:
+            timeout: 120s
+            content: |
+              set -eu
+              ISVC=$(kubectl get inferenceservice -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=mig-svc \
+                -o jsonpath='{.items[0].metadata.name}')
+
+              for _ in $(seq 1 120); do
+                STATE=$(kubectl get inferenceservice "$ISVC" -n "$NAMESPACE" -o json)
+                GENERATION=$(echo "$STATE" | jq -r '.metadata.generation')
+                OBSERVED=$(echo "$STATE" | jq -r '.status.observedGeneration // 0')
+                READY=$(echo "$STATE" | jq -r \
+                  '[.status.conditions[]? | select(.type == "Ready")][0].status // ""')
+                if [ "$OBSERVED" = "$GENERATION" ] && [ "$READY" = "True" ]; then
+                  echo "InferenceService $ISVC is Ready at generation $GENERATION"
+                  exit 0
+                fi
+                sleep 1
+              done
+
+              echo "ERROR: InferenceService $ISVC did not become current and Ready"
+              kubectl get inferenceservice "$ISVC" -n "$NAMESPACE" -o yaml
+              kubectl get pods -n "$NAMESPACE" -o wide
+              exit 1
 
     - name: Assert the orphaned legacy service-owned ConfigMap is garbage-collected
       description: |

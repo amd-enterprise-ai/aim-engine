@@ -46,7 +46,7 @@ spec:
               APIVersion defines the versioned schema of this representation of an object.
               Servers should convert recognized schemas to the latest internal value, and
               may reject unrecognized values.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+              More info: https://git.k8s.
             type: string
           kind:
             description: |-
@@ -54,7 +54,7 @@ spec:
               Servers may infer this from the endpoint the client submits requests to.
               Cannot be updated.
               In CamelCase.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+              More info: https://git.k8s.
             type: string
           metadata:
             type: object
@@ -79,12 +79,7 @@ spec:
                         Variable references $(VAR_NAME) are expanded
                         using the previously defined environment variables in the container and
                         any service environment variables. If a variable cannot be resolved,
-                        the reference in the input string will be unchanged. Double $$ are reduced
-                        to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                        "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                        Escaped references will never be expanded, regardless of whether the variable
-                        exists or not.
-                        Defaults to "".
+                        the reference in the input string will be unchanged.
                       type: string
                     valueFrom:
                       description: Source for the environment variable's value. Cannot
@@ -103,7 +98,7 @@ spec:
                                 This field is effectively required, but due to backwards compatibility is
                                 allowed to be empty. Instances of this type with an empty value here are
                                 almost certainly wrong.
-                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                More info: https://kubernetes.
                               type: string
                             optional:
                               description: Specify whether the ConfigMap or its key
@@ -139,18 +134,12 @@ spec:
                               description: |-
                                 The key within the env file. An invalid key will prevent the pod from starting.
                                 The keys defined within a source may consist of any printable ASCII characters except '='.
-                                During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                               type: string
                             optional:
                               default: false
                               description: |-
                                 Specify whether the file or its key must be defined. If the file or key
                                 does not exist, then the env var is not published.
-                                If optional is set to true and the specified key does not exist,
-                                the environment variable will not be set in the Pod's containers.
-
-                                If optional is set to false and the specified key does not exist,
-                                an error will be returned during Pod creation.
                               type: boolean
                             path:
                               description: |-
@@ -205,7 +194,7 @@ spec:
                                 This field is effectively required, but due to backwards compatibility is
                                 allowed to be empty. Instances of this type with an empty value here are
                                 almost certainly wrong.
-                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                More info: https://kubernetes.
                               type: string
                             optional:
                               description: Specify whether the Secret or its key must
@@ -228,7 +217,6 @@ spec:
                 description: |-
                   Mode controls the ownership behavior of artifacts created by this profile cache.
                   - Dedicated: artifacts are owned by this profile cache and garbage collected when it's deleted.
-                  - Shared (default): artifacts have no owner references and persist independently.
                 enum:
                 - Dedicated
                 - Shared
@@ -256,16 +244,11 @@ spec:
                 description: |-
                   RequiresAdapterDisk requests that the backing model artifact carry a shared
                   ReadWriteMany adapter disk for LoRA serving. Set by the AIMService planner
-                  when the service serves adapters. When set, the cache stamps an adapterDisk
-                  onto the artifact it creates and won't adopt one lacking a disk; size and
-                  class come from AIMRuntimeConfig.Storage.
+                  when the service serves adapters.
                 type: boolean
               runtimeConfigName:
-                description: |-
-                  Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both
-                  as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority
-                  over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster
-                  runtime config with the name `default` is used, if it exists.
+                description: Name is the name of the runtime config to use for this
+                  resource.
                 type: string
               storageClassName:
                 description: |-
@@ -331,8 +314,7 @@ spec:
                     observedGeneration:
                       description: |-
                         observedGeneration represents the .metadata.generation that the condition was set based upon.
-                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
-                        with respect to the current state of the instance.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].
                       format: int64
                       minimum: 0
                       type: integer
@@ -341,8 +323,6 @@ spec:
                         reason contains a programmatic identifier indicating the reason for the condition's last transition.
                         Producers of specific condition types may define expected values and meanings for this field,
                         and whether the values are considered a guaranteed API.
-                        The value should be a CamelCase string.
-                        This field may not be empty.
                       maxLength: 1024
                       minLength: 1
                       pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$

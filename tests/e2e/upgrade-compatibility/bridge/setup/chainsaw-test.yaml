@@ -1,0 +1,125 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha1-bridge-setup
+  labels:
+    requires: upgrade-workflow
+spec:
+  description: |
+    Creates the pinned v0.2.6 predecessor corpus for the CPU-only bridge leg:
+    one Shared migration service, one Dedicated manual-handoff service, and one
+    separately namespaced inline-custom compatibility service.
+  timeouts:
+    assert: 300s
+    cleanup: 180s
+  steps:
+    - name: Create the v1alpha1 predecessor corpus
+      try:
+        - apply:
+            file: resources.yaml
+
+    - name: Wait for the explicit model and template
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMModel
+              metadata:
+                name: bridge-template-model
+              status:
+                status: Ready
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: bridge-template
+              status:
+                status: Ready
+
+    - name: Wait for every predecessor service
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: bridge-shared
+              status:
+                status: Running
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: bridge-dedicated
+              status:
+                status: Running
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: bridge-inline-custom
+                namespace: aim-upgrade-inline-custom
+              status:
+                status: Running
+
+    - name: Wait for Shared and Dedicated source caches
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: bridge-shared
+              spec:
+                mode: Shared
+              status:
+                status: Ready
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: bridge-dedicated
+              spec:
+                mode: Dedicated
+              status:
+                status: Ready
+
+    - name: Wait for predecessor InferenceServices
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: bridge-shared
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: bridge-dedicated
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                namespace: aim-upgrade-inline-custom
+                labels:
+                  aim.eai.amd.com/service: bridge-inline-custom
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"

@@ -245,7 +245,7 @@ def build_client() -> S3Client:
       - AWS_REGION / AWS_DEFAULT_REGION   signing region
       - AIM_S3_ADDRESSING_STYLE     path | virtual | auto
       - AIM_S3_SIGNATURE_VERSION    e.g. s3v4 | s3
-      - AWS_CA_BUNDLE               PEM CA bundle used for TLS verification
+      - AWS_CA_BUNDLE               path to a PEM CA bundle used for TLS verification
       - AIM_S3_INSECURE_SKIP_VERIFY true disables TLS verification (unsafe)
       - AIM_S3_MAX_CONCURRENCY      per-object multipart threads
       - AIM_S3_MULTIPART_CHUNKSIZE_MB  multipart chunk size in MiB

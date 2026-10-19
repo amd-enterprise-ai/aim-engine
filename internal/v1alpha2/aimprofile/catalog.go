@@ -51,9 +51,8 @@ import (
 //                                     baseImage, sourceSpecHash, discoveryCommandVersion,
 //                                     profileIds, discoveredAt}.
 //
-// There is no persisted catalog.json. The DiscoveryCatalog struct is rebuilt in-memory
-// from the raw YAMLs on every read, so parser changes apply immediately without
-// migrating existing caches.
+// There is no persisted catalog.json. Parsed catalogs are immutable, process-local
+// snapshots keyed by ConfigMap revision.
 
 const (
 	// ProfilesDataKeyPrefix is the prefix every raw-profile key in the cache starts with.
@@ -126,31 +125,34 @@ type imageProfileFile struct {
 }
 
 type imageProfileMetadata struct {
-	Engine              string                                    `json:"engine"`
-	Variant             string                                    `json:"variant,omitempty"`
-	Metric              aimv1alpha1.AIMMetric                     `json:"metric"`
-	Precision           aimv1alpha1.AIMPrecision                  `json:"precision"`
-	Type                aimv1alpha1.AIMProfileType                `json:"type"`
-	AutoSelectionPolicy aimv1alpha1.AIMProfileAutoSelectionPolicy `json:"auto_selection_policy,omitempty"`
-	Primary             *bool                                     `json:"primary,omitempty"`
-	ManualSelectionOnly bool                                      `json:"manual_selection_only,omitempty"`
-	AcceleratorModel    string                                    `json:"accelerator_model,omitempty"`
-	GPU                 string                                    `json:"gpu,omitempty"`
-	AcceleratorType     aimv1alpha1.AcceleratorType               `json:"accelerator_type,omitempty"`
-	AcceleratorCount    *int32                                    `json:"accelerator_count,omitempty"`
-	GPUCount            *int32                                    `json:"gpu_count,omitempty"`
+	Engine                      string                                    `json:"engine"`
+	Variant                     string                                    `json:"variant,omitempty"`
+	Metric                      aimv1alpha1.AIMMetric                     `json:"metric"`
+	Precision                   aimv1alpha1.AIMPrecision                  `json:"precision"`
+	Type                        aimv1alpha1.AIMProfileType                `json:"type"`
+	AutoSelectionPolicy         aimv1alpha1.AIMProfileAutoSelectionPolicy `json:"auto_selection_policy,omitempty"`
+	Primary                     *bool                                     `json:"primary,omitempty"`
+	ManualSelectionOnly         bool                                      `json:"manual_selection_only,omitempty"`
+	AcceleratorModel            string                                    `json:"accelerator_model,omitempty"`
+	AcceleratorVendor           aimv1alpha1.AcceleratorVendor             `json:"accelerator_vendor,omitempty"`
+	AcceleratorPartitioningMode string                                    `json:"accelerator_partitioning_mode,omitempty"`
+	GPU                         string                                    `json:"gpu,omitempty"`
+	AcceleratorType             aimv1alpha1.AcceleratorType               `json:"accelerator_type,omitempty"`
+	AcceleratorCount            *int32                                    `json:"accelerator_count,omitempty"`
+	GPUCount                    *int32                                    `json:"gpu_count,omitempty"`
 	// Features mirrors the runtime's metadata.features (e.g. "adapters"); discovery
 	// materialises it onto AIMProfile.spec.features so gating matches the image.
 	Features []string `json:"features,omitempty"`
 }
 
-// ToCandidates returns the catalog entries as ProfileCopy candidates.
+// ToCandidates returns immutable views of the catalog entries. Override
+// application deep-copies selected specs before mutating them.
 func (c DiscoveryCatalog) ToCandidates() []ProfileCopyCandidate {
 	out := make([]ProfileCopyCandidate, 0, len(c.Profiles))
 	for _, item := range c.Profiles {
 		out = append(out, ProfileCopyCandidate{
 			Name:         item.Name,
-			Spec:         *item.Spec.DeepCopy(),
+			Spec:         item.Spec,
 			Status:       aimv1alpha2.AIMProfileStatus{Version: item.Version},
 			BaseImage:    firstNonEmpty(item.BaseImage, c.BaseImage),
 			YAMLContract: item.YAMLContract,
@@ -210,9 +212,6 @@ func ParseDiscoveryCatalog(cm *corev1.ConfigMap) (*DiscoveryCatalog, error) {
 		if _, ok := UnflattenProfileKey(k); ok {
 			keys = append(keys, k)
 		}
-	}
-	if len(keys) == 0 {
-		return nil, fmt.Errorf("ConfigMap %s/%s has no %s*%s keys", cm.Namespace, cm.Name, ProfilesDataKeyPrefix, ProfilesDataKeySuffix)
 	}
 	sort.Strings(keys)
 
@@ -294,7 +293,7 @@ func LoadDiscoveryCatalog(ctx context.Context, r client.Reader, ref aimv1alpha1.
 	if err := r.Get(ctx, client.ObjectKey{Name: ref.Name, Namespace: namespace}, &configMap); err != nil {
 		return nil, nil, err
 	}
-	catalog, err := ParseDiscoveryCatalog(&configMap)
+	catalog, err := CachedDiscoveryCatalog(&configMap)
 	if err != nil {
 		return &configMap, nil, err
 	}
@@ -382,25 +381,27 @@ func parseProfileYAMLIntoCatalogItem(raw []byte, relpath, defaultAimID, sourceIm
 		RelPath:         relpath,
 		PrimaryExplicit: parsed.Metadata.Primary != nil,
 		Spec: aimv1alpha2.AIMProfileSpecCommon{
-			AimId:               aimID,
-			ModelId:             parsed.ModelID,
-			ProfileId:           profileID,
-			Engine:              parsed.Metadata.Engine,
-			Variant:             parsed.Metadata.Variant,
-			Metric:              parsed.Metadata.Metric,
-			Precision:           parsed.Metadata.Precision,
-			Type:                parsed.Metadata.Type,
-			AutoSelectionPolicy: parsed.Metadata.AutoSelectionPolicy,
-			Primary:             primary,
-			ManualSelectionOnly: parsed.Metadata.ManualSelectionOnly,
-			AcceleratorModel:    acceleratorModel,
-			AcceleratorType:     acceleratorType,
-			AcceleratorCount:    acceleratorCount,
-			EngineArgs:          engineArgsJSON,
-			EngineEnv:           parsed.EnvVars,
-			Image:               sourceImage,
-			ModelSources:        deriveModelSources(parsed.ModelID),
-			Features:            append([]string(nil), parsed.Metadata.Features...),
+			AimId:                       aimID,
+			ModelId:                     parsed.ModelID,
+			ProfileId:                   profileID,
+			Engine:                      parsed.Metadata.Engine,
+			Variant:                     parsed.Metadata.Variant,
+			Metric:                      parsed.Metadata.Metric,
+			Precision:                   parsed.Metadata.Precision,
+			Type:                        parsed.Metadata.Type,
+			AutoSelectionPolicy:         parsed.Metadata.AutoSelectionPolicy,
+			Primary:                     primary,
+			ManualSelectionOnly:         parsed.Metadata.ManualSelectionOnly,
+			AcceleratorModel:            acceleratorModel,
+			AcceleratorVendor:           parsed.Metadata.AcceleratorVendor,
+			AcceleratorPartitioningMode: parsed.Metadata.AcceleratorPartitioningMode,
+			AcceleratorType:             acceleratorType,
+			AcceleratorCount:            acceleratorCount,
+			EngineArgs:                  engineArgsJSON,
+			EngineEnv:                   parsed.EnvVars,
+			Image:                       sourceImage,
+			ModelSources:                deriveModelSources(parsed.ModelID),
+			Features:                    append([]string(nil), parsed.Metadata.Features...),
 		},
 	}, nil
 }

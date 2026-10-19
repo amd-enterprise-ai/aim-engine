@@ -30,6 +30,7 @@ COPY adapter-reap.sh /adapter-reap.sh
 COPY adapter-subtree-sync.sh /adapter-subtree-sync.sh
 COPY progress-monitor.sh /progress-monitor.sh
 COPY check-size.sh /check-size.sh
+COPY combine-ca.sh /combine-ca.sh
 COPY hf-download.sh /hf-download.sh
 COPY hf-verify.sh /hf-verify.sh
 RUN mkdir -p /check-size /storage-initializer/scripts
@@ -38,7 +39,7 @@ COPY verify-files.py /verify-files.py
 COPY kserve-entrypoint.sh /storage-initializer/scripts/initializer-entrypoint
 COPY s3_downloader /opt/s3_downloader
 
-RUN chmod +x /entrypoint.sh /adapter-stage.sh /adapter-reap.sh /adapter-subtree-sync.sh /check-size.sh /progress-monitor.sh /storage-initializer/scripts/initializer-entrypoint /hf-download.sh /hf-verify.sh
+RUN chmod +x /entrypoint.sh /adapter-stage.sh /adapter-reap.sh /adapter-subtree-sync.sh /check-size.sh /combine-ca.sh /progress-monitor.sh /storage-initializer/scripts/initializer-entrypoint /hf-download.sh /hf-verify.sh
 
 
 RUN mkdir -p /cache/models && chown -R 1000:1000 /cache

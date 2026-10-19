@@ -85,16 +85,14 @@ const (
 // The four kinds correspond 1:1 to the onboarding flows documented in
 // concepts/models.md:
 //
-//   - Image    — spec.image is set; profiles come from in-cluster image
-//     discovery on that image. Covers both AMD-published official AIMs
-//     and any private image with profile YAMLs baked in (including
-//     base images used as source material for Custom-kind models).
-//   - Derived  — spec.profiles.derivedFrom with selector.role unset or
+//   - Image    — spec.image is set; discovery supplies the source definitions.
+//     Includes official AIM images, private images, and generic base images.
+//   - Derived  — spec.profiles.derivedFrom without spec.image, with selector.role unset or
 //     "deployable"; profiles are re-derived from another deployable
 //     model's profiles (e.g. fine-tunes that swap weights but keep
 //     the original model's architecture, runtime, and accelerator
 //     shapes).
-//   - Custom   — spec.profiles.derivedFrom with selector.role=base;
+//   - Custom   — spec.profiles.derivedFrom without spec.image, with selector.role=base;
 //     profiles are derived by overlaying BYO weights + target identity
 //     onto a base image's generic base profiles.
 //   - Generated — spec.modelId is set; profiles are generated from matching
@@ -334,11 +332,10 @@ type AIMCustomModelSpec struct {
 // +kubebuilder:validation:XValidation:rule="(has(self.image) && size(self.image) > 0) || (has(self.modelId) && size(self.modelId) > 0) || has(self.profileCopy) || has(self.derivedFrom) || has(self.profiles) || (has(self.aimId) && has(self.custom) && has(self.custom.versionPolicy) && self.custom.versionPolicy != 'pinned')",message="image or modelId is required unless aimId is set with versionPolicy latest or any, or profileCopy/derivedFrom/profiles is set"
 // +kubebuilder:validation:XValidation:rule="!has(self.profileCopy) || (!has(self.discovery) && !has(self.defaultServiceTemplate) && !has(self.custom) && (!has(self.customTemplates) || size(self.customTemplates) == 0) && (!has(self.modelSources) || size(self.modelSources) == 0) && (!has(self.runtimeConfigName) || size(self.runtimeConfigName) == 0) && (!has(self.env) || size(self.env) == 0) && !has(self.imageMetadata))",message="profileCopy cannot be combined with deprecated legacy AIMModel fields"
 //
-// Per-version constraints (v1alpha1 forbids derivedFrom and profiles;
-// v1alpha2 forbids profileCopy/custom/customTemplates/top-level modelSources,
-// requires image XOR profiles, and forbids profiles mixed with legacy scalar
-// fields) live on the version-specific AIMModel / AIMClusterModel root types
-// in the per-version *_types.go files.
+// v1alpha2 accepts exactly one of image, profiles, or modelId.
+// v1alpha1 forbids derivedFrom and profiles. v1alpha2 forbids
+// profileCopy/custom/customTemplates/top-level modelSources on new resources
+// and rejects profiles mixed with legacy scalar fields.
 //
 //nolint:lll // kubebuilder marker; CEL rule cannot be wrapped across lines
 type AIMModelSpec struct {
@@ -396,16 +393,10 @@ type AIMModelSpec struct {
 	// +optional
 	DerivedFrom *AIMProfileSetSpec `json:"derivedFrom,omitempty"`
 
-	// Profiles is the v1alpha2 fine-tune / custom-model onboarding surface.
-	// It groups the source descriptor (`profiles.derivedFrom.selector` /
-	// `profiles.derivedFrom.sourceRef`), the version filter
-	// (`profiles.versionPolicy` / `profiles.version`), and the modifications
-	// applied to copies (`profiles.overrides`). When set, the AIMModel
-	// reconciler synthesises a child AIMProfileSet from this block.
-	//
-	// Mutually exclusive with spec.image (exactly one of the two is required
-	// for v1alpha2 AIMModel). v1alpha1 rejects spec.profiles via per-version
-	// CEL.
+	// Profiles selects definitions and applies overrides through a child
+	// AIMProfileSet. derivedFrom selects external sources and is required.
+	// Exclusive with spec.image and spec.modelId.
+	// v1alpha1 rejects spec.profiles.
 	// +optional
 	Profiles *AIMModelProfilesSpec `json:"profiles,omitempty"`
 
@@ -483,29 +474,22 @@ type AIMModelSpec struct {
 	ImageMetadata *ImageMetadata `json:"imageMetadata,omitempty"`
 }
 
-// AIMModelProfilesSpec is the v1alpha2 AIMModel onboarding surface for
-// profile-derivation flows. It groups the source descriptor, version filter,
-// and overrides under one block so the spec reads "the model's profiles,
-// derived from <source>, with <overrides> applied".
-//
-// The reconciler translates this block into a child AIMProfileSet:
-//   - DerivedFrom.Selector / DerivedFrom.SourceRef → child AIMProfileSet
-//     spec.selector / spec.sourceRef.
-//   - VersionPolicy / Version → child spec.versionPolicy / spec.version.
-//   - Overrides → child spec.overrides (Image included via overrides.image).
+// AIMModelProfilesSpec selects and transforms profiles through a model-owned
+// AIMProfileSet. derivedFrom is required and selects external definitions using
+// versionPolicy and version. It cannot be combined with the model's spec.image.
 //
 // +kubebuilder:validation:XValidation:rule="has(self.derivedFrom)",message="profiles.derivedFrom is required when spec.profiles is set"
 // +kubebuilder:validation:XValidation:rule="has(self.version) || (has(self.versionPolicy) && self.versionPolicy != 'pinned')",message="profiles.version is required when versionPolicy is pinned"
 // +kubebuilder:validation:XValidation:rule="!has(self.versionPolicy) || (self.versionPolicy != 'latest' && self.versionPolicy != 'all') || !has(self.version)",message="latest/all versionPolicy must not set version"
-// +kubebuilder:validation:XValidation:rule="!(has(self.derivedFrom.selector.role) && self.derivedFrom.selector.role == 'base') || (!has(self.derivedFrom.selector.aimId) && !has(self.derivedFrom.selector.modelId) && !has(self.derivedFrom.selector.profileId))",message="derivedFrom.selector.aimId/modelId/profileId are not allowed when selector.role=base; set overrides.aimId/modelId/profileId instead (base profiles have no source identity to filter on)"
-// +kubebuilder:validation:XValidation:rule="!(has(self.derivedFrom.selector.role) && self.derivedFrom.selector.role == 'base') || (has(self.overrides) && has(self.overrides.aimId) && has(self.overrides.modelId))",message="derivedFrom.selector.role=base requires overrides.aimId and overrides.modelId (base profiles carry no identity of their own; overrides supply it)"
+// +kubebuilder:validation:XValidation:rule="!has(self.derivedFrom) || !has(self.derivedFrom.selector) || !(has(self.derivedFrom.selector.role) && self.derivedFrom.selector.role == 'base') || (!has(self.derivedFrom.selector.aimId) && !has(self.derivedFrom.selector.modelId) && !has(self.derivedFrom.selector.profileId))",message="derivedFrom.selector.aimId/modelId/profileId are not allowed when selector.role=base; set overrides.aimId/modelId/profileId instead (base profiles have no source identity to filter on)"
+// +kubebuilder:validation:XValidation:rule="!has(self.derivedFrom) || !has(self.derivedFrom.selector) || !(has(self.derivedFrom.selector.role) && self.derivedFrom.selector.role == 'base') || (has(self.overrides) && has(self.overrides.aimId) && has(self.overrides.modelId))",message="derivedFrom.selector.role=base requires overrides.aimId and overrides.modelId (base profiles carry no identity of their own; overrides supply it)"
 //
 //nolint:lll // kubebuilder marker; CEL rule cannot be wrapped across lines
 type AIMModelProfilesSpec struct {
-	// DerivedFrom identifies the source profiles to copy from.
+	// DerivedFrom selects source definitions and profiles.
 	DerivedFrom *AIMModelProfilesDerivedFrom `json:"derivedFrom,omitempty"`
 
-	// VersionPolicy controls how matching profiles are filtered by version.
+	// VersionPolicy controls matching source versions (defaults to pinned).
 	// +optional
 	// +kubebuilder:default=pinned
 	VersionPolicy ProfileVersionPolicy `json:"versionPolicy,omitempty"`
@@ -520,22 +504,30 @@ type AIMModelProfilesSpec struct {
 	// image used by the derived profiles.
 	// +optional
 	Overrides *ProfileOverrides `json:"overrides,omitempty"`
+
+	// OutputPolicy controls whether profiles produced for this model may be
+	// used as sources for subsequent derivations.
+	// +optional
+	OutputPolicy *ProfileOutputPolicy `json:"outputPolicy,omitempty"`
 }
 
-// AIMModelProfilesDerivedFrom describes the source half of a profile-
-// derivation request: which existing profiles (or discovery cache) the
-// reconciler should copy from.
+// AIMModelProfilesDerivedFrom selects source profile definitions.
+// Selection uses published model definitions and existing copyable
+// profiles, or an explicit alternate catalog.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.sourceRef) || !has(self.selector) || !has(self.selector.modelRef)",message="sourceRef and selector.modelRef are mutually exclusive"
+//
+//nolint:lll // kubebuilder marker; CEL rule cannot be wrapped across lines
 type AIMModelProfilesDerivedFrom struct {
-	// Selector chooses which source profiles to derive from. Discovery of a
-	// deployable AIM image stamps role=deployable; selector.role=base targets
-	// the base profiles emitted by base-image discovery (custom-model
-	// derivation source material).
+	// Selector filters source definitions before overrides. The default role
+	// is deployable; role=base selects base definitions.
 	// +optional
 	Selector ProfileSelector `json:"selector,omitempty"`
 
-	// SourceRef points to an alternate discovery cache source (a
-	// pre-populated ConfigMap of profile YAMLs) instead of using the
-	// visible AIMProfile / AIMClusterProfile objects.
+	// SourceRef selects an alternate catalog ConfigMap in place of the default
+	// model-definition and copyable-profile pool.
+	// Mutually exclusive with selector.modelRef; other selector fields may
+	// filter the catalog contents.
 	// +optional
 	SourceRef *ProfileSourceRef `json:"sourceRef,omitempty"`
 }
@@ -655,20 +647,23 @@ type AIMModelStatus struct {
 	// +optional
 	Version string `json:"version,omitempty"`
 
-	// DiscoveryCacheRef points at the normalized discovery cache ConfigMap for image-backed flows.
-	// Populated by the v1alpha2 controller after image inspection succeeds.
+	// DiscoveryCacheRef points to the raw profile YAML and metadata cache
+	// ConfigMap for image-backed flows. Populated after image inspection succeeds.
 	// +optional
 	DiscoveryCacheRef *DiscoveryCacheReference `json:"discoveryCacheRef,omitempty"`
 
-	// DiscoveredProfiles summarizes the profiles found during image discovery.
+	// DiscoveredProfiles summarizes raw discovered definitions and their
+	// hardware support.
 	// +optional
 	DiscoveredProfiles DiscoveredProfileCounts `json:"discoveredProfiles,omitempty"`
 
-	// ProfileSetRef identifies the child profile set synthesized for derivation flows.
+	// ProfileSetRef identifies the child profile set created when spec.profiles
+	// is configured.
 	// +optional
 	ProfileSetRef *ProfileSetReference `json:"profileSetRef,omitempty"`
 
-	// ManagedProfiles summarizes the direct promoted or derived profiles owned or managed by this model.
+	// ManagedProfiles summarizes actual managed outputs. Standalone sets'
+	// outputs are counted by those sets.
 	// +optional
 	ManagedProfiles ManagedProfileCounts `json:"managedProfiles,omitempty"`
 
@@ -683,6 +678,10 @@ func (s *AIMModelStatus) GetConditions() []metav1.Condition {
 
 func (s *AIMModelStatus) SetConditions(conditions []metav1.Condition) {
 	s.Conditions = conditions
+}
+
+func (s *AIMModelStatus) SetObservedGeneration(generation int64) {
+	s.ObservedGeneration = generation
 }
 
 func (s *AIMModelStatus) SetStatus(status string) {

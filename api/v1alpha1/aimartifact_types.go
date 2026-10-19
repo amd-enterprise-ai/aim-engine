@@ -406,6 +406,10 @@ func (s *AIMArtifactStatus) SetConditions(conditions []metav1.Condition) {
 	s.Conditions = conditions
 }
 
+func (s *AIMArtifactStatus) SetObservedGeneration(generation int64) {
+	s.ObservedGeneration = generation
+}
+
 func (s *AIMArtifactStatus) SetStatus(status string) {
 	s.Status = constants.AIMStatus(status)
 }

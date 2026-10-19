@@ -39,9 +39,21 @@ jobs:
       - name: Clone the code
         uses: actions/checkout@v4
 
+      # Runner instances share a home directory. Concurrent cache restores must
+      # not overwrite the mise executable or tools another job is using.
+      - name: Isolate mise state
+        run: |
+          echo "MISE_DATA_DIR=${RUNNER_TEMP}/mise/data" >> "$GITHUB_ENV"
+          echo "MISE_CACHE_DIR=${RUNNER_TEMP}/mise/cache" >> "$GITHUB_ENV"
+          echo "MISE_CONFIG_DIR=${RUNNER_TEMP}/mise/config" >> "$GITHUB_ENV"
+
       - name: Setup mise
         uses: jdx/mise-action@v2
+        with:
+          cache_key_prefix: mise-isolated-v1
         env:
+          # mise-action also unpacks its executable under os.tmpdir().
+          TMPDIR: ${{ runner.temp }}
           # Load only mise.toml (CI tools); skip mise.local.toml dev tools.
           # NOTE: MISE_LOCAL_CONFIG_ALLOWED is NOT a real mise setting (it was a
           # no-op, so CI was installing/compiling every dev tool from
@@ -72,6 +84,7 @@ jobs:
       - name: Run tests
         run: |
           set -o pipefail
+          make test-artifact-downloader
           # Self-heal for a corrupt Go build cache.
           if ! go test ./... 2>&1 | tee /tmp/go-test.log; then
             if grep -q "reference to nonexistent package" /tmp/go-test.log; then
@@ -155,9 +168,20 @@ jobs:
           echo "Disk:"
           df -h /
 
+      # Keep the matrix legs (and other workflows on this host) from restoring
+      # their mise caches over the same executable and tool installations.
+      - name: Isolate mise state
+        run: |
+          echo "MISE_DATA_DIR=${RUNNER_TEMP}/mise/data" >> "$GITHUB_ENV"
+          echo "MISE_CACHE_DIR=${RUNNER_TEMP}/mise/cache" >> "$GITHUB_ENV"
+          echo "MISE_CONFIG_DIR=${RUNNER_TEMP}/mise/config" >> "$GITHUB_ENV"
+
       - name: Setup mise
         uses: jdx/mise-action@v2
+        with:
+          cache_key_prefix: mise-isolated-v1
         env:
+          TMPDIR: ${{ runner.temp }}
           # Load only mise.toml (CI tools); skip mise.local.toml dev tools.
           # NOTE: MISE_LOCAL_CONFIG_ALLOWED is NOT a real mise setting (it was a
           # no-op, so CI was installing/compiling every dev tool from

@@ -76,20 +76,13 @@ spec:
           AIMClusterProfile is the Schema for cluster-scoped AIM profiles.
           Cluster profiles are visible across all namespaces. They can be created manually
           or, in the future, automatically during model discovery by a v1alpha2 model controller.
-          Unlike namespace-scoped AIMProfiles, cluster profiles do not support caching
-          configuration since caches are namespace-scoped.
-
-          Deployable profiles have both aimId and modelSources populated; base
-          profiles (custom-model derivation source material) have neither. Mixed
-          (one of the two set) is rejected to keep status.deployable derivable from
-          spec.
         properties:
           apiVersion:
             description: |-
               APIVersion defines the versioned schema of this representation of an object.
               Servers should convert recognized schemas to the latest internal value, and
               may reject unrecognized values.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+              More info: https://git.k8s.
             type: string
           kind:
             description: |-
@@ -97,7 +90,7 @@ spec:
               Servers may infer this from the endpoint the client submits requests to.
               Cannot be updated.
               In CamelCase.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+              More info: https://git.k8s.
             type: string
           metadata:
             type: object
@@ -110,18 +103,7 @@ spec:
                   AcceleratorCount is the number of accelerator units required.
                   For AcceleratorType=gpu, this is the device count (e.g., 1, 2, 4, 8
                   for tensor-parallel sizes). For AcceleratorType=cpu, this is the
-                  number of CPU cores (e.g., 128 for EPYC_ZEN5, 192 for EPYC_9965).
-                  Combined with cluster-level configuration to compute default
-                  resource requests in status.resources.
-
-                  For AcceleratorType=gpu, the per-unit interpretation depends on
-                  AcceleratorPartitioningMode: under "unpartitioned" (default) one unit is
-                  one whole GPU; under "partitioned" or a specific scheme one unit is one
-                  partition slice (e.g. CPX-NPS4 = 1/8 of a GPU). Host CPU and memory
-                  defaults are scaled by the recognized compute partition density
-                  (SPX=1, DPX=2, QPX=4, CPX=8). Geometry-agnostic "partitioned" and unknown
-                  schemes require explicit host resources because a safe scale cannot be
-                  inferred.
+                  number of CPU cores (e.g.
                 format: int32
                 minimum: 0
                 type: integer
@@ -130,9 +112,7 @@ spec:
                   AcceleratorModel is the accelerator identifier for node selection.
                   Maps to a node label key using the Exists operator:
                     feature.node.kubernetes.io/aim-accelerator.{value}: Exists
-                  Supports both specific models (e.g., "MI300X") and architecture-level
-                  fallbacks (e.g., "EPYC_ZEN5") — the AcceleratorDetector labels nodes
-                  with all applicable identifiers.
+                  Supports both specific models (e.g.
                 maxLength: 63
                 pattern: ^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$
                 type: string
@@ -143,26 +123,7 @@ spec:
                   requires. Free-form string with reserved values:
 
                     ""              - omitted; CRD-defaulted to "unpartitioned".
-                    "unpartitioned" - hardware-default partition state. Matches unpartitioned
-                                      MI300X (canonical SPX-NPS1) AND non-partitionable
-                                      hardware (Radeon, etc.) — any node whose detector
-                                      stamped aim-accelerator.partitioning-scheme.default.
-                    "partitioned"   - any actively partitioned mode. Excludes both
-                                      unpartitioned partitionable hardware and
-                                      non-partitionable hardware.
-                    "<C>-<M>"       - specific compute+memory scheme, e.g. "CPX-NPS4". Matches
-                                      only nodes carrying that exact scheme label; does not
-                                      match non-partitionable hardware.
-
-                  Other values (e.g. "CPX" alone, or typos) are accepted but fail-safe to
-                  zero matching nodes under this iteration's label schema — compute-only /
-                  memory-only matching is not supported here. AIM Engine does NOT validate
-                  against AMD's hardware compatibility matrix; invalid combinations simply
-                  report MatchingNodes == 0.
-
-                  Resolves to a single Exists or DoesNotExist node-affinity term on the
-                  aim-accelerator.partitioning-scheme.* labels published by the
-                  AcceleratorDetector, AND-ed with the acceleratorModel term.
+                    "unpartitioned" - hardware-default partition state.
                 maxLength: 63
                 pattern: ^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$
                 type: string
@@ -184,10 +145,7 @@ spec:
                   AcceleratorVendor selects the vendor-specific device-plugin resource and
                   vendor node label used for this profile. A generic NVIDIA profile can set
                   this to "nvidia" without declaring an acceleratorModel; AIM Engine then
-                  requests nvidia.com/gpu and matches NVIDIA GPU nodes of any model.
-
-                  Empty preserves the legacy AMD behavior for profiles created before this
-                  field existed.
+                  requests nvidia.
                 enum:
                 - amd
                 - nvidia
@@ -197,13 +155,7 @@ spec:
                   AimId is the model architecture identifier (e.g., "qwen/qwen3-32b").
                   Primary matching axis for profile selection and custom weight onboarding.
 
-                  AimId is required for deployable profiles. Iteration 1 producers always
-                  emit deployable profiles, so AimId is effectively required there. Empty
-                  AimId is reserved for base profiles emitted by base-image discovery
-                  (custom-model derivation source material), which are not deployable
-                  until derived.
-
-                  Once set, AimId is immutable.
+                  AimId is required for deployable profiles.
                 type: string
                 x-kubernetes-validations:
                 - message: aimId is immutable once set
@@ -215,11 +167,7 @@ spec:
                   automatic selection when the AIMService does not explicitly set
                   minimumType.
 
-                  "optimized" applies the implicit optimized floor. "any" permits the
-                  profile to participate in a second selection pass regardless of its type,
-                  but only when no optimized candidate matched. It never overrides an
-                  explicitly authored minimumType. Explicit spec.profile.name resolution is
-                  unaffected.
+                  "optimized" applies the implicit optimized floor.
                 enum:
                 - optimized
                 - any
@@ -241,12 +189,7 @@ spec:
                         Variable references $(VAR_NAME) are expanded
                         using the previously defined environment variables in the container and
                         any service environment variables. If a variable cannot be resolved,
-                        the reference in the input string will be unchanged. Double $$ are reduced
-                        to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                        "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                        Escaped references will never be expanded, regardless of whether the variable
-                        exists or not.
-                        Defaults to "".
+                        the reference in the input string will be unchanged.
                       type: string
                     valueFrom:
                       description: Source for the environment variable's value. Cannot
@@ -265,7 +208,7 @@ spec:
                                 This field is effectively required, but due to backwards compatibility is
                                 allowed to be empty. Instances of this type with an empty value here are
                                 almost certainly wrong.
-                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                More info: https://kubernetes.
                               type: string
                             optional:
                               description: Specify whether the ConfigMap or its key
@@ -301,18 +244,12 @@ spec:
                               description: |-
                                 The key within the env file. An invalid key will prevent the pod from starting.
                                 The keys defined within a source may consist of any printable ASCII characters except '='.
-                                During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                               type: string
                             optional:
                               default: false
                               description: |-
                                 Specify whether the file or its key must be defined. If the file or key
                                 does not exist, then the env var is not published.
-                                If optional is set to true and the specified key does not exist,
-                                the environment variable will not be set in the Pod's containers.
-
-                                If optional is set to false and the specified key does not exist,
-                                an error will be returned during Pod creation.
                               type: boolean
                             path:
                               description: |-
@@ -367,7 +304,7 @@ spec:
                                 This field is effectively required, but due to backwards compatibility is
                                 allowed to be empty. Instances of this type with an empty value here are
                                 almost certainly wrong.
-                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                More info: https://kubernetes.
                               type: string
                             optional:
                               description: Specify whether the Secret or its key must
@@ -432,7 +369,7 @@ spec:
                         This field is effectively required, but due to backwards compatibility is
                         allowed to be empty. Instances of this type with an empty value here are
                         almost certainly wrong.
-                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        More info: https://kubernetes.
                       type: string
                   type: object
                   x-kubernetes-map-type: atomic
@@ -442,15 +379,7 @@ spec:
                 description: |-
                   ManualSelectionOnly is DEPRECATED and no longer honored by the resolver.
                   It was a binary gate excluding a profile from automatic AIMService
-                  selection. Optimization-tier consent is now expressed through the graded
-                  `type` hierarchy combined with the selector's `minimumType` floor, while
-                  eligibility for implicit any-tier automatic selection is expressed through
-                  `autoSelectionPolicy`. The field is retained for backward compatibility
-                  (existing objects and aim-build profile YAMLs still set it) but has no
-                  effect on selection; it will be removed in a future API version.
-
-                  Deprecated: superseded by `type`, selector `minimumType`, and
-                  `autoSelectionPolicy`; ignored by the resolver.
+                  selection.
                 type: boolean
               metric:
                 allOf:
@@ -496,12 +425,7 @@ spec:
                               Variable references $(VAR_NAME) are expanded
                               using the previously defined environment variables in the container and
                               any service environment variables. If a variable cannot be resolved,
-                              the reference in the input string will be unchanged. Double $$ are reduced
-                              to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                              "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                              Escaped references will never be expanded, regardless of whether the variable
-                              exists or not.
-                              Defaults to "".
+                              the reference in the input string will be unchanged.
                             type: string
                           valueFrom:
                             description: Source for the environment variable's value.
@@ -520,7 +444,7 @@ spec:
                                       This field is effectively required, but due to backwards compatibility is
                                       allowed to be empty. Instances of this type with an empty value here are
                                       almost certainly wrong.
-                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                      More info: https://kubernetes.
                                     type: string
                                   optional:
                                     description: Specify whether the ConfigMap or
@@ -556,18 +480,12 @@ spec:
                                     description: |-
                                       The key within the env file. An invalid key will prevent the pod from starting.
                                       The keys defined within a source may consist of any printable ASCII characters except '='.
-                                      During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                                     type: string
                                   optional:
                                     default: false
                                     description: |-
                                       Specify whether the file or its key must be defined. If the file or key
                                       does not exist, then the env var is not published.
-                                      If optional is set to true and the specified key does not exist,
-                                      the environment variable will not be set in the Pod's containers.
-
-                                      If optional is set to false and the specified key does not exist,
-                                      an error will be returned during Pod creation.
                                     type: boolean
                                   path:
                                     description: |-
@@ -623,7 +541,7 @@ spec:
                                       This field is effectively required, but due to backwards compatibility is
                                       allowed to be empty. Instances of this type with an empty value here are
                                       almost certainly wrong.
-                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                      More info: https://kubernetes.
                                     type: string
                                   optional:
                                     description: Specify whether the Secret or its
@@ -646,7 +564,6 @@ spec:
                         ModelID is the canonical identifier in {org}/{name} format.
                         Determines the cache mount path: /workspace/cache/{modelId}
                         For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
-                        For S3 sources, users define their own organizational structure.
                       pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                       type: string
                     precision:
@@ -682,7 +599,6 @@ spec:
                         Size is the expected storage space required for this model artifact.
                         Used for PVC sizing and capacity planning during cache creation.
                         Optional - if not specified, the download job will discover the size automatically.
-                        Can be set explicitly to pre-allocate storage or override auto-discovery.
                       pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                       x-kubernetes-int-or-string: true
                     sourceUri:
@@ -732,18 +648,13 @@ spec:
                 description: |-
                   ProfileId is the on-disk profile identifier from the AIM image
                   (e.g., "vllm-mi300x-fp8-tp1-latency"). Populated during discovery to link this
-                  CRD back to the profile YAML inside the container. Runtime projection retains
-                  this identifier as the mounted YAML filename. Not required for manually created
-                  profiles, which receive an engine-aware generated filename when omitted.
+                  CRD back to the profile YAML inside the container.
                 type: string
               resources:
                 description: |-
                   Resources is an optional override for K8s resource requests/limits.
                   When set, merged on top of the defaults that AIM Engine computes from
                   AcceleratorType, AcceleratorCount, and cluster-level configuration.
-                  Generated values account for an explicit opposite-side value so partial
-                  overrides cannot produce a request above its limit.
-                  The resolved result is written to status.resources.
                 properties:
                   claims:
                     description: |-
@@ -798,7 +709,6 @@ spec:
                       Requests describes the minimum amount of compute resources required.
                       If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
                       otherwise to an implementation-defined value. Requests cannot exceed Limits.
-                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
               serviceAccountName:
@@ -824,8 +734,7 @@ spec:
                 description: |-
                   Variant distinguishes profiles that share the same engine, accelerator,
                   precision, count, and metric but use a different runtime recipe (for
-                  example, "usp4"). Discovered profiles preserve metadata.variant here so
-                  the projected profile YAML and filename retain the image's identity.
+                  example, "usp4"). Discovered profiles preserve metadata.
                 pattern: ^[a-z][a-z0-9-]*$
                 type: string
             required:
@@ -840,10 +749,6 @@ spec:
                 description: |-
                   BaseImage is the AIM_BASE_IMAGE_REF the inspector extracted from the
                   source image when this profile was materialised by AIMModel discovery.
-                  Used by derivation flows (AIMService overlays, AIMProfileSet) to rebase
-                  the deployment image onto the source's base when overriding model
-                  sources, so private mirrors stay self-contained. Empty for
-                  user-authored profiles.
                 type: string
               conditions:
                 description: Conditions represent the latest observations of profile
@@ -867,8 +772,7 @@ spec:
                     observedGeneration:
                       description: |-
                         observedGeneration represents the .metadata.generation that the condition was set based upon.
-                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
-                        with respect to the current state of the instance.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].
                       format: int64
                       minimum: 0
                       type: integer
@@ -877,8 +781,6 @@ spec:
                         reason contains a programmatic identifier indicating the reason for the condition's last transition.
                         Producers of specific condition types may define expected values and meanings for this field,
                         and whether the values are considered a guaranteed API.
-                        The value should be a CamelCase string.
-                        This field may not be empty.
                       maxLength: 1024
                       minLength: 1
                       pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
@@ -912,10 +814,6 @@ spec:
                   Deployable reports whether the profile is materialised enough to back an
                   AIMService: true when spec.aimId and spec.modelSources are both
                   populated, false for base profiles awaiting derivation.
-
-                  Image discovery of a deployable AIM image emits deployable profiles;
-                  base-image discovery emits base profiles (no aimId/modelSources) that
-                  a custom-model AIMModel derives into deployable copies.
                 type: boolean
               hardwareSummary:
                 description: |-
@@ -939,11 +837,7 @@ spec:
                     - discovered: emitted by image discovery (AIMModel.spec.image).
                     - derived: emitted by an AIMProfileSet or
                       AIMModel.spec.profiles.derivedFrom.
-                    - generated: emitted from AIMModel.spec.modelId and a RuntimeConfig fallback.
-                    - user-authored: created independently by a user.
-
-                  Backfilled by the AIMProfile reconciler when not stamped at creation
-                  time; user-authored profiles default to `user-authored`.
+                    - generated: emitted from AIMModel.spec.
                 enum:
                 - discovered
                 - derived
@@ -954,23 +848,13 @@ spec:
                 description: |-
                   ProjectedModelSlugRuntimeName is the name of the readable model-slug
                   primary runtime (aim-<model-slug>) this profile publishes when it is its
-                  model's primary under Reduced or Both projection mode. Empty otherwise
-                  (Exhaustive mode, or a non-primary / non-projectable profile). Like
-                  ProjectedRuntimeName it follows the additive/degrade lifecycle and is not
-                  cleared when the gate flips while the runtime survives.
+                  model's primary under Reduced or Both projection mode.
                 type: string
               projectedRuntimeName:
                 description: |-
                   ProjectedRuntimeName is the name of the per-profile KServe
                   ServingRuntime / ClusterServingRuntime this profile projects
-                  (aim-<truncated-profile>-<hash>). Because that object name is truncated and
-                  hashed for length-safety and collision-freedom, it is not reversible; this
-                  field is the authoritative profile→runtime lookup for humans and tooling.
-                  Set alongside RuntimeProjected=True. It follows the projection's
-                  additive/degrade lifecycle: it is kept in place when the projection gate
-                  later flips but the runtime is retained (RuntimeProjected=Degraded), and is
-                  empty when no per-profile runtime is projected (e.g. Reduced mode, or a
-                  profile that was never projectable).
+                  (aim-<truncated-profile>-<hash>).
                 type: string
               resolvedNodeAffinity:
                 description: |-
@@ -981,13 +865,7 @@ spec:
                     description: |-
                       The scheduler will prefer to schedule pods to nodes that satisfy
                       the affinity expressions specified by this field, but it may choose
-                      a node that violates one or more of the expressions. The node that is
-                      most preferred is the one with the greatest sum of weights, i.e.
-                      for each node that meets all of the scheduling requirements (resource
-                      request, requiredDuringScheduling affinity expressions, etc.),
-                      compute a sum by iterating through the elements of this field and adding
-                      "weight" to the sum if the node matches the corresponding matchExpressions; the
-                      node(s) with the highest sum are the most preferred.
+                      a node that violates one or more of the expressions.
                     items:
                       description: |-
                         An empty preferred scheduling term matches all objects with implicit weight 0
@@ -1018,9 +896,7 @@ spec:
                                     description: |-
                                       An array of string values. If the operator is In or NotIn,
                                       the values array must be non-empty. If the operator is Exists or DoesNotExist,
-                                      the values array must be empty. If the operator is Gt or Lt, the values
-                                      array must have a single element, which will be interpreted as an integer.
-                                      This array is replaced during a strategic merge patch.
+                                      the values array must be empty.
                                     items:
                                       type: string
                                     type: array
@@ -1052,9 +928,7 @@ spec:
                                     description: |-
                                       An array of string values. If the operator is In or NotIn,
                                       the values array must be non-empty. If the operator is Exists or DoesNotExist,
-                                      the values array must be empty. If the operator is Gt or Lt, the values
-                                      array must have a single element, which will be interpreted as an integer.
-                                      This array is replaced during a strategic merge patch.
+                                      the values array must be empty.
                                     items:
                                       type: string
                                     type: array
@@ -1083,8 +957,7 @@ spec:
                       If the affinity requirements specified by this field are not met at
                       scheduling time, the pod will not be scheduled onto the node.
                       If the affinity requirements specified by this field cease to be met
-                      at some point during pod execution (e.g. due to an update), the system
-                      may or may not try to eventually evict the pod from its node.
+                      at some point during pod execution (e.g.
                     properties:
                       nodeSelectorTerms:
                         description: Required. A list of node selector terms. The
@@ -1116,9 +989,7 @@ spec:
                                     description: |-
                                       An array of string values. If the operator is In or NotIn,
                                       the values array must be non-empty. If the operator is Exists or DoesNotExist,
-                                      the values array must be empty. If the operator is Gt or Lt, the values
-                                      array must have a single element, which will be interpreted as an integer.
-                                      This array is replaced during a strategic merge patch.
+                                      the values array must be empty.
                                     items:
                                       type: string
                                     type: array
@@ -1150,9 +1021,7 @@ spec:
                                     description: |-
                                       An array of string values. If the operator is In or NotIn,
                                       the values array must be non-empty. If the operator is Exists or DoesNotExist,
-                                      the values array must be empty. If the operator is Gt or Lt, the values
-                                      array must have a single element, which will be interpreted as an integer.
-                                      This array is replaced during a strategic merge patch.
+                                      the values array must be empty.
                                     items:
                                       type: string
                                     type: array
@@ -1231,7 +1100,6 @@ spec:
                       Requests describes the minimum amount of compute resources required.
                       If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
                       otherwise to an implementation-defined value. Requests cannot exceed Limits.
-                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
               sourceModel:

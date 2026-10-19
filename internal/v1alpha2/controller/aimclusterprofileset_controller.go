@@ -68,6 +68,7 @@ type AIMClusterProfileSetReconciler struct {
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterprofilesets/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterprofilesets/finalizers,verbs=update
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterprofiles,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclustermodels,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
@@ -112,6 +113,11 @@ func (r *AIMClusterProfileSetReconciler) SetupWithManager(mgr ctrl.Manager) erro
 	}); err != nil {
 		return err
 	}
+	if err := registerObjectIndex(ctx, mgr, &aimv1alpha2.AIMClusterProfileSet{}, profileSetModelRefIndex, func(set *aimv1alpha2.AIMClusterProfileSet) []string {
+		return profileSetModelIndexValues(set.Spec)
+	}); err != nil {
+		return err
+	}
 
 	profileHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
 		var requests []reconcile.Request
@@ -127,12 +133,20 @@ func (r *AIMClusterProfileSetReconciler) SetupWithManager(mgr ctrl.Manager) erro
 		if !ok {
 			return nil
 		}
-		return clusterProfileSetsForSourceRef(ctx, r.Client, profileSourceRefIndexValue(configMap.Namespace, configMap.Name))
+		requests := clusterProfileSetsForSourceRef(ctx, r.Client, profileSourceRefIndexValue(configMap.Namespace, configMap.Name))
+		if model, ok := catalogModelEvent(configMap).(*aimv1alpha2.AIMClusterModel); ok {
+			requests = append(requests, clusterProfileSetsForModel(ctx, r.Client, model)...)
+		}
+		return dedupeRequests(requests)
+	})
+	modelHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		return clusterProfileSetsForModel(ctx, r.Client, obj)
 	})
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha2.AIMClusterProfileSet{}).
 		Watches(&aimv1alpha2.AIMClusterProfile{}, profileHandler).
+		Watches(&aimv1alpha2.AIMClusterModel{}, modelHandler, builder.WithPredicates(modelDefinitionPredicate())).
 		Watches(
 			&corev1.ConfigMap{},
 			configMapHandler,

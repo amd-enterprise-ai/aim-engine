@@ -41,7 +41,9 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimartifact"
 	v1alpha1utils "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/utils"
 )
 
@@ -344,6 +346,11 @@ func buildInferenceService(
 	// rather than re-resolving from artifacts. Artifacts or their PVCs may be
 	// transiently unavailable, and re-resolving would cause SSA to strip the
 	// storage volumes off the running ISVC.
+	addRuntimeTrust(
+		inferenceService,
+		obs.mergedRuntimeConfig.Value,
+		obs.additionalCABundle.Value,
+	)
 	if obs.inferenceService.OK() && obs.inferenceService.Value != nil {
 		preserveExistingStorageVolumes(inferenceService, obs.inferenceService.Value)
 	} else {
@@ -351,6 +358,32 @@ func buildInferenceService(
 	}
 
 	return inferenceService
+}
+
+func addRuntimeTrust(
+	isvc *servingv1beta1.InferenceService,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	caConfigMap *corev1.ConfigMap,
+) {
+	if runtimeConfig == nil ||
+		runtimeConfig.AdditionalCABundleRef == nil ||
+		caConfigMap == nil ||
+		len(isvc.Spec.Predictor.Containers) == 0 {
+		return
+	}
+	projection := trust.BuildProjection(trust.Options{
+		AdditionalCABundleRef: runtimeConfig.AdditionalCABundleRef,
+		Image:                 aimartifact.ResolveDownloadImage(nil, runtimeConfig),
+	})
+	if projection == nil {
+		return
+	}
+	predictor := &isvc.Spec.Predictor
+	predictor.InitContainers = append(predictor.InitContainers, projection.InitContainer)
+	predictor.Volumes = append(predictor.Volumes, projection.Volumes...)
+	container := &predictor.Containers[0]
+	container.VolumeMounts = append(container.VolumeMounts, projection.VolumeMounts...)
+	container.Env = trust.UpsertEnv(container.Env, projection.Env)
 }
 
 // resolvedModelId returns the model id the runtime serves under, mirroring its

@@ -654,3 +654,29 @@ func TestFetchRuntimeConfig_EmptyName(t *testing.T) {
 		t.Error("expected default config values")
 	}
 }
+
+func TestMergeRuntimeConfigs_AdditionalCABundleNamespacePrecedence(t *testing.T) {
+	cluster := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{
+			Name: "cluster-ca",
+			Key:  "ca.crt",
+		},
+	}
+	namespace := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{
+			Name: "namespace-ca",
+			Key:  "bundle.pem",
+		},
+	}
+
+	merged := mergeRuntimeConfigs(namespace, cluster)
+	if merged == nil || merged.AdditionalCABundleRef == nil {
+		t.Fatal("merged additional CA reference is nil")
+	}
+	if got := merged.AdditionalCABundleRef.Name; got != "namespace-ca" {
+		t.Errorf("name = %q, want namespace-ca", got)
+	}
+	if got := merged.AdditionalCABundleRef.Key; got != "bundle.pem" {
+		t.Errorf("key = %q, want bundle.pem", got)
+	}
+}

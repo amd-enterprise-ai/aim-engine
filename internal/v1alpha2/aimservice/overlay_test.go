@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,6 +38,7 @@ import (
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
 )
 
@@ -814,4 +816,69 @@ func TestNeedsServiceOverlay_IncludesExplicitAdapterFeatureOverride(t *testing.T
 	if !needsServiceOverlay(service) {
 		t.Fatal("explicit features override must create a service-owned overlay")
 	}
+}
+
+func TestAddRuntimeTrustOverlayProjectsCombinedBundle(t *testing.T) {
+	isvc := &servingv1beta1.InferenceService{}
+	isvc.Spec.Predictor.Model = &servingv1beta1.ModelSpec{}
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{
+			Name: "company-ca",
+			Key:  "ca.crt",
+		},
+		Artifact: &aimv1alpha1.AIMArtifactConfig{
+			ModelDownloadImage: "registry.example.test/downloader:v1",
+		},
+	}
+	configMap := &corev1.ConfigMap{Data: map[string]string{"ca.crt": "rotation-one"}}
+
+	addRuntimeTrustOverlay(isvc, config, configMap)
+
+	if len(isvc.Spec.Predictor.InitContainers) != 1 {
+		t.Fatalf("init containers = %d, want 1", len(isvc.Spec.Predictor.InitContainers))
+	}
+	if got := isvc.Spec.Predictor.InitContainers[0].Image; got != "registry.example.test/downloader:v1" {
+		t.Errorf("init image = %q", got)
+	}
+	if got := isvc.Spec.Predictor.InitContainers[0].Env; len(got) != 0 {
+		t.Errorf("trust init env = %#v, want no rollout metadata", got)
+	}
+	if got := overlayEnvValue(isvc.Spec.Predictor.Model.Env, "REQUESTS_CA_BUNDLE"); got != trust.OutputFilePath {
+		t.Errorf("REQUESTS_CA_BUNDLE = %q", got)
+	}
+	if isvc.Spec.Predictor.SecurityContext != nil {
+		t.Fatalf("trust projection changed predictor security context: %#v", isvc.Spec.Predictor.SecurityContext)
+	}
+}
+
+func TestAddRuntimeTrustOverlaySkipsUnavailableBundle(t *testing.T) {
+	isvc := &servingv1beta1.InferenceService{}
+	isvc.Spec.Predictor.Model = &servingv1beta1.ModelSpec{}
+	isvc.Spec.Predictor.Model.Env = []corev1.EnvVar{{
+		Name: "REQUESTS_CA_BUNDLE", Value: "/vendor/roots.pem",
+	}}
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{
+			Name: "missing-ca",
+			Key:  "ca.crt",
+		},
+	}
+
+	addRuntimeTrustOverlay(isvc, config, nil)
+
+	if len(isvc.Spec.Predictor.InitContainers) != 0 || len(isvc.Spec.Predictor.Volumes) != 0 {
+		t.Fatalf("unavailable trust bundle changed pod spec: %#v", isvc.Spec.Predictor)
+	}
+	if got := overlayEnvValue(isvc.Spec.Predictor.Model.Env, "REQUESTS_CA_BUNDLE"); got != "/vendor/roots.pem" {
+		t.Errorf("REQUESTS_CA_BUNDLE = %q, want existing public roots unchanged", got)
+	}
+}
+
+func overlayEnvValue(env []corev1.EnvVar, name string) string {
+	for _, item := range env {
+		if item.Name == name {
+			return item.Value
+		}
+	}
+	return ""
 }

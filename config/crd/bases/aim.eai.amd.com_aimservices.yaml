@@ -49,14 +49,14 @@ spec:
         description: |-
           AIMService manages a KServe-based AIM inference service for the selected model and template.
           Note: KServe uses {name}-{namespace} format which must not exceed 63 characters.
-          This constraint is validated at runtime since CEL cannot access metadata.namespace.
+          This constraint is validated at runtime since CEL cannot access metadata.
         properties:
           apiVersion:
             description: |-
               APIVersion defines the versioned schema of this representation of an object.
               Servers should convert recognized schemas to the latest internal value, and
               may reject unrecognized values.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+              More info: https://git.k8s.
             type: string
           kind:
             description: |-
@@ -64,7 +64,7 @@ spec:
               Servers may infer this from the endpoint the client submits requests to.
               Cannot be updated.
               In CamelCase.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+              More info: https://git.k8s.
             type: string
           metadata:
             type: object
@@ -73,12 +73,7 @@ spec:
               AIMServiceSpec defines the desired state of AIMService.
 
               Binds a canonical model to an AIMServiceTemplate and configures replicas,
-              caching behavior, and optional overrides. The template governs the base
-              runtime selection knobs, while the overrides field allows service-specific
-              customization.
-
-              With v1alpha2, a Profile can be used instead of a Template. Template and Profile
-              are mutually exclusive — at least one resolution path must be specified.
+              caching behavior, and optional overrides.
             properties:
               adapterMode:
                 default: static
@@ -86,9 +81,7 @@ spec:
                   AdapterMode is the immutable adapter contract for the service, mapped
                   directly to the AIM_ADAPTER_MODE container env. static (default) freezes
                   spec.adapters and mounts the adapter disk only when adapters are declared;
-                  dynamic allows editing spec.adapters and mounts the disk even at zero
-                  adapters (so add/remove never restarts the pod). It is immutable after
-                  creation.
+                  dynamic allows editing spec.
                 enum:
                 - static
                 - dynamic
@@ -107,20 +100,6 @@ spec:
                       A service-level value takes precedence over namespace and cluster
                       RuntimeConfig values. When unset, the controller uses a conservative
                       built-in default.
-
-                      Static adapter services infer the required maximum rank from their declared
-                      AIMArtifact objects. A service-level value is rejected in static mode;
-                      inherited RuntimeConfig values are ignored because one RuntimeConfig may
-                      serve both static and dynamic services.
-
-                      Allowed values mirror vLLM's MaxLoRARanks:
-                      1, 8, 16, 32, 64, 128, 256, 320, and 512.
-
-                      Changing this value changes the inference container contract and rolls the
-                      serving workload. Increases take effect immediately. A decrease is deferred
-                      while any declared adapter artifact's rank is unresolved; the controller
-                      retains the last resolved ceiling until every rank can be checked against
-                      the lower value.
                     format: int32
                     minimum: 1
                     type: integer
@@ -134,22 +113,11 @@ spec:
                   Adapters is the load-bearing list of LoRA adapters this service serves.
                   The list may only be edited after creation when adapterMode is dynamic
                   (static freezes it). Omitting the list serves no adapters.
-                  Supported on both the template (v1alpha1) and profile (v1alpha2) pipelines:
-                  the base model the adapters attach to is resolved from the service's
-                  template cache or profile cache respectively. In dynamic mode the list may
-                  be edited after creation: adding an adapter stages it into the service's
-                  subtree and the aim-runtime hot-loads it; removing one lets the runtime
-                  unload it (subtree cleanup is reclaimed out-of-band). The InferenceService
-                  is never modified for adapter changes — it mounts the whole per-service
-                  subtree read-only. Entries are pure references; (kind, name) pairs must be
-                  unique. Omitting the list serves no adapters.
                 items:
                   description: |-
                     AIMServiceAdapterReference is a typed reference to a LoRA adapter served by this
                     service. Today it is resolved as a pure reference to an existing adapter
-                    artifact. The inline bootstrap fields (sourceUri/modelId/rank) are reserved:
-                    the schema accepts them, but create-if-missing self-healing is not yet wired,
-                    so a referenced adapter artifact must currently exist.
+                    artifact.
                   properties:
                     kind:
                       description: Kind is the kind of the referenced adapter. Required;
@@ -273,8 +241,7 @@ spec:
                                   description: |-
                                     AverageUtilization is the target value of the average of the resource metric across all relevant pods,
                                     represented as a percentage of the requested value of the resource for the pods.
-                                    Used when Type is "Utilization". Only valid for Resource metric source type.
-                                    Example: 80 for 80% utilization
+                                    Used when Type is "Utilization".
                                   format: int32
                                   type: integer
                                 averageValue:
@@ -284,11 +251,8 @@ spec:
                                     Example: "100m" for 100 millicores per pod
                                   type: string
                                 type:
-                                  description: |-
-                                    Type specifies how to interpret the metric value.
-                                    "Value": absolute value target (use Value field)
-                                    "AverageValue": average value across all pods (use AverageValue field)
-                                    "Utilization": percentage utilization for resource metrics (use AverageUtilization field)
+                                  description: Type specifies how to interpret the
+                                    metric value.
                                   enum:
                                   - Value
                                   - AverageValue
@@ -356,11 +320,7 @@ spec:
                   env:
                     description: |-
                       Env supplies credentials for model downloads (for example a HuggingFace
-                      token via secretKeyRef). Unlike the inference container env, these
-                      variables reach only the model-download Job, so download-only secrets are
-                      never injected into the serving container. They are also reachable for
-                      cluster-scoped and overlay profiles, where the profile's own caching.env
-                      does not exist. Merged over the profile's caching.env (service wins).
+                      token via secretKeyRef).
                     items:
                       description: EnvVar represents an environment variable present
                         in a Container.
@@ -375,12 +335,7 @@ spec:
                             Variable references $(VAR_NAME) are expanded
                             using the previously defined environment variables in the container and
                             any service environment variables. If a variable cannot be resolved,
-                            the reference in the input string will be unchanged. Double $$ are reduced
-                            to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                            "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                            Escaped references will never be expanded, regardless of whether the variable
-                            exists or not.
-                            Defaults to "".
+                            the reference in the input string will be unchanged.
                           type: string
                         valueFrom:
                           description: Source for the environment variable's value.
@@ -399,7 +354,7 @@ spec:
                                     This field is effectively required, but due to backwards compatibility is
                                     allowed to be empty. Instances of this type with an empty value here are
                                     almost certainly wrong.
-                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    More info: https://kubernetes.
                                   type: string
                                 optional:
                                   description: Specify whether the ConfigMap or its
@@ -435,18 +390,12 @@ spec:
                                   description: |-
                                     The key within the env file. An invalid key will prevent the pod from starting.
                                     The keys defined within a source may consist of any printable ASCII characters except '='.
-                                    During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                                   type: string
                                 optional:
                                   default: false
                                   description: |-
                                     Specify whether the file or its key must be defined. If the file or key
                                     does not exist, then the env var is not published.
-                                    If optional is set to true and the specified key does not exist,
-                                    the environment variable will not be set in the Pod's containers.
-
-                                    If optional is set to false and the specified key does not exist,
-                                    an error will be returned during Pod creation.
                                   type: boolean
                                 path:
                                   description: |-
@@ -502,7 +451,7 @@ spec:
                                     This field is effectively required, but due to backwards compatibility is
                                     allowed to be empty. Instances of this type with an empty value here are
                                     almost certainly wrong.
-                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    More info: https://kubernetes.
                                   type: string
                                 optional:
                                   description: Specify whether the Secret or its key
@@ -522,16 +471,7 @@ spec:
                     x-kubernetes-list-type: map
                   mode:
                     default: Shared
-                    description: |-
-                      Mode controls when to use caching.
-                      Canonical values:
-                      - Shared (default): reuse/create shared cache assets
-                      - Dedicated: create service-owned dedicated cache assets
-
-                      Legacy values are accepted and normalized:
-                      - Always -> Shared
-                      - Auto -> Shared
-                      - Never -> Dedicated
+                    description: Mode controls when to use caching.
                     enum:
                     - Dedicated
                     - Shared
@@ -548,7 +488,6 @@ spec:
                   Env specifies environment variables for inference containers.
                   When set on AIMService, these take highest precedence in the merge hierarchy.
                   When set on RuntimeConfig, these provide namespace/cluster-level defaults.
-                  Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env
                 items:
                   description: EnvVar represents an environment variable present in
                     a Container.
@@ -563,12 +502,7 @@ spec:
                         Variable references $(VAR_NAME) are expanded
                         using the previously defined environment variables in the container and
                         any service environment variables. If a variable cannot be resolved,
-                        the reference in the input string will be unchanged. Double $$ are reduced
-                        to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                        "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                        Escaped references will never be expanded, regardless of whether the variable
-                        exists or not.
-                        Defaults to "".
+                        the reference in the input string will be unchanged.
                       type: string
                     valueFrom:
                       description: Source for the environment variable's value. Cannot
@@ -587,7 +521,7 @@ spec:
                                 This field is effectively required, but due to backwards compatibility is
                                 allowed to be empty. Instances of this type with an empty value here are
                                 almost certainly wrong.
-                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                More info: https://kubernetes.
                               type: string
                             optional:
                               description: Specify whether the ConfigMap or its key
@@ -623,18 +557,12 @@ spec:
                               description: |-
                                 The key within the env file. An invalid key will prevent the pod from starting.
                                 The keys defined within a source may consist of any printable ASCII characters except '='.
-                                During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                               type: string
                             optional:
                               default: false
                               description: |-
                                 Specify whether the file or its key must be defined. If the file or key
                                 does not exist, then the env var is not published.
-                                If optional is set to true and the specified key does not exist,
-                                the environment variable will not be set in the Pod's containers.
-
-                                If optional is set to false and the specified key does not exist,
-                                an error will be returned during Pod creation.
                               type: boolean
                             path:
                               description: |-
@@ -689,7 +617,7 @@ spec:
                                 This field is effectively required, but due to backwards compatibility is
                                 allowed to be empty. Instances of this type with an empty value here are
                                 almost certainly wrong.
-                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                More info: https://kubernetes.
                               type: string
                             optional:
                               description: Specify whether the Secret or its key must
@@ -722,7 +650,7 @@ spec:
                         This field is effectively required, but due to backwards compatibility is
                         allowed to be empty. Instances of this type with an empty value here are
                         almost certainly wrong.
-                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        More info: https://kubernetes.
                       type: string
                   type: object
                   x-kubernetes-map-type: atomic
@@ -739,16 +667,12 @@ spec:
                   MinReplicas specifies the minimum number of replicas for autoscaling.
                   Defaults to 1. Set to 0 to enable scale-to-zero: KEDA idles the predictor
                   to zero replicas when idle and brings it back up on the next request.
-                  When specified with MaxReplicas, enables autoscaling for the service.
                 format: int32
                 minimum: 0
                 type: integer
               model:
-                description: |-
-                  Model specifies which model to deploy using one of the available reference methods.
-                  Use `name` to reference an existing AIMModel/AIMClusterModel by name, or use `image`
-                  to specify a container image URI directly (which will auto-create a model if needed).
-                  Required for v1alpha1 (template path), not permitted for v1alpha2 (profile path).
+                description: Model specifies which model to deploy using one of the
+                  available reference methods.
                 properties:
                   custom:
                     description: |-
@@ -840,7 +764,6 @@ spec:
                           ModelSources specifies the model sources to use.
                           The controller will search for or create an AIMModel with these sources.
                           The size field is optional - if not specified, it will be discovered by the download job.
-                          AIM runtime currently supports only one model source.
                         items:
                           description: |-
                             AIMModelSource describes a model artifact that must be downloaded for inference.
@@ -865,12 +788,7 @@ spec:
                                       Variable references $(VAR_NAME) are expanded
                                       using the previously defined environment variables in the container and
                                       any service environment variables. If a variable cannot be resolved,
-                                      the reference in the input string will be unchanged. Double $$ are reduced
-                                      to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                                      "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                                      Escaped references will never be expanded, regardless of whether the variable
-                                      exists or not.
-                                      Defaults to "".
+                                      the reference in the input string will be unchanged.
                                     type: string
                                   valueFrom:
                                     description: Source for the environment variable's
@@ -889,7 +807,7 @@ spec:
                                               This field is effectively required, but due to backwards compatibility is
                                               allowed to be empty. Instances of this type with an empty value here are
                                               almost certainly wrong.
-                                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                              More info: https://kubernetes.
                                             type: string
                                           optional:
                                             description: Specify whether the ConfigMap
@@ -926,18 +844,12 @@ spec:
                                             description: |-
                                               The key within the env file. An invalid key will prevent the pod from starting.
                                               The keys defined within a source may consist of any printable ASCII characters except '='.
-                                              During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                                             type: string
                                           optional:
                                             default: false
                                             description: |-
                                               Specify whether the file or its key must be defined. If the file or key
                                               does not exist, then the env var is not published.
-                                              If optional is set to true and the specified key does not exist,
-                                              the environment variable will not be set in the Pod's containers.
-
-                                              If optional is set to false and the specified key does not exist,
-                                              an error will be returned during Pod creation.
                                             type: boolean
                                           path:
                                             description: |-
@@ -995,7 +907,7 @@ spec:
                                               This field is effectively required, but due to backwards compatibility is
                                               allowed to be empty. Instances of this type with an empty value here are
                                               almost certainly wrong.
-                                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                              More info: https://kubernetes.
                                             type: string
                                           optional:
                                             description: Specify whether the Secret
@@ -1018,7 +930,6 @@ spec:
                                 ModelID is the canonical identifier in {org}/{name} format.
                                 Determines the cache mount path: /workspace/cache/{modelId}
                                 For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
-                                For S3 sources, users define their own organizational structure.
                               pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                               type: string
                             precision:
@@ -1054,7 +965,6 @@ spec:
                                 Size is the expected storage space required for this model artifact.
                                 Used for PVC sizing and capacity planning during cache creation.
                                 Optional - if not specified, the download job will discover the size automatically.
-                                Can be set explicitly to pre-allocate storage or override auto-discovery.
                               pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                               x-kubernetes-int-or-string: true
                             sourceUri:
@@ -1085,7 +995,7 @@ spec:
                       Image specifies a container image URI directly.
                       The controller searches for an existing model with this image, or creates one if none exists.
                       Auto-created models are namespace-scoped and can be reused by other services.
-                      Example: `ghcr.io/silogen/llama-3-8b:v1.2.0`
+                      Example: `ghcr.
                     type: string
                   name:
                     description: |-
@@ -1250,14 +1160,7 @@ spec:
                       Selector narrows candidate AIMProfile / AIMClusterProfile objects via the
                       shared provenance labels (role, source-model, origin) and spec filters
                       (aimId, precision, acceleratorModel, ...). The controller forces
-                      `selector.role = Deployable` at evaluation time; user-supplied values
-                      for that field are rejected by CEL on v1alpha2.
-
-                      For every selector-driven AIMService the controller requires at least
-                      one of `selector.aimId` or `selector.modelRef.name` so the watch
-                      fan-out can reach the service via an O(1) index lookup. The top-level
-                      `spec.model.name` shortcut is treated as if the user had set
-                      `selector.modelRef.name` to the same value when not explicit.
+                      `selector.
                     properties:
                       acceleratorCount:
                         description: AcceleratorCount filters by accelerator unit
@@ -1273,12 +1176,6 @@ spec:
                           partitioning mode. Partial-order match (NOT strict equality):
                             ""              - no filter on this field.
                             "unpartitioned" - matches profiles with mode "" or "unpartitioned".
-                            "partitioned"   - matches profiles whose mode is non-trivial (anything
-                                              other than "" / "unpartitioned").
-                            "<C>"           - selector-only convenience: matches profiles with mode
-                                              "<C>-*" (prefix on the scheme). Not a valid profile-spec
-                                              value (e.g. selector "CPX" matches "CPX-NPS1", "CPX-NPS4").
-                            "<C>-<M>"       - exact-string match on the scheme.
                         type: string
                       acceleratorType:
                         description: AcceleratorType filters by accelerator resource
@@ -1317,17 +1214,7 @@ spec:
                         description: |-
                           MinimumType filters by a minimum optimization level: candidates whose
                           type is this tier OR BETTER are accepted (hierarchy: optimized > general
-                          > preview > unoptimized). This is the floor counterpart to the exact-match
-                          Type field; the two AND together when both are set.
-
-                          The sentinel "any" disables the floor (accept every tier). When this
-                          field is empty the AIMService resolver applies a default floor of
-                          "optimized" so auto-selection prefers production-grade profiles and never
-                          silently picks an unoptimized one; to opt a service into lower tiers
-                          (e.g. CPU/EPYC profiles published as unoptimized) set minimumType
-                          explicitly to "unoptimized" or "any". Derivation selectors
-                          (AIMProfileSet / AIMModel.profiles) treat empty as "any" so copying is
-                          never tier-restricted by default.
+                          > preview > unoptimized).
                         enum:
                         - optimized
                         - general
@@ -1341,9 +1228,8 @@ spec:
                         type: string
                       modelRef:
                         description: |-
-                          ModelRef narrows candidates to those produced by a specific
-                          AIM(Cluster)Model, matched via the `aim.eai.amd.com/source-model[-scope]`
-                          labels stamped by the AIMModel reconcilers. Iteration 1 (v1alpha2 only).
+                          ModelRef optionally narrows candidates to definitions and profiles
+                          published by a specific AIM(Cluster)Model. Omit to select across models.
                         properties:
                           name:
                             description: Name is the owning AIM(Cluster)Model name.
@@ -1364,9 +1250,9 @@ spec:
                         type: object
                       origin:
                         description: |-
-                          Origin filters by the `aim.eai.amd.com/profile-origin` label. When unset
-                          (empty) the selector does not filter by origin. Iteration 1 (v1alpha2
-                          only).
+                          Origin filters source provenance across catalog and resource
+                          representations.
+                          Empty means no origin filter.
                         enum:
                         - discovered
                         - derived
@@ -1436,16 +1322,7 @@ spec:
                     description: |-
                       AcceleratorPartitioningMode replaces the referenced profile's
                       acceleratorPartitioningMode. Complete replacement, not a merge — single
-                      string, no substruct ambiguity. Empty string means "no override" (the
-                      resolved overlay inherits the base profile's mode). Use this to deploy a
-                      profile written for whole GPUs onto a partition slice. Whenever this
-                      override is set (to any value, including "unpartitioned"), the CEL rule on
-                      AIMService also requires an acceleratorCount override: partition mode
-                      changes the per-unit interpretation of acceleratorCount, and CEL cannot
-                      read the base profile to tell whether the meaning actually changed, so it
-                      conservatively requires the count be restated. See
-                      AcceleratorPartitioningMode on AIMProfileSpecCommon for the reserved
-                      values ("unpartitioned", "partitioned", "<C>-<M>").
+                      string, no substruct ambiguity.
                     type: string
                   acceleratorVendor:
                     description: AcceleratorVendor replaces the referenced profile's
@@ -1458,9 +1335,6 @@ spec:
                     description: |-
                       ContainerEnv merges by env-var name on top of the profile's
                       containerEnv. Matching names override; new names are appended.
-                      AIM framework variables (AIM_*) reserved for the controller are
-                      applied after the overlay's containerEnv and cannot be overridden
-                      here.
                     items:
                       description: EnvVar represents an environment variable present
                         in a Container.
@@ -1475,12 +1349,7 @@ spec:
                             Variable references $(VAR_NAME) are expanded
                             using the previously defined environment variables in the container and
                             any service environment variables. If a variable cannot be resolved,
-                            the reference in the input string will be unchanged. Double $$ are reduced
-                            to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                            "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                            Escaped references will never be expanded, regardless of whether the variable
-                            exists or not.
-                            Defaults to "".
+                            the reference in the input string will be unchanged.
                           type: string
                         valueFrom:
                           description: Source for the environment variable's value.
@@ -1499,7 +1368,7 @@ spec:
                                     This field is effectively required, but due to backwards compatibility is
                                     allowed to be empty. Instances of this type with an empty value here are
                                     almost certainly wrong.
-                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    More info: https://kubernetes.
                                   type: string
                                 optional:
                                   description: Specify whether the ConfigMap or its
@@ -1535,18 +1404,12 @@ spec:
                                   description: |-
                                     The key within the env file. An invalid key will prevent the pod from starting.
                                     The keys defined within a source may consist of any printable ASCII characters except '='.
-                                    During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                                   type: string
                                 optional:
                                   default: false
                                   description: |-
                                     Specify whether the file or its key must be defined. If the file or key
                                     does not exist, then the env var is not published.
-                                    If optional is set to true and the specified key does not exist,
-                                    the environment variable will not be set in the Pod's containers.
-
-                                    If optional is set to false and the specified key does not exist,
-                                    an error will be returned during Pod creation.
                                   type: boolean
                                 path:
                                   description: |-
@@ -1602,7 +1465,7 @@ spec:
                                     This field is effectively required, but due to backwards compatibility is
                                     allowed to be empty. Instances of this type with an empty value here are
                                     almost certainly wrong.
-                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    More info: https://kubernetes.
                                   type: string
                                 optional:
                                   description: Specify whether the Secret or its key
@@ -1636,9 +1499,7 @@ spec:
                   features:
                     description: |-
                       Features adds optional runtime capabilities to the service-owned overlay
-                      profile. Values are unioned with the referenced profile's features. Use
-                      ["adapters"] to explicitly assert that the selected image honours the LoRA
-                      adapter runtime contract when discovery metadata does not advertise it.
+                      profile. Values are unioned with the referenced profile's features.
                     items:
                       type: string
                     type: array
@@ -1647,8 +1508,7 @@ spec:
                     description: |-
                       ModelSources replaces the referenced profile's modelSources entirely.
                       Use this to point a profile at user-supplied weights (e.g. a fine-tuned
-                      checkpoint) without forking the profile itself. The first source's
-                      modelId becomes the overlay profile's modelId.
+                      checkpoint) without forking the profile itself.
                     items:
                       description: |-
                         AIMModelSource describes a model artifact that must be downloaded for inference.
@@ -1673,12 +1533,7 @@ spec:
                                   Variable references $(VAR_NAME) are expanded
                                   using the previously defined environment variables in the container and
                                   any service environment variables. If a variable cannot be resolved,
-                                  the reference in the input string will be unchanged. Double $$ are reduced
-                                  to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                                  "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                                  Escaped references will never be expanded, regardless of whether the variable
-                                  exists or not.
-                                  Defaults to "".
+                                  the reference in the input string will be unchanged.
                                 type: string
                               valueFrom:
                                 description: Source for the environment variable's
@@ -1697,7 +1552,7 @@ spec:
                                           This field is effectively required, but due to backwards compatibility is
                                           allowed to be empty. Instances of this type with an empty value here are
                                           almost certainly wrong.
-                                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                          More info: https://kubernetes.
                                         type: string
                                       optional:
                                         description: Specify whether the ConfigMap
@@ -1733,18 +1588,12 @@ spec:
                                         description: |-
                                           The key within the env file. An invalid key will prevent the pod from starting.
                                           The keys defined within a source may consist of any printable ASCII characters except '='.
-                                          During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                                         type: string
                                       optional:
                                         default: false
                                         description: |-
                                           Specify whether the file or its key must be defined. If the file or key
                                           does not exist, then the env var is not published.
-                                          If optional is set to true and the specified key does not exist,
-                                          the environment variable will not be set in the Pod's containers.
-
-                                          If optional is set to false and the specified key does not exist,
-                                          an error will be returned during Pod creation.
                                         type: boolean
                                       path:
                                         description: |-
@@ -1800,7 +1649,7 @@ spec:
                                           This field is effectively required, but due to backwards compatibility is
                                           allowed to be empty. Instances of this type with an empty value here are
                                           almost certainly wrong.
-                                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                          More info: https://kubernetes.
                                         type: string
                                       optional:
                                         description: Specify whether the Secret or
@@ -1823,7 +1672,6 @@ spec:
                             ModelID is the canonical identifier in {org}/{name} format.
                             Determines the cache mount path: /workspace/cache/{modelId}
                             For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
-                            For S3 sources, users define their own organizational structure.
                           pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                           type: string
                         precision:
@@ -1859,7 +1707,6 @@ spec:
                             Size is the expected storage space required for this model artifact.
                             Used for PVC sizing and capacity planning during cache creation.
                             Optional - if not specified, the download job will discover the size automatically.
-                            Can be set explicitly to pre-allocate storage or override auto-discovery.
                           pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                           x-kubernetes-int-or-string: true
                         sourceUri:
@@ -1943,7 +1790,6 @@ spec:
                       Requests describes the minimum amount of compute resources required.
                       If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
                       otherwise to an implementation-defined value. Requests cannot exceed Limits.
-                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
               routing:
@@ -1958,23 +1804,17 @@ spec:
                       Annotations defines default annotations to add to all HTTPRoute resources.
                       Services can add additional annotations or override these via spec.routing.annotations.
                       When both are specified, service annotations take precedence for conflicting keys.
-                      Common use cases include ingress controller settings, rate limiting, monitoring labels,
-                      and security policies that should apply to all services using this config.
                     type: object
                   enabled:
                     description: |-
                       Enabled controls whether HTTP routing is managed for inference services using this config.
                       When true, the operator creates HTTPRoute resources for services that reference this config.
-                      When false or unset, routing must be explicitly enabled on each service.
-                      This provides a namespace or cluster-wide default that individual services can override.
                     type: boolean
                   gatewayRef:
                     description: |-
                       GatewayRef specifies the Gateway API Gateway resource that should receive HTTPRoutes.
                       This identifies the parent gateway for routing traffic to inference services.
                       The gateway can be in any namespace (cross-namespace references are supported).
-                      If routing is enabled but GatewayRef is not specified, service reconciliation will fail
-                      with a validation error.
                     properties:
                       group:
                         default: gateway.networking.k8s.io
@@ -1990,15 +1830,7 @@ spec:
                         type: string
                       kind:
                         default: Gateway
-                        description: |-
-                          Kind is kind of the referent.
-
-                          There are two kinds of parent resources with "Core" support:
-
-                          * Gateway (Gateway conformance profile)
-                          * Service (Mesh conformance profile, ClusterIP Services only)
-
-                          Support for other resources is Implementation-Specific.
+                        description: Kind is kind of the referent.
                         maxLength: 63
                         minLength: 1
                         pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
@@ -2017,24 +1849,7 @@ spec:
                           to the local namespace of the Route.
 
                           Note that there are specific rules for ParentRefs which cross namespace
-                          boundaries. Cross-namespace references are only valid if they are explicitly
-                          allowed by something in the namespace they are referring to. For example:
-                          Gateway has the AllowedRoutes field, and ReferenceGrant provides a
-                          generic way to enable any other kind of cross-namespace reference.
-
-                          <gateway:experimental:description>
-                          ParentRefs from a Route to a Service in the same namespace are "producer"
-                          routes, which apply default routing rules to inbound connections from
-                          any namespace to the Service.
-
-                          ParentRefs from a Route to a Service in a different namespace are
-                          "consumer" routes, and these routing rules are only applied to outbound
-                          connections originating from the same namespace as the Route, for which
-                          the intended destination of the connections are a Service targeted as a
-                          ParentRef of the Route.
-                          </gateway:experimental:description>
-
-                          Support: Core
+                          boundaries.
                         maxLength: 63
                         minLength: 1
                         pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
@@ -2043,34 +1858,6 @@ spec:
                         description: |-
                           Port is the network port this Route targets. It can be interpreted
                           differently based on the type of parent resource.
-
-                          When the parent resource is a Gateway, this targets all listeners
-                          listening on the specified port that also support this kind of Route(and
-                          select this Route). It's not recommended to set `Port` unless the
-                          networking behaviors specified in a Route must apply to a specific port
-                          as opposed to a listener(s) whose port(s) may be changed. When both Port
-                          and SectionName are specified, the name and port of the selected listener
-                          must match both specified values.
-
-                          <gateway:experimental:description>
-                          When the parent resource is a Service, this targets a specific port in the
-                          Service spec. When both Port (experimental) and SectionName are specified,
-                          the name and port of the selected port must match both specified values.
-                          </gateway:experimental:description>
-
-                          Implementations MAY choose to support other parent resources.
-                          Implementations supporting other types of parent resources MUST clearly
-                          document how/if Port is interpreted.
-
-                          For the purpose of status, an attachment is considered successful as
-                          long as the parent resource accepts it partially. For example, Gateway
-                          listeners can restrict which Routes can attach to them by Route kind,
-                          namespace, or hostname. If 1 of 2 Gateway listeners accept attachment
-                          from the referencing Route, the Route MUST be considered successfully
-                          attached. If no Gateway listeners accept attachment from this Route,
-                          the Route MUST be considered detached from the Gateway.
-
-                          Support: Extended
                         format: int32
                         maximum: 65535
                         minimum: 1
@@ -2080,27 +1867,7 @@ spec:
                           SectionName is the name of a section within the target resource. In the
                           following resources, SectionName is interpreted as the following:
 
-                          * Gateway: Listener name. When both Port (experimental) and SectionName
-                          are specified, the name and port of the selected listener must match
-                          both specified values.
-                          * Service: Port name. When both Port (experimental) and SectionName
-                          are specified, the name and port of the selected listener must match
-                          both specified values.
-
-                          Implementations MAY choose to support attaching Routes to other resources.
-                          If that is the case, they MUST clearly document how SectionName is
-                          interpreted.
-
-                          When unspecified (empty string), this will reference the entire resource.
-                          For the purpose of status, an attachment is considered successful if at
-                          least one section in the parent resource accepts it. For example, Gateway
-                          listeners can restrict which Routes can attach to them by Route kind,
-                          namespace, or hostname. If 1 of 2 Gateway listeners accept attachment from
-                          the referencing Route, the Route MUST be considered successfully
-                          attached. If no Gateway listeners accept attachment from this Route, the
-                          Route MUST be considered detached from the Gateway.
-
-                          Support: Core
+                          * Gateway: Listener name.
                         maxLength: 253
                         minLength: 1
                         pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
@@ -2112,34 +1879,14 @@ spec:
                     description: |-
                       Hostnames pins generated HTTPRoutes to these hostnames so a route only
                       attaches to the matching Gateway listener instead of every listener on
-                      the parent gateway. Without a hostname, an HTTPRoute matches all of the
-                      parent gateway's listener hostnames, which can expose a service on
-                      listeners that do not enforce the intended authentication.
-
-                      This field is required when the parent gateway exposes more than one
-                      listener: in that case a service with routing enabled but no hostnames
-                      configured will not get an HTTPRoute and reports ConfigValid=False with
-                      reason RouteHostnameRequired. When the parent gateway has a single
-                      listener, leaving this empty preserves the existing behavior (the route
-                      inherits that listener's hostnames).
-
-                      Individual services can override this list via spec.routing.hostnames.
+                      the parent gateway.
                     items:
                       description: |-
                         Hostname is the fully qualified domain name of a network host. This matches
                         the RFC 1123 definition of a hostname with 2 notable exceptions:
 
                          1. IPs are not allowed.
-                         2. A hostname may be prefixed with a wildcard label (`*.`). The wildcard
-                            label must appear by itself as the first label.
-
-                        Hostname can be "precise" which is a domain name without the terminating
-                        dot of a network host (e.g. "foo.example.com") or "wildcard", which is a
-                        domain name prefixed with a single wildcard label (e.g. `*.example.com`).
-
-                        Note that as per RFC1035 and RFC1123, a *label* must consist of lower case
-                        alphanumeric characters or '-', and must start and end with an alphanumeric
-                        character. No other punctuation is allowed.
+                         2. A hostname may be prefixed with a wildcard label (`*.`).
                       maxLength: 253
                       minLength: 1
                       pattern: ^(\*\.)?[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
@@ -2151,18 +1898,7 @@ spec:
                       The template is rendered against the AIMService object to generate unique paths.
 
                       Example templates:
-                      - `/{.metadata.namespace}/{.metadata.name}` - namespace and service name
-                      - `/{.metadata.namespace}/{.metadata.labels['team']}/inference` - with label
-                      - `/models/{.metadata.name}` - based on service name
-
-                      The template must:
-                      - Use valid JSONPath expressions wrapped in {...}
-                      - Reference fields that exist on the service
-                      - Produce a path ≤ 200 characters after rendering
-                      - Result in valid URL path segments (lowercase, RFC 1123 compliant)
-
-                      If evaluation fails, the service enters Degraded state with PathTemplateInvalid reason.
-                      Individual services can override this template via spec.routing.pathTemplate.
+                      - `/{.metadata.namespace}/{.metadata.
                     type: string
                   requestTimeout:
                     description: |-
@@ -2170,15 +1906,11 @@ spec:
                       This sets the maximum duration for a request to complete before timing out.
                       The timeout applies to the entire request/response cycle.
                       If not specified, no timeout is set on the route.
-                      Individual services can override this value via spec.routing.requestTimeout.
                     type: string
                 type: object
               runtimeConfigName:
-                description: |-
-                  Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both
-                  as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority
-                  over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster
-                  runtime config with the name `default` is used, if it exists.
+                description: Name is the name of the runtime config to use for this
+                  resource.
                 type: string
               scaleFromZero:
                 description: |-
@@ -2190,11 +1922,7 @@ spec:
                       ActivationMetricQueryTemplate overrides the provider-derived KEDA
                       OpenTelemetry metric query. The controller expands these placeholders:
                       ${namespace}, ${serviceName}, ${httpRouteName}, and
-                      ${predictorDeployment}. Unknown placeholders make the service
-                      configuration invalid.
-
-                      A value set directly on AIMService takes precedence over namespace and
-                      cluster RuntimeConfig values.
+                      ${predictorDeployment}.
                     maxLength: 4096
                     minLength: 1
                     type: string
@@ -2229,22 +1957,19 @@ spec:
                     description: |-
                       DefaultStorageClassName specifies the storage class to use for artifacts and PVCs
                       when the consuming resource (AIMArtifact, AIMTemplateCache, AIMServiceTemplate) does not
-                      specify a storage class. If this field is empty, the cluster's default storage class is used.
+                      specify a storage class.
                     type: string
                   downloadFilter:
                     description: |-
                       DownloadFilter controls which files are included or excluded during artifact downloads.
                       When set here, applies as the default for all artifacts using this runtime config.
                       Individual artifacts can override this with their own downloadFilter.
-                      When no filter is configured at any level, subdirectory files are excluded by default.
-                      Set to an empty object (downloadFilter: {}) to explicitly allow all files.
                     properties:
                       exclude:
                         description: |-
                           Exclude specifies glob patterns for files to skip.
                           Files matching any exclude pattern are removed after include filtering.
                           Patterns use fnmatch syntax (e.g., ["*/*", "*.bin"]).
-                          Use ["*/*"] to exclude all files in subdirectories (the default when no filter is set).
                         items:
                           type: string
                         type: array
@@ -2264,7 +1989,6 @@ spec:
                       PVCHeadroomPercent specifies the percentage of extra space to add to PVCs
                       for model storage. This accounts for filesystem overhead and temporary files
                       during model loading. The value represents a percentage (e.g., 10 means 10% extra space).
-                      If not specified, defaults to 10%.
                     format: int32
                     minimum: 0
                     type: integer
@@ -2305,35 +2029,25 @@ spec:
               adapterDiskPersistentVolumeClaim:
                 description: |-
                   AdapterDiskPersistentVolumeClaim is the shared adapter-disk PVC whose
-                  service subtree was most recently synchronized successfully. Together with
-                  AdapterDiskPersistentVolumeClaimUID it identifies the currently mountable
-                  storage binding and is reused through transient parent-resolution gaps.
+                  service subtree was most recently synchronized successfully.
                 type: string
               adapterDiskPersistentVolumeClaimUid:
                 description: |-
                   AdapterDiskPersistentVolumeClaimUID is the Kubernetes UID of
-                  AdapterDiskPersistentVolumeClaim. A same-name PVC recreation receives a new
-                  UID, forcing the controller to provision and stage the service subtree on
-                  the replacement storage before switching the InferenceService mount.
+                  AdapterDiskPersistentVolumeClaim.
                 type: string
               adapterMaxRank:
                 description: |-
                   AdapterMaxRank is the resolved AIM_ADAPTER_MAX_RANK startup ceiling.
                   It is only updated when the resolved configuration is valid; a rejected
-                  change leaves the last valid value in place. Static services recompute it
-                  from their declared adapter artifacts, preserving the last resolved value
-                  across transient lookup failures. Dynamic services report the
-                  configured/default startup ceiling, but preserve the previous higher
-                  ceiling while any declared adapter rank is unresolved before a decrease.
+                  change leaves the last valid value in place.
                 format: int32
                 type: integer
               adapterSubtreeSyncKey:
                 description: |-
                   AdapterSubtreeSyncKey records the adapter-disk PVC generation and declared
                   adapter set most recently reconciled onto the service's adapter subtree by
-                  the subtree-sync Job. The controller re-runs the sync Job whenever the
-                  adapter set or storage binding changes. This both reclaims removed adapters
-                  and provisions a fresh subtree after a PVC or base artifact is recreated.
+                  the subtree-sync Job.
                 type: string
               adapters:
                 description: |-
@@ -2429,7 +2143,6 @@ spec:
                       RetryAttempts tracks how many times this service has attempted to retry a failed cache.
                       Each service gets exactly one retry attempt. When a cache enters Failed state,
                       this counter is incremented from 0 to 1 after deleting failed Artifacts.
-                      If the retry fails (cache enters Failed again with attempts == 1), the service degrades.
                     type: integer
                   templateCacheRef:
                     description: |-
@@ -2486,8 +2199,7 @@ spec:
                     observedGeneration:
                       description: |-
                         observedGeneration represents the .metadata.generation that the condition was set based upon.
-                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
-                        with respect to the current state of the instance.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].
                       format: int64
                       minimum: 0
                       type: integer
@@ -2496,8 +2208,6 @@ spec:
                         reason contains a programmatic identifier indicating the reason for the condition's last transition.
                         Producers of specific condition types may define expected values and meanings for this field,
                         and whether the values are considered a guaranteed API.
-                        The value should be a CamelCase string.
-                        This field may not be empty.
                       maxLength: 1024
                       minLength: 1
                       pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
@@ -2530,6 +2240,15 @@ spec:
                   by the controller.
                 format: int64
                 type: integer
+              reconcilerPipeline:
+                description: |-
+                  ReconcilerPipeline records which pipeline owns pipeline-specific status.
+                  The controller persists this before dispatch so transitions can retire old
+                  resolved references and conditions before the new pipeline fetches state.
+                enum:
+                - template
+                - profile
+                type: string
               resolvedModel:
                 description: ResolvedModel captures metadata about the image that
                   was resolved.
@@ -2754,14 +2473,14 @@ spec:
         description: |-
           AIMService manages a KServe-based AIM inference service for the selected model and template.
           Note: KServe uses {name}-{namespace} format which must not exceed 63 characters.
-          This constraint is validated at runtime since CEL cannot access metadata.namespace.
+          This constraint is validated at runtime since CEL cannot access metadata.
         properties:
           apiVersion:
             description: |-
               APIVersion defines the versioned schema of this representation of an object.
               Servers should convert recognized schemas to the latest internal value, and
               may reject unrecognized values.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+              More info: https://git.k8s.
             type: string
           kind:
             description: |-
@@ -2769,7 +2488,7 @@ spec:
               Servers may infer this from the endpoint the client submits requests to.
               Cannot be updated.
               In CamelCase.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+              More info: https://git.k8s.
             type: string
           metadata:
             type: object
@@ -2778,12 +2497,7 @@ spec:
               AIMServiceSpec defines the desired state of AIMService.
 
               Binds a canonical model to an AIMServiceTemplate and configures replicas,
-              caching behavior, and optional overrides. The template governs the base
-              runtime selection knobs, while the overrides field allows service-specific
-              customization.
-
-              With v1alpha2, a Profile can be used instead of a Template. Template and Profile
-              are mutually exclusive — at least one resolution path must be specified.
+              caching behavior, and optional overrides.
             properties:
               adapterMode:
                 default: static
@@ -2791,9 +2505,7 @@ spec:
                   AdapterMode is the immutable adapter contract for the service, mapped
                   directly to the AIM_ADAPTER_MODE container env. static (default) freezes
                   spec.adapters and mounts the adapter disk only when adapters are declared;
-                  dynamic allows editing spec.adapters and mounts the disk even at zero
-                  adapters (so add/remove never restarts the pod). It is immutable after
-                  creation.
+                  dynamic allows editing spec.
                 enum:
                 - static
                 - dynamic
@@ -2812,20 +2524,6 @@ spec:
                       A service-level value takes precedence over namespace and cluster
                       RuntimeConfig values. When unset, the controller uses a conservative
                       built-in default.
-
-                      Static adapter services infer the required maximum rank from their declared
-                      AIMArtifact objects. A service-level value is rejected in static mode;
-                      inherited RuntimeConfig values are ignored because one RuntimeConfig may
-                      serve both static and dynamic services.
-
-                      Allowed values mirror vLLM's MaxLoRARanks:
-                      1, 8, 16, 32, 64, 128, 256, 320, and 512.
-
-                      Changing this value changes the inference container contract and rolls the
-                      serving workload. Increases take effect immediately. A decrease is deferred
-                      while any declared adapter artifact's rank is unresolved; the controller
-                      retains the last resolved ceiling until every rank can be checked against
-                      the lower value.
                     format: int32
                     minimum: 1
                     type: integer
@@ -2839,22 +2537,11 @@ spec:
                   Adapters is the load-bearing list of LoRA adapters this service serves.
                   The list may only be edited after creation when adapterMode is dynamic
                   (static freezes it). Omitting the list serves no adapters.
-                  Supported on both the template (v1alpha1) and profile (v1alpha2) pipelines:
-                  the base model the adapters attach to is resolved from the service's
-                  template cache or profile cache respectively. In dynamic mode the list may
-                  be edited after creation: adding an adapter stages it into the service's
-                  subtree and the aim-runtime hot-loads it; removing one lets the runtime
-                  unload it (subtree cleanup is reclaimed out-of-band). The InferenceService
-                  is never modified for adapter changes — it mounts the whole per-service
-                  subtree read-only. Entries are pure references; (kind, name) pairs must be
-                  unique. Omitting the list serves no adapters.
                 items:
                   description: |-
                     AIMServiceAdapterReference is a typed reference to a LoRA adapter served by this
                     service. Today it is resolved as a pure reference to an existing adapter
-                    artifact. The inline bootstrap fields (sourceUri/modelId/rank) are reserved:
-                    the schema accepts them, but create-if-missing self-healing is not yet wired,
-                    so a referenced adapter artifact must currently exist.
+                    artifact.
                   properties:
                     kind:
                       description: Kind is the kind of the referenced adapter. Required;
@@ -2978,8 +2665,7 @@ spec:
                                   description: |-
                                     AverageUtilization is the target value of the average of the resource metric across all relevant pods,
                                     represented as a percentage of the requested value of the resource for the pods.
-                                    Used when Type is "Utilization". Only valid for Resource metric source type.
-                                    Example: 80 for 80% utilization
+                                    Used when Type is "Utilization".
                                   format: int32
                                   type: integer
                                 averageValue:
@@ -2989,11 +2675,8 @@ spec:
                                     Example: "100m" for 100 millicores per pod
                                   type: string
                                 type:
-                                  description: |-
-                                    Type specifies how to interpret the metric value.
-                                    "Value": absolute value target (use Value field)
-                                    "AverageValue": average value across all pods (use AverageValue field)
-                                    "Utilization": percentage utilization for resource metrics (use AverageUtilization field)
+                                  description: Type specifies how to interpret the
+                                    metric value.
                                   enum:
                                   - Value
                                   - AverageValue
@@ -3061,11 +2744,7 @@ spec:
                   env:
                     description: |-
                       Env supplies credentials for model downloads (for example a HuggingFace
-                      token via secretKeyRef). Unlike the inference container env, these
-                      variables reach only the model-download Job, so download-only secrets are
-                      never injected into the serving container. They are also reachable for
-                      cluster-scoped and overlay profiles, where the profile's own caching.env
-                      does not exist. Merged over the profile's caching.env (service wins).
+                      token via secretKeyRef).
                     items:
                       description: EnvVar represents an environment variable present
                         in a Container.
@@ -3080,12 +2759,7 @@ spec:
                             Variable references $(VAR_NAME) are expanded
                             using the previously defined environment variables in the container and
                             any service environment variables. If a variable cannot be resolved,
-                            the reference in the input string will be unchanged. Double $$ are reduced
-                            to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                            "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                            Escaped references will never be expanded, regardless of whether the variable
-                            exists or not.
-                            Defaults to "".
+                            the reference in the input string will be unchanged.
                           type: string
                         valueFrom:
                           description: Source for the environment variable's value.
@@ -3104,7 +2778,7 @@ spec:
                                     This field is effectively required, but due to backwards compatibility is
                                     allowed to be empty. Instances of this type with an empty value here are
                                     almost certainly wrong.
-                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    More info: https://kubernetes.
                                   type: string
                                 optional:
                                   description: Specify whether the ConfigMap or its
@@ -3140,18 +2814,12 @@ spec:
                                   description: |-
                                     The key within the env file. An invalid key will prevent the pod from starting.
                                     The keys defined within a source may consist of any printable ASCII characters except '='.
-                                    During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                                   type: string
                                 optional:
                                   default: false
                                   description: |-
                                     Specify whether the file or its key must be defined. If the file or key
                                     does not exist, then the env var is not published.
-                                    If optional is set to true and the specified key does not exist,
-                                    the environment variable will not be set in the Pod's containers.
-
-                                    If optional is set to false and the specified key does not exist,
-                                    an error will be returned during Pod creation.
                                   type: boolean
                                 path:
                                   description: |-
@@ -3207,7 +2875,7 @@ spec:
                                     This field is effectively required, but due to backwards compatibility is
                                     allowed to be empty. Instances of this type with an empty value here are
                                     almost certainly wrong.
-                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    More info: https://kubernetes.
                                   type: string
                                 optional:
                                   description: Specify whether the Secret or its key
@@ -3227,16 +2895,7 @@ spec:
                     x-kubernetes-list-type: map
                   mode:
                     default: Shared
-                    description: |-
-                      Mode controls when to use caching.
-                      Canonical values:
-                      - Shared (default): reuse/create shared cache assets
-                      - Dedicated: create service-owned dedicated cache assets
-
-                      Legacy values are accepted and normalized:
-                      - Always -> Shared
-                      - Auto -> Shared
-                      - Never -> Dedicated
+                    description: Mode controls when to use caching.
                     enum:
                     - Dedicated
                     - Shared
@@ -3253,7 +2912,6 @@ spec:
                   Env specifies environment variables for inference containers.
                   When set on AIMService, these take highest precedence in the merge hierarchy.
                   When set on RuntimeConfig, these provide namespace/cluster-level defaults.
-                  Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env
                 items:
                   description: EnvVar represents an environment variable present in
                     a Container.
@@ -3268,12 +2926,7 @@ spec:
                         Variable references $(VAR_NAME) are expanded
                         using the previously defined environment variables in the container and
                         any service environment variables. If a variable cannot be resolved,
-                        the reference in the input string will be unchanged. Double $$ are reduced
-                        to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                        "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                        Escaped references will never be expanded, regardless of whether the variable
-                        exists or not.
-                        Defaults to "".
+                        the reference in the input string will be unchanged.
                       type: string
                     valueFrom:
                       description: Source for the environment variable's value. Cannot
@@ -3292,7 +2945,7 @@ spec:
                                 This field is effectively required, but due to backwards compatibility is
                                 allowed to be empty. Instances of this type with an empty value here are
                                 almost certainly wrong.
-                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                More info: https://kubernetes.
                               type: string
                             optional:
                               description: Specify whether the ConfigMap or its key
@@ -3328,18 +2981,12 @@ spec:
                               description: |-
                                 The key within the env file. An invalid key will prevent the pod from starting.
                                 The keys defined within a source may consist of any printable ASCII characters except '='.
-                                During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                               type: string
                             optional:
                               default: false
                               description: |-
                                 Specify whether the file or its key must be defined. If the file or key
                                 does not exist, then the env var is not published.
-                                If optional is set to true and the specified key does not exist,
-                                the environment variable will not be set in the Pod's containers.
-
-                                If optional is set to false and the specified key does not exist,
-                                an error will be returned during Pod creation.
                               type: boolean
                             path:
                               description: |-
@@ -3394,7 +3041,7 @@ spec:
                                 This field is effectively required, but due to backwards compatibility is
                                 allowed to be empty. Instances of this type with an empty value here are
                                 almost certainly wrong.
-                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                More info: https://kubernetes.
                               type: string
                             optional:
                               description: Specify whether the Secret or its key must
@@ -3427,7 +3074,7 @@ spec:
                         This field is effectively required, but due to backwards compatibility is
                         allowed to be empty. Instances of this type with an empty value here are
                         almost certainly wrong.
-                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        More info: https://kubernetes.
                       type: string
                   type: object
                   x-kubernetes-map-type: atomic
@@ -3444,16 +3091,12 @@ spec:
                   MinReplicas specifies the minimum number of replicas for autoscaling.
                   Defaults to 1. Set to 0 to enable scale-to-zero: KEDA idles the predictor
                   to zero replicas when idle and brings it back up on the next request.
-                  When specified with MaxReplicas, enables autoscaling for the service.
                 format: int32
                 minimum: 0
                 type: integer
               model:
-                description: |-
-                  Model specifies which model to deploy using one of the available reference methods.
-                  Use `name` to reference an existing AIMModel/AIMClusterModel by name, or use `image`
-                  to specify a container image URI directly (which will auto-create a model if needed).
-                  Required for v1alpha1 (template path), not permitted for v1alpha2 (profile path).
+                description: Model specifies which model to deploy using one of the
+                  available reference methods.
                 properties:
                   custom:
                     description: |-
@@ -3545,7 +3188,6 @@ spec:
                           ModelSources specifies the model sources to use.
                           The controller will search for or create an AIMModel with these sources.
                           The size field is optional - if not specified, it will be discovered by the download job.
-                          AIM runtime currently supports only one model source.
                         items:
                           description: |-
                             AIMModelSource describes a model artifact that must be downloaded for inference.
@@ -3570,12 +3212,7 @@ spec:
                                       Variable references $(VAR_NAME) are expanded
                                       using the previously defined environment variables in the container and
                                       any service environment variables. If a variable cannot be resolved,
-                                      the reference in the input string will be unchanged. Double $$ are reduced
-                                      to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                                      "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                                      Escaped references will never be expanded, regardless of whether the variable
-                                      exists or not.
-                                      Defaults to "".
+                                      the reference in the input string will be unchanged.
                                     type: string
                                   valueFrom:
                                     description: Source for the environment variable's
@@ -3594,7 +3231,7 @@ spec:
                                               This field is effectively required, but due to backwards compatibility is
                                               allowed to be empty. Instances of this type with an empty value here are
                                               almost certainly wrong.
-                                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                              More info: https://kubernetes.
                                             type: string
                                           optional:
                                             description: Specify whether the ConfigMap
@@ -3631,18 +3268,12 @@ spec:
                                             description: |-
                                               The key within the env file. An invalid key will prevent the pod from starting.
                                               The keys defined within a source may consist of any printable ASCII characters except '='.
-                                              During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                                             type: string
                                           optional:
                                             default: false
                                             description: |-
                                               Specify whether the file or its key must be defined. If the file or key
                                               does not exist, then the env var is not published.
-                                              If optional is set to true and the specified key does not exist,
-                                              the environment variable will not be set in the Pod's containers.
-
-                                              If optional is set to false and the specified key does not exist,
-                                              an error will be returned during Pod creation.
                                             type: boolean
                                           path:
                                             description: |-
@@ -3700,7 +3331,7 @@ spec:
                                               This field is effectively required, but due to backwards compatibility is
                                               allowed to be empty. Instances of this type with an empty value here are
                                               almost certainly wrong.
-                                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                              More info: https://kubernetes.
                                             type: string
                                           optional:
                                             description: Specify whether the Secret
@@ -3723,7 +3354,6 @@ spec:
                                 ModelID is the canonical identifier in {org}/{name} format.
                                 Determines the cache mount path: /workspace/cache/{modelId}
                                 For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
-                                For S3 sources, users define their own organizational structure.
                               pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                               type: string
                             precision:
@@ -3759,7 +3389,6 @@ spec:
                                 Size is the expected storage space required for this model artifact.
                                 Used for PVC sizing and capacity planning during cache creation.
                                 Optional - if not specified, the download job will discover the size automatically.
-                                Can be set explicitly to pre-allocate storage or override auto-discovery.
                               pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                               x-kubernetes-int-or-string: true
                             sourceUri:
@@ -3790,7 +3419,7 @@ spec:
                       Image specifies a container image URI directly.
                       The controller searches for an existing model with this image, or creates one if none exists.
                       Auto-created models are namespace-scoped and can be reused by other services.
-                      Example: `ghcr.io/silogen/llama-3-8b:v1.2.0`
+                      Example: `ghcr.
                     type: string
                   name:
                     description: |-
@@ -3955,14 +3584,7 @@ spec:
                       Selector narrows candidate AIMProfile / AIMClusterProfile objects via the
                       shared provenance labels (role, source-model, origin) and spec filters
                       (aimId, precision, acceleratorModel, ...). The controller forces
-                      `selector.role = Deployable` at evaluation time; user-supplied values
-                      for that field are rejected by CEL on v1alpha2.
-
-                      For every selector-driven AIMService the controller requires at least
-                      one of `selector.aimId` or `selector.modelRef.name` so the watch
-                      fan-out can reach the service via an O(1) index lookup. The top-level
-                      `spec.model.name` shortcut is treated as if the user had set
-                      `selector.modelRef.name` to the same value when not explicit.
+                      `selector.
                     properties:
                       acceleratorCount:
                         description: AcceleratorCount filters by accelerator unit
@@ -3978,12 +3600,6 @@ spec:
                           partitioning mode. Partial-order match (NOT strict equality):
                             ""              - no filter on this field.
                             "unpartitioned" - matches profiles with mode "" or "unpartitioned".
-                            "partitioned"   - matches profiles whose mode is non-trivial (anything
-                                              other than "" / "unpartitioned").
-                            "<C>"           - selector-only convenience: matches profiles with mode
-                                              "<C>-*" (prefix on the scheme). Not a valid profile-spec
-                                              value (e.g. selector "CPX" matches "CPX-NPS1", "CPX-NPS4").
-                            "<C>-<M>"       - exact-string match on the scheme.
                         type: string
                       acceleratorType:
                         description: AcceleratorType filters by accelerator resource
@@ -4022,17 +3638,7 @@ spec:
                         description: |-
                           MinimumType filters by a minimum optimization level: candidates whose
                           type is this tier OR BETTER are accepted (hierarchy: optimized > general
-                          > preview > unoptimized). This is the floor counterpart to the exact-match
-                          Type field; the two AND together when both are set.
-
-                          The sentinel "any" disables the floor (accept every tier). When this
-                          field is empty the AIMService resolver applies a default floor of
-                          "optimized" so auto-selection prefers production-grade profiles and never
-                          silently picks an unoptimized one; to opt a service into lower tiers
-                          (e.g. CPU/EPYC profiles published as unoptimized) set minimumType
-                          explicitly to "unoptimized" or "any". Derivation selectors
-                          (AIMProfileSet / AIMModel.profiles) treat empty as "any" so copying is
-                          never tier-restricted by default.
+                          > preview > unoptimized).
                         enum:
                         - optimized
                         - general
@@ -4046,9 +3652,8 @@ spec:
                         type: string
                       modelRef:
                         description: |-
-                          ModelRef narrows candidates to those produced by a specific
-                          AIM(Cluster)Model, matched via the `aim.eai.amd.com/source-model[-scope]`
-                          labels stamped by the AIMModel reconcilers. Iteration 1 (v1alpha2 only).
+                          ModelRef optionally narrows candidates to definitions and profiles
+                          published by a specific AIM(Cluster)Model. Omit to select across models.
                         properties:
                           name:
                             description: Name is the owning AIM(Cluster)Model name.
@@ -4069,9 +3674,9 @@ spec:
                         type: object
                       origin:
                         description: |-
-                          Origin filters by the `aim.eai.amd.com/profile-origin` label. When unset
-                          (empty) the selector does not filter by origin. Iteration 1 (v1alpha2
-                          only).
+                          Origin filters source provenance across catalog and resource
+                          representations.
+                          Empty means no origin filter.
                         enum:
                         - discovered
                         - derived
@@ -4141,16 +3746,7 @@ spec:
                     description: |-
                       AcceleratorPartitioningMode replaces the referenced profile's
                       acceleratorPartitioningMode. Complete replacement, not a merge — single
-                      string, no substruct ambiguity. Empty string means "no override" (the
-                      resolved overlay inherits the base profile's mode). Use this to deploy a
-                      profile written for whole GPUs onto a partition slice. Whenever this
-                      override is set (to any value, including "unpartitioned"), the CEL rule on
-                      AIMService also requires an acceleratorCount override: partition mode
-                      changes the per-unit interpretation of acceleratorCount, and CEL cannot
-                      read the base profile to tell whether the meaning actually changed, so it
-                      conservatively requires the count be restated. See
-                      AcceleratorPartitioningMode on AIMProfileSpecCommon for the reserved
-                      values ("unpartitioned", "partitioned", "<C>-<M>").
+                      string, no substruct ambiguity.
                     type: string
                   acceleratorVendor:
                     description: AcceleratorVendor replaces the referenced profile's
@@ -4163,9 +3759,6 @@ spec:
                     description: |-
                       ContainerEnv merges by env-var name on top of the profile's
                       containerEnv. Matching names override; new names are appended.
-                      AIM framework variables (AIM_*) reserved for the controller are
-                      applied after the overlay's containerEnv and cannot be overridden
-                      here.
                     items:
                       description: EnvVar represents an environment variable present
                         in a Container.
@@ -4180,12 +3773,7 @@ spec:
                             Variable references $(VAR_NAME) are expanded
                             using the previously defined environment variables in the container and
                             any service environment variables. If a variable cannot be resolved,
-                            the reference in the input string will be unchanged. Double $$ are reduced
-                            to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                            "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                            Escaped references will never be expanded, regardless of whether the variable
-                            exists or not.
-                            Defaults to "".
+                            the reference in the input string will be unchanged.
                           type: string
                         valueFrom:
                           description: Source for the environment variable's value.
@@ -4204,7 +3792,7 @@ spec:
                                     This field is effectively required, but due to backwards compatibility is
                                     allowed to be empty. Instances of this type with an empty value here are
                                     almost certainly wrong.
-                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    More info: https://kubernetes.
                                   type: string
                                 optional:
                                   description: Specify whether the ConfigMap or its
@@ -4240,18 +3828,12 @@ spec:
                                   description: |-
                                     The key within the env file. An invalid key will prevent the pod from starting.
                                     The keys defined within a source may consist of any printable ASCII characters except '='.
-                                    During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                                   type: string
                                 optional:
                                   default: false
                                   description: |-
                                     Specify whether the file or its key must be defined. If the file or key
                                     does not exist, then the env var is not published.
-                                    If optional is set to true and the specified key does not exist,
-                                    the environment variable will not be set in the Pod's containers.
-
-                                    If optional is set to false and the specified key does not exist,
-                                    an error will be returned during Pod creation.
                                   type: boolean
                                 path:
                                   description: |-
@@ -4307,7 +3889,7 @@ spec:
                                     This field is effectively required, but due to backwards compatibility is
                                     allowed to be empty. Instances of this type with an empty value here are
                                     almost certainly wrong.
-                                    More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    More info: https://kubernetes.
                                   type: string
                                 optional:
                                   description: Specify whether the Secret or its key
@@ -4341,9 +3923,7 @@ spec:
                   features:
                     description: |-
                       Features adds optional runtime capabilities to the service-owned overlay
-                      profile. Values are unioned with the referenced profile's features. Use
-                      ["adapters"] to explicitly assert that the selected image honours the LoRA
-                      adapter runtime contract when discovery metadata does not advertise it.
+                      profile. Values are unioned with the referenced profile's features.
                     items:
                       type: string
                     type: array
@@ -4352,8 +3932,7 @@ spec:
                     description: |-
                       ModelSources replaces the referenced profile's modelSources entirely.
                       Use this to point a profile at user-supplied weights (e.g. a fine-tuned
-                      checkpoint) without forking the profile itself. The first source's
-                      modelId becomes the overlay profile's modelId.
+                      checkpoint) without forking the profile itself.
                     items:
                       description: |-
                         AIMModelSource describes a model artifact that must be downloaded for inference.
@@ -4378,12 +3957,7 @@ spec:
                                   Variable references $(VAR_NAME) are expanded
                                   using the previously defined environment variables in the container and
                                   any service environment variables. If a variable cannot be resolved,
-                                  the reference in the input string will be unchanged. Double $$ are reduced
-                                  to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
-                                  "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
-                                  Escaped references will never be expanded, regardless of whether the variable
-                                  exists or not.
-                                  Defaults to "".
+                                  the reference in the input string will be unchanged.
                                 type: string
                               valueFrom:
                                 description: Source for the environment variable's
@@ -4402,7 +3976,7 @@ spec:
                                           This field is effectively required, but due to backwards compatibility is
                                           allowed to be empty. Instances of this type with an empty value here are
                                           almost certainly wrong.
-                                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                          More info: https://kubernetes.
                                         type: string
                                       optional:
                                         description: Specify whether the ConfigMap
@@ -4438,18 +4012,12 @@ spec:
                                         description: |-
                                           The key within the env file. An invalid key will prevent the pod from starting.
                                           The keys defined within a source may consist of any printable ASCII characters except '='.
-                                          During Alpha stage of the EnvFiles feature gate, the key size is limited to 128 characters.
                                         type: string
                                       optional:
                                         default: false
                                         description: |-
                                           Specify whether the file or its key must be defined. If the file or key
                                           does not exist, then the env var is not published.
-                                          If optional is set to true and the specified key does not exist,
-                                          the environment variable will not be set in the Pod's containers.
-
-                                          If optional is set to false and the specified key does not exist,
-                                          an error will be returned during Pod creation.
                                         type: boolean
                                       path:
                                         description: |-
@@ -4505,7 +4073,7 @@ spec:
                                           This field is effectively required, but due to backwards compatibility is
                                           allowed to be empty. Instances of this type with an empty value here are
                                           almost certainly wrong.
-                                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                          More info: https://kubernetes.
                                         type: string
                                       optional:
                                         description: Specify whether the Secret or
@@ -4528,7 +4096,6 @@ spec:
                             ModelID is the canonical identifier in {org}/{name} format.
                             Determines the cache mount path: /workspace/cache/{modelId}
                             For HuggingFace sources, this typically mirrors the URI path (e.g., meta-llama/Llama-3-8B).
-                            For S3 sources, users define their own organizational structure.
                           pattern: ^[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$
                           type: string
                         precision:
@@ -4564,7 +4131,6 @@ spec:
                             Size is the expected storage space required for this model artifact.
                             Used for PVC sizing and capacity planning during cache creation.
                             Optional - if not specified, the download job will discover the size automatically.
-                            Can be set explicitly to pre-allocate storage or override auto-discovery.
                           pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                           x-kubernetes-int-or-string: true
                         sourceUri:
@@ -4648,7 +4214,6 @@ spec:
                       Requests describes the minimum amount of compute resources required.
                       If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
                       otherwise to an implementation-defined value. Requests cannot exceed Limits.
-                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
               routing:
@@ -4663,23 +4228,17 @@ spec:
                       Annotations defines default annotations to add to all HTTPRoute resources.
                       Services can add additional annotations or override these via spec.routing.annotations.
                       When both are specified, service annotations take precedence for conflicting keys.
-                      Common use cases include ingress controller settings, rate limiting, monitoring labels,
-                      and security policies that should apply to all services using this config.
                     type: object
                   enabled:
                     description: |-
                       Enabled controls whether HTTP routing is managed for inference services using this config.
                       When true, the operator creates HTTPRoute resources for services that reference this config.
-                      When false or unset, routing must be explicitly enabled on each service.
-                      This provides a namespace or cluster-wide default that individual services can override.
                     type: boolean
                   gatewayRef:
                     description: |-
                       GatewayRef specifies the Gateway API Gateway resource that should receive HTTPRoutes.
                       This identifies the parent gateway for routing traffic to inference services.
                       The gateway can be in any namespace (cross-namespace references are supported).
-                      If routing is enabled but GatewayRef is not specified, service reconciliation will fail
-                      with a validation error.
                     properties:
                       group:
                         default: gateway.networking.k8s.io
@@ -4695,15 +4254,7 @@ spec:
                         type: string
                       kind:
                         default: Gateway
-                        description: |-
-                          Kind is kind of the referent.
-
-                          There are two kinds of parent resources with "Core" support:
-
-                          * Gateway (Gateway conformance profile)
-                          * Service (Mesh conformance profile, ClusterIP Services only)
-
-                          Support for other resources is Implementation-Specific.
+                        description: Kind is kind of the referent.
                         maxLength: 63
                         minLength: 1
                         pattern: ^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$
@@ -4722,24 +4273,7 @@ spec:
                           to the local namespace of the Route.
 
                           Note that there are specific rules for ParentRefs which cross namespace
-                          boundaries. Cross-namespace references are only valid if they are explicitly
-                          allowed by something in the namespace they are referring to. For example:
-                          Gateway has the AllowedRoutes field, and ReferenceGrant provides a
-                          generic way to enable any other kind of cross-namespace reference.
-
-                          <gateway:experimental:description>
-                          ParentRefs from a Route to a Service in the same namespace are "producer"
-                          routes, which apply default routing rules to inbound connections from
-                          any namespace to the Service.
-
-                          ParentRefs from a Route to a Service in a different namespace are
-                          "consumer" routes, and these routing rules are only applied to outbound
-                          connections originating from the same namespace as the Route, for which
-                          the intended destination of the connections are a Service targeted as a
-                          ParentRef of the Route.
-                          </gateway:experimental:description>
-
-                          Support: Core
+                          boundaries.
                         maxLength: 63
                         minLength: 1
                         pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
@@ -4748,34 +4282,6 @@ spec:
                         description: |-
                           Port is the network port this Route targets. It can be interpreted
                           differently based on the type of parent resource.
-
-                          When the parent resource is a Gateway, this targets all listeners
-                          listening on the specified port that also support this kind of Route(and
-                          select this Route). It's not recommended to set `Port` unless the
-                          networking behaviors specified in a Route must apply to a specific port
-                          as opposed to a listener(s) whose port(s) may be changed. When both Port
-                          and SectionName are specified, the name and port of the selected listener
-                          must match both specified values.
-
-                          <gateway:experimental:description>
-                          When the parent resource is a Service, this targets a specific port in the
-                          Service spec. When both Port (experimental) and SectionName are specified,
-                          the name and port of the selected port must match both specified values.
-                          </gateway:experimental:description>
-
-                          Implementations MAY choose to support other parent resources.
-                          Implementations supporting other types of parent resources MUST clearly
-                          document how/if Port is interpreted.
-
-                          For the purpose of status, an attachment is considered successful as
-                          long as the parent resource accepts it partially. For example, Gateway
-                          listeners can restrict which Routes can attach to them by Route kind,
-                          namespace, or hostname. If 1 of 2 Gateway listeners accept attachment
-                          from the referencing Route, the Route MUST be considered successfully
-                          attached. If no Gateway listeners accept attachment from this Route,
-                          the Route MUST be considered detached from the Gateway.
-
-                          Support: Extended
                         format: int32
                         maximum: 65535
                         minimum: 1
@@ -4785,27 +4291,7 @@ spec:
                           SectionName is the name of a section within the target resource. In the
                           following resources, SectionName is interpreted as the following:
 
-                          * Gateway: Listener name. When both Port (experimental) and SectionName
-                          are specified, the name and port of the selected listener must match
-                          both specified values.
-                          * Service: Port name. When both Port (experimental) and SectionName
-                          are specified, the name and port of the selected listener must match
-                          both specified values.
-
-                          Implementations MAY choose to support attaching Routes to other resources.
-                          If that is the case, they MUST clearly document how SectionName is
-                          interpreted.
-
-                          When unspecified (empty string), this will reference the entire resource.
-                          For the purpose of status, an attachment is considered successful if at
-                          least one section in the parent resource accepts it. For example, Gateway
-                          listeners can restrict which Routes can attach to them by Route kind,
-                          namespace, or hostname. If 1 of 2 Gateway listeners accept attachment from
-                          the referencing Route, the Route MUST be considered successfully
-                          attached. If no Gateway listeners accept attachment from this Route, the
-                          Route MUST be considered detached from the Gateway.
-
-                          Support: Core
+                          * Gateway: Listener name.
                         maxLength: 253
                         minLength: 1
                         pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
@@ -4817,34 +4303,14 @@ spec:
                     description: |-
                       Hostnames pins generated HTTPRoutes to these hostnames so a route only
                       attaches to the matching Gateway listener instead of every listener on
-                      the parent gateway. Without a hostname, an HTTPRoute matches all of the
-                      parent gateway's listener hostnames, which can expose a service on
-                      listeners that do not enforce the intended authentication.
-
-                      This field is required when the parent gateway exposes more than one
-                      listener: in that case a service with routing enabled but no hostnames
-                      configured will not get an HTTPRoute and reports ConfigValid=False with
-                      reason RouteHostnameRequired. When the parent gateway has a single
-                      listener, leaving this empty preserves the existing behavior (the route
-                      inherits that listener's hostnames).
-
-                      Individual services can override this list via spec.routing.hostnames.
+                      the parent gateway.
                     items:
                       description: |-
                         Hostname is the fully qualified domain name of a network host. This matches
                         the RFC 1123 definition of a hostname with 2 notable exceptions:
 
                          1. IPs are not allowed.
-                         2. A hostname may be prefixed with a wildcard label (`*.`). The wildcard
-                            label must appear by itself as the first label.
-
-                        Hostname can be "precise" which is a domain name without the terminating
-                        dot of a network host (e.g. "foo.example.com") or "wildcard", which is a
-                        domain name prefixed with a single wildcard label (e.g. `*.example.com`).
-
-                        Note that as per RFC1035 and RFC1123, a *label* must consist of lower case
-                        alphanumeric characters or '-', and must start and end with an alphanumeric
-                        character. No other punctuation is allowed.
+                         2. A hostname may be prefixed with a wildcard label (`*.`).
                       maxLength: 253
                       minLength: 1
                       pattern: ^(\*\.)?[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
@@ -4856,18 +4322,7 @@ spec:
                       The template is rendered against the AIMService object to generate unique paths.
 
                       Example templates:
-                      - `/{.metadata.namespace}/{.metadata.name}` - namespace and service name
-                      - `/{.metadata.namespace}/{.metadata.labels['team']}/inference` - with label
-                      - `/models/{.metadata.name}` - based on service name
-
-                      The template must:
-                      - Use valid JSONPath expressions wrapped in {...}
-                      - Reference fields that exist on the service
-                      - Produce a path ≤ 200 characters after rendering
-                      - Result in valid URL path segments (lowercase, RFC 1123 compliant)
-
-                      If evaluation fails, the service enters Degraded state with PathTemplateInvalid reason.
-                      Individual services can override this template via spec.routing.pathTemplate.
+                      - `/{.metadata.namespace}/{.metadata.
                     type: string
                   requestTimeout:
                     description: |-
@@ -4875,15 +4330,11 @@ spec:
                       This sets the maximum duration for a request to complete before timing out.
                       The timeout applies to the entire request/response cycle.
                       If not specified, no timeout is set on the route.
-                      Individual services can override this value via spec.routing.requestTimeout.
                     type: string
                 type: object
               runtimeConfigName:
-                description: |-
-                  Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both
-                  as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority
-                  over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster
-                  runtime config with the name `default` is used, if it exists.
+                description: Name is the name of the runtime config to use for this
+                  resource.
                 type: string
               scaleFromZero:
                 description: |-
@@ -4895,11 +4346,7 @@ spec:
                       ActivationMetricQueryTemplate overrides the provider-derived KEDA
                       OpenTelemetry metric query. The controller expands these placeholders:
                       ${namespace}, ${serviceName}, ${httpRouteName}, and
-                      ${predictorDeployment}. Unknown placeholders make the service
-                      configuration invalid.
-
-                      A value set directly on AIMService takes precedence over namespace and
-                      cluster RuntimeConfig values.
+                      ${predictorDeployment}.
                     maxLength: 4096
                     minLength: 1
                     type: string
@@ -4934,22 +4381,19 @@ spec:
                     description: |-
                       DefaultStorageClassName specifies the storage class to use for artifacts and PVCs
                       when the consuming resource (AIMArtifact, AIMTemplateCache, AIMServiceTemplate) does not
-                      specify a storage class. If this field is empty, the cluster's default storage class is used.
+                      specify a storage class.
                     type: string
                   downloadFilter:
                     description: |-
                       DownloadFilter controls which files are included or excluded during artifact downloads.
                       When set here, applies as the default for all artifacts using this runtime config.
                       Individual artifacts can override this with their own downloadFilter.
-                      When no filter is configured at any level, subdirectory files are excluded by default.
-                      Set to an empty object (downloadFilter: {}) to explicitly allow all files.
                     properties:
                       exclude:
                         description: |-
                           Exclude specifies glob patterns for files to skip.
                           Files matching any exclude pattern are removed after include filtering.
                           Patterns use fnmatch syntax (e.g., ["*/*", "*.bin"]).
-                          Use ["*/*"] to exclude all files in subdirectories (the default when no filter is set).
                         items:
                           type: string
                         type: array
@@ -4969,7 +4413,6 @@ spec:
                       PVCHeadroomPercent specifies the percentage of extra space to add to PVCs
                       for model storage. This accounts for filesystem overhead and temporary files
                       during model loading. The value represents a percentage (e.g., 10 means 10% extra space).
-                      If not specified, defaults to 10%.
                     format: int32
                     minimum: 0
                     type: integer
@@ -5010,35 +4453,25 @@ spec:
               adapterDiskPersistentVolumeClaim:
                 description: |-
                   AdapterDiskPersistentVolumeClaim is the shared adapter-disk PVC whose
-                  service subtree was most recently synchronized successfully. Together with
-                  AdapterDiskPersistentVolumeClaimUID it identifies the currently mountable
-                  storage binding and is reused through transient parent-resolution gaps.
+                  service subtree was most recently synchronized successfully.
                 type: string
               adapterDiskPersistentVolumeClaimUid:
                 description: |-
                   AdapterDiskPersistentVolumeClaimUID is the Kubernetes UID of
-                  AdapterDiskPersistentVolumeClaim. A same-name PVC recreation receives a new
-                  UID, forcing the controller to provision and stage the service subtree on
-                  the replacement storage before switching the InferenceService mount.
+                  AdapterDiskPersistentVolumeClaim.
                 type: string
               adapterMaxRank:
                 description: |-
                   AdapterMaxRank is the resolved AIM_ADAPTER_MAX_RANK startup ceiling.
                   It is only updated when the resolved configuration is valid; a rejected
-                  change leaves the last valid value in place. Static services recompute it
-                  from their declared adapter artifacts, preserving the last resolved value
-                  across transient lookup failures. Dynamic services report the
-                  configured/default startup ceiling, but preserve the previous higher
-                  ceiling while any declared adapter rank is unresolved before a decrease.
+                  change leaves the last valid value in place.
                 format: int32
                 type: integer
               adapterSubtreeSyncKey:
                 description: |-
                   AdapterSubtreeSyncKey records the adapter-disk PVC generation and declared
                   adapter set most recently reconciled onto the service's adapter subtree by
-                  the subtree-sync Job. The controller re-runs the sync Job whenever the
-                  adapter set or storage binding changes. This both reclaims removed adapters
-                  and provisions a fresh subtree after a PVC or base artifact is recreated.
+                  the subtree-sync Job.
                 type: string
               adapters:
                 description: |-
@@ -5134,7 +4567,6 @@ spec:
                       RetryAttempts tracks how many times this service has attempted to retry a failed cache.
                       Each service gets exactly one retry attempt. When a cache enters Failed state,
                       this counter is incremented from 0 to 1 after deleting failed Artifacts.
-                      If the retry fails (cache enters Failed again with attempts == 1), the service degrades.
                     type: integer
                   templateCacheRef:
                     description: |-
@@ -5191,8 +4623,7 @@ spec:
                     observedGeneration:
                       description: |-
                         observedGeneration represents the .metadata.generation that the condition was set based upon.
-                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
-                        with respect to the current state of the instance.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].
                       format: int64
                       minimum: 0
                       type: integer
@@ -5201,8 +4632,6 @@ spec:
                         reason contains a programmatic identifier indicating the reason for the condition's last transition.
                         Producers of specific condition types may define expected values and meanings for this field,
                         and whether the values are considered a guaranteed API.
-                        The value should be a CamelCase string.
-                        This field may not be empty.
                       maxLength: 1024
                       minLength: 1
                       pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
@@ -5235,6 +4664,15 @@ spec:
                   by the controller.
                 format: int64
                 type: integer
+              reconcilerPipeline:
+                description: |-
+                  ReconcilerPipeline records which pipeline owns pipeline-specific status.
+                  The controller persists this before dispatch so transitions can retire old
+                  resolved references and conditions before the new pipeline fetches state.
+                enum:
+                - template
+                - profile
+                type: string
               resolvedModel:
                 description: ResolvedModel captures metadata about the image that
                   was resolved.

@@ -472,6 +472,137 @@ func TestBuildDesiredNamespaceProfiles_MarksCopiesWithProfileSource(t *testing.T
 	}
 }
 
+func TestBuildDesiredProfiles_OutputPolicyMarksCopiesCopyable(t *testing.T) {
+	t.Parallel()
+
+	spec := aimv1alpha1.AIMProfileSetSpec{
+		VersionPolicy: aimv1alpha1.ProfileVersionPolicyAll,
+		OutputPolicy: &aimv1alpha1.ProfileOutputPolicy{
+			Copyable: true,
+		},
+	}
+	source := aimprofile.ProfileCopyCandidate{
+		Name:           "source",
+		YAMLContract:   profileyaml.DefaultContract(),
+		ProfileSetUIDs: []string{"upstream-set-uid"},
+		Spec: aimv1alpha2.AIMProfileSpecCommon{
+			AimId:     "qwen/Qwen3-32B",
+			ModelId:   "qwen/Qwen3-32B",
+			ProfileId: "tp2",
+		},
+	}
+
+	tests := []struct {
+		name  string
+		build func() ([]desiredProfile, error)
+	}{
+		{
+			name: "namespace",
+			build: func() ([]desiredProfile, error) {
+				return buildDesiredNamespaceProfiles(&aimv1alpha2.AIMProfileSet{
+					ObjectMeta: metav1.ObjectMeta{Name: "qwen-profiles", Namespace: "team-a", UID: "set-uid"},
+					Spec:       spec,
+				}, []aimprofile.ProfileCopyCandidate{source})
+			},
+		},
+		{
+			name: "cluster",
+			build: func() ([]desiredProfile, error) {
+				return buildDesiredClusterProfiles(&aimv1alpha2.AIMClusterProfileSet{
+					ObjectMeta: metav1.ObjectMeta{Name: "qwen-profiles", UID: "set-uid"},
+					Spec:       spec,
+				}, []aimprofile.ProfileCopyCandidate{source})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			desired, err := tt.build()
+			if err != nil {
+				t.Fatalf("build desired profiles: %v", err)
+			}
+			if len(desired) != 1 {
+				t.Fatalf("len(desired) = %d, want 1", len(desired))
+			}
+			if !aimprofile.IsProfileCopyable(desired[0].Object.GetAnnotations()) {
+				t.Fatalf("derived annotations = %#v, want %q=true", desired[0].Object.GetAnnotations(), aimprofile.AnnotationProfileCopyable)
+			}
+			if lineage := desired[0].Object.GetAnnotations()[annotationProfileSetLineage]; lineage != "upstream-set-uid,set-uid" {
+				t.Fatalf("derived lineage = %q, want upstream-set-uid,set-uid", lineage)
+			}
+		})
+	}
+}
+
+func TestComposeState_DistinguishesIneligibleProfilesFromNoMatch(t *testing.T) {
+	t.Parallel()
+
+	set := &aimv1alpha2.AIMProfileSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "derived", Namespace: "team-a", UID: "set-uid"},
+		Spec: aimv1alpha1.AIMProfileSetSpec{
+			Selector:      aimv1alpha1.ProfileSelector{AimId: "amd/example"},
+			VersionPolicy: aimv1alpha1.ProfileVersionPolicyAll,
+		},
+	}
+	matchingButIneligible := profileSetCandidate{ProfileCopyCandidate: aimprofile.ProfileCopyCandidate{
+		Name: "uncopyable",
+		Spec: aimv1alpha2.AIMProfileSpecCommon{
+			AimId:     "amd/example",
+			ModelId:   "amd/example",
+			ProfileId: "mi350x",
+		},
+	}}
+	reconciler := &ProfileSetReconciler{}
+
+	tests := []struct {
+		name        string
+		ineligible  []profileSetCandidate
+		wantReason  string
+		wantMessage string
+	}{
+		{
+			name:        "matching profile excluded by copyability",
+			ineligible:  []profileSetCandidate{matchingButIneligible},
+			wantReason:  "NoEligibleProfiles",
+			wantMessage: "1 source profile matches the selection but is not published as copyable; annotate a hand-authored source with aim.eai.amd.com/profile-copyable=true, or set outputPolicy.copyable=true on its producing derivation",
+		},
+		{
+			name: "ineligible profile does not match selector",
+			ineligible: []profileSetCandidate{{ProfileCopyCandidate: aimprofile.ProfileCopyCandidate{
+				Name: "other",
+				Spec: aimv1alpha2.AIMProfileSpecCommon{AimId: "amd/other", ModelId: "amd/other", ProfileId: "mi350x"},
+			}}},
+			wantReason: "NoMatchingProfiles",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			obs := reconciler.ComposeState(
+				context.Background(),
+				controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileSet]{Object: set},
+				ProfileSetFetchResult{
+					set:                  set,
+					candidates:           controllerutils.FetchResult[[]profileSetCandidate]{Value: nil},
+					ineligibleCandidates: tt.ineligible,
+					managed:              controllerutils.FetchResult[[]managedProfile]{Value: nil},
+				},
+			)
+			if len(obs.componentHealth) != 1 || obs.componentHealth[0].Reason != tt.wantReason {
+				t.Fatalf("component health = %#v, want reason %q", obs.componentHealth, tt.wantReason)
+			}
+			if tt.wantMessage != "" && obs.componentHealth[0].Message != tt.wantMessage {
+				t.Fatalf("component message = %q, want %q", obs.componentHealth[0].Message, tt.wantMessage)
+			}
+		})
+	}
+}
+
 // TestBuildDesiredNamespaceProfiles_BaseRoleStampsIdentityFromOverrides
 // covers the custom-model derivation contract end-to-end at the
 // reconciler layer: a Base-role selector against an empty-identity
@@ -596,19 +727,19 @@ func TestMergeCandidates_KeepsDistinctTypesInDeterministicOrder(t *testing.T) {
 	}
 }
 
-func TestBuildComponentHealth_PartialReadinessIsDegraded(t *testing.T) {
+func TestBuildComponentHealth_PartialReadinessIsReady(t *testing.T) {
 	t.Parallel()
 
 	health := buildComponentHealth(nil, nil, aimv1alpha1.ManagedProfileCounts{
 		Total:        2,
 		Ready:        1,
 		NotAvailable: 1,
-	}, 2)
+	}, 2, 0)
 	if len(health) != 1 {
 		t.Fatalf("len(health) = %d, want 1", len(health))
 	}
-	if health[0].State != constants.AIMStatusDegraded {
-		t.Fatalf("state = %q, want %q", health[0].State, constants.AIMStatusDegraded)
+	if health[0].State != constants.AIMStatusReady {
+		t.Fatalf("state = %q, want %q", health[0].State, constants.AIMStatusReady)
 	}
 }
 
@@ -748,9 +879,9 @@ func TestLoadNamespaceCandidates_BaseRoleMatchesNothingInIteration1(t *testing.T
 // A derived AIMProfile's name is
 //
 //	GenerateDerivedName([setName, profileId],
-//	    WithHashSource(setName, candidateIdentity(source)))
+//	    WithHashSource(setName, legacyNamingIdentity(source)))
 //
-// so the hash suffix is a pure function of candidateIdentity's field list.
+// so the hash suffix is a pure function of legacyNamingIdentity's field list.
 // Any change to that list silently renames every derived profile across the
 // engine — exactly what PR #139 did when it dropped manualSelectionOnly from
 // the fingerprint, invalidating hard-coded names in e2e fixtures and any
@@ -764,7 +895,7 @@ func TestDerivedProfileName_Stable(t *testing.T) {
 	t.Parallel()
 
 	source := aimprofile.ProfileCopyCandidate{
-		Name: "stable-source",
+		Name: "stable-source", SourceID: "AIMProfile/team/stable-source/new-uid",
 		Spec: aimv1alpha2.AIMProfileSpecCommon{
 			AimId:            "acme/model",
 			ModelId:          "acme/model",
@@ -780,10 +911,7 @@ func TestDerivedProfileName_Stable(t *testing.T) {
 		Status: aimv1alpha2.AIMProfileStatus{Version: "0.2.0"},
 	}
 
-	name, err := utils.GenerateDerivedName(
-		[]string{"stable-set", firstNonEmpty(source.Spec.ProfileId, source.Name)},
-		utils.WithHashSource("stable-set", candidateIdentity(source)),
-	)
+	name, err := derivedProfileName("stable-set", source)
 	if err != nil {
 		t.Fatalf("GenerateDerivedName() error = %v", err)
 	}

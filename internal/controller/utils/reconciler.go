@@ -30,7 +30,6 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -89,6 +88,11 @@ const (
 
 // PlanResult contains the desired state changes from the PlanResources phase.
 type PlanResult struct {
+	// toCreate are owned objects that must be created atomically and never
+	// update an existing occupant. Use only for deterministic names where an
+	// AlreadyExists response represents a collision that must be re-observed.
+	toCreate []client.Object
+
 	// toApply are objects to create or update via Server-Side Apply with owner references.
 	// This is the default and most common case - owned resources will be garbage collected
 	// when the owner is deleted.
@@ -122,6 +126,11 @@ type PlanResult struct {
 	// after the specified duration. Use this when the reconciler cannot proceed
 	// (e.g., blocked by a rate limit) but should retry later.
 	RequeueAfter time.Duration
+}
+
+// Create adds an owned object using atomic create-only semantics.
+func (pr *PlanResult) Create(obj client.Object) {
+	pr.toCreate = append(pr.toCreate, obj)
 }
 
 // Apply adds an object to be applied with an owner reference (default behavior).
@@ -182,6 +191,11 @@ func (pr *PlanResult) SkipLabelPropagation(obj client.Object) {
 	pr.labelPropagationSkips[obj] = struct{}{}
 }
 
+// GetToCreate returns objects requiring atomic create-only semantics (for testing).
+func (pr *PlanResult) GetToCreate() []client.Object {
+	return pr.toCreate
+}
+
 // GetToApply returns the objects to be applied with owner references (for testing)
 func (pr *PlanResult) GetToApply() []client.Object {
 	return pr.toApply
@@ -218,6 +232,7 @@ func (pr *PlanResult) RequestRequeueAfter(duration time.Duration) {
 // the same parent object (e.g. v1alpha1 + v1alpha2 AIMModel pipelines that
 // both produce children).
 func (pr *PlanResult) Merge(other PlanResult) {
+	pr.toCreate = append(pr.toCreate, other.toCreate...)
 	pr.toApply = append(pr.toApply, other.toApply...)
 	pr.toApplyWithoutOwnerRef = append(pr.toApplyWithoutOwnerRef, other.toApplyWithoutOwnerRef...)
 	pr.toApplyWithForce = append(pr.toApplyWithForce, other.toApplyWithForce...)
@@ -347,6 +362,8 @@ type ReconcileContext[T client.Object] struct {
 // - fetching the object from the API
 // - deletion / finalizers
 // Those remain in the controller's Reconcile.
+//
+//nolint:gocyclo // Pipeline ordering and fail-closed phase outcomes stay visible in one orchestration seam.
 func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -448,8 +465,23 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) (ctrl.Result, e
 			applyOwned = ApplyDesiredStateWithForce
 		}
 
+		// Create collision-sensitive owned resources atomically. A concurrent
+		// winner must be re-observed; it must never be overwritten by SSA.
+		if len(planResult.toCreate) > 0 {
+			applyErr = CreateDesiredState(
+				ctx,
+				p.Client,
+				p.Scheme,
+				planResult.toCreate,
+				obj,
+			)
+			if applyErr != nil {
+				applyErr = fmt.Errorf("failed to create collision-sensitive resources: %w", applyErr)
+			}
+		}
+
 		// Apply owned resources (with owner references)
-		if len(planResult.toApply) > 0 {
+		if applyErr == nil && len(planResult.toApply) > 0 {
 			applyErr = applyOwned(ctx, p.Client, p.GetFullName(), p.Scheme, planResult.toApply, obj)
 			if applyErr != nil {
 				applyErr = fmt.Errorf("failed to apply owned resources: %w", applyErr)
@@ -507,15 +539,11 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) (ctrl.Result, e
 
 	// === Phase 10: Update Status ===
 	// ALWAYS update status (even on errors) so users can see what went wrong
+	if !decision.ShouldRequeue && phaseErr == nil {
+		status.SetObservedGeneration(obj.GetGeneration())
+	}
 	if !equality.Semantic.DeepEqual(oldStatus, status) {
 		if err := p.StatusClient.Update(ctx, obj); err != nil {
-			// Conflict errors are expected during concurrent updates (e.g., when child resources
-			// are being reconciled simultaneously). Log at debug level and return nil - the
-			// controller will be requeued automatically due to the watch on the resource.
-			if apierrors.IsConflict(err) {
-				log.FromContext(ctx).V(1).Info("status update conflict, will retry on next reconcile")
-				return ctrl.Result{}, nil
-			}
 			return ctrl.Result{}, fmt.Errorf("status update failed: %w", err)
 		}
 	}
@@ -554,6 +582,9 @@ type errorCategories struct {
 func categorizeComponentErrors(componentHealth []ComponentHealth) errorCategories {
 	var result errorCategories
 	for _, h := range componentHealth {
+		if h.NonBlocking {
+			continue
+		}
 		for _, err := range h.Errors {
 			if err == nil {
 				continue
@@ -689,11 +720,11 @@ func deriveStatusAndSetReadyCondition(cm *ConditionManager, cats errorCategories
 		return status
 	}
 
-	// Build lookup maps for component states and dependency types
-	componentStates, componentDepTypes := buildComponentMaps(componentHealth)
+	// Build lookup maps for component states, dependency types, and gating policy.
+	componentStates, componentDepTypes, nonBlockingComponents := buildComponentMaps(componentHealth)
 
-	// Scan all component conditions and aggregate results
-	scanResult := scanComponentConditions(cm, componentStates, componentDepTypes)
+	// Scan all gating component conditions and aggregate results.
+	scanResult := scanComponentConditions(cm, componentStates, componentDepTypes, nonBlockingComponents)
 
 	// Set Ready condition based on scan results
 	setReadyConditionFromScan(cm, scanResult, cats)
@@ -726,15 +757,17 @@ func handleErrorCategories(cm *ConditionManager, cats errorCategories) (constant
 	return constants.AIMStatusFailed, true
 }
 
-// buildComponentMaps creates lookup maps for component states and dependency types.
-func buildComponentMaps(componentHealth []ComponentHealth) (map[string]constants.AIMStatus, map[string]DependencyType) {
+// buildComponentMaps creates lookup maps for component states, dependency types, and gating policy.
+func buildComponentMaps(componentHealth []ComponentHealth) (map[string]constants.AIMStatus, map[string]DependencyType, map[string]bool) {
 	componentStates := make(map[string]constants.AIMStatus)
 	componentDepTypes := make(map[string]DependencyType)
+	nonBlockingComponents := make(map[string]bool)
 	for _, h := range componentHealth {
 		componentStates[h.Component] = h.GetState()
 		componentDepTypes[h.Component] = h.DependencyType
+		nonBlockingComponents[h.Component] = h.NonBlocking
 	}
-	return componentStates, componentDepTypes
+	return componentStates, componentDepTypes, nonBlockingComponents
 }
 
 // componentScanResult holds the aggregated results from scanning component conditions.
@@ -746,8 +779,13 @@ type componentScanResult struct {
 	firstErrorMessage   string
 }
 
-// scanComponentConditions scans all component Ready conditions and aggregates their status.
-func scanComponentConditions(cm *ConditionManager, componentStates map[string]constants.AIMStatus, componentDepTypes map[string]DependencyType) componentScanResult {
+// scanComponentConditions scans all gating component Ready conditions and aggregates their status.
+func scanComponentConditions(
+	cm *ConditionManager,
+	componentStates map[string]constants.AIMStatus,
+	componentDepTypes map[string]DependencyType,
+	nonBlockingComponents map[string]bool,
+) componentScanResult {
 	result := componentScanResult{
 		allReady:    true,
 		worstStatus: constants.AIMStatusReady,
@@ -756,12 +794,17 @@ func scanComponentConditions(cm *ConditionManager, componentStates map[string]co
 	// Note: cm.Conditions() allocates a new slice for encapsulation, but this is acceptable
 	// since the number of conditions is typically small (< 10) and this is called once per reconcile.
 	allConditions := cm.Conditions()
+	blockingComponents := 0
 	for _, cond := range allConditions {
 		if !isComponentCondition(cond.Type) {
 			continue
 		}
 
 		componentName := strings.TrimSuffix(cond.Type, ComponentConditionSuffix)
+		if nonBlockingComponents[componentName] {
+			continue
+		}
+		blockingComponents++
 		componentStatus := deriveComponentStatus(cond.Status, componentName, componentStates, componentDepTypes)
 
 		// Process the component status
@@ -771,6 +814,10 @@ func scanComponentConditions(cm *ConditionManager, componentStates map[string]co
 		if constants.CompareAIMStatus(componentStatus, result.worstStatus) < 0 {
 			result.worstStatus = componentStatus
 		}
+	}
+	if len(componentStates) > 0 && blockingComponents == 0 {
+		result.allReady = false
+		result.worstStatus = constants.AIMStatusProgressing
 	}
 
 	return result
@@ -985,6 +1032,7 @@ type StatusWithConditions interface {
 	GetConditions() []metav1.Condition
 	SetConditions([]metav1.Condition)
 	SetStatus(string)
+	SetObservedGeneration(int64)
 }
 
 // ObjectWithStatus is a constraint for objects that have a Status field with conditions.

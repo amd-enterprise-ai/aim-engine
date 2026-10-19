@@ -9,6 +9,8 @@ on:
     paths:
       - "docs/**"
       - "config/helm/values.yaml"
+      - ".copyright-template"
+      - "hack/inject-svg-license.sh"
       - ".github/workflows/docs.yml"
 
 permissions:

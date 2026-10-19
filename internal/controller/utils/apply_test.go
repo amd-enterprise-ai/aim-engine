@@ -29,6 +29,9 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -44,6 +47,24 @@ func TestApplyControllerLabelsToResult(t *testing.T) {
 		expectedLabels map[string]string
 		checkJobPods   bool
 	}{
+		{
+			name: "adds labels to create-only resources",
+			planResult: &PlanResult{
+				toCreate: []client.Object{
+					&corev1.ConfigMap{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "test-create-only-configmap",
+						},
+					},
+				},
+			},
+			labels: map[string]string{
+				"app.kubernetes.io/managed-by": "test-controller",
+			},
+			expectedLabels: map[string]string{
+				"app.kubernetes.io/managed-by": "test-controller",
+			},
+		},
 		{
 			name: "adds labels to regular resources",
 			planResult: &PlanResult{
@@ -156,6 +177,18 @@ func TestApplyControllerLabelsToResult(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ApplyControllerLabelsToResult(tt.planResult, tt.labels)
+
+			// Check labels on toCreate resources
+			for _, obj := range tt.planResult.toCreate {
+				objLabels := obj.GetLabels()
+				for key, expectedValue := range tt.expectedLabels {
+					if gotValue, exists := objLabels[key]; !exists {
+						t.Errorf("Expected label %s to exist, but it doesn't", key)
+					} else if gotValue != expectedValue {
+						t.Errorf("Expected label %s=%s, got %s=%s", key, expectedValue, key, gotValue)
+					}
+				}
+			}
 
 			// Check labels on toApply resources
 			for _, obj := range tt.planResult.toApply {
@@ -335,6 +368,20 @@ func TestPlanResult_MergeCarriesForceBucket(t *testing.T) {
 
 	if got := len(base.GetToApplyWithForce()); got != 2 {
 		t.Fatalf("merged force bucket length = %d, want 2", got)
+	}
+}
+
+func TestPlanResult_MergeCarriesCreateBucket(t *testing.T) {
+	base := PlanResult{}
+	base.Create(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "a"}})
+
+	other := PlanResult{}
+	other.Create(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "b"}})
+
+	base.Merge(other)
+
+	if got := len(base.GetToCreate()); got != 2 {
+		t.Fatalf("merged create bucket length = %d, want 2", got)
 	}
 }
 
@@ -609,6 +656,13 @@ func TestPropagateLabelsFoResult(t *testing.T) {
 	config := &LabelPropagationSettings{Enabled: true, Match: []string{"team"}}
 
 	planResult := &PlanResult{
+		toCreate: []client.Object{
+			&corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "create-only",
+				},
+			},
+		},
 		toApply: []client.Object{
 			&corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
@@ -627,6 +681,14 @@ func TestPropagateLabelsFoResult(t *testing.T) {
 
 	PropagateLabelsForResult(parent, planResult, config)
 
+	// Check toCreate
+	for _, obj := range planResult.toCreate {
+		labels := obj.GetLabels()
+		if labels["team"] != testLabelValueAlpha {
+			t.Errorf("Expected toCreate object to have team=alpha, got %v", labels)
+		}
+	}
+
 	// Check toApply
 	for _, obj := range planResult.toApply {
 		labels := obj.GetLabels()
@@ -641,5 +703,89 @@ func TestPropagateLabelsFoResult(t *testing.T) {
 		if labels["team"] != testLabelValueAlpha {
 			t.Errorf("Expected toApplyWithoutOwnerRef object to have team=alpha, got %v", labels)
 		}
+	}
+}
+
+func TestSetOwnerReferenceConvergesBridgeGVKWithoutChangingDeletionSemantics(t *testing.T) {
+	trueValue := true
+	falseValue := false
+	tests := []struct {
+		name               string
+		kind               string
+		wantVersion        string
+		existing           bool
+		controller         *bool
+		blockOwnerDeletion *bool
+	}{
+		{name: "new bridge reference uses production version", kind: "AIMService", wantVersion: "v1alpha2"},
+		{name: "service preserves true", kind: "AIMService", wantVersion: "v1alpha2", existing: true, controller: &trueValue, blockOwnerDeletion: &trueValue},
+		{name: "model preserves nil", kind: "AIMModel", wantVersion: "v1alpha2", existing: true},
+		{name: "cluster model preserves false", kind: "AIMClusterModel", wantVersion: "v1alpha2", existing: true, controller: &falseValue, blockOwnerDeletion: &falseValue},
+		{name: "legacy-only owner remains v1alpha1", kind: "AIMTemplateCache", wantVersion: "v1alpha1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			owner := &unstructured.Unstructured{}
+			owner.SetGroupVersionKind(schema.GroupVersionKind{
+				Group:   "aim.eai.amd.com",
+				Version: "v1alpha1",
+				Kind:    tt.kind,
+			})
+			owner.SetName("owner")
+			owner.SetUID(types.UID("owner-uid"))
+
+			child := &corev1.ConfigMap{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: corev1.SchemeGroupVersion.String(),
+					Kind:       "ConfigMap",
+				},
+			}
+			if tt.existing {
+				child.OwnerReferences = []metav1.OwnerReference{{
+					APIVersion:         "aim.eai.amd.com/v1alpha1",
+					Kind:               tt.kind,
+					Name:               owner.GetName(),
+					UID:                owner.GetUID(),
+					Controller:         tt.controller,
+					BlockOwnerDeletion: tt.blockOwnerDeletion,
+				}}
+			}
+
+			if err := setOwnerReference(owner, child, nil); err != nil {
+				t.Fatalf("set owner reference: %v", err)
+			}
+
+			refs := child.GetOwnerReferences()
+			if len(refs) != 1 {
+				t.Fatalf("owner references = %d, want 1", len(refs))
+			}
+			ref := refs[0]
+			if ref.APIVersion != "aim.eai.amd.com/"+tt.wantVersion ||
+				ref.Kind != tt.kind ||
+				ref.Name != owner.GetName() ||
+				ref.UID != owner.GetUID() {
+				t.Errorf("owner reference = %#v, want converged %s identity", ref, tt.kind)
+			}
+			switch {
+			case !tt.existing && (ref.Controller == nil || !*ref.Controller):
+				t.Error("new owner reference must control garbage collection")
+			case tt.existing && tt.controller == nil && ref.Controller != nil:
+				t.Errorf("controller = %v, want nil", *ref.Controller)
+			case tt.existing && tt.controller != nil &&
+				(ref.Controller == nil || *ref.Controller != *tt.controller):
+				t.Errorf("controller = %v, want %v", ref.Controller, *tt.controller)
+			}
+			switch {
+			case !tt.existing &&
+				(ref.BlockOwnerDeletion == nil || !*ref.BlockOwnerDeletion):
+				t.Error("new owner reference must block owner deletion")
+			case tt.existing && tt.blockOwnerDeletion == nil && ref.BlockOwnerDeletion != nil:
+				t.Errorf("blockOwnerDeletion = %v, want nil", *ref.BlockOwnerDeletion)
+			case tt.existing && tt.blockOwnerDeletion != nil &&
+				(ref.BlockOwnerDeletion == nil || *ref.BlockOwnerDeletion != *tt.blockOwnerDeletion):
+				t.Errorf("blockOwnerDeletion = %v, want %v", ref.BlockOwnerDeletion, *tt.blockOwnerDeletion)
+			}
+		})
 	}
 }

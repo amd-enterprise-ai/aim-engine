@@ -126,7 +126,7 @@ spec:
                       fsGroup: 1000
                     containers:
                       - name: uploader
-                        image: minio/mc:latest
+                        image: docker.io/pgsty/mc:RELEASE.2026-09-16T00-00-00Z
                         env:
                           - name: MC_CONFIG_DIR
                             value: /tmp/.mc

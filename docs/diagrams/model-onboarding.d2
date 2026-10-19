@@ -12,7 +12,9 @@ ProfileSetCtrl: Profile-set controller {class: operator}
 ProfileCtrl: Profile controller {class: operator}
 
 Discovery: "Discovery Job +\nConfigMap" {class: managed}
-Profile: "AIMProfile /\nAIMClusterProfile\n(deployable)" {class: resolved}
+Definitions: "Discovered model definitions\n(complete catalog)" {class: managed}
+Copyable: "Copyable profile resources\n(direct, generated, derived)" {class: user}
+Profile: "Materialised AIMProfile /\nAIMClusterProfile" {class: resolved}
 
 ModelSource -> AIMModel: discovers / declares
 AIMModel -> ModelCtrl
@@ -21,7 +23,11 @@ RuntimeConfig -> ModelCtrl: generated fallback
 ModelCtrl -> Profile: spec.modelId
 ModelCtrl -> ProfileSetCtrl: spec.profiles
 ProfileSet -> ProfileSetCtrl
-Discovery -> Profile: yields
+Discovery -> Definitions: complete catalog
+Discovery -> Profile: supported entries (image only)
+Discovery -> ProfileSetCtrl: explicit catalog sourceRef
+Definitions -> ProfileSetCtrl: external source selection
+Copyable -> ProfileSetCtrl: external source selection
 ProfileSetCtrl -> Profile: derives
 HandProfile -> ProfileCtrl
 ProfileCtrl -> Profile: reconciles

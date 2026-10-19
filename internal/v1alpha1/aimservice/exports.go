@@ -127,6 +127,16 @@ func InferenceServicePodsComponentHealth(
 	return inferenceServicePodsHealth(ctx, clientset, service, hpa, pods)
 }
 
+// InferenceServiceComponentHealth returns the shared runtime health verdict.
+// A current Ready condition is authoritative, while Ready predictor pods prove
+// the service is still running during status-generation lag or active scaling.
+func InferenceServiceComponentHealth(
+	inferenceService controllerutils.FetchResult[*servingv1beta1.InferenceService],
+	inferenceServicePods *controllerutils.FetchResult[*corev1.PodList],
+) controllerutils.ComponentHealth {
+	return inferenceServiceComponentHealth(inferenceService, inferenceServicePods)
+}
+
 // InferenceServiceReady reports whether the fetched InferenceService has
 // Ready=True. Exported so the profile pipeline can contextualize HPA health
 // identically to the template pipeline.

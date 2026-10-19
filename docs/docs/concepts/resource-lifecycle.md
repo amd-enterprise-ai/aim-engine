@@ -9,18 +9,28 @@ AIM Engine uses Kubernetes owner references to express resource relationships. W
 ### v1alpha2 graph
 
 ```
-AIMModel / AIMClusterModel  (spec.image — official / base-image flow)
+AIMModel / AIMClusterModel  (spec.image without spec.profiles)
     ├── Discovery Job + ConfigMap (owned by model)
-    └── AIMProfile / AIMClusterProfile  (owned by model)
+    └── Supported AIMProfile / AIMClusterProfile  (owned by model)
             ├── Projected KServe runtime (+ ConfigMap for namespaced runtimes)
             └── AIMProfileCache  (owned by profile only when spec.caching.enabled)
                     └── AIMArtifact  (owned by cache in Dedicated mode; orphan in Shared)
                             └── PVC + Download Job  (owned by artifact)
 
-AIMModel / AIMClusterModel  (spec.profiles — fine-tune / custom-model flow)
+AIMModel / AIMClusterModel  (spec.image + spec.profiles)
+    ├── Discovery Job + ConfigMap (raw catalog; owned by model)
+    └── AIMProfileSet / AIMClusterProfileSet  (owned by model)
+            └── Transformed AIMProfile / AIMClusterProfile  (owned by profile set)
+                    └── ... (same as above)
+
+AIMModel / AIMClusterModel  (spec.profiles without spec.image)
     └── AIMProfileSet / AIMClusterProfileSet  (owned by model)
             └── AIMProfile / AIMClusterProfile  (owned by profile set)
                     └── ... (same as above)
+
+Standalone AIMProfileSet / AIMClusterProfileSet
+    └── AIMProfile / AIMClusterProfile  (owned by profile set)
+            └── ... (same as above)
 
 AIMService
     ├── AIMProfile  (only when spec.profileOverrides — overlay; owned by service)
@@ -33,47 +43,34 @@ Key behaviours:
 
 - **Shared profile caches** have no owner reference. They persist across services for reuse.
 - **Dedicated profile caches and their artifacts** are owner-referenced by the service and garbage-collected with it.
-- **AIMProfile resources** are owner-referenced by the producing `AIMModel` (for image discovery) or `AIMProfileSet` (for derivation). User-authored profiles have no AIM controller owner.
+- **AIMProfile resources** are owner-referenced by the producing `AIMModel` (for direct discovery or generation) or `AIMProfileSet` (for derivation). User-authored profiles have no AIM controller owner.
+- **Logical model definitions** are discovered catalog entries used for source selection. They have no separate Kubernetes resource or runtime.
+- **Standalone derived outputs** belong to their profile set. Source provenance does not add them to the source model's managed-profile counts or readiness.
 - **Auto-created models**:
     - v1alpha1 `spec.model.image` path: no owner reference; the model persists for reuse by other services.
     - v1alpha2 `spec.model.image` path (requires the `aim.eai.amd.com/reconciler-pipeline: profile` annotation): owner-referenced by the originating service and garbage-collected with it. Named `<service>-auto-<6charHash(image)>`. See [Services → By image](services.md#by-image).
+
+### Profile source lifecycle
+
+Profile sets select current image-backed model definitions and existing copyable profiles. A catalog entry and its corresponding profile resource have one logical identity, stable across hardware-driven materialisation. Model ownership and discovery inputs determine catalog validity through model recreation and operator restarts.
+
+Pending discovery and source-read or parsing failures retain the entire set's outputs without writes. Confirmed source removal and completed selector narrowing prune outputs once all remaining sources resolve. See [Profile-set reconciliation](profilesets.md#reconciliation-and-resource-use).
+
+For image models, `discoveredProfiles` describes the complete catalog while `managedProfiles` describes materialised profiles. Separate derived models summarise their child profile-set outputs. Services select from profile resources, not catalog definitions.
 
 ### Runtime projection lifecycle and operational caveats
 
 Runtime projection deliberately favors continuity over immediate cleanup:
 
-- Projection is additive. If a profile later becomes unprojectable, its
-  existing runtime is kept and the profile reports
-  `RuntimeProjected=False / RuntimeDegraded`. The runtime is removed when its
-  owning profile is deleted.
-- A namespaced `ServingRuntime` and its same-name profile ConfigMap are separate
-  Kubernetes objects. Initial force-owned publication applies the ConfigMap
-  first and stops on failure, but creation and updates are not transactional.
-  `AIMService` waits for matching content hashes before changing its
-  InferenceService; native KServe consumers do not have that gate.
-- ConfigMap-only changes do not change the pod template and therefore do not
-  guarantee a rollout. Kubernetes eventually refreshes mounted ConfigMap
-  volumes, but a process that reads its profile only at startup needs an
-  explicit predictor-pod restart.
-- The first native InferenceService that references a projected
-  `ClusterServingRuntime` can briefly bind the bare cluster runtime before its
-  namespaced shadow and ConfigMap exist. The pod can restart during this window
-  and self-heals after materialization.
-- Generated `aim-*` runtimes and same-name ConfigMaps are read-only operational
-  objects. Out-of-band mutation is unsupported; server-side apply reclaims
-  desired fields but may not remove extra foreign-owned fields. If undoing the
-  edit does not converge, delete both generated siblings and let AIM Engine
-  recreate them, accounting for disruption to active consumers.
-- Model-slug aliases are best-effort across projectability and projection-mode
-  changes. A retained alias can temporarily expose an older revision or winner
-  until its profile becomes projectable or model-slug election resumes.
-- When shared-cache readiness is unknown because of a transient API,
-  authentication, or reconciliation error, AIM Engine preserves the last-known
-  cache mount and retries instead of treating the cache as absent.
+- Projection is additive. If a profile later becomes unprojectable, its existing runtime is kept and the profile reports `RuntimeProjected=False / RuntimeDegraded`. The runtime is removed when its owning profile is deleted.
+- A namespaced `ServingRuntime` and its same-name profile ConfigMap are separate Kubernetes objects. Initial force-owned publication applies the ConfigMap first and stops on failure, but creation and updates are not transactional. `AIMService` waits for matching content hashes before changing its InferenceService; native KServe consumers do not have that gate.
+- ConfigMap-only changes do not change the pod template and therefore do not guarantee a rollout. Kubernetes eventually refreshes mounted ConfigMap volumes, but a process that reads its profile only at startup needs an explicit predictor-pod restart.
+- The first native InferenceService that references a projected `ClusterServingRuntime` can briefly bind the bare cluster runtime before its namespaced shadow and ConfigMap exist. The pod can restart during this window and self-heals after materialization.
+- Generated `aim-*` runtimes and same-name ConfigMaps are read-only operational objects. Out-of-band mutation is unsupported; server-side apply reclaims desired fields but may not remove extra foreign-owned fields. If undoing the edit does not converge, delete both generated siblings and let AIM Engine recreate them, accounting for disruption to active consumers.
+- Model-slug aliases are best-effort across projectability and projection-mode changes. A retained alias can temporarily expose an older revision or winner until its profile becomes projectable or model-slug election resumes.
+- When shared-cache readiness is unknown because of a transient API, authentication, or reconciliation error, AIM Engine preserves the last-known cache mount and retries instead of treating the cache as absent.
 
-See [Bring Your Own KServe](../guides/bring-your-own-kserve.md) for the complete
-consumer workflow and [Conditions](../reference/conditions.md) for the
-authoritative health signals.
+See [Bring Your Own KServe](../guides/bring-your-own-kserve.md) for the complete consumer workflow and [Conditions](../reference/conditions.md) for the authoritative health signals.
 
 ### v1alpha1 graph (legacy)
 
@@ -130,7 +127,7 @@ Component-specific conditions are added per CRD. See [Conditions](../reference/c
 |---|---|
 | `AIMService` (v1alpha2) | `ProfileReady`, `ProfileCacheReady`, `InferenceServiceReady`, `HTTPRouteReady`, `HPAReady` |
 | `AIMService` (v1alpha1) | `ModelReady`, `TemplateReady`, `RuntimeConfigReady`, `CacheReady`, `InferenceServiceReady`, `HTTPRouteReady`, `HPAReady` |
-| `AIMModel` / `AIMClusterModel` | `DiscoveryReady` (image flows) or `DerivationReady` (derivation flows) |
+| `AIMModel` / `AIMClusterModel` | `DiscoveryReady` for image discovery; `DerivationReady` for external derivation through `spec.profiles` |
 | `AIMProfileSet` / `AIMClusterProfileSet` | `DerivationReady` |
 | `AIMProfile` / `AIMClusterProfile` | `HardwareAvailable` |
 | `AIMProfileCache` | `ProfileFound`, `ArtifactsReady` |
@@ -185,7 +182,8 @@ CRD schemas include [CEL validation rules](https://kubernetes.io/docs/tasks/exte
 
 | CRD | Rule |
 |---|---|
-| `AIMModel` / `AIMClusterModel` | Exactly one of `spec.image`, `spec.modelId`, or `spec.profiles` |
+| `AIMModel` / `AIMClusterModel` | Exactly one of `spec.image`, `spec.profiles`, or `spec.modelId` |
+| `AIMModel` / `AIMClusterModel` | `profiles` requires `derivedFrom`; `versionPolicy: pinned` requires `profiles.version` |
 | `AIMModel` / `AIMClusterModel` | `spec.source` and `spec.accelerator` are valid only with `spec.modelId` |
 | `AIMModel` / `AIMClusterModel` | `spec.profiles` cannot be combined with `spec.aimId`, `spec.source`, `spec.discovery`, `spec.defaultServiceTemplate`, `spec.runtimeConfigName`, `spec.env`, or `spec.imageMetadata` |
 | `AIMModel` / `AIMClusterModel` | `spec.modelSources`, `spec.custom`, `spec.customTemplates`, and `spec.profileCopy` are forbidden on new v1alpha2 resources |
@@ -197,8 +195,9 @@ CRD schemas include [CEL validation rules](https://kubernetes.io/docs/tasks/exte
 | `AIMService` | `spec.profileOverrides` requires `spec.profile.name` |
 | `AIMService` | `spec.template` is forbidden on v1alpha2 (rejected by CEL `!has(spec.template)`); use `spec.profile` or `spec.model` |
 | `AIMProfile` / `AIMClusterProfile` | `spec.aimId` and `spec.modelSources` must be both populated or both empty |
-| `AIMProfileSet` / `AIMClusterProfileSet` | `spec.selector` requires at least one selector field |
+| `AIMProfileSet` / `AIMClusterProfileSet` | Default source selection requires at least one selector field; explicit `sourceRef` scopes a catalog without a selector |
 | `AIMProfileSet` / `AIMClusterProfileSet` | `versionPolicy: pinned` requires `version` |
+| `AIMProfileSet` / `AIMClusterProfileSet` | A partitioning override requires an explicit target override count; an explicit source selector count is recommended |
 
 #### Structural rules (v1alpha1, legacy)
 
