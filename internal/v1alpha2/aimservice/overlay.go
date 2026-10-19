@@ -188,17 +188,22 @@ func buildServiceOverlayProfile(
 		return nil, aimv1alpha2.AIMProfileSpecCommon{}, err
 	}
 
+	overlayAnnotations := map[string]string{
+		AnnotationOverlayService: service.Name,
+	}
+	if overlaySpec.BaseImageRef != "" {
+		overlayAnnotations[aimprofile.AnnotationBaseImage] = overlaySpec.BaseImageRef
+	}
+
 	overlay := &aimv1alpha2.AIMProfile{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: aimv1alpha2.GroupVersion.String(),
 			Kind:       "AIMProfile",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      overlayName,
-			Namespace: service.Namespace,
-			Annotations: profileyaml.Mark(map[string]string{
-				AnnotationOverlayService: service.Name,
-			}, yamlContract),
+			Name:        overlayName,
+			Namespace:   service.Namespace,
+			Annotations: profileyaml.Mark(overlayAnnotations, yamlContract),
 		},
 		Spec: aimv1alpha2.AIMProfileSpec{
 			AIMProfileSpecCommon: overlaySpec,

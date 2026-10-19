@@ -68,6 +68,8 @@ spec:
                 -o jsonpath='{.spec.image}')
               BASE_IMAGE_REF=$(kubectl get "$PROFILE_GV" -n "$NAMESPACE" "$OVERLAY" \
                 -o jsonpath='{.spec.baseImageRef}')
+              BASE_IMAGE_ANNOTATION=$(kubectl get "$PROFILE_GV" -n "$NAMESPACE" "$OVERLAY" \
+                -o jsonpath='{.metadata.annotations.aim\.eai\.amd\.com/base-image}')
 
               if [ "$ROLE" != "deployable" ]; then
                 echo "ERROR: overlay profile-role = $ROLE; expected 'deployable'"
@@ -83,6 +85,10 @@ spec:
               fi
               if [ "$BASE_IMAGE_REF" != "registry.example.com/aim-cpu-base:0.12.0" ]; then
                 echo "ERROR: overlay baseImageRef = $BASE_IMAGE_REF; expected canonical lineage"
+                exit 1
+              fi
+              if [ "$BASE_IMAGE_ANNOTATION" != "registry.example.com/aim-cpu-base:0.12.0" ]; then
+                echo "ERROR: overlay base-image annotation = $BASE_IMAGE_ANNOTATION; expected canonical lineage"
                 exit 1
               fi
               echo "Overlay provenance and lineage OK: role=$ROLE origin=$ORIGIN image=$IMAGE"

@@ -88,8 +88,10 @@ must apply to both.
 ## Image repository mappings
 
 `spec.imageRegistry.mappings` explicitly redirects image repository prefixes.
-This is useful when an AIM image records a public `AIM_BASE_IMAGE_REF`, but the
-cluster must pull the corresponding runtime from an internal mirror:
+Some released AIM model images record a producer-private `AIM_BASE_IMAGE_REF`
+even though the same runtime is published publicly under
+`docker.io/amdenterpriseai`. The Helm chart's default cluster RuntimeConfig
+therefore includes these compatibility mappings:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -99,14 +101,23 @@ metadata:
 spec:
   imageRegistry:
     mappings:
-      - from: docker.io/amdenterpriseai
-        to: registry.internal.example/amdenterpriseai
+      - from: docker.io/silogenai
+        to: docker.io/amdenterpriseai
+      - from: ghcr.io/silogen
+        to: docker.io/amdenterpriseai
 ```
 
-For example, the mapping above resolves
-`docker.io/amdenterpriseai/aim-base:0.11.2` to
-`registry.internal.example/amdenterpriseai/aim-base:0.11.2`. Tags and digests
-are preserved exactly.
+For example, the first mapping resolves
+`docker.io/silogenai/aim-base:2026.11.0` to
+`docker.io/amdenterpriseai/aim-base:2026.11.0`. The canonical
+`spec.baseImageRef` remains unchanged; only the deployment image is remapped.
+Tags and digests are preserved exactly.
+
+Private and air-gapped installations should replace the `to` values for these
+producer prefixes with their internal mirror. Also add a
+`docker.io/amdenterpriseai` mapping for images whose producer metadata already
+records the public repository. Resolution applies one mapping only; mappings
+are not chained through an intermediate repository.
 
 Mappings use repository-segment boundaries, and the longest matching `from`
 prefix wins. Namespace mappings replace cluster mappings with the same `from`
@@ -166,7 +177,9 @@ limitations.
 `spec.model.profileGeneration.fallbacks` defines generic serving runtimes for
 v1alpha2 models declared with `spec.modelId`. The Helm chart installs a
 chart-managed `AIMClusterRuntimeConfig/default` with the NVIDIA vLLM fallback
-shown below, so NVIDIA model-ID onboarding works after a default install.
+shown below, alongside the [image compatibility mappings](#image-repository-mappings),
+so NVIDIA model-ID onboarding and derived AIM runtimes work after a default
+install.
 Set `clusterRuntimeConfig.enable=false` when the cluster already has a
 platform-managed config named `default`, or override
 `clusterRuntimeConfig.spec.model.profileGeneration.fallbacks` to enforce a

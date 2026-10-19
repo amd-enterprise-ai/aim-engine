@@ -27,7 +27,8 @@
 # Requires:
 # - GPU infrastructure (real AIM image, real dry-run, real inference).
 # - HF_TOKEN exported for the shared per-test Secret setup (meta-llama is gated).
-#   The exact resolved base image is public, so no registry pull secret is
+#   The producer reference is private, but the chart's default RuntimeConfig
+#   maps it to the public Docker Hub runtime, so no registry pull secret is
 #   required.
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
@@ -122,7 +123,7 @@ spec:
     #
     #   base spec.image:                amdenterpriseai/aim-meta-llama-…:0.11.0
     #   base baseImageRef:              ghcr.io/silogen/aim-base:0.11
-    #   resolved deployment-image-ref:  ghcr.io/silogen/aim-base:0.11
+    #   resolved deployment-image-ref:  docker.io/amdenterpriseai/aim-base:0.11
     - name: Fine-tuned template copy carries the exact deployment image annotation
       try:
         - assert:
@@ -135,7 +136,7 @@ spec:
                   aim.eai.amd.com/model: ft-latest-finetuned
                   aim.eai.amd.com/origin: fine-tuned
                 annotations:
-                  aim.eai.amd.com/deployment-image-ref: ghcr.io/silogen/aim-base:0.11
+                  aim.eai.amd.com/deployment-image-ref: docker.io/amdenterpriseai/aim-base:0.11
               spec:
                 aimId: meta-llama/Llama-3.2-1B-Instruct
                 modelId: meta-llama/Llama-3.2-1B-Instruct

@@ -112,8 +112,10 @@ kubectl wait --for=condition=Established \
 After updating the CRDs but before upgrading the operator:
 
 1. Set `spec.baseImageRef` on affected hand-authored deployable profiles.
-2. Configure explicit mappings for public producer references that must be
-   pulled from a private mirror.
+2. Configure mappings for the producer references recorded by released AIM
+   images. Fresh chart installations include the public compatibility mappings
+   shown below. Existing releases upgraded with `--reuse-values` do not inherit
+   newly added chart defaults, so add them to the values used for the upgrade.
 3. Repeat mappings on named RuntimeConfigs selected by services or legacy
    fine-tuned models; mappings present only on `default` do not apply there.
 
@@ -125,13 +127,19 @@ metadata:
 spec:
   imageRegistry:
     mappings:
-      - from: docker.io/amdenterpriseai
-        to: registry.internal.example/amdenterpriseai
+      - from: docker.io/silogenai
+        to: docker.io/amdenterpriseai
+      - from: ghcr.io/silogen
+        to: docker.io/amdenterpriseai
 ```
 
 Matching is literal, so use the `from` prefix exactly as recorded in
 `AIM_BASE_IMAGE_REF`. Confirm that the exact resulting tag or digest exists in
-the destination registry. AIM Engine does not fall back to a rolling tag.
+the destination registry. Private and air-gapped installations should map both
+producer prefixes directly to their internal mirror and add a
+`docker.io/amdenterpriseai` mapping for newer public references. Mapping is
+single-pass, so `silogenai -> amdenterpriseai -> internal` does not chain. AIM
+Engine does not fall back to a rolling tag.
 
 ### 4. Upgrade the operator
 

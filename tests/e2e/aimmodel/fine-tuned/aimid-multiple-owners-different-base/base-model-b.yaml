@@ -6,8 +6,9 @@
 #
 # Owner B deliberately uses a Docker Hub spec.image (no registry prefix means
 # docker.io/amdenterpriseai/...) while keeping baseImageRef on
-# ghcr.io/silogen/... . The resolver must preserve that baseImageRef exactly;
-# source-image placement does not imply a runtime-image mirror.
+# ghcr.io/silogen/... . The resolver must use that baseImageRef as canonical
+# input to RuntimeConfig mapping; source-image placement does not imply a
+# runtime-image mirror.
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMModel
 metadata:

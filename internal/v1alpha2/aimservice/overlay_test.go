@@ -430,6 +430,9 @@ func TestComposeState_WeightsReplacementAppliesRuntimeConfigImageMapping(t *test
 	if got, want := obs.desiredOverlayProfile.Spec.BaseImageRef, "docker.io/amdenterpriseai/aim-base:0.11.2"; got != want {
 		t.Fatalf("overlay baseImageRef = %q, want canonical producer reference %q", got, want)
 	}
+	if got, want := obs.desiredOverlayProfile.Annotations[aimprofile.AnnotationBaseImage], "docker.io/amdenterpriseai/aim-base:0.11.2"; got != want {
+		t.Fatalf("overlay base-image annotation = %q, want canonical producer reference %q", got, want)
+	}
 }
 
 func TestComposeState_HandAuthoredBaseImageRefSupportsWeightReplacement(t *testing.T) {

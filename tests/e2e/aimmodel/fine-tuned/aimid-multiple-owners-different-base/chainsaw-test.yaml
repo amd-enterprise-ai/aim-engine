@@ -21,8 +21,9 @@
 #      owner — without name collision (the owner identity participates in
 #      the generated copy name's hash).
 #   3. Each copy carries the deployment-image-ref annotation resolved from
-#      its OWN source owner's baseImageRef. Sibling copies must end up with
-#      different annotations even though they share aimId/modelId/hardware.
+#      its OWN source owner's baseImageRef through RuntimeConfig mapping.
+#      Sibling copies must end up with different annotations even though they
+#      share aimId/modelId/hardware.
 #   4. A third template that shares the same aimId but a non-matching
 #      modelId produces NO copy.
 #
@@ -35,6 +36,11 @@ spec:
     apply: 30s
     assert: 120s
   steps:
+    - name: Configure the released-image producer compatibility mapping
+      try:
+        - apply:
+            file: runtime-config.yaml
+
     - name: Create both base models (different base-image families, same aimId in their templates)
       try:
         - apply:
@@ -89,16 +95,17 @@ spec:
                   aim.eai.amd.com/model: ft-multi-finetuned
                   aim.eai.amd.com/origin: fine-tuned
                 annotations:
-                  aim.eai.amd.com/deployment-image-ref: ghcr.io/silogen/aim-multi-base:0.11
+                  aim.eai.amd.com/deployment-image-ref: docker.io/amdenterpriseai/aim-multi-base:0.11
               spec:
                 aimId: test/ft-multi-llama
                 modelId: test/ft-multi-fp8
                 modelName: ft-multi-finetuned
 
-    - name: Assert a fine-tuned copy preserves the aim-cpu-base annotation exactly
+    - name: Assert a fine-tuned copy maps the aim-cpu-base family independently
       # Owner B has spec.image=amdenterpriseai/aim-multi-llama-cpu:0.1.10 but
-      # baseImageRef=ghcr.io/silogen/aim-multi-cpu-base:0.11. The source image
-      # registry must not alter the producer-owned runtime reference.
+      # baseImageRef=ghcr.io/silogen/aim-multi-cpu-base:0.11. RuntimeConfig
+      # maps that producer reference to docker.io/amdenterpriseai; the source
+      # image registry must not choose a different runtime family.
       try:
         - assert:
             timeout: 60s
@@ -110,7 +117,7 @@ spec:
                   aim.eai.amd.com/model: ft-multi-finetuned
                   aim.eai.amd.com/origin: fine-tuned
                 annotations:
-                  aim.eai.amd.com/deployment-image-ref: ghcr.io/silogen/aim-multi-cpu-base:0.11
+                  aim.eai.amd.com/deployment-image-ref: docker.io/amdenterpriseai/aim-multi-cpu-base:0.11
               spec:
                 aimId: test/ft-multi-llama
                 modelId: test/ft-multi-fp8

@@ -249,8 +249,12 @@ metadata:
 spec:
   imageRegistry:
     mappings:
+      - from: docker.io/silogenai
+        to: registry.internal.example/amdenterpriseai
+      - from: ghcr.io/silogen
+        to: registry.internal.example/amdenterpriseai
       - from: docker.io/amdenterpriseai
-        to: ghcr.io/company-mirror/amdenterpriseai
+        to: registry.internal.example/amdenterpriseai
 ```
 
 This changes only matching derived base-image references. Explicit image
@@ -259,11 +263,17 @@ their original registry, repository, tag, and digest. See
 [Image repository mappings](../concepts/runtime-config.md#image-repository-mappings)
 for merge and missing-reference behavior.
 
-Mappings are literal: a `from: docker.io/amdenterpriseai` entry does not match
-the short reference `amdenterpriseai/aim-base:0.11.2`. Use the prefix exactly
-as the image producer recorded it. Services and legacy fine-tuned models that
-select a named RuntimeConfig use mappings from that selected configuration,
-not mappings present only on `default`.
+The chart-managed cluster default maps `docker.io/silogenai` and
+`ghcr.io/silogen` to the public `docker.io/amdenterpriseai` repository. A
+namespace mapping with the same `from` value overrides that default, allowing
+air-gapped clusters to send current released-image references directly to
+their mirror. Mappings are single-pass and literal: a
+`from: docker.io/silogenai` entry does not match the short reference
+`silogenai/aim-base:0.11.2`, and a mapping to `docker.io/amdenterpriseai` is not
+then remapped a second time. Use the prefix exactly as the image producer
+recorded it. Services and legacy fine-tuned models that select a named
+RuntimeConfig use mappings from that selected configuration, not mappings
+present only on `default`.
 
 When `AIMProfile.spec.caching.enabled` creates a profile-owned shared cache,
 that cache resolves the `default` RuntimeConfig. Setting
