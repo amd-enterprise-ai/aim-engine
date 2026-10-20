@@ -5,7 +5,8 @@ set -euo pipefail
 # rejected by SCC admission. Review the required privileges before use.
 
 namespace="${AIM_SYSTEM_NAMESPACE:-aim-system}"
-selector='app.kubernetes.io/name=aim-accelerator-detector'
+release="${AIM_ENGINE_RELEASE:-aim-engine}"
+selector="app.kubernetes.io/instance=${release},app.kubernetes.io/managed-by=Helm"
 
 service_account="${AIM_DETECTOR_SERVICE_ACCOUNT:-}"
 if [[ -z "$service_account" ]]; then

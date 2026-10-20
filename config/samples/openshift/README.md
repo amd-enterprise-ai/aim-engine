@@ -20,9 +20,13 @@ cluster-specific hostPath paths.
 - `detector-scc-rolebinding.yaml` binds the privileged SCC to one detector
   service account after AIM Engine is installed. Replace the service-account
   name before applying it.
+- `cert-manager-operator.yaml` installs the supported cert-manager Operator
+  for Red Hat OpenShift from the `redhat-operators` catalog. Create the
+  `cert-manager-operator` project before applying it.
 - `patch-detectors.sh` applies the tested post-install detector security-context
   workaround. Review it before use and run it only when the installed release
-  requires it.
+  requires it. Set `AIM_ENGINE_RELEASE` if the Helm release is not named
+  `aim-engine`.
 - `aimservice-mi355x.yaml` deploys a Qwen3-32B model and an AIMService that
   selects one MI355X GPU. Change the image tag and namespace as needed.
 - `kserve-values.yaml` contains the KServe values required by AIM Engine.
@@ -59,8 +63,11 @@ oc get daemonset -n aim-system \
   -o custom-columns=NAME:.metadata.name,SERVICE_ACCOUNT:.spec.template.spec.serviceAccountName
 oc auth can-i use scc/privileged \
   --as=system:serviceaccount:aim-system:REPLACE_ME
-oc get pod -n aim-system <detector-pod> \
-  -o jsonpath='{.metadata.annotations.openshift\\.io/scc}{"\\n"}'
+DETECTOR_POD="$(oc get pod -n aim-system \
+  -l app.kubernetes.io/name=aim-accelerator-detector \
+  -o jsonpath='{.items[0].metadata.name}')"
+oc get pod -n aim-system "$DETECTOR_POD" \
+  -o jsonpath='{.metadata.annotations.openshift\.io/scc}{"\n"}'
 ```
 
 The detector service account name can vary with the Helm release name. Derive
