@@ -443,6 +443,20 @@ Do not use a local hostPath PV as a production RWX implementation. A hostPath
 workaround is suitable only for a disposable single-node test and requires
 node affinity, ownership, SELinux labeling, and a privileged preparation pod.
 
+RWX support is separate from PV placement and hostPath permissions. A PVC can
+be `Bound` while its cache or download pod remains `Pending` if the bound PV's
+node affinity does not match a suitable node. A hostPath download can also fail
+with `Permission denied` when its directory ownership or SELinux label is not
+prepared. Inspect the bound PV and the cache/download pod when diagnosing this
+case:
+
+```bash
+oc get pvc -n aim-models
+oc get pv <bound-pv> -o yaml
+oc get pods -n aim-models
+oc describe pod -n aim-models <cache-or-download-pod>
+```
+
 If a cache PVC is pending, inspect its events before deleting anything:
 
 ```bash
@@ -539,11 +553,11 @@ curl --fail --silent --show-error \
 | --- | --- |
 | Detector pod is rejected | `oc describe pod`, SCC review, service-account binding, hostPath/device permissions |
 | GPU is detected but not schedulable | `amd.com/gpu` allocatable capacity, NFD labels, AIM detector logs on every node |
-| Cache PVC is Pending | StorageClass access modes, PV availability, PVC events, RWX support |
+| Cache PVC or download pod is Pending/Failed | StorageClass access modes, bound PV node affinity, PV availability, PVC/pod events, RWX support, hostPath ownership and SELinux labeling |
 | Predictor is Pending | Selected profile, GPU capacity, cache binding, existing workloads |
 | `ImagePullBackOff` | Registry reachability, pull secret, image name, catalog access |
 | Route is unavailable | Route target Service, router status, TLS, network policy |
-| AIMService remains Pending | Deployable profile availability and profile resource requirements |
+| AIMService remains Pending or Starting | Deployable profile availability, profile resource requirements, cache/download status |
 | API reports unknown model | Query `/v1/models` and use the returned `id` exactly |
 
 Useful commands:
