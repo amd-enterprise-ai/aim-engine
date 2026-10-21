@@ -47,7 +47,7 @@ containing `config/samples/openshift/` instead of cloning it again.
 The samples currently track `main` and are not versioned in lockstep with the
 AIM Engine Helm chart. Record the printed source revision with the chart version
 and verify compatibility before using a different chart release; in particular,
-check sample API fields, detector labels, and the detector patch script.
+check sample API fields, detector labels, and the detector SCC-grant script.
 
 ## Prerequisites
 
@@ -84,9 +84,12 @@ prerequisites. Confirm ownership and versions first.
 
 ## Projects and permissions
 
-Use a dedicated project for model-serving workloads:
+Use separate projects for the AIM Engine control plane and model-serving
+workloads. If either project already exists, skip its `oc new-project`
+command:
 
 ```bash
+oc new-project aim-system
 oc new-project aim-models
 ```
 
@@ -96,32 +99,10 @@ their `AIMService` resources rather than cluster-admin access.
 
 ## Registry access
 
-This guide pulls the detector image (`amdenterpriseai/aim-base`) into
-`aim-system` and the AIM model image (`amdenterpriseai/aim-qwen-qwen3-32b`)
-into `aim-models`. If your account requires authentication for those images, or
-if the cluster pulls them through a mirror, create a pull secret in each
-namespace before installing:
-
-```bash
-oc create secret docker-registry aim-pull-secret \
-  --docker-server=docker.io \
-  --docker-username=<registry-username> \
-  --docker-password=<registry-token> \
-  -n aim-system
-
-oc create secret docker-registry aim-pull-secret \
-  --docker-server=docker.io \
-  --docker-username=<registry-username> \
-  --docker-password=<registry-token> \
-  -n aim-models
-```
-
-Reference the `aim-system` secret from the Helm install with
-`--set acceleratorDetector.gpu.imagePullSecrets[0].name=aim-pull-secret`. See
-[Private Registries](../guides/private-registries.md) for mirrors, per-model
-secrets, and the AIM Engine fields that consume them. Skip this section when
-the images pull anonymously; `ImagePullBackOff` on either namespace is the
-signal that it was needed.
+This guide assumes cluster administrators have configured registry access so
+OpenShift nodes can pull the AIM Engine and selected model container images. For
+private registries or `ImagePullBackOff`, see [Private
+Registries](../guides/private-registries.md).
 
 ## cert-manager and KServe
 
@@ -189,26 +170,27 @@ oc get pods -n cert-manager-operator
 oc get pods -n cert-manager
 ```
 
-Install KServe v0.17.1 in Standard mode. AIM Engine supports KServe v0.16.1 or
-later; this example uses v0.17.1's separate CRD and resource charts. KServe
-changed its Helm chart layout in v0.17, so do not use the older single `kserve`
-chart command with this version. Consult the linked KServe Configuration guide
-for the values rationale only; its installation commands target v0.16.1. The
+Install KServe v0.21.0 in Standard mode. AIM Engine supports KServe v0.16.1 or
+later; this example pins v0.21.0 and uses its separate CRD and resource charts.
+KServe changed its Helm chart layout in v0.17, so do not use the older single
+`kserve` chart command. Consult the linked KServe Configuration guide for the
+values rationale only; its installation commands target v0.16.1. The
 repository sample
 [`kserve-values.yaml`](https://github.com/amd-enterprise-ai/aim-engine/blob/main/config/samples/openshift/kserve-values.yaml)
 contains the AIM-compatible settings. For the chart-layout change, see the
-[KServe v0.17 release notes](https://kserve.github.io/website/blog/kserve-0.17-release).
+[KServe v0.17 release notes](https://kserve.github.io/website/blog/kserve-0.17-release)
+and the [KServe v0.21.0 release](https://github.com/kserve/kserve/releases/tag/v0.21.0).
 
 For example:
 
 ```bash
 helm upgrade --install kserve-crd \
   oci://ghcr.io/kserve/charts/kserve-crd \
-  --namespace kserve --create-namespace --version v0.17.1 \
+  --namespace kserve --create-namespace --version v0.21.0 \
   --wait --timeout 5m
 helm upgrade --install kserve-resources \
   oci://ghcr.io/kserve/charts/kserve-resources \
-  --namespace kserve --version v0.17.1 \
+  --namespace kserve --version v0.21.0 \
   -f config/samples/openshift/kserve-values.yaml \
   --wait --timeout 5m
 ```
@@ -243,7 +225,7 @@ helm template aim-engine-crds \
       started && ($0 ~ /^Pulled:/ || $0 ~ /^Digest:/ || $0 ~ /^\{"(Pulled|Digest)"/) { next }
       started { print }
     ' \
-  | oc apply --server-side --force-conflicts -f -
+  | oc apply --server-side -f -
 
 oc get crd -o name | grep 'aim.eai.amd.com' | while read -r crd; do
   oc wait --for=condition=Established "$crd" --timeout=120s
@@ -266,9 +248,12 @@ oc rollout status deployment/aim-engine-controller-manager \
 
 Server-side application avoids the Kubernetes object-size limitation that can
 occur when large rendered CRDs are stored in a Helm release Secret.
-`--force-conflicts` is required when the AIM CRDs were previously applied
-client-side or by another Helm release, because those objects carry a different
-field manager and the apply would otherwise abort partway through the list.
+Do not add `--force-conflicts` by default. Server-side apply can report a
+conflict when another field manager owns a field whose value differs from this
+manifest; a prior client-side apply alone does not make force necessary. Inspect
+the conflicting fields and their owners before resolving the conflict. Forcing
+the apply overrides conflicting values and transfers field ownership; see the
+[Kubernetes Server-Side Apply documentation](https://kubernetes.io/docs/reference/using-api/server-side-apply/).
 
 ## Configure Security Context Constraints
 
@@ -297,8 +282,8 @@ oc get daemonset -n aim-system \
 Review the required SCC before granting it:
 
 ```bash
-AIM_ENGINE_RELEASE="${AIM_ENGINE_RELEASE:-aim-engine}"
-DETECTOR_SELECTOR="app.kubernetes.io/instance=${AIM_ENGINE_RELEASE},app.kubernetes.io/managed-by=Helm"
+export AIM_ENGINE_RELEASE="${AIM_ENGINE_RELEASE:-aim-engine}"
+DETECTOR_SELECTOR="app.kubernetes.io/instance=${AIM_ENGINE_RELEASE},app.kubernetes.io/managed-by=Helm,app.kubernetes.io/component=gpu-detection"
 
 oc get daemonset -n aim-system \
   -l "$DETECTOR_SELECTOR"
@@ -323,10 +308,11 @@ fi
 Keep `DETECTOR_SA` set in this shell; the cleanup section uses it to revoke the
 SCC grant.
 
-The review reports which SCC can admit the detector pod template. The command
-reviews the first detector DaemonSet; AIM detector DaemonSets normally share a
-service account. The temporary YAML file is generated from the installed
-DaemonSet; it is not a repository file.
+The review reports which SCC can admit the AMD GPU detector pod template. The
+chart's detector DaemonSets share a service account, so granting an SCC to this
+account also makes that SCC available to the other detector pods using it. The
+temporary YAML file is generated from the installed DaemonSet; it is not a
+repository file.
 
 If the command prints only the column header and no row, no SCC currently
 admits the detector pod template. This is expected before the workaround below
@@ -339,51 +325,53 @@ privileged SCC, so keep the service account dedicated to the detector and
 review who can create pods that use it.
 
 Review the script before running it and obtain approval from the cluster
-administrator. It grants `privileged` to the detector service account and
-normalizes `runAsUser`, `runAsNonRoot`, and `allowPrivilegeEscalation` on the
-detector container and every init container in the matching DaemonSets. The
-chart already marks the detector container privileged, so the SCC grant is the
-operative change; the pod-template patch only makes the remaining fields
-consistent with it. Do not run this workaround on clusters whose policy
-prohibits privileged containers:
+administrator. It grants the built-in `privileged` SCC to the detector service
+account; it does not patch any pod template. The chart already marks the AMD
+GPU detector container privileged, so the SCC grant is the required admission
+exception. Do not run this workaround on clusters whose policy prohibits
+privileged containers:
 
 ```bash
-bash config/samples/openshift/patch-detectors.sh
+bash config/samples/openshift/grant-detector-scc.sh
 
 oc rollout status deployment/aim-engine-controller-manager \
   -n aim-system --timeout=120s
 ```
 
-The script selects DaemonSets by the AIM Engine Helm release labels. It both
-grants the SCC and patches the pod templates; no separate SCC grant is needed
-when using it. The
+The script selects the AMD GPU DaemonSet by its Helm release labels and grants
+the SCC to its service account. The
 [`detector-scc-rolebinding.yaml`](https://github.com/amd-enterprise-ai/aim-engine/blob/main/config/samples/openshift/detector-scc-rolebinding.yaml)
-sample is only a binding to the same built-in `privileged` SCC. It does not
-apply the security-context patch, and should not also be applied when running
-the script. Neither sample defines a custom SCC. Because the patch explicitly
-requests privileged containers, a custom SCC would not make this procedure
-least-privilege; if policy forbids privileged containers, stop and use a
-detector configuration approved for that policy. Recheck the installed release
-before reusing the workaround, since a later release may no longer need it.
+sample grants access to the same built-in SCC; use either the script or the
+RoleBinding, not both. Neither sample defines a custom SCC. This is a
+high-privilege exception, not a least-privilege configuration. If policy forbids
+privileged containers, stop and use a detector configuration approved for that
+policy. Recheck the installed release before reusing the workaround, since a
+later release may no longer need it.
 
-Check the SCC that admitted a pod:
+Check the SCC used by the AMD GPU detector. The GPU component selector
+avoids selecting CPU or other accelerator detector pods. First inspect
+scheduling:
 
 ```bash
-oc get pod -n aim-system \
-  -l app.kubernetes.io/name=aim-accelerator-detector
+oc get daemonset -n aim-system \
+  -l app.kubernetes.io/component=gpu-detection -o wide
 
 DETECTOR_POD="$(oc get pod -n aim-system \
-  -l app.kubernetes.io/name=aim-accelerator-detector \
-  -o jsonpath='{.items[0].metadata.name}')"
+  -l app.kubernetes.io/component=gpu-detection -o name | head -n 1)"
 
-oc get pod -n aim-system "$DETECTOR_POD" \
-  -o jsonpath='{.metadata.annotations.openshift\.io/scc}{"\n"}'
-oc describe pod -n aim-system "$DETECTOR_POD"
+if [[ -n "$DETECTOR_POD" ]]; then
+  DETECTOR_POD="${DETECTOR_POD#pod/}"
+  oc get pod -n aim-system "$DETECTOR_POD" \
+    -o jsonpath='{.metadata.annotations.openshift\.io/scc}{"\n"}'
+  oc describe pod -n aim-system "$DETECTOR_POD"
+else
+  echo "No AMD GPU detector pod is scheduled."
+fi
 ```
 
-The first command lists the generated pod name. If it returns no pods, the
-detector DaemonSet has not created one yet; check SCC admission events before
-continuing.
+If no AMD GPU detector pod is scheduled, there is no pod SCC annotation to
+check yet. Confirm that an AMD GPU node has the required feature label and
+that the detector DaemonSet's desired count is nonzero.
 
 After the SCC workaround completes, verify the installation:
 
@@ -691,26 +679,29 @@ oc delete aimclustermodel qwen3-32b-mi355x
 ```
 
 If you applied the SCC workaround, revoke it when the detector is no longer
-needed. Neither `helm uninstall` nor deleting the AIM resources removes the
-grant, and leaving it in place lets anyone who can create pods with that
-service account run privileged containers:
+needed, before uninstalling AIM Engine. Neither `helm uninstall` nor deleting
+the AIM resources removes the grant. Keep the `DETECTOR_SA` value from the SCC
+section; if you are in a new shell, retrieve it from the still-installed GPU
+detector DaemonSet before uninstalling the release. Leaving the grant in place
+lets anyone who can create pods using that service account request the
+privileged SCC:
 
 ```bash
-# DETECTOR_SA from the Security Context Constraints section, or:
-DETECTOR_SA="$(oc get daemonset -n aim-system \
-  -l app.kubernetes.io/name=aim-accelerator-detector \
-  -o jsonpath='{.items[0].spec.template.spec.serviceAccountName}')"
-
 oc adm policy remove-scc-from-user privileged \
   -z "$DETECTOR_SA" -n aim-system
 ```
 
-If you applied `detector-scc-rolebinding.yaml` instead of the script, delete
-that RoleBinding. The script's pod-template patch lives in the DaemonSets and
-goes away with `helm uninstall`. When the release is kept, note that
-`helm upgrade` does not necessarily drop fields the patch added but the chart
-never sets, such as `runAsUser`; delete the detector DaemonSets and let the
-next `helm upgrade` recreate them to return to the shipped security contexts.
+If you applied `detector-scc-rolebinding.yaml` instead of the script, remove
+that exact RoleBinding:
+
+```bash
+oc delete rolebinding aim-detector-privileged -n aim-system
+```
+
+The current SCC-grant script does not patch DaemonSets. If you ran an older
+revision of the sample script that patched pod templates and are keeping the
+release, recreate the affected DaemonSets from the Helm chart to remove those
+manual pod-template changes.
 
 Remove only the cache resources owned by the test deployment and restore any
 runtime storage override when appropriate. Do not delete shared KServe,
