@@ -504,11 +504,21 @@ oc apply -f config/samples/openshift/route.yaml
 oc get route -n aim-models
 ```
 
+An OpenShift `Route` and an AIM-managed Gateway API `HTTPRoute` are separate
+ingress paths. This sample manually creates a Route to the predictor Service
+through the OpenShift router. Gateway API requires a supported controller and a
+configured `Gateway`; enabling `spec.routing.enabled` and setting `gatewayRef`
+on an AIMService or runtime config makes AIM Engine create the `HTTPRoute`.
+Applying `route.yaml` does not configure Gateway API, and AIM routing does not
+create an OpenShift Route. The KServe `enableGatewayApi: false` setting disables
+KServe's own Gateway integration, not AIM Engine routing. Use one path for a
+single external endpoint; both may coexist when intentionally needed. See
+[Routing and Ingress](../guides/routing-and-ingress.md) for the AIM-managed
+Gateway API procedure.
+
 The Route example uses edge TLS termination. Production deployments must also
 address authentication, authorization, rate limiting, network policy, and
-certificate ownership. AIM-managed Gateway API HTTPRoutes remain available when
-the cluster has a supported Gateway API implementation; see
-[Routing and Ingress](../guides/routing-and-ingress.md).
+certificate ownership.
 
 ## Verify readiness and inference
 
