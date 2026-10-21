@@ -9,6 +9,10 @@ The samples assume AIM Engine is installed in `aim-system` and application
 resources use the `aim-models` namespace. If you change a namespace, update all
 related manifests and commands consistently.
 
+These samples track `main` and are not versioned in lockstep with the AIM
+Engine Helm chart. Before using them with a different chart release, verify the
+sample API fields, detector labels, and the detector patch script.
+
 ## Sample files
 
 | File | Purpose and notes |

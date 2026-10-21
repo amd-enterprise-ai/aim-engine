@@ -94,6 +94,35 @@ Keep AIM Engine control-plane resources in the installation namespace, usually
 `aim-system`. Application users should receive namespace-scoped permissions for
 their `AIMService` resources rather than cluster-admin access.
 
+## Registry access
+
+This guide pulls the detector image (`amdenterpriseai/aim-base`) into
+`aim-system` and the AIM model image (`amdenterpriseai/aim-qwen-qwen3-32b`)
+into `aim-models`. If your account requires authentication for those images, or
+if the cluster pulls them through a mirror, create a pull secret in each
+namespace before installing:
+
+```bash
+oc create secret docker-registry aim-pull-secret \
+  --docker-server=docker.io \
+  --docker-username=<registry-username> \
+  --docker-password=<registry-token> \
+  -n aim-system
+
+oc create secret docker-registry aim-pull-secret \
+  --docker-server=docker.io \
+  --docker-username=<registry-username> \
+  --docker-password=<registry-token> \
+  -n aim-models
+```
+
+Reference the `aim-system` secret from the Helm install with
+`--set acceleratorDetector.gpu.imagePullSecrets[0].name=aim-pull-secret`. See
+[Private Registries](../guides/private-registries.md) for mirrors, per-model
+secrets, and the AIM Engine fields that consume them. Skip this section when
+the images pull anonymously; `ImagePullBackOff` on either namespace is the
+signal that it was needed.
+
 ## cert-manager and KServe
 
 Install the cert-manager Operator for Red Hat OpenShift from the Red Hat
@@ -124,13 +153,26 @@ oc new-project cert-manager-operator
 oc apply -f config/samples/openshift/cert-manager-operator.yaml
 ```
 
-Wait for the OLM CSV and all cert-manager deployments before continuing:
+Wait for the OLM CSV and all cert-manager deployments before continuing.
+
+OLM creates the ClusterServiceVersion (CSV) some time after the Subscription is
+accepted. `oc wait` with a label selector does not wait for an object that does
+not exist yet; it returns immediately with `no matching resources found`. Wait
+for the CSV to appear first, then wait for its phase:
 
 ```bash
+CSV_SELECTOR='operators.coreos.com/openshift-cert-manager-operator.cert-manager-operator'
+
+for _ in $(seq 60); do
+  oc get csv -n cert-manager-operator -l "$CSV_SELECTOR" \
+    -o name | grep -q . && break
+  sleep 10
+done
+
 oc wait \
   --for=jsonpath='{.status.phase}'=Succeeded \
   -n cert-manager-operator \
-  csv -l operators.coreos.com/openshift-cert-manager-operator.cert-manager-operator \
+  csv -l "$CSV_SELECTOR" \
   --timeout=10m
 
 oc rollout status deployment/cert-manager-operator-controller-manager \
@@ -201,7 +243,7 @@ helm template aim-engine-crds \
       started && ($0 ~ /^Pulled:/ || $0 ~ /^Digest:/ || $0 ~ /^\{"(Pulled|Digest)"/) { next }
       started { print }
     ' \
-  | oc apply --server-side -f -
+  | oc apply --server-side --force-conflicts -f -
 
 oc get crd -o name | grep 'aim.eai.amd.com' | while read -r crd; do
   oc wait --for=condition=Established "$crd" --timeout=120s
@@ -224,6 +266,9 @@ oc rollout status deployment/aim-engine-controller-manager \
 
 Server-side application avoids the Kubernetes object-size limitation that can
 occur when large rendered CRDs are stored in a Helm release Secret.
+`--force-conflicts` is required when the AIM CRDs were previously applied
+client-side or by another Helm release, because those objects carry a different
+field manager and the apply would otherwise abort partway through the list.
 
 ## Configure Security Context Constraints
 
@@ -233,8 +278,16 @@ that its detector DaemonSets and service account exist; the initial Helm
 installation above intentionally omits `--wait` for this reason.
 
 SCC admission is the most common OpenShift-specific installation issue. AIM's
-accelerator detector may need host access to inspect hardware and publish NFD
-labels. Determine the detector service account from the installed DaemonSet:
+accelerator detector needs host access to inspect hardware and publish NFD
+labels. The GPU detector pod template requests a privileged container and these
+hostPath volumes, which is what an administrator must weigh when reviewing the
+exception:
+
+- `/dev/kfd` and `/dev/dri` — AMD GPU device nodes, mounted read-only
+- `/etc/kubernetes/node-feature-discovery/features.d/` — where the detector
+  writes the NFD feature files that become node labels
+
+Determine the detector service account from the installed DaemonSet:
 
 ```bash
 oc get daemonset -n aim-system \
@@ -254,18 +307,21 @@ DETECTOR_DS="$(oc get daemonset -n aim-system \
   -l "$DETECTOR_SELECTOR" -o name | head -n 1)"
 if [[ -z "$DETECTOR_DS" ]]; then
   echo "No AIM Engine detector DaemonSet found in aim-system" >&2
-  exit 1
-fi
-DETECTOR_SA="$(oc get "$DETECTOR_DS" -n aim-system \
-  -o jsonpath='{.spec.template.spec.serviceAccountName}')"
-oc get "$DETECTOR_DS" -n aim-system -o yaml \
-  > /tmp/aim-detector-daemonset.yaml
+else
+  DETECTOR_SA="$(oc get "$DETECTOR_DS" -n aim-system \
+    -o jsonpath='{.spec.template.spec.serviceAccountName}')"
+  oc get "$DETECTOR_DS" -n aim-system -o yaml \
+    > /tmp/aim-detector-daemonset.yaml
 
-oc adm policy scc-review \
-  -z "$DETECTOR_SA" \
-  -n aim-system \
-  -f /tmp/aim-detector-daemonset.yaml
+  oc adm policy scc-review \
+    -z "$DETECTOR_SA" \
+    -n aim-system \
+    -f /tmp/aim-detector-daemonset.yaml
+fi
 ```
+
+Keep `DETECTOR_SA` set in this shell; the cleanup section uses it to revoke the
+SCC grant.
 
 The review reports which SCC can admit the detector pod template. The command
 reviews the first detector DaemonSet; AIM detector DaemonSets normally share a
@@ -284,9 +340,12 @@ review who can create pods that use it.
 
 Review the script before running it and obtain approval from the cluster
 administrator. It grants `privileged` to the detector service account and
-patches the detector plus every init container in the matching DaemonSets to
-run privileged as root with privilege escalation enabled. Do not run this
-workaround on clusters whose policy prohibits privileged containers:
+normalizes `runAsUser`, `runAsNonRoot`, and `allowPrivilegeEscalation` on the
+detector container and every init container in the matching DaemonSets. The
+chart already marks the detector container privileged, so the SCC grant is the
+operative change; the pod-template patch only makes the remaining fields
+consistent with it. Do not run this workaround on clusters whose policy
+prohibits privileged containers:
 
 ```bash
 bash config/samples/openshift/patch-detectors.sh
@@ -361,9 +420,13 @@ when the device plugin reports `amd.com/gpu` capacity.
 After the GPU detector has a scheduled pod, inspect its logs:
 
 ```bash
-oc logs -n aim-system \
-  daemonset/aim-engine-aim-engine-chart-accelerator-detector-gpu
+GPU_DETECTOR_DS="$(oc get daemonset -n aim-system \
+  -l app.kubernetes.io/component=gpu-detection -o name | head -n 1)"
+oc logs -n aim-system "$GPU_DETECTOR_DS"
 ```
+
+The DaemonSet's generated name depends on the Helm release and chart names, so
+select it by label rather than by a literal name.
 
 For the MI355X worked example, an expected detector message resembles:
 
@@ -430,9 +493,12 @@ node affinity, ownership, SELinux labeling, and a privileged preparation pod.
 
 The sample
 [`aimservice-mi355x.yaml`](https://github.com/amd-enterprise-ai/aim-engine/blob/main/config/samples/openshift/aimservice-mi355x.yaml)
-contains both an `AIMClusterModel` and an `AIMService`. Applying it once is
-valid; the service remains pending until profile discovery produces a deployable
-profile. Observe model discovery with:
+contains both an `AIMClusterModel` and an `AIMService`. Both use
+`aim.eai.amd.com/v1alpha2`, and the service carries the
+`aim.eai.amd.com/reconciler-pipeline: profile` annotation, which selects the
+profile-based reconciler rather than the legacy template-based one. Applying
+the file once is valid; the service remains pending until profile discovery
+produces a deployable profile. Observe model discovery with:
 
 ```bash
 oc apply -f config/samples/openshift/aimservice-mi355x.yaml
@@ -452,6 +518,9 @@ AMD accelerator, update the model image, `acceleratorModel`, and
 `acceleratorCount` to matching values supported by the AIM Engine release.
 
 ## Troubleshoot RWX model caching
+
+This section covers storage symptoms in detail; see
+[Troubleshooting](#troubleshooting) for the full symptom table.
 
 RWX support is separate from PV placement and hostPath permissions. A PVC can
 be `Bound` while its cache or download pod remains `Pending` if the bound PV's
@@ -595,7 +664,7 @@ curl --fail --silent --show-error \
 | --- | --- |
 | Detector pod is rejected | `oc describe pod`, SCC review, service-account binding, hostPath/device permissions |
 | GPU is detected but not schedulable | `amd.com/gpu` allocatable capacity, NFD labels, AIM detector logs on every node |
-| Cache PVC or download pod is Pending/Failed | StorageClass access modes, bound PV node affinity, PV availability, PVC/pod events, RWX support, hostPath ownership and SELinux labeling |
+| Cache PVC or download pod is Pending/Failed | StorageClass access modes, bound PV node affinity, PV availability, PVC/pod events, RWX support, hostPath ownership and SELinux labeling (see [Troubleshoot RWX model caching](#troubleshoot-rwx-model-caching)) |
 | Predictor is Pending | Selected profile, GPU capacity, cache binding, existing workloads |
 | `ImagePullBackOff` | Registry reachability, pull secret, image name, catalog access |
 | Route is unavailable | Route target Service, router status, TLS, network policy |
@@ -620,6 +689,28 @@ Delete application resources before changing cluster-wide components:
 oc delete aimservice -n aim-models qwen3-32b-chat
 oc delete aimclustermodel qwen3-32b-mi355x
 ```
+
+If you applied the SCC workaround, revoke it when the detector is no longer
+needed. Neither `helm uninstall` nor deleting the AIM resources removes the
+grant, and leaving it in place lets anyone who can create pods with that
+service account run privileged containers:
+
+```bash
+# DETECTOR_SA from the Security Context Constraints section, or:
+DETECTOR_SA="$(oc get daemonset -n aim-system \
+  -l app.kubernetes.io/name=aim-accelerator-detector \
+  -o jsonpath='{.items[0].spec.template.spec.serviceAccountName}')"
+
+oc adm policy remove-scc-from-user privileged \
+  -z "$DETECTOR_SA" -n aim-system
+```
+
+If you applied `detector-scc-rolebinding.yaml` instead of the script, delete
+that RoleBinding. The script's pod-template patch lives in the DaemonSets and
+goes away with `helm uninstall`. When the release is kept, note that
+`helm upgrade` does not necessarily drop fields the patch added but the chart
+never sets, such as `runAsUser`; delete the detector DaemonSets and let the
+next `helm upgrade` recreate them to return to the shipped security contexts.
 
 Remove only the cache resources owned by the test deployment and restore any
 runtime storage override when appropriate. Do not delete shared KServe,
