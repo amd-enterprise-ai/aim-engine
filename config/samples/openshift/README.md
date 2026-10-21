@@ -1,82 +1,22 @@
 # OpenShift samples
 
-These samples supplement the AIM Engine Kubernetes examples with OpenShift
-platform resources. They are templates, not a single cluster-wide bundle.
+These AMD-focused samples support the [OpenShift administration
+guide](../../../docs/docs/admin/openshift.md). They are templates, not a
+bundle to apply all at once. Follow the guide for prerequisites, installation,
+SCC and RWX setup, networking, and verification.
 
-## Before applying
+The samples assume AIM Engine is installed in `aim-system` and application
+resources use the `aim-models` namespace. If you change a namespace, update all
+related manifests and commands consistently.
 
-1. Install and verify the AMD GPU Operator, KServe, cert-manager, and AIM
-   Engine.
-2. Create or select an application project. The examples use `aim-models`.
-3. Confirm that the cluster provides an approved RWX-capable StorageClass.
-4. Replace every value marked `REPLACE_ME` or `replace-me-*`.
-5. Review SCC and Route changes with the OpenShift platform administrator.
+## Sample files
 
-Do not commit kubeconfigs, passwords, pull secrets, tokens, node names, or
-cluster-specific hostPath paths.
-
-## Files
-
-- `detector-scc-rolebinding.yaml` binds the privileged SCC to one detector
-  service account after AIM Engine is installed. Replace the service-account
-  name before applying it.
-- `cert-manager-operator.yaml` installs the supported cert-manager Operator
-  for Red Hat OpenShift from the `redhat-operators` catalog. Create the
-  `cert-manager-operator` project before applying it.
-- `patch-detectors.sh` applies the tested post-install detector security-context
-  workaround. Review it before use and run it only when the installed release
-  requires it. Set `AIM_ENGINE_RELEASE` if the Helm release is not named
-  `aim-engine`.
-- `aimservice-mi355x.yaml` deploys a Qwen3-32B model and an AIMService that
-  selects one MI355X GPU. Change the image tag and namespace as needed.
-- `kserve-values.yaml` contains the KServe values required by AIM Engine.
-- `route.yaml` is a Route template. Replace the generated predictor Service
-  name after the InferenceService exists.
-
-## Apply order
-
-```bash
-cd config/samples/openshift
-oc new-project aim-models
-oc get daemonset -n aim-system \
-  -o custom-columns=NAME:.metadata.name,SERVICE_ACCOUNT:.spec.template.spec.serviceAccountName
-# Replace the detector service-account placeholder in the SCC sample.
-oc apply -f detector-scc-rolebinding.yaml
-bash patch-detectors.sh
-oc apply -f aimservice-mi355x.yaml
-oc get aimclustermodel,aimservice -n aim-models
-oc get inferenceservice -n aim-models
-```
-
-The `AIMClusterModel` is cluster-scoped. The `AIMService` is namespace-scoped.
-Wait for profile discovery and cache readiness before exposing a Route.
-
-Configure the RWX StorageClass through a namespace `AIMRuntimeConfig/default`
-or a cluster `AIMClusterRuntimeConfig/default` according to the platform's
-storage policy. Prefer the namespace-scoped resource for application teams.
-The samples intentionally do not select a StorageClass by name.
-
-## Verify SCC admission
-
-```bash
-oc get daemonset -n aim-system \
-  -o custom-columns=NAME:.metadata.name,SERVICE_ACCOUNT:.spec.template.spec.serviceAccountName
-oc auth can-i use scc/privileged \
-  --as=system:serviceaccount:aim-system:REPLACE_ME
-DETECTOR_POD="$(oc get pod -n aim-system \
-  -l app.kubernetes.io/name=aim-accelerator-detector \
-  -o jsonpath='{.items[0].metadata.name}')"
-oc get pod -n aim-system "$DETECTOR_POD" \
-  -o jsonpath='{.metadata.annotations.openshift\.io/scc}{"\n"}'
-```
-
-The detector service account name can vary with the Helm release name. Derive
-it from the installed DaemonSet instead of assuming a fixed name.
-
-## Verify inference
-
-```bash
-oc get aimservice,inferenceservice,pods,pvc -n aim-models -o wide
-oc port-forward -n aim-models svc/REPLACE_ME 18000:80
-curl --fail --silent --show-error http://127.0.0.1:18000/v1/models
-```
+| File | Purpose and notes |
+| --- | --- |
+| `cert-manager-operator.yaml` | Installs the Red Hat cert-manager Operator from `redhat-operators` with an all-namespaces OperatorGroup. Create the `cert-manager-operator` project first. The sample follows the recommended installation mode for Operator v1.15 and later; use the guide for installation and compatibility details. |
+| `kserve-values.yaml` | Helm values for the KServe resources chart. Pass this file to Helm as shown in the guide; do not apply it with `oc`. |
+| `detector-scc-rolebinding.yaml` | Binds the built-in `privileged` SCC to the detector service account. Replace the service-account placeholder with the account used by the installed detector DaemonSet. This file grants SCC access but does not patch pod security contexts. |
+| `patch-detectors.sh` | Release-specific workaround that grants the detector service account the `privileged` SCC and patches detector and init containers to run as privileged root with privilege escalation enabled. Run only when the guide's checks and installed release require it and the cluster administrator approves. Do not also apply the RoleBinding sample. Set `AIM_ENGINE_RELEASE` or `AIM_SYSTEM_NAMESPACE` if using non-default values. |
+| `aimruntimeconfig-rwx.yaml` | Optional, namespace-scoped cache StorageClass override for `aim-models`. Replace the placeholder and apply this before the AIMService only when an explicit override is needed. The guide explains how to select and verify an RWX-capable class. |
+| `aimservice-mi355x.yaml` | AMD MI355X worked example: a cluster-scoped `AIMClusterModel` and a namespaced `AIMService` for Qwen3-32B, requesting one MI355X GPU. Update the model image and accelerator profile together when adapting this example to another supported AMD GPU. |
+| `route.yaml` | Optional OpenShift Route template. Replace the target with the generated KServe predictor Service and apply only after that Service exists; see the guide's networking section. |

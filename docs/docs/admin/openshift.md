@@ -28,6 +28,27 @@ OpenShift adds platform controls that affect AIM Engine installation:
 The OpenShift-specific samples are in
 [`config/samples/openshift/`](https://github.com/amd-enterprise-ai/aim-engine/tree/main/config/samples/openshift).
 
+The commands in this guide that use `config/samples/openshift/` assume that
+you are working from the AIM Engine repository root. These OpenShift sample
+files are maintained on the repository's `main` branch; the AIM Engine chart
+release is selected separately below. Clone the repository and change to its
+root before continuing:
+
+```bash
+git clone --depth 1 --branch main \
+  https://github.com/amd-enterprise-ai/aim-engine.git
+cd aim-engine
+git rev-parse --short HEAD
+```
+
+If you already have the repository, use an up-to-date `main` checkout
+containing `config/samples/openshift/` instead of cloning it again.
+
+The samples currently track `main` and are not versioned in lockstep with the
+AIM Engine Helm chart. Record the printed source revision with the chart version
+and verify compatibility before using a different chart release; in particular,
+check sample API fields, detector labels, and the detector patch script.
+
 ## Prerequisites
 
 Install or verify the following before installing AIM Engine:
@@ -37,7 +58,7 @@ Install or verify the following before installing AIM Engine:
   installation
 - KServe v0.16.1 or later in Standard deployment mode
 - cert-manager v1.16 or later
-- Helm 3 and the `oc` CLI
+- Git, Helm 3, and the `oc` CLI
 - An RWX-capable StorageClass for model caching, such as a class backed by
   NFS, CephFS, Longhorn, or another shared-filesystem provider
 - `jq` and `rg` for the diagnostic commands in this guide, or equivalent
@@ -126,27 +147,15 @@ oc get pods -n cert-manager-operator
 oc get pods -n cert-manager
 ```
 
-Install KServe in Standard mode using the AIM-compatible values from
-[`KServe Configuration`](kserve-configuration.md):
-
-```yaml
-kserve:
-  controller:
-    deploymentMode: Standard
-    gateway:
-      ingressGateway:
-        enableGatewayApi: false
-  localmodel:
-    enabled: false
-  inferenceservice:
-    resources:
-      limits:
-        cpu: ""
-        memory: ""
-      requests:
-        cpu: ""
-        memory: ""
-```
+Install KServe v0.17.1 in Standard mode. AIM Engine supports KServe v0.16.1 or
+later; this example uses v0.17.1's separate CRD and resource charts. KServe
+changed its Helm chart layout in v0.17, so do not use the older single `kserve`
+chart command with this version. Consult the linked KServe Configuration guide
+for the values rationale only; its installation commands target v0.16.1. The
+repository sample
+[`kserve-values.yaml`](https://github.com/amd-enterprise-ai/aim-engine/blob/main/config/samples/openshift/kserve-values.yaml)
+contains the AIM-compatible settings. For the chart-layout change, see the
+[KServe v0.17 release notes](https://kserve.github.io/website/blog/kserve-0.17-release).
 
 For example:
 
@@ -172,13 +181,15 @@ oc get crd | rg 'inferenceservices|servingruntimes|clusterservingruntimes'
 ## Install AIM Engine
 
 Install the AIM CRDs before the operator chart. The following uses the same
-server-side CRD application pattern as the OpenShift test. Replace
-`<aim-engine-version>` with the AIM Engine release being installed (for
-example, `v0.2.7`). Helm chart versions omit the optional leading `v`.
+server-side CRD application pattern as the OpenShift test. Set
+`AIM_ENGINE_VERSION` to the AIM Engine release being installed; Helm chart
+versions omit the optional leading `v`. The example below uses `v0.2.7`; change
+it to the release selected for your installation.
 
 ```bash
 export KUBECONFIG=/path/to/openshift-kubeconfig
-AIM_ENGINE_VERSION=<aim-engine-version>
+# Set this to the AIM Engine release being installed.
+export AIM_ENGINE_VERSION=v0.2.7
 
 helm template aim-engine-crds \
   oci://docker.io/amdenterpriseai/aim-engine-crds-chart \
@@ -240,11 +251,14 @@ oc get daemonset -n aim-system \
   -l "$DETECTOR_SELECTOR"
 
 DETECTOR_DS="$(oc get daemonset -n aim-system \
-  -l "$DETECTOR_SELECTOR" \
-  -o jsonpath='{.items[0].metadata.name}')"
-DETECTOR_SA=$(oc get daemonset "$DETECTOR_DS" -n aim-system \
-  -o jsonpath='{.spec.template.spec.serviceAccountName}')
-oc get daemonset "$DETECTOR_DS" -n aim-system -o yaml \
+  -l "$DETECTOR_SELECTOR" -o name | head -n 1)"
+if [[ -z "$DETECTOR_DS" ]]; then
+  echo "No AIM Engine detector DaemonSet found in aim-system" >&2
+  exit 1
+fi
+DETECTOR_SA="$(oc get "$DETECTOR_DS" -n aim-system \
+  -o jsonpath='{.spec.template.spec.serviceAccountName}')"
+oc get "$DETECTOR_DS" -n aim-system -o yaml \
   > /tmp/aim-detector-daemonset.yaml
 
 oc adm policy scc-review \
@@ -262,26 +276,17 @@ If the command prints only the column header and no row, no SCC currently
 admits the detector pod template. This is expected before the workaround below
 has granted the detector service account access to the required SCC.
 
-If the deployment requires the built-in privileged SCC, bind it only to the
-detector service account. The sample
-[`detector-scc-rolebinding.yaml`](https://github.com/amd-enterprise-ai/aim-engine/blob/main/config/samples/openshift/detector-scc-rolebinding.yaml)
-is intentionally parameterized.
+The tested workaround for the release used here requires the built-in
+`privileged` SCC. This is a high-privilege exception, not a least-privilege
+configuration. The grant allows pods using this service account to request the
+privileged SCC, so keep the service account dedicated to the detector and
+review who can create pods that use it.
 
-```bash
-oc adm policy add-scc-to-user privileged \
-  -z "$DETECTOR_SA" \
-  -n aim-system
-```
-
-Alternatively, apply a reviewed RoleBinding after replacing the service-account
-placeholder in the sample. Do not grant `privileged` to an entire namespace,
-group, or all service accounts. Production deployments should use the narrowest
-custom SCC that permits the detector's required host paths, devices, and
-security context.
-
-The detector DaemonSets in the tested AIM Engine release also required an
-OpenShift security-context patch after the SCC binding. Apply the parameterized
-sample after AIM Engine is installed and before relying on detector readiness:
+Review the script before running it and obtain approval from the cluster
+administrator. It grants `privileged` to the detector service account and
+patches the detector plus every init container in the matching DaemonSets to
+run privileged as root with privilege escalation enabled. Do not run this
+workaround on clusters whose policy prohibits privileged containers:
 
 ```bash
 bash config/samples/openshift/patch-detectors.sh
@@ -290,11 +295,17 @@ oc rollout status deployment/aim-engine-controller-manager \
   -n aim-system --timeout=120s
 ```
 
-The script discovers detector DaemonSets by label, grants the SCC to their
-shared service account, and patches only those detector pods. Review the
-resulting pod security context with the platform administrator. If a future AIM
-Engine release no longer needs this patch, the script should not be applied
-automatically.
+The script selects DaemonSets by the AIM Engine Helm release labels. It both
+grants the SCC and patches the pod templates; no separate SCC grant is needed
+when using it. The
+[`detector-scc-rolebinding.yaml`](https://github.com/amd-enterprise-ai/aim-engine/blob/main/config/samples/openshift/detector-scc-rolebinding.yaml)
+sample is only a binding to the same built-in `privileged` SCC. It does not
+apply the security-context patch, and should not also be applied when running
+the script. Neither sample defines a custom SCC. Because the patch explicitly
+requests privileged containers, a custom SCC would not make this procedure
+least-privilege; if policy forbids privileged containers, stop and use a
+detector configuration approved for that policy. Recheck the installed release
+before reusing the workaround, since a later release may no longer need it.
 
 Check the SCC that admitted a pod:
 
@@ -368,6 +379,53 @@ If the detector log identifies a GPU but the normalized AIM labels are absent,
 inspect the DaemonSet permissions, NFD worker logs, and detector logs on every
 node. Do not assume that one healthy detector pod makes every node schedulable.
 
+## Configure RWX model caching
+
+AIM Engine resolves the cache StorageClass when it provisions model artifacts.
+Complete this setup before applying the `AIMService`, so its first cache PVC
+uses the intended class. First list the StorageClasses installed in the cluster:
+
+```bash
+oc get storageclass \
+  -o custom-columns='NAME:.metadata.name,PROVISIONER:.provisioner,DEFAULT:.metadata.annotations.storageclass\.kubernetes\.io/is-default-class'
+```
+
+Choose a class whose provisioner supports `ReadWriteMany` (RWX). Do not infer
+this from the class name or from whether it is the default class. Block-storage
+provisioners commonly provide `ReadWriteOnce`, while shared-filesystem and
+distributed-filesystem provisioners may provide RWX. Check the provisioner's
+documentation and confirm the selected class and its parameters with:
+
+```bash
+export RWX_STORAGE_CLASS=<installed-rwx-storage-class>
+oc get storageclass "${RWX_STORAGE_CLASS}" -o yaml
+```
+
+Replace `<installed-rwx-storage-class>` with the actual name printed by the
+first command; do not include the angle brackets. If no installed class has an
+RWX-capable provisioner, install or request an approved NFS-, CephFS-,
+Longhorn-, or other RWX-backed StorageClass before continuing. A PVC requesting
+`ReadWriteMany` will remain `Pending` when the selected provisioner cannot
+provide RWX.
+
+If the cluster's default StorageClass is the approved RWX class, no AIM runtime
+storage override is needed. Otherwise, replace
+`replace-me-rwx-storage-class` in the namespace-scoped sample
+[`aimruntimeconfig-rwx.yaml`](https://github.com/amd-enterprise-ai/aim-engine/blob/main/config/samples/openshift/aimruntimeconfig-rwx.yaml)
+with the approved class name, then apply it:
+
+```bash
+oc apply -f config/samples/openshift/aimruntimeconfig-rwx.yaml
+oc get aimruntimeconfig default -n aim-models -o yaml
+```
+
+This sample affects only `aim-models`. Use
+`AIMClusterRuntimeConfig/default` only when a cluster administrator
+intentionally wants to change the cache default for all namespaces.
+Do not use a local hostPath PV as a production RWX implementation. A hostPath
+workaround is suitable only for a disposable single-node test and requires
+node affinity, ownership, SELinux labeling, and a privileged preparation pod.
+
 ## Deploy a model and service
 
 The sample
@@ -393,55 +451,7 @@ concrete worked example, not a hardware requirement. For another supported
 AMD accelerator, update the model image, `acceleratorModel`, and
 `acceleratorCount` to matching values supported by the AIM Engine release.
 
-## Configure RWX model caching
-
-AIM downloads model artifacts to persistent storage before starting the
-predictor. First list the StorageClasses installed in the cluster:
-
-```bash
-oc get storageclass \
-  -o custom-columns='NAME:.metadata.name,PROVISIONER:.provisioner,DEFAULT:.metadata.annotations.storageclass\.kubernetes\.io/is-default-class'
-```
-
-Choose a class whose provisioner supports `ReadWriteMany` (RWX). Do not infer
-this from the class name or from whether it is the default class. Block-storage
-provisioners commonly provide `ReadWriteOnce`, while shared-filesystem and
-distributed-filesystem provisioners may provide RWX. Check the provisioner's
-documentation and confirm the selected class and its parameters with:
-
-```bash
-export RWX_STORAGE_CLASS=<installed-rwx-storage-class>
-oc get storageclass "${RWX_STORAGE_CLASS}" -o yaml
-```
-
-Replace `<installed-rwx-storage-class>` with the actual name printed by the
-first command; do not include the angle brackets. If no installed class has an
-RWX-capable provisioner, install or request an approved NFS-, CephFS-,
-Longhorn-, or other RWX-backed StorageClass before continuing. A PVC requesting
-`ReadWriteMany` will remain `Pending` when the selected provisioner cannot
-provide RWX.
-
-Configure the AIM runtime default only after confirming that the StorageClass
-is approved for the target project. Prefer a namespace-scoped runtime
-configuration for an application team:
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMRuntimeConfig
-metadata:
-  name: default
-  namespace: aim-models
-spec:
-  storage:
-    defaultStorageClassName: <installed-rwx-storage-class>
-```
-
-Replace `<installed-rwx-storage-class>` in the manifest before applying it. Use
-`AIMClusterRuntimeConfig/default` only when a cluster administrator intentionally
-wants to change the cache default for all namespaces.
-Do not use a local hostPath PV as a production RWX implementation. A hostPath
-workaround is suitable only for a disposable single-node test and requires
-node affinity, ownership, SELinux labeling, and a privileged preparation pod.
+## Troubleshoot RWX model caching
 
 RWX support is separate from PV placement and hostPath permissions. A PVC can
 be `Bound` while its cache or download pod remains `Pending` if the bound PV's
@@ -465,8 +475,12 @@ oc describe pvc -n aim-models <cache-pvc>
 oc get events -n aim-models --sort-by=.lastTimestamp
 ```
 
-An error such as `MULTI_NODE_MULTI_WRITER` means that the selected StorageClass
-does not support RWX.
+`MULTI_NODE_MULTI_WRITER` is a CSI volume access-mode value associated with
+multi-node read/write access (Kubernetes `ReadWriteMany`); by itself, it is not
+a diagnosis that the StorageClass lacks RWX. If it appears in an event, inspect
+the complete PVC event and CSI provisioner message, then verify that the
+selected provisioner can satisfy the requested access mode. See the
+[CSI volume capability definitions](https://github.com/container-storage-interface/spec/blob/master/csi.proto).
 
 ## Networking
 
@@ -487,6 +501,10 @@ oc get svc -n aim-models "${PREDICTOR_SERVICE}"
 oc port-forward -n aim-models "svc/${PREDICTOR_SERVICE}" 18000:80
 ```
 
+The port-forward command stays in the foreground. Leave it running and use a
+second terminal for the `curl` inference checks below; stop the port-forward
+with `Ctrl-C` when finished.
+
 Replace `<inferenceservice-name>` with the actual `NAME` from the first
 command; do not include the angle brackets. If the Service is not found, list
 all Services and use the KServe-generated predictor Service shown there:
@@ -503,6 +521,20 @@ after replacing the generated predictor Service name:
 oc apply -f config/samples/openshift/route.yaml
 oc get route -n aim-models
 ```
+
+The sample Route is named `qwen3-32b-chat`. Use its host to verify external
+access (change `ROUTE_NAME` if you changed the sample's metadata name):
+
+```bash
+ROUTE_NAME=qwen3-32b-chat
+ROUTE_HOST="$(oc get route "$ROUTE_NAME" -n aim-models \
+  -o jsonpath='{.spec.host}')"
+curl --fail --silent --show-error "https://${ROUTE_HOST}/v1/models"
+```
+
+If the router certificate is not trusted by the client, configure that
+certificate or its CA for `curl`; do not disable certificate verification for
+production checks.
 
 An OpenShift `Route` and an AIM-managed Gateway API `HTTPRoute` are separate
 ingress paths. This sample manually creates a Route to the predictor Service
