@@ -11,9 +11,11 @@ You need:
   KServe CRDs, controller, presets, and supporting controllers.
 - Deployable profiles for your actual model artifacts and available hardware.
   The examples use a publishing model named `qwen3-32b`.
-- For P/D, a configured local-transfer preset and a common eligible node large
-  enough for every role group. Ask your administrator which preset/integration
-  is available; a generic profile engine label is not a transport configuration.
+- For P/D, a configured transfer preset and capacity satisfying its placement.
+  A TCP integration can permit `AnyNode`; a GPU-access integration can require
+  one common eligible node for every role group. Ask your administrator which
+  preset/integration is available; a generic profile engine label is not a
+  transport configuration.
 - Namespace-local model-cache storage, credentials, and image pull access for
   each participating execution position.
 - For external requests, an administrator-provided Gateway and the applicable
@@ -49,11 +51,13 @@ kubectl wait aimservice/qwen-chat -n team-a \
   --for=condition=Ready --timeout=10m
 ```
 
-This expands to one prefill group and one decode group on the same node.
-Both select profiles produced by `qwen3-32b`. Runtime-config defaults fill
-unconstrained fields. For example, an administrator can configure throughput
-for prefill and latency for decode. Those metric choices are not hidden built-in
-ranking rules.
+This expands to one prefill group and one decode group. Placement comes from the
+selected transport integration unless the service supplies a stricter minimum.
+Both roles select profiles produced by `qwen3-32b`. Runtime-config defaults fill
+unconstrained fields. For example, an administrator can configure throughput for
+prefill and latency for decode. Those metric choices are not hidden built-in
+ranking rules. The one-prefill/one-decode shape is a functional minimum, not a
+production sizing recommendation.
 
 No `template`, top-level replica count, `spec.profile`, or pipeline annotation is
 needed. A missing profile does not cause AIM to create a model or derive weights.
@@ -134,8 +138,6 @@ metadata:
   name: local-pd
 spec:
   mode: PrefillDecode
-  placement:
-    scope: SameNode
   transport:
     preset: local-kv
   profileSelector:
@@ -151,7 +153,9 @@ spec:
 ```
 
 Publishing this object starts no workload. Its model-binding classification is
-`ModelAgnostic`. Instantiate it:
+`ModelAgnostic`. The `local-kv` integration supplies the minimum placement; the
+recipe does not assume that every P/D transport requires co-location. Instantiate
+it:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
@@ -245,8 +249,9 @@ one role object.
 
 For a supported cooperating-worker mapping, use
 [the worker manifest](examples/10-worker.yaml). No separate worker replica count
-is needed. The configured parallelism must be realizable by that bundle on one
-node; a syntactically valid worker shape is not automatically supported.
+is needed. The configured parallelism must be realizable by that bundle and its
+effective placement; a syntactically valid worker shape is not automatically
+supported.
 
 ## Control inherited defaults
 

@@ -35,8 +35,8 @@ All are optional individually; mode must be supplied or inferable.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `mode` | `Aggregated` or `PrefillDecode` | Serving topology. Inferred from roles if omitted. |
-| `placement` | Placement | Hard placement intent. Effective default is `SameNode`. |
-| `transport` | TransportReference | Local P/D preset. Omit to use the runtime config's default. |
+| `placement` | Placement | Optional minimum placement intent. Omission uses the selected transport's requirement. |
+| `transport` | TransportReference | P/D transfer preset. Omit to use the runtime config's default. |
 | `profileSelector` | ProfileSelector | Authored restrictions on every primary and worker binding. |
 | `main` | Role | Aggregated role. |
 | `prefill` | Role | Prompt-processing role. |
@@ -59,10 +59,15 @@ declaration, or nested compositions.
 | Mode inconsistent with authored roles | Reject. |
 | `Disaggregated`, `Auto`, or `serving.mode` | Not part of this contract. |
 
-`Placement` contains only `scope: SameNode`. An empty placement object has the
-same effective value. `TransportReference` requires `preset`, a non-empty name
-in the effective runtime config's `composition.transportPresets`.
-Transport is forbidden for aggregated recipes.
+`Placement` contains optional `scope: AnyNode` or `SameNode`. An empty placement
+object is the same as omission. The selected transport integration contributes
+its own minimum: TCP compatibility can permit `AnyNode`, while a local GPU-access
+integration can require `SameNode`. Authored placement may narrow that result
+but cannot weaken it.
+
+`TransportReference` requires `preset`, a non-empty name in the effective runtime
+config's `composition.transportPresets`. Transport is forbidden for aggregated
+recipes.
 
 ## AIMService composition
 
@@ -74,15 +79,18 @@ Transport is forbidden for aggregated recipes.
 | Named field | Type | Meaning |
 | --- | --- | --- |
 | `ref` | CompositionReference | Exact namespace or cluster recipe. |
+| `placement` | Placement | Additional minimum placement; cannot weaken the recipe or selected transport. |
 | `profileSelector` | ProfileSelector | Additional shared restrictions. |
 | `main`, `prefill`, `decode` | Role | Customization of roles in the recipe's effective topology. |
 | `inheritSelectorDefaults` | boolean | Overrides the recipe's default-inheritance choice. |
 | `refreshToken` | string, 1–128 characters | Change to request a fresh resolution. |
 
-Named form cannot include `mode`, `placement`, or `transport`. Reference lookup
-does not fall back to a same-named object of another kind. Adding a role outside
-the recipe's mode, or adding a worker absent from that recipe, is rejected during
-resolution. A P/D recipe's omitted counterpart is still an existing role.
+Named form cannot include `mode` or `transport`. Reference lookup does not fall
+back to a same-named object of another kind. A named placement is an additional
+minimum and is rejected during resolution if it would weaken the recipe or
+transport requirement. Adding a role outside the recipe's mode, or adding a
+worker absent from that recipe, is also rejected during resolution. A P/D
+recipe's omitted counterpart is still an existing role.
 
 `CompositionReference` has exactly these required fields:
 
@@ -302,7 +310,7 @@ runtime-default fields. This keeps defaults distinct from mandatory model policy
 launch overlays, and fallback generation.
 
 `TransportPreset` requires `name` and `integration`, both non-empty strings.
-`integration` identifies a registered, versioned local-transfer integration
+`integration` identifies a registered, versioned KV-transfer integration
 contract in the installed bundle. The contract supplies its connector, protocol,
 images, launch inputs, permissions, placement requirements, and bounded
 validation rules. Presets do not accept arbitrary native pod/config overlays.
@@ -428,10 +436,10 @@ the full non-secret record.
 | Admission/CEL | Profile ref XOR selector, role/mode shape, named vs inline union, replicas XOR scaling, cluster recipe exact-ref scope, metric structure, forbidden legacy combinations. |
 | Update admission | Composition presence immutable; legacy-only defaults and old API-version rules preserved. |
 | Recipe reconciliation | Reference availability, authored contradictions, classification. No workload creation. |
-| Service resolution | Named recipe topology, semantic selector intersection, profile eligibility/ranking, effective defaults, artifact identity, resource/parallelism agreement, transport construction, storage access, same-node feasibility. |
+| Service resolution | Named recipe topology, semantic selector intersection, profile eligibility/ranking, effective defaults, artifact identity, resource/parallelism agreement, transport construction, storage access, and effective-placement feasibility. |
 | Refresh validation | Known-unsafe mixed generations rejected unless the native rollout prevents mixing. |
-| Bundle conformance | Effective post-preset native configuration, hard placement lifecycle, routing/security, scaling, profile YAML and storage mounts. |
-| Runtime observation | Native health, routing, pending capacity, transport failures or observed transfer. |
+| Bundle conformance | Effective post-preset native configuration, role-specific parallelism mapping, transport-required placement lifecycle, routing/security, scaling, profile YAML and storage mounts. |
+| Runtime observation | Native health, routing, pending capacity, and observed transfer, fallback, lease failure, or recomputation. |
 
 Unknown fields are excluded from the structural schema. Strict field validation
 rejects them; clients must not depend on a server's permissive pruning behavior.

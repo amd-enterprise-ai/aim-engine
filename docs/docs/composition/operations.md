@@ -61,7 +61,7 @@ All conditions carry standard `status`, `reason`, `message`,
 | `LLMInferenceServiceReady` | Applied native workload health | `Ready`, `Progressing`, `NativeFailure`. |
 | `HTTPRouteReady` | Public route, if enabled | `Accepted`, `AwaitingBackends`, `RouteRejected`. |
 | `CapacityAvailable` | Scheduling of requested applied groups | `Available`, `WaitingForCapacity`, `NodeRecoveryPending`. |
-| `TransportHealthy` | Native/runtime transport signals for the applied path | `NoFailureObserved`, `TransferObserved`, `TransportFailure`, `NotApplicable`. |
+| `TransportHealthy` | Native/runtime transport signals for the applied path | `NoFailureObserved`, `TransferObserved`, `FallbackObserved`, `RecomputeDetected`, `LeaseFailure`, `TransportFailure`, `NotApplicable`. |
 | `SourcesCurrent` | Availability/drift of recorded external sources | `Current`, `SourceChanged`, `SourceDeleted`, `BundleDrift`. Informational. |
 | `Ready` | Availability of the applied requested serving path | `Serving`, `Progressing`, `ServingFailure`. |
 
@@ -145,11 +145,12 @@ The zero-minimum example needs role-aware activation and an enabled route.
 Use [the complete zero-minimum manifest](examples/12-zero-minimum.yaml) only on
 an integration supporting that path.
 
-SameNode capacity includes every requested fixed group and at least
-`max(1, minReplicas)` groups per autoscaled role. Maxima are growth ceilings.
-A compatible but busy node produces a capacity wait; profiles are not replaced
-and transport is not changed. An impossible capacity-only request is rejected
-without altering the previous applied capacity.
+When effective placement is `SameNode`, capacity includes every requested fixed
+group and at least `max(1, minReplicas)` groups per autoscaled role. Maxima are
+growth ceilings. A compatible but busy node produces a capacity wait; profiles
+are not replaced and transport is not changed. An impossible capacity-only
+request is rejected without altering the previous applied capacity. `AnyNode`
+transport does not acquire this combined-node feasibility requirement.
 
 ## Source deletion, restart, and cleanup
 
@@ -186,13 +187,13 @@ and inspect drift findings for the rest.
 | `NoMatchingProfiles` | Inspect `effectiveSelector` and default contributions, model provenance/scope, deployable eligibility, and explicit tier settings. Supply a matching profile or intentionally change restrictions/default inheritance. |
 | `ReferenceNotFound` | Check exact kind/name and scope. A namespace ref does not fall back to a cluster ref. |
 | `MissingTransport` | Configure a P/D preset and registered integration, or correct the preset name. Omission is not automatic connector detection. |
-| `UnsupportedShape` | Worker/parallelism, hard placement, scaling, or transport cannot be rendered by the installed integration. Use a supported shape; do not weaken SameNode. |
+| `UnsupportedShape` | Worker/parallelism, placement, scaling, or transport cannot be rendered by the installed integration. Use a supported shape; do not weaken the selected transport's minimum placement. |
 | `NoFeasibleTuple` | Inspect the binding/rule and complete capacity footprint, not each profile's individual availability alone. |
 | `WaitingForCapacity` | The node is compatible but busy. Reduce groups or free capacity. Scheduling is not a reservation. |
 | `ManagedObjectCollision` | The generated name is occupied by an object AIM does not own. Resolve ownership deliberately; AIM does not adopt or overwrite it. |
 | `DependencyUnavailable` | Check namespace-local profile YAML, artifact/cache volumes, credentials, and all worker mounts. Cluster publication grants no cross-namespace mounts. |
-| `AwaitingBackends` | Inspect native endpoint-selection resources and route backend resolution. Avoid a circular dependency that prevents native-service creation. |
-| `TransportFailure` | Inspect engine/connector logs and protocol diagnostics for the applied revision; pod readiness alone does not establish transfer. |
+| `AwaitingBackends` | Inspect `InferencePool`, endpoint-picker, and route backend resolution. Confirm the Gateway supports the installed inference-extension API and avoid a circular dependency that prevents native-service creation. |
+| `TransportFailure` | Inspect engine/connector logs, request-time protocol diagnostics, transfer metrics, lease expiry, fallback, and decode recomputation for the applied revision; pod readiness alone does not establish transfer. |
 | `SourceDeleted` with healthy serving | Restore the source before refresh, or deliberately choose another source. Do not delete retained revision dependencies. |
 | `MixedGenerationUnsafe` | Use a separate service and explicit traffic transition, or a native mapping that proves isolation of incompatible generations. |
 
@@ -207,8 +208,11 @@ Treat these as separate observations:
 1. AIM can construct the configuration.
 2. Native workloads become healthy.
 3. An authorized inference request succeeds, including streaming/cancellation.
-4. Connector/runtime telemetry shows KV transfer on the intended local path,
+4. Connector/runtime telemetry shows KV transfer on the selected path,
    without prefill recomputation or an unintended fallback.
 
 One successful response does not establish step four. Static validation does not
-provide benchmark results or hardware qualification.
+provide benchmark results or hardware qualification. Evidence is
+integration-specific and can include request-time `UCX_PROTO_INFO`, vLLM
+`nixl_*` transfer metrics, transfer-byte counters, and KV lease-expiry signals;
+startup capability tables alone are not proof of the request-time path.

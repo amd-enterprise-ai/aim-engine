@@ -9,12 +9,15 @@ installed CRD, or chart change is included in the review package.
 | Module | Interface | Hidden implementation |
 | --- | --- | --- |
 | Composition resolution | Authored recipe/service, source catalog, runtime configuration, node/bundle capabilities → validated effective execution or structured findings | Inheritance, selector intersections/defaults, deterministic tuple search, overlays, identity and capacity checks, bounded interoperability rules. |
-| Native projection | Accepted execution plus projection intent → ordered revision artifacts and native config/service | Profile YAML contract, caches/storage, native field mapping, preset interaction, placement, routing, scaling. |
+| Native projection | Accepted execution plus projection intent → ordered revision artifacts and native config/service | Profile YAML contract, caches/storage, qualified-bundle adapter, native field mapping, preset interaction, placement, routing, scaling. |
 | Revision lifecycle | Desired intent, persisted accepted content, and observations → publication/retention decisions and status | Refresh semantics, projection vs execution digests, crash recovery, source deletion, mixed-generation checks, garbage collection. |
 
 The resolution interface is the main test surface. It must never return a
 renderable tuple that has bypassed joint validation. Native KServe details belong
-at the projection seam, not in the public selector or recipe vocabulary.
+at the projection seam, not in the public selector or recipe vocabulary. A
+versioned qualified-bundle adapter is the only module that knows KServe's
+role-field asymmetry, platform launch additions, security settings, transport
+placement, rollout requirements, and runtime evidence.
 
 ## 1. Translate the reviewed contract into CRDs
 
@@ -119,26 +122,51 @@ Acceptance: effective post-preset workload inspection, profile/config dependenci
 cache/credential mounts, authenticated routing, group scaling, owner collision
 handling, and legacy regression.
 
-## 5. Establish and add the local P/D integration
+## 5. Establish and add the P/D integration
 
 Choose a reproducible installed bundle, not just the API version inspected by
-the ADR. Register one concrete local-transfer contract with exact versions,
+the ADR. Register one concrete KV-transfer contract with exact versions,
 obtainable artifacts, GPU topology, permissions, launch settings, and bounded
 rules. The `integration` name in example presets is not a bundle choice.
 
 Map decode to native top-level workload fields and prefill to native prefill
-fields within the generated config. Verify AIM owns the public route/security
-surface while KServe owns its endpoint-selection resources and role scalers.
-Do not reuse predictor names, route backends, scaler ownership, or storage
-initializer behavior by assumption.
+fields within the generated config. The tested KServe v0.20 shape maps top-level
+tensor parallelism to decode; prefill requires its own engine argument and GPU
+count. Treat that as bundle-specific behavior and test the selected KServe
+v0.21 bundle rather than assuming symmetry or a fix.
 
-Prove hard co-location through bootstrap, independent scaling, replacement,
-surge, coexisting revisions, scale-to-zero/reactivation, and node loss.
-An inability to enforce this blocks the shape; affinity syntax alone is not
-acceptance evidence.
+Verify AIM owns the public route/security surface while KServe owns its
+endpoint-selection resources and role scalers. Require an
+`InferencePool`-compatible Gateway. Do not reuse predictor names, route backends,
+scaler ownership, or storage-initializer behavior by assumption.
+The tested Envoy Gateway path rejected `InferencePool` backends and bypassed the
+endpoint picker, so ordinary `HTTPRoute` support is not qualification evidence.
+
+The qualified adapter renders or verifies the platform additions required by its
+pinned bundle. Initial AMD evidence requires tests for:
+
+- `VLLM_HTTP_TIMEOUT_KEEP_ALIVE=120` on both roles;
+- a compatible ROCm engine image;
+- KV-transfer arguments that survive the preset entrypoint;
+- sufficient storage-initializer memory;
+- an image-compatible security context without blanket privilege or `hostPID`;
+- the `VLLM_ROCM_USE_AITER=1` NIXL contradiction and empty-string neutralization;
+- connector-specific rules such as equal tensor parallelism for MoRI.
+
+TCP compatibility permits `AnyNode` and must not acquire false co-location. If a
+transport requires `SameNode`, prove hard co-location through bootstrap,
+independent scaling, replacement, scale-to-zero/reactivation, and node loss.
+Pinned-GPU transports that cannot safely surge use a strategy such as `Recreate`
+or reject the update. An inability to enforce the selected requirement blocks
+the shape; affinity syntax alone is not acceptance evidence.
 
 Check old/new cross-generation combinations before publishing a refresh.
 Reject known-unsafe mixing if the native rollout cannot isolate it.
+
+Acceptance also covers short-prompt scheduler behavior, `min_tokens` rewriting,
+KV lease pressure, connector import failure, and explicit detection of disabled
+transfer, unintended fallback, or decode recomputation. A successful response
+or ready pod is not evidence that KV moved on the intended path.
 
 ## 6. Exercise a reference recipe and promote the docs
 
@@ -147,9 +175,13 @@ hardware, prompts, and allowed differences. Compare generated config and
 post-preset workloads to that reference.
 
 Collect distinct evidence for render equivalence, inference correctness,
-authorized routing/streaming/cancellation, and intended local KV movement.
+authorized routing/streaming/cancellation, and intended KV movement.
 Test replacement, scaling, source deletion, crash recovery, and dependency
-retention. No performance, multi-node, or RDMA claim follows from this test.
+retention. Compare P/D against a tuned aggregated deployment and record prompt
+distribution, concurrency, scheduler budgets, role counts, and transport. The
+one-prefill/one-decode short form is a functional minimum, not a production
+sizing recommendation. No general performance, GPU-IPC, or RDMA claim follows
+from this test.
 
 After team approval, synchronize refinements to ADR-0012. After implementation
 and conformance, move the product pages into normal concepts/guides/admin/reference

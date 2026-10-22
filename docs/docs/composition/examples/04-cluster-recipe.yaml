@@ -4,8 +4,6 @@ metadata:
   name: local-pd
 spec:
   mode: PrefillDecode
-  placement:
-    scope: SameNode
   transport:
     preset: local-kv
   profileSelector:

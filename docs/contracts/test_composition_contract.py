@@ -106,7 +106,13 @@ class CompositionContractTest(unittest.TestCase):
             {"decode": {}},
             {"decode": {"profile": {"selector": {}}}},
             {"mode": "PrefillDecode", "inheritSelectorDefaults": False},
+            {"mode": "PrefillDecode", "placement": {"scope": "AnyNode"}},
+            {"mode": "PrefillDecode", "placement": {"scope": "SameNode"}},
             {"ref": {"kind": "AIMClusterComposition", "name": "local-pd"}},
+            {
+                "ref": {"kind": "AIMClusterComposition", "name": "local-pd"},
+                "placement": {"scope": "SameNode"},
+            },
         ]:
             with self.subTest(composition=composition):
                 self.assert_valid(service(composition))
@@ -138,6 +144,7 @@ class CompositionContractTest(unittest.TestCase):
             {"main": {}, "refreshToken": ""},
             {"main": {}, "inheritSelectorDefaults": None},
             {"main": {"launch": {"engineEnv": {"EXAMPLE": None}}}},
+            {"mode": "PrefillDecode", "placement": {"scope": "Rack"}},
         ]:
             with self.subTest(composition=composition):
                 self.assert_invalid(service(composition))
@@ -145,7 +152,6 @@ class CompositionContractTest(unittest.TestCase):
     def test_named_form_excludes_inline_topology(self):
         for field, value in [
             ("mode", "PrefillDecode"),
-            ("placement", {"scope": "SameNode"}),
             ("transport", {"preset": "local-kv"}),
         ]:
             with self.subTest(field=field):

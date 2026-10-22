@@ -1,5 +1,5 @@
-# Requires a bundle that can map these particular primary/worker profiles and
-# parallelism to a complete same-node group. Not a qualified hardware fixture.
+# Requires a bundle that can map these particular primary/worker profiles,
+# parallelism, and effective placement. Not a qualified hardware fixture.
 apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:

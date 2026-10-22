@@ -102,7 +102,7 @@ $defs:
         type: object
         additionalProperties: false
         properties:
-          scope: {const: SameNode}
+          scope: {enum: [AnyNode, SameNode]}
       transport:
         type: object
         additionalProperties: false
@@ -137,7 +137,6 @@ $defs:
           not:
             anyOf:
               - {required: [mode]}
-              - {required: [placement]}
               - {required: [transport]}
         else: {$ref: '#/$defs/InlineShape'}
   InlineShape:

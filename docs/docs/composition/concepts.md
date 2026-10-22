@@ -121,12 +121,25 @@ incompatibility. There is no `allowUntested` switch: unverified interoperability
 is already allowed when the workload is constructible and has no known
 contradiction.
 
-## Same-node execution
+Initial bounded rules include the tested NIXL contradiction where
+`VLLM_ROCM_USE_AITER=1` changes the expected KV layout, and the tested MoRI rule
+requiring equal tensor parallelism across prefill and decode. These are
+integration-specific rules, not universal P/D admission. A role launch overlay
+can replace an inherited environment value with an empty string when the
+qualified engine contract defines empty as disabled.
 
-`SameNode` covers all groups and workers in a service, including overlapping
-serving revisions. At least one common eligible node must have enough allocatable
-capacity for all fixed replicas and, for each autoscaled role, its minimum or
-one activation group, whichever is larger.
+## Transport-driven placement
+
+Placement is a requirement of the effective transport contract, not an inherent
+property of P/D. TCP compatibility can permit `AnyNode`; an integration that
+depends on local GPU access can require `SameNode`. Authored placement may narrow
+the transport requirement but cannot weaken it. Omission uses the transport's
+minimum.
+
+When the effective scope is `SameNode`, it covers all groups and workers in a
+service, including overlapping serving revisions. At least one common eligible
+node must have enough allocatable capacity for all fixed replicas and, for each
+autoscaled role, its minimum or one activation group, whichever is larger.
 
 For example, one prefill group requesting two GPUs plus two decode groups
 requesting one GPU each needs a common node with at least four compatible GPUs,
@@ -137,8 +150,10 @@ waiting. Scaling maxima are ceilings, not reservations or a promise that all
 maxima fit together. Pods wait rather than spill onto another node.
 
 Hard co-location continues through independent role scaling, replacement,
-surge, scale-to-zero, and node loss. A platform mapping that cannot enforce those
-transitions is unsupported.
+scale-to-zero, and node loss. A transport that exposes pinned GPUs or cannot
+safely admit old and new revisions together must use a non-surge strategy such
+as `Recreate`, or reject the update. A platform mapping that cannot enforce the
+selected transport's lifecycle is unsupported.
 
 ## Ownership and revision artifacts
 
@@ -175,7 +190,9 @@ Composition is an explicit opt-in, fixed at service creation. Services without
 `spec.composition` keep their existing `InferenceService` behavior. Moving between
 paths requires a separate service.
 
-The local P/D contract does not include multi-node transfer, RDMA, gang scheduling,
-Grove, Dynamo, atomic role rollout, automatic rollback, or guaranteed zero
-downtime. Local KV transfer is distinct from intra-role collectives and request
-or control traffic. Sharing `/dev/shm` alone does not establish GPU IPC.
+The initial P/D contract does not qualify RDMA, gang scheduling, Grove, Dynamo,
+atomic role rollout, automatic rollback, or guaranteed zero downtime. TCP
+compatibility can place roles on different nodes, but it is not a high-performance
+cross-node claim. KV transfer is distinct from intra-role collectives and request
+or control traffic. Same-node placement or sharing `/dev/shm` alone does not
+establish GPU IPC.

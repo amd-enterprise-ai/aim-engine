@@ -59,8 +59,10 @@ A version of the effective service-specific configuration. A requested revision
 can differ from the revision applied to the serving platform.
 
 **Local KV transfer**:
-Movement of generation state from prefill to decode on the same node.
-_Avoid_: Request routing, intra-role collectives.
+Movement of generation state from prefill to decode through the selected
+transport integration. It does not by itself imply same-node placement or GPU
+IPC.
+_Avoid_: Request routing, intra-role collectives, co-location.
 
 **Interoperability finding**:
 A bounded statement about known contradictions, missing construction inputs, or

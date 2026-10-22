@@ -1,6 +1,6 @@
 # Administrator configuration
 
-Runtime configs provide composition-specific selector defaults and named local
+Runtime configs provide composition-specific selector defaults and named
 transport presets. They do not impose mandatory model policy or rank candidate
 profiles.
 
@@ -115,7 +115,7 @@ No engine, metric, precision, or accelerator is hard-coded when a default and an
 authored restriction are both absent. Existing eligible-profile selection still
 applies; this does not disable the optimized-tier policy.
 
-## Configure local transfer
+## Configure KV transfer
 
 A P/D composition selects `transport.preset`, or uses the runtime config's
 `defaultTransportPreset` when no preset is authored:
@@ -142,15 +142,19 @@ Each integration contract specifies concrete versions and mappings for:
 
 - Engine, connector, protocol, runtime and sidecar images.
 - Required role launch arguments/environment and model/profile paths.
+- Role-specific parallelism and GPU-resource mapping.
 - GPU topology and accessible devices.
 - Pod permissions, IPC/sharing, volumes, ports, probes, and security restrictions.
-- Hard same-node placement across the complete service lifecycle.
+- Minimum placement and any required rollout strategy across the complete service
+  lifecycle.
 - Statically checkable interoperability rules and observable runtime signals.
 
 The preset names that contract; it does not provide arbitrary `PodSpec` overrides.
 No blanket privileged or `hostIPC` default is introduced. Selecting a preset
 does not provision fabric, grant access to namespace-local Secrets, or certify
-the compatibility of arbitrary profile pairs.
+the compatibility of arbitrary profile pairs. A preset cannot silently disable
+transfer, fall back to another transport, or permit decode recomputation while
+reporting the intended transport as healthy.
 
 Namespace transport entries replace same-named cluster entries **as a whole**.
 This avoids constructing a hybrid connector contract by merging unrelated
@@ -169,8 +173,14 @@ operational integration.
 
 Conformance checks inspect the **effective resources after KServe preset
 merging**, not only the generated AIM config. Verify image/entrypoint, flags/env,
-ports/probes, sidecars, resources, profile YAML mounts, storage, placement, and
-permissions.
+ports/probes, sidecars, resources, role-specific parallelism, profile YAML mounts,
+storage, placement, permissions, and rollout strategy.
+
+The selected Gateway must support the bundle's `InferencePool` backend and
+inference-extension API. Ordinary `HTTPRoute` support is insufficient if the
+route bypasses the endpoint picker. Bundle tests also exercise short-prompt
+scheduling, request-field rewriting such as `min_tokens`, KV lease pressure,
+connector import failure, unintended fallback, and decode recomputation.
 
 For AIM-managed external serving, AIM owns the HTTPRoute and associated security
 intent; KServe observes the referenced route and owns its endpoint-selection
