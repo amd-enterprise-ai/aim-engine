@@ -715,7 +715,7 @@ _Appears in:_
 
 
 
-AIMCompositionPlacement declares hard placement intent.
+AIMCompositionPlacement declares additional minimum placement intent.
 
 
 
@@ -724,23 +724,24 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `scope` _[AIMCompositionPlacementScope](#aimcompositionplacementscope)_ | Scope is the required relationship between composition roles. |  | Enum: [SameNode] <br />Optional: \{\} |
+| `scope` _[AIMCompositionPlacementScope](#aimcompositionplacementscope)_ | Scope is the minimum relationship between composition roles. Omission uses the selected transport integration's requirement. |  | Enum: [AnyNode SameNode] <br />Optional: \{\} |
 
 
 #### AIMCompositionPlacementScope
 
 _Underlying type:_ _string_
 
-AIMCompositionPlacementScope is the hard placement relationship between roles.
+AIMCompositionPlacementScope is the minimum placement relationship between roles.
 
 _Validation:_
-- Enum: [SameNode]
+- Enum: [AnyNode SameNode]
 
 _Appears in:_
 - [AIMCompositionPlacement](#aimcompositionplacement)
 
 | Field | Description |
 | --- | --- |
+| `AnyNode` | AIMCompositionPlacementAnyNode permits ordinary scheduler placement. A selected transport may still impose a stricter minimum. |
 | `SameNode` | AIMCompositionPlacementSameNode requires every role in one serving composition to remain on a common node. |
 
 

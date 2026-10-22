@@ -95,6 +95,10 @@ func TestCompositionRecipeAdmission(t *testing.T) {
 		{"inferred-main", `main: {}`, true},
 		{"inferred-prefill", `prefill: {}`, true},
 		{"inferred-decode", `decode: {}`, true},
+		{"placement-any-node", `prefill: {}
+placement: {scope: AnyNode}`, true},
+		{"placement-same-node", `prefill: {}
+placement: {scope: SameNode}`, true},
 		{"profile-selector-only", `profileSelector: {engine: vllm}`, false},
 		{"empty", `{}`, false},
 		{"mixed-roles", `main: {}
@@ -153,6 +157,41 @@ transport: {preset: local-kv}`, false},
 			}
 		})
 	}
+}
+
+func TestCompositionPlacementScopeEnum(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "config", "crd", "bases", "aim.eai.amd.com_aimcompositions.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var crd apiextensionsv1.CustomResourceDefinition
+	if err := yaml.Unmarshal(raw, &crd); err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range crd.Spec.Versions {
+		if version.Name != "v1alpha2" {
+			continue
+		}
+		scope := version.Schema.OpenAPIV3Schema.
+			Properties["spec"].
+			Properties["placement"].
+			Properties["scope"]
+		got := make([]string, 0, len(scope.Enum))
+		for _, value := range scope.Enum {
+			got = append(got, string(value.Raw))
+		}
+		want := []string{`"AnyNode"`, `"SameNode"`}
+		if len(got) != len(want) {
+			t.Fatalf("placement scope enum=%v want=%v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("placement scope enum=%v want=%v", got, want)
+			}
+		}
+		return
+	}
+	t.Fatal("missing v1alpha2 schema")
 }
 
 func TestClusterCompositionRejectsNamespaceProfileRefs(t *testing.T) {

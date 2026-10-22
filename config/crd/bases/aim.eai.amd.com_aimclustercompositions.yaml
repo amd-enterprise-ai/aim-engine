@@ -2028,13 +2028,15 @@ spec:
                 type: string
               placement:
                 description: |-
-                  Placement declares hard placement intent. Effective placement defaults are
-                  resolved later and are not persisted into the recipe spec.
+                  Placement declares optional minimum placement intent. The selected transport
+                  integration contributes its own minimum during service resolution.
                 properties:
                   scope:
-                    description: Scope is the required relationship between composition
-                      roles.
+                    description: |-
+                      Scope is the minimum relationship between composition roles. Omission uses
+                      the selected transport integration's requirement.
                     enum:
+                    - AnyNode
                     - SameNode
                     type: string
                 type: object
@@ -3150,7 +3152,7 @@ spec:
                     type: string
                 type: object
               transport:
-                description: Transport selects a local prefill/decode transport preset.
+                description: Transport selects a prefill/decode KV-transfer preset.
                 properties:
                   preset:
                     description: Preset is the name of a transport preset in the effective

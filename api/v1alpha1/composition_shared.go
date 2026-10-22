@@ -40,19 +40,23 @@ const (
 	AIMCompositionModePrefillDecode AIMCompositionMode = "PrefillDecode"
 )
 
-// AIMCompositionPlacementScope is the hard placement relationship between roles.
-// +kubebuilder:validation:Enum=SameNode
+// AIMCompositionPlacementScope is the minimum placement relationship between roles.
+// +kubebuilder:validation:Enum=AnyNode;SameNode
 type AIMCompositionPlacementScope string
 
 const (
+	// AIMCompositionPlacementAnyNode permits ordinary scheduler placement. A
+	// selected transport may still impose a stricter minimum.
+	AIMCompositionPlacementAnyNode AIMCompositionPlacementScope = "AnyNode"
 	// AIMCompositionPlacementSameNode requires every role in one serving
 	// composition to remain on a common node.
 	AIMCompositionPlacementSameNode AIMCompositionPlacementScope = "SameNode"
 )
 
-// AIMCompositionPlacement declares hard placement intent.
+// AIMCompositionPlacement declares additional minimum placement intent.
 type AIMCompositionPlacement struct {
-	// Scope is the required relationship between composition roles.
+	// Scope is the minimum relationship between composition roles. Omission uses
+	// the selected transport integration's requirement.
 	// +optional
 	Scope AIMCompositionPlacementScope `json:"scope,omitempty"`
 }
@@ -223,12 +227,12 @@ type AIMCompositionSpec struct {
 	// +optional
 	Mode AIMCompositionMode `json:"mode,omitempty"`
 
-	// Placement declares hard placement intent. Effective placement defaults are
-	// resolved later and are not persisted into the recipe spec.
+	// Placement declares optional minimum placement intent. The selected transport
+	// integration contributes its own minimum during service resolution.
 	// +optional
 	Placement *AIMCompositionPlacement `json:"placement,omitempty"`
 
-	// Transport selects a local prefill/decode transport preset.
+	// Transport selects a prefill/decode KV-transfer preset.
 	// +optional
 	Transport *AIMCompositionTransportReference `json:"transport,omitempty"`
 
