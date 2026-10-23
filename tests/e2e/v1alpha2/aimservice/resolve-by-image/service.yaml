@@ -16,6 +16,13 @@ metadata:
 spec:
   model:
     image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  profile:
+    selector:
+      # Discovery only publishes profiles that fit the cluster's nodes. The
+      # image's MI300X profiles default to 32Gi of host memory per GPU, so on
+      # smaller nodes only its unoptimized CPU profile is published, which
+      # the default minimumType=optimized floor would exclude.
+      minimumType: any
   caching:
     env:
       - name: HF_TOKEN

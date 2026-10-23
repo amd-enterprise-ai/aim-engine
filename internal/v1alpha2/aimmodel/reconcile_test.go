@@ -43,7 +43,7 @@ import (
 
 var errListNodesFailed = errors.New("list nodes failed")
 
-const testBaseImageRef = "ghcr.io/silogen/aim-base:0.8.5"
+const testBaseImageRef = "ghcr.io/amdenterpriseai/aim-base:0.8.5"
 
 func TestHasLegacyFields_DetectsLegacyCompatibilityFields(t *testing.T) {
 	t.Parallel()
@@ -984,7 +984,7 @@ func TestBuildDesiredOfficialProfiles_BaseEntriesStampedAsBase(t *testing.T) {
 	}
 	catalog := aimprofile.DiscoveryCatalog{
 		Profiles: []aimprofile.DiscoveryCatalogItem{{
-			BaseImage:    "ghcr.io/silogen/aim-base-vllm:0.1.0",
+			BaseImage:    "ghcr.io/amdenterpriseai/aim-base-vllm:0.1.0",
 			YAMLContract: profileyaml.DefaultContract(),
 			Spec: aimv1alpha2.AIMProfileSpecCommon{
 				ProfileId: "vllm-cpu-bf16-tp1-latency",

@@ -76,7 +76,7 @@ Create it once:
 ```bash
 mkdir -p ~/.config/aim-engine
 
-# Docker Hub pull secret (private docker.io/silogenai images).
+# Docker Hub pull secret (private AIM images).
 # The manifest must NOT pin a namespace — the helper applies it with -n <test-ns>.
 kubectl create secret docker-registry dockerhub-regcred \
   --docker-server=docker.io \
@@ -130,7 +130,7 @@ complete v1alpha2 path. It demonstrates:
   frame count and duration.
 
 Prerequisites are one available MI300X, Longhorn, the vLLM-Omni-capable
-operator build under test, and credentials for `docker.io/silogenai`. A cold
+operator build under test, and credentials for its private Docker Hub image. A cold
 namespace downloads approximately 118 GiB, so allow substantial storage and up
 to 90 minutes for the cache:
 

@@ -136,7 +136,7 @@ func isModelOwnedBySource(model *aimv1alpha1.AIMClusterModel, sourceName string)
 //
 // Examples:
 //
-//	{Registry: "ghcr.io", Repository: "silogen/llama-3-8b", Tag: "v1.2.0"} -> silogen-llama-3-8b-v1-2-0-a1b2c3
+//	{Registry: "ghcr.io", Repository: "amdenterpriseai/llama-3-8b", Tag: "v1.2.0"} -> amdenterpriseai-llama-3-8b-v1-2-0-a1b2c3
 //	{Registry: "docker.io", Repository: "library/nginx", Tag: "latest"} -> library-nginx-latest-e5f6g7
 func generateModelName(img RegistryImage) string {
 	// Use GenerateDerivedName with repository and tag as name parts

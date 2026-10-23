@@ -298,7 +298,7 @@ func getAMDLabel(labels map[string]string, suffix string) string {
 	return labels["org.amd.silogen."+suffix]
 }
 
-// parseImageLabels extracts structured metadata from OCI and AMD Silogen image labels.
+// parseImageLabels extracts structured metadata from OCI and AIM image labels.
 func parseImageLabels(labels map[string]string) (*aimv1alpha1.ImageMetadata, error) {
 	// Allow images with no labels - metadata will be minimal but valid
 	// Downstream logic will detect missing recommendedDeployments if needed
@@ -321,7 +321,7 @@ func parseImageLabels(labels map[string]string) (*aimv1alpha1.ImageMetadata, err
 	metadata.OCI.Revision = labels["org.opencontainers.image.revision"]
 	metadata.OCI.Version = labels["org.opencontainers.image.version"]
 
-	// Parse AMD Silogen model labels (supports both com.amd.aim and org.amd.silogen prefixes)
+	// Parse AIM model labels (supports both com.amd.aim and org.amd.silogen prefixes)
 	metadata.Model.CanonicalName = getAMDLabel(labels, "model.canonicalName")
 	metadata.Model.Source = getAMDLabel(labels, "model.source")
 	metadata.Model.Title = getAMDLabel(labels, "title")

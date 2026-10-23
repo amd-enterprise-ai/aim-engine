@@ -84,8 +84,8 @@ spec:
 
                         Supported formats:
                         - Repository name: "amdenterpriseai/aim-qwen-qwen3-32b"
-                        - Repository with tag: "silogen/aim-llama:1.0.0" (overrides versions field)
-                        - Full URI: "ghcr.
+                        - Repository with tag: "amdenterpriseai/aim-llama:1.0.0" (overrides versions field)
+                        - Full URI: "docker.
                       maxLength: 512
                       type: string
                     versions:

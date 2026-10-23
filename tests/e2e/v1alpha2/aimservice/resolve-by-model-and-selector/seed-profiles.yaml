@@ -17,6 +17,11 @@ spec:
   acceleratorModel: EPYC_ZEN5
   acceleratorType: cpu
   acceleratorCount: 1
+  # The EPYC default memory request (120Gi) exceeds small CI nodes. Derived
+  # profiles copy this spec, so the override carries over to them.
+  resources:
+    requests:
+      memory: 1Gi
   image: registry.example.com/aim-cpu-base:0.12.0
   modelSources:
     - modelId: model-selector/qwen
@@ -41,6 +46,9 @@ spec:
   acceleratorModel: EPYC_ZEN5
   acceleratorType: cpu
   acceleratorCount: 1
+  resources:
+    requests:
+      memory: 1Gi
   image: registry.example.com/aim-cpu-base:0.12.0
   modelSources:
     - modelId: model-selector/qwen

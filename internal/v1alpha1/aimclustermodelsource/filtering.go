@@ -39,13 +39,13 @@ const (
 )
 
 // parsedImageFilter represents a parsed image filter that may contain:
-// - Just a repository name (e.g., "silogen/aim-llama")
-// - A full image URI with registry (e.g., "ghcr.io/silogen/aim-llama:1.0.0")
-// - A repository with tag (e.g., "silogen/aim-llama:1.0.0")
+// - Just a repository name (e.g., "amdenterpriseai/aim-llama")
+// - A full image URI with registry (e.g., "ghcr.io/amdenterpriseai/aim-llama:1.0.0")
+// - A repository with tag (e.g., "amdenterpriseai/aim-llama:1.0.0")
 type parsedImageFilter struct {
 	// registry override from the filter (e.g., "ghcr.io"), empty if not specified
 	registry string
-	// repository to match (e.g., "silogen/aim-llama")
+	// repository to match (e.g., "amdenterpriseai/aim-llama")
 	repository string
 	// tag override from the filter (e.g., "1.0.0"), empty if not specified
 	tag string
@@ -83,9 +83,9 @@ func parseImageFilter(imageFilter string) parsedImageFilter {
 
 	// Try parsing as a full image reference (registry/repo:tag)
 	// This will handle cases like:
-	// - ghcr.io/silogen/aim-llama:1.0.0
-	// - silogen/aim-llama:1.0.0
-	// - ghcr.io/silogen/aim-llama
+	// - ghcr.io/amdenterpriseai/aim-llama:1.0.0
+	// - amdenterpriseai/aim-llama:1.0.0
+	// - ghcr.io/amdenterpriseai/aim-llama
 	ref, err := name.ParseReference(imageFilter)
 	if err != nil {
 		// If parsing fails, treat it as a simple repository pattern

@@ -280,7 +280,7 @@ env_vars: {}
 			FlattenProfilePath("general/vllm-cpu-bf16-tp1-latency.yaml"):         generalYAML,
 			DiscoveryCacheMetadataKey: `{
   "aimId": "Qwen/Qwen3-0.6B",
-  "sourceImage": "ghcr.io/silogen/aim-cpu-qwen-qwen3-0-6b:0.12.0-rc16",
+  "sourceImage": "ghcr.io/amdenterpriseai/aim-cpu-qwen-qwen3-0-6b:0.12.0-rc16",
   "discoveryCommandVersion": "v1"
 }`,
 		},
@@ -376,7 +376,7 @@ env_vars: {}
 			FlattenProfilePath("general/vllm-cpu-bf16-tp1-latency.yaml"): generalYAML,
 			DiscoveryCacheMetadataKey: `{
   "aimId": "Qwen/Qwen3-0.6B",
-  "sourceImage": "ghcr.io/silogen/aim-cpu-qwen-qwen3-0-6b:0.12.0-rc16",
+  "sourceImage": "ghcr.io/amdenterpriseai/aim-cpu-qwen-qwen3-0-6b:0.12.0-rc16",
   "discoveryCommandVersion": "v1"
 }`,
 		},
@@ -414,7 +414,7 @@ func TestParseDiscoveryCatalog_BaseImageGeneralYamlsAreBaseProfiles(t *testing.T
 		Data: map[string]string{
 			FlattenProfilePath("general/vllm-mi300x-bf16-tp1-latency.yaml"): generalYAML,
 			DiscoveryCacheMetadataKey: `{
-  "sourceImage": "ghcr.io/silogen/aim-base-vllm:0.1.0",
+  "sourceImage": "ghcr.io/amdenterpriseai/aim-base-vllm:0.1.0",
   "discoveryCommandVersion": "v1"
 }`,
 		},
@@ -470,7 +470,7 @@ metadata:
 		Data: map[string]string{
 			FlattenProfilePath("general/vllm-mi300x-bf16-tp1-latency.yaml"): yaml,
 			DiscoveryCacheMetadataKey: `{
-  "sourceImage": "ghcr.io/silogen/aim-base-vllm:0.1.0",
+  "sourceImage": "ghcr.io/amdenterpriseai/aim-base-vllm:0.1.0",
   "discoveryCommandVersion": "v1"
 }`,
 		},

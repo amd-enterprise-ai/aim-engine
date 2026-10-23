@@ -311,7 +311,7 @@ func SanitizeLabelValue(s string) (string, error) {
 
 type ImageParts struct {
 	Registry   string // e.g., "ghcr.io" or "docker.io"
-	Repository string // e.g., "silogen/llama-3-8b" (full repository path)
+	Repository string // e.g., "amdenterpriseai/llama-3-8b" (full repository path)
 	Name       string // e.g., "llama-3-8b" (just the image name, last component)
 	Tag        string // e.g., "v1.2.0" or "abc123" (first 6 chars of digest)
 }
@@ -323,7 +323,7 @@ func ExtractImageParts(image string) (ImageParts, error) {
 
 	// Extract registry, repository path, and tag/digest
 	// Examples:
-	//   ghcr.io/silogen/llama-3-8b:v1.2.0
+	//   ghcr.io/amdenterpriseai/llama-3-8b:v1.2.0
 	//   docker.io/library/nginx:latest
 	//   localhost:5000/my-image:dev
 	//   nginx:latest (implicitly docker.io/nginx:latest)

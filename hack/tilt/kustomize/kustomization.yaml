@@ -63,8 +63,8 @@ patches:
                   claimName: aim-engine-go-mod-cache
 
 # Image replacement - Tilt will match this and inject its built image
-# Note: config/manager already transforms controller -> docker.io/silogenai/aim-engine
+# Note: config/manager already transforms controller -> docker.io/amdenterpriseai/aim-engine
 images:
-  - name: docker.io/silogenai/aim-engine
+  - name: docker.io/amdenterpriseai/aim-engine
     newName: ttl.sh/aim-placeholder/manager
     newTag: tilt

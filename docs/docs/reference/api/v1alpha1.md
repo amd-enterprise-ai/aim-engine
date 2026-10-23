@@ -426,10 +426,10 @@ _Appears in:_
 | `registry` _string_ | Registry to sync from (e.g., docker.io, ghcr.io, gcr.io). Defaults to docker.io if not specified. | docker.io | Optional: \{\} |
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#localobjectreference-v1-core) array_ | ImagePullSecrets contains references to secrets for authenticating to private registries. Secrets must exist in the operator namespace (typically aim-system). Used for both registry catalog listing and image metadata extraction. |  | Optional: \{\} |
 | `filters` _[ModelSourceFilter](#modelsourcefilter) array_ | Filters define which images to discover and sync. Each filter specifies an image selector with optional version constraints and exclusions. Multiple filters are combined with OR logic (any match includes the image). Use this field for advanced matching options. For simple explicit image lists, use Images instead. |  | MaxItems: 100 <br />MinItems: 1 <br />Optional: \{\} |
-| `images` _string array_ | Images defines a simple explicit list of images to discover and sync. Use this for straightforward static declarations without per-filter options. Supported image formats:<br />- Repository with tag: "amdenterpriseai/aim-qwen-qwen3-32b:0.8.4"<br />- Repository without tag: "amdenterpriseai/aim-qwen-qwen3-32b" (uses Versions if set)<br />- Full URI with tag: "ghcr.io/silogen/aim-llama:1.0.0"<br />Must not be set together with Filters. |  | MaxItems: 100 <br />MinItems: 1 <br />Optional: \{\} |
+| `images` _string array_ | Images defines a simple explicit list of images to discover and sync. Use this for straightforward static declarations without per-filter options. Supported image formats:<br />- Repository with tag: "amdenterpriseai/aim-qwen-qwen3-32b:0.8.4"<br />- Repository without tag: "amdenterpriseai/aim-qwen-qwen3-32b" (uses Versions if set)<br />- Full URI with tag: "docker.io/amdenterpriseai/aim-llama:1.0.0"<br />Must not be set together with Filters. |  | MaxItems: 100 <br />MinItems: 1 <br />Optional: \{\} |
 | `models` _[AIMClusterModelSourceModel](#aimclustermodelsourcemodel) array_ | Models declares canonical model identifiers to materialize as v1alpha2 AIMClusterModel resources. Models may be combined with either Filters or Images. Lifecycle differs from registry discovery in one respect. Discovered images are a snapshot of an external registry, so they are only ever appended. A declaration is desired state the user edits in this spec, so models this source owns are kept in sync with their declaration — editing aimId, source, or accelerator updates the existing model in place. Neither kind is ever deleted: removing a declaration leaves its AIMClusterModel behind for an operator to remove deliberately. |  | MaxItems: 100 <br />MinItems: 1 <br />Optional: \{\} |
 | `syncInterval` _[Duration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#duration-v1-meta)_ | SyncInterval defines how often to sync with the registry. Defaults to 1h. Minimum recommended interval is 15m to avoid rate limiting. Format: duration string (e.g., "30m", "1h", "2h30m"). | 1h | Optional: \{\} |
-| `versions` _string array_ | Versions specifies global semantic version constraints applied to all filters. Individual filters can override this with their own version constraints. Constraints use semver syntax: >=1.0.0, <2.0.0, ~1.2.0, ^1.0.0, etc. Non-semver tags (e.g., "latest", "dev") are silently skipped. Version ranges work on all registries (including ghcr.io, gcr.io) when combined with exact repository names (no wildcards). The controller uses the Tags List API to fetch all tags for the repository and filters them by the semver constraint. Example: registry=ghcr.io, filters=[\{image: "silogen/aim-llama"\}], versions=[">=1.0.0"] will fetch all tags from ghcr.io/silogen/aim-llama and include only those >=1.0.0. |  | Optional: \{\} |
+| `versions` _string array_ | Versions specifies global semantic version constraints applied to all filters. Individual filters can override this with their own version constraints. Constraints use semver syntax: >=1.0.0, <2.0.0, ~1.2.0, ^1.0.0, etc. Non-semver tags (e.g., "latest", "dev") are silently skipped. Version ranges work on all registries (including ghcr.io, gcr.io) when combined with exact repository names (no wildcards). The controller uses the Tags List API to fetch all tags for the repository and filters them by the semver constraint. Example: registry=ghcr.io, filters=[\{image: "amdenterpriseai/aim-llama"\}], versions=[">=1.0.0"] will fetch all tags from docker.io/amdenterpriseai/aim-llama and include only those >=1.0.0. |  | Optional: \{\} |
 | `maxModels` _integer_ | MaxModels is the maximum number of AIMClusterModel resources to create from this source. Once this limit is reached, no new models will be created, even if more matching images are discovered. Existing models are never deleted. This prevents runaway model creation from overly broad filters. | 100 | Maximum: 10000 <br />Minimum: 1 <br />Optional: \{\} |
 
 
@@ -1844,7 +1844,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `name` _string_ | Name references an existing AIMModel or AIMClusterModel by metadata.name. The controller looks for a namespace-scoped AIMModel first, then falls back to cluster-scoped AIMClusterModel. Example: `meta-llama-3-8b` |  | Optional: \{\} |
-| `image` _string_ | Image specifies a container image URI directly. The controller searches for an existing model with this image, or creates one if none exists. Auto-created models are namespace-scoped and can be reused by other services. Example: `ghcr.io/silogen/llama-3-8b:v1.2.0` |  | Optional: \{\} |
+| `image` _string_ | Image specifies a container image URI directly. The controller searches for an existing model with this image, or creates one if none exists. Auto-created models are namespace-scoped and can be reused by other services. Example: `docker.io/amdenterpriseai/llama-3-8b:v1.2.0` |  | Optional: \{\} |
 | `custom` _[AIMServiceModelCustom](#aimservicemodelcustom)_ | Custom specifies a custom model configuration with explicit base image, model sources, and hardware requirements. The controller will search for an existing matching AIMModel or auto-create one if not found. |  | Optional: \{\} |
 
 
@@ -1861,7 +1861,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `baseImage` _string_ | BaseImage is the container image URI for the AIM base image. This will be used as the image for the auto-created AIMModel. Example: `ghcr.io/silogen/aim-base:0.7.0` |  | Required: \{\} |
+| `baseImage` _string_ | BaseImage is the container image URI for the AIM base image. This will be used as the image for the auto-created AIMModel. Example: `docker.io/amdenterpriseai/aim-base:0.7.0` |  | Required: \{\} |
 | `modelSources` _[AIMModelSource](#aimmodelsource) array_ | ModelSources specifies the model sources to use. The controller will search for or create an AIMModel with these sources. The size field is optional - if not specified, it will be discovered by the download job. AIM runtime currently supports only one model source. |  | MaxItems: 1 <br />MinItems: 1 <br />Required: \{\} |
 | `hardware` _[AIMHardwareRequirements](#aimhardwarerequirements)_ | Hardware specifies the GPU and CPU requirements for this custom model. GPU is optional - if not set, no GPUs are requested (CPU-only model). |  | Required: \{\} |
 
@@ -2640,10 +2640,10 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `model` _[ModelMetadata](#modelmetadata)_ | Model contains AMD Silogen model-specific metadata. |  | Optional: \{\} |
+| `model` _[ModelMetadata](#modelmetadata)_ | Model contains AIM model-specific metadata. |  | Optional: \{\} |
 | `oci` _[OCIMetadata](#ocimetadata)_ | OCI contains standard OCI image metadata. |  | Optional: \{\} |
 | `originalLabels` _object (keys:string, values:string)_ | OriginalLabels contains the raw OCI image labels as a JSON object. This preserves all labels from the image, including those not mapped to structured fields. |  | Optional: \{\} |
-| `baseImageRef` _string_ | BaseImageRef is the value of the AIM_BASE_IMAGE_REF environment variable baked into the image's OCI config at build time. For AIM model images this records the base image (e.g. "ghcr.io/silogen/aim-base:0.8.5") that the model image was built from. Used by the AIMModel controller to resolve the deployment image for fine-tuned models whose spec.image is omitted (versionPolicy=latest or any). |  | Optional: \{\} |
+| `baseImageRef` _string_ | BaseImageRef is the value of the AIM_BASE_IMAGE_REF environment variable baked into the image's OCI config at build time. For AIM model images this records the base image (e.g. "docker.io/amdenterpriseai/aim-base:0.8.5") that the model image was built from. Used by the AIMModel controller to resolve the deployment image for fine-tuned models whose spec.image is omitted (versionPolicy=latest or any). |  | Optional: \{\} |
 
 
 #### ManagedProfileCounts
@@ -2690,7 +2690,8 @@ _Appears in:_
 
 
 
-ModelMetadata contains AMD Silogen model-specific metadata extracted from image labels.
+ModelMetadata contains AIM model-specific metadata extracted from image labels.
+Each field falls back to the legacy org.amd.silogen. label with the same suffix.
 
 
 
@@ -2699,16 +2700,16 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `canonicalName` _string_ | CanonicalName is the canonical model identifier (e.g., mistralai/Mixtral-8x22B-Instruct-v0.1). Extracted from: org.amd.silogen.model.canonicalName |  | Optional: \{\} |
-| `source` _string_ | Source is the URL where the model can be found. Extracted from: org.amd.silogen.model.source |  | Optional: \{\} |
-| `tags` _string array_ | Tags are descriptive tags (e.g., ["text-generation", "chat", "instruction"]). Extracted from: org.amd.silogen.model.tags (comma-separated) |  | Optional: \{\} |
-| `versions` _string array_ | Versions lists available versions. Extracted from: org.amd.silogen.model.versions (comma-separated) |  | Optional: \{\} |
-| `variants` _string array_ | Variants lists model variants. Extracted from: org.amd.silogen.model.variants (comma-separated) |  | Optional: \{\} |
-| `hfTokenRequired` _boolean_ | HFTokenRequired indicates if a HuggingFace token is required. Extracted from: org.amd.silogen.hfToken.required |  | Optional: \{\} |
-| `title` _string_ | Title is the Silogen-specific title for the model. Extracted from: org.amd.silogen.title |  | Optional: \{\} |
-| `descriptionFull` _string_ | DescriptionFull is the full description. Extracted from: org.amd.silogen.description.full |  | Optional: \{\} |
-| `releaseNotes` _string_ | ReleaseNotes contains release notes for this version. Extracted from: org.amd.silogen.release.notes |  | Optional: \{\} |
-| `recommendedDeployments` _[RecommendedDeployment](#recommendeddeployment) array_ | RecommendedDeployments contains recommended deployment configurations. Extracted from: org.amd.silogen.model.recommendedDeployments (parsed from JSON array) |  | Optional: \{\} |
+| `canonicalName` _string_ | CanonicalName is the canonical model identifier (e.g., mistralai/Mixtral-8x22B-Instruct-v0.1). Extracted from: com.amd.aim.model.canonicalName |  | Optional: \{\} |
+| `source` _string_ | Source is the URL where the model can be found. Extracted from: com.amd.aim.model.source |  | Optional: \{\} |
+| `tags` _string array_ | Tags are descriptive tags (e.g., ["text-generation", "chat", "instruction"]). Extracted from: com.amd.aim.model.tags (comma-separated) |  | Optional: \{\} |
+| `versions` _string array_ | Versions lists available versions. Extracted from: com.amd.aim.model.versions (comma-separated) |  | Optional: \{\} |
+| `variants` _string array_ | Variants lists model variants. Extracted from: com.amd.aim.model.variants (comma-separated) |  | Optional: \{\} |
+| `hfTokenRequired` _boolean_ | HFTokenRequired indicates if a HuggingFace token is required. Extracted from: com.amd.aim.hfToken.required |  | Optional: \{\} |
+| `title` _string_ | Title is the AIM-specific title for the model. Extracted from: com.amd.aim.title |  | Optional: \{\} |
+| `descriptionFull` _string_ | DescriptionFull is the full description. Extracted from: com.amd.aim.description.full |  | Optional: \{\} |
+| `releaseNotes` _string_ | ReleaseNotes contains release notes for this version. Extracted from: com.amd.aim.release.notes |  | Optional: \{\} |
+| `recommendedDeployments` _[RecommendedDeployment](#recommendeddeployment) array_ | RecommendedDeployments contains recommended deployment configurations. Extracted from: com.amd.aim.model.recommendedDeployments (parsed from JSON array) |  | Optional: \{\} |
 
 
 #### ModelSourceFilter
@@ -2728,8 +2729,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `image` _string_ | Image with explicit repository matching and full URI support. Supported formats:<br />- Repository name: "amdenterpriseai/aim-qwen-qwen3-32b"<br />- Repository with tag: "silogen/aim-llama:1.0.0" (overrides versions field)<br />- Full URI: "ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1" (overrides spec.registry and versions)<br />- Full URI without tag: "ghcr.io/silogen/aim-google-gemma-3-1b-it" (overrides spec.registry)<br />When a full URI is specified (including registry like ghcr.io), only images from that registry will match. When a tag is included, it takes precedence over the versions field. Note: wildcard syntax (e.g., "*") is not supported; use explicit image list entries. |  | MaxLength: 512 |
-| `exclude` _string array_ | Exclude lists specific repository names to skip (exact match on repository name only, not registry). Useful for excluding base images or experimental versions. Examples:<br />- ["amdenterpriseai/aim-base", "amdenterpriseai/aim-experimental"]<br />- ["silogen/aim-base"] - works with "ghcr.io/silogen/aim-*" (registry is not checked in exclusion)<br />Note: Exclusions match against repository names (e.g., "silogen/aim-base"), not full URIs. |  | Optional: \{\} |
+| `image` _string_ | Image with explicit repository matching and full URI support. Supported formats:<br />- Repository name: "amdenterpriseai/aim-qwen-qwen3-32b"<br />- Repository with tag: "amdenterpriseai/aim-llama:1.0.0" (overrides versions field)<br />- Full URI: "docker.io/amdenterpriseai/aim-google-gemma-3-1b-it:0.8.1-rc1" (overrides spec.registry and versions)<br />- Full URI without tag: "docker.io/amdenterpriseai/aim-google-gemma-3-1b-it" (overrides spec.registry)<br />When a full URI is specified (including registry like ghcr.io), only images from that registry will match. When a tag is included, it takes precedence over the versions field. Note: wildcard syntax (e.g., "*") is not supported; use explicit image list entries. |  | MaxLength: 512 |
+| `exclude` _string array_ | Exclude lists specific repository names to skip (exact match on repository name only, not registry). Useful for excluding base images or experimental versions. Examples:<br />- ["amdenterpriseai/aim-base", "amdenterpriseai/aim-experimental"]<br />- ["amdenterpriseai/aim-base"] - works with "docker.io/amdenterpriseai/aim-*" (registry is not checked in exclusion)<br />Note: Exclusions match against repository names (e.g., "amdenterpriseai/aim-base"), not full URIs. |  | Optional: \{\} |
 | `versions` _string array_ | Versions specifies semantic version constraints for this filter. If specified, overrides the global Versions field. Only tags that parse as valid semver are considered (including prereleases like 0.8.1-rc1). Ignored if the Image field includes an explicit tag (e.g., "repo:1.0.0"). Examples: ">=1.0.0", "<2.0.0", "~1.2.0" (patch updates), "^1.0.0" (minor updates) Prerelease versions (e.g., 0.8.1-rc1) are supported and follow semver rules:<br />- 0.8.1-rc1 matches ">=0.8.0" (prerelease is part of version 0.8.1)<br />- Use ">=0.8.1-rc1" to match only that prerelease or higher<br />- Leave empty to match all tags (including prereleases and non-semver tags) |  | Optional: \{\} |
 
 

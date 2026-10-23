@@ -277,7 +277,7 @@ type AIMServiceModel struct {
 	// Image specifies a container image URI directly.
 	// The controller searches for an existing model with this image, or creates one if none exists.
 	// Auto-created models are namespace-scoped and can be reused by other services.
-	// Example: `ghcr.io/silogen/llama-3-8b:v1.2.0`
+	// Example: `docker.io/amdenterpriseai/llama-3-8b:v1.2.0`
 	// +optional
 	Image *string `json:"image,omitempty"`
 
@@ -294,7 +294,7 @@ type AIMServiceModel struct {
 type AIMServiceModelCustom struct {
 	// BaseImage is the container image URI for the AIM base image.
 	// This will be used as the image for the auto-created AIMModel.
-	// Example: `ghcr.io/silogen/aim-base:0.7.0`
+	// Example: `docker.io/amdenterpriseai/aim-base:0.7.0`
 	// +required
 	BaseImage string `json:"baseImage"`
 
