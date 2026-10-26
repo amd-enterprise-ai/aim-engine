@@ -515,6 +515,7 @@ _Appears in:_
 | `routing` _[AIMRuntimeRoutingConfig](#aimruntimeroutingconfig)_ | Routing controls HTTP routing configuration for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `scaleFromZero` _[AIMScaleFromZeroConfig](#aimscalefromzeroconfig)_ | ScaleFromZero configures the activation metric query for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for inference containers. When set on AIMService, these take highest precedence in the merge hierarchy. When set on RuntimeConfig, these provide namespace/cluster-level defaults. Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} |
+| `composition` _[AIMRuntimeCompositionConfig](#aimruntimecompositionconfig)_ | Composition configures profile-selector defaults and registered local transport presets for composition recipes and services. These settings are administrator-owned and intentionally are not embedded into AIMServiceSpec. |  | Optional: \{\} |
 | `additionalCABundleRef` _[AdditionalCABundleReference](#additionalcabundlereference)_ | AdditionalCABundleRef selects PEM CA certificates that AIM Engine adds to its standard public trust roots for outbound TLS from inference, artifact-download, size-check, and adapter-staging containers. The ConfigMap is resolved in each workload namespace. When configured on an AIMClusterRuntimeConfig, each consuming namespace needs a ConfigMap with the same name and key to receive the additional trust. AIM Engine checks the reference directly during reconciliation and omits the projection when the ConfigMap or key is absent. Certificate parsing occurs only in a workload init container. CA changes are consumed when workloads are recreated; the ConfigMap is not watched for rotation. |  | Optional: \{\} |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
 | `artifact` _[AIMArtifactConfig](#aimartifactconfig)_ | Artifact controls artifact-level defaults such as eviction policy. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
@@ -597,6 +598,343 @@ _Appears in:_
 | `profileId` _string_ | ProfileId is the specific AIM profile ID that this template should use. When set, the discovery job will be instructed to use this specific profile. |  | Optional: \{\} |
 | `type` _[AIMProfileType](#aimprofiletype)_ | Type indicates the optimization level of this template.<br />- optimized: Template has been tuned for performance<br />- preview: Template is experimental/pre-release<br />- general: General-purpose tuning between optimized and preview<br />- unoptimized: Default, no specific optimizations applied<br />When nil, the type is determined by discovery. When set, overrides discovery. |  | Enum: [optimized general preview unoptimized] <br />Optional: \{\} |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for inference containers. These variables are passed to the inference runtime and can be used to configure runtime behavior, authentication, or other settings. |  | Optional: \{\} |
+
+
+#### AIMCompositionFinding
+
+
+
+AIMCompositionFinding records a bounded, user-visible composition diagnostic.
+
+
+
+_Appears in:_
+- [AIMCompositionStatus](#aimcompositionstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `category` _[AIMCompositionFindingCategory](#aimcompositionfindingcategory)_ | Category classifies the finding. |  | Enum: [Contradiction MissingInput Unverified Drift RuntimeFailure] |
+| `reason` _string_ | Reason is a stable machine-readable identifier. |  |  |
+| `message` _string_ | Message is a human-readable explanation. |  |  |
+| `position` _string_ | Position identifies the affected execution position. |  | Optional: \{\} |
+| `rule` _string_ | Rule identifies the interoperability or construction rule. |  | Optional: \{\} |
+| `sourcePath` _string_ | SourcePath identifies the authored field that contributed to the finding. |  | Optional: \{\} |
+| `intentDigest` _string_ | IntentDigest identifies the desired service attempt when applicable. |  | Optional: \{\} |
+| `revision` _string_ | Revision identifies accepted effective content when applicable. |  | Optional: \{\} |
+
+
+#### AIMCompositionFindingCategory
+
+_Underlying type:_ _string_
+
+AIMCompositionFindingCategory classifies a composition diagnostic.
+
+_Validation:_
+- Enum: [Contradiction MissingInput Unverified Drift RuntimeFailure]
+
+_Appears in:_
+- [AIMCompositionFinding](#aimcompositionfinding)
+
+
+
+#### AIMCompositionLaunch
+
+
+
+AIMCompositionLaunch overlays runtime launch settings for one execution position.
+
+
+
+_Appears in:_
+- [AIMCompositionRole](#aimcompositionrole)
+- [AIMCompositionWorker](#aimcompositionworker)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `containerEnv` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | ContainerEnv merges by environment-variable name. |  | Optional: \{\} |
+| `engineEnv` _object (keys:string, values:string)_ | EngineEnv merges by key into the inference engine environment. |  | Optional: \{\} |
+| `engineArgs` _[JSON](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#json-v1-apiextensions-k8s-io)_ | EngineArgs shallow-merges by top-level key into inference engine arguments. |  | Type: object <br />Optional: \{\} |
+
+
+#### AIMCompositionMode
+
+_Underlying type:_ _string_
+
+AIMCompositionMode identifies the serving topology described by a composition.
+
+_Validation:_
+- Enum: [Aggregated PrefillDecode]
+
+_Appears in:_
+- [AIMCompositionSpec](#aimcompositionspec)
+- [AIMCompositionStatus](#aimcompositionstatus)
+
+| Field | Description |
+| --- | --- |
+| `Aggregated` | AIMCompositionModeAggregated serves requests through one main role. |
+| `PrefillDecode` | AIMCompositionModePrefillDecode serves requests through cooperating prefill and decode roles. |
+
+
+#### AIMCompositionModelBindingType
+
+_Underlying type:_ _string_
+
+AIMCompositionModelBindingType classifies whether a recipe is reusable across model identities.
+
+_Validation:_
+- Enum: [ModelAgnostic ModelSpecific Unknown]
+
+_Appears in:_
+- [AIMCompositionStatus](#aimcompositionstatus)
+
+| Field | Description |
+| --- | --- |
+| `ModelAgnostic` | AIMCompositionModelAgnostic has no authored or referenced model identity. |
+| `ModelSpecific` | AIMCompositionModelSpecific carries a model restriction. |
+| `Unknown` | AIMCompositionModelUnknown cannot yet be classified because a reference is unresolved. |
+
+
+#### AIMCompositionParallelism
+
+
+
+AIMCompositionParallelism describes supported intra-group parallelism.
+
+
+
+_Appears in:_
+- [AIMCompositionRole](#aimcompositionrole)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `tensor` _integer_ | Tensor is tensor parallelism within one execution group. |  | Minimum: 1 <br />Optional: \{\} |
+| `pipeline` _integer_ | Pipeline is pipeline parallelism within one execution group. |  | Minimum: 1 <br />Optional: \{\} |
+
+
+#### AIMCompositionPlacement
+
+
+
+AIMCompositionPlacement declares additional minimum placement intent.
+
+
+
+_Appears in:_
+- [AIMCompositionSpec](#aimcompositionspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `scope` _[AIMCompositionPlacementScope](#aimcompositionplacementscope)_ | Scope is the minimum relationship between composition roles. Omission uses the selected transport integration's requirement. |  | Enum: [AnyNode SameNode] <br />Optional: \{\} |
+
+
+#### AIMCompositionPlacementScope
+
+_Underlying type:_ _string_
+
+AIMCompositionPlacementScope is the minimum placement relationship between roles.
+
+_Validation:_
+- Enum: [AnyNode SameNode]
+
+_Appears in:_
+- [AIMCompositionPlacement](#aimcompositionplacement)
+
+| Field | Description |
+| --- | --- |
+| `AnyNode` | AIMCompositionPlacementAnyNode permits ordinary scheduler placement. A selected transport may still impose a stricter minimum. |
+| `SameNode` | AIMCompositionPlacementSameNode requires every role in one serving composition to remain on a common node. |
+
+
+#### AIMCompositionProfileBinding
+
+
+
+AIMCompositionProfileBinding selects a profile by exact reference or selector.
+
+
+
+_Appears in:_
+- [AIMCompositionRole](#aimcompositionrole)
+- [AIMCompositionWorker](#aimcompositionworker)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `ref` _[AIMCompositionProfileReference](#aimcompositionprofilereference)_ | Ref selects an exact AIMProfile or AIMClusterProfile. |  | Optional: \{\} |
+| `selector` _[ProfileSelector](#profileselector)_ | Selector contributes restrictions for automatic profile selection. An empty selector is valid. |  | Optional: \{\} |
+
+
+#### AIMCompositionProfileKind
+
+_Underlying type:_ _string_
+
+AIMCompositionProfileKind is a profile resource kind accepted by an exact composition binding.
+
+_Validation:_
+- Enum: [AIMProfile AIMClusterProfile]
+
+_Appears in:_
+- [AIMCompositionProfileReference](#aimcompositionprofilereference)
+
+| Field | Description |
+| --- | --- |
+| `AIMProfile` | AIMCompositionProfileKindNamespace references an AIMProfile in the consuming namespace. |
+| `AIMClusterProfile` | AIMCompositionProfileKindCluster references an AIMClusterProfile. |
+
+
+#### AIMCompositionProfileReference
+
+
+
+AIMCompositionProfileReference fixes one execution position to an exact profile.
+
+
+
+_Appears in:_
+- [AIMCompositionProfileBinding](#aimcompositionprofilebinding)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `kind` _[AIMCompositionProfileKind](#aimcompositionprofilekind)_ | Kind identifies the profile scope. |  | Enum: [AIMProfile AIMClusterProfile] |
+| `name` _string_ | Name is the referenced profile's metadata.name. |  | MinLength: 1 |
+
+
+#### AIMCompositionRole
+
+
+
+AIMCompositionRole describes one complete execution group.
+
+
+
+_Appears in:_
+- [AIMCompositionSpec](#aimcompositionspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `profile` _[AIMCompositionProfileBinding](#aimcompositionprofilebinding)_ | Profile selects the primary runtime profile. Omit for automatic selection. |  | Optional: \{\} |
+| `launch` _[AIMCompositionLaunch](#aimcompositionlaunch)_ | Launch customizes the selected primary profile. |  | Optional: \{\} |
+| `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#resourcerequirements-v1-core)_ | Resources overlays the selected primary profile's resource requirements. |  | Optional: \{\} |
+| `replicas` _integer_ | Replicas is the fixed number of complete execution groups. |  | Minimum: 1 <br />Optional: \{\} |
+| `scaling` _[AIMCompositionScaling](#aimcompositionscaling)_ | Scaling configures role-aware autoscaling. |  | Optional: \{\} |
+| `parallelism` _[AIMCompositionParallelism](#aimcompositionparallelism)_ | Parallelism configures supported intra-group parallelism. |  | Optional: \{\} |
+| `worker` _[AIMCompositionWorker](#aimcompositionworker)_ | Worker requests a cooperating worker shape for each group. |  | Optional: \{\} |
+
+
+#### AIMCompositionScaling
+
+
+
+AIMCompositionScaling configures role-aware autoscaling.
+
+
+
+_Appears in:_
+- [AIMCompositionRole](#aimcompositionrole)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `minReplicas` _integer_ | MinReplicas is the minimum number of complete execution groups. |  | Minimum: 0 <br />Optional: \{\} |
+| `maxReplicas` _integer_ | MaxReplicas is the maximum number of complete execution groups. |  | Minimum: 1 |
+| `metrics` _[AIMServiceMetricsSpec](#aimservicemetricsspec) array_ | Metrics is the role-aware autoscaling metric set. |  | MinItems: 1 <br />Optional: \{\} |
+| `pollingInterval` _integer_ | PollingInterval is the scaler polling interval in seconds. |  | Minimum: 1 <br />Optional: \{\} |
+| `cooldownPeriod` _integer_ | CooldownPeriod is the inactivity period before scaling down. |  | Minimum: 0 <br />Optional: \{\} |
+
+
+#### AIMCompositionSelectorDefaultFields
+
+
+
+AIMCompositionSelectorDefaultFields are administrator-provided gap fillers for automatic profile selection.
+
+
+
+_Appears in:_
+- [AIMCompositionSelectorDefaults](#aimcompositionselectordefaults)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `engine` _string_ | Engine defaults the inference engine. |  | MinLength: 1 <br />Optional: \{\} |
+| `metric` _[AIMMetric](#aimmetric)_ | Metric defaults the optimization target. |  | Enum: [latency throughput] <br />Optional: \{\} |
+| `precision` _[AIMPrecision](#aimprecision)_ | Precision defaults numeric precision. |  | Enum: [auto fp4 fp8 fp16 fp32 fp64 bf16 int4 int8] <br />Optional: \{\} |
+| `acceleratorType` _[AcceleratorType](#acceleratortype)_ | AcceleratorType defaults the accelerator resource type. |  | Enum: [gpu cpu] <br />Optional: \{\} |
+| `acceleratorVendor` _[AcceleratorVendor](#acceleratorvendor)_ | AcceleratorVendor defaults the accelerator vendor. |  | Enum: [amd nvidia] <br />Optional: \{\} |
+| `acceleratorModel` _string_ | AcceleratorModel defaults the accelerator identifier. |  | MinLength: 1 <br />Optional: \{\} |
+| `acceleratorPartitioningMode` _string_ | AcceleratorPartitioningMode defaults the partition scheme. |  | MinLength: 1 <br />Optional: \{\} |
+| `acceleratorCount` _integer_ | AcceleratorCount defaults the accelerator unit count. |  | Minimum: 0 <br />Optional: \{\} |
+
+
+#### AIMCompositionSelectorDefaults
+
+
+
+AIMCompositionSelectorDefaults contains gap-filling selector fields. Identity, provenance, eligibility tier, and engine arguments are intentionally excluded.
+
+
+
+_Appears in:_
+- [AIMRuntimeCompositionConfig](#aimruntimecompositionconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `common` _[AIMCompositionSelectorDefaultFields](#aimcompositionselectordefaultfields)_ | Common applies to every automatically selected composition position. |  | Optional: \{\} |
+| `main` _[AIMCompositionSelectorDefaultFields](#aimcompositionselectordefaultfields)_ | Main applies to the aggregated primary role. |  | Optional: \{\} |
+| `prefill` _[AIMCompositionSelectorDefaultFields](#aimcompositionselectordefaultfields)_ | Prefill applies to the prefill primary and worker positions. |  | Optional: \{\} |
+| `decode` _[AIMCompositionSelectorDefaultFields](#aimcompositionselectordefaultfields)_ | Decode applies to the decode primary and worker positions. |  | Optional: \{\} |
+
+
+
+
+
+
+#### AIMCompositionTransportPreset
+
+
+
+AIMCompositionTransportPreset names a registered local-transfer integration.
+
+
+
+_Appears in:_
+- [AIMRuntimeCompositionConfig](#aimruntimecompositionconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name is the preset key. |  | MaxLength: 253 <br />MinLength: 1 |
+| `integration` _string_ | Integration identifies the registered, versioned integration contract. |  | MinLength: 1 |
+
+
+#### AIMCompositionTransportReference
+
+
+
+AIMCompositionTransportReference selects a registered runtime transport preset.
+
+
+
+_Appears in:_
+- [AIMCompositionSpec](#aimcompositionspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `preset` _string_ | Preset is the name of a transport preset in the effective runtime config. |  | MinLength: 1 |
+
+
+#### AIMCompositionWorker
+
+
+
+AIMCompositionWorker describes the optional cooperating worker within a role.
+
+
+
+_Appears in:_
+- [AIMCompositionRole](#aimcompositionrole)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `profile` _[AIMCompositionProfileBinding](#aimcompositionprofilebinding)_ | Profile selects the worker runtime profile. Omit for automatic selection. |  | Optional: \{\} |
+| `launch` _[AIMCompositionLaunch](#aimcompositionlaunch)_ | Launch customizes the selected worker profile. |  | Optional: \{\} |
+| `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#resourcerequirements-v1-core)_ | Resources overlays the selected worker profile's resource requirements. |  | Optional: \{\} |
 
 
 #### AIMCpuRequirements
@@ -802,6 +1140,7 @@ _Validation:_
 
 _Appears in:_
 - [AIMClusterServiceTemplateSpec](#aimclusterservicetemplatespec)
+- [AIMCompositionSelectorDefaultFields](#aimcompositionselectordefaultfields)
 - [AIMDiscoveryProfileMetadata](#aimdiscoveryprofilemetadata)
 - [AIMProfileMetadata](#aimprofilemetadata)
 - [AIMRuntimeParameters](#aimruntimeparameters)
@@ -1149,6 +1488,7 @@ _Validation:_
 
 _Appears in:_
 - [AIMClusterServiceTemplateSpec](#aimclusterservicetemplatespec)
+- [AIMCompositionSelectorDefaultFields](#aimcompositionselectordefaultfields)
 - [AIMDiscoveryProfileMetadata](#aimdiscoveryprofilemetadata)
 - [AIMModelSource](#aimmodelsource)
 - [AIMModelSourceLocation](#aimmodelsourcelocation)
@@ -1444,6 +1784,26 @@ _Appears in:_
 | `uid` _[UID](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#uid-types-pkg)_ | UID captures the unique identifier of the resolved reference, when known. |  | Optional: \{\} |
 
 
+#### AIMRuntimeCompositionConfig
+
+
+
+AIMRuntimeCompositionConfig configures composition selection and transport defaults at namespace or cluster scope.
+
+
+
+_Appears in:_
+- [AIMClusterRuntimeConfigSpec](#aimclusterruntimeconfigspec)
+- [AIMRuntimeConfigCommon](#aimruntimeconfigcommon)
+- [AIMRuntimeConfigSpec](#aimruntimeconfigspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `selectorDefaults` _[AIMCompositionSelectorDefaults](#aimcompositionselectordefaults)_ | SelectorDefaults fill selector fields left unconstrained by authored intent. |  | Optional: \{\} |
+| `defaultTransportPreset` _string_ | DefaultTransportPreset is the default preset for PrefillDecode compositions. |  | MinLength: 1 <br />Optional: \{\} |
+| `transportPresets` _[AIMCompositionTransportPreset](#aimcompositiontransportpreset) array_ | TransportPresets maps names to registered local-transfer integrations. Namespace entries replace same-named cluster entries as complete values. |  | MaxItems: 64 <br />Optional: \{\} |
+
+
 #### AIMRuntimeConfig
 
 
@@ -1483,6 +1843,7 @@ _Appears in:_
 | `routing` _[AIMRuntimeRoutingConfig](#aimruntimeroutingconfig)_ | Routing controls HTTP routing configuration for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `scaleFromZero` _[AIMScaleFromZeroConfig](#aimscalefromzeroconfig)_ | ScaleFromZero configures the activation metric query for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for inference containers. When set on AIMService, these take highest precedence in the merge hierarchy. When set on RuntimeConfig, these provide namespace/cluster-level defaults. Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} |
+| `composition` _[AIMRuntimeCompositionConfig](#aimruntimecompositionconfig)_ | Composition configures profile-selector defaults and registered local transport presets for composition recipes and services. These settings are administrator-owned and intentionally are not embedded into AIMServiceSpec. |  | Optional: \{\} |
 | `additionalCABundleRef` _[AdditionalCABundleReference](#additionalcabundlereference)_ | AdditionalCABundleRef selects PEM CA certificates that AIM Engine adds to its standard public trust roots for outbound TLS from inference, artifact-download, size-check, and adapter-staging containers. The ConfigMap is resolved in each workload namespace. When configured on an AIMClusterRuntimeConfig, each consuming namespace needs a ConfigMap with the same name and key to receive the additional trust. AIM Engine checks the reference directly during reconciliation and omits the projection when the ConfigMap or key is absent. Certificate parsing occurs only in a workload init container. CA changes are consumed when workloads are recreated; the ConfigMap is not watched for rotation. |  | Optional: \{\} |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
 | `artifact` _[AIMArtifactConfig](#aimartifactconfig)_ | Artifact controls artifact-level defaults such as eviction policy. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
@@ -1547,6 +1908,7 @@ _Appears in:_
 | `routing` _[AIMRuntimeRoutingConfig](#aimruntimeroutingconfig)_ | Routing controls HTTP routing configuration for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `scaleFromZero` _[AIMScaleFromZeroConfig](#aimscalefromzeroconfig)_ | ScaleFromZero configures the activation metric query for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for inference containers. When set on AIMService, these take highest precedence in the merge hierarchy. When set on RuntimeConfig, these provide namespace/cluster-level defaults. Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} |
+| `composition` _[AIMRuntimeCompositionConfig](#aimruntimecompositionconfig)_ | Composition configures profile-selector defaults and registered local transport presets for composition recipes and services. These settings are administrator-owned and intentionally are not embedded into AIMServiceSpec. |  | Optional: \{\} |
 | `additionalCABundleRef` _[AdditionalCABundleReference](#additionalcabundlereference)_ | AdditionalCABundleRef selects PEM CA certificates that AIM Engine adds to its standard public trust roots for outbound TLS from inference, artifact-download, size-check, and adapter-staging containers. The ConfigMap is resolved in each workload namespace. When configured on an AIMClusterRuntimeConfig, each consuming namespace needs a ConfigMap with the same name and key to receive the additional trust. AIM Engine checks the reference directly during reconciliation and omits the projection when the ConfigMap or key is absent. Certificate parsing occurs only in a workload init container. CA changes are consumed when workloads are recreated; the ConfigMap is not watched for rotation. |  | Optional: \{\} |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
 | `artifact` _[AIMArtifactConfig](#aimartifactconfig)_ | Artifact controls artifact-level defaults such as eviction policy. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
@@ -1822,6 +2184,7 @@ AIMServiceMetricsSpec defines a single metric for autoscaling. Specifies the met
 
 
 _Appears in:_
+- [AIMCompositionScaling](#aimcompositionscaling)
 - [AIMServiceAutoScaling](#aimserviceautoscaling)
 
 | Field | Description | Default | Validation |
@@ -2456,6 +2819,7 @@ _Validation:_
 - Enum: [gpu cpu]
 
 _Appears in:_
+- [AIMCompositionSelectorDefaultFields](#aimcompositionselectordefaultfields)
 - [AIMProfileGenerationMatch](#aimprofilegenerationmatch)
 - [ProfileHardwareGroup](#profilehardwaregroup)
 - [ProfileSelector](#profileselector)
@@ -2476,6 +2840,7 @@ _Validation:_
 - Enum: [amd nvidia]
 
 _Appears in:_
+- [AIMCompositionSelectorDefaultFields](#aimcompositionselectordefaultfields)
 - [AIMModelAcceleratorRequest](#aimmodelacceleratorrequest)
 - [AIMProfileGenerationMatch](#aimprofilegenerationmatch)
 - [AIMServiceProfileOverrides](#aimserviceprofileoverrides)
@@ -2897,6 +3262,8 @@ ProfileSelector filters by source identity, runtime, hardware, and provenance. D
 
 
 _Appears in:_
+- [AIMCompositionProfileBinding](#aimcompositionprofilebinding)
+- [AIMCompositionSpec](#aimcompositionspec)
 - [AIMModelProfilesDerivedFrom](#aimmodelprofilesderivedfrom)
 - [AIMProfileSetSpec](#aimprofilesetspec)
 - [AIMServiceProfileConfig](#aimserviceprofileconfig)

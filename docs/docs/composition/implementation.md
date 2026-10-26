@@ -1,8 +1,13 @@
 # Implementation outline
 
 This page is the engineering handoff for the contract review. Unlike the product
-guides, it describes work still to implement. No controller, production API type,
-installed CRD, or chart change is included in the review package.
+guides, it describes work still to implement.
+
+The first API slice implements the reusable recipe types, generated namespace
+and cluster CRDs, recipe status shape, and runtime-config selector-default and
+transport-preset fields. `AIMService.spec.composition`, service status,
+composition reconciliation, and every workload-producing path remain
+unimplemented.
 
 ## Keep three deep modules
 
@@ -20,6 +25,9 @@ role-field asymmetry, platform launch additions, security settings, transport
 placement, rollout requirements, and runtime evidence.
 
 ## 1. Translate the reviewed contract into CRDs
+
+**In progress:** recipe CRDs and runtime-config additions are implemented.
+Service opt-in/status and composition-aware legacy defaulting remain.
 
 Add shared composition types where the current version dependency permits them,
 then v1alpha2 `AIMProfileComposition` / `AIMClusterProfileComposition` root/list types. Extend the

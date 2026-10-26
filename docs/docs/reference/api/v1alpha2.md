@@ -12,6 +12,8 @@ Package v1alpha2 contains API Schema definitions for the aim v1alpha2 API group.
 - [AIMClusterModel](#aimclustermodel)
 - [AIMClusterModelList](#aimclustermodellist)
 - [AIMClusterProfile](#aimclusterprofile)
+- [AIMClusterProfileComposition](#aimclusterprofilecomposition)
+- [AIMClusterProfileCompositionList](#aimclusterprofilecompositionlist)
 - [AIMClusterProfileList](#aimclusterprofilelist)
 - [AIMClusterProfileSet](#aimclusterprofileset)
 - [AIMClusterProfileSetList](#aimclusterprofilesetlist)
@@ -20,6 +22,8 @@ Package v1alpha2 contains API Schema definitions for the aim v1alpha2 API group.
 - [AIMProfile](#aimprofile)
 - [AIMProfileCache](#aimprofilecache)
 - [AIMProfileCacheList](#aimprofilecachelist)
+- [AIMProfileComposition](#aimprofilecomposition)
+- [AIMProfileCompositionList](#aimprofilecompositionlist)
 - [AIMProfileList](#aimprofilelist)
 - [AIMProfileSet](#aimprofileset)
 - [AIMProfileSetList](#aimprofilesetlist)
@@ -86,6 +90,44 @@ _Appears in:_
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `spec` _[AIMClusterProfileSpec](#aimclusterprofilespec)_ |  |  |  |
 | `status` _[AIMProfileStatus](#aimprofilestatus)_ |  |  |  |
+
+
+#### AIMClusterProfileComposition
+
+
+
+AIMClusterProfileComposition publishes a reusable cluster-scoped serving recipe. Exact profile references in a cluster recipe must target AIMClusterProfile; selectors may still resolve namespace profiles when a service instantiates the recipe.
+
+
+
+_Appears in:_
+- [AIMClusterProfileCompositionList](#aimclusterprofilecompositionlist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMClusterProfileComposition` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMCompositionSpec](#aimcompositionspec)_ |  |  |  |
+| `status` _[AIMCompositionStatus](#aimcompositionstatus)_ |  |  |  |
+
+
+#### AIMClusterProfileCompositionList
+
+
+
+AIMClusterProfileCompositionList contains a list of AIMClusterProfileComposition resources.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMClusterProfileCompositionList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMClusterProfileComposition](#aimclusterprofilecomposition) array_ |  |  |  |
 
 
 #### AIMClusterProfileList
@@ -368,6 +410,44 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `enabled` _boolean_ | Enabled controls whether caching is enabled for this profile. | false |  |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for model download during caching. If not set, falls back to the profile's ContainerEnv. |  | Optional: \{\} |
+
+
+#### AIMProfileComposition
+
+
+
+AIMProfileComposition publishes a reusable namespace-scoped recipe that binds profiles to serving roles. Publishing a recipe does not create inference workloads.
+
+
+
+_Appears in:_
+- [AIMProfileCompositionList](#aimprofilecompositionlist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMProfileComposition` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMCompositionSpec](#aimcompositionspec)_ |  |  |  |
+| `status` _[AIMCompositionStatus](#aimcompositionstatus)_ |  |  |  |
+
+
+#### AIMProfileCompositionList
+
+
+
+AIMProfileCompositionList contains a list of AIMProfileComposition resources.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMProfileCompositionList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMProfileComposition](#aimprofilecomposition) array_ |  |  |  |
 
 
 #### AIMProfileList

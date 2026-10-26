@@ -369,6 +369,7 @@ $defs:
           defaultTransportPreset: {$ref: '#/$defs/Name'}
           transportPresets:
             type: array
+            maxItems: 64
             items:
               type: object
               additionalProperties: false

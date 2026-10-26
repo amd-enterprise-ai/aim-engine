@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterProfileComposition
+metadata:
+  name: aggregated-vllm
+spec:
+  main:
+    profile:
+      selector:
+        engine: vllm
