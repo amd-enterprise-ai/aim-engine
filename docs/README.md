@@ -63,7 +63,7 @@ a committed SVG drifts from its `.d2` source.
 These docs are designed to build standalone *and* to be aggregated into the
 umbrella `AMDEnterpriseAISuiteDocs` site, where the contents of `docs/docs` are
 synced under `docs/aim-engine/` (see
-[`.github/workflows/copy-docs-to-public-docs.yaml`](../.github/workflows/copy-docs-to-public-docs.yaml))
+[`.github/workflows/sync-docs-to-central-repo.yml`](../.github/workflows/sync-docs-to-central-repo.yml))
 and built by that repo's own root `conf.py`.
 
 To keep both modes working:

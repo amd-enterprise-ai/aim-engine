@@ -507,6 +507,15 @@ jobs:
           # Force push to artifacts branch
           git push origin HEAD:artifacts --force
 
+      - name: Print release artifacts
+        run: ./hack/release/print-artifacts.sh
+
+      - name: Upload release artifacts list
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/release-artifacts.txt
+
   test-release:
     name: test-release
     runs-on: self-hosted
