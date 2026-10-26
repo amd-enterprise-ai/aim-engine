@@ -4,10 +4,11 @@ A composition joins existing pod-local profiles into a complete model-serving
 deployment. Use it when you need separate prefill and decode roles, or when you
 want to serve a single profile through the same revisioned serving path.
 
-`AIMComposition` publishes a reusable recipe within a namespace.
-`AIMClusterComposition` publishes one for reuse across namespaces. Neither
-resource starts inference. An `AIMService` instantiates a named recipe or supplies
-one inline.
+`AIMProfileComposition` publishes a reusable recipe within a namespace.
+`AIMClusterProfileComposition` publishes the same recipe for reuse across
+namespaces. Each kind composes profiles into serving roles; it is not itself a
+profile. Neither resource starts inference. An `AIMService` instantiates a named
+recipe or supplies one inline.
 
 ## Roles and execution groups
 

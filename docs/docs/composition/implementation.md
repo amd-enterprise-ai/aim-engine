@@ -22,7 +22,7 @@ placement, rollout requirements, and runtime evidence.
 ## 1. Translate the reviewed contract into CRDs
 
 Add shared composition types where the current version dependency permits them,
-then v1alpha2 `AIMComposition` / `AIMClusterComposition` root/list types. Extend the
+then v1alpha2 `AIMProfileComposition` / `AIMClusterProfileComposition` root/list types. Extend the
 shared service spec/status and runtime-config common types.
 
 Relevant existing locations:

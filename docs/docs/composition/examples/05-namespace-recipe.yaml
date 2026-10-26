@@ -1,5 +1,5 @@
 apiVersion: aim.eai.amd.com/v1alpha2
-kind: AIMComposition
+kind: AIMProfileComposition
 metadata:
   name: team-chat
   namespace: team-a
@@ -18,7 +18,7 @@ metadata:
 spec:
   composition:
     ref:
-      kind: AIMComposition
+      kind: AIMProfileComposition
       name: team-chat
     main:
       replicas: 2

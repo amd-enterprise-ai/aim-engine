@@ -41,7 +41,7 @@ def local_errors(obj):
         return [str(error) for error in errors]
 
     composition = obj["spec"].get("composition", {})
-    if obj["kind"] in ("AIMComposition", "AIMClusterComposition"):
+    if obj["kind"] in ("AIMProfileComposition", "AIMClusterProfileComposition"):
         composition = obj["spec"]
     if obj["kind"] in ("AIMRuntimeConfig", "AIMClusterRuntimeConfig"):
         names = [p["name"] for p in composition.get("transportPresets", [])]
@@ -108,9 +108,9 @@ class CompositionContractTest(unittest.TestCase):
             {"mode": "PrefillDecode", "inheritSelectorDefaults": False},
             {"mode": "PrefillDecode", "placement": {"scope": "AnyNode"}},
             {"mode": "PrefillDecode", "placement": {"scope": "SameNode"}},
-            {"ref": {"kind": "AIMClusterComposition", "name": "local-pd"}},
+            {"ref": {"kind": "AIMClusterProfileComposition", "name": "local-pd"}},
             {
-                "ref": {"kind": "AIMClusterComposition", "name": "local-pd"},
+                "ref": {"kind": "AIMClusterProfileComposition", "name": "local-pd"},
                 "placement": {"scope": "SameNode"},
             },
         ]:
@@ -156,7 +156,7 @@ class CompositionContractTest(unittest.TestCase):
         ]:
             with self.subTest(field=field):
                 self.assert_invalid(service({
-                    "ref": {"kind": "AIMComposition", "name": "recipe"},
+                    "ref": {"kind": "AIMProfileComposition", "name": "recipe"},
                     field: value,
                 }))
 
@@ -228,7 +228,7 @@ class CompositionContractTest(unittest.TestCase):
     def test_cluster_recipe_reference_scope(self):
         obj = {
             "apiVersion": "aim.eai.amd.com/v1alpha2",
-            "kind": "AIMClusterComposition",
+            "kind": "AIMClusterProfileComposition",
             "metadata": {"name": "recipe"},
             "spec": {"main": {"profile": {"ref": {
                 "kind": "AIMClusterProfile", "name": "p",
@@ -237,10 +237,10 @@ class CompositionContractTest(unittest.TestCase):
         self.assert_valid(obj)
         obj["spec"]["main"]["profile"]["ref"]["kind"] = "AIMProfile"
         self.assert_invalid(obj)
-        obj["kind"] = "AIMComposition"
+        obj["kind"] = "AIMProfileComposition"
         obj["metadata"]["namespace"] = "team-a"
         self.assert_valid(obj)
-        obj["spec"]["ref"] = {"kind": "AIMComposition", "name": "other"}
+        obj["spec"]["ref"] = {"kind": "AIMProfileComposition", "name": "other"}
         self.assert_invalid(obj)
 
     def test_environment_map_keys(self):
@@ -252,7 +252,7 @@ class CompositionContractTest(unittest.TestCase):
 
     def test_validation_does_not_materialize_inherited_defaults(self):
         for composition in [
-            {"ref": {"kind": "AIMComposition", "name": "recipe"}},
+            {"ref": {"kind": "AIMProfileComposition", "name": "recipe"}},
             {"mode": "PrefillDecode"},
         ]:
             obj = service(composition)

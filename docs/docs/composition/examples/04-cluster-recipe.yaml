@@ -1,5 +1,5 @@
 apiVersion: aim.eai.amd.com/v1alpha2
-kind: AIMClusterComposition
+kind: AIMClusterProfileComposition
 metadata:
   name: local-pd
 spec:
@@ -27,7 +27,7 @@ spec:
     name: qwen3-32b
   composition:
     ref:
-      kind: AIMClusterComposition
+      kind: AIMClusterProfileComposition
       name: local-pd
     decode:
       replicas: 2

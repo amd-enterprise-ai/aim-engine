@@ -23,11 +23,11 @@ oneOf:
       spec: {$ref: '#/$defs/ServiceSpec'}
   - properties:
       apiVersion: {const: aim.eai.amd.com/v1alpha2}
-      kind: {const: AIMComposition}
+      kind: {const: AIMProfileComposition}
       spec: {$ref: '#/$defs/Recipe'}
   - properties:
       apiVersion: {const: aim.eai.amd.com/v1alpha2}
-      kind: {const: AIMClusterComposition}
+      kind: {const: AIMClusterProfileComposition}
       metadata:
         not: {required: [namespace]}
       spec:
@@ -127,7 +127,7 @@ $defs:
         additionalProperties: false
         required: [kind, name]
         properties:
-          kind: {enum: [AIMComposition, AIMClusterComposition]}
+          kind: {enum: [AIMProfileComposition, AIMClusterProfileComposition]}
           name: {$ref: '#/$defs/Name'}
       refreshToken: {type: string, minLength: 1, maxLength: 128}
     allOf:

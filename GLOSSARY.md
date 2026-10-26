@@ -12,8 +12,10 @@ _Avoid_: Composition profile, deployment graph.
 
 **AIM composition**:
 A reusable recipe binding profiles to serving roles and describing their execution
-shape and default capacity. A published recipe is not a running service.
-_Avoid_: Distributed profile.
+shape and default capacity. The namespace-scoped kind is `AIMProfileComposition`,
+and the cluster-scoped kind is `AIMClusterProfileComposition`. A published recipe
+is not a running service.
+_Avoid_: Distributed profile, composition profile.
 
 **AIM service**:
 A concrete intent to expose a model for inference, with instance-specific

@@ -8,17 +8,18 @@ This reference defines composition authoring and observed state. See
 
 | Kind | API version | Scope | Change |
 | --- | --- | --- | --- |
-| `AIMComposition` | `aim.eai.amd.com/v1alpha2` | Namespace | New reusable recipe. |
-| `AIMClusterComposition` | `aim.eai.amd.com/v1alpha2` | Cluster | Same recipe contract, cluster publication. |
+| `AIMProfileComposition` | `aim.eai.amd.com/v1alpha2` | Namespace | New reusable recipe. |
+| `AIMClusterProfileComposition` | `aim.eai.amd.com/v1alpha2` | Cluster | Same recipe contract, cluster publication. |
 | `AIMService` | `aim.eai.amd.com/v1alpha2` | Namespace | Add `spec.composition` and `status.composition`. |
 | `AIMRuntimeConfig` | `aim.eai.amd.com/v1alpha1` | Namespace | Add composition defaults and transport presets. |
 | `AIMClusterRuntimeConfig` | `aim.eai.amd.com/v1alpha1` | Cluster | Same additions. |
 
 The new recipe resources have a status subresource and ordinary Kubernetes
-metadata. Their plurals are `aimcompositions` and `aimclustercompositions`.
-Lists use `AIMCompositionList` and `AIMClusterCompositionList`. Print columns
-are `Mode` (`status.resolvedMode`), `Model Binding`
-(`status.modelBindingType`), and `Age`. Recipe publication starts no workload.
+metadata. Their plurals are `aimprofilecompositions` and
+`aimclusterprofilecompositions`. Lists use `AIMProfileCompositionList` and
+`AIMClusterProfileCompositionList`. Print columns are `Mode`
+(`status.resolvedMode`), `Model Binding` (`status.modelBindingType`), and `Age`.
+Recipe publication starts no workload.
 
 On AIMService, add a `Mode` column (`status.composition.mode`). Existing
 single-profile and predictor replica columns remain empty for compositions;
@@ -29,7 +30,7 @@ fields are required. Runtime configs do not move to v1alpha2.
 
 ## Recipe specification
 
-`AIMComposition.spec` and `AIMClusterComposition.spec` share these fields.
+`AIMProfileComposition.spec` and `AIMClusterProfileComposition.spec` share these fields.
 All are optional individually; mode must be supplied or inferable.
 
 | Field | Type | Meaning |
@@ -96,10 +97,10 @@ recipe's omitted counterpart is still an existing role.
 
 | Field | Type |
 | --- | --- |
-| `kind` | `AIMComposition` or `AIMClusterComposition` |
+| `kind` | `AIMProfileComposition` or `AIMClusterProfileComposition` |
 | `name` | Non-empty Kubernetes object name |
 
-`AIMComposition` resolves in the service namespace. Cross-namespace reference
+`AIMProfileComposition` resolves in the service namespace. Cross-namespace reference
 fields are not accepted. Cluster publication does not confer tenant-data access.
 
 ### Top-level service fields

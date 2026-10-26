@@ -133,7 +133,7 @@ A model-agnostic recipe can fix the serving shape without naming a model:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
-kind: AIMClusterComposition
+kind: AIMClusterProfileComposition
 metadata:
   name: local-pd
 spec:
@@ -168,7 +168,7 @@ spec:
     name: qwen3-32b
   composition:
     ref:
-      kind: AIMClusterComposition
+      kind: AIMClusterProfileComposition
       name: local-pd
     decode:
       replicas: 2
@@ -177,8 +177,8 @@ spec:
 The consumer inherits both metric restrictions and changes decode capacity.
 Its model restriction does not make the shared recipe model-specific.
 
-Use `AIMComposition` with `metadata.namespace: team-a` for a namespace-scoped
-recipe and `ref.kind: AIMComposition` when consuming it. See
+Use `AIMProfileComposition` with `metadata.namespace: team-a` for a namespace-scoped
+recipe and `ref.kind: AIMProfileComposition` when consuming it. See
 [the namespace recipe example](examples/05-namespace-recipe.yaml).
 Recipes cannot refer to other recipes.
 
@@ -214,7 +214,7 @@ profile. For example:
 spec:
   composition:
     ref:
-      kind: AIMClusterComposition
+      kind: AIMClusterProfileComposition
       name: local-pd
     decode:
       replicas: 2
