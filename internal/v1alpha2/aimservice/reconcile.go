@@ -70,9 +70,10 @@ const (
 // is the storage version; the profile-specific spec fields live on
 // aimv1alpha1.AIMService while the referenced profile is defined in v1alpha2.
 type ProfileServiceReconciler struct {
-	Scheme    *runtime.Scheme
-	Recorder  record.EventRecorder
-	APIReader client.Reader
+	Scheme             *runtime.Scheme
+	Recorder           record.EventRecorder
+	APIReader          client.Reader
+	RuntimeModelClient aimadapter.RuntimeModelClient
 }
 
 // GetApplyOptions returns apply options derived from the merged
@@ -138,7 +139,8 @@ type ServiceFetchResult struct {
 	// adapterDeps holds the per-adapter artifacts, staging Jobs, and resolved
 	// base-model artifact for spec.adapters. Populated only when the service
 	// declares adapters. See internal/aimadapter.
-	adapterDeps aimadapter.Dependencies
+	adapterDeps    aimadapter.Dependencies
+	adapterRuntime aimadapter.RuntimeObservation
 }
 
 // ServiceObservation holds state derived from the fetch result plus any
@@ -710,6 +712,24 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 		parentName, parentErr := resolveAdapterParentName(&seedObs, &result)
 		result.adapterDeps = aimadapter.Fetch(ctx, c, service, parentName)
 		result.adapterDeps.ParentResolutionErr = parentErr
+		if aimadapter.ShouldObserveRuntime(service) &&
+			result.inferenceServicePods != nil &&
+			result.inferenceServicePods.OK() &&
+			result.inferenceServicePods.Value != nil {
+			result.adapterRuntime = aimadapter.ObserveRuntimeModels(
+				ctx,
+				r.RuntimeModelClient,
+				result.inferenceServicePods.Value,
+			)
+			if result.adapterRuntime.FailedReplicas > 0 {
+				logger.V(1).Info(
+					"Runtime adapter observation incomplete; preserving last confirmed state",
+					"replicas", result.adapterRuntime.Replicas,
+					"failedReplicas", result.adapterRuntime.FailedReplicas,
+					"failures", result.adapterRuntime.Failures,
+				)
+			}
+		}
 	}
 
 	logger.V(1).Info("Fetch complete",
@@ -828,6 +848,7 @@ func (r *ProfileServiceReconciler) ComposeState(
 			fetch.mergedRuntimeConfig.Value,
 			fetch.mergedRuntimeConfig.Error,
 		)
+		obs.adapterState.Runtime = fetch.adapterRuntime
 	}
 
 	if migrationPreservationPinActive(fetch.service) {
@@ -1116,6 +1137,7 @@ func (r *ProfileServiceReconciler) PlanResources(
 	); requeueAfter > 0 {
 		planResult.RequestRequeueAfter(requeueAfter)
 	}
+	planResult.RequestRequeueAfter(aimadapter.RuntimePollRequeueAfter(service, obs.adapterState))
 
 	if obs.configErr != nil {
 		logger.V(1).Info("Config error, skipping resource planning", "err", obs.configErr.Error())

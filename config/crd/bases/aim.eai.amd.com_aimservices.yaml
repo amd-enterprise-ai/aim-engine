@@ -2068,14 +2068,14 @@ spec:
                         failing reason from the underlying artifact).
                       type: string
                     lastObserved:
-                      description: LastObserved is when the controller last observed
-                        this adapter's state.
+                      description: LastObserved is when the reported adapter state
+                        or replica summary last changed.
                       format: date-time
                       type: string
                     loadedReplicas:
                       description: |-
-                        LoadedReplicas reports how many serving replicas have the adapter loaded,
-                        as "loaded/total" (e.g. "3/3"). RESERVED: engine-reported, not yet populated.
+                        LoadedReplicas reports the last complete observation of how many ready
+                        serving replicas have the adapter loaded, as "loaded/total" (e.g. "3/3").
                       type: string
                     modelId:
                       description: ModelID is the adapter's canonical model id (mirrored
@@ -2085,8 +2085,8 @@ spec:
                       description: Name is the adapter reference name.
                       type: string
                     state:
-                      description: State is the disk-side state of the adapter for
-                        this service.
+                      description: State is the staged and runtime-observed state
+                        of the adapter for this service.
                       enum:
                       - Pending
                       - Downloading
@@ -4492,14 +4492,14 @@ spec:
                         failing reason from the underlying artifact).
                       type: string
                     lastObserved:
-                      description: LastObserved is when the controller last observed
-                        this adapter's state.
+                      description: LastObserved is when the reported adapter state
+                        or replica summary last changed.
                       format: date-time
                       type: string
                     loadedReplicas:
                       description: |-
-                        LoadedReplicas reports how many serving replicas have the adapter loaded,
-                        as "loaded/total" (e.g. "3/3"). RESERVED: engine-reported, not yet populated.
+                        LoadedReplicas reports the last complete observation of how many ready
+                        serving replicas have the adapter loaded, as "loaded/total" (e.g. "3/3").
                       type: string
                     modelId:
                       description: ModelID is the adapter's canonical model id (mirrored
@@ -4509,8 +4509,8 @@ spec:
                       description: Name is the adapter reference name.
                       type: string
                     state:
-                      description: State is the disk-side state of the adapter for
-                        this service.
+                      description: State is the staged and runtime-observed state
+                        of the adapter for this service.
                       enum:
                       - Pending
                       - Downloading

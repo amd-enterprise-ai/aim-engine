@@ -95,7 +95,10 @@ _Appears in:_
 
 _Underlying type:_ _string_
 
-AIMAdapterState is the disk-side lifecycle state of an adapter within a service's subtree. The controller tracks staging and removal directly; the engine-reported states (Loaded/LoadRejected) are reserved until the inference container exposes a per-adapter load-status surface.
+AIMAdapterState is the lifecycle state of an adapter within a service. The
+controller tracks staging and removal directly and derives Loaded from each
+ready replica's /v1/models response. LoadRejected remains reserved for an
+explicit engine rejection signal.
 
 _Validation:_
 - Enum: [Pending Downloading Downloaded Failed Deleting Loaded LoadRejected]
@@ -110,8 +113,8 @@ _Appears in:_
 | `Downloaded` | AdapterStateDownloaded means the bytes are staged in this service's subtree. |
 | `Failed` | AdapterStateFailed means the adapter's staging Job terminated unsuccessfully. LastError carries the Job failure reason and message. |
 | `Deleting` | AdapterStateDeleting means the adapter was removed from spec.adapters and its bytes are being reclaimed from the service subtree by the subtree-sync Job. The entry is dropped from status once the prune completes. |
-| `Loaded` | AdapterStateLoaded means the inference engine has the adapter in memory. RESERVED: engine-reported, not yet populated by the controller. |
-| `LoadRejected` | AdapterStateLoadRejected means the bytes are present but the engine declined to load the adapter. RESERVED: engine-reported, not yet populated. |
+| `Loaded` | AdapterStateLoaded means every ready serving replica reported the adapter through its /v1/models endpoint. |
+| `LoadRejected` | AdapterStateLoadRejected means the bytes are present but the engine declined to load the adapter. Reserved for an explicit engine rejection signal; absence from /v1/models alone does not imply rejection. |
 
 
 #### AIMArtifact
@@ -1713,9 +1716,9 @@ _Appears in:_
 | `name` _string_ | Name is the adapter reference name. |  |  |
 | `adapterPath` _string_ | AdapterPath is the on-disk directory name (mirrored from the artifact). |  | Optional: \{\} |
 | `modelId` _string_ | ModelID is the adapter's canonical model id (mirrored from the artifact). |  | Optional: \{\} |
-| `state` _[AIMAdapterState](#aimadapterstate)_ | State is the disk-side state of the adapter for this service. |  | Enum: [Pending Downloading Downloaded Failed Deleting Loaded LoadRejected] <br />Optional: \{\} |
-| `loadedReplicas` _string_ | LoadedReplicas reports how many serving replicas have the adapter loaded, as "loaded/total" (e.g. "3/3"). RESERVED: engine-reported, not yet populated. |  | Optional: \{\} |
-| `lastObserved` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#time-v1-meta)_ | LastObserved is when the controller last observed this adapter's state. |  | Optional: \{\} |
+| `state` _[AIMAdapterState](#aimadapterstate)_ | State is the staged and runtime-observed state of the adapter for this service. |  | Enum: [Pending Downloading Downloaded Failed Deleting Loaded LoadRejected] <br />Optional: \{\} |
+| `loadedReplicas` _string_ | LoadedReplicas reports the last complete observation of how many ready serving replicas have the adapter loaded, as "loaded/total" (e.g. "3/3"). |  | Optional: \{\} |
+| `lastObserved` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#time-v1-meta)_ | LastObserved is when the reported adapter state or replica summary last changed. |  | Optional: \{\} |
 | `lastError` _string_ | LastError carries the most recent error for this adapter (e.g. a mirrored failing reason from the underlying artifact). |  | Optional: \{\} |
 
 
