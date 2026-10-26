@@ -155,7 +155,7 @@ func TestImageResolver_NormalizesReleaseCandidateTag(t *testing.T) {
 // mirrors of base models automatically cover the aim-base image too.
 func TestImageResolver_RebasesToOwnerRegistry(t *testing.T) {
 	owner := clusterOwner("qwen3-0.11.0",
-		"ghcr.io/amdenterpriseai/qwen3:0.11.0",
+		"registry.example.com/mirror/qwen3:0.11.0",
 		"docker.io/amdenterpriseai/aim-base:0.11",
 	)
 	c := newFakeClient(owner)
@@ -170,8 +170,8 @@ func TestImageResolver_RebasesToOwnerRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != aimBase011 {
-		t.Errorf("Resolve = %q, want %q (expected base rebased onto owner registry)", got, aimBase011)
+	if want := "registry.example.com/mirror/aim-base:0.11"; got != want {
+		t.Errorf("Resolve = %q, want %q (expected base rebased onto owner registry)", got, want)
 	}
 }
 

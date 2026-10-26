@@ -671,10 +671,10 @@ func TestResolveDerivedProfileImage(t *testing.T) {
 			// optimized image back to its aim-base runtime.
 			name:               "deployable source + weights changed: sourceBaseImage rebased onto source registry+org",
 			sourceBaseImage:    "docker.io/amdenterpriseai/aim-base:0.11",
-			sourceImage:        "ghcr.io/amdenterpriseai/qwen3:0.11",
+			sourceImage:        "registry.example.com/mirror/qwen3:0.11",
 			sourceIsDeployable: true,
 			weightsChanged:     true,
-			want:               "ghcr.io/amdenterpriseai/aim-base:0.11",
+			want:               "registry.example.com/mirror/aim-base:0.11",
 		},
 		{
 			// The fix: weights untouched (no modelSources override) keeps
@@ -682,14 +682,14 @@ func TestResolveDerivedProfileImage(t *testing.T) {
 			// overrides don't silently downgrade to the base runtime.
 			name:               "deployable source + weights unchanged: keeps optimized image despite base image ref",
 			sourceBaseImage:    "docker.io/amdenterpriseai/aim-base:0.11",
-			sourceImage:        "ghcr.io/amdenterpriseai/qwen3:0.11",
+			sourceImage:        "registry.example.com/mirror/qwen3:0.11",
 			sourceIsDeployable: true,
 			weightsChanged:     false,
-			want:               "ghcr.io/amdenterpriseai/qwen3:0.11",
+			want:               "registry.example.com/mirror/qwen3:0.11",
 		},
 		{
 			name:               "deployable source + weights changed: sourceBaseImage path keeps source registry+org",
-			sourceBaseImage:    "ghcr.io/amdenterpriseai/aim-base:0.11",
+			sourceBaseImage:    "registry.example.com/mirror/aim-base:0.11",
 			sourceImage:        "docker.io/amdenterpriseai/qwen3:0.11",
 			sourceIsDeployable: true,
 			weightsChanged:     true,

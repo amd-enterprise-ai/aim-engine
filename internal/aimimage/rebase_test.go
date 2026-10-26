@@ -33,14 +33,14 @@ func TestRebaseRegistry(t *testing.T) {
 	}{
 		{
 			name:         "graft prefix with registry+org",
-			source:       "ghcr.io/amdenterpriseai/qwen3:0.11",
+			source:       "registry.example.com/mirror/qwen3:0.11",
 			baseImageRef: "docker.io/amdenterpriseai/aim-base:0.11",
-			want:         "ghcr.io/amdenterpriseai/aim-base:0.11",
+			want:         "registry.example.com/mirror/aim-base:0.11",
 		},
 		{
 			name:         "switch registry+org again",
 			source:       "docker.io/amdenterpriseai/qwen3:0.11",
-			baseImageRef: "ghcr.io/amdenterpriseai/aim-base:0.11",
+			baseImageRef: "registry.example.com/mirror/aim-base:0.11",
 			want:         "docker.io/amdenterpriseai/aim-base:0.11",
 		},
 		{
