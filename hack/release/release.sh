@@ -11,6 +11,7 @@
 # Prerequisites:
 #   - CHANGELOG.md updated with the new version section
 #   - Working directory is clean (all changes committed)
+#   - Local main is at origin/main
 set -euo pipefail
 
 VERSION=""
@@ -59,6 +60,18 @@ if [[ -n "$(git status --porcelain)" ]]; then
     exit 1
 fi
 
+git fetch --quiet origin main
+if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
+    echo "ERROR: Local main is not at origin/main."
+    echo "Run 'git pull', and land any local commits through a PR first."
+    exit 1
+fi
+
+IS_RELEASE=false
+if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    IS_RELEASE=true
+fi
+
 # --- Confirmation ---
 
 PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
@@ -71,12 +84,14 @@ echo "  Commits:     $COMMIT_COUNT (since ${PREV_TAG:-"beginning"})"
 echo ""
 echo "This will:"
 echo "  1. Create tag $VERSION on current HEAD"
-echo "  2. Push main and tag to origin"
+echo "  2. Push tag $VERSION to origin"
 echo ""
-echo "Tag-triggered workflows will then:"
-echo "  - Run unit and e2e tests"
-echo "  - Build and push images and Helm charts"
-echo "  - Create a GitHub Release from CHANGELOG.md"
+echo "compile-release will then:"
+echo "  - Build and push images and Helm charts to docker.io/silogenai"
+echo "  - Run the e2e tests"
+if [[ "$IS_RELEASE" == true ]]; then
+    echo "  - Create a draft GitHub Release, published by publish-release after promotion"
+fi
 echo ""
 
 if [[ "$YES" != true ]]; then
@@ -93,10 +108,13 @@ echo ""
 echo ">>> Creating tag $VERSION..."
 git tag -a "$VERSION" -m "Release $VERSION"
 
-echo ">>> Pushing to origin..."
-git push origin main --tags
+echo ">>> Pushing tag to origin..."
+git push origin "$VERSION"
 
 echo ""
-echo "=== Release $VERSION pushed ==="
-echo "  Tag-triggered workflows are now running."
-echo "  Once CI passes, the GitHub Release will be created automatically."
+echo "=== Tag $VERSION pushed ==="
+echo "  compile-release is now running."
+if [[ "$IS_RELEASE" == true ]]; then
+    echo "  It creates a draft GitHub Release. After the release is promoted to"
+    echo "  docker.io/amdenterpriseai, publish-release publishes it."
+fi

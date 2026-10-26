@@ -51,16 +51,32 @@ tag. The workflow:
 
 - regenerates CRDs, then runs `make test-bridge-contract` before packaging or
   publishing Helm/CRD artifacts
-- attaches `install.yaml`, `crds.yaml`, the Helm chart tarball, and the CRDs
-  chart tarball to a draft GitHub Release
+- for `vX.Y.Z` tags, attaches `install.yaml`, `crds.yaml`, the Helm chart
+  tarball, and the CRDs chart tarball to a draft GitHub Release
 - pushes the `aim-engine-chart` and `aim-engine-crds-chart` charts to an OCI
   registry
-- force-pushes the rendered chart and CRDs to the `artifacts` branch as a
-  browseable mirror
 
 The bridge contract is static: it checks API markers and generated CRDs,
 controller roots, owner-reference semantics, RBAC, and release ordering. It
 does not qualify a migration, artifact preservation, GPU serving, or inference.
+
+Once a release has been tested and promoted to `docker.io/amdenterpriseai`,
+the `publish-release` workflow publishes it:
+
+```bash
+gh workflow run publish-release --ref main -f version=vX.Y.Z
+```
+
+The workflow:
+
+- checks that the operator and artifact-downloader images and both charts can
+  be pulled anonymously from `docker.io/amdenterpriseai`, before changing
+  anything public
+- replaces the draft's internal notes with the version's `CHANGELOG.md` section
+  (read from `main`) and the public install instructions, then publishes the
+  release
+- force-pushes the released chart and CRDs to the `artifacts` branch as a
+  browseable mirror
 
 Between releases, the `publish-main` workflow snapshots `main` on every commit
 (when `vars.ACTIVATE_PUBLISH_MAIN_WORKFLOW == 'true'`). It pushes a chart

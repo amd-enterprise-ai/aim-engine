@@ -62,9 +62,10 @@ jobs:
           # even when the int-test git tag is reused. Real releases keep the bare
           # VERSION as the image tag.
           INT_TEST_IMAGE_TAG="${VERSION}-${SHORT_SHA}"
-          # Only final versions (vX.Y.Z) get a GitHub release and update the
-          # artifacts branch. Candidates (vX.Y.Z-rc1, *int-test, ...) only
-          # publish images and charts to silogenai for testing.
+          # Only final versions (vX.Y.Z) get a draft GitHub release, which
+          # publish-release publishes after promotion. Candidates (vX.Y.Z-rc1,
+          # *int-test, ...) only publish images and charts to silogenai for
+          # testing.
           # A release's install.yaml is promoted with it, so it references the
           # public mirror; a candidate's references the image it was pushed as.
           if [[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -213,14 +214,16 @@ jobs:
       - name: Build release notes
         if: steps.ver.outputs.is_release == 'true'
         run: |
-          # Build the release body in two pieces: an internal block explaining
-          # how to install the silogenai-OCI chart before manual image
-          # promotion has run, followed by the standard post-promotion install
-          # instructions. Quoted heredocs keep the markdown verbatim
-          # (backticks, `$`); env-driven values are substituted via sed
-          # afterwards.
+          # The draft only carries the internal, pre-promotion install notes;
+          # publish-release replaces them with the public notes. The quoted
+          # heredoc keeps the markdown verbatim (backticks, `$`); env-driven
+          # values are substituted via sed afterwards.
           {
             cat <<'INNER_EOF'
+          > [!NOTE]
+          > Draft for testing before promotion. `publish-release` replaces
+          > these notes with the public release notes.
+
           ### Internal install (pre-promotion, silogenai)
 
           The chart's baked-in `manager.image.repository` points at the public
@@ -256,71 +259,6 @@ jobs:
           Because these download Jobs run in your workload namespace, pulling the
           private artifact-downloader image requires node-level (containerd)
           registry credentials configured on each node.
-
-          ---
-
-          INNER_EOF
-
-            cat <<'INNER_EOF'
-          ## Installation
-
-          ### Quick Install (kubectl)
-          ```bash
-          kubectl apply -f https://github.com/__GITHUB_REPOSITORY__/releases/download/__VERSION__/install.yaml --server-side
-          ```
-
-          ### Helm Install
-
-          CRDs are distributed separately and must be installed first:
-
-          ```bash
-          # 1a. Install CRDs via Helm OCI (recommended)
-          helm install aim-engine-crds __CHART_OCI_REPO__/aim-engine-crds-chart \
-            --version __CHART_VERSION__
-          ```
-
-          ```bash
-          # 1b. Or install CRDs from manifest
-          kubectl apply -f https://github.com/__GITHUB_REPOSITORY__/releases/download/__VERSION__/crds.yaml
-          kubectl wait --for=condition=Established crd --all --timeout=60s
-          ```
-
-          ```bash
-          # 2a. Install operator via Helm OCI (recommended).
-          helm install aim-engine __CHART_OCI_REPO__/aim-engine-chart \
-            --version __CHART_VERSION__ \
-            --namespace aim-system --create-namespace
-          ```
-
-          ```bash
-          # 2b. Or install from GitHub Releases tarball.
-          curl -L https://github.com/__GITHUB_REPOSITORY__/releases/download/__VERSION__/aim-engine-chart-__CHART_VERSION__.tgz -o aim-engine.tgz
-          helm install aim-engine aim-engine.tgz --namespace aim-system --create-namespace
-          ```
-
-          Gateway activation is disabled by default. Neither installation path
-          selects a Gateway implementation or installs a gateway extension.
-
-          ### Optional Envoy Gateway scale-from-zero
-
-          The platform administrator installs Envoy Gateway and this
-          Gateway-targeted policy independently. Edit its Gateway namespace/name,
-          apply it, then deliberately enable the Helm-managed Envoy collector:
-
-          ```bash
-          curl -LO https://github.com/__GITHUB_REPOSITORY__/releases/download/__VERSION__/envoy-gateway-route-metrics.yaml
-          kubectl apply -f envoy-gateway-route-metrics.yaml
-          helm upgrade aim-engine __CHART_OCI_REPO__/aim-engine-chart \
-            --version __CHART_VERSION__ \
-            --namespace aim-system \
-            --set scaleFromZero.gatewayProvider=envoyGateway
-          ```
-
-          See the [version-matched Envoy scale-from-zero setup guide](https://github.com/__GITHUB_REPOSITORY__/blob/__VERSION__/docs/docs/admin/envoy-gateway-scale-from-zero.md)
-          for platform setup, target customization, and verification.
-
-          ### Docker Images
-          - Operator: `__CHART_IMAGE_REPO__:__VERSION__`
           INNER_EOF
           } > release-notes.template
 
@@ -328,13 +266,11 @@ jobs:
             -e "s|__VERSION__|${VERSION}|g" \
             -e "s|__CHART_VERSION__|${CHART_VERSION}|g" \
             -e "s|__CHART_OCI_REPO__|${CHART_OCI_REPO}|g" \
-            -e "s|__CHART_IMAGE_REPO__|${CHART_IMAGE_REPO}|g" \
-            -e "s|__GITHUB_REPOSITORY__|${{ github.repository }}|g" \
             release-notes.template > release-notes.md
 
       - name: Create draft release and upload assets
         # Stays a draft until the images are promoted to amdenterpriseai and
-        # the release is published by hand.
+        # publish-release publishes it.
         if: steps.ver.outputs.is_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
@@ -350,155 +286,6 @@ jobs:
           draft: true
           prerelease: false
           body_path: release-notes.md
-
-      - name: Create or update artifacts branch
-        if: steps.ver.outputs.is_release == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Create orphan branch
-          git checkout --orphan artifacts-temp || true
-
-          # Clear the index
-          git rm -rf --cached . || true
-
-          # Add the chart directory
-          mkdir -p chart
-          cp -r dist/chart/* chart/
-          git add chart/
-
-          # Add the crd directory with crds.yaml as separate file (distributed independently)
-          mkdir -p crd
-          cp dist/crds.yaml crd/crds.yaml
-          git add crd/crds.yaml
-
-          # Add version-matched scale-from-zero policies and standalone collectors.
-          mkdir -p prereqs/scale-from-zero
-          cp config/prereqs/scale-from-zero/README.md prereqs/scale-from-zero/
-          cp config/prereqs/scale-from-zero/*.yaml prereqs/scale-from-zero/
-          sed -i \
-            's#config/prereqs/scale-from-zero/#prereqs/scale-from-zero/#g' \
-            prereqs/scale-from-zero/README.md
-          git add prereqs/scale-from-zero/
-
-          # Build the README in two pieces: an internal block explaining the
-          # pre-promotion override, followed by the standard install
-          # instructions. Same template+sed pattern as release notes.
-          {
-            cat <<'INNER_EOF'
-          # aim-engine
-
-          This branch contains the auto-generated Helm chart and CRDs for aim-engine.
-
-          ## Installation
-
-          INNER_EOF
-
-            cat <<'INNER_EOF'
-          ### Internal install (pre-promotion, silogenai)
-
-          The chart's `manager.image.repository` defaults to the public
-          `docker.io/amdenterpriseai/aim-engine`, populated only after the
-          manual silogenai → amdenterpriseai image promotion. The operator
-          binary likewise bakes the public artifact-downloader default. To
-          install pre-promotion, provision a `dockerhub-regcred` pull secret in
-          the install namespace (skip if it is already present) and override
-          both the operator image and the artifact-downloader image:
-
-          ```bash
-          kubectl create namespace aim-system --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create secret docker-registry dockerhub-regcred \
-            --namespace aim-system \
-            --docker-server=https://index.docker.io/v1/ \
-            --docker-username=<dockerhub-user> \
-            --docker-password=<dockerhub-token>
-
-          helm install aim-engine ./chart \
-            --namespace aim-system --create-namespace \
-            --set manager.image.repository=docker.io/silogenai/aim-engine \
-            --set manager.imagePullSecrets[0].name=dockerhub-regcred \
-            --set manager.artifactDownloaderImage=docker.io/silogenai/aim-artifact-downloader:__VERSION__
-          ```
-
-          Because the download Jobs run in your workload namespace, pulling the
-          private artifact-downloader image requires node-level (containerd)
-          registry credentials configured on each node.
-
-          ---
-
-          INNER_EOF
-
-            cat <<'INNER_EOF'
-          CRDs are distributed separately and must be installed first:
-
-          ```bash
-          # 1. Install CRDs
-          kubectl apply -f https://raw.githubusercontent.com/__GITHUB_REPOSITORY__/artifacts/crd/crds.yaml
-          kubectl wait --for=condition=Established crd --all --timeout=60s
-
-          # 2a. Install operator via Helm OCI (recommended)
-          helm install aim-engine __CHART_OCI_REPO__/aim-engine-chart \
-            --version __CHART_VERSION__ \
-            --namespace aim-system --create-namespace
-
-          # 2b. Or install from this branch
-          helm install aim-engine ./chart --namespace aim-system --create-namespace
-          ```
-
-          Gateway activation is disabled by default. The base install does not
-          select a Gateway implementation or install a gateway extension.
-
-          ### Optional Envoy Gateway scale-from-zero
-
-          Install Envoy Gateway and its Gateway-targeted policy as platform
-          infrastructure. Edit the policy target, apply it, then deliberately
-          enable the matching Helm-managed collector:
-
-          ```bash
-          curl -LO https://raw.githubusercontent.com/__GITHUB_REPOSITORY__/artifacts/prereqs/scale-from-zero/envoy-gateway-route-metrics.yaml
-          kubectl apply -f envoy-gateway-route-metrics.yaml
-          helm upgrade aim-engine __CHART_OCI_REPO__/aim-engine-chart \
-            --version __CHART_VERSION__ \
-            --namespace aim-system \
-            --set scaleFromZero.gatewayProvider=envoyGateway
-          ```
-
-          See the [Envoy scale-from-zero setup guide](prereqs/scale-from-zero/README.md)
-          for target customization, verification, and security guidance.
-
-          Or clone this branch:
-
-          ```bash
-          git clone -b artifacts https://github.com/__GITHUB_REPOSITORY__.git aim-engine
-          cd aim-engine
-
-          kubectl apply -f crd/crds.yaml
-          kubectl wait --for=condition=Established crd --all --timeout=60s
-          helm install aim-engine ./chart --namespace aim-system --create-namespace
-          ```
-
-          ## Source
-
-          Generated from tag: __VERSION__ (commit: __GITHUB_SHA__)
-          INNER_EOF
-          } > README.md.template
-
-          sed \
-            -e "s|__VERSION__|${VERSION}|g" \
-            -e "s|__CHART_VERSION__|${CHART_VERSION}|g" \
-            -e "s|__CHART_OCI_REPO__|${CHART_OCI_REPO}|g" \
-            -e "s|__GITHUB_REPOSITORY__|${{ github.repository }}|g" \
-            -e "s|__GITHUB_SHA__|${{ github.sha }}|g" \
-            README.md.template > README.md
-          rm -f README.md.template
-          git add README.md
-
-          # Commit
-          git commit -m "Release ${VERSION}" --allow-empty
-
-          # Force push to artifacts branch
-          git push origin HEAD:artifacts --force
 
       - name: Print release artifacts
         env:

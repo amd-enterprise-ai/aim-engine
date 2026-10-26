@@ -1,0 +1,326 @@
+name: publish-release
+
+# Publishes a release after it has been promoted. compile-release builds the
+# tag into docker.io/silogenai and creates a draft GitHub release; the external
+# promotion tool then copies aim-engine, aim-artifact-downloader and both
+# charts to docker.io/amdenterpriseai and runs:
+#
+#   gh workflow run publish-release -R amd-enterprise-ai/aim-engine --ref main -f version=vX.Y.Z
+#
+# Every check in the publish job runs before anything public changes. If a
+# later job fails, re-run the failed jobs: the publish job refuses a release
+# that is already published.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag to publish (vX.Y.Z)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+# Opt JavaScript actions onto Node 24 ahead of GitHub's June 16, 2026 default
+# flip. See https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  GH_REPO: ${{ github.repository }}
+  IMAGE_REPO: docker.io/amdenterpriseai/aim-engine
+  DOWNLOADER_REPO: docker.io/amdenterpriseai/aim-artifact-downloader
+  CHART_OCI_REPO: oci://registry-1.docker.io/amdenterpriseai
+
+jobs:
+  publish:
+    # Only the reviewed workflow on main may publish.
+    if: github.repository == 'amd-enterprise-ai/aim-engine' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      chart_version: ${{ steps.ver.outputs.chart_version }}
+
+    steps:
+      - name: Validate version
+        id: ver
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be a release tag (vX.Y.Z); candidates are never published."
+            exit 1
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "CHART_VERSION=${VERSION#v}" >> "$GITHUB_ENV"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "chart_version=${VERSION#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Check the tag and its draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Publishing a draft whose tag doesn't exist would create the tag
+          # on main.
+          if ! git ls-remote --exit-code --tags origin "refs/tags/${VERSION}" >/dev/null; then
+            echo "::error::Tag ${VERSION} does not exist."
+            exit 1
+          fi
+          if ! is_draft=$(gh release view "${VERSION}" --json isDraft --jq .isDraft); then
+            echo "::error::No GitHub release for ${VERSION}; compile-release creates it as a draft."
+            exit 1
+          fi
+          if [ "${is_draft}" != "true" ]; then
+            echo "::error::${VERSION} is already published. To finish a failed run, re-run its failed jobs."
+            exit 1
+          fi
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4.3.1
+
+      - name: Check the promoted artifacts are public
+        run: |
+          # Empty credential stores, so every check below is anonymous.
+          export DOCKER_CONFIG="${RUNNER_TEMP}/docker-anonymous"
+          export HELM_REGISTRY_CONFIG="${RUNNER_TEMP}/helm-anonymous/config.json"
+          mkdir -p "${DOCKER_CONFIG}" "$(dirname "${HELM_REGISTRY_CONFIG}")"
+
+          missing=0
+          for image in "${IMAGE_REPO}:${VERSION}" "${DOWNLOADER_REPO}:${VERSION}"; do
+            if ! docker manifest inspect "${image}" >/dev/null; then
+              echo "::error::${image} can't be pulled anonymously."
+              missing=1
+            fi
+          done
+          for chart in aim-engine-chart aim-engine-crds-chart; do
+            if ! helm show chart "${CHART_OCI_REPO}/${chart}" --version "${CHART_VERSION}" >/dev/null; then
+              echo "::error::${CHART_OCI_REPO}/${chart}:${CHART_VERSION} can't be pulled anonymously."
+              missing=1
+            fi
+          done
+          exit "${missing}"
+
+      - name: Build public release notes
+        run: |
+          # Taken from CHANGELOG.md on main, so a missing or wrong section can
+          # be fixed by a PR and the run repeated.
+          awk -v heading="## [${CHART_VERSION}]" '
+            index($0, "## [") == 1 { if (found) exit; found = (index($0, heading) == 1); next }
+            found
+          ' CHANGELOG.md > changelog-section.md
+          if ! grep -q '[^[:space:]]' changelog-section.md; then
+            echo "::error::CHANGELOG.md on main has no '## [${CHART_VERSION}]' section."
+            exit 1
+          fi
+
+          # The quoted heredoc keeps the markdown verbatim (backticks, `$`);
+          # env-driven values are substituted via sed afterwards.
+          cat <<'INNER_EOF' > install.template
+          ## Installation
+
+          ### Quick Install (kubectl)
+          ```bash
+          kubectl apply -f https://github.com/__GITHUB_REPOSITORY__/releases/download/__VERSION__/install.yaml --server-side
+          ```
+
+          ### Helm Install
+
+          CRDs are distributed separately and must be installed first:
+
+          ```bash
+          # 1a. Install CRDs via Helm OCI (recommended)
+          helm install aim-engine-crds __CHART_OCI_REPO__/aim-engine-crds-chart \
+            --version __CHART_VERSION__
+          ```
+
+          ```bash
+          # 1b. Or install CRDs from manifest
+          kubectl apply -f https://github.com/__GITHUB_REPOSITORY__/releases/download/__VERSION__/crds.yaml
+          kubectl wait --for=condition=Established crd --all --timeout=60s
+          ```
+
+          ```bash
+          # 2a. Install operator via Helm OCI (recommended).
+          helm install aim-engine __CHART_OCI_REPO__/aim-engine-chart \
+            --version __CHART_VERSION__ \
+            --namespace aim-system --create-namespace
+          ```
+
+          ```bash
+          # 2b. Or install from GitHub Releases tarball.
+          curl -L https://github.com/__GITHUB_REPOSITORY__/releases/download/__VERSION__/aim-engine-chart-__CHART_VERSION__.tgz -o aim-engine.tgz
+          helm install aim-engine aim-engine.tgz --namespace aim-system --create-namespace
+          ```
+
+          Gateway activation is disabled by default. Neither installation path
+          selects a Gateway implementation or installs a gateway extension.
+
+          ### Optional Envoy Gateway scale-from-zero
+
+          The platform administrator installs Envoy Gateway and this
+          Gateway-targeted policy independently. Edit its Gateway namespace/name,
+          apply it, then deliberately enable the Helm-managed Envoy collector:
+
+          ```bash
+          curl -LO https://github.com/__GITHUB_REPOSITORY__/releases/download/__VERSION__/envoy-gateway-route-metrics.yaml
+          kubectl apply -f envoy-gateway-route-metrics.yaml
+          helm upgrade aim-engine __CHART_OCI_REPO__/aim-engine-chart \
+            --version __CHART_VERSION__ \
+            --namespace aim-system \
+            --set scaleFromZero.gatewayProvider=envoyGateway
+          ```
+
+          See the [version-matched Envoy scale-from-zero setup guide](https://github.com/__GITHUB_REPOSITORY__/blob/__VERSION__/docs/docs/admin/envoy-gateway-scale-from-zero.md)
+          for platform setup, target customization, and verification.
+
+          ### Docker Images
+          - Operator: `__IMAGE_REPO__:__VERSION__`
+          - Artifact downloader: `__DOWNLOADER_REPO__:__VERSION__`
+          INNER_EOF
+
+          {
+            echo "## What's changed"
+            echo
+            cat changelog-section.md
+            echo
+            echo "**Full changelog**: https://github.com/${GITHUB_REPOSITORY}/blob/main/CHANGELOG.md"
+            echo
+            sed \
+              -e "s|__VERSION__|${VERSION}|g" \
+              -e "s|__CHART_VERSION__|${CHART_VERSION}|g" \
+              -e "s|__CHART_OCI_REPO__|${CHART_OCI_REPO}|g" \
+              -e "s|__IMAGE_REPO__|${IMAGE_REPO}|g" \
+              -e "s|__DOWNLOADER_REPO__|${DOWNLOADER_REPO}|g" \
+              -e "s|__GITHUB_REPOSITORY__|${GITHUB_REPOSITORY}|g" \
+              install.template
+          } > release-notes.md
+          cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${VERSION}" --draft=false --prerelease=false --notes-file release-notes.md
+
+  artifacts-branch:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.publish.outputs.version }}
+      CHART_VERSION: ${{ needs.publish.outputs.chart_version }}
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Force-push the artifacts branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ART="${RUNNER_TEMP}/artifacts"
+          mkdir -p "${ART}/chart" "${ART}/crd" "${ART}/prereqs"
+
+          # The chart and CRDs exactly as attached to the release.
+          gh release download "${VERSION}" --dir "${RUNNER_TEMP}/assets" \
+            --pattern "aim-engine-chart-${CHART_VERSION}.tgz" \
+            --pattern crds.yaml
+          tar -xzf "${RUNNER_TEMP}/assets/aim-engine-chart-${CHART_VERSION}.tgz" \
+            -C "${ART}/chart" --strip-components=1
+          cp "${RUNNER_TEMP}/assets/crds.yaml" "${ART}/crd/crds.yaml"
+
+          # Version-matched scale-from-zero policies and standalone collectors.
+          git archive "${VERSION}" config/prereqs/scale-from-zero | tar -x -C "${RUNNER_TEMP}"
+          mv "${RUNNER_TEMP}/config/prereqs/scale-from-zero" "${ART}/prereqs/"
+          sed -i \
+            's#config/prereqs/scale-from-zero/#prereqs/scale-from-zero/#g' \
+            "${ART}/prereqs/scale-from-zero/README.md"
+
+          cat <<'INNER_EOF' > README.md.template
+          # aim-engine
+
+          This branch contains the auto-generated Helm chart and CRDs for aim-engine.
+
+          ## Installation
+
+          CRDs are distributed separately and must be installed first:
+
+          ```bash
+          # 1. Install CRDs
+          kubectl apply -f https://raw.githubusercontent.com/__GITHUB_REPOSITORY__/artifacts/crd/crds.yaml
+          kubectl wait --for=condition=Established crd --all --timeout=60s
+
+          # 2a. Install operator via Helm OCI (recommended)
+          helm install aim-engine __CHART_OCI_REPO__/aim-engine-chart \
+            --version __CHART_VERSION__ \
+            --namespace aim-system --create-namespace
+
+          # 2b. Or install from this branch
+          helm install aim-engine ./chart --namespace aim-system --create-namespace
+          ```
+
+          Gateway activation is disabled by default. The base install does not
+          select a Gateway implementation or install a gateway extension.
+
+          ### Optional Envoy Gateway scale-from-zero
+
+          Install Envoy Gateway and its Gateway-targeted policy as platform
+          infrastructure. Edit the policy target, apply it, then deliberately
+          enable the matching Helm-managed collector:
+
+          ```bash
+          curl -LO https://raw.githubusercontent.com/__GITHUB_REPOSITORY__/artifacts/prereqs/scale-from-zero/envoy-gateway-route-metrics.yaml
+          kubectl apply -f envoy-gateway-route-metrics.yaml
+          helm upgrade aim-engine __CHART_OCI_REPO__/aim-engine-chart \
+            --version __CHART_VERSION__ \
+            --namespace aim-system \
+            --set scaleFromZero.gatewayProvider=envoyGateway
+          ```
+
+          See the [Envoy scale-from-zero setup guide](prereqs/scale-from-zero/README.md)
+          for target customization, verification, and security guidance.
+
+          Or clone this branch:
+
+          ```bash
+          git clone -b artifacts https://github.com/__GITHUB_REPOSITORY__.git aim-engine
+          cd aim-engine
+
+          kubectl apply -f crd/crds.yaml
+          kubectl wait --for=condition=Established crd --all --timeout=60s
+          helm install aim-engine ./chart --namespace aim-system --create-namespace
+          ```
+
+          ## Source
+
+          Generated from tag: __VERSION__ (commit: __TAG_SHA__)
+          INNER_EOF
+
+          sed \
+            -e "s|__VERSION__|${VERSION}|g" \
+            -e "s|__CHART_VERSION__|${CHART_VERSION}|g" \
+            -e "s|__CHART_OCI_REPO__|${CHART_OCI_REPO}|g" \
+            -e "s|__GITHUB_REPOSITORY__|${GITHUB_REPOSITORY}|g" \
+            -e "s|__TAG_SHA__|$(git rev-list -n1 "${VERSION}")|g" \
+            README.md.template > "${ART}/README.md"
+
+          # Commit the tree in ${ART} as a fresh orphan, so nothing from the
+          # main checkout ends up on the branch.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout --quiet --orphan artifacts-temp
+          git rm -rf --quiet --cached .
+          git --work-tree="${ART}" add --all
+          git --work-tree="${ART}" commit --quiet -m "Release ${VERSION}"
+          git push origin HEAD:artifacts --force
