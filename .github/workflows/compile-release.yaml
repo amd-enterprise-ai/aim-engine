@@ -5,12 +5,8 @@ on:
     tags:
       - "v*"
       - "*int-test"
+  # Re-runs a tag build; dispatching from a branch is skipped by the job guard.
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Release version (e.g. v1.2.3). Falls back to tag if empty.'
-        required: false
-        type: string
 
 permissions:
   contents: write
@@ -31,8 +27,9 @@ env:
 
 jobs:
   compile-release:
-    # Forks and mirrors must not push to the silogenai org.
-    if: github.repository == 'amd-enterprise-ai/aim-engine'
+    # Forks and mirrors must not push to the silogenai org, and only tags may
+    # publish: the tag name is the version that promotion copies.
+    if: github.repository == 'amd-enterprise-ai/aim-engine' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
@@ -57,12 +54,7 @@ jobs:
       - name: Determine version
         id: ver
         run: |
-          INPUT_VERSION="${{ inputs.version }}"
-          if [ -n "${INPUT_VERSION}" ]; then
-            VERSION="${INPUT_VERSION}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
+          VERSION="${GITHUB_REF_NAME}"
           CHART_VERSION="${VERSION#v}"
           SHORT_SHA="${GITHUB_SHA::7}"
           # Int-test charts have a static name (INT_TEST_CHART_VERSION) but need a
@@ -73,12 +65,17 @@ jobs:
           # Only final versions (vX.Y.Z) get a GitHub release and update the
           # artifacts branch. Candidates (vX.Y.Z-rc1, *int-test, ...) only
           # publish images and charts to silogenai for testing.
+          # A release's install.yaml is promoted with it, so it references the
+          # public mirror; a candidate's references the image it was pushed as.
           if [[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             IS_RELEASE=true
+            INSTALL_IMAGE_REPO="${CHART_IMAGE_REPO}"
           else
             IS_RELEASE=false
+            INSTALL_IMAGE_REPO="${PUSH_IMAGE_REPO}"
           fi
           echo "is_release=${IS_RELEASE}" >> "$GITHUB_OUTPUT"
+          echo "INSTALL_IMAGE_REPO=${INSTALL_IMAGE_REPO}" >> "$GITHUB_ENV"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "CHART_VERSION=${CHART_VERSION}" >> "$GITHUB_ENV"
           echo "SHORT_SHA=${SHORT_SHA}" >> "$GITHUB_ENV"
@@ -86,7 +83,7 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "chart_version=${CHART_VERSION}" >> "$GITHUB_OUTPUT"
           echo "int_test_image_tag=${INT_TEST_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
-          echo "Using version: ${VERSION}, chart version: ${CHART_VERSION}, int-test image tag: ${INT_TEST_IMAGE_TAG}, release: ${IS_RELEASE}"
+          echo "Using version: ${VERSION}, chart version: ${CHART_VERSION}, int-test image tag: ${INT_TEST_IMAGE_TAG}, release: ${IS_RELEASE}, install.yaml image: ${INSTALL_IMAGE_REPO}"
 
       - name: Generate CRDs
         run: make crds
@@ -147,10 +144,6 @@ jobs:
         run: |
           make crds-package CHART_VERSION=${CHART_VERSION} TAG=${VERSION}
 
-      - name: Generate install.yaml
-        run: |
-          make build-installer IMG=${PUSH_IMAGE_REPO}:${VERSION}
-
       - name: Log in to DockerHub (Helm/OCI)
         run: echo "${{ secrets.DOCKER_HUB_PUSH }}" | helm registry login registry-1.docker.io -u "${{ secrets.DOCKER_HUB_PUSH_USER }}" --password-stdin
 
@@ -186,6 +179,12 @@ jobs:
           rm -rf dist/chart
           cp -a "/tmp/aim-engine-dist-chart-${GITHUB_RUN_ID}" dist/chart
           rm -rf "/tmp/aim-engine-dist-chart-${GITHUB_RUN_ID}"
+
+      # Must run after every `make helm-package`, which regenerates
+      # dist/install.yaml with the Makefile's default (private) IMG.
+      - name: Generate install.yaml
+        run: |
+          make build-installer IMG=${INSTALL_IMAGE_REPO}:${VERSION}
 
       - name: Upload install.yaml artifact
         uses: actions/upload-artifact@v4
@@ -250,13 +249,9 @@ jobs:
             --set manager.artifactDownloaderImage=docker.io/silogenai/aim-artifact-downloader:__VERSION__
           ```
 
-          The attached `install.yaml` already references
-          `docker.io/silogenai/aim-engine:__VERSION__` directly, but the
-          operator binary still bakes the public downloader default. Until
-          promotion, prefer the Helm install above (which overrides
-          `manager.artifactDownloaderImage`), or patch the controller-manager
-          Deployment to add an `AIM_ARTIFACT_DOWNLOADER_IMAGE=docker.io/silogenai/aim-artifact-downloader:__VERSION__`
-          env var so download Jobs resolve against the private silogenai org.
+          The attached `install.yaml` references the public
+          `docker.io/amdenterpriseai/aim-engine:__VERSION__`, so it only works
+          after promotion. Until then, use the Helm install above.
 
           Because these download Jobs run in your workload namespace, pulling the
           private artifact-downloader image requires node-level (containerd)
