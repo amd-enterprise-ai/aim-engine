@@ -28,7 +28,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 )
 
-// AIMClusterComposition publishes a reusable cluster-scoped serving recipe.
+// AIMClusterProfileComposition publishes a reusable cluster-scoped serving recipe.
 // Exact profile references in a cluster recipe must target AIMClusterProfile;
 // selectors may still resolve namespace profiles when a service instantiates
 // the recipe.
@@ -46,7 +46,7 @@ import (
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.decode) || !has(self.spec.decode.worker) || !has(self.spec.decode.worker.profile) || !has(self.spec.decode.worker.profile.ref) || self.spec.decode.worker.profile.ref.kind == 'AIMClusterProfile'",message="cluster composition decode worker profile refs must target AIMClusterProfile"
 //
 //nolint:lll // kubebuilder markers; CEL rules cannot be wrapped across lines
-type AIMClusterComposition struct {
+type AIMClusterProfileComposition struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
@@ -54,14 +54,14 @@ type AIMClusterComposition struct {
 	Status aimv1alpha1.AIMCompositionStatus `json:"status,omitempty"`
 }
 
-// AIMClusterCompositionList contains a list of AIMClusterComposition resources.
+// AIMClusterProfileCompositionList contains a list of AIMClusterProfileComposition resources.
 // +kubebuilder:object:root=true
-type AIMClusterCompositionList struct {
+type AIMClusterProfileCompositionList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []AIMClusterComposition `json:"items"`
+	Items           []AIMClusterProfileComposition `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&AIMClusterComposition{}, &AIMClusterCompositionList{})
+	SchemeBuilder.Register(&AIMClusterProfileComposition{}, &AIMClusterProfileCompositionList{})
 }

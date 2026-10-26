@@ -84,7 +84,7 @@ func validateYAML(t *testing.T, structural *schema.Structural, manifest string) 
 }
 
 func TestCompositionRecipeAdmission(t *testing.T) {
-	structural := generatedSchemaForVersion(t, "aimcompositions", "v1alpha2")
+	structural := generatedSchemaForVersion(t, "aimprofilecompositions", "v1alpha2")
 	for _, tc := range []struct {
 		name  string
 		spec  string
@@ -147,7 +147,7 @@ transport: {preset: local-kv}`, false},
         target: {type: Value, value: "1"}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			manifest := "apiVersion: aim.eai.amd.com/v1alpha2\nkind: AIMComposition\nmetadata: {name: test}\nspec:\n"
+			manifest := "apiVersion: aim.eai.amd.com/v1alpha2\nkind: AIMProfileComposition\nmetadata: {name: test}\nspec:\n"
 			for _, line := range splitLines(tc.spec) {
 				manifest += "  " + line + "\n"
 			}
@@ -160,7 +160,7 @@ transport: {preset: local-kv}`, false},
 }
 
 func TestCompositionPlacementScopeEnum(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "config", "crd", "bases", "aim.eai.amd.com_aimcompositions.yaml"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "config", "crd", "bases", "aim.eai.amd.com_aimprofilecompositions.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestCompositionPlacementScopeEnum(t *testing.T) {
 }
 
 func TestClusterCompositionRejectsNamespaceProfileRefs(t *testing.T) {
-	structural := generatedSchemaForVersion(t, "aimclustercompositions", "v1alpha2")
+	structural := generatedSchemaForVersion(t, "aimclusterprofilecompositions", "v1alpha2")
 	for _, tc := range []struct {
 		name, refKind string
 		valid         bool
@@ -205,7 +205,7 @@ func TestClusterCompositionRejectsNamespaceProfileRefs(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			manifest := `apiVersion: aim.eai.amd.com/v1alpha2
-kind: AIMClusterComposition
+kind: AIMClusterProfileComposition
 metadata: {name: test}
 spec:
   main:

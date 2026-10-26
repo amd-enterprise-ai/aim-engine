@@ -1,5 +1,5 @@
 apiVersion: aim.eai.amd.com/v1alpha2
-kind: AIMClusterComposition
+kind: AIMClusterProfileComposition
 metadata:
   name: aggregated-vllm
 spec:

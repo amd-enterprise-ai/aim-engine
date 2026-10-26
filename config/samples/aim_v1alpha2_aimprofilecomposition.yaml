@@ -1,5 +1,5 @@
 apiVersion: aim.eai.amd.com/v1alpha2
-kind: AIMComposition
+kind: AIMProfileComposition
 metadata:
   name: local-prefill-decode
 spec:

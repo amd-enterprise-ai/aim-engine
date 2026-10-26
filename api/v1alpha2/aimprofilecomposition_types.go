@@ -28,15 +28,15 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 )
 
-// AIMComposition publishes a reusable namespace-scoped serving recipe.
-// Publishing a recipe does not create inference workloads.
+// AIMProfileComposition publishes a reusable namespace-scoped recipe that binds
+// profiles to serving roles. Publishing a recipe does not create inference workloads.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=aimcomp,categories=aim;all
 // +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.status.resolvedMode`
 // +kubebuilder:printcolumn:name="Model Binding",type=string,JSONPath=`.status.modelBindingType`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
-type AIMComposition struct {
+type AIMProfileComposition struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
@@ -44,14 +44,14 @@ type AIMComposition struct {
 	Status aimv1alpha1.AIMCompositionStatus `json:"status,omitempty"`
 }
 
-// AIMCompositionList contains a list of AIMComposition resources.
+// AIMProfileCompositionList contains a list of AIMProfileComposition resources.
 // +kubebuilder:object:root=true
-type AIMCompositionList struct {
+type AIMProfileCompositionList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []AIMComposition `json:"items"`
+	Items           []AIMProfileComposition `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&AIMComposition{}, &AIMCompositionList{})
+	SchemeBuilder.Register(&AIMProfileComposition{}, &AIMProfileCompositionList{})
 }

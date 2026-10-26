@@ -4,8 +4,8 @@ This is the review surface for ADR-0012, **not a feature release**. The followin
 pages deliberately use final-product language so reviewers can evaluate the
 interface users will actually see.
 
-The first implementation slice now adds installable `AIMComposition` and
-`AIMClusterComposition` CRDs plus runtime-config selector defaults and transport
+The first implementation slice now adds installable `AIMProfileComposition` and
+`AIMClusterProfileComposition` CRDs plus runtime-config selector defaults and transport
 preset fields. It does **not** add `AIMService.spec.composition`, recipe
 reconciliation, profile resolution, or workload projection. No composition can
 start an inference workload in this slice.
