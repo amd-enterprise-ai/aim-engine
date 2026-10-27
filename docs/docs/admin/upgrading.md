@@ -112,12 +112,14 @@ kubectl wait --for=condition=Established \
 After updating the CRDs but before upgrading the operator:
 
 1. Set `spec.baseImageRef` on affected hand-authored deployable profiles.
-2. Configure mappings for the producer references recorded by released AIM
-   images. Fresh chart installations include the public compatibility mappings
-   shown below. Existing releases upgraded with `--reuse-values` do not inherit
-   newly added chart defaults, so add them to the values used for the upgrade.
-3. Repeat mappings on named RuntimeConfigs selected by services or legacy
-   fine-tuned models; mappings present only on `default` do not apply there.
+2. Review mappings for the producer references recorded by released AIM images.
+   The operator applies the public compatibility mappings shown below as
+   fallbacks regardless of the selected RuntimeConfig. Fresh chart installations
+   also expose them on the default cluster RuntimeConfig.
+3. Private and air-gapped installations must configure their mirror explicitly.
+   Repeat that policy on named RuntimeConfigs selected by services or legacy
+   fine-tuned models; a matching configured mapping wins over the public
+   fallback, while other mappings on `default` are not inherited by name.
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -140,6 +142,13 @@ producer prefixes directly to their internal mirror and add a
 `docker.io/amdenterpriseai` mapping for newer public references. Mapping is
 single-pass, so `silogenai -> amdenterpriseai -> internal` does not chain. AIM
 Engine does not fall back to a rolling tag.
+
+Existing derived profiles are updated in place when the upgraded controller
+reconciles exact producer lineage. For example, a previously synthesized
+`aim-base:0.13` can become `aim-base:0.13.1`, and a date tag such as
+`aim-base:2026.11` can become `aim-base:2026.11.0`. Running fine-tuned services
+that consume those profiles can therefore roll and pull a new image of about
+9 GB; plan registry bandwidth and rollout capacity accordingly.
 
 ### 4. Upgrade the operator
 

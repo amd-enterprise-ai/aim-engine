@@ -1,0 +1,9 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+spec:
+  imageRegistry:
+    mappings:
+      - from: ghcr.io/silogen
+        to: docker.io/amdenterpriseai

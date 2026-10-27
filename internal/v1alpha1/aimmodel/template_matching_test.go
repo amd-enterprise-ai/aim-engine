@@ -971,7 +971,10 @@ func TestBuildFineTunedClusterServiceTemplates_StampsAnnotationPerMatch(t *testi
 		}
 		gotImages[ref] = true
 	}
-	for _, want := range []string{"ghcr.io/silogen/aim-base:0.11", "ghcr.io/silogen/aim-epyc-base:0.11"} {
+	for _, want := range []string{
+		"docker.io/amdenterpriseai/aim-base:0.11",
+		"docker.io/amdenterpriseai/aim-epyc-base:0.11",
+	} {
 		if !gotImages[want] {
 			t.Errorf("expected at least one template stamped with %q, got %v", want, gotImages)
 		}
@@ -1005,7 +1008,7 @@ func TestBuildFineTunedClusterServiceTemplates_SkipsUnresolvableMatches(t *testi
 	if len(templates) != 1 {
 		t.Fatalf("expected 1 template (deferred match skipped), got %d", len(templates))
 	}
-	if got := templates[0].Annotations[constants.AnnotationDeploymentImageRef]; got != "ghcr.io/silogen/aim-base:0.11" {
+	if got := templates[0].Annotations[constants.AnnotationDeploymentImageRef]; got != "docker.io/amdenterpriseai/aim-base:0.11" {
 		t.Errorf("unexpected stamped image: %q", got)
 	}
 }

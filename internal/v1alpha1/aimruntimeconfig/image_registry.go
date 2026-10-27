@@ -27,18 +27,37 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 )
 
+var compatibilityImageRegistryMappings = []aimimage.RegistryMapping{
+	{
+		From:     "docker.io/silogenai",
+		To:       "docker.io/amdenterpriseai",
+		Fallback: true,
+	},
+	{
+		From:     "ghcr.io/silogen",
+		To:       "docker.io/amdenterpriseai",
+		Fallback: true,
+	},
+}
+
 // ImageRegistryMappings adapts RuntimeConfig registry policy to the
-// version-neutral image-reference resolver.
+// version-neutral image-reference resolver. Operator-owned compatibility
+// mappings are fallbacks, so any matching mapping from the selected
+// RuntimeConfig wins, including a broader private-registry mapping.
 func ImageRegistryMappings(config *aimv1alpha1.AIMRuntimeConfigCommon) []aimimage.RegistryMapping {
-	if config == nil || config.ImageRegistry == nil {
-		return nil
+	configured := 0
+	if config != nil && config.ImageRegistry != nil {
+		configured = len(config.ImageRegistry.Mappings)
 	}
-	mappings := make([]aimimage.RegistryMapping, 0, len(config.ImageRegistry.Mappings))
-	for _, mapping := range config.ImageRegistry.Mappings {
-		mappings = append(mappings, aimimage.RegistryMapping{
-			From: mapping.From,
-			To:   mapping.To,
-		})
+	mappings := make([]aimimage.RegistryMapping, 0, configured+len(compatibilityImageRegistryMappings))
+	if configured > 0 {
+		for _, mapping := range config.ImageRegistry.Mappings {
+			mappings = append(mappings, aimimage.RegistryMapping{
+				From: mapping.From,
+				To:   mapping.To,
+			})
+		}
 	}
+	mappings = append(mappings, compatibilityImageRegistryMappings...)
 	return mappings
 }

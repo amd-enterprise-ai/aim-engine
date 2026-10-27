@@ -73,6 +73,44 @@ func TestResolveReference(t *testing.T) {
 			want: "registry.internal/aim/aim-base:0.11",
 		},
 		{
+			name: "fallback applies when no configured mapping matches",
+			ref:  "ghcr.io/silogen/aim-base:0.11",
+			mappings: []RegistryMapping{
+				{
+					From:     "ghcr.io/silogen",
+					To:       "docker.io/amdenterpriseai",
+					Fallback: true,
+				},
+			},
+			want: "docker.io/amdenterpriseai/aim-base:0.11",
+		},
+		{
+			name: "configured broad mapping wins over specific fallback",
+			ref:  "ghcr.io/silogen/aim-base:0.11",
+			mappings: []RegistryMapping{
+				{From: "ghcr.io", To: "registry.internal/ghcr"},
+				{
+					From:     "ghcr.io/silogen",
+					To:       "docker.io/amdenterpriseai",
+					Fallback: true,
+				},
+			},
+			want: "registry.internal/ghcr/silogen/aim-base:0.11",
+		},
+		{
+			name: "longest matching fallback wins",
+			ref:  "ghcr.io/silogen/aim-base:0.11",
+			mappings: []RegistryMapping{
+				{From: "ghcr.io", To: "registry.fallback/ghcr", Fallback: true},
+				{
+					From:     "ghcr.io/silogen",
+					To:       "docker.io/amdenterpriseai",
+					Fallback: true,
+				},
+			},
+			want: "docker.io/amdenterpriseai/aim-base:0.11",
+		},
+		{
 			name: "segment boundary prevents partial prefix match",
 			ref:  "docker.io/amdenterpriseai-preview/aim-base:0.11",
 			mappings: []RegistryMapping{

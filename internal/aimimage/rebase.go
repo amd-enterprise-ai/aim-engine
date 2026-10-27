@@ -34,22 +34,29 @@ import (
 
 // RegistryMapping rewrites one image repository prefix to another.
 type RegistryMapping struct {
-	From string
-	To   string
+	From     string
+	To       string
+	Fallback bool
 }
 
 // ResolveReference applies the longest matching repository-prefix mapping to
-// ref while preserving its repository suffix, tag, and digest exactly. When no
-// mapping matches, ref is returned unchanged.
+// ref while preserving its repository suffix, tag, and digest exactly.
+// Configured mappings take precedence over fallback mappings even when the
+// fallback has a longer prefix. When no mapping matches, ref is returned
+// unchanged.
 func ResolveReference(ref string, mappings []RegistryMapping) (string, error) {
 	if ref == "" || len(mappings) == 0 {
 		return ref, nil
 	}
 
 	repository, suffix := splitReference(ref)
-	best := -1
-	bestFrom := ""
-	bestTo := ""
+	type match struct {
+		length int
+		from   string
+		to     string
+	}
+	configured := match{length: -1}
+	fallback := match{length: -1}
 	for i, mapping := range mappings {
 		if err := validateRepositoryPrefix(mapping.From); err != nil {
 			return "", fmt.Errorf("image registry mapping %d from %q: %w", i, mapping.From, err)
@@ -60,16 +67,24 @@ func ResolveReference(ref string, mappings []RegistryMapping) (string, error) {
 		if repository != mapping.From && !strings.HasPrefix(repository, mapping.From+"/") {
 			continue
 		}
-		if len(mapping.From) > best {
-			best = len(mapping.From)
-			bestFrom = mapping.From
-			bestTo = mapping.To
+		best := &configured
+		if mapping.Fallback {
+			best = &fallback
+		}
+		if len(mapping.From) > best.length {
+			best.length = len(mapping.From)
+			best.from = mapping.From
+			best.to = mapping.To
 		}
 	}
-	if best < 0 {
+	best := configured
+	if best.length < 0 {
+		best = fallback
+	}
+	if best.length < 0 {
 		return ref, nil
 	}
-	return bestTo + strings.TrimPrefix(repository, bestFrom) + suffix, nil
+	return best.to + strings.TrimPrefix(repository, best.from) + suffix, nil
 }
 
 // splitReference separates the repository name from an optional tag/digest

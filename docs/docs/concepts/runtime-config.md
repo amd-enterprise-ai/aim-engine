@@ -90,8 +90,9 @@ must apply to both.
 `spec.imageRegistry.mappings` explicitly redirects image repository prefixes.
 Some released AIM model images record a producer-private `AIM_BASE_IMAGE_REF`
 even though the same runtime is published publicly under
-`docker.io/amdenterpriseai`. The Helm chart's default cluster RuntimeConfig
-therefore includes these compatibility mappings:
+`docker.io/amdenterpriseai`. AIM Engine therefore carries these operator-owned
+compatibility fallbacks, and the Helm chart also materializes them in its
+default cluster RuntimeConfig:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -121,9 +122,11 @@ are not chained through an intermediate repository.
 
 Mappings use repository-segment boundaries, and the longest matching `from`
 prefix wins. Namespace mappings replace cluster mappings with the same `from`
-value while preserving unrelated cluster mappings. If no mapping matches, AIM
-Engine uses the image reference exactly as recorded; it does not infer a mirror,
-probe registries, or fall back between registries.
+value while preserving unrelated cluster mappings. Any matching configured
+mapping takes precedence over the operator compatibility fallbacks, even when
+the configured prefix is broader. If neither configured nor compatibility
+mapping matches, AIM Engine uses the image reference exactly as recorded; it
+does not infer a mirror, probe registries, or fall back between registries.
 
 Matching is literal. AIM Engine does not treat `amdenterpriseai/aim-base`,
 `docker.io/amdenterpriseai/aim-base`, and
@@ -140,9 +143,11 @@ The RuntimeConfig supplying mappings depends on the derivation owner:
 | v1alpha1 fine-tuned `AIMModel` / `AIMClusterModel` template copies | The RuntimeConfig selected by that model |
 
 Explicit derivation image overrides remain authoritative and are not remapped.
-If a service or model selects a named RuntimeConfig, mappings placed only on
-`default` do not apply to that path; repeat the infrastructure mapping on the
-selected configuration.
+The two public compatibility fallbacks apply regardless of which RuntimeConfig
+a service or model selects. Other mappings placed only on `default` do not
+apply to a named configuration. Private and air-gapped installations should
+repeat their explicit mirror mapping on each selected named configuration; that
+configured policy wins over the public fallback.
 
 If an image does not contain `AIM_BASE_IMAGE_REF`, derivation reports a
 controlled resolution error and retains existing managed profiles rather than

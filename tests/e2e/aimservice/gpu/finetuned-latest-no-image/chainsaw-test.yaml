@@ -27,9 +27,9 @@
 # Requires:
 # - GPU infrastructure (real AIM image, real dry-run, real inference).
 # - HF_TOKEN exported for the shared per-test Secret setup (meta-llama is gated).
-#   The producer reference is private, but the chart's default RuntimeConfig
-#   maps it to the public Docker Hub runtime, so no registry pull secret is
-#   required.
+#   The producer reference is private, but this fixture installs a namespace
+#   default RuntimeConfig that maps it to the public Docker Hub runtime, so the
+#   test behaves the same under Helm and Tilt/kustomize.
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
@@ -53,6 +53,11 @@ spec:
   steps:
     - use:
         template: ../../../_shared/hf-token-step.yaml
+
+    - name: Apply test-local base-image compatibility mapping
+      try:
+        - apply:
+            file: default-runtime-config.yaml
 
     - name: Apply the base AIMModel (real AIM image)
       try:

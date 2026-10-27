@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 )
 
 func newFakeClient(objs ...client.Object) client.Client {
@@ -166,6 +167,63 @@ func TestFetchRuntimeConfig_MergeNamespaceOverridesCluster(t *testing.T) {
 	// Cluster value should be preserved where namespace didn't override
 	if result.Value.Storage.DefaultStorageClassName == nil || *result.Value.Storage.DefaultStorageClassName != "cluster-sc" {
 		t.Error("expected DefaultStorageClassName from cluster to be preserved")
+	}
+}
+
+func TestFetchRuntimeConfig_NamedUsesCompatibilityImageMapping(t *testing.T) {
+	defaultClusterConfig := &aimv1alpha1.AIMClusterRuntimeConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: DefaultRuntimeConfigName},
+		Spec: aimv1alpha1.AIMClusterRuntimeConfigSpec{
+			AIMRuntimeConfigCommon: aimv1alpha1.AIMRuntimeConfigCommon{
+				ImageRegistry: &aimv1alpha1.AIMImageRegistryConfig{
+					Mappings: []aimv1alpha1.AIMImageRegistryMapping{
+						{
+							From: "ghcr.io/silogen",
+							To:   "docker.io/amdenterpriseai",
+						},
+					},
+				},
+			},
+		},
+	}
+	namedNamespaceConfig := &aimv1alpha1.AIMRuntimeConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "routing", Namespace: "test-ns"},
+		Spec: aimv1alpha1.AIMRuntimeConfigSpec{
+			AIMRuntimeConfigCommon: aimv1alpha1.AIMRuntimeConfigCommon{
+				AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+					Routing: &aimv1alpha1.AIMRuntimeRoutingConfig{
+						Enabled: ptr.To(true),
+					},
+				},
+			},
+		},
+	}
+
+	result := FetchMergedRuntimeConfig(
+		context.Background(),
+		newFakeClient(defaultClusterConfig, namedNamespaceConfig),
+		"routing",
+		"test-ns",
+	)
+
+	if result.HasError() {
+		t.Fatalf("unexpected error: %v", result.Error)
+	}
+	if result.Value == nil {
+		t.Fatal("expected merged config")
+	}
+	if result.Value.Routing == nil || result.Value.Routing.Enabled == nil || !*result.Value.Routing.Enabled {
+		t.Fatal("expected routing from named namespace config")
+	}
+	got, err := aimimage.ResolveReference(
+		"ghcr.io/silogen/aim-base:0.11",
+		ImageRegistryMappings(result.Value),
+	)
+	if err != nil {
+		t.Fatalf("resolve compatibility image mapping: %v", err)
+	}
+	if want := "docker.io/amdenterpriseai/aim-base:0.11"; got != want {
+		t.Fatalf("resolved deployment image = %q, want %q", got, want)
 	}
 }
 
