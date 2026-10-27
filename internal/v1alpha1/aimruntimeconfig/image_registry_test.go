@@ -65,3 +65,27 @@ func TestImageRegistryMappings_ConfiguredPolicyWinsFallback(t *testing.T) {
 		t.Fatalf("resolved image = %q, want %q", got, want)
 	}
 }
+
+func TestImageRegistryMappings_SelfMappingDisablesCompatibilityFallback(t *testing.T) {
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		ImageRegistry: &aimv1alpha1.AIMImageRegistryConfig{
+			Mappings: []aimv1alpha1.AIMImageRegistryMapping{
+				{
+					From: "docker.io/silogenai",
+					To:   "docker.io/silogenai",
+				},
+			},
+		},
+	}
+
+	got, err := aimimage.ResolveReference(
+		"docker.io/silogenai/aim-base:0.14.0-rc1",
+		ImageRegistryMappings(config),
+	)
+	if err != nil {
+		t.Fatalf("resolve configured self-mapping: %v", err)
+	}
+	if want := "docker.io/silogenai/aim-base:0.14.0-rc1"; got != want {
+		t.Fatalf("resolved image = %q, want %q", got, want)
+	}
+}

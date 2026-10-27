@@ -124,9 +124,24 @@ Mappings use repository-segment boundaries, and the longest matching `from`
 prefix wins. Namespace mappings replace cluster mappings with the same `from`
 value while preserving unrelated cluster mappings. Any matching configured
 mapping takes precedence over the operator compatibility fallbacks, even when
-the configured prefix is broader. If neither configured nor compatibility
-mapping matches, AIM Engine uses the image reference exactly as recorded; it
-does not infer a mirror, probe registries, or fall back between registries.
+the configured prefix is broader. To keep a producer-private reference
+unchanged—for example, when an internal cluster can pull release-candidate
+images that have not been published under `amdenterpriseai`—configure an exact
+self-mapping in the RuntimeConfig used by that derivation:
+
+```yaml
+spec:
+  imageRegistry:
+    mappings:
+      - from: docker.io/silogenai
+        to: docker.io/silogenai
+```
+
+This explicitly opts that prefix out of the operator compatibility fallback.
+Use the equivalent self-mapping for `ghcr.io/silogen` if needed. If neither a
+configured nor compatibility mapping matches, AIM Engine uses the image
+reference exactly as recorded; it does not infer a mirror, probe registries, or
+fall back between registries.
 
 Matching is literal. AIM Engine does not treat `amdenterpriseai/aim-base`,
 `docker.io/amdenterpriseai/aim-base`, and

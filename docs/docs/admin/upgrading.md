@@ -141,7 +141,10 @@ the destination registry. Private and air-gapped installations should map both
 producer prefixes directly to their internal mirror and add a
 `docker.io/amdenterpriseai` mapping for newer public references. Mapping is
 single-pass, so `silogenai -> amdenterpriseai -> internal` does not chain. AIM
-Engine does not fall back to a rolling tag.
+Engine does not fall back to a rolling tag. Internal clusters that must retain
+producer-private release-candidate references can opt out of a compatibility
+fallback with an exact self-mapping such as `from: docker.io/silogenai` and
+`to: docker.io/silogenai` in the RuntimeConfig used by the derivation.
 
 Existing derived profiles are updated in place when the upgraded controller
 reconciles exact producer lineage. For example, a previously synthesized
