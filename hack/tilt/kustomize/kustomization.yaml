@@ -28,6 +28,10 @@ patches:
               runAsNonRoot: false
             containers:
               - name: manager
+                # Tilt matches this name and injects its build. Set here rather
+                # than with an `images:` rule, which would have to match the
+                # base image name that `make build-installer` rewrites.
+                image: ttl.sh/aim-placeholder/manager:tilt
                 securityContext:
                   runAsNonRoot: false
                   runAsUser: 0
@@ -61,10 +65,3 @@ patches:
               - name: go-mod-cache
                 persistentVolumeClaim:
                   claimName: aim-engine-go-mod-cache
-
-# Image replacement - Tilt will match this and inject its built image
-# Note: config/manager already transforms controller -> docker.io/amdenterpriseai/aim-engine
-images:
-  - name: docker.io/amdenterpriseai/aim-engine
-    newName: ttl.sh/aim-placeholder/manager
-    newTag: tilt

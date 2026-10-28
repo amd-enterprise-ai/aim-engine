@@ -83,6 +83,33 @@ jobs:
             exit 1
           fi
 
+      - name: Check the draft's assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # compile-release uploads these after pushing the images and charts,
+          # so an interrupted upload leaves a draft that passes every other
+          # check. Keep in sync with the files of its draft release step.
+          required=(
+            install.yaml
+            crds.yaml
+            "aim-engine-chart-${CHART_VERSION}.tgz"
+            "aim-engine-crds-chart-${CHART_VERSION}.tgz"
+            envoy-gateway-route-metrics.yaml
+            envoy-gateway-metrics-collector.yaml
+            kgateway-metrics-collector.yaml
+          )
+          uploaded=$(gh release view "${VERSION}" --json assets \
+            --jq '.assets[] | select(.state == "uploaded" and .size > 0) | .name')
+          missing=0
+          for name in "${required[@]}"; do
+            if ! grep -qxF -- "${name}" <<< "${uploaded}"; then
+              echo "::error::The draft has no complete ${name}. Re-run the failed jobs of the compile-release run for ${VERSION}."
+              missing=1
+            fi
+          done
+          exit "${missing}"
+
       - name: Set up Helm
         uses: azure/setup-helm@v4.3.1
 

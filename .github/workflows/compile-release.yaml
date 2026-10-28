@@ -284,12 +284,21 @@ jobs:
           version *after* the manual silogenai → amdenterpriseai image
           promotion has run. The operator binary likewise bakes the public
           `docker.io/amdenterpriseai/aim-artifact-downloader` default. To
-          install **before** promotion, provision a `dockerhub-regcred` pull
-          secret in the install namespace (skip if it is already present) and
-          override both the operator image and the artifact-downloader image to
-          point at the private silogenai org.
+          install **before** promotion, log in to the private silogenai charts,
+          install the CRDs chart first (the operator chart doesn't include the
+          CRDs, and creates an `AIMClusterRuntimeConfig` by default), provision
+          a `dockerhub-regcred` pull secret in the install namespace (skip if it
+          is already present), and override both the operator image and the
+          artifact-downloader image to point at the private silogenai org.
 
           ```bash
+          # A Docker Hub account with read access to silogenai.
+          helm registry login registry-1.docker.io -u <dockerhub-user>
+
+          helm install aim-engine-crds __CHART_OCI_REPO__/aim-engine-crds-chart \
+            --version __CHART_VERSION__
+          kubectl wait --for=condition=Established crd --all --timeout=60s
+
           kubectl create namespace aim-system --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret docker-registry dockerhub-regcred \
             --namespace aim-system \

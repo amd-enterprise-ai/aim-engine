@@ -137,9 +137,15 @@ make release VERSION=vX.Y.Z-rc1
 
 `compile-release` pushes the images and charts to `silogenai` and runs the tests. There is no GitHub release for a candidate.
 
-The chart and the operator binary always reference the public org, so installing a candidate needs overrides. Install the CRDs chart (`oci://registry-1.docker.io/silogenai/aim-engine-crds-chart`, same version) first, and make sure the `dockerhub-regcred` pull secret exists in `aim-system`:
+The chart and the operator binary always reference the public org, so installing a candidate needs overrides. The `silogenai` charts are private, so log in first with a Docker Hub account that can read them. Install the CRDs chart first: the operator chart doesn't include the CRDs, and creates an `AIMClusterRuntimeConfig` by default. Make sure the `dockerhub-regcred` pull secret exists in `aim-system`:
 
 ```bash
+helm registry login registry-1.docker.io -u <dockerhub-user>
+
+helm install aim-engine-crds oci://registry-1.docker.io/silogenai/aim-engine-crds-chart \
+  --version X.Y.Z-rc1
+kubectl wait --for=condition=Established crd --all --timeout=60s
+
 helm install aim-engine oci://registry-1.docker.io/silogenai/aim-engine-chart \
   --version X.Y.Z-rc1 \
   --namespace aim-system --create-namespace \
