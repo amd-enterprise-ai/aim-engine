@@ -11,7 +11,7 @@ https://enterprise-ai.docs.amd.com.
 This project also builds standalone and is aggregated into the umbrella
 AMDEnterpriseAISuiteDocs site, where the contents of ``docs/docs`` are rsynced
 under ``docs/aim-engine/`` (see
-``.github/workflows/copy-docs-to-public-docs.yaml``) and built by that repo's
+``.github/workflows/sync-docs-to-central-repo.yml``) and built by that repo's
 own config. To keep both modes working: all internal links are relative ``.md``
 links, the table of contents lives in ``_toc.yml``, and nothing hardcodes the
 ``aim-engine/`` prefix that only exists in the umbrella site.
