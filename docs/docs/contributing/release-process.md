@@ -46,8 +46,23 @@ make docker-push IMG=docker.io/amdenterpriseai/aim-engine:v0.8.5
 
 ## Distribution
 
-Tagged releases are produced by the `compile-release` workflow on every `v*`
-tag. The workflow:
+A release (`vX.Y.Z`) or release candidate (`vX.Y.Z-rcN`) starts in one of two
+ways:
+
+- **Run workflow** on the `compile-release` workflow's Actions page, run from
+  `main`, with the version. The run tags the `main` commit it runs on, then
+  builds the version and syncs the docs itself, because a tag created by a
+  workflow doesn't start other workflows.
+- `make release VERSION=vX.Y.Z` from an up-to-date `main`, which tags `HEAD`
+  and pushes the tag.
+
+Both reject a version in any other format, a tag that already exists, and a
+final version without a `CHANGELOG.md` section
+(`hack/release/check-version.sh`). Pushing a tag by hand still works, and is
+how `*int-test` tags are created. If a build fails after tagging, use **Re-run
+failed jobs** on that run: the tag already exists, so a new run is rejected.
+
+The `compile-release` workflow builds every `v*` and `*int-test` tag:
 
 - regenerates CRDs, then runs `make test-bridge-contract` before packaging or
   publishing Helm/CRD artifacts

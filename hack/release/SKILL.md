@@ -10,10 +10,10 @@ This skill covers the full release lifecycle. Detect the current stage and proce
 ## How a release flows
 
 - Every tag builds into the private `docker.io/silogenai` org. A release (`vX.Y.Z`) is then promoted byte-for-byte to the public `docker.io/amdenterpriseai` org by an external promotion tool, and only published after that.
-- Tags are pushed from git. Never create the tag or the release in the GitHub UI: `compile-release` creates the draft itself, and a release published in the UI goes public before promotion, after which `publish-release` refuses it.
-- `compile-release` runs on the tag push. It builds the operator, the artifact downloader and both charts into `silogenai` and runs the Kind tests. For `vX.Y.Z` it also creates a draft GitHub release with internal install notes and the assets. Release candidates (`vX.Y.Z-rc1`) and `*int-test` tags get no GitHub release.
+- A release or candidate starts from the `compile-release` **Run workflow** button on `main` (or `gh workflow run compile-release.yaml --ref main -f version=vX.Y.Z`), or from `make release`. Both run `hack/release/check-version.sh`, which rejects a version that isn't `vX.Y.Z` or `vX.Y.Z-rcN`, an existing tag, and a final version without a `CHANGELOG.md` section. Never create the tag or the release on the Releases page: `compile-release` creates the draft itself, and a release published there goes public before promotion, after which `publish-release` refuses it.
+- `compile-release` runs on a tag push, or creates the tag itself when started from the button. A tag created by a workflow starts no other workflows, so a button run also builds and syncs the docs in the same run. It builds the operator, the artifact downloader and both charts into `silogenai` and runs the Kind tests. For `vX.Y.Z` it also creates a draft GitHub release with internal install notes and the assets. Release candidates (`vX.Y.Z-rc1`) and `*int-test` tags get no GitHub release.
 - `publish-release` runs from `main` via `workflow_dispatch`, normally started by the promotion tool. It checks the promoted artifacts can be pulled anonymously, then publishes the draft with the version's `CHANGELOG.md` section from `main` as "What's changed", followed by the public install instructions. It then force-pushes the `artifacts` branch.
-- `Docs - Sync to central repo` runs on every `v*` tag push, including candidates, and on pushes to `release/**` branches that change `docs/docs/`.
+- `Docs - Sync to central repo` runs on every `v*` tag push, including candidates, and on pushes to `release/**` branches that change `docs/docs/`. For a button run, `compile-release` calls it.
 
 ## Stage detection
 
@@ -127,13 +127,12 @@ git pull
 
 ## Stage 4: Release candidates (optional)
 
-Tag release candidates directly with git; `make release` requires a `CHANGELOG.md` section for the exact version it tags. Confirm with the user before pushing a tag.
+Candidates don't need a `CHANGELOG.md` section. Confirm with the user before tagging, then either ask them to use the Run workflow button with `vX.Y.Z-rc1`, or run:
 
 ```bash
 git checkout main
 git pull
-git tag -a vX.Y.Z-rc1 -m "Release candidate vX.Y.Z-rc1"
-git push origin vX.Y.Z-rc1
+make release VERSION=vX.Y.Z-rc1
 ```
 
 `compile-release` pushes the images and charts to `silogenai` and runs the tests. There is no GitHub release for a candidate.
@@ -166,17 +165,22 @@ make release VERSION=vX.Y.Z
 
 The script validates everything, shows a summary, asks for confirmation (pass `YES=1` to skip for non-interactive/agent use), creates the tag, and pushes only that tag.
 
+Alternatively, the user can start the release from the `compile-release` Run workflow button on `main` with `vX.Y.Z`. It runs the same checks and tags the `main` commit it runs on.
+
 The release tag is always a fresh build, even on the same commit as the last candidate, because the version is baked into the images and charts.
 
 `compile-release` then builds into `silogenai`, runs the tests, and creates the draft GitHub release.
 
 ## Stage 6: Test and promote
 
-Follow the build:
+Follow the build. A pushed tag's run is listed under the tag; a button run is listed under `main`:
 ```bash
 gh run list --workflow compile-release.yaml --branch vX.Y.Z
+gh run list --workflow compile-release.yaml --branch main --event workflow_dispatch
 gh run watch <run-id>
 ```
+
+If the build fails after a button run created the tag, re-run the failed jobs (`gh run rerun <run-id> --failed`); a new button run is rejected because the tag exists.
 
 Once the draft exists, the user tests from its internal install notes, which use the same `silogenai` overrides as a candidate. The draft's `install.yaml` references the public image, so it only works after promotion. Tell the user whether the run's tests passed before they promote.
 

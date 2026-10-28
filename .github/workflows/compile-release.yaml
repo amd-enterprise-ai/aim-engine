@@ -5,8 +5,14 @@ on:
     tags:
       - "v*"
       - "*int-test"
-  # Re-runs a tag build; dispatching from a branch is skipped by the job guard.
+  # The Run workflow button: tags the main commit it runs on and builds that
+  # version like a pushed tag.
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to tag on main and build (vX.Y.Z or vX.Y.Z-rcN)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -26,10 +32,54 @@ env:
   CHART_OCI_REPO: oci://registry-1.docker.io/silogenai
 
 jobs:
+  create-tag:
+    # A tag pushed with the workflow token doesn't start another run, so this
+    # run builds the version and syncs the docs itself. Tagging is its own job
+    # so that re-running a failed build doesn't try to create the tag again.
+    if: github.repository == 'amd-enterprise-ai/aim-engine' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+
+    steps:
+      - name: Require main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Run this workflow from main; releases are tagged on main."
+          exit 1
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: ./hack/release/check-version.sh "${VERSION}"
+
+      - name: Create and push the tag
+        id: tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # The commit this run checked out, even if main has moved since.
+          git tag -a "${VERSION}" -m "Release ${VERSION}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Tagged \`${VERSION}\` at ${GITHUB_SHA}." >> "$GITHUB_STEP_SUMMARY"
+
   compile-release:
+    needs: create-tag
     # Forks and mirrors must not push to the silogenai org, and only tags may
-    # publish: the tag name is the version that promotion copies.
-    if: github.repository == 'amd-enterprise-ai/aim-engine' && github.ref_type == 'tag'
+    # publish: the tag name is the version that promotion copies. A pushed tag
+    # skips create-tag; a Run workflow button run builds only once it tagged.
+    if: >-
+      !cancelled() && github.repository == 'amd-enterprise-ai/aim-engine' &&
+      ((github.event_name == 'push' && github.ref_type == 'tag') ||
+      needs.create-tag.result == 'success')
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
@@ -53,8 +103,11 @@ jobs:
 
       - name: Determine version
         id: ver
+        env:
+          # Empty for a pushed tag, whose name is the version.
+          TAGGED_VERSION: ${{ needs.create-tag.outputs.version }}
         run: |
-          VERSION="${GITHUB_REF_NAME}"
+          VERSION="${TAGGED_VERSION:-${GITHUB_REF_NAME}}"
           CHART_VERSION="${VERSION#v}"
           SHORT_SHA="${GITHUB_SHA::7}"
           # Int-test charts have a static name (INT_TEST_CHART_VERSION) but need a
@@ -274,6 +327,8 @@ jobs:
         if: steps.ver.outputs.is_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          # The default is the run's ref, which is main for a button run.
+          tag_name: ${{ env.VERSION }}
           files: |
             dist/install.yaml
             dist/crds.yaml
@@ -304,9 +359,13 @@ jobs:
     name: test-release
     runs-on: ubuntu-latest
     needs: compile-release
+    # Without a status check, the create-tag job that a pushed tag skips would
+    # skip this job too.
+    if: ${{ !cancelled() && needs.compile-release.result == 'success' }}
     timeout-minutes: 60
     concurrency:
-      group: compile-release-test-${{ github.ref }}
+      # Keyed on the version: every button run has the same ref (main).
+      group: compile-release-test-${{ needs.compile-release.outputs.version }}
       cancel-in-progress: false
     env:
       VERSION: ${{ needs.compile-release.outputs.version }}
@@ -670,3 +729,15 @@ jobs:
       - name: Delete kubeconfig
         if: always()
         run: rm -f "${KUBECONFIG}"
+
+  sync-docs:
+    # A pushed tag starts the docs sync on its own; a tag created by
+    # create-tag doesn't, so a button run calls it here.
+    needs: create-tag
+    permissions:
+      contents: read
+    uses: ./.github/workflows/sync-docs-to-central-repo.yml
+    with:
+      ref: ${{ needs.create-tag.outputs.version }}
+    secrets:
+      DOCS_REPO_TOKEN: ${{ secrets.DOCS_REPO_TOKEN }}

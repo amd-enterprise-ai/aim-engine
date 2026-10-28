@@ -6,12 +6,16 @@
 #
 # Example:
 #   ./hack/release/release.sh v0.2.0
+#   ./hack/release/release.sh v0.2.0-rc1
 #   ./hack/release/release.sh v0.2.0 --yes   # skip confirmation (for agent/CI use)
 #
 # Prerequisites:
-#   - CHANGELOG.md updated with the new version section
+#   - CHANGELOG.md updated with the new version section (final versions only)
 #   - Working directory is clean (all changes committed)
 #   - Local main is at origin/main
+#
+# The version checks are shared with the compile-release Run workflow button
+# (check-version.sh).
 set -euo pipefail
 
 VERSION=""
@@ -32,26 +36,10 @@ fi
 
 # --- Validation ---
 
-if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
-    echo "ERROR: Version must be semver with 'v' prefix (e.g. v0.2.0, v1.0.0-rc1)"
-    exit 1
-fi
-
 CURRENT_BRANCH=$(git branch --show-current)
 if [[ "$CURRENT_BRANCH" != "main" ]]; then
     echo "ERROR: Must be on main to release (currently on $CURRENT_BRANCH)."
     echo "Merge your release branch first, then run this from main."
-    exit 1
-fi
-
-if git rev-parse "$VERSION" >/dev/null 2>&1; then
-    echo "ERROR: Tag $VERSION already exists"
-    exit 1
-fi
-
-if ! grep -q "## \[${VERSION#v}\]" CHANGELOG.md 2>/dev/null; then
-    echo "ERROR: CHANGELOG.md does not contain a section for [${VERSION#v}]."
-    echo "Update CHANGELOG.md before releasing."
     exit 1
 fi
 
@@ -66,6 +54,8 @@ if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
     echo "Run 'git pull', and land any local commits through a PR first."
     exit 1
 fi
+
+bash "$(dirname "$0")/check-version.sh" "$VERSION"
 
 IS_RELEASE=false
 if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
