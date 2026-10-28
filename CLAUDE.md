@@ -2,6 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Contributing standards (authors & reviewers)
+
+Canonical docs (read when authoring or reviewing; do not reinvent conventions):
+
+- [Coding Guidelines](docs/docs/contributing/coding-guidelines.md) — naming, comments, docs/samples, phase discipline, tests
+- [PR Review Guidelines](docs/docs/contributing/pr-review-guidelines.md) — production readiness, cross-layer completeness, severity, alternatives
+
+When helping with a PR as author or reviewer, enforce at least:
+
+1. **Disambiguate overloaded terms.** Do not use bare "runtime", "profile", "model", "cache", or "template" for multiple concepts in the same change without qualification (e.g. `KServe ServingRuntime` vs `AIMRuntimeConfig` vs "runtime behavior").
+2. **Docs and samples stand alone.** No private registries, proprietary label namespaces, or closed-source tooling that an external contributor cannot resolve. Prefer public `docker.io/amdenterpriseai/...` examples; isolate any internal-only notes.
+3. **Comments explain current behavior and why**, not debugging history. Flag process diaries ("we tried X, then Y, so now Z").
+4. **Consider simpler alternatives without redesigning.** Raise a concrete, local alternative when it removes a layer or hazard; frame as Question/Important. Do not block on taste or reopen settled ADRs without new evidence.
+5. **Cross-layer completeness.** API/Helm/docs/tests/CI must stay uniform for defaults and terminology; check upgrade/`--reuse-values` impact on default changes.
+
+Full checklists live in the docs above — follow them rather than summarizing from memory.
+
 ## Build & Development Commands
 
 Tools are managed via mise. Use `mise exec --` prefix for all commands requiring mise-managed tools (go, controller-gen, chainsaw, kubectl, helm, etc.):
