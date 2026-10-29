@@ -326,9 +326,10 @@ Local-only adapter sync/reap also does not use this workload trust mechanism.
 ## S3-Compatible Storage
 
 Model artifacts with an `s3://` source URI are downloaded by a boto3-backed
-client (Signature V4). Validated end-to-end against MinIO. Other S3-v4 backends
-(AWS S3, Cloudflare R2, Backblaze B2, GCS, Ceph RGW) use the same boto3 path
-and are expected to work with the corresponding endpoint and credentials.
+client (Signature V4). Validated end-to-end against SeaweedFS. Other S3-v4
+backends (AWS S3, MinIO, Cloudflare R2, Backblaze B2, GCS, Ceph RGW) use the
+same boto3 path and are expected to work with the corresponding endpoint and
+credentials.
 
 Prefer the typed S3 configuration. It keeps credentials out of Pod environment
 variables, mounts custom trust roots consistently into size-check and download

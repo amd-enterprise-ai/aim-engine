@@ -1,0 +1,34 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seaweedfs-setup
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: aws
+        image: docker.io/amazon/aws-cli:2.38.6
+        env:
+        - name: AWS_ENDPOINT_URL
+          value: http://seaweedfs:8333
+        - name: AWS_ACCESS_KEY_ID
+          value: seaweedadmin
+        - name: AWS_SECRET_ACCESS_KEY
+          value: seaweedadmin
+        - name: AWS_DEFAULT_REGION
+          value: us-east-1
+        command:
+        - /bin/sh
+        - -c
+        - |
+          #!/bin/sh
+          set -e
+          echo "Waiting for SeaweedFS to be ready..."
+          until aws s3 ls >/dev/null; do
+            echo "Waiting for SeaweedFS..."
+            sleep 2
+          done
+          echo "Creating bucket 'models'..."
+          aws s3api head-bucket --bucket models 2>/dev/null || aws s3 mb s3://models
+          echo "Bucket setup complete"

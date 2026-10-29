@@ -5,24 +5,9 @@ metadata:
   name: failure-auth-s3
 spec:
   steps:
-    - name: Deploy Minio
-      try:
-        - apply:
-            file: minio-service.yaml
-        - apply:
-            file: minio-deployment.yaml
-
-    - name: Wait for Minio to be ready
-      try:
-        - assert:
-            timeout: 60s
-            resource:
-              apiVersion: apps/v1
-              kind: Deployment
-              metadata:
-                name: minio
-              status:
-                availableReplicas: 1
+    - name: Deploy SeaweedFS
+      use:
+        template: ../../_shared/seaweedfs-step.yaml
 
     - name: Create artifact
       try:

@@ -1,27 +1,36 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: minio-setup
+  name: seaweedfs-setup
 spec:
   template:
     spec:
       restartPolicy: OnFailure
       containers:
-      - name: mc
-        image: docker.io/pgsty/mc:RELEASE.2026-09-16T00-00-00Z
+      - name: aws
+        image: docker.io/amazon/aws-cli:2.38.6
+        env:
+        - name: AWS_ENDPOINT_URL
+          value: http://seaweedfs:8333
+        - name: AWS_ACCESS_KEY_ID
+          value: seaweedadmin
+        - name: AWS_SECRET_ACCESS_KEY
+          value: seaweedadmin
+        - name: AWS_DEFAULT_REGION
+          value: us-east-1
         command:
         - /bin/sh
         - -c
         - |
           #!/bin/sh
           set -e
-          echo "Waiting for Minio to be ready..."
-          until mc alias set myminio http://minio:9000 minioadmin minioadmin; do
-            echo "Waiting for Minio..."
+          echo "Waiting for SeaweedFS to be ready..."
+          until aws s3 ls >/dev/null; do
+            echo "Waiting for SeaweedFS..."
             sleep 2
           done
           echo "Creating bucket 'models'..."
-          mc mb myminio/models || true
+          aws s3api head-bucket --bucket models 2>/dev/null || aws s3 mb s3://models
           # Seed a synthetic model so the AIMArtifact has S3 objects to download.
           # Content is irrelevant (readiness is gated on the download Job, not the
           # bytes), so fabricate small files locally rather than pull a real model.
@@ -32,5 +41,5 @@ spec:
           head -c 8388608 /dev/urandom > /tmp/seed/SmolLM-135M/model.safetensors
           printf '{"model_type":"llama"}\n' > /tmp/seed/SmolLM-135M/config.json
           printf 'tokenizer\n' > /tmp/seed/SmolLM-135M/tokenizer.json
-          mc cp --recursive /tmp/seed/SmolLM-135M/ myminio/models/SmolLM-135M/
+          aws s3 cp --recursive --no-progress /tmp/seed/SmolLM-135M/ s3://models/SmolLM-135M/
           echo "Bucket + seed complete"

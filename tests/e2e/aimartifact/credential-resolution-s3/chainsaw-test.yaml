@@ -5,8 +5,8 @@ metadata:
 spec:
   description: >
     Pins when the S3 downloader is allowed to fall back to anonymous (unsigned)
-    requests. Two artifacts read from one MinIO, which serves an anonymously
-    readable bucket and a private one.
+    requests. Two artifacts read from one SeaweedFS, which serves an
+    anonymously readable bucket and a private one.
 
     explicit-anonymous asks for anonymous access with the "anonymous" sentinel
     against the public bucket and must reach Ready. That is the form the built-in
@@ -26,39 +26,27 @@ spec:
     and a log line announcing anonymous access, which sends the user looking at
     their sourceUri.
   steps:
-    - name: Deploy Minio
-      try:
-        - apply:
-            file: minio-service.yaml
-        - apply:
-            file: minio-deployment.yaml
-        - assert:
-            timeout: 60s
-            resource:
-              apiVersion: apps/v1
-              kind: Deployment
-              metadata:
-                name: minio
-              status:
-                availableReplicas: 1
+    - name: Deploy SeaweedFS
+      use:
+        template: ../../_shared/seaweedfs-step.yaml
 
     - name: Create a public bucket and a private bucket, seeded identically
       try:
         - apply:
-            file: minio-setup-job.yaml
+            file: seaweedfs-setup-job.yaml
         - assert:
-            timeout: 60s
+            timeout: 120s
             resource:
               apiVersion: batch/v1
               kind: Job
               metadata:
-                name: minio-setup
+                name: seaweedfs-setup
               status:
                 (succeeded != null): true
                 succeeded: 1
       catch:
         - podLogs:
-            selector: job-name=minio-setup
+            selector: job-name=seaweedfs-setup
             tail: 50
 
     - name: Create both artifacts

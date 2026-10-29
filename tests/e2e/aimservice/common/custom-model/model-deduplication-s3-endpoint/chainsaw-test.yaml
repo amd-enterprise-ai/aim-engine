@@ -71,7 +71,7 @@ spec:
                   aim.eai.amd.com/custom-model: "true"
                   aim.eai.amd.com/service: test-dedup-endpoint-service-1
                 annotations:
-                  aim.eai.amd.com/legacy-auto-custom-spec: '{"baseImage":"docker.io/amdenterpriseai/aim-dummy:0.2.0","modelSources":[{"modelId":"shared/s3-endpoint-model","sourceUri":"s3://test-bucket/model","env":[{"name":"AWS_ENDPOINT_URL","value":"https://minio-a.example.com"}]}],"hardware":{"cpu":{"requests":"500m"}}}'
+                  aim.eai.amd.com/legacy-auto-custom-spec: '{"baseImage":"docker.io/amdenterpriseai/aim-dummy:0.2.0","modelSources":[{"modelId":"shared/s3-endpoint-model","sourceUri":"s3://test-bucket/model","env":[{"name":"AWS_ENDPOINT_URL","value":"https://seaweedfs-a.example.com"}]}],"hardware":{"cpu":{"requests":"500m"}}}'
                 (ownerReferences[?apiVersion == 'aim.eai.amd.com/v1alpha2' && kind == 'AIMService' && name == 'test-dedup-endpoint-service-1']):
                   - controller: true
                     blockOwnerDeletion: true
@@ -96,7 +96,7 @@ spec:
                   aim.eai.amd.com/custom-model: "true"
                   aim.eai.amd.com/service: test-dedup-endpoint-service-2
                 annotations:
-                  aim.eai.amd.com/legacy-auto-custom-spec: '{"baseImage":"docker.io/amdenterpriseai/aim-dummy:0.2.0","modelSources":[{"modelId":"shared/s3-endpoint-model","sourceUri":"s3://test-bucket/model","env":[{"name":"AWS_ENDPOINT_URL","value":"https://minio-b.example.com"}]}],"hardware":{"cpu":{"requests":"500m"}}}'
+                  aim.eai.amd.com/legacy-auto-custom-spec: '{"baseImage":"docker.io/amdenterpriseai/aim-dummy:0.2.0","modelSources":[{"modelId":"shared/s3-endpoint-model","sourceUri":"s3://test-bucket/model","env":[{"name":"AWS_ENDPOINT_URL","value":"https://seaweedfs-b.example.com"}]}],"hardware":{"cpu":{"requests":"500m"}}}'
                 (ownerReferences[?apiVersion == 'aim.eai.amd.com/v1alpha2' && kind == 'AIMService' && name == 'test-dedup-endpoint-service-2']):
                   - controller: true
                     blockOwnerDeletion: true

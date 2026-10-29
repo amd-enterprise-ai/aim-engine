@@ -4,36 +4,21 @@ metadata:
   name: failure-missing-s3
 spec:
   steps:
-    - name: Deploy Minio
-      try:
-        - apply:
-            file: minio-service.yaml
-        - apply:
-            file: minio-deployment.yaml
+    - name: Deploy SeaweedFS
+      use:
+        template: ../../_shared/seaweedfs-step.yaml
 
-    - name: Wait for Minio to be ready
-      try:
-        - assert:
-            timeout: 60s
-            resource:
-              apiVersion: apps/v1
-              kind: Deployment
-              metadata:
-                name: minio
-              status:
-                availableReplicas: 1
-
-    - name: Create Minio bucket
+    - name: Create SeaweedFS bucket
       try:
         - apply:
-            file: minio-setup-job.yaml
+            file: seaweedfs-setup-job.yaml
         - assert:
-            timeout: 60s
+            timeout: 120s
             resource:
               apiVersion: batch/v1
               kind: Job
               metadata:
-                name: minio-setup
+                name: seaweedfs-setup
               status:
                 (succeeded != null): true
                 succeeded: 1

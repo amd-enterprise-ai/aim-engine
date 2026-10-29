@@ -11,36 +11,21 @@ spec:
     the size job, and Ready (which requires the download job's post-download
     file-presence verification to pass) proves it actually lands on disk.
   steps:
-    - name: Deploy Minio
-      try:
-        - apply:
-            file: minio-service.yaml
-        - apply:
-            file: minio-deployment.yaml
-
-    - name: Wait for Minio to be ready
-      try:
-        - assert:
-            timeout: 60s
-            resource:
-              apiVersion: apps/v1
-              kind: Deployment
-              metadata:
-                name: minio
-              status:
-                availableReplicas: 1
+    - name: Deploy SeaweedFS
+      use:
+        template: ../../_shared/seaweedfs-step.yaml
 
     - name: Create bucket and seed root + nested objects
       try:
         - apply:
-            file: minio-setup-job.yaml
+            file: seaweedfs-setup-job.yaml
         - assert:
-            timeout: 60s
+            timeout: 120s
             resource:
               apiVersion: batch/v1
               kind: Job
               metadata:
-                name: minio-setup
+                name: seaweedfs-setup
               status:
                 (succeeded != null): true
                 succeeded: 1

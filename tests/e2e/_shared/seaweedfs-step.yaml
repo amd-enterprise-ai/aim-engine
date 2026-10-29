@@ -1,0 +1,113 @@
+# Single-pod SeaweedFS S3 endpoint for S3-backed tests, reachable in the test
+# namespace at http://seaweedfs:8333.
+#
+# Access key seaweedadmin / secret key seaweedadmin has full access. Unsigned
+# (anonymous) requests may only list and read the bucket "public-models"; every
+# other bucket is private.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: StepTemplate
+metadata:
+  name: deploy-seaweedfs
+spec:
+  try:
+    - apply:
+        resource:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: seaweedfs-s3-config
+          data:
+            s3.json: |
+              {
+                "identities": [
+                  {
+                    "name": "admin",
+                    "credentials": [{"accessKey": "seaweedadmin", "secretKey": "seaweedadmin"}],
+                    "actions": ["Admin", "Read", "List", "Tagging", "Write"]
+                  },
+                  {
+                    "name": "anonymous",
+                    "actions": ["Read:public-models", "List:public-models"]
+                  }
+                ]
+              }
+    - apply:
+        resource:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: seaweedfs
+          spec:
+            selector:
+              app: seaweedfs
+            ports:
+              - name: s3
+                port: 8333
+                targetPort: s3
+    - apply:
+        resource:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: seaweedfs
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: seaweedfs
+            template:
+              metadata:
+                labels:
+                  app: seaweedfs
+              spec:
+                # A graceful SeaweedFS shutdown takes ~25s (the filer retries a
+                # metadata flush after the volume server has stopped). The data is
+                # throwaway, so don't let it stall namespace teardown.
+                terminationGracePeriodSeconds: 1
+                containers:
+                  - name: seaweedfs
+                    image: docker.io/chrislusf/seaweedfs:4.51
+                    args:
+                      - server
+                      - -dir=/data
+                      - -ip.bind=0.0.0.0
+                      # Every bucket gets its own set of 7 volumes and the volume
+                      # count is capped at free disk / volume size, so the image's
+                      # 1 GiB default runs out after a couple of buckets on CI disks.
+                      - -master.volumeSizeLimitMB=128
+                      - -master.telemetry=false
+                      - -s3
+                      - -s3.port=8333
+                      - -s3.config=/etc/seaweedfs/s3.json
+                      - -s3.iam=false
+                      - -s3.port.iceberg=0
+                      - -s3.port.lance=0
+                    ports:
+                      - name: s3
+                        containerPort: 8333
+                    readinessProbe:
+                      httpGet:
+                        path: /healthz
+                        port: s3
+                      periodSeconds: 2
+                    volumeMounts:
+                      - name: data
+                        mountPath: /data
+                      - name: s3-config
+                        mountPath: /etc/seaweedfs
+                        readOnly: true
+                volumes:
+                  - name: data
+                    emptyDir: {}
+                  - name: s3-config
+                    configMap:
+                      name: seaweedfs-s3-config
+    - assert:
+        timeout: 2m
+        resource:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: seaweedfs
+          status:
+            availableReplicas: 1

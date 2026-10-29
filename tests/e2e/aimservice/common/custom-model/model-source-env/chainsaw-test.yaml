@@ -54,7 +54,7 @@ spec:
                     sourceUri: s3://test-bucket/model
                     env:
                       - name: AWS_ENDPOINT_URL
-                        value: https://minio.example.com
+                        value: https://seaweedfs.example.com
                       - name: AWS_DEFAULT_REGION
                         value: us-east-1
 
@@ -73,6 +73,6 @@ spec:
                     sourceUri: s3://test-bucket/model
                     env:
                       - name: AWS_ENDPOINT_URL
-                        value: https://minio.example.com
+                        value: https://seaweedfs.example.com
                       - name: AWS_DEFAULT_REGION
                         value: us-east-1

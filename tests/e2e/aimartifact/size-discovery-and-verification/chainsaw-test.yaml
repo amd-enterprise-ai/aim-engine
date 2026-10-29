@@ -34,32 +34,23 @@ spec:
         template: ../../_shared/hf-token-step.yaml
 
     # ========================================
-    # Phase 1: Setup MinIO
+    # Phase 1: Setup SeaweedFS
     # ========================================
-    - name: Deploy MinIO
+    - name: Deploy SeaweedFS
+      use:
+        template: ../../_shared/seaweedfs-step.yaml
+
+    - name: Create SeaweedFS bucket
       try:
         - apply:
-            file: minio-service.yaml
-        - apply:
-            file: minio-deployment.yaml
+            file: seaweedfs-setup-job.yaml
         - assert:
-            timeout: 60s
-            resource:
-              apiVersion: apps/v1
-              kind: Deployment
-              metadata:
-                name: minio
-              status:
-                availableReplicas: 1
-        - apply:
-            file: minio-setup-job.yaml
-        - assert:
-            timeout: 60s
+            timeout: 120s
             resource:
               apiVersion: batch/v1
               kind: Job
               metadata:
-                name: minio-setup
+                name: seaweedfs-setup
               status:
                 succeeded: 1
 
@@ -100,9 +91,9 @@ spec:
                   percentage: 100
 
     # ========================================
-    # Phase 3: Upload HF model to MinIO
+    # Phase 3: Upload HF model to SeaweedFS
     # ========================================
-    - name: Upload HF model to MinIO
+    - name: Upload HF model to SeaweedFS
       try:
         - script:
             timeout: 8m
@@ -126,15 +117,22 @@ spec:
                       fsGroup: 1000
                     containers:
                       - name: uploader
-                        image: docker.io/pgsty/mc:RELEASE.2026-09-16T00-00-00Z
+                        image: docker.io/amazon/aws-cli:2.38.6
                         env:
-                          - name: MC_CONFIG_DIR
-                            value: /tmp/.mc
+                          - name: HOME
+                            value: /tmp
+                          - name: AWS_ENDPOINT_URL
+                            value: http://seaweedfs:8333
+                          - name: AWS_ACCESS_KEY_ID
+                            value: seaweedadmin
+                          - name: AWS_SECRET_ACCESS_KEY
+                            value: seaweedadmin
+                          - name: AWS_DEFAULT_REGION
+                            value: us-east-1
                         command: ["/bin/sh", "-c"]
                         args:
                           - |
-                            mc alias set myminio http://minio:9000 minioadmin minioadmin
-                            mc cp --recursive /hf-model/ myminio/models/tiny-gpt2/
+                            aws s3 cp --recursive --no-progress /hf-model/ s3://models/tiny-gpt2/
                         volumeMounts:
                           - name: hf-model
                             mountPath: /hf-model

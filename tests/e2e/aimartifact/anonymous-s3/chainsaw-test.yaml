@@ -4,8 +4,8 @@ metadata:
   name: anonymous-s3
 spec:
   description: >
-    Verifies anonymous (UNSIGNED) S3 access: a public MinIO bucket is read with
-    no credentials, requested explicitly via AIM_S3_ANONYMOUS. Exercises the
+    Verifies anonymous (UNSIGNED) S3 access: a public SeaweedFS bucket is read
+    with no credentials, requested explicitly via AIM_S3_ANONYMOUS. Exercises the
     downloader's public-bucket code path end to end (anonymous list + stat in
     the size job, anonymous list + get in the download job).
 
@@ -13,36 +13,21 @@ spec:
     here: the "anonymous" sentinel key, and omitting credentials entirely (which
     must NOT be read as a public bucket).
   steps:
-    - name: Deploy Minio
-      try:
-        - apply:
-            file: minio-service.yaml
-        - apply:
-            file: minio-deployment.yaml
+    - name: Deploy SeaweedFS
+      use:
+        template: ../../_shared/seaweedfs-step.yaml
 
-    - name: Wait for Minio to be ready
-      try:
-        - assert:
-            timeout: 60s
-            resource:
-              apiVersion: apps/v1
-              kind: Deployment
-              metadata:
-                name: minio
-              status:
-                availableReplicas: 1
-
-    - name: Create bucket, seed objects, make public
+    - name: Create the public bucket and seed objects
       try:
         - apply:
-            file: minio-setup-job.yaml
+            file: seaweedfs-setup-job.yaml
         - assert:
-            timeout: 60s
+            timeout: 120s
             resource:
               apiVersion: batch/v1
               kind: Job
               metadata:
-                name: minio-setup
+                name: seaweedfs-setup
               status:
                 (succeeded != null): true
                 succeeded: 1

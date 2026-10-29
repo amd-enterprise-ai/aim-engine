@@ -23,8 +23,8 @@
 """S3-compatible object-storage downloader for AIM artifacts.
 
 Uses boto3-backed cloudpathlib so a single configuration works across S3-v4
-backends. Validated end-to-end against MinIO (SeaweedFS is exercised as the
-built-in artifact cache backend); AWS S3, Cloudflare R2, Backblaze B2, GCS and
-Ceph RGW use the same boto3 path and are expected to work. Configured entirely
+backends. Validated end-to-end against SeaweedFS; AWS S3, MinIO, Cloudflare R2,
+Backblaze B2, GCS and Ceph RGW use the same boto3 path and are expected to
+work. Configured entirely
 via the AWS_*/AIM_S3_* environment variables passed to the download Job.
 """

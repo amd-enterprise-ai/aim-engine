@@ -8,11 +8,11 @@ spec:
   # boto3 chain" (IRSA, instance role, shared profile), not "public bucket".
   # size is omitted so the check-size job runs too -- proving anonymous
   # list + stat + download.
-  sourceUri: s3://models/tree
+  sourceUri: s3://public-models/tree
   env:
     - name: AIM_S3_ANONYMOUS
       value: "true"
     - name: AWS_ENDPOINT_URL
-      value: http://minio:9000
+      value: http://seaweedfs:8333
     - name: AWS_DEFAULT_REGION
       value: us-east-1
