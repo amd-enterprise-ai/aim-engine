@@ -1,0 +1,23 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterModel
+metadata:
+  name: qwen3-32b-mi355x
+spec:
+  image: amdenterpriseai/aim-qwen-qwen3-32b:0.11.1
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: qwen3-32b-chat
+  namespace: aim-models
+  annotations:
+    aim.eai.amd.com/reconciler-pipeline: profile
+spec:
+  model:
+    name: qwen3-32b-mi355x
+  profile:
+    selector:
+      acceleratorModel: MI355X
+      acceleratorCount: 1
+      metric: latency
+      minimumType: any

@@ -93,6 +93,8 @@ subtrees:
                 title: Troubleshooting
               - file: admin/security
                 title: Security
+              - file: admin/openshift
+                title: Red Hat OpenShift
               - file: admin/envoy-gateway-scale-from-zero
                 title: Envoy Gateway Scale-from-Zero
               - file: admin/migrating-kgateway-to-envoy-gateway
