@@ -1,0 +1,14 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: qwen-throughput
+  namespace: team-a
+spec:
+  model:
+    name: qwen3-32b
+  composition:
+    mode: PrefillDecode
+    decode:
+      profile:
+        selector:
+          metric: throughput

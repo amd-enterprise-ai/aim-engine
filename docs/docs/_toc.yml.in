@@ -131,5 +131,23 @@ subtrees:
                 title: Service Templates (v1alpha1)
               - file: legacy/conditions-v1alpha1
                 title: Conditions (v1alpha1)
+      - file: composition/README
+        title: Composition Contract Review
+        subtrees:
+          - entries:
+              - file: composition/guide
+                title: Deploy a Composition
+              - file: composition/concepts
+                title: Composition Concepts
+              - file: composition/api
+                title: Composition CRD Contract
+              - file: composition/runtime-config
+                title: Administrator Configuration
+              - file: composition/operations
+                title: Operations and Troubleshooting
+              - file: composition/examples
+                title: Example Manifests
+              - file: composition/implementation
+                title: Implementation Outline
       - file: changelog
         title: Changelog
