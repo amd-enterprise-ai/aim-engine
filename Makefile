@@ -471,13 +471,6 @@ test-chainsaw-kind-zot: aim-dummy-zot-push ## Run Kind e2e against the ephemeral
 	matches=$$(grep -rlF "docker.io/amdenterpriseai/aim-dummy:" "$$zot_dir" || true); \
 	if [ -z "$$matches" ]; then echo "ERROR: no fixtures under $$zot_dir reference docker.io/amdenterpriseai/aim-dummy:"; exit 1; fi; \
 	echo "$$matches" | xargs sed -i "s|docker.io/amdenterpriseai/aim-dummy:|$(ZOT_AIM_DUMMY_REPO):|g"; \
-	: "Derivation tests assert an aim-base ref rebased onto the source image's registry."; \
-	: "Do not rewrite image-discovery-happy-path: status.baseImage is the literal"; \
-	: "AIM_BASE_IMAGE_REF baked into aim-dummy, not a derived registry reference."; \
-	base_matches=$$(grep -rlF "docker.io/amdenterpriseai/aim-base:" "$$zot_dir" | grep -vE '/image-discovery-happy-path/' || true); \
-	if [ -n "$$base_matches" ]; then \
-		echo "$$base_matches" | xargs sed -i "s|docker.io/amdenterpriseai/aim-base:|$(ZOT_CLUSTER_REGISTRY)/aim-base:|g"; \
-	fi; \
 	$(MAKE) test-chainsaw ENV=kind CHAINSAW_TEST_DIR="$$zot_dir"
 
 .PHONY: aim-dummy-ttl-push
@@ -515,17 +508,6 @@ test-chainsaw-gpu-ttl: aim-dummy-ttl-push ## Run GPU e2e against an ephemeral tt
 	matches=$$(grep -rlF "docker.io/amdenterpriseai/aim-dummy:" "$$ttl_dir" || true); \
 	if [ -z "$$matches" ]; then echo "ERROR: no fixtures under $$ttl_dir reference docker.io/amdenterpriseai/aim-dummy:"; exit 1; fi; \
 	echo "$$matches" | xargs sed -i "s|docker.io/amdenterpriseai/aim-dummy:|$(TTL_AIM_DUMMY_REPO):|g"; \
-	: "Cascade: derivation tests assert a derived image that RebaseRegistry grafts"; \
-	: "onto the *source* image's registry+org. With the ttl source ref the prefix"; \
-	: "collapses to '$(TTL_REGISTRY)', so rewrite the docker.io/amdenterpriseai aim-base"; \
-	: "assertions to match (tag preserved). No-op for the real docker.io ref."; \
-	: "EXCLUDE image-discovery-happy-path: its status.baseImage is the literal"; \
-	: "AIM_BASE_IMAGE_REF env baked into aim-dummy (NOT rebased), so it stays"; \
-	: "docker.io/amdenterpriseai/aim-base:dummy regardless of the source registry."; \
-	base_matches=$$(grep -rlF "docker.io/amdenterpriseai/aim-base:" "$$ttl_dir" | grep -vE '/image-discovery-happy-path(-ttl)?/' || true); \
-	if [ -n "$$base_matches" ]; then \
-		echo "$$base_matches" | xargs sed -i "s|docker.io/amdenterpriseai/aim-base:|$(TTL_REGISTRY)/aim-base:|g"; \
-	fi; \
 	$(MAKE) test-chainsaw ENV=gpu CHAINSAW_TEST_DIR="$$ttl_dir"
 
 # Focus test configuration - per-branch local config

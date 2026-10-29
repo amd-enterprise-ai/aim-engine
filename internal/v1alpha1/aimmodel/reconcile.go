@@ -24,6 +24,7 @@ package aimmodel
 
 import (
 	"context"
+	"fmt"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -40,8 +41,8 @@ import (
 type ClusterModelReconciler struct {
 	// Client is needed in PlanResources to resolve fine-tuned template
 	// deployment images per-match (each copy needs its source owner's
-	// baseImageRef rebased onto the source registry; matches may span owners,
-	// so we GET them on demand with an in-memory cache).
+	// baseImageRef, with explicit RuntimeConfig mappings applied; matches may
+	// span owners, so we GET them on demand with an in-memory cache).
 	Client    client.Client
 	Clientset kubernetes.Interface
 	Scheme    *runtime.Scheme
@@ -153,7 +154,8 @@ func (result ClusterModelFetchResult) GetComponentHealth() []controllerutils.Com
 
 	health := []controllerutils.ComponentHealth{runtimeConfigHealth}
 
-	imageMetadataHealth := result.imageMetadata.ToUpstreamComponentHealth("ImageMetadata", inspectImageMetadataHealth)
+	imageMetadataHealth := metadataResultForHealth(result.imageMetadata, &result.model.Status).
+		ToUpstreamComponentHealth("ImageMetadata", inspectImageMetadataHealth)
 	health = append(health, imageMetadataHealth)
 
 	health = append(health, clusterServiceTemplateHealth)
@@ -201,7 +203,8 @@ func (result ModelFetchResult) GetComponentHealth() []controllerutils.ComponentH
 	runtimeConfigHealth := result.mergedRuntimeConfig.ToComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth)
 	health := []controllerutils.ComponentHealth{runtimeConfigHealth}
 
-	imageMetadataHealth := result.imageMetadata.ToComponentHealth("ImageMetadata", inspectImageMetadataHealth)
+	imageMetadataHealth := metadataResultForHealth(result.imageMetadata, &result.model.Status).
+		ToComponentHealth("ImageMetadata", inspectImageMetadataHealth)
 	health = append(health, imageMetadataHealth)
 
 	serviceTemplateHealth := result.serviceTemplates.ToComponentHealth("ServiceTemplates", func(list *aimv1alpha1.AIMServiceTemplateList) controllerutils.ComponentHealth {
@@ -285,6 +288,22 @@ func inspectImageMetadataHealth(metadata *aimv1alpha1.ImageMetadata) controlleru
 		State:  constants.AIMStatusReady,
 		Reason: "ImageFound",
 	}
+}
+
+// metadataResultForHealth keeps a best-effort legacy metadata migration from
+// gating a model that already has usable cached metadata. Initial extraction
+// errors still pass through unchanged.
+func metadataResultForHealth(
+	result controllerutils.FetchResult[*aimv1alpha1.ImageMetadata],
+	status *aimv1alpha1.AIMModelStatus,
+) controllerutils.FetchResult[*aimv1alpha1.ImageMetadata] {
+	if result.HasError() && status != nil && status.ImageMetadata != nil &&
+		status.ImageMetadataVersion < currentImageMetadataVersion {
+		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{
+			Value: status.ImageMetadata,
+		}
+	}
+	return result
 }
 
 // aggregateTemplateStatuses aggregates template statuses into a single ComponentState.
@@ -463,6 +482,12 @@ type ModelObservation struct {
 	ModelFetchResult
 }
 
+const (
+	conditionTypeRuntimeImageLineage   = "RuntimeImageLineage"
+	reasonBaseImageRefMissing          = "BaseImageRefMissing"
+	reasonBaseImageRefInspectionFailed = "BaseImageRefInspectionFailed"
+)
+
 func (r *ModelReconciler) ComposeState(
 	_ context.Context,
 	_ controllerutils.ReconcileContext[*aimv1alpha1.AIMModel],
@@ -501,7 +526,7 @@ func (r *ClusterModelReconciler) PlanResources(
 			logger.V(1).Info("aimId template matching complete",
 				"candidates", len(obs.aimIdClusterTemplates.Value.Items),
 				"matches", len(matches))
-			templates := BuildFineTunedClusterServiceTemplates(ctx, r.Client, model, matches)
+			templates := BuildFineTunedClusterServiceTemplates(ctx, r.Client, model, matches, obs.mergedRuntimeConfig.Value)
 			for _, template := range templates {
 				planResult.Apply(template)
 			}
@@ -576,7 +601,7 @@ func (r *ModelReconciler) PlanResources(
 			logger.V(1).Info("aimId template matching complete (namespace)",
 				"candidates", len(obs.aimIdTemplates.Value.Items),
 				"matches", len(matches))
-			templates := BuildFineTunedServiceTemplates(ctx, r.Client, model, matches)
+			templates := BuildFineTunedServiceTemplates(ctx, r.Client, model, matches, obs.mergedRuntimeConfig.Value)
 			for _, t := range templates {
 				planResult.Apply(t)
 			}
@@ -587,7 +612,7 @@ func (r *ModelReconciler) PlanResources(
 			logger.V(1).Info("aimId template matching complete (cluster)",
 				"candidates", len(obs.aimIdClusterTemplates.Value.Items),
 				"matches", len(matches))
-			templates := BuildFineTunedServiceTemplates(ctx, r.Client, model, matches)
+			templates := BuildFineTunedServiceTemplates(ctx, r.Client, model, matches, obs.mergedRuntimeConfig.Value)
 			for _, t := range templates {
 				planResult.Apply(t)
 			}
@@ -658,7 +683,7 @@ func (r *ModelReconciler) DecorateStatus(
 // decorateModelStatus handles common status decoration for both cluster and namespace-scoped models.
 func decorateModelStatus(
 	status *aimv1alpha1.AIMModelStatus,
-	_ *controllerutils.ConditionManager,
+	cm *controllerutils.ConditionManager,
 	spec *aimv1alpha1.AIMModelSpec,
 	imageMetadataResult controllerutils.FetchResult[*aimv1alpha1.ImageMetadata],
 ) {
@@ -672,7 +697,14 @@ func decorateModelStatus(
 
 	if imageMetadataResult.OK() && imageMetadataResult.Value != nil {
 		status.ImageMetadata = imageMetadataResult.Value
+		status.ImageMetadataVersion = currentImageMetadataVersion
+	} else if status.ImageMetadata != nil && status.ImageMetadata.BaseImageRef != "" {
+		// Metadata cached by an older controller already contains the field
+		// introduced by the current extraction contract. Mark it current without
+		// performing an unnecessary registry request.
+		status.ImageMetadataVersion = currentImageMetadataVersion
 	}
+	decorateRuntimeImageLineageCondition(cm, spec, status, imageMetadataResult)
 
 	// Surface an effective image version on status (denormalised for the
 	// kubectl printcolumn). Tag-derived: see AIMModelStatus.Version
@@ -680,4 +712,55 @@ func decorateModelStatus(
 	// spec.image leave this empty, matching how AIMProfile.Status.Version
 	// behaves for derived profiles.
 	status.Version = aimimage.ExtractTag(spec.Image)
+}
+
+// decorateRuntimeImageLineageCondition exposes missing producer lineage without
+// making the source model itself unready. The condition name deliberately does
+// not end in "Ready", so the generic status rollup treats it as an informational
+// capability condition. Only consumers that replace model weights need it.
+func decorateRuntimeImageLineageCondition(
+	cm *controllerutils.ConditionManager,
+	spec *aimv1alpha1.AIMModelSpec,
+	status *aimv1alpha1.AIMModelStatus,
+	imageMetadataResult controllerutils.FetchResult[*aimv1alpha1.ImageMetadata],
+) {
+	if cm == nil || spec == nil || spec.IsFineTunedModel() || spec.Image == "" {
+		return
+	}
+	metadata := spec.GetEffectiveImageMetadata(status)
+	if metadata != nil && metadata.BaseImageRef != "" {
+		cm.Delete(conditionTypeRuntimeImageLineage)
+		return
+	}
+	if imageMetadataResult.HasError() && status.ImageMetadata != nil {
+		cm.MarkFalse(
+			conditionTypeRuntimeImageLineage,
+			reasonBaseImageRefInspectionFailed,
+			fmt.Sprintf(
+				"Could not re-inspect image %q for AIM_BASE_IMAGE_REF: %v; normal model serving continues from cached metadata, but fine-tuned template copies that replace weights require registry access or complete spec.imageMetadata containing baseImageRef",
+				spec.Image,
+				imageMetadataResult.Error,
+			),
+			controllerutils.AsInfo(),
+		)
+		return
+	}
+	extractionComplete := spec.ImageMetadata != nil ||
+		status.ImageMetadataVersion >= currentImageMetadataVersion ||
+		!spec.Discovery.IsExtractMetadataEnabled()
+	if !extractionComplete {
+		// A legacy cache is still being migrated, or the registry inspection
+		// failed and its normal component condition already explains why.
+		cm.Delete(conditionTypeRuntimeImageLineage)
+		return
+	}
+	cm.MarkFalse(
+		conditionTypeRuntimeImageLineage,
+		reasonBaseImageRefMissing,
+		fmt.Sprintf(
+			"Image %q does not declare AIM_BASE_IMAGE_REF; normal model serving is unaffected, but fine-tuned template copies that replace weights require complete spec.imageMetadata containing baseImageRef",
+			spec.Image,
+		),
+		controllerutils.AsInfo(),
+	)
 }

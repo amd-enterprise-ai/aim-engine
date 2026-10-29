@@ -388,7 +388,7 @@ func TestBuildFineTunedServiceTemplates(t *testing.T) {
 
 	// versionPolicy=pinned with model.spec.image set short-circuits owner
 	// lookup, so a no-object client is sufficient.
-	templates := BuildFineTunedServiceTemplates(context.Background(), newFakeClient(), model, matches)
+	templates := BuildFineTunedServiceTemplates(context.Background(), newFakeClient(), model, matches, nil)
 	if len(templates) != 1 {
 		t.Fatalf("expected 1 template, got %d", len(templates))
 	}
@@ -482,7 +482,7 @@ func TestBuildFineTunedServiceTemplates_PropagatesSourceProfileAsCustomProfile(t
 		},
 	}}
 
-	tpl := BuildFineTunedServiceTemplates(context.Background(), newFakeClient(), model, matches)[0]
+	tpl := BuildFineTunedServiceTemplates(context.Background(), newFakeClient(), model, matches, nil)[0]
 
 	if tpl.Spec.CustomProfile == nil {
 		t.Fatal("expected CustomProfile to be populated from source profile")
@@ -574,7 +574,7 @@ func TestBuildFineTunedServiceTemplates_MergesModelEnvIntoTemplateSpecEnv(t *tes
 		},
 	}}
 
-	tpl := BuildFineTunedServiceTemplates(context.Background(), newFakeClient(), model, matches)[0]
+	tpl := BuildFineTunedServiceTemplates(context.Background(), newFakeClient(), model, matches, nil)[0]
 
 	envByName := map[string]corev1.EnvVar{}
 	for _, e := range tpl.Spec.Env {
@@ -688,10 +688,10 @@ func TestBuildFineTunedServiceTemplates_BuildsFromProfileMetadata(t *testing.T) 
 		},
 	}}
 
-	tpl := BuildFineTunedServiceTemplates(context.Background(), newFakeClient(), model, matches)[0]
+	tpl := BuildFineTunedServiceTemplates(context.Background(), newFakeClient(), model, matches, nil)[0]
 
-	// CustomProfile carries the discovered engine config across to the
-	// rebased aim-base image (which has no baked-in catalog).
+	// CustomProfile carries the discovered engine config across to the clean
+	// AIM runtime (which has no baked-in catalog).
 	if tpl.Spec.CustomProfile == nil {
 		t.Fatal("expected CustomProfile to be populated from source profile")
 	}
@@ -714,7 +714,7 @@ func TestBuildFineTunedServiceTemplates_BuildsFromProfileMetadata(t *testing.T) 
 		t.Errorf("expected Precision from metadata, got %+v", tpl.Spec.Precision)
 	}
 	// ProfileId from the source spec is dropped — it points at the source
-	// image's baked-in catalog, which the rebased aim-base image doesn't
+	// image's baked-in catalog, which the clean AIM runtime doesn't
 	// ship; keeping it would emit a conflicting AIM_PROFILE_ID.
 	if tpl.Spec.ProfileId != "" {
 		t.Errorf("expected ProfileId to be empty on the clone, got %q", tpl.Spec.ProfileId)
@@ -770,7 +770,7 @@ func TestBuildFineTunedServiceTemplates_DefersWhenDiscoveryNotReady(t *testing.T
 			m := baseMatch
 			m.SourceProfile = tc.profile
 			templates := BuildFineTunedServiceTemplates(
-				context.Background(), newFakeClient(), model, []TemplateMatchResult{m})
+				context.Background(), newFakeClient(), model, []TemplateMatchResult{m}, nil)
 			if len(templates) != 0 {
 				t.Errorf("expected deferral (0 templates), got %d", len(templates))
 			}
@@ -782,7 +782,7 @@ func TestBuildFineTunedServiceTemplates_DefersWhenDiscoveryNotReady(t *testing.T
 // the inline-modelSources flow: the source template has no discovery job, so
 // status.profile carries identity / shape metadata synthesised from spec but
 // no engineArgs / envVars. The clone gets the metadata fields but no
-// customProfile (the rebased image is the same image family — the runtime
+// customProfile (the resolved image is the same image family — the runtime
 // resolves the original profile against the unchanged catalog).
 func TestBuildFineTunedServiceTemplates_InlineModelSourcesNoEngineConfig(t *testing.T) {
 	model := &aimv1alpha1.AIMModel{
@@ -818,7 +818,7 @@ func TestBuildFineTunedServiceTemplates_InlineModelSourcesNoEngineConfig(t *test
 		},
 	}}
 
-	tpl := BuildFineTunedServiceTemplates(context.Background(), newFakeClient(), model, matches)[0]
+	tpl := BuildFineTunedServiceTemplates(context.Background(), newFakeClient(), model, matches, nil)[0]
 
 	if tpl.Spec.CustomProfile != nil {
 		t.Errorf("expected no CustomProfile (inline-modelSources source has no engine config), got %+v", tpl.Spec.CustomProfile)
@@ -920,7 +920,7 @@ func TestBuildFineTunedServiceTemplates_DefersWhenCustomProfileWouldTripCEL(t *t
 				Metadata:   tc.metadata,
 			}
 			templates := BuildFineTunedServiceTemplates(
-				context.Background(), newFakeClient(), model, []TemplateMatchResult{m})
+				context.Background(), newFakeClient(), model, []TemplateMatchResult{m}, nil)
 			if len(templates) != 0 {
 				t.Errorf("expected deferral (0 templates) for partial-metadata + customProfile, got %d", len(templates))
 			}
@@ -955,7 +955,7 @@ func TestBuildFineTunedClusterServiceTemplates_StampsAnnotationPerMatch(t *testi
 	}
 
 	c := newFakeClient(mi300, epyc)
-	templates := BuildFineTunedClusterServiceTemplates(context.Background(), c, model, matches)
+	templates := BuildFineTunedClusterServiceTemplates(context.Background(), c, model, matches, nil)
 	if len(templates) != 2 {
 		t.Fatalf("expected 2 templates, got %d", len(templates))
 	}
@@ -971,7 +971,10 @@ func TestBuildFineTunedClusterServiceTemplates_StampsAnnotationPerMatch(t *testi
 		}
 		gotImages[ref] = true
 	}
-	for _, want := range []string{"ghcr.io/silogen/aim-base:0.11", "ghcr.io/silogen/aim-epyc-base:0.11"} {
+	for _, want := range []string{
+		"docker.io/amdenterpriseai/aim-base:0.11",
+		"docker.io/amdenterpriseai/aim-epyc-base:0.11",
+	} {
 		if !gotImages[want] {
 			t.Errorf("expected at least one template stamped with %q, got %v", want, gotImages)
 		}
@@ -983,7 +986,7 @@ func TestBuildFineTunedClusterServiceTemplates_StampsAnnotationPerMatch(t *testi
 // copy alive on the server.
 func TestBuildFineTunedClusterServiceTemplates_SkipsUnresolvableMatches(t *testing.T) {
 	resolvable := clusterOwner("qwen3-resolvable", "ghcr.io/silogen/qwen3:0.11.0", "ghcr.io/silogen/aim-base:0.11")
-	// "deferred" has no baseImageRef and a non-semver tag -> resolver gives up.
+	// "deferred" has no baseImageRef, so the resolver defers without guessing.
 	deferred := clusterOwner("qwen3-deferred", "ghcr.io/silogen/qwen3:latest", "")
 
 	model := &aimv1alpha1.AIMClusterModel{
@@ -1001,11 +1004,11 @@ func TestBuildFineTunedClusterServiceTemplates_SkipsUnresolvableMatches(t *testi
 	}
 
 	c := newFakeClient(resolvable, deferred)
-	templates := BuildFineTunedClusterServiceTemplates(context.Background(), c, model, matches)
+	templates := BuildFineTunedClusterServiceTemplates(context.Background(), c, model, matches, nil)
 	if len(templates) != 1 {
 		t.Fatalf("expected 1 template (deferred match skipped), got %d", len(templates))
 	}
-	if got := templates[0].Annotations[constants.AnnotationDeploymentImageRef]; got != "ghcr.io/silogen/aim-base:0.11" {
+	if got := templates[0].Annotations[constants.AnnotationDeploymentImageRef]; got != "docker.io/amdenterpriseai/aim-base:0.11" {
 		t.Errorf("unexpected stamped image: %q", got)
 	}
 }

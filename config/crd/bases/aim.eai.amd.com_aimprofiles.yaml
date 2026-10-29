@@ -169,6 +169,13 @@ spec:
                 - optimized
                 - any
                 type: string
+              baseImageRef:
+                description: |-
+                  BaseImageRef is the clean AIM runtime image to use when a derivation or
+                  service overlay replaces this deployable profile's modelSources. Image
+                  discovery populates it from AIM_BASE_IMAGE_REF.
+                minLength: 1
+                type: string
               caching:
                 description: Caching configures model caching behavior for this namespace-scoped
                   profile.

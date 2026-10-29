@@ -24,6 +24,7 @@ package aimprofile
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -37,6 +38,27 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
 )
+
+const ReasonBaseImageUnresolved = "BaseImageUnresolved"
+
+// BaseImageUnresolvedError means a weight-replacing copy has no explicit or
+// producer-owned AIM runtime reference. Callers surface this separately from
+// malformed overrides so users receive the correct remediation.
+type BaseImageUnresolvedError struct {
+	SourceImage string
+}
+
+func (e *BaseImageUnresolvedError) Error() string {
+	return fmt.Sprintf(
+		"source image %q has no AIM_BASE_IMAGE_REF or spec.baseImageRef; refusing to guess a runtime image",
+		e.SourceImage,
+	)
+}
+
+func IsBaseImageUnresolved(err error) bool {
+	var unresolved *BaseImageUnresolvedError
+	return errors.As(err, &unresolved)
+}
 
 // ProfileCopyCandidate is a resource-neutral profile source used by derivation hosts such as AIMModel.
 type ProfileCopyCandidate struct {
@@ -292,6 +314,7 @@ func ApplyProfileCopyOverrides(
 	overrides *aimv1alpha1.ProfileOverrides,
 	imageOverride string,
 	sourceBaseImage string,
+	registryMappings []aimimage.RegistryMapping,
 ) (aimv1alpha2.AIMProfileSpecCommon, error) {
 	result := *source.DeepCopy()
 	resolvedImageOverride := imageOverride
@@ -312,12 +335,21 @@ func ApplyProfileCopyOverrides(
 	//     what lets a partitioning-only or env-only override stay on the
 	//     model-optimized image instead of silently falling back to base.
 	//   - A base source (BYO custom-model flow) already IS the runtime
-	//     image and must not be resolved to a base image (its AIM_BASE_IMAGE_REF is
-	//     the FROM line of aim-base itself, e.g. vllm-openai-rocm —
-	//     rebasing onto the source registry+org produces a nonexistent
-	//     mirror).
+	//     image and must not descend to its own AIM_BASE_IMAGE_REF (the FROM
+	//     line of aim-base itself, e.g. vllm-openai-rocm).
 	weightsChanged := overrides != nil && len(overrides.ModelSources) > 0
-	result.Image = ResolveDerivedProfileImage(resolvedImageOverride, sourceBaseImage, source.Image, IsProfileDeployable(source), weightsChanged)
+	resolvedImage, err := ResolveDerivedProfileImage(
+		resolvedImageOverride,
+		sourceBaseImage,
+		source.Image,
+		IsProfileDeployable(source),
+		weightsChanged,
+		registryMappings,
+	)
+	if err != nil {
+		return aimv1alpha2.AIMProfileSpecCommon{}, err
+	}
+	result.Image = resolvedImage
 
 	if overrides == nil {
 		return result, nil
@@ -477,15 +509,14 @@ func MergeEngineArgs(base, overrides *apiextensionsv1.JSON) (*apiextensionsv1.JS
 //  2. When sourceIsDeployable is false (the BYO custom-model flow: the
 //     source profile is itself a `base`-role profile emitted from an
 //     aim-base image), sourceImage IS already the runtime image we want.
-//     Skipping the rebase here is essential: a base profile's
+//     Skipping base-image resolution here is essential: a base profile's
 //     sourceBaseImage is the FROM line of aim-base itself
 //     (e.g. `docker.io/vllm/vllm-openai-rocm:v0.16.0`), which is *not* a
-//     deployable AIM image. Rebasing onto sourceImage's registry+org
-//     would produce a nonexistent mirror like
-//     `amdenterpriseai/vllm-openai-rocm:v0.16.0` and break the predictor
-//     pod. Custom-model derivations therefore deploy on the base image
+//     deployable AIM image. Deploying that upstream image would bypass the AIM
+//     runtime contract and break the predictor pod. Custom-model derivations
+//     therefore deploy on the base image
 //     declared by their base AIMModel; weights come from
-//     `overrides.modelSources`, not from a rebased image.
+//     `overrides.modelSources`, not from the upstream base image.
 //  3. When the source is deployable but the derivation does NOT change the
 //     weights (weightsChanged is false, i.e. overrides supply no
 //     modelSources), keep the optimized sourceImage. The model-optimized
@@ -494,41 +525,77 @@ func MergeEngineArgs(base, overrides *apiextensionsv1.JSON) (*apiextensionsv1.JS
 //     base runtime. Resolving to the base image here would discard the model
 //     optimizations and silently downgrade the deployment.
 //  4. sourceBaseImage (the AIM_BASE_IMAGE_REF the inspector extracted from
-//     the source image) is normalised to MAJOR.MINOR (build pipelines often
-//     stamp release-candidate tags like `0.11-rc21` but the deployable
-//     aim-base image is always tagged with its MAJOR.MINOR rolling tag)
-//     and rebased onto sourceImage's registry+org so private mirrors don't
-//     reach back to the upstream aim-base. This is the fine-tuned flow:
-//     source is a model-optimized image, the derivation REPLACES its
-//     weights via overrides.modelSources, and we resolve back to the matching
-//     aim-base runtime.
-//  5. As a legacy fallback for installs whose imageMetadata was cached
-//     before AIM_BASE_IMAGE_REF extraction existed, synthesize
-//     aim-base:MAJOR.MINOR from sourceImage's tag and rebase onto its
-//     registry+org.
-//  6. Otherwise return sourceImage unchanged.
+//     the source image) is used exactly unless an explicit RuntimeConfig
+//     repository-prefix mapping applies. The reference's tag or digest is
+//     preserved exactly: the image producer owns the mapping between a model
+//     image and its deployable base runtime. This is the fine-tuned flow:
+//     source is a model-optimized image, the derivation REPLACES its weights
+//     via overrides.modelSources, and we resolve back to the matching aim-base
+//     runtime.
+//  5. If AIM_BASE_IMAGE_REF is absent, return a controlled error rather than
+//     deriving a runtime from the source image's tag or registry.
 //
 // weightsChanged is true when the derivation replaces the source profile's
 // model weights (overrides.modelSources is non-empty). It only gates the
 // deployable-source base-image resolution: a base source and an explicit imageOverride both
 // resolve identically regardless of whether weights changed.
-func ResolveDerivedProfileImage(imageOverride, sourceBaseImage, sourceImage string, sourceIsDeployable, weightsChanged bool) string {
+func ResolveDerivedProfileImage(
+	imageOverride, sourceBaseImage, sourceImage string,
+	sourceIsDeployable, weightsChanged bool,
+	registryMappings []aimimage.RegistryMapping,
+) (string, error) {
+	if imageOverride != "" {
+		return imageOverride, nil
+	}
+	if !sourceIsDeployable {
+		return sourceImage, nil
+	}
+	if !weightsChanged {
+		return sourceImage, nil
+	}
+	if sourceBaseImage != "" {
+		resolved, err := aimimage.ResolveReference(sourceBaseImage, registryMappings)
+		if err != nil {
+			return "", fmt.Errorf("resolve AIM_BASE_IMAGE_REF %q: %w", sourceBaseImage, err)
+		}
+		return resolved, nil
+	}
+	return "", &BaseImageUnresolvedError{SourceImage: sourceImage}
+}
+
+// ResolveDerivedProfileBaseImage returns the runtime image that a subsequent
+// weight-replacing derivation should use.
+//
+// For a deployable source, a weight-replacing derivation keeps the producer's
+// canonical sourceBaseImage as lineage even when RuntimeConfig maps the
+// deployment image. This lets each downstream owner apply its own mapping and
+// avoids mapping an already-mapped reference. For a base-role source, the
+// source image itself becomes the reusable lineage; carrying that image's own
+// AIM_BASE_IMAGE_REF would descend one layer too far on the next copy (for
+// example from aim-base to its upstream vLLM FROM image). An explicit image
+// override likewise establishes the runtime chosen by the producer.
+// Configuration-only copies keep the source lineage unchanged.
+func ResolveDerivedProfileBaseImage(
+	sourceBaseImage string,
+	derivedImage string,
+	imageOverride string,
+	overrides *aimv1alpha1.ProfileOverrides,
+	sourceIsDeployable bool,
+) string {
+	weightsChanged := overrides != nil && len(overrides.ModelSources) > 0
+	if overrides != nil && overrides.Image != "" {
+		imageOverride = overrides.Image
+	}
 	if imageOverride != "" {
 		return imageOverride
 	}
-	if !sourceIsDeployable {
-		return sourceImage
+	if weightsChanged {
+		if sourceIsDeployable && sourceBaseImage != "" {
+			return sourceBaseImage
+		}
+		return derivedImage
 	}
-	if !weightsChanged {
-		return sourceImage
-	}
-	if sourceBaseImage != "" {
-		return aimimage.RebaseRegistry(sourceImage, aimimage.NormalizeBaseImageTag(sourceBaseImage))
-	}
-	if legacy := aimimage.LegacyBaseImageFromSource(sourceImage); legacy != "" {
-		return aimimage.RebaseRegistry(sourceImage, legacy)
-	}
-	return sourceImage
+	return sourceBaseImage
 }
 
 func compareVersionStrings(left, right string) int {

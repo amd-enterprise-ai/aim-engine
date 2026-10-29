@@ -74,13 +74,13 @@ Prometheus ServiceMonitor for metrics scraping
 
 ## Cluster Runtime Configuration
 
-Cluster-wide runtime configuration for AIM resources. By default the chart creates `AIMClusterRuntimeConfig/default` with a generic NVIDIA vLLM fallback so v1alpha2 `spec.modelId` onboarding can generate profiles immediately on clusters that advertise NVIDIA GPU resources. Disable this when the cluster already has a platform-managed config with the same name.
+Cluster-wide runtime configuration for AIM resources. By default the chart creates `AIMClusterRuntimeConfig/default` with public AIM base-image compatibility mappings and a generic NVIDIA vLLM fallback, so derived runtime images remain pullable and v1alpha2 `spec.modelId` onboarding can generate profiles immediately on clusters that advertise NVIDIA GPU resources. Disable this when the cluster already has a platform-managed config with the same name.
 
 | Parameter | Description | Default |
 |-----------|-------------|----------|
 | `clusterRuntimeConfig.enable` | Enable creation of the chart-managed AIMClusterRuntimeConfig resource | `true` |
 | `clusterRuntimeConfig.name` | Name of the AIMClusterRuntimeConfig resource | `default` |
-| `clusterRuntimeConfig.spec` | Spec fields for the AIMClusterRuntimeConfig. See [Runtime Configuration](../concepts/runtime-config.md) for details. The default fallback intentionally omits CPU and memory requests so profile generation is gated by the NVIDIA device resource, not a one-size-fits-all host-resource policy. Override the fallback to match your fleet and model sizes. Generated profiles remain truthfully `unoptimized`, while autoSelectionPolicy=any lets AIMServices use this runtime automatically only when no optimized profile matches. | NVIDIA vLLM fallback for any NVIDIA GPU |
+| `clusterRuntimeConfig.spec` | Spec fields for the AIMClusterRuntimeConfig. See [Runtime Configuration](../concepts/runtime-config.md) for details. The default fallback intentionally omits CPU and memory requests so profile generation is gated by the NVIDIA device resource, not a one-size-fits-all host-resource policy. Override the fallback to match your fleet and model sizes. Generated profiles remain truthfully `unoptimized`, while autoSelectionPolicy=any lets AIMServices use this runtime automatically only when no optimized profile matches. | Public AIM base-image compatibility mappings and an NVIDIA vLLM fallback for any NVIDIA GPU |
 
 ## clusterModelSource
 

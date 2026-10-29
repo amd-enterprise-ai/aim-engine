@@ -142,10 +142,13 @@ func mergeRuntimeConfigs(priority, base *aimv1alpha1.AIMRuntimeConfigCommon) *ai
 	// Both exist - merge them with priority taking precedence
 	priorityFallbacks := copyProfileGenerationFallbacks(priority)
 	baseFallbacks := copyProfileGenerationFallbacks(base)
+	priorityImageMappings := copyImageRegistryMappings(priority)
+	baseImageMappings := copyImageRegistryMappings(base)
 	merged := aimv1alpha1.AIMRuntimeConfigCommon{}
 	// We can ignore the error as we control the input and their types
 	_ = utils.MergeConfigs(&merged, *base, *priority)
 	mergeProfileGenerationConfig(&merged, priorityFallbacks, baseFallbacks)
+	mergeImageRegistryConfig(&merged, priorityImageMappings, baseImageMappings)
 
 	// An S3 connection is a trust boundary, not a bag of independently
 	// inheritable defaults. If the namespace config supplies one, use that
@@ -159,6 +162,48 @@ func mergeRuntimeConfigs(priority, base *aimv1alpha1.AIMRuntimeConfigCommon) *ai
 	}
 
 	return &merged
+}
+
+// mergeImageRegistryConfig applies list-map semantics to image registry
+// mappings. Namespace mappings replace cluster mappings with the same From
+// prefix and preserve unrelated cluster mappings.
+func mergeImageRegistryConfig(
+	merged *aimv1alpha1.AIMRuntimeConfigCommon,
+	priorityMappings, baseMappings []aimv1alpha1.AIMImageRegistryMapping,
+) {
+	if len(priorityMappings) == 0 && len(baseMappings) == 0 {
+		return
+	}
+	if merged.ImageRegistry == nil {
+		merged.ImageRegistry = &aimv1alpha1.AIMImageRegistryConfig{}
+	}
+
+	byFrom := make(map[string]aimv1alpha1.AIMImageRegistryMapping, len(baseMappings)+len(priorityMappings))
+	order := make([]string, 0, len(baseMappings)+len(priorityMappings))
+	for _, mapping := range baseMappings {
+		if _, exists := byFrom[mapping.From]; !exists {
+			order = append(order, mapping.From)
+		}
+		byFrom[mapping.From] = mapping
+	}
+	for _, mapping := range priorityMappings {
+		if _, exists := byFrom[mapping.From]; !exists {
+			order = append(order, mapping.From)
+		}
+		byFrom[mapping.From] = mapping
+	}
+	mergedMappings := make([]aimv1alpha1.AIMImageRegistryMapping, 0, len(order))
+	for _, from := range order {
+		mergedMappings = append(mergedMappings, byFrom[from])
+	}
+	merged.ImageRegistry.Mappings = mergedMappings
+}
+
+func copyImageRegistryMappings(config *aimv1alpha1.AIMRuntimeConfigCommon) []aimv1alpha1.AIMImageRegistryMapping {
+	if config == nil || config.ImageRegistry == nil {
+		return nil
+	}
+	return append([]aimv1alpha1.AIMImageRegistryMapping(nil), config.ImageRegistry.Mappings...)
 }
 
 // mergeProfileGenerationConfig applies list-map semantics to profile

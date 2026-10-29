@@ -33,6 +33,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservicetemplate"
 )
 
@@ -241,17 +242,18 @@ func matchByModelId[T interface{ GetVersion() string }](
 // constants.AnnotationDeploymentImageRef annotation resolved from its match's
 // source owner. Matches are skipped (and logged) when the source isn't ready
 // yet — either because the deployment image can't be resolved (owner not
-// found, no baseImageRef and no semver tag to fall back to) or because the
-// source's discovery hasn't produced enough data to populate the cloned
-// spec. An owner / source update will trigger a retry on the next reconcile.
+// found or AIM_BASE_IMAGE_REF absent) or because the source's discovery hasn't
+// produced enough data to populate the cloned spec. An owner / source update
+// will trigger a retry on the next reconcile.
 func BuildFineTunedServiceTemplates(
 	ctx context.Context,
 	c client.Client,
 	model *aimv1alpha1.AIMModel,
 	matches []TemplateMatchResult,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) []*aimv1alpha1.AIMServiceTemplate {
 	logger := log.FromContext(ctx)
-	resolver := newImageResolver(c, &model.Spec)
+	resolver := newImageResolver(c, &model.Spec, aimruntimeconfig.ImageRegistryMappings(runtimeConfig))
 	templates := make([]*aimv1alpha1.AIMServiceTemplate, 0, len(matches))
 	for _, m := range matches {
 		image, err := resolver.Resolve(ctx, m)
@@ -289,9 +291,10 @@ func BuildFineTunedClusterServiceTemplates(
 	c client.Client,
 	model *aimv1alpha1.AIMClusterModel,
 	matches []TemplateMatchResult,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) []*aimv1alpha1.AIMClusterServiceTemplate {
 	logger := log.FromContext(ctx)
-	resolver := newImageResolver(c, &model.Spec)
+	resolver := newImageResolver(c, &model.Spec, aimruntimeconfig.ImageRegistryMappings(runtimeConfig))
 	templates := make([]*aimv1alpha1.AIMClusterServiceTemplate, 0, len(matches))
 	for _, m := range matches {
 		image, err := resolver.Resolve(ctx, m)
@@ -342,12 +345,11 @@ func BuildFineTunedClusterServiceTemplates(
 // apiserver immediately rejects.
 //
 // customProfile is stamped only when discovery emitted engine config
-// (engineArgs / envVars). The rebased aim-base image has no baked-in
-// catalog so the runtime needs the engine config to resolve a profile;
-// for inline-modelSources sources (which never run discovery and have
-// no engine config in status), the rebased image is the same image
-// family and the runtime resolves the original profile against the
-// unchanged catalog — no customProfile needed.
+// (engineArgs / envVars). A resolved clean AIM runtime may not carry the
+// source model image's baked-in catalog, so the runtime needs that discovered
+// engine config to resolve a profile. Inline-modelSources sources never run
+// discovery and have no engine config in status; they continue using their
+// explicitly selected image and original profile identity.
 //
 // Non-discovery engine knobs (container resources, runtime config
 // selection, pull secrets, service account) have no analogue in

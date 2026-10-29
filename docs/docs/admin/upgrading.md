@@ -7,7 +7,87 @@ versions, AIMService dispatch, retained model outputs, and manual recovery.
 
 ## Upgrade Procedure
 
-### 1. Update CRDs First
+### 1. Inventory derived runtime image lineage
+
+Current releases use the exact `AIM_BASE_IMAGE_REF` recorded by an image
+producer. They no longer truncate the tag to `MAJOR.MINOR` or move the
+reference implicitly to the source model image's registry. Before upgrading,
+inventory deployable profiles that can seed weight-replacing derivations but
+do not yet expose runtime lineage:
+
+```bash
+kubectl get aimprofile -A -o json | jq -r '
+  .items[]
+  | select((.spec.aimId // "") != "")
+  | select(((.spec.modelSources // []) | length) > 0)
+  | select((.spec.baseImageRef // "") == "")
+  | select((.metadata.annotations["aim.eai.amd.com/base-image"] // "") == "")
+  | select((.status.baseImage // "") == "")
+  | [.metadata.namespace, .metadata.name, .spec.image] | @tsv'
+
+kubectl get aimclusterprofile -o json | jq -r '
+  .items[]
+  | select((.spec.aimId // "") != "")
+  | select(((.spec.modelSources // []) | length) > 0)
+  | select((.spec.baseImageRef // "") == "")
+  | select((.metadata.annotations["aim.eai.amd.com/base-image"] // "") == "")
+  | select((.status.baseImage // "") == "")
+  | [.metadata.name, .spec.image] | @tsv'
+```
+
+These profiles continue to serve normally. They need `spec.baseImageRef` only
+if a ProfileSet or `AIMService.spec.profileOverrides.modelSources` will replace
+their weights.
+
+Also inventory models whose cached metadata predates base-image extraction:
+
+```bash
+kubectl get aimmodel -A -o json | jq -r '
+  .items[]
+  | select(.status.imageMetadata != null)
+  | select((.status.imageMetadata.baseImageRef // "") == "")
+  | [.metadata.namespace, .metadata.name, .spec.image] | @tsv'
+
+kubectl get aimclustermodel -o json | jq -r '
+  .items[]
+  | select(.status.imageMetadata != null)
+  | select((.status.imageMetadata.baseImageRef // "") == "")
+  | [.metadata.name, .spec.image] | @tsv'
+```
+
+The upgraded controller re-inspects these cached images. If reinspection fails,
+the cached metadata and existing templates remain usable: normal model serving
+does not become unready, and the non-gating `RuntimeImageLineage=False` condition
+reports `BaseImageRefInspectionFailed`. Fix registry connectivity or the
+model's `imagePullSecrets`; a later reconcile can retry the migration.
+If changing only Secret data does not enqueue the model in your installation,
+update any harmless annotation on the affected `AIMModel` or
+`AIMClusterModel` after fixing access to trigger that reconcile.
+
+When registry access cannot be restored, copy the complete object from
+`status.imageMetadata` into `spec.imageMetadata` and add the producer's exact
+`baseImageRef`:
+
+```yaml
+spec:
+  imageMetadata:
+    # Preserve model, oci, originalLabels, and any other existing metadata.
+    # This spec object becomes authoritative and disables remote extraction.
+    baseImageRef: ghcr.io/silogen/aim-base:0.11
+```
+
+Do not set only `baseImageRef` when the status object contains other metadata:
+`spec.imageMetadata` replaces extracted metadata as a whole rather than merging
+field by field. Obtain the exact reference from the image producer; do not
+derive it by truncating the model image's tag or substituting its registry.
+
+If inspection succeeds but the image genuinely lacks `AIM_BASE_IMAGE_REF`, the
+condition reports `BaseImageRefMissing` and the controller records the current
+metadata contract so it does not repeatedly inspect that image. In either case,
+only new fine-tuned copies that replace weights and require the unresolved
+runtime lineage are deferred.
+
+### 2. Update CRDs first
 
 CRDs must be updated before the operator, as new operator versions may depend on new CRD fields:
 
@@ -17,7 +97,63 @@ helm upgrade aim-engine-crds oci://docker.io/amdenterpriseai/aim-engine-crds-cha
   --namespace aim-system
 ```
 
-### 2. Upgrade the Operator
+Wait for the CRDs to become established:
+
+```bash
+kubectl wait --for=condition=Established \
+  crd/aimprofiles.aim.eai.amd.com \
+  crd/aimclusterprofiles.aim.eai.amd.com \
+  crd/aimruntimeconfigs.aim.eai.amd.com \
+  crd/aimclusterruntimeconfigs.aim.eai.amd.com
+```
+
+### 3. Configure lineage and registry mappings
+
+After updating the CRDs but before upgrading the operator:
+
+1. Set `spec.baseImageRef` on affected hand-authored deployable profiles.
+2. Review mappings for the producer references recorded by released AIM images.
+   The operator applies the public compatibility mappings shown below as
+   fallbacks regardless of the selected RuntimeConfig. Fresh chart installations
+   also expose them on the default cluster RuntimeConfig.
+3. Private and air-gapped installations must configure their mirror explicitly.
+   Repeat that policy on named RuntimeConfigs selected by services or legacy
+   fine-tuned models; a matching configured mapping wins over the public
+   fallback, while other mappings on `default` are not inherited by name.
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: default
+spec:
+  imageRegistry:
+    mappings:
+      - from: docker.io/silogenai
+        to: docker.io/amdenterpriseai
+      - from: ghcr.io/silogen
+        to: docker.io/amdenterpriseai
+```
+
+Matching is literal, so use the `from` prefix exactly as recorded in
+`AIM_BASE_IMAGE_REF`. Confirm that the exact resulting tag or digest exists in
+the destination registry. Private and air-gapped installations should map both
+producer prefixes directly to their internal mirror and add a
+`docker.io/amdenterpriseai` mapping for newer public references. Mapping is
+single-pass, so `silogenai -> amdenterpriseai -> internal` does not chain. AIM
+Engine does not fall back to a rolling tag. Internal clusters that must retain
+producer-private release-candidate references can opt out of a compatibility
+fallback with an exact self-mapping such as `from: docker.io/silogenai` and
+`to: docker.io/silogenai` in the RuntimeConfig used by the derivation.
+
+Existing derived profiles are updated in place when the upgraded controller
+reconciles exact producer lineage. For example, a previously synthesized
+`aim-base:0.13` can become `aim-base:0.13.1`, and a date tag such as
+`aim-base:2026.11` can become `aim-base:2026.11.0`. Running fine-tuned services
+that consume those profiles can therefore roll and pull a new image of about
+9 GB; plan registry bandwidth and rollout capacity accordingly.
+
+### 4. Upgrade the operator
 
 ```bash
 helm upgrade aim-engine oci://docker.io/amdenterpriseai/aim-engine-chart \
@@ -88,12 +224,17 @@ kubectl delete clusterrolebinding envoy-gateway-metrics-collector \
   --ignore-not-found
 ```
 
-### 3. Verify
+### 5. Verify
 
 ```bash
 kubectl get pods -n aim-system
 kubectl get aimservice --all-namespaces
+kubectl get aimprofileset,aimclusterprofileset -A
 ```
+
+Investigate `BaseImageUnresolved` before changing or deleting existing
+profiles. The controllers retain existing managed profiles and inference
+resources while runtime-image lineage is unresolved.
 
 ## Rollback
 

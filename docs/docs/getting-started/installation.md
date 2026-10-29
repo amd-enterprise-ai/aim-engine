@@ -134,7 +134,9 @@ This project uses [mise](https://mise.jdx.dev) to manage tool versions (Go, cont
 ### Customize Cluster Runtime Defaults
 
 The chart creates `AIMClusterRuntimeConfig/default` by default, including a
-generic NVIDIA vLLM fallback for model-ID onboarding. Add cluster-wide routing
+generic NVIDIA vLLM fallback for model-ID onboarding and compatibility mappings
+from the private producer prefixes recorded by released AIM images to the
+public `docker.io/amdenterpriseai` runtime repository. Add cluster-wide routing
 and storage defaults by overriding its spec:
 
 ```bash

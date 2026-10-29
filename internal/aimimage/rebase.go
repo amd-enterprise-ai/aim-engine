@@ -27,104 +27,105 @@
 package aimimage
 
 import (
-	"regexp"
+	"fmt"
 	"strings"
+	"unicode"
 )
 
-// majorMinorTagRegex matches semver-shaped image tags so we can extract
-// MAJOR.MINOR consistently across the canonical forms aim-* images use:
-//
-//	0.11           (short — `blang/semver.ParseTolerant` accepts this)
-//	0.11.0         (full)
-//	v0.11.0        (v-prefixed)
-//	0.11.0-rc1     (full + prerelease — `ParseTolerant` accepts this)
-//	0.11-rc21      (short + prerelease — `ParseTolerant` REJECTS this with
-//	                "Short version cannot contain PreRelease/Build meta data";
-//	                aim-base build pipelines stamp this exact form so we
-//	                cannot afford to lose it)
-//	0.11.0+build.1 (build metadata)
-//
-// Tags that don't match (e.g. `latest`, `sha-abc123`, empty) yield no
-// match and callers leave the original tag in place.
-var majorMinorTagRegex = regexp.MustCompile(`^v?(\d+)\.(\d+)(?:\.\d+)?(?:[-+].*)?$`)
-
-// RebaseRegistry rewrites baseImageRef so its registry+org prefix matches
-// sourceImage while preserving baseImageRef's image name and tag. This lets a
-// fine-tuned deployment pull aim-base from the same registry/org as the source
-// base model — so mirroring the base model to a private registry automatically
-// covers the aim-base deployment too.
-//
-// Examples:
-//
-//	RebaseRegistry("ghcr.io/silogen/qwen3:0.11",
-//	               "docker.io/amdenterpriseai/aim-base:0.11")
-//	  → "ghcr.io/silogen/aim-base:0.11"
-//	RebaseRegistry("docker.io/amdenterpriseai/qwen3:0.11",
-//	               "ghcr.io/silogen/aim-base:0.11")
-//	  → "docker.io/amdenterpriseai/aim-base:0.11"
-//
-// When sourceImage lacks a "/" (no registry+org to graft on) or is empty,
-// baseImageRef is returned unchanged.
-func RebaseRegistry(sourceImage, baseImageRef string) string {
-	srcSlash := strings.LastIndex(sourceImage, "/")
-	if srcSlash <= 0 {
-		return baseImageRef
-	}
-	prefix := sourceImage[:srcSlash]
-
-	baseSlash := strings.LastIndex(baseImageRef, "/")
-	if baseSlash < 0 {
-		return prefix + "/" + baseImageRef
-	}
-	return prefix + baseImageRef[baseSlash:]
+// RegistryMapping rewrites one image repository prefix to another.
+type RegistryMapping struct {
+	From     string
+	To       string
+	Fallback bool
 }
 
-// LegacyBaseImageFromSource synthesizes an aim-base reference for AIMModels
-// whose status.imageMetadata was populated before AIM_BASE_IMAGE_REF
-// extraction existed. It returns `aim-base:MAJOR.MINOR` derived from the
-// source image's tag, or "" when the tag isn't parseable as semver. The
-// result has no registry+org prefix on purpose — RebaseRegistry grafts that
-// on from the source image so the fallback inherits the same mirror the base
-// model already uses.
-//
-// Truncating to MAJOR.MINOR matches how the aim-base image is actually
-// published (e.g. `aim-base:0.11`, not `aim-base:0.11.0`).
-func LegacyBaseImageFromSource(sourceImage string) string {
-	colon := tagColonIndex(sourceImage)
-	if colon < 0 {
-		return ""
+// ResolveReference applies the longest matching repository-prefix mapping to
+// ref while preserving its repository suffix, tag, and digest exactly.
+// Configured mappings take precedence over fallback mappings even when the
+// fallback has a longer prefix. When no mapping matches, ref is returned
+// unchanged.
+func ResolveReference(ref string, mappings []RegistryMapping) (string, error) {
+	if ref == "" || len(mappings) == 0 {
+		return ref, nil
 	}
-	mm, ok := extractMajorMinor(sourceImage[colon+1:])
-	if !ok {
-		return ""
+
+	repository, suffix := splitReference(ref)
+	type match struct {
+		length int
+		from   string
+		to     string
 	}
-	return "aim-base:" + mm
+	configured := match{length: -1}
+	fallback := match{length: -1}
+	for i, mapping := range mappings {
+		if err := validateRepositoryPrefix(mapping.From); err != nil {
+			return "", fmt.Errorf("image registry mapping %d from %q: %w", i, mapping.From, err)
+		}
+		if err := validateRepositoryPrefix(mapping.To); err != nil {
+			return "", fmt.Errorf("image registry mapping %d to %q: %w", i, mapping.To, err)
+		}
+		if repository != mapping.From && !strings.HasPrefix(repository, mapping.From+"/") {
+			continue
+		}
+		best := &configured
+		if mapping.Fallback {
+			best = &fallback
+		}
+		if len(mapping.From) > best.length {
+			best.length = len(mapping.From)
+			best.from = mapping.From
+			best.to = mapping.To
+		}
+	}
+	best := configured
+	if best.length < 0 {
+		best = fallback
+	}
+	if best.length < 0 {
+		return ref, nil
+	}
+	return best.to + strings.TrimPrefix(repository, best.from) + suffix, nil
 }
 
-// NormalizeBaseImageTag rewrites baseImageRef's tag to MAJOR.MINOR when the
-// tag parses as semver. This collapses release-candidate / patch tags
-// (e.g. `aim-base:0.11-rc21`, `aim-base:0.11.2`) onto the stable MAJOR.MINOR
-// tag aim-base actually publishes (e.g. `aim-base:0.11`).
-//
-// Applied to AIM_BASE_IMAGE_REF values extracted from the source image's OCI
-// config: build pipelines often stamp the in-progress release tag
-// (`0.11-rc21`), but the deployable aim-base image is always tagged with its
-// MAJOR.MINOR rolling tag. Truncating here makes downstream rebases produce
-// a tag that actually resolves in the registry.
-//
-// When baseImageRef has no tag, the tag isn't semver-parseable, or only the
-// registry port (`registry.local:5000/image`) looks like a tag, baseImageRef
-// is returned unchanged.
-func NormalizeBaseImageTag(baseImageRef string) string {
-	colon := tagColonIndex(baseImageRef)
-	if colon < 0 {
-		return baseImageRef
+// splitReference separates the repository name from an optional tag/digest
+// suffix without normalizing the caller's reference.
+func splitReference(ref string) (string, string) {
+	end := len(ref)
+	if digest := strings.IndexByte(ref, '@'); digest >= 0 {
+		end = digest
 	}
-	mm, ok := extractMajorMinor(baseImageRef[colon+1:])
-	if !ok {
-		return baseImageRef
+	if tag := strings.LastIndex(ref[:end], ":"); tag > strings.LastIndex(ref[:end], "/") {
+		end = tag
 	}
-	return baseImageRef[:colon] + ":" + mm
+	return ref[:end], ref[end:]
+}
+
+func validateRepositoryPrefix(prefix string) error {
+	if prefix == "" {
+		return fmt.Errorf("prefix is empty")
+	}
+	if prefix != strings.TrimSpace(prefix) {
+		return fmt.Errorf("prefix has leading or trailing whitespace")
+	}
+	if strings.ContainsAny(prefix, "@ \t\r\n") {
+		return fmt.Errorf("prefix contains a digest or whitespace")
+	}
+	if strings.HasPrefix(prefix, "/") || strings.HasSuffix(prefix, "/") || strings.Contains(prefix, "//") {
+		return fmt.Errorf("prefix has an invalid repository path")
+	}
+
+	lastSlash := strings.LastIndex(prefix, "/")
+	lastColon := strings.LastIndex(prefix, ":")
+	if lastColon > lastSlash {
+		// A colon before a slash is a registry port. For a host-only mapping,
+		// accept a numeric suffix as a port as well.
+		hostOnlyPort := lastSlash < 0 && lastColon > 0 &&
+			strings.IndexFunc(prefix[lastColon+1:], func(r rune) bool { return !unicode.IsDigit(r) }) == -1
+		if !hostOnlyPort {
+			return fmt.Errorf("prefix must not include a tag")
+		}
+	}
+	return nil
 }
 
 // ExtractTag returns the tag substring of imageRef, or "" when imageRef
@@ -140,9 +141,7 @@ func NormalizeBaseImageTag(baseImageRef string) string {
 //	"registry.local:5000/image"       → ""  (registry port, not a tag)
 //
 // Use this as the "image version" source-of-truth for printcolumns and
-// status denormalisation. The companion `NormalizeBaseImageTag` above
-// truncates a SemVer-ish tag to MAJOR.MINOR; use that for rebase paths
-// that must match a stable rolling tag.
+// status denormalisation.
 func ExtractTag(imageRef string) string {
 	if strings.Contains(imageRef, "@sha256:") {
 		return ""
@@ -167,16 +166,4 @@ func tagColonIndex(imageRef string) int {
 		return -1
 	}
 	return colon
-}
-
-// extractMajorMinor parses tag against majorMinorTagRegex and returns the
-// MAJOR.MINOR substring (e.g. `0.11`) along with ok=true on match. Tags
-// that don't look like a semver release tag yield ok=false and callers
-// fall back to leaving the original tag alone.
-func extractMajorMinor(tag string) (string, bool) {
-	m := majorMinorTagRegex.FindStringSubmatch(tag)
-	if m == nil {
-		return "", false
-	}
-	return m[1] + "." + m[2], true
 }

@@ -32,11 +32,13 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -114,6 +116,9 @@ func sourceClient(t *testing.T, objects ...client.Object) client.Client {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := aimv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	if err := aimv1alpha2.AddToScheme(scheme); err != nil {
@@ -246,9 +251,9 @@ func TestCatalogDerivationPreservesType(t *testing.T) {
 							}
 							var desired []desiredProfile
 							if namespace == "" {
-								desired, err = buildDesiredClusterProfiles(clusterSet, selected)
+								desired, err = buildDesiredClusterProfiles(clusterSet, selected, nil)
 							} else {
-								desired, err = buildDesiredNamespaceProfiles(set, selected)
+								desired, err = buildDesiredNamespaceProfiles(set, selected, nil)
 							}
 							if err != nil {
 								t.Fatal(err)
@@ -300,9 +305,9 @@ func TestCatalogNamingSurvivesOptedInDerivationChains(t *testing.T) {
 				}
 				var outputs []desiredProfile
 				if namespace == "" {
-					outputs, err = buildDesiredClusterProfiles(&aimv1alpha2.AIMClusterProfileSet{ObjectMeta: set.ObjectMeta, Spec: set.Spec}, []aimprofile.ProfileCopyCandidate{source})
+					outputs, err = buildDesiredClusterProfiles(&aimv1alpha2.AIMClusterProfileSet{ObjectMeta: set.ObjectMeta, Spec: set.Spec}, []aimprofile.ProfileCopyCandidate{source}, nil)
 				} else {
-					outputs, err = buildDesiredNamespaceProfiles(set, []aimprofile.ProfileCopyCandidate{source})
+					outputs, err = buildDesiredNamespaceProfiles(set, []aimprofile.ProfileCopyCandidate{source}, nil)
 				}
 				if err != nil || len(outputs) != 1 {
 					t.Fatalf("outputs=%d, %v", len(outputs), err)
@@ -335,11 +340,11 @@ func TestDistinctDefinitionsWithSameLegacyNameFailClosed(t *testing.T) {
 	duplicate := sources[0].ProfileCopyCandidate
 	duplicate.SourceID += "/distinct-definition"
 	candidates := []aimprofile.ProfileCopyCandidate{sources[0].ProfileCopyCandidate, duplicate}
-	if _, err := buildDesiredNamespaceProfiles(set, candidates); err == nil {
+	if _, err := buildDesiredNamespaceProfiles(set, candidates, nil); err == nil {
 		t.Fatal("distinct definitions silently overwrote the same namespaced output")
 	}
 	cluster := &aimv1alpha2.AIMClusterProfileSet{ObjectMeta: metav1.ObjectMeta{Name: set.Name}, Spec: set.Spec}
-	if _, err := buildDesiredClusterProfiles(cluster, candidates); err == nil {
+	if _, err := buildDesiredClusterProfiles(cluster, candidates, nil); err == nil {
 		t.Fatal("distinct definitions silently overwrote the same cluster output")
 	}
 }
@@ -443,6 +448,95 @@ func TestSourceFailurePipelineDoesNotWriteProfiles(t *testing.T) {
 				t.Fatalf("source failure hidden: %+v", status)
 			}
 		}
+	}
+}
+
+func TestProfileSetPipeline_MissingBaseImageIsMissingUpstreamDependency(t *testing.T) {
+	t.Parallel()
+
+	for _, namespace := range []string{"team", ""} {
+		t.Run("namespace="+namespace, func(t *testing.T) {
+			sourceSpec := aimv1alpha2.AIMProfileSpecCommon{
+				AimId: "team/base", ModelId: "team/base", ProfileId: "gpu",
+				Image:        "registry.example/optimized:1.2",
+				ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "team/base", SourceURI: "hf://team/base"}},
+			}
+			sourceMeta := metav1.ObjectMeta{
+				Name: "source", Namespace: namespace,
+				Annotations: profileyaml.Mark(map[string]string{
+					aimprofile.AnnotationProfileCopyable: "true",
+				}, profileyaml.DefaultContract()),
+			}
+			setMeta := metav1.ObjectMeta{Name: "fine-tune", Namespace: namespace, UID: "set-uid", Generation: 1}
+			setSpec := aimv1alpha1.AIMProfileSetSpec{
+				Selector:      aimv1alpha1.ProfileSelector{AimId: sourceSpec.AimId},
+				VersionPolicy: aimv1alpha1.ProfileVersionPolicyAll,
+				Overrides: &aimv1alpha1.ProfileOverrides{
+					ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "team/fine-tune", SourceURI: "hf://team/fine-tune"}},
+				},
+			}
+			outputMeta := metav1.ObjectMeta{
+				Name: "keep", Namespace: namespace,
+				Annotations: map[string]string{annotationProfileSetUID: string(setMeta.UID)},
+			}
+			var source, parent, output client.Object
+			var status *aimv1alpha1.AIMProfileSetStatus
+			var run func(client.Client) (ctrl.Result, error)
+			if namespace == "" {
+				source = &aimv1alpha2.AIMClusterProfile{ObjectMeta: sourceMeta, Spec: aimv1alpha2.AIMClusterProfileSpec{AIMProfileSpecCommon: sourceSpec}}
+				set := &aimv1alpha2.AIMClusterProfileSet{ObjectMeta: setMeta, Spec: setSpec}
+				parent, status = set, &set.Status
+				output = &aimv1alpha2.AIMClusterProfile{ObjectMeta: outputMeta}
+				run = func(c client.Client) (ctrl.Result, error) {
+					pipeline := controllerutils.Pipeline[*aimv1alpha2.AIMClusterProfileSet, *aimv1alpha1.AIMProfileSetStatus, ClusterProfileSetFetchResult, ClusterProfileSetObservation]{
+						Client: c, StatusClient: c.Status(), Scheme: c.Scheme(), Clientset: kubernetesfake.NewClientset(),
+						Recorder: record.NewFakeRecorder(100), ControllerName: "cluster-profile-set", Reconciler: &ClusterProfileSetReconciler{Scheme: c.Scheme()},
+					}
+					return pipeline.Run(context.Background(), set)
+				}
+			} else {
+				source = &aimv1alpha2.AIMProfile{ObjectMeta: sourceMeta, Spec: aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: sourceSpec}}
+				set := &aimv1alpha2.AIMProfileSet{ObjectMeta: setMeta, Spec: setSpec}
+				parent, status = set, &set.Status
+				output = &aimv1alpha2.AIMProfile{ObjectMeta: outputMeta}
+				run = func(c client.Client) (ctrl.Result, error) {
+					pipeline := controllerutils.Pipeline[*aimv1alpha2.AIMProfileSet, *aimv1alpha1.AIMProfileSetStatus, ProfileSetFetchResult, ProfileSetObservation]{
+						Client: c, StatusClient: c.Status(), Scheme: c.Scheme(), Clientset: kubernetesfake.NewClientset(),
+						Recorder: record.NewFakeRecorder(100), ControllerName: "profile-set", Reconciler: &ProfileSetReconciler{Scheme: c.Scheme()},
+					}
+					return pipeline.Run(context.Background(), set)
+				}
+			}
+			c := sourceClient(t, source, parent, output)
+			before := output.DeepCopyObject().(client.Object)
+			if err := c.Get(context.Background(), client.ObjectKeyFromObject(output), before); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				result, err := run(c)
+				if err != nil || result != (ctrl.Result{}) {
+					t.Fatalf("missing lineage must not retry: result=%+v error=%v", result, err)
+				}
+				condition := meta.FindStatusCondition(status.Conditions, controllerutils.ConditionTypeConfigValid)
+				if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != controllerutils.ReasonMissingRef {
+					t.Fatalf("missing ConfigValid=False: %+v", status.Conditions)
+				}
+				if condition := meta.FindStatusCondition(status.Conditions, controllerutils.ConditionTypeDependenciesReachable); condition != nil && condition.Status == metav1.ConditionFalse {
+					t.Fatalf("missing lineage reported as unreachable infrastructure: %+v", condition)
+				}
+				derivation := meta.FindStatusCondition(status.Conditions, componentDerivation+controllerutils.ComponentConditionSuffix)
+				if derivation == nil || !strings.Contains(derivation.Message, "no AIM_BASE_IMAGE_REF") {
+					t.Fatalf("missing actionable lineage diagnostic: %+v", derivation)
+				}
+			}
+			after := output.DeepCopyObject().(client.Object)
+			if err := c.Get(context.Background(), client.ObjectKeyFromObject(output), after); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(before, after) {
+				t.Fatal("missing lineage changed an existing managed profile")
+			}
+		})
 	}
 }
 
@@ -579,9 +673,9 @@ func TestDefaultDefinitionsWithoutMaterialization(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			desired, err := buildDesiredNamespaceProfiles(set, selected)
+			desired, err := buildDesiredNamespaceProfiles(set, selected, nil)
 			if cluster {
-				desired, err = buildDesiredClusterProfiles(&aimv1alpha2.AIMClusterProfileSet{ObjectMeta: set.ObjectMeta, Spec: set.Spec}, selected)
+				desired, err = buildDesiredClusterProfiles(&aimv1alpha2.AIMClusterProfileSet{ObjectMeta: set.ObjectMeta, Spec: set.Spec}, selected, nil)
 			}
 			if err != nil || len(desired) != 2 {
 				t.Fatalf("outputs=%d err=%v", len(desired), err)
@@ -617,7 +711,7 @@ func TestDefinitionIdentityAndOptOutAcrossMaterialization(t *testing.T) {
 		t.Fatalf("before=%v err=%v", before, err)
 	}
 	selected, _ := resolveSelectedProfileSetCandidates(before, profileCopyRequest(set.Spec))
-	outputBefore, _ := buildDesiredNamespaceProfiles(set, selected)
+	outputBefore, _ := buildDesiredNamespaceProfiles(set, selected, nil)
 	name, _ := utils.GenerateDerivedName([]string{"model", "gpu"}, utils.WithHashSource("model", "gpu"))
 	live := &aimv1alpha2.AIMProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "team", Annotations: map[string]string{
@@ -634,7 +728,7 @@ func TestDefinitionIdentityAndOptOutAcrossMaterialization(t *testing.T) {
 		t.Fatalf("after=%v err=%v", after, err)
 	}
 	selected, _ = resolveSelectedProfileSetCandidates(after, profileCopyRequest(set.Spec))
-	outputAfter, _ := buildDesiredNamespaceProfiles(set, selected)
+	outputAfter, _ := buildDesiredNamespaceProfiles(set, selected, nil)
 	if !reflect.DeepEqual(outputBefore, outputAfter) {
 		t.Fatal("materialization changed derived name/spec/contract")
 	}
@@ -796,7 +890,7 @@ func TestPartialSourceFailureRetainsEntireSetWithoutWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	selected, _ := resolveSelectedProfileSetCandidates(candidates, profileCopyRequest(set.Spec))
-	outputs, _ := buildDesiredNamespaceProfiles(set, selected)
+	outputs, _ := buildDesiredNamespaceProfiles(set, selected, nil)
 	existing := make([]managedProfile, 0, len(outputs)+1)
 	for _, output := range outputs {
 		existing = append(existing, managedProfile{Object: output.Object})

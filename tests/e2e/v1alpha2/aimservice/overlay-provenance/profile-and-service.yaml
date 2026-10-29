@@ -3,6 +3,9 @@ kind: AIMProfile
 metadata:
   name: overlay-seed-profile
 spec:
+  # Hand-authored deployable profiles use the typed field rather than the
+  # producer-only discovery annotation.
+  baseImageRef: registry.example.com/aim-cpu-base:0.12.0
   aimId: overlay-test/model
   modelId: overlay-test/model
   profileId: cpu-default

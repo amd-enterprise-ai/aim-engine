@@ -104,6 +104,43 @@ func assertContainsNone(t *testing.T, subject, body string, forbidden ...string)
 	}
 }
 
+func TestHelmDefaultRuntimeImageRegistryCompatibilityMappings(t *testing.T) {
+	root := repoRoot(t)
+
+	var values struct {
+		ClusterRuntimeConfig struct {
+			Spec struct {
+				ImageRegistry struct {
+					Mappings []struct {
+						From string `yaml:"from"`
+						To   string `yaml:"to"`
+					} `yaml:"mappings"`
+				} `yaml:"imageRegistry"`
+			} `yaml:"spec"`
+		} `yaml:"clusterRuntimeConfig"`
+	}
+	if err := yaml.Unmarshal([]byte(readRepoFile(t, root, "config", "helm", "values.yaml")), &values); err != nil {
+		t.Fatalf("parse values.yaml: %v", err)
+	}
+
+	got := values.ClusterRuntimeConfig.Spec.ImageRegistry.Mappings
+	want := []struct {
+		From string `yaml:"from"`
+		To   string `yaml:"to"`
+	}{
+		{From: "docker.io/silogenai", To: "docker.io/amdenterpriseai"},
+		{From: "ghcr.io/silogen", To: "docker.io/amdenterpriseai"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("default runtime image registry mappings = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("default runtime image registry mapping %d = %#v, want %#v", i, got[i], want[i])
+		}
+	}
+}
+
 // TestGatewayActivationInvariant pins the scale-from-zero activation invariant
 // across every place it is independently expressed:
 //

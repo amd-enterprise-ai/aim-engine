@@ -127,10 +127,12 @@ prometheus:
   enable: false
 
 # -- Cluster-wide runtime configuration for AIM resources. By default the chart
-# creates `AIMClusterRuntimeConfig/default` with a generic NVIDIA vLLM fallback
-# so v1alpha2 `spec.modelId` onboarding can generate profiles immediately on
-# clusters that advertise NVIDIA GPU resources. Disable this when the cluster
-# already has a platform-managed config with the same name.
+# creates `AIMClusterRuntimeConfig/default` with public AIM base-image
+# compatibility mappings and a generic NVIDIA vLLM fallback, so derived
+# runtime images remain pullable and v1alpha2 `spec.modelId` onboarding can
+# generate profiles immediately on clusters that advertise NVIDIA GPU resources.
+# Disable this when the cluster already has a platform-managed config with the
+# same name.
 clusterRuntimeConfig:
   # -- Enable creation of the chart-managed AIMClusterRuntimeConfig resource
   enable: true
@@ -145,8 +147,20 @@ clusterRuntimeConfig:
   # sizes. Generated profiles remain truthfully `unoptimized`, while
   # autoSelectionPolicy=any lets AIMServices use this runtime automatically
   # only when no optimized profile matches.
-  # @default -- NVIDIA vLLM fallback for any NVIDIA GPU
+  # @default -- Public AIM base-image compatibility mappings and an NVIDIA vLLM fallback for any NVIDIA GPU
   spec:
+    # Released AIM model images can record the producer's private base-image
+    # repository in AIM_BASE_IMAGE_REF even when the corresponding runtime is
+    # published publicly under docker.io/amdenterpriseai. Keep the canonical
+    # producer reference as lineage while making derived runtime images
+    # pullable by default. Image builds should eventually record the public
+    # reference.
+    imageRegistry:
+      mappings:
+        - from: docker.io/silogenai
+          to: docker.io/amdenterpriseai
+        - from: ghcr.io/silogen
+          to: docker.io/amdenterpriseai
     model:
       profileGeneration:
         fallbacks:

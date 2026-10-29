@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 )
 
 // aimBase011 is the canonical aim-base:0.11 reference used across tests in
@@ -96,8 +97,8 @@ func match(ownerName, ownerNamespace, version string) TemplateMatchResult {
 	}
 }
 
-// Resolver returns the cluster owner's baseImageRef (rebased onto the owner's
-// registry+org and normalised to MAJOR.MINOR) for a cluster-scoped match.
+// Resolver returns the cluster owner's exact baseImageRef for a cluster-scoped
+// match.
 func TestImageResolver_ClusterOwner_BaseImageRef(t *testing.T) {
 	owner := clusterOwner("qwen3-0.9.0",
 		"ghcr.io/silogen/qwen3:0.9.0",
@@ -111,25 +112,18 @@ func TestImageResolver_ClusterOwner_BaseImageRef(t *testing.T) {
 			ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights",
 		}},
 		Custom: &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyLatest},
-	})
+	}, nil)
 
 	got, err := r.Resolve(context.Background(), match("qwen3-0.9.0", "", "0.9.0"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// `0.9.0` truncates to MAJOR.MINOR `0.9`: the deployable aim-base
-	// image is always tagged with its MAJOR.MINOR rolling tag, never the
-	// patch-level tag baked into AIM_BASE_IMAGE_REF.
-	if want := "ghcr.io/silogen/aim-base:0.9"; got != want {
+	if want := "ghcr.io/silogen/aim-base:0.9.0"; got != want {
 		t.Errorf("Resolve = %q, want %q", got, want)
 	}
 }
 
-// Resolver normalises release-candidate AIM_BASE_IMAGE_REF tags
-// (e.g. `0.11-rc21`) onto the stable MAJOR.MINOR rolling tag that aim-base
-// actually publishes. Build pipelines stamp the RC tag during release prep,
-// but the deployable image is reachable only at `aim-base:0.11`.
-func TestImageResolver_NormalizesReleaseCandidateTag(t *testing.T) {
+func TestImageResolver_PreservesReleaseCandidateTag(t *testing.T) {
 	owner := clusterOwner("qwen3-32b",
 		"amdenterpriseai/aim-qwen-qwen3-32b:0.11.0",
 		"ghcr.io/silogen/aim-base:0.11-rc21",
@@ -140,20 +134,18 @@ func TestImageResolver_NormalizesReleaseCandidateTag(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyLatest},
-	})
+	}, nil)
 
 	got, err := r.Resolve(context.Background(), match("qwen3-32b", "", "0.11.0"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if want := "amdenterpriseai/aim-base:0.11"; got != want {
-		t.Errorf("Resolve = %q, want %q (rc tag must truncate to MAJOR.MINOR and rebase onto owner registry)", got, want)
+	if want := "ghcr.io/silogen/aim-base:0.11-rc21"; got != want {
+		t.Errorf("Resolve = %q, want exact producer-owned reference %q", got, want)
 	}
 }
 
-// Resolver rebases the baseImageRef onto the owner's registry+org so private
-// mirrors of base models automatically cover the aim-base image too.
-func TestImageResolver_RebasesToOwnerRegistry(t *testing.T) {
+func TestImageResolver_PreservesBaseImageRegistry(t *testing.T) {
 	owner := clusterOwner("qwen3-0.11.0",
 		"ghcr.io/silogen/qwen3:0.11.0",
 		"docker.io/amdenterpriseai/aim-base:0.11",
@@ -164,24 +156,46 @@ func TestImageResolver_RebasesToOwnerRegistry(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyAny},
-	})
+	}, nil)
 
 	got, err := r.Resolve(context.Background(), match("qwen3-0.11.0", "", "0.11.0"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != aimBase011 {
-		t.Errorf("Resolve = %q, want %q (expected base rebased onto owner registry)", got, aimBase011)
+	if want := "docker.io/amdenterpriseai/aim-base:0.11"; got != want {
+		t.Errorf("Resolve = %q, want exact producer-owned reference %q", got, want)
 	}
 }
 
-// Resolver synthesizes aim-base:MAJOR.MINOR from the owner's image tag for
-// legacy installs whose status.imageMetadata predates AIM_BASE_IMAGE_REF.
-func TestImageResolver_LegacyFallback(t *testing.T) {
+func TestImageResolver_AppliesExplicitRegistryMapping(t *testing.T) {
+	owner := clusterOwner("qwen3-0.11.0",
+		"ghcr.io/private-team/qwen3:0.11.0",
+		"docker.io/amdenterpriseai/aim-base:0.11.2",
+	)
+	c := newFakeClient(owner)
+
+	r := newImageResolver(c, &aimv1alpha1.AIMModelSpec{
+		AimId:        "qwen/qwen3-32b",
+		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
+		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyAny},
+	}, []aimimage.RegistryMapping{{
+		From: "docker.io/amdenterpriseai",
+		To:   "ghcr.io/private-team",
+	}})
+
+	got, err := r.Resolve(context.Background(), match("qwen3-0.11.0", "", "0.11.0"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := "ghcr.io/private-team/aim-base:0.11.2"; got != want {
+		t.Errorf("Resolve = %q, want mapped reference %q", got, want)
+	}
+}
+
+// Missing AIM_BASE_IMAGE_REF is a controlled deferral even when the source tag
+// looks like semver. The resolver must not synthesize or truncate an image tag.
+func TestImageResolver_DefersWhenBaseImageRefIsMissing(t *testing.T) {
 	owner := clusterOwner("qwen3-0.11.0", "ghcr.io/silogen/qwen3:0.11.0", "")
-	// Force "metadata cached" so the resolver doesn't think the owner is
-	// merely missing baseImageRef because it hasn't inspected yet — it has,
-	// the field just didn't exist.
 	owner.Status.ImageMetadata = &aimv1alpha1.ImageMetadata{}
 	c := newFakeClient(owner)
 
@@ -189,19 +203,14 @@ func TestImageResolver_LegacyFallback(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyLatest},
-	})
+	}, nil)
 
-	got, err := r.Resolve(context.Background(), match("qwen3-0.11.0", "", "0.11.0"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != aimBase011 {
-		t.Errorf("Resolve = %q, want %q", got, aimBase011)
+	if _, err := r.Resolve(context.Background(), match("qwen3-0.11.0", "", "0.11.0")); err == nil {
+		t.Fatal("expected deferral error for missing AIM_BASE_IMAGE_REF")
 	}
 }
 
-// Resolver returns an error when the owner has neither baseImageRef nor a
-// semver-shaped tag — caller treats this as "defer the copy".
+// Resolver returns the same controlled deferral for non-semver source tags.
 func TestImageResolver_DefersWhenUnresolvable(t *testing.T) {
 	owner := clusterOwner("qwen3-latest", "ghcr.io/silogen/qwen3:latest", "")
 	c := newFakeClient(owner)
@@ -210,7 +219,7 @@ func TestImageResolver_DefersWhenUnresolvable(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyLatest},
-	})
+	}, nil)
 
 	if _, err := r.Resolve(context.Background(), match("qwen3-latest", "", "latest")); err == nil {
 		t.Fatal("expected deferral error, got nil")
@@ -225,7 +234,7 @@ func TestImageResolver_DefersWhenOwnerMissing(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyLatest},
-	})
+	}, nil)
 
 	if _, err := r.Resolve(context.Background(), match("missing-owner", "", "0.9.0")); err == nil {
 		t.Fatal("expected deferral error when owner is missing")
@@ -244,7 +253,7 @@ func TestImageResolver_PinnedReturnsModelSpecImage(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyPinned},
-	})
+	}, nil)
 
 	got, err := r.Resolve(context.Background(), match("qwen3-0.8.5", "", "0.8.5"))
 	if err != nil {
@@ -268,13 +277,13 @@ func TestImageResolver_NamespaceScopedOwner(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyLatest},
-	})
+	}, nil)
 
 	got, err := r.Resolve(context.Background(), match("qwen3-0.9.0", "team-a", "0.9.0"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if want := "ghcr.io/silogen/aim-base:0.9"; got != want {
+	if want := "ghcr.io/silogen/aim-base:0.9.0"; got != want {
 		t.Errorf("Resolve = %q, want %q", got, want)
 	}
 }
@@ -292,7 +301,7 @@ func TestImageResolver_PerMatchHeterogeneous(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyAny},
-	})
+	}, nil)
 
 	gpuImage, err := r.Resolve(context.Background(), match("qwen3-mi300-0.11", "", "0.11.0"))
 	if err != nil {
@@ -309,16 +318,3 @@ func TestImageResolver_PerMatchHeterogeneous(t *testing.T) {
 		t.Errorf("epyc image = %q, want %q", cpuImage, want)
 	}
 }
-
-// NOTE: rebaseImageRegistry / legacyBaseImageFromSource used to live in this
-// package as local helpers and had their own unit tests here. Both were
-// consolidated into internal/aimimage and the duplicated tests removed — see
-// internal/aimimage/rebase_test.go (TestRebaseRegistry,
-// TestLegacyBaseImageFromSource) for the canonical coverage, including the
-// extra edge cases (short-form RC tags, registry ports, multi-segment paths,
-// empty source) the v1alpha1 tests previously asserted.
-//
-// The integration-style TestImageResolver_* tests above stay because they
-// exercise the resolver end-to-end against a fake client and verify the
-// version-policy / owner-lookup / per-match-heterogeneous behaviour that's
-// specific to the v1alpha1 fine-tuned model flow.

@@ -52,6 +52,7 @@ func PublishesCatalog(spec *aimv1alpha1.AIMModelSpec) bool {
 // only when applying overrides or creating API objects.
 func CatalogProfileSpec(entry aimprofile.DiscoveryCatalogItem, spec *aimv1alpha1.AIMModelSpec, recommended []aimv1alpha1.RecommendedDeployment) aimv1alpha2.AIMProfileSpecCommon {
 	result := entry.Spec
+	result.BaseImageRef = entry.BaseImage
 	result.ImagePullSecrets = spec.ImagePullSecrets
 	result.ServiceAccountName = spec.ServiceAccountName
 	if !entry.PrimaryExplicit {

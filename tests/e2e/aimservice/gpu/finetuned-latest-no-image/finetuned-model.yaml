@@ -5,7 +5,7 @@
 #   1. Match this model's aimId to the auto-discovered official template.
 #   2. Read the matched template's owning model's
 #      status.imageMetadata.baseImageRef (= AIM_BASE_IMAGE_REF baked into the
-#      aim-meta-llama image), rebased onto the owner's registry+org.
+#      aim-meta-llama image) exactly.
 #   3. Stamp the resolved image onto the generated fine-tuned template copy
 #      as the aim.eai.amd.com/deployment-image-ref annotation. AIMService
 #      reads that annotation when building the KServe InferenceService.

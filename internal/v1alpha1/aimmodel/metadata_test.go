@@ -27,9 +27,14 @@ package aimmodel
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
@@ -128,13 +133,30 @@ func TestShouldExtractMetadata(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "status with existing metadata",
+			name: "legacy status with existing metadata is migrated",
 			status: &aimv1alpha1.AIMModelStatus{
 				ImageMetadata: &aimv1alpha1.ImageMetadata{
 					Model: &aimv1alpha1.ModelMetadata{
 						CanonicalName: "test-model",
 					},
 				},
+			},
+			expected: true,
+		},
+		{
+			name: "legacy status with base image reference needs no registry migration",
+			status: &aimv1alpha1.AIMModelStatus{
+				ImageMetadata: &aimv1alpha1.ImageMetadata{
+					BaseImageRef: "docker.io/amdenterpriseai/aim-base:0.11.2",
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "current metadata without base image reference is not repeatedly inspected",
+			status: &aimv1alpha1.AIMModelStatus{
+				ImageMetadata:        &aimv1alpha1.ImageMetadata{},
+				ImageMetadataVersion: currentImageMetadataVersion,
 			},
 			expected: false,
 		},
@@ -147,5 +169,107 @@ func TestShouldExtractMetadata(t *testing.T) {
 				t.Errorf("shouldExtractMetadata() = %v, want %v", result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestDecorateModelStatusReportsMissingBaseImageWithoutGatingReadiness(t *testing.T) {
+	status := &aimv1alpha1.AIMModelStatus{Status: constants.AIMStatusReady}
+	cm := controllerutils.NewConditionManager(nil)
+
+	decorateModelStatus(
+		status,
+		cm,
+		&aimv1alpha1.AIMModelSpec{Image: "registry.example/model:1.0"},
+		controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{
+			Value: &aimv1alpha1.ImageMetadata{},
+		},
+	)
+
+	condition := cm.Get(conditionTypeRuntimeImageLineage)
+	if condition == nil {
+		t.Fatal("missing runtime image lineage condition")
+	}
+	if condition.Status != metav1.ConditionFalse || condition.Reason != reasonBaseImageRefMissing {
+		t.Fatalf("runtime image lineage condition = %#v", condition)
+	}
+	if strings.HasSuffix(condition.Type, controllerutils.ComponentConditionSuffix) {
+		t.Fatalf("condition %q participates in readiness rollup", condition.Type)
+	}
+	if status.Status != constants.AIMStatusReady {
+		t.Fatalf("status = %q, want normal model usage to remain Ready", status.Status)
+	}
+	if status.ImageMetadataVersion != currentImageMetadataVersion {
+		t.Fatalf("image metadata version = %d, want %d", status.ImageMetadataVersion, currentImageMetadataVersion)
+	}
+}
+
+func TestDecorateModelStatusClearsMissingBaseImageConditionAfterRecovery(t *testing.T) {
+	status := &aimv1alpha1.AIMModelStatus{
+		Conditions: []metav1.Condition{{
+			Type:   conditionTypeRuntimeImageLineage,
+			Status: metav1.ConditionFalse,
+			Reason: reasonBaseImageRefMissing,
+		}},
+	}
+	cm := controllerutils.NewConditionManager(status.Conditions)
+
+	decorateModelStatus(
+		status,
+		cm,
+		&aimv1alpha1.AIMModelSpec{Image: "registry.example/model:1.0"},
+		controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{
+			Value: &aimv1alpha1.ImageMetadata{
+				BaseImageRef: "docker.io/amdenterpriseai/aim-base:0.11.2",
+			},
+		},
+	)
+
+	if condition := cm.Get(conditionTypeRuntimeImageLineage); condition != nil {
+		t.Fatalf("stale runtime image lineage condition was not cleared: %#v", condition)
+	}
+}
+
+func TestDecorateModelStatusRecordsFailedLegacyMigrationWithoutReplacingCachedMetadata(t *testing.T) {
+	cached := &aimv1alpha1.ImageMetadata{
+		Model: &aimv1alpha1.ModelMetadata{CanonicalName: "cached-model"},
+	}
+	status := &aimv1alpha1.AIMModelStatus{
+		Status:        constants.AIMStatusReady,
+		ImageMetadata: cached,
+	}
+	cm := controllerutils.NewConditionManager(nil)
+	migrationErr := &utils.ImageRegistryError{
+		Type:    utils.ImagePullErrorAuth,
+		Message: "401 unauthorized",
+	}
+
+	decorateModelStatus(
+		status,
+		cm,
+		&aimv1alpha1.AIMModelSpec{Image: "registry.example/model:1.0"},
+		controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{Error: migrationErr},
+	)
+
+	if status.ImageMetadata != cached {
+		t.Fatal("failed migration replaced usable cached metadata")
+	}
+	if status.ImageMetadataVersion != 0 {
+		t.Fatalf("failed migration advanced image metadata version to %d", status.ImageMetadataVersion)
+	}
+	if status.Status != constants.AIMStatusReady {
+		t.Fatalf("status = %q, want normal model usage to remain Ready", status.Status)
+	}
+	condition := cm.Get(conditionTypeRuntimeImageLineage)
+	if condition == nil {
+		t.Fatal("missing runtime image lineage diagnostic")
+	}
+	if condition.Status != metav1.ConditionFalse || condition.Reason != reasonBaseImageRefInspectionFailed {
+		t.Fatalf("runtime image lineage condition = %#v", condition)
+	}
+	if !strings.Contains(condition.Message, "401 unauthorized") {
+		t.Fatalf("condition message %q does not explain the migration failure", condition.Message)
+	}
+	if !shouldExtractMetadata(status) {
+		t.Fatal("failed migration should remain eligible for recovery after registry access is fixed")
 	}
 }
