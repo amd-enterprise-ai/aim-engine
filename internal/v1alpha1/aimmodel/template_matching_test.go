@@ -266,7 +266,7 @@ func TestMatchTemplatesForModel_NoMatchingModelId(t *testing.T) {
 // stamping out additional copies named after both version spellings.
 func TestMatchTemplatesForModel_ExcludesFineTunedCopies(t *testing.T) {
 	modelSpec := &aimv1alpha1.AIMModelSpec{
-		Image: "ghcr.io/silogen/aim-base:0.11",
+		Image: "ghcr.io/amdenterpriseai/aim-base:0.11",
 		AimId: "meta-llama/Llama-3.2-1B-Instruct",
 		ModelSources: []aimv1alpha1.AIMModelSource{
 			{ModelID: "meta-llama/Llama-3.2-1B-Instruct", SourceURI: "hf://meta-llama/Llama-3.2-1B-Instruct"},
@@ -291,7 +291,7 @@ func TestMatchTemplatesForModel_ExcludesFineTunedCopies(t *testing.T) {
 
 func TestMatchClusterTemplatesForModel_ExcludesFineTunedCopies(t *testing.T) {
 	modelSpec := &aimv1alpha1.AIMModelSpec{
-		Image: "ghcr.io/silogen/aim-base:0.11",
+		Image: "ghcr.io/amdenterpriseai/aim-base:0.11",
 		AimId: "meta-llama/Llama-3.2-1B-Instruct",
 		ModelSources: []aimv1alpha1.AIMModelSource{
 			{ModelID: "meta-llama/Llama-3.2-1B-Instruct", SourceURI: "hf://meta-llama/Llama-3.2-1B-Instruct"},
@@ -440,7 +440,7 @@ func TestBuildFineTunedServiceTemplates_PropagatesSourceProfileAsCustomProfile(t
 	model := &aimv1alpha1.AIMModel{
 		ObjectMeta: metav1.ObjectMeta{Name: "ft-llama", Namespace: "default"},
 		Spec: aimv1alpha1.AIMModelSpec{
-			Image: "ghcr.io/silogen/aim-base:0.11",
+			Image: "ghcr.io/amdenterpriseai/aim-base:0.11",
 			AimId: "meta-llama/Llama-3.2-1B-Instruct",
 			ModelSources: []aimv1alpha1.AIMModelSource{
 				{ModelID: "meta-llama/Llama-3.2-1B-Instruct", SourceURI: "s3://bucket/weights/"},
@@ -532,7 +532,7 @@ func TestBuildFineTunedServiceTemplates_MergesModelEnvIntoTemplateSpecEnv(t *tes
 	model := &aimv1alpha1.AIMModel{
 		ObjectMeta: metav1.ObjectMeta{Name: "ft-llama", Namespace: "default"},
 		Spec: aimv1alpha1.AIMModelSpec{
-			Image: "ghcr.io/silogen/aim-base:0.11",
+			Image: "ghcr.io/amdenterpriseai/aim-base:0.11",
 			AimId: "meta-llama/Llama-3.2-1B-Instruct",
 			Env:   []corev1.EnvVar{awsKey, awsEndpoint},
 			ModelSources: []aimv1alpha1.AIMModelSource{
@@ -647,7 +647,7 @@ func TestBuildFineTunedServiceTemplates_BuildsFromProfileMetadata(t *testing.T) 
 	model := &aimv1alpha1.AIMModel{
 		ObjectMeta: metav1.ObjectMeta{Name: "ft-llama", Namespace: "default"},
 		Spec: aimv1alpha1.AIMModelSpec{
-			Image: "ghcr.io/silogen/aim-base:0.11",
+			Image: "ghcr.io/amdenterpriseai/aim-base:0.11",
 			AimId: "meta-llama/Llama-3.2-1B-Instruct",
 			ModelSources: []aimv1alpha1.AIMModelSource{
 				{ModelID: "meta-llama/Llama-3.2-1B-Instruct", SourceURI: "s3://bucket/weights/"},
@@ -731,7 +731,7 @@ func TestBuildFineTunedServiceTemplates_DefersWhenDiscoveryNotReady(t *testing.T
 	model := &aimv1alpha1.AIMModel{
 		ObjectMeta: metav1.ObjectMeta{Name: "ft-llama", Namespace: "default"},
 		Spec: aimv1alpha1.AIMModelSpec{
-			Image: "ghcr.io/silogen/aim-base:0.11",
+			Image: "ghcr.io/amdenterpriseai/aim-base:0.11",
 			AimId: "meta-llama/Llama-3.2-1B-Instruct",
 			ModelSources: []aimv1alpha1.AIMModelSource{
 				{ModelID: "meta-llama/Llama-3.2-1B-Instruct", SourceURI: "s3://bucket/weights/"},
@@ -854,7 +854,7 @@ func TestBuildFineTunedServiceTemplates_DefersWhenCustomProfileWouldTripCEL(t *t
 	model := &aimv1alpha1.AIMModel{
 		ObjectMeta: metav1.ObjectMeta{Name: "ft-llama", Namespace: "default"},
 		Spec: aimv1alpha1.AIMModelSpec{
-			Image: "ghcr.io/silogen/aim-base:0.11",
+			Image: "ghcr.io/amdenterpriseai/aim-base:0.11",
 			AimId: "meta-llama/Llama-3.2-1B-Instruct",
 			ModelSources: []aimv1alpha1.AIMModelSource{
 				{ModelID: "meta-llama/Llama-3.2-1B-Instruct", SourceURI: "s3://bucket/weights/"},
@@ -933,8 +933,8 @@ func TestBuildFineTunedServiceTemplates_DefersWhenCustomProfileWouldTripCEL(t *t
 // scenario that motivated moving image resolution onto each copy: a single
 // patched model.spec.image cannot honor heterogeneous owners.
 func TestBuildFineTunedClusterServiceTemplates_StampsAnnotationPerMatch(t *testing.T) {
-	mi300 := clusterOwner("qwen3-mi300", "ghcr.io/silogen/qwen3:0.11.0", "ghcr.io/silogen/aim-base:0.11")
-	epyc := clusterOwner("qwen3-epyc", "ghcr.io/silogen/qwen3-epyc:0.11.0", "ghcr.io/silogen/aim-epyc-base:0.11")
+	mi300 := clusterOwner("qwen3-mi300", "ghcr.io/amdenterpriseai/qwen3:0.11.0", "ghcr.io/amdenterpriseai/aim-base:0.11")
+	epyc := clusterOwner("qwen3-epyc", "ghcr.io/amdenterpriseai/qwen3-epyc:0.11.0", "ghcr.io/amdenterpriseai/aim-epyc-base:0.11")
 
 	model := &aimv1alpha1.AIMClusterModel{
 		ObjectMeta: metav1.ObjectMeta{Name: "ft-qwen"},
@@ -971,7 +971,7 @@ func TestBuildFineTunedClusterServiceTemplates_StampsAnnotationPerMatch(t *testi
 		}
 		gotImages[ref] = true
 	}
-	for _, want := range []string{"ghcr.io/silogen/aim-base:0.11", "ghcr.io/silogen/aim-epyc-base:0.11"} {
+	for _, want := range []string{"ghcr.io/amdenterpriseai/aim-base:0.11", "ghcr.io/amdenterpriseai/aim-epyc-base:0.11"} {
 		if !gotImages[want] {
 			t.Errorf("expected at least one template stamped with %q, got %v", want, gotImages)
 		}
@@ -982,9 +982,9 @@ func TestBuildFineTunedClusterServiceTemplates_StampsAnnotationPerMatch(t *testi
 // applied), so a transiently-broken owner doesn't keep a stale, image-less
 // copy alive on the server.
 func TestBuildFineTunedClusterServiceTemplates_SkipsUnresolvableMatches(t *testing.T) {
-	resolvable := clusterOwner("qwen3-resolvable", "ghcr.io/silogen/qwen3:0.11.0", "ghcr.io/silogen/aim-base:0.11")
+	resolvable := clusterOwner("qwen3-resolvable", "ghcr.io/amdenterpriseai/qwen3:0.11.0", "ghcr.io/amdenterpriseai/aim-base:0.11")
 	// "deferred" has no baseImageRef and a non-semver tag -> resolver gives up.
-	deferred := clusterOwner("qwen3-deferred", "ghcr.io/silogen/qwen3:latest", "")
+	deferred := clusterOwner("qwen3-deferred", "ghcr.io/amdenterpriseai/qwen3:latest", "")
 
 	model := &aimv1alpha1.AIMClusterModel{
 		ObjectMeta: metav1.ObjectMeta{Name: "ft-qwen"},
@@ -1005,7 +1005,7 @@ func TestBuildFineTunedClusterServiceTemplates_SkipsUnresolvableMatches(t *testi
 	if len(templates) != 1 {
 		t.Fatalf("expected 1 template (deferred match skipped), got %d", len(templates))
 	}
-	if got := templates[0].Annotations[constants.AnnotationDeploymentImageRef]; got != "ghcr.io/silogen/aim-base:0.11" {
+	if got := templates[0].Annotations[constants.AnnotationDeploymentImageRef]; got != "ghcr.io/amdenterpriseai/aim-base:0.11" {
 		t.Errorf("unexpected stamped image: %q", got)
 	}
 }

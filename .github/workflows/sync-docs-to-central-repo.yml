@@ -29,6 +29,18 @@ on:
     paths:
       - "docs/docs/**"
       - ".github/workflows/sync-docs-to-central-repo.yml"
+  # compile-release calls this for a tag it created, which starts no push run.
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Tag to sync the docs from'
+        required: true
+        type: string
+    secrets:
+      # Optional, so a missing token fails only this sync (see the check
+      # below) and not the whole calling run.
+      DOCS_REPO_TOKEN:
+        required: false
 
 jobs:
   copy-docs:
@@ -51,6 +63,8 @@ jobs:
       - name: Checkout aim-engine repo
         uses: actions/checkout@v4
         with:
+          # Empty on push, which checks out the pushed ref.
+          ref: ${{ inputs.ref }}
           # Avoid leaving a github.com credential header behind: it would collide
           # with the token used below for the separate docs repo checkout.
           persist-credentials: false

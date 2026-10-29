@@ -19,6 +19,10 @@ spec:
               spec:
                 model:
                   profileGeneration:
+                    # Generated profiles take these resources. Without them the
+                    # default host requests (4 CPUs and 32Gi per GPU) exceed small
+                    # CI nodes, and vendor would not be the only reason a fallback
+                    # is rejected.
                     fallbacks:
                       - name: amd-vllm
                         priority: 10
@@ -28,6 +32,10 @@ spec:
                         runtime:
                           image: registry.example.com/amd-vllm:test
                           engine: vllm
+                          resources:
+                            requests:
+                              cpu: 500m
+                              memory: 1Gi
                       - name: nvidia-vllm
                         priority: 20
                         match:
@@ -36,6 +44,10 @@ spec:
                         runtime:
                           image: registry.example.com/nvidia-vllm:test
                           engine: vllm
+                          resources:
+                            requests:
+                              cpu: 500m
+                              memory: 1Gi
 
     - name: Create modelId-only model
       try:

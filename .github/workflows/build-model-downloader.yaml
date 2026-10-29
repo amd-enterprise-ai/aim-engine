@@ -1,10 +1,8 @@
 name: build-artifact-downloader
 
+# PRs only build; pushes happen from manual runs. compile-release builds and
+# pushes the downloader for every tag.
 on:
-  push:
-    tags:
-      - "v*"
-      - "*int-test"
   pull_request:
     paths:
       - "images/artifact-downloader/**"
@@ -30,9 +28,6 @@ env:
 
 jobs:
   build:
-    # Gate automatic triggers (tag push / PR) behind the repo variable, but
-    # always allow a manual run — dispatching the workflow is an explicit opt-in.
-    if: ${{ vars.ACTIVATE_ARTIFACT_DOWNLOADER_WORKFLOW == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -58,7 +53,7 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=tag
-            type=raw,value=latest,enable=${{ inputs.push_latest == true || startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ inputs.push_latest == true }}
             type=sha,prefix=
             type=raw,value=${{ inputs.version }},enable=${{ inputs.version != '' }}
       - name: Build and push image

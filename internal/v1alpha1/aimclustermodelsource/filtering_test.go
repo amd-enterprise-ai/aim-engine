@@ -216,50 +216,50 @@ func TestParseImageFilter(t *testing.T) {
 	}{
 		{
 			name: "simple repository pattern",
-			in:   "silogen/aim-llama",
+			in:   "amdenterpriseai/aim-llama",
 			want: parsedImageFilter{
 				registry:    "",
-				repository:  "silogen/aim-llama",
+				repository:  "amdenterpriseai/aim-llama",
 				tag:         "",
 				hasWildcard: false,
 			},
 		},
 		{
 			name: "repository with wildcard",
-			in:   "silogen/aim-*",
+			in:   "amdenterpriseai/aim-*",
 			want: parsedImageFilter{
 				registry:    "",
-				repository:  "silogen/aim-*",
+				repository:  "amdenterpriseai/aim-*",
 				tag:         "",
 				hasWildcard: true,
 			},
 		},
 		{
 			name: "repository with tag",
-			in:   "silogen/aim-llama:1.0.0",
+			in:   "amdenterpriseai/aim-llama:1.0.0",
 			want: parsedImageFilter{
 				registry:    "",
-				repository:  "silogen/aim-llama",
+				repository:  "amdenterpriseai/aim-llama",
 				tag:         "1.0.0",
 				hasWildcard: false,
 			},
 		},
 		{
 			name: "full URI with ghcr.io registry",
-			in:   "ghcr.io/silogen/aim-llama",
+			in:   "ghcr.io/amdenterpriseai/aim-llama",
 			want: parsedImageFilter{
 				registry:    "ghcr.io",
-				repository:  "silogen/aim-llama",
+				repository:  "amdenterpriseai/aim-llama",
 				tag:         "",
 				hasWildcard: false,
 			},
 		},
 		{
 			name: "full URI with ghcr.io registry and tag",
-			in:   "ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1",
+			in:   "ghcr.io/amdenterpriseai/aim-google-gemma-3-1b-it:0.8.1-rc1",
 			want: parsedImageFilter{
 				registry:    "ghcr.io",
-				repository:  "silogen/aim-google-gemma-3-1b-it",
+				repository:  "amdenterpriseai/aim-google-gemma-3-1b-it",
 				tag:         "0.8.1-rc1",
 				hasWildcard: false,
 			},
@@ -276,10 +276,10 @@ func TestParseImageFilter(t *testing.T) {
 		},
 		{
 			name: "ghcr.io with wildcard",
-			in:   "ghcr.io/silogen/aim-*",
+			in:   "ghcr.io/amdenterpriseai/aim-*",
 			want: parsedImageFilter{
 				registry:    "ghcr.io",
-				repository:  "silogen/aim-*",
+				repository:  "amdenterpriseai/aim-*",
 				tag:         "",
 				hasWildcard: true,
 			},
@@ -464,11 +464,11 @@ func TestMatchesFilter_FullURISupport(t *testing.T) {
 			name: "full URI with exact tag match",
 			img: RegistryImage{
 				Registry:   "ghcr.io",
-				Repository: "silogen/aim-google-gemma-3-1b-it",
+				Repository: "amdenterpriseai/aim-google-gemma-3-1b-it",
 				Tag:        "0.8.1-rc1",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image: "ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1",
+				Image: "ghcr.io/amdenterpriseai/aim-google-gemma-3-1b-it:0.8.1-rc1",
 			},
 			want: true,
 		},
@@ -476,11 +476,11 @@ func TestMatchesFilter_FullURISupport(t *testing.T) {
 			name: "full URI wrong tag",
 			img: RegistryImage{
 				Registry:   "ghcr.io",
-				Repository: "silogen/aim-google-gemma-3-1b-it",
+				Repository: "amdenterpriseai/aim-google-gemma-3-1b-it",
 				Tag:        "0.8.2",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image: "ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1",
+				Image: "ghcr.io/amdenterpriseai/aim-google-gemma-3-1b-it:0.8.1-rc1",
 			},
 			want: false,
 		},
@@ -488,11 +488,11 @@ func TestMatchesFilter_FullURISupport(t *testing.T) {
 			name: "full URI wrong registry",
 			img: RegistryImage{
 				Registry:   "docker.io",
-				Repository: "silogen/aim-llama",
+				Repository: "amdenterpriseai/aim-llama",
 				Tag:        "1.0.0",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image: "ghcr.io/silogen/aim-llama:1.0.0",
+				Image: "ghcr.io/amdenterpriseai/aim-llama:1.0.0",
 			},
 			want: false,
 		},
@@ -500,11 +500,11 @@ func TestMatchesFilter_FullURISupport(t *testing.T) {
 			name: "full URI matches registry, no tag specified",
 			img: RegistryImage{
 				Registry:   "ghcr.io",
-				Repository: "silogen/aim-llama",
+				Repository: "amdenterpriseai/aim-llama",
 				Tag:        "1.0.0",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image: "ghcr.io/silogen/aim-llama",
+				Image: "ghcr.io/amdenterpriseai/aim-llama",
 			},
 			want: true,
 		},
@@ -512,11 +512,11 @@ func TestMatchesFilter_FullURISupport(t *testing.T) {
 			name: "registry override exact repository",
 			img: RegistryImage{
 				Registry:   "ghcr.io",
-				Repository: "silogen/aim-llama3",
+				Repository: "amdenterpriseai/aim-llama3",
 				Tag:        "1.0.0",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image: "ghcr.io/silogen/aim-llama3",
+				Image: "ghcr.io/amdenterpriseai/aim-llama3",
 			},
 			want: true,
 		},
@@ -524,11 +524,11 @@ func TestMatchesFilter_FullURISupport(t *testing.T) {
 			name: "registry override exact repository wrong registry",
 			img: RegistryImage{
 				Registry:   "docker.io",
-				Repository: "silogen/aim-llama3",
+				Repository: "amdenterpriseai/aim-llama3",
 				Tag:        "1.0.0",
 			},
 			filter: aimv1alpha1.ModelSourceFilter{
-				Image: "ghcr.io/silogen/aim-llama3",
+				Image: "ghcr.io/amdenterpriseai/aim-llama3",
 			},
 			want: false,
 		},
@@ -712,11 +712,11 @@ func TestExtractStaticImages(t *testing.T) {
 			spec: aimv1alpha1.AIMClusterModelSourceSpec{
 				Registry: "ghcr.io",
 				Filters: []aimv1alpha1.ModelSourceFilter{
-					{Image: "silogen/aim-llama:1.0.0"},
+					{Image: "amdenterpriseai/aim-llama:1.0.0"},
 				},
 			},
 			want: []RegistryImage{
-				{Registry: "ghcr.io", Repository: "silogen/aim-llama", Tag: "1.0.0"},
+				{Registry: "ghcr.io", Repository: "amdenterpriseai/aim-llama", Tag: "1.0.0"},
 			},
 		},
 		{
@@ -725,12 +725,12 @@ func TestExtractStaticImages(t *testing.T) {
 				Registry: "ghcr.io",
 				Versions: []string{"1.0.0", "1.1.0"},
 				Filters: []aimv1alpha1.ModelSourceFilter{
-					{Image: "silogen/aim-llama"},
+					{Image: "amdenterpriseai/aim-llama"},
 				},
 			},
 			want: []RegistryImage{
-				{Registry: "ghcr.io", Repository: "silogen/aim-llama", Tag: "1.0.0"},
-				{Registry: "ghcr.io", Repository: "silogen/aim-llama", Tag: "1.1.0"},
+				{Registry: "ghcr.io", Repository: "amdenterpriseai/aim-llama", Tag: "1.0.0"},
+				{Registry: "ghcr.io", Repository: "amdenterpriseai/aim-llama", Tag: "1.1.0"},
 			},
 		},
 		{
@@ -739,11 +739,11 @@ func TestExtractStaticImages(t *testing.T) {
 				Registry: "ghcr.io",
 				Versions: []string{"1.0.0"},
 				Filters: []aimv1alpha1.ModelSourceFilter{
-					{Image: "silogen/aim-llama", Versions: []string{"2.0.0"}},
+					{Image: "amdenterpriseai/aim-llama", Versions: []string{"2.0.0"}},
 				},
 			},
 			want: []RegistryImage{
-				{Registry: "ghcr.io", Repository: "silogen/aim-llama", Tag: "2.0.0"},
+				{Registry: "ghcr.io", Repository: "amdenterpriseai/aim-llama", Tag: "2.0.0"},
 			},
 		},
 		{
@@ -752,7 +752,7 @@ func TestExtractStaticImages(t *testing.T) {
 				Registry: "ghcr.io",
 				Versions: []string{"1.0.0"},
 				Filters: []aimv1alpha1.ModelSourceFilter{
-					{Image: "silogen/aim-*"},
+					{Image: "amdenterpriseai/aim-*"},
 				},
 			},
 			want: nil,
@@ -763,7 +763,7 @@ func TestExtractStaticImages(t *testing.T) {
 				Registry: "ghcr.io",
 				Versions: []string{">=1.0.0"},
 				Filters: []aimv1alpha1.ModelSourceFilter{
-					{Image: "silogen/aim-llama"},
+					{Image: "amdenterpriseai/aim-llama"},
 				},
 			},
 			want: nil,
@@ -772,11 +772,11 @@ func TestExtractStaticImages(t *testing.T) {
 			name: "default to docker.io",
 			spec: aimv1alpha1.AIMClusterModelSourceSpec{
 				Filters: []aimv1alpha1.ModelSourceFilter{
-					{Image: "silogen/aim-llama:1.0.0"},
+					{Image: "amdenterpriseai/aim-llama:1.0.0"},
 				},
 			},
 			want: []RegistryImage{
-				{Registry: "docker.io", Repository: "silogen/aim-llama", Tag: "1.0.0"},
+				{Registry: "docker.io", Repository: "amdenterpriseai/aim-llama", Tag: "1.0.0"},
 			},
 		},
 		{
@@ -784,11 +784,11 @@ func TestExtractStaticImages(t *testing.T) {
 			spec: aimv1alpha1.AIMClusterModelSourceSpec{
 				Registry: "docker.io",
 				Filters: []aimv1alpha1.ModelSourceFilter{
-					{Image: "ghcr.io/silogen/aim-llama:1.0.0"},
+					{Image: "ghcr.io/amdenterpriseai/aim-llama:1.0.0"},
 				},
 			},
 			want: []RegistryImage{
-				{Registry: "ghcr.io", Repository: "silogen/aim-llama", Tag: "1.0.0"},
+				{Registry: "ghcr.io", Repository: "amdenterpriseai/aim-llama", Tag: "1.0.0"},
 			},
 		},
 	}
@@ -853,7 +853,7 @@ func TestEffectiveFilters(t *testing.T) {
 			"amdenterpriseai/aim-meta-llama-llama-3-2-1b-instruct:0.8.4",
 		},
 		Filters: []aimv1alpha1.ModelSourceFilter{
-			{Image: "ghcr.io/silogen/aim-llama:1.0.0"},
+			{Image: "ghcr.io/amdenterpriseai/aim-llama:1.0.0"},
 		},
 	}
 
@@ -867,7 +867,7 @@ func TestEffectiveFilters(t *testing.T) {
 	if got[1].Image != "amdenterpriseai/aim-meta-llama-llama-3-2-1b-instruct:0.8.4" {
 		t.Fatalf("second normalized filter image = %q", got[1].Image)
 	}
-	if got[2].Image != "ghcr.io/silogen/aim-llama:1.0.0" {
+	if got[2].Image != "ghcr.io/amdenterpriseai/aim-llama:1.0.0" {
 		t.Fatalf("third normalized filter image = %q", got[2].Image)
 	}
 }
@@ -896,7 +896,7 @@ func TestExtractStaticImages_UsingImagesField(t *testing.T) {
 		Registry: "docker.io",
 		Images: []string{
 			"amdenterpriseai/aim-qwen-qwen3-32b:0.8.4",
-			"ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1",
+			"ghcr.io/amdenterpriseai/aim-google-gemma-3-1b-it:0.8.1-rc1",
 		},
 	}
 
@@ -915,7 +915,7 @@ func TestExtractStaticImages_UsingImagesField(t *testing.T) {
 
 	if got[1] != (RegistryImage{
 		Registry:   "ghcr.io",
-		Repository: "silogen/aim-google-gemma-3-1b-it",
+		Repository: "amdenterpriseai/aim-google-gemma-3-1b-it",
 		Tag:        "0.8.1-rc1",
 	}) {
 		t.Fatalf("second image = %+v", got[1])

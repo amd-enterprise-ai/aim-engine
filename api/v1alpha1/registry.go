@@ -81,7 +81,7 @@ func (d *RecommendedDeployment) IsGPUDeployment() bool {
 
 // ImageMetadata contains metadata extracted from or provided for a container image.
 type ImageMetadata struct {
-	// Model contains AMD Silogen model-specific metadata.
+	// Model contains AIM model-specific metadata.
 	// +optional
 	Model *ModelMetadata `json:"model,omitempty"`
 
@@ -96,7 +96,7 @@ type ImageMetadata struct {
 
 	// BaseImageRef is the value of the AIM_BASE_IMAGE_REF environment variable
 	// baked into the image's OCI config at build time. For AIM model images this
-	// records the base image (e.g. "ghcr.io/silogen/aim-base:0.8.5") that the
+	// records the base image (e.g. "docker.io/amdenterpriseai/aim-base:0.8.5") that the
 	// model image was built from. Used by the AIMModel controller to resolve
 	// the deployment image for fine-tuned models whose spec.image is omitted
 	// (versionPolicy=latest or any).
@@ -104,55 +104,56 @@ type ImageMetadata struct {
 	BaseImageRef string `json:"baseImageRef,omitempty"`
 }
 
-// ModelMetadata contains AMD Silogen model-specific metadata extracted from image labels.
+// ModelMetadata contains AIM model-specific metadata extracted from image labels.
+// Each field falls back to the legacy org.amd.silogen. label with the same suffix.
 type ModelMetadata struct {
 	// CanonicalName is the canonical model identifier (e.g., mistralai/Mixtral-8x22B-Instruct-v0.1).
-	// Extracted from: org.amd.silogen.model.canonicalName
+	// Extracted from: com.amd.aim.model.canonicalName
 	// +optional
 	CanonicalName string `json:"canonicalName,omitempty"`
 
 	// Source is the URL where the model can be found.
-	// Extracted from: org.amd.silogen.model.source
+	// Extracted from: com.amd.aim.model.source
 	// +optional
 	Source string `json:"source,omitempty"`
 
 	// Tags are descriptive tags (e.g., ["text-generation", "chat", "instruction"]).
-	// Extracted from: org.amd.silogen.model.tags (comma-separated)
+	// Extracted from: com.amd.aim.model.tags (comma-separated)
 	// +optional
 	Tags []string `json:"tags,omitempty"`
 
 	// Versions lists available versions.
-	// Extracted from: org.amd.silogen.model.versions (comma-separated)
+	// Extracted from: com.amd.aim.model.versions (comma-separated)
 	// +optional
 	Versions []string `json:"versions,omitempty"`
 
 	// Variants lists model variants.
-	// Extracted from: org.amd.silogen.model.variants (comma-separated)
+	// Extracted from: com.amd.aim.model.variants (comma-separated)
 	// +optional
 	Variants []string `json:"variants,omitempty"`
 
 	// HFTokenRequired indicates if a HuggingFace token is required.
-	// Extracted from: org.amd.silogen.hfToken.required
+	// Extracted from: com.amd.aim.hfToken.required
 	// +optional
 	HFTokenRequired bool `json:"hfTokenRequired,omitempty"`
 
-	// Title is the Silogen-specific title for the model.
-	// Extracted from: org.amd.silogen.title
+	// Title is the AIM-specific title for the model.
+	// Extracted from: com.amd.aim.title
 	// +optional
 	Title string `json:"title,omitempty"`
 
 	// DescriptionFull is the full description.
-	// Extracted from: org.amd.silogen.description.full
+	// Extracted from: com.amd.aim.description.full
 	// +optional
 	DescriptionFull string `json:"descriptionFull,omitempty"`
 
 	// ReleaseNotes contains release notes for this version.
-	// Extracted from: org.amd.silogen.release.notes
+	// Extracted from: com.amd.aim.release.notes
 	// +optional
 	ReleaseNotes string `json:"releaseNotes,omitempty"`
 
 	// RecommendedDeployments contains recommended deployment configurations.
-	// Extracted from: org.amd.silogen.model.recommendedDeployments (parsed from JSON array)
+	// Extracted from: com.amd.aim.model.recommendedDeployments (parsed from JSON array)
 	// +optional
 	RecommendedDeployments []RecommendedDeployment `json:"recommendedDeployments,omitempty"`
 }

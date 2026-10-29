@@ -91,8 +91,8 @@ func TestGenerateModelName(t *testing.T) {
 	}{
 		{
 			name:       "basic image with tag",
-			imageURI:   "ghcr.io/silogen/aim-llama:1.0.0",
-			wantPrefix: "silogen-aim-llama-",
+			imageURI:   "ghcr.io/amdenterpriseai/aim-llama:1.0.0",
+			wantPrefix: "amdenterpriseai-aim-llama-",
 			wantMaxLen: 63,
 		},
 		{
@@ -103,8 +103,8 @@ func TestGenerateModelName(t *testing.T) {
 		},
 		{
 			name:       "long image name is truncated",
-			imageURI:   "ghcr.io/silogen/aim-mistralai-mistral-small-3.2-24b-instruct-2506:0.8.5",
-			wantPrefix: "silogen-aim-mistralai-mistral-small-3-2-24b-instru-",
+			imageURI:   "ghcr.io/amdenterpriseai/aim-mistralai-mistral-small-3.2-24b-instruct-2506:0.8.5",
+			wantPrefix: "amdenterpriseai-aim-mistralai-mistral-small-3-2-24-",
 			wantMaxLen: 63,
 		},
 		{
@@ -258,7 +258,7 @@ func TestBuildClusterModel(t *testing.T) {
 
 	img := RegistryImage{
 		Registry:   "ghcr.io",
-		Repository: "silogen/aim-llama",
+		Repository: "amdenterpriseai/aim-llama",
 		Tag:        "1.0.0",
 	}
 
@@ -280,7 +280,7 @@ func TestBuildClusterModel(t *testing.T) {
 	}
 
 	// Check image is set correctly
-	expectedImage := "ghcr.io/silogen/aim-llama:1.0.0"
+	expectedImage := "ghcr.io/amdenterpriseai/aim-llama:1.0.0"
 	if model.Spec.Image != expectedImage {
 		t.Errorf("model image = %q, want %q", model.Spec.Image, expectedImage)
 	}

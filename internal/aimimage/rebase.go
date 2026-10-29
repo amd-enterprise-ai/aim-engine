@@ -56,11 +56,11 @@ var majorMinorTagRegex = regexp.MustCompile(`^v?(\d+)\.(\d+)(?:\.\d+)?(?:[-+].*)
 //
 // Examples:
 //
-//	RebaseRegistry("ghcr.io/silogen/qwen3:0.11",
+//	RebaseRegistry("registry.example.com/mirror/qwen3:0.11",
 //	               "docker.io/amdenterpriseai/aim-base:0.11")
-//	  → "ghcr.io/silogen/aim-base:0.11"
+//	  → "registry.example.com/mirror/aim-base:0.11"
 //	RebaseRegistry("docker.io/amdenterpriseai/qwen3:0.11",
-//	               "ghcr.io/silogen/aim-base:0.11")
+//	               "registry.example.com/mirror/aim-base:0.11")
 //	  → "docker.io/amdenterpriseai/aim-base:0.11"
 //
 // When sourceImage lacks a "/" (no registry+org to graft on) or is empty,

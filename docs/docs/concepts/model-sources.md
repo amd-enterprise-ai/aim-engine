@@ -55,7 +55,7 @@ spec:
 spec:
   images:
     - amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
-    - ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1
+    - docker.io/amdenterpriseai/aim-google-gemma-3-1b-it:0.12.0
 ```
 
 Supported formats:
@@ -76,7 +76,7 @@ spec:
     - image: amdenterpriseai/aim-qwen-qwen3-32b
       versions:
         - ">=0.8.5"
-    - image: ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1
+    - image: docker.io/amdenterpriseai/aim-google-gemma-3-1b-it:0.12.0
 ```
 
 ### Mutual Exclusivity: `images` vs `filters`

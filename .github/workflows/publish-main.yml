@@ -29,12 +29,11 @@ jobs:
     if: vars.ACTIVATE_PUBLISH_MAIN_WORKFLOW == 'true'
     runs-on: ubuntu-latest
     env:
-      PUSH_IMAGE_REPO: ${{ vars.PUSH_IMAGE_REPO }}
-      PULL_IMAGE_REPO: ${{ vars.PULL_IMAGE_REPO }}
+      PUSH_IMAGE_REPO: docker.io/silogenai/aim-engine
+      PULL_IMAGE_REPO: docker.io/silogenai/aim-engine
       # OCI registry that receives the packaged Helm chart for publish-main
-      # builds. Defaults to the same DockerHub silogenai org used by tagged
-      # releases on this fork.
-      CHART_OCI_REPO: ${{ vars.CHART_OCI_REPO || (github.repository_owner == 'silogen' && 'oci://registry-1.docker.io/silogenai' || 'oci://registry-1.docker.io/amdenterpriseai') }}
+      # builds: the same DockerHub silogenai org used by tagged releases.
+      CHART_OCI_REPO: oci://registry-1.docker.io/silogenai
       CHART_NAME: aim-engine-chart
 
     steps:

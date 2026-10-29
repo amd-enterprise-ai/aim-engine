@@ -79,7 +79,7 @@ type AIMClusterModelSourceSpec struct {
 	// Supported image formats:
 	// - Repository with tag: "amdenterpriseai/aim-qwen-qwen3-32b:0.8.4"
 	// - Repository without tag: "amdenterpriseai/aim-qwen-qwen3-32b" (uses Versions if set)
-	// - Full URI with tag: "ghcr.io/silogen/aim-llama:1.0.0"
+	// - Full URI with tag: "docker.io/amdenterpriseai/aim-llama:1.0.0"
 	//
 	// Must not be set together with Filters.
 	// +kubebuilder:validation:MinItems=1
@@ -121,8 +121,8 @@ type AIMClusterModelSourceSpec struct {
 	// exact repository names (no wildcards). The controller uses the Tags List API to fetch
 	// all tags for the repository and filters them by the semver constraint.
 	//
-	// Example: registry=ghcr.io, filters=[{image: "silogen/aim-llama"}], versions=[">=1.0.0"]
-	// will fetch all tags from ghcr.io/silogen/aim-llama and include only those >=1.0.0.
+	// Example: registry=docker.io, filters=[{image: "amdenterpriseai/aim-llama"}], versions=[">=1.0.0"]
+	// will fetch all tags from docker.io/amdenterpriseai/aim-llama and include only those >=1.0.0.
 	// +optional
 	Versions []string `json:"versions,omitempty"`
 
@@ -168,9 +168,9 @@ type ModelSourceFilter struct {
 	//
 	// Supported formats:
 	// - Repository name: "amdenterpriseai/aim-qwen-qwen3-32b"
-	// - Repository with tag: "silogen/aim-llama:1.0.0" (overrides versions field)
-	// - Full URI: "ghcr.io/silogen/aim-google-gemma-3-1b-it:0.8.1-rc1" (overrides spec.registry and versions)
-	// - Full URI without tag: "ghcr.io/silogen/aim-google-gemma-3-1b-it" (overrides spec.registry)
+	// - Repository with tag: "amdenterpriseai/aim-llama:1.0.0" (overrides versions field)
+	// - Full URI: "docker.io/amdenterpriseai/aim-google-gemma-3-1b-it:0.8.1-rc1" (overrides spec.registry and versions)
+	// - Full URI without tag: "docker.io/amdenterpriseai/aim-google-gemma-3-1b-it" (overrides spec.registry)
 	//
 	// When a full URI is specified (including registry like ghcr.io), only images from that
 	// registry will match. When a tag is included, it takes precedence over the versions field.
@@ -184,9 +184,9 @@ type ModelSourceFilter struct {
 	//
 	// Examples:
 	// - ["amdenterpriseai/aim-base", "amdenterpriseai/aim-experimental"]
-	// - ["silogen/aim-base"] - works with "ghcr.io/silogen/aim-*" (registry is not checked in exclusion)
+	// - ["amdenterpriseai/aim-base"] - works with "docker.io/amdenterpriseai/aim-*" (registry is not checked in exclusion)
 	//
-	// Note: Exclusions match against repository names (e.g., "silogen/aim-base"), not full URIs.
+	// Note: Exclusions match against repository names (e.g., "amdenterpriseai/aim-base"), not full URIs.
 	// +optional
 	Exclude []string `json:"exclude,omitempty"`
 
