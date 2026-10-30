@@ -66,8 +66,10 @@ The `compile-release` workflow builds every `v*` and `*int-test` tag:
 
 - regenerates CRDs, then runs `make test-bridge-contract` before packaging or
   publishing Helm/CRD artifacts
-- for `vX.Y.Z` tags, attaches `install.yaml`, `crds.yaml`, the Helm chart
-  tarball, and the CRDs chart tarball to a draft GitHub Release
+- for `vX.Y.Z` and `vX.Y.Z-rcN` tags, attaches `install.yaml`, `crds.yaml`,
+  the Helm chart tarball, and the CRDs chart tarball to a draft GitHub
+  Release. A candidate's draft is marked pre-release and is never published;
+  `*int-test` tags get none
 - pushes the `aim-engine-chart` and `aim-engine-crds-chart` charts to an OCI
   registry
 

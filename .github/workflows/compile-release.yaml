@@ -115,20 +115,28 @@ jobs:
           # even when the int-test git tag is reused. Real releases keep the bare
           # VERSION as the image tag.
           INT_TEST_IMAGE_TAG="${VERSION}-${SHORT_SHA}"
-          # Only final versions (vX.Y.Z) get a draft GitHub release, which
-          # publish-release publishes after promotion. Candidates (vX.Y.Z-rc1,
-          # *int-test, ...) only publish images and charts to silogenai for
-          # testing.
+          # Releases (vX.Y.Z) and release candidates (vX.Y.Z-rcN) get a draft
+          # GitHub release with the assets. Only a release's draft is published,
+          # by publish-release after promotion; a candidate's stays a draft
+          # pre-release for testing. Other candidates (*int-test) only publish
+          # images and charts to silogenai.
           # A release's install.yaml is promoted with it, so it references the
           # public mirror; a candidate's references the image it was pushed as.
           if [[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             IS_RELEASE=true
+            DRAFT=true
             INSTALL_IMAGE_REPO="${CHART_IMAGE_REPO}"
           else
             IS_RELEASE=false
+            if [[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+$ ]]; then
+              DRAFT=true
+            else
+              DRAFT=false
+            fi
             INSTALL_IMAGE_REPO="${PUSH_IMAGE_REPO}"
           fi
           echo "is_release=${IS_RELEASE}" >> "$GITHUB_OUTPUT"
+          echo "draft=${DRAFT}" >> "$GITHUB_OUTPUT"
           echo "INSTALL_IMAGE_REPO=${INSTALL_IMAGE_REPO}" >> "$GITHUB_ENV"
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "CHART_VERSION=${CHART_VERSION}" >> "$GITHUB_ENV"
@@ -137,7 +145,7 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "chart_version=${CHART_VERSION}" >> "$GITHUB_OUTPUT"
           echo "int_test_image_tag=${INT_TEST_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
-          echo "Using version: ${VERSION}, chart version: ${CHART_VERSION}, int-test image tag: ${INT_TEST_IMAGE_TAG}, release: ${IS_RELEASE}, install.yaml image: ${INSTALL_IMAGE_REPO}"
+          echo "Using version: ${VERSION}, chart version: ${CHART_VERSION}, int-test image tag: ${INT_TEST_IMAGE_TAG}, release: ${IS_RELEASE}, draft: ${DRAFT}, install.yaml image: ${INSTALL_IMAGE_REPO}"
 
       - name: Generate CRDs
         run: make crds
@@ -265,26 +273,39 @@ jobs:
           path: dist/aim-engine-crds-chart-${{ env.CHART_VERSION }}.tgz
 
       - name: Build release notes
-        if: steps.ver.outputs.is_release == 'true'
+        if: steps.ver.outputs.draft == 'true'
+        env:
+          IS_RELEASE: ${{ steps.ver.outputs.is_release }}
         run: |
-          # The draft only carries the internal, pre-promotion install notes;
-          # publish-release replaces them with the public notes. The quoted
-          # heredoc keeps the markdown verbatim (backticks, `$`); env-driven
-          # values are substituted via sed afterwards.
+          # The draft only carries the internal silogenai install notes;
+          # publish-release replaces a release's with the public notes. The
+          # quoted heredocs keep the markdown verbatim (backticks, `$`);
+          # env-driven values are substituted via sed afterwards.
           {
-            cat <<'INNER_EOF'
+            if [ "${IS_RELEASE}" = "true" ]; then
+              cat <<'INNER_EOF'
           > [!NOTE]
           > Draft for testing before promotion. `publish-release` replaces
           > these notes with the public release notes.
 
-          ### Internal install (pre-promotion, silogenai)
+          INNER_EOF
+            else
+              cat <<'INNER_EOF'
+          > [!NOTE]
+          > Release candidate for testing. Candidates are never promoted to
+          > `docker.io/amdenterpriseai` or published, so this stays a draft.
+
+          INNER_EOF
+            fi
+            cat <<'INNER_EOF'
+          ### Internal install (silogenai)
 
           The chart's baked-in `manager.image.repository` points at the public
-          `docker.io/amdenterpriseai/aim-engine`, which only carries this
-          version *after* the manual silogenai → amdenterpriseai image
-          promotion has run. The operator binary likewise bakes the public
+          `docker.io/amdenterpriseai/aim-engine`, which only carries a release
+          once the manual silogenai → amdenterpriseai promotion has run, and
+          never a candidate. The operator binary likewise bakes the public
           `docker.io/amdenterpriseai/aim-artifact-downloader` default. To
-          install **before** promotion, log in to the private silogenai charts,
+          install from silogenai, log in to the private silogenai charts,
           install the CRDs chart first (the operator chart doesn't include the
           CRDs, and creates an `AIMClusterRuntimeConfig` by default), provision
           a `dockerhub-regcred` pull secret in the install namespace (skip if it
@@ -314,9 +335,22 @@ jobs:
             --set manager.artifactDownloaderImage=docker.io/silogenai/aim-artifact-downloader:__VERSION__
           ```
 
+          INNER_EOF
+            if [ "${IS_RELEASE}" = "true" ]; then
+              cat <<'INNER_EOF'
           The attached `install.yaml` references the public
           `docker.io/amdenterpriseai/aim-engine:__VERSION__`, so it only works
           after promotion. Until then, use the Helm install above.
+          INNER_EOF
+            else
+              cat <<'INNER_EOF'
+          Use the Helm install above rather than the attached `install.yaml`. It
+          references the private `docker.io/silogenai/aim-engine:__VERSION__`
+          without a pull secret, and leaves the operator on the public
+          artifact-downloader default, which a candidate never has.
+          INNER_EOF
+            fi
+            cat <<'INNER_EOF'
 
           Because these download Jobs run in your workload namespace, pulling the
           private artifact-downloader image requires node-level (containerd)
@@ -331,9 +365,10 @@ jobs:
             release-notes.template > release-notes.md
 
       - name: Create draft release and upload assets
-        # Stays a draft until the images are promoted to amdenterpriseai and
-        # publish-release publishes it.
-        if: steps.ver.outputs.is_release == 'true'
+        # A release's draft stays a draft until the images are promoted to
+        # amdenterpriseai and publish-release publishes it. A candidate's is
+        # marked pre-release and is never published.
+        if: steps.ver.outputs.draft == 'true'
         uses: softprops/action-gh-release@v2
         with:
           # The default is the run's ref, which is main for a button run.
@@ -348,7 +383,7 @@ jobs:
             config/prereqs/scale-from-zero/kgateway-metrics-collector.yaml
           token: '${{ secrets.GITHUB_TOKEN }}'
           draft: true
-          prerelease: false
+          prerelease: ${{ steps.ver.outputs.is_release != 'true' }}
           body_path: release-notes.md
 
       - name: Print release artifacts
