@@ -867,13 +867,26 @@ func TestDecorateStatus_terminatingArtifactIsNotReady(t *testing.T) {
 }
 
 func TestPlanResources_CopiesDeclaredDownloadFilter(t *testing.T) {
-	declared := &aimv1alpha1.AIMDownloadFilter{Exclude: []string{"*.bin"}}
 	tests := []struct {
 		name   string
 		filter *aimv1alpha1.AIMDownloadFilter
+		// want is the spec the planner must persist. The filter is canonicalized
+		// (sorted, deduplicated) before apply so that caches declaring the same file
+		// set with reordered or duplicated globs submit byte-identical immutable
+		// specs; nil stays nil so "no declaration" never collides with empty {}.
+		want *aimv1alpha1.AIMDownloadFilter
 	}{
-		{name: "declared filter", filter: declared},
-		{name: "no filter", filter: nil},
+		{name: "no filter", filter: nil, want: nil},
+		{
+			name:   "declared filter",
+			filter: &aimv1alpha1.AIMDownloadFilter{Exclude: []string{"*.bin"}},
+			want:   &aimv1alpha1.AIMDownloadFilter{Exclude: []string{"*.bin"}},
+		},
+		{
+			name:   "reordered and duplicated globs canonicalized",
+			filter: &aimv1alpha1.AIMDownloadFilter{Include: []string{"b/*", "a/*", "a/*"}, Exclude: []string{"*.md", "*.bin"}},
+			want:   &aimv1alpha1.AIMDownloadFilter{Include: []string{"a/*", "b/*"}, Exclude: []string{"*.bin", "*.md"}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -895,8 +908,8 @@ func TestPlanResources_CopiesDeclaredDownloadFilter(t *testing.T) {
 				t.Fatalf("expected 1 artifact, got %d", len(planned))
 			}
 			art := planned[0].(*aimv1alpha1.AIMArtifact)
-			if !reflect.DeepEqual(art.Spec.DownloadFilter, tt.filter) {
-				t.Errorf("artifact downloadFilter = %+v, want %+v", art.Spec.DownloadFilter, tt.filter)
+			if !reflect.DeepEqual(art.Spec.DownloadFilter, tt.want) {
+				t.Errorf("artifact downloadFilter = %+v, want %+v", art.Spec.DownloadFilter, tt.want)
 			}
 		})
 	}

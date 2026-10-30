@@ -421,6 +421,13 @@ func (r *TemplateCacheReconciler) PlanResources(
 			},
 		}
 
+		// Persist the canonical form so caches declaring the same file set with
+		// reordered or duplicated globs land on byte-identical immutable specs.
+		if mc.Spec.DownloadFilter != nil {
+			filter := canonicalDownloadFilter(mc.Spec.DownloadFilter)
+			mc.Spec.DownloadFilter = &filter
+		}
+
 		// Apply based on template cache mode:
 		// - Dedicated: artifacts are owned by this template cache (garbage collected with it)
 		// - Shared: artifacts have no owner references (persist independently)
