@@ -47,7 +47,7 @@ Key fields:
 |---|---|
 | `spec.image` | Discovery image (Official flow) |
 | `spec.modelId` | Canonical model identity used to generate a profile from RuntimeConfig fallbacks (Generated flow) |
-| `spec.profiles` | Derivation spec (Fine-tuned / Custom flow) |
+| `spec.profiles` | Derivation spec (image-derived / Fine-tuned / Custom flow) |
 | `status.aimId` | Resolved architecture identifier |
 | `status.managedProfiles` | Counts: `total`, `ready`, `deployable`, `base` |
 | `status.discoveryCacheRef` | Reference to the discovery cache `ConfigMap` |
@@ -55,6 +55,35 @@ Key fields:
 | `status.profileGeneration` | Resolution strategy and matched RuntimeConfig fallbacks (Generated flow only) |
 
 ## Applying models manually
+
+### Image-derived model integration limitations
+
+An `AIMModel` or `AIMClusterModel` with `spec.image + spec.profiles` can derive
+partition-targeted profiles directly from an image's discovery catalog.
+See [image-backed derivation](../concepts/models.md#derive-a-profile-directly-from-the-image-catalog)
+for the manifest and readiness contract.
+
+This does not change the following integration boundaries:
+
+- **Registry-source automation:** `AIMClusterModelSource.spec.images` and
+  `spec.filters` create image-backed models without profile-derivation
+  overrides. Author image-derived model manifests separately. Adding source
+  configuration that propagates `spec.profiles` is follow-up work.
+- **Generated models are a separate path:** declarations under
+  `AIMClusterModelSource.spec.models` already accept
+  `accelerator.partitioningMode`. These use `modelId` with RuntimeConfig
+  fallbacks; they do not derive from a published image's catalog.
+- **AIWB catalog integration:** the existing catalog groups by
+  `aim.eai.amd.com/source-repository` and uses model-level `Ready` for supported
+  versions, rather than selecting from ready profiles. Registry discovery
+  stamps source annotations, but manually authored models do not receive
+  them automatically. `source-tag` is a version fallback, not a substitute
+  for the profile's identity. Profile-based catalog identity, discoverability,
+  and deployment selection remain AIWB follow-up work.
+- **Legacy templates:** the template hardware check does not validate GPU
+  partitioning. Use `discovery.createServiceTemplates: false` for a
+  v1alpha2-only derivation and deploy its profiles. This avoids publishing
+  compatibility templates; it does not fix the legacy hardware check.
 
 ### Official flow
 

@@ -1022,6 +1022,20 @@ func applyModelServingPathPolicy(
 	if spec == nil {
 		return
 	}
+	legacyComponents := map[string]struct{}{
+		componentRuntimeConfig: {},
+		componentImageMetadata: {},
+		templateComponent:      {},
+	}
+	if spec.Image != "" && derivationSpec(spec) != nil {
+		// Explicit derivation selects and overrides the serving profiles.
+		// Legacy templates describe the original image, not those outputs;
+		// even Ready templates (or NoTemplatesExpected) cannot substitute
+		// for the requested profile set. Keep compatibility conditions
+		// visible, but let only the native path determine readiness.
+		markComponentsNonBlocking(health, legacyComponents)
+		return
+	}
 	legacyApplicable := legacyObserved
 	legacyReady := legacyApplicable && componentsReady(
 		health,
@@ -1041,11 +1055,7 @@ func applyModelServingPathPolicy(
 	case legacyReady && nativeApplicable && !nativeReady:
 		markComponentsNonBlocking(health, nativeComponents)
 	case nativeReady && legacyApplicable && !legacyReady:
-		markComponentsNonBlocking(health, map[string]struct{}{
-			componentRuntimeConfig: {},
-			componentImageMetadata: {},
-			templateComponent:      {},
-		})
+		markComponentsNonBlocking(health, legacyComponents)
 	}
 }
 

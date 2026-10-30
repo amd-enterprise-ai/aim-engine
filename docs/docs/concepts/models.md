@@ -114,6 +114,23 @@ deployment so the compatibility pipeline does not also publish deprecated
 v1alpha1 service templates. Metadata extraction itself must remain enabled:
 `discovery.extractMetadata: false` is rejected for image-backed derivation.
 
+For `spec.image + spec.profiles`, overall model readiness is determined by
+native discovery and the selected, overridden profiles in the current child
+profile set. A failed or unavailable set, an empty result, or a stale child
+status cannot be masked by ready legacy templates. Disabling template
+creation also cannot establish readiness: `NoTemplatesExpected` only means
+that no compatibility templates need to be created.
+
+The legacy metadata/template conditions remain visible for diagnostics, but
+do not gate this derivation flow. Template generation itself is unchanged:
+when enabled, it uses the original image metadata and does not apply
+`spec.profiles.overrides` or validate the requested partitioning mode. Deploy
+the resulting v1alpha2 profiles, not those compatibility templates.
+
+This is an Engine derivation capability, not complete catalog-UI onboarding.
+See [catalog integration limitations](../guides/model-catalog.md#image-derived-model-integration-limitations)
+for the remaining AIWB and registry-source work.
+
 ### Status signal
 
 ```bash
