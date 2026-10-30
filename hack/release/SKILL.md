@@ -11,7 +11,7 @@ This skill covers the full release lifecycle. Detect the current stage and proce
 
 - Every tag builds into the private `docker.io/silogenai` org. A release (`vX.Y.Z`) is then promoted byte-for-byte to the public `docker.io/amdenterpriseai` org by an external promotion tool, and only published after that.
 - A release or candidate starts from the `compile-release` **Run workflow** button on `main` (or `gh workflow run compile-release.yaml --ref main -f version=vX.Y.Z`), or from `make release`. Both run `hack/release/check-version.sh`, which rejects a version that isn't `vX.Y.Z` or `vX.Y.Z-rcN`, an existing tag, and a final version without a `CHANGELOG.md` section. Never create the tag or the release on the Releases page: `compile-release` creates the draft itself, and a release published there goes public before promotion, after which `publish-release` refuses it.
-- `compile-release` runs on a tag push, or creates the tag itself when started from the button. A tag created by a workflow starts no other workflows, so a button run also builds and syncs the docs in the same run. It builds the operator, the artifact downloader and both charts into `silogenai` and runs the Kind tests. For `vX.Y.Z` it also creates a draft GitHub release with internal install notes and the assets. Release candidates (`vX.Y.Z-rc1`) and `*int-test` tags get no GitHub release.
+- `compile-release` runs on a tag push, or creates the tag itself when started from the button. A tag created by a workflow starts no other workflows, so a button run also builds and syncs the docs in the same run. It builds the operator, the artifact downloader and both charts into `silogenai` and runs the Kind tests. For `vX.Y.Z` and release candidates (`vX.Y.Z-rcN`) it also creates a draft GitHub release with internal install notes and the assets; a candidate's is marked pre-release and is never published. `*int-test` tags get no GitHub release.
 - `publish-release` runs from `main` via `workflow_dispatch`, normally started by the promotion tool. It checks the promoted artifacts can be pulled anonymously, then publishes the draft with the version's `CHANGELOG.md` section from `main` as "What's changed", followed by the public install instructions. It then force-pushes the `artifacts` branch.
 - `Docs - Sync to central repo` runs on every `v*` tag push, including candidates, and on pushes to `release/**` branches that change `docs/docs/`. For a button run, `compile-release` calls it.
 
@@ -135,7 +135,7 @@ git pull
 make release VERSION=vX.Y.Z-rc1
 ```
 
-`compile-release` pushes the images and charts to `silogenai` and runs the tests. There is no GitHub release for a candidate.
+`compile-release` pushes the images and charts to `silogenai`, runs the tests, and creates a draft pre-release with the assets and the install notes below. Candidates are never published, so it stays a draft.
 
 The chart and the operator binary always reference the public org, so installing a candidate needs overrides. The `silogenai` charts are private, so log in first with a Docker Hub account that can read them. Install the CRDs chart first: the operator chart doesn't include the CRDs, and creates an `AIMClusterRuntimeConfig` by default. Make sure the `dockerhub-regcred` pull secret exists in `aim-system`:
 

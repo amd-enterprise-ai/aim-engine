@@ -81,6 +81,8 @@ echo "  - Build and push images and Helm charts to docker.io/silogenai"
 echo "  - Run the e2e tests"
 if [[ "$IS_RELEASE" == true ]]; then
     echo "  - Create a draft GitHub Release, published by publish-release after promotion"
+else
+    echo "  - Create a draft GitHub pre-release with the assets, which is never published"
 fi
 echo ""
 
@@ -107,4 +109,6 @@ echo "  compile-release is now running."
 if [[ "$IS_RELEASE" == true ]]; then
     echo "  It creates a draft GitHub Release. After the release is promoted to"
     echo "  docker.io/amdenterpriseai, publish-release publishes it."
+else
+    echo "  It creates a draft GitHub pre-release for testing, which stays a draft."
 fi
