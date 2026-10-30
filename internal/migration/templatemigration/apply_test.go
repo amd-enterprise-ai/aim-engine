@@ -1940,6 +1940,104 @@ func TestValidateSharedArtifactSemantics_OptionalTargetSize(t *testing.T) {
 	}
 }
 
+func TestValidateSharedArtifactSemantics_DownloadFilter(t *testing.T) {
+	tests := []struct {
+		name           string
+		artifactFilter *aimv1alpha1.AIMDownloadFilter
+		targetFilter   *aimv1alpha1.AIMDownloadFilter
+		wantError      bool
+	}{
+		{name: "neither declares a filter"},
+		{
+			name:           "equal filters in different order",
+			artifactFilter: &aimv1alpha1.AIMDownloadFilter{Exclude: []string{"*.bin", "*.md"}},
+			targetFilter:   &aimv1alpha1.AIMDownloadFilter{Exclude: []string{"*.md", "*.bin"}},
+		},
+		{
+			name:         "target declares a filter the artifact lacks",
+			targetFilter: &aimv1alpha1.AIMDownloadFilter{},
+			wantError:    true,
+		},
+		{
+			name:         "target declares the default the artifact inherits",
+			targetFilter: &aimv1alpha1.AIMDownloadFilter{Exclude: []string{"*/*"}},
+			wantError:    true,
+		},
+		{
+			name:           "different filters",
+			artifactFilter: &aimv1alpha1.AIMDownloadFilter{Exclude: []string{"*/*"}},
+			targetFilter:   &aimv1alpha1.AIMDownloadFilter{Include: []string{"*.safetensors"}},
+			wantError:      true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newSharedApplyFixture(t, nil)
+			fixture.artifact.Spec.DownloadFilter = test.artifactFilter
+			modelSource := fixture.profile.Spec.ModelSources[0]
+			modelSource.DownloadFilter = test.targetFilter
+			err := validateSharedArtifactSemantics(
+				context.Background(),
+				newApplyFakeClient(t, fixture.objects...),
+				fixture.cache,
+				fixture.legacyCache,
+				fixture.artifact,
+				fixture.claim,
+				modelSource,
+			)
+			if test.wantError {
+				if err == nil || !strings.Contains(err.Error(), "download filter") {
+					t.Fatalf("error = %v, want download filter mismatch", err)
+				}
+			} else if err != nil {
+				t.Fatalf("matching download filters rejected: %v", err)
+			}
+		})
+	}
+}
+
+// The controller never adopts an artifact whose filter differs from the source's,
+// so such an artifact must not count toward adoption ambiguity either.
+func TestValidateSharedArtifactCandidates_IgnoresOtherDownloadFilters(t *testing.T) {
+	tests := []struct {
+		name          string
+		otherFilter   *aimv1alpha1.AIMDownloadFilter
+		wantAmbiguous bool
+	}{
+		{name: "same filter is ambiguous", wantAmbiguous: true},
+		{name: "different filter is not a candidate", otherFilter: &aimv1alpha1.AIMDownloadFilter{}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newSharedApplyFixture(t, nil)
+			other := fixture.artifact.DeepCopy()
+			other.Name = "other-artifact"
+			other.UID = "other-artifact-uid"
+			other.ResourceVersion = "99"
+			other.Status.PersistentVolumeClaim = "other-pvc"
+			other.Spec.DownloadFilter = test.otherFilter
+			objects := append(fixture.objects, other)
+
+			err := validateSharedArtifactCandidates(
+				context.Background(),
+				newApplyFakeClient(t, objects...),
+				fixture.cache,
+				fixture.artifact,
+				fixture.profile.Spec.ModelSources[0],
+			)
+			if test.wantAmbiguous {
+				if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+					t.Fatalf("error = %v, want ambiguity", err)
+				}
+			} else if err != nil {
+				t.Fatalf("artifact with a different filter counted as a candidate: %v", err)
+			}
+		})
+	}
+}
+
 //nolint:gocyclo // Related fail-closed cases intentionally share one end-to-end fixture test.
 func TestApply_SharedAmbiguityAndWrongAdoptionFailBeforeCutover(t *testing.T) {
 	t.Run("ambiguous artifact candidates", func(t *testing.T) {
