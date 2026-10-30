@@ -358,6 +358,13 @@ func (r *ProfileCacheReconciler) PlanResources(
 			},
 		}
 
+		// Persist the canonical form so caches declaring the same file set with
+		// reordered or duplicated globs land on byte-identical immutable specs.
+		if artifact.Spec.DownloadFilter != nil {
+			filter := canonicalDownloadFilter(artifact.Spec.DownloadFilter)
+			artifact.Spec.DownloadFilter = &filter
+		}
+
 		// Provision the shared adapter disk; size/class are left empty so the
 		// AIMArtifact reconciler resolves them from AIMRuntimeConfig.Storage.
 		if pc.Spec.RequiresAdapterDisk {
