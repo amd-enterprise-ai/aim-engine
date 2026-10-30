@@ -29,14 +29,22 @@ spec:
               mountPath: /mnt/models
       containers:
         - name: uploader
-          image: docker.io/pgsty/mc:RELEASE.2026-09-16T00-00-00Z
+          image: docker.io/amazon/aws-cli:2.38.6
+          env:
+            - name: AWS_ENDPOINT_URL
+              value: http://seaweedfs:8333
+            - name: AWS_ACCESS_KEY_ID
+              value: seaweedadmin
+            - name: AWS_SECRET_ACCESS_KEY
+              value: seaweedadmin
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
           command:
             - /bin/sh
             - -c
             - |
               set -e
-              mc alias set myminio http://minio:9000 minioadmin minioadmin
-              mc cp --recursive /mnt/models/ myminio/models/Qwen2-0.5B/
+              aws s3 cp --recursive --no-progress /mnt/models/ s3://models/Qwen2-0.5B/
           volumeMounts:
             - name: model-storage
               mountPath: /mnt/models
