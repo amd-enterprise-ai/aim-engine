@@ -44,6 +44,9 @@ spec:
                 (conditions[?type == 'Ready']):
                   - status: "False"
                     reason: "InvalidSpec"
+                # An empty prefix is also SourceNotFound; only the log excerpt
+                # proves the missing bucket was the cause.
                 (conditions[?type == 'DownloadJobPodsReady']):
                   - status: "False"
                     reason: "SourceNotFound"
+                    (contains(message || '', 'NoSuchBucket')): true

@@ -52,3 +52,4 @@ spec:
                 (conditions[?type == 'DownloadJobPodsReady']):
                   - status: "False"
                     reason: "SourceNotFound"
+                    (contains(message || '', 'No objects found')): true

@@ -33,6 +33,7 @@ spec:
                 (conditions[?type == 'DownloadJobPodsReady']):
                   - status: "False"
                     reason: "AuthError"
+                    (contains(message || '', 'InvalidAccessKeyId')): true
                 (conditions[?type == 'AuthValid']):
                   - status: "False"
                     reason: "AuthError"

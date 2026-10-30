@@ -21,10 +21,12 @@ spec:
     Nothing supplies credentials in this namespace, so the chain comes up empty
     and the downloader reports "Unable to locate credentials".
 
-    Asserting AuthError here is the point of the test: it has to name credentials
-    as the cause. Reading absent keys as a public bucket instead produces a 403
-    and a log line announcing anonymous access, which sends the user looking at
-    their sourceUri.
+    Naming credentials as the cause is the point of the test. Reading absent keys
+    as a public bucket instead produces a 403 and a log line announcing anonymous
+    access, which sends the user looking at their sourceUri. That 403
+    (AccessDenied) is classified as AuthError too, so the reason alone cannot
+    tell the two apart; the size-check condition message must carry the
+    "Unable to locate credentials" excerpt.
   steps:
     - name: Deploy SeaweedFS
       use:
@@ -96,6 +98,10 @@ spec:
                 (conditions[?type == 'AuthValid']):
                   - status: "False"
                     reason: "AuthError"
+                (conditions[?type == 'CheckSizeJobPodsReady']):
+                  - status: "False"
+                    reason: "AuthError"
+                    (contains(message || '', 'Unable to locate credentials')): true
       catch:
         - describe:
             apiVersion: aim.eai.amd.com/v1alpha1

@@ -112,15 +112,13 @@ spec:
                 template:
                   spec:
                     restartPolicy: Never
-                    securityContext:
-                      runAsUser: 1000
-                      fsGroup: 1000
+                    # Runs as root: a non-root user cannot read the volume's
+                    # root-owned lost+found, and aws s3 cp exits 2 when it
+                    # skips an unreadable path.
                     containers:
                       - name: uploader
                         image: docker.io/amazon/aws-cli:2.38.6
                         env:
-                          - name: HOME
-                            value: /tmp
                           - name: AWS_ENDPOINT_URL
                             value: http://seaweedfs:8333
                           - name: AWS_ACCESS_KEY_ID
