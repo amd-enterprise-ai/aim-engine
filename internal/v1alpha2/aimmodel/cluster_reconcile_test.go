@@ -141,7 +141,7 @@ func TestBuildDesiredOfficialClusterModelProfiles_BaseEntriesStampedAsBase(t *te
 	}
 	catalog := aimprofile.DiscoveryCatalog{
 		Profiles: []aimprofile.DiscoveryCatalogItem{{
-			BaseImage:    "ghcr.io/silogen/aim-base-vllm:0.1.0",
+			BaseImage:    "ghcr.io/amdenterpriseai/aim-base-vllm:0.1.0",
 			YAMLContract: profileyaml.DefaultContract(),
 			Spec: aimv1alpha2.AIMProfileSpecCommon{
 				ProfileId: "vllm-cpu-bf16-tp1-latency",

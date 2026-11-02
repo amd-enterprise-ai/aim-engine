@@ -583,9 +583,9 @@ func TestExtractEnvValue(t *testing.T) {
 	}{
 		{
 			name:     "key present",
-			env:      []string{"PATH=/usr/bin", "AIM_BASE_IMAGE_REF=ghcr.io/silogen/aim-base:0.8.5"},
+			env:      []string{"PATH=/usr/bin", "AIM_BASE_IMAGE_REF=ghcr.io/amdenterpriseai/aim-base:0.8.5"},
 			key:      "AIM_BASE_IMAGE_REF",
-			expected: "ghcr.io/silogen/aim-base:0.8.5",
+			expected: "ghcr.io/amdenterpriseai/aim-base:0.8.5",
 		},
 		{
 			name:     "value contains equals signs",

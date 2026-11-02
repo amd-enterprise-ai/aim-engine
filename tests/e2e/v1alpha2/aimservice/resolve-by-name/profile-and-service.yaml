@@ -14,6 +14,10 @@ spec:
   acceleratorModel: EPYC_ZEN5
   acceleratorType: cpu
   acceleratorCount: 1
+  # The EPYC default memory request (120Gi) exceeds small CI nodes.
+  resources:
+    requests:
+      memory: 1Gi
   image: registry.example.com/aim-cpu-base:0.12.0
   modelSources:
     - modelId: resolve-by-name/model

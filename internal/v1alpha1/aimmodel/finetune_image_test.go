@@ -37,7 +37,7 @@ import (
 
 // aimBase011 is the canonical aim-base:0.11 reference used across tests in
 // this package. Centralising it shuts up goconst and makes intent obvious.
-const aimBase011 = "ghcr.io/silogen/aim-base:0.11"
+const aimBase011 = "ghcr.io/amdenterpriseai/aim-base:0.11"
 
 func newFakeClient(objs ...client.Object) client.Client {
 	scheme := runtime.NewScheme()
@@ -100,8 +100,8 @@ func match(ownerName, ownerNamespace, version string) TemplateMatchResult {
 // registry+org and normalised to MAJOR.MINOR) for a cluster-scoped match.
 func TestImageResolver_ClusterOwner_BaseImageRef(t *testing.T) {
 	owner := clusterOwner("qwen3-0.9.0",
-		"ghcr.io/silogen/qwen3:0.9.0",
-		"ghcr.io/silogen/aim-base:0.9.0",
+		"ghcr.io/amdenterpriseai/qwen3:0.9.0",
+		"ghcr.io/amdenterpriseai/aim-base:0.9.0",
 	)
 	c := newFakeClient(owner)
 
@@ -120,7 +120,7 @@ func TestImageResolver_ClusterOwner_BaseImageRef(t *testing.T) {
 	// `0.9.0` truncates to MAJOR.MINOR `0.9`: the deployable aim-base
 	// image is always tagged with its MAJOR.MINOR rolling tag, never the
 	// patch-level tag baked into AIM_BASE_IMAGE_REF.
-	if want := "ghcr.io/silogen/aim-base:0.9"; got != want {
+	if want := "ghcr.io/amdenterpriseai/aim-base:0.9"; got != want {
 		t.Errorf("Resolve = %q, want %q", got, want)
 	}
 }
@@ -132,7 +132,7 @@ func TestImageResolver_ClusterOwner_BaseImageRef(t *testing.T) {
 func TestImageResolver_NormalizesReleaseCandidateTag(t *testing.T) {
 	owner := clusterOwner("qwen3-32b",
 		"amdenterpriseai/aim-qwen-qwen3-32b:0.11.0",
-		"ghcr.io/silogen/aim-base:0.11-rc21",
+		"ghcr.io/amdenterpriseai/aim-base:0.11-rc21",
 	)
 	c := newFakeClient(owner)
 
@@ -155,7 +155,7 @@ func TestImageResolver_NormalizesReleaseCandidateTag(t *testing.T) {
 // mirrors of base models automatically cover the aim-base image too.
 func TestImageResolver_RebasesToOwnerRegistry(t *testing.T) {
 	owner := clusterOwner("qwen3-0.11.0",
-		"ghcr.io/silogen/qwen3:0.11.0",
+		"registry.example.com/mirror/qwen3:0.11.0",
 		"docker.io/amdenterpriseai/aim-base:0.11",
 	)
 	c := newFakeClient(owner)
@@ -170,15 +170,15 @@ func TestImageResolver_RebasesToOwnerRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != aimBase011 {
-		t.Errorf("Resolve = %q, want %q (expected base rebased onto owner registry)", got, aimBase011)
+	if want := "registry.example.com/mirror/aim-base:0.11"; got != want {
+		t.Errorf("Resolve = %q, want %q (expected base rebased onto owner registry)", got, want)
 	}
 }
 
 // Resolver synthesizes aim-base:MAJOR.MINOR from the owner's image tag for
 // legacy installs whose status.imageMetadata predates AIM_BASE_IMAGE_REF.
 func TestImageResolver_LegacyFallback(t *testing.T) {
-	owner := clusterOwner("qwen3-0.11.0", "ghcr.io/silogen/qwen3:0.11.0", "")
+	owner := clusterOwner("qwen3-0.11.0", "ghcr.io/amdenterpriseai/qwen3:0.11.0", "")
 	// Force "metadata cached" so the resolver doesn't think the owner is
 	// merely missing baseImageRef because it hasn't inspected yet — it has,
 	// the field just didn't exist.
@@ -203,7 +203,7 @@ func TestImageResolver_LegacyFallback(t *testing.T) {
 // Resolver returns an error when the owner has neither baseImageRef nor a
 // semver-shaped tag — caller treats this as "defer the copy".
 func TestImageResolver_DefersWhenUnresolvable(t *testing.T) {
-	owner := clusterOwner("qwen3-latest", "ghcr.io/silogen/qwen3:latest", "")
+	owner := clusterOwner("qwen3-latest", "ghcr.io/amdenterpriseai/qwen3:latest", "")
 	c := newFakeClient(owner)
 
 	r := newImageResolver(c, &aimv1alpha1.AIMModelSpec{
@@ -240,7 +240,7 @@ func TestImageResolver_PinnedReturnsModelSpecImage(t *testing.T) {
 	c := newFakeClient() // intentionally no owner
 
 	r := newImageResolver(c, &aimv1alpha1.AIMModelSpec{
-		Image:        "ghcr.io/silogen/aim-base:0.8.5",
+		Image:        "ghcr.io/amdenterpriseai/aim-base:0.8.5",
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyPinned},
@@ -250,7 +250,7 @@ func TestImageResolver_PinnedReturnsModelSpecImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if want := "ghcr.io/silogen/aim-base:0.8.5"; got != want {
+	if want := "ghcr.io/amdenterpriseai/aim-base:0.8.5"; got != want {
 		t.Errorf("Resolve = %q, want %q (pinned should use spec.image)", got, want)
 	}
 }
@@ -259,8 +259,8 @@ func TestImageResolver_PinnedReturnsModelSpecImage(t *testing.T) {
 // not the fine-tuned model's namespace.
 func TestImageResolver_NamespaceScopedOwner(t *testing.T) {
 	owner := nsOwner("team-a", "qwen3-0.9.0",
-		"ghcr.io/silogen/qwen3:0.9.0",
-		"ghcr.io/silogen/aim-base:0.9.0",
+		"ghcr.io/amdenterpriseai/qwen3:0.9.0",
+		"ghcr.io/amdenterpriseai/aim-base:0.9.0",
 	)
 	c := newFakeClient(owner)
 
@@ -274,7 +274,7 @@ func TestImageResolver_NamespaceScopedOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if want := "ghcr.io/silogen/aim-base:0.9"; got != want {
+	if want := "ghcr.io/amdenterpriseai/aim-base:0.9"; got != want {
 		t.Errorf("Resolve = %q, want %q", got, want)
 	}
 }
@@ -284,8 +284,8 @@ func TestImageResolver_NamespaceScopedOwner(t *testing.T) {
 // scenario that motivated dropping the single model-spec.image patching and
 // moving image resolution onto each template copy.
 func TestImageResolver_PerMatchHeterogeneous(t *testing.T) {
-	mi300 := clusterOwner("qwen3-mi300-0.11", "ghcr.io/silogen/qwen3:0.11.0", aimBase011)
-	epyc := clusterOwner("qwen3-epyc-0.11", "ghcr.io/silogen/qwen3-epyc:0.11.0", "ghcr.io/silogen/aim-epyc-base:0.11")
+	mi300 := clusterOwner("qwen3-mi300-0.11", "ghcr.io/amdenterpriseai/qwen3:0.11.0", aimBase011)
+	epyc := clusterOwner("qwen3-epyc-0.11", "ghcr.io/amdenterpriseai/qwen3-epyc:0.11.0", "ghcr.io/amdenterpriseai/aim-epyc-base:0.11")
 	c := newFakeClient(mi300, epyc)
 
 	r := newImageResolver(c, &aimv1alpha1.AIMModelSpec{
@@ -305,7 +305,7 @@ func TestImageResolver_PerMatchHeterogeneous(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve(epyc): %v", err)
 	}
-	if want := "ghcr.io/silogen/aim-epyc-base:0.11"; cpuImage != want {
+	if want := "ghcr.io/amdenterpriseai/aim-epyc-base:0.11"; cpuImage != want {
 		t.Errorf("epyc image = %q, want %q", cpuImage, want)
 	}
 }

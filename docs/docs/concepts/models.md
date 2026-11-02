@@ -106,7 +106,7 @@ kubectl get aimmodel llama-3-8b-official -o jsonpath='{.status}' | jq
 {
   "status": "Ready",
   "aimId": "meta-llama/Llama-3-8B-Instruct",
-  "baseImage": "ghcr.io/silogen/aim-base:0.11",
+  "baseImage": "docker.io/amdenterpriseai/aim-base:0.11",
   "discoveryCacheRef": { "name": "llama-3-8b-official-discovery-5e8ad928" },
   "discoveredProfiles": { "total": 7, "supported": 5, "unsupported": 2 },
   "managedProfiles": { "total": 5, "ready": 5, "deployable": 5, "base": 0, "notAvailable": 0 }

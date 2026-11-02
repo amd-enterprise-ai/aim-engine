@@ -47,7 +47,7 @@ func TestGenerateCustomModelName(t *testing.T) {
 		{
 			name: "simple model ID",
 			custom: &aimv1alpha1.AIMServiceModelCustom{
-				BaseImage: "ghcr.io/silogen/aim-base:0.7.0",
+				BaseImage: "ghcr.io/amdenterpriseai/aim-base:0.7.0",
 				ModelSources: []aimv1alpha1.AIMModelSource{
 					{ModelID: "my-org/my-model", SourceURI: "s3://bucket/model"},
 				},
@@ -57,7 +57,7 @@ func TestGenerateCustomModelName(t *testing.T) {
 		{
 			name: "model ID with special chars",
 			custom: &aimv1alpha1.AIMServiceModelCustom{
-				BaseImage: "ghcr.io/silogen/aim-base:0.7.0",
+				BaseImage: "ghcr.io/amdenterpriseai/aim-base:0.7.0",
 				ModelSources: []aimv1alpha1.AIMModelSource{
 					{ModelID: "Meta-Llama/Llama-3.1-70B", SourceURI: "hf://Meta-Llama/Llama-3.1-70B"},
 				},
@@ -86,7 +86,7 @@ func TestGenerateCustomModelName(t *testing.T) {
 func TestGenerateCustomModelName_Deterministic(t *testing.T) {
 	service := NewService("source").Build()
 	custom := &aimv1alpha1.AIMServiceModelCustom{
-		BaseImage: "ghcr.io/silogen/aim-base:0.7.0",
+		BaseImage: "ghcr.io/amdenterpriseai/aim-base:0.7.0",
 		ModelSources: []aimv1alpha1.AIMModelSource{
 			{ModelID: "my-org/my-model", SourceURI: "s3://bucket/model"},
 		},
@@ -107,7 +107,7 @@ func TestGenerateCustomModelName_DifferentEndpoints(t *testing.T) {
 	service := NewService("source").Build()
 	// Two custom models with same base but different S3 endpoints should get different names
 	custom1 := &aimv1alpha1.AIMServiceModelCustom{
-		BaseImage: "ghcr.io/silogen/aim-base:0.7.0",
+		BaseImage: "ghcr.io/amdenterpriseai/aim-base:0.7.0",
 		ModelSources: []aimv1alpha1.AIMModelSource{
 			{
 				ModelID:   "my-org/my-model",
@@ -120,7 +120,7 @@ func TestGenerateCustomModelName_DifferentEndpoints(t *testing.T) {
 	}
 
 	custom2 := &aimv1alpha1.AIMServiceModelCustom{
-		BaseImage: "ghcr.io/silogen/aim-base:0.7.0",
+		BaseImage: "ghcr.io/amdenterpriseai/aim-base:0.7.0",
 		ModelSources: []aimv1alpha1.AIMModelSource{
 			{
 				ModelID:   "my-org/my-model",
@@ -142,7 +142,7 @@ func TestGenerateCustomModelName_DifferentEndpoints(t *testing.T) {
 
 func TestGenerateCustomModelName_DifferentServiceUIDs(t *testing.T) {
 	custom := &aimv1alpha1.AIMServiceModelCustom{
-		BaseImage: "ghcr.io/silogen/aim-base:0.7.0",
+		BaseImage: "ghcr.io/amdenterpriseai/aim-base:0.7.0",
 		ModelSources: []aimv1alpha1.AIMModelSource{
 			{ModelID: "my-org/my-model", SourceURI: "s3://bucket/model"},
 		},
@@ -270,7 +270,7 @@ func newCustomModelMatchingFixture(
 ) (*aimv1alpha1.AIMService, *aimv1alpha1.AIMServiceModelCustom, string) {
 	t.Helper()
 	custom := &aimv1alpha1.AIMServiceModelCustom{
-		BaseImage: "ghcr.io/silogen/aim-base:0.7.0",
+		BaseImage: "ghcr.io/amdenterpriseai/aim-base:0.7.0",
 		ModelSources: []aimv1alpha1.AIMModelSource{
 			{ModelID: "my-org/my-model", SourceURI: "s3://bucket/model"},
 		},

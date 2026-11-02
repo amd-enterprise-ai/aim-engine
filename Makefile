@@ -1,19 +1,14 @@
 # Image URL to use all building/pushing image targets
 TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "latest")
-GIT_ORG ?= $(shell git remote get-url origin 2>/dev/null | sed -n 's|.*github\.com[:/]\([^/]*\)/.*|\1|p')
-# Default operator image repo for local-dev builds. Fork-aware: silogen pushes
-# to docker.io/silogenai (private), everyone else (notably amd-enterprise-ai)
-# uses the public docker.io/amdenterpriseai mirror. CI always overrides via IMG.
-ifeq ($(GIT_ORG),silogen)
+# Push destinations (IMG_REPO, CHART_OCI_OWNER) default to the private
+# docker.io/silogenai org so a manual push can never reach the public
+# docker.io/amdenterpriseai mirror, which only promotion may populate. CI always
+# passes its destinations explicitly.
 IMG_REPO ?= docker.io/silogenai/aim-engine
-else
-IMG_REPO ?= docker.io/amdenterpriseai/aim-engine
-endif
 IMG ?= $(IMG_REPO):$(TAG)
-# Default to the public docker.io/amdenterpriseai mirror so non-CI builds
-# (and the amd-enterprise-ai public release flow) produce a binary whose
-# compiled-in artifact-downloader default is publicly pullable. Silogen-private
-# CI overrides this to docker.io/silogenai/aim-artifact-downloader at build time.
+# Not a push destination: compile-release relies on this public default so the
+# released binary's compiled-in downloader is pullable once promoted.
+# publish-main overrides it to the private silogenai downloader.
 ARTIFACT_DOWNLOADER_IMG ?= docker.io/amdenterpriseai/aim-artifact-downloader:$(TAG)
 LDFLAGS ?= -X 'github.com/amd-enterprise-ai/aim-engine/api/v1alpha1.DefaultDownloadImage=$(ARTIFACT_DOWNLOADER_IMG)'
 
@@ -85,25 +80,15 @@ CHART_NAME ?= aim-engine-chart
 CRDS_CHART_NAME ?= aim-engine-crds-chart
 CHART_VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.1.0")
 APP_VERSION ?= $(TAG)
-# Image baked into the packaged chart's values.yaml. CI always overrides via
-# CHART_IMAGE_REPO. For local-dev runs of `make helm-package`, silogen builds
-# reference docker.io/silogenai (the private dev mirror); everything else
-# (notably the amd-enterprise-ai official fork) references the public
-# docker.io/amdenterpriseai org that end users actually pull from.
-ifeq ($(GIT_ORG),silogen)
-CHART_IMAGE_REPO ?= docker.io/silogenai/aim-engine
-else
-CHART_IMAGE_REPO ?= docker.io/amdenterpriseai/aim-engine
-endif
+# Image baked into the packaged chart's values.yaml; defaults to IMG_REPO so a
+# locally pushed chart references the locally pushed image. CI always
+# overrides via CHART_IMAGE_REPO.
+CHART_IMAGE_REPO ?= $(IMG_REPO)
 CHART_IMAGE_TAG  ?= $(TAG)
-# OCI registry receiving the packaged Helm + CRDs charts. Same fork-aware
-# split as CHART_IMAGE_REPO; CI overrides via CHART_OCI_REPO env.
+# OCI registry receiving the packaged Helm + CRDs charts. CI overrides via
+# CHART_OCI_REPO.
 CHART_OCI_REGISTRY ?= registry-1.docker.io
-ifeq ($(GIT_ORG),silogen)
 CHART_OCI_OWNER ?= silogenai
-else
-CHART_OCI_OWNER ?= amdenterpriseai
-endif
 CHART_OCI_REPO ?= oci://$(CHART_OCI_REGISTRY)/$(CHART_OCI_OWNER)
 
 # Cluster environment configuration
@@ -345,7 +330,7 @@ CHAINSAW_DEBUG_DIR := .tmp/chainsaw-debug
 CHAINSAW_CONFIG_DIR := tests/chainsaw/config
 
 # needs-secret tags tests with environmental credential prerequisites
-# (HF token, Docker Hub pull secret for docker.io/silogenai, etc.)
+# (HF token, Docker Hub pull secret for private AIM images, etc.)
 # that aren't universally provisioned. Excluded from the default selectors;
 # opt in through a dedicated target or by overriding the selector.
 CHAINSAW_NEEDS_SECRET_EXCLUDE := needs-secret notin (hf_token,dockerhub_pull_secret)

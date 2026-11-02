@@ -684,7 +684,7 @@ spec:
                         description: |-
                           BaseImage is the container image URI for the AIM base image.
                           This will be used as the image for the auto-created AIMModel.
-                          Example: `ghcr.io/silogen/aim-base:0.7.0`
+                          Example: `docker.io/amdenterpriseai/aim-base:0.7.0`
                         type: string
                       hardware:
                         description: |-
@@ -995,7 +995,7 @@ spec:
                       Image specifies a container image URI directly.
                       The controller searches for an existing model with this image, or creates one if none exists.
                       Auto-created models are namespace-scoped and can be reused by other services.
-                      Example: `ghcr.
+                      Example: `docker.
                     type: string
                   name:
                     description: |-
@@ -3108,7 +3108,7 @@ spec:
                         description: |-
                           BaseImage is the container image URI for the AIM base image.
                           This will be used as the image for the auto-created AIMModel.
-                          Example: `ghcr.io/silogen/aim-base:0.7.0`
+                          Example: `docker.io/amdenterpriseai/aim-base:0.7.0`
                         type: string
                       hardware:
                         description: |-
@@ -3419,7 +3419,7 @@ spec:
                       Image specifies a container image URI directly.
                       The controller searches for an existing model with this image, or creates one if none exists.
                       Auto-created models are namespace-scoped and can be reused by other services.
-                      Example: `ghcr.
+                      Example: `docker.
                     type: string
                   name:
                     description: |-

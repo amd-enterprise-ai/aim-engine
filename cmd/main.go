@@ -138,9 +138,9 @@ func main() {
 	setupLog.Info("KServe ServingRuntime/ClusterServingRuntime projection configured", "mode", runtimeProjectionMode)
 
 	// Install-time override for the artifact-downloader image. The binary bakes
-	// in the public docker.io/amdenterpriseai mirror at build time (via LDFLAGS),
-	// so the promoted public operator is self-sufficient. Private installs that
-	// pull the downloader from a different registry (e.g. docker.io/silogenai)
+	// in the public docker.io/amdenterpriseai org at build time (via LDFLAGS),
+	// so the released operator is self-sufficient. Private installs that
+	// pull the downloader from a different registry (e.g. a private mirror)
 	// set this via the chart's manager.artifactDownloaderImage value, mirroring
 	// how manager.image.repository overrides the operator image itself. An
 	// explicit value here always wins over the compiled-in default.
