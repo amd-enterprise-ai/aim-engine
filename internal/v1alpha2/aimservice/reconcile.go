@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
@@ -62,6 +63,7 @@ import (
 const (
 	reasonFetchError               = "FetchError"
 	reasonProfileRuntimeConverging = "ProfileRuntimeConverging"
+	reasonProfileCacheReconciling  = "ProfileCacheReconciling"
 	serviceControllerNameLabel     = constants.AimLabelDomain + "/service.name"
 )
 
@@ -365,6 +367,15 @@ func (obs ServiceObservation) getConfigHealth() controllerutils.ComponentHealth 
 	}
 }
 
+// profileCacheStatusTrusted reports whether service may act on pc's reported
+// status. An adapter-enabled service needs the status to reflect the current
+// spec, because the spec change it makes (turning on requiresAdapterDisk) is
+// what its adapter disk depends on. Other services keep using the last reported
+// status, so that change never flips them to not-ready.
+func profileCacheStatusTrusted(service *aimv1alpha1.AIMService, pc *aimv1alpha2.AIMProfileCache) bool {
+	return !service.Spec.AdaptersEnabled() || profilecache.StatusCurrent(pc)
+}
+
 func (obs ServiceObservation) getProfileCacheHealth() controllerutils.ComponentHealth {
 	health := controllerutils.ComponentHealth{
 		Component:      "ProfileCache",
@@ -386,6 +397,12 @@ func (obs ServiceObservation) getProfileCacheHealth() controllerutils.ComponentH
 	}
 
 	pc := obs.profileCache.Value
+	if !profileCacheStatusTrusted(obs.service, pc) {
+		health.State = constants.AIMStatusProgressing
+		health.Reason = reasonProfileCacheReconciling
+		health.Message = fmt.Sprintf("Profile cache %s is applying a spec change", pc.Name)
+		return health
+	}
 	if pc.Status.Status == constants.AIMStatusReady {
 		health.State = constants.AIMStatusReady
 		health.Reason = "ProfileCacheReady"
@@ -802,7 +819,8 @@ func (r *ProfileServiceReconciler) ComposeState(
 	}
 
 	if obs.hasModelSources && fetch.profileCache.OK() && fetch.profileCache.Value != nil {
-		obs.profileCacheReady = fetch.profileCache.Value.Status.Status == constants.AIMStatusReady
+		obs.profileCacheReady = fetch.profileCache.Value.Status.Status == constants.AIMStatusReady &&
+			profileCacheStatusTrusted(fetch.service, fetch.profileCache.Value)
 	}
 
 	r.composeDerivedNames(ctx, &obs)
@@ -1194,6 +1212,13 @@ func (r *ProfileServiceReconciler) PlanResources(
 			} else {
 				planResult.Apply(pc)
 			}
+		} else if patch := planProfileCacheAdapterDisk(service, obs.profileCache.Value); patch != nil {
+			planResult.ApplyFields(patch, constants.FieldManagerSuffixAdapterDisk, &controllerutils.FieldApplyEvent{
+				Target: obs.profileCache.Value,
+				Reason: constants.ReasonAdapterDiskRequested,
+				Message: fmt.Sprintf("AIMService %s serves adapters; turned on requiresAdapterDisk",
+					service.Name),
+			})
 		}
 
 		if !obs.profileCacheReady {
@@ -1472,7 +1497,8 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 		}
 	}
 
-	if obs.profileCache.Value != nil && obs.profileCache.Value.Status.Status == constants.AIMStatusReady {
+	if pc := obs.profileCache.Value; pc != nil && pc.Status.Status == constants.AIMStatusReady &&
+		profileCacheStatusTrusted(obs.service, pc) {
 		status.Cache = &aimv1alpha1.AIMServiceCacheStatus{
 			ProfileCacheRef: &aimv1alpha1.AIMResolvedReference{
 				Name:      obs.profileCache.Value.Name,
@@ -1555,7 +1581,8 @@ func fetchProfileCache(
 	// profile in Shared mode and prefer the healthiest. Mirrors v1alpha1's
 	// AIMTemplateCache resolution. ProfileScope must also match so we don't
 	// reuse a cache that was created for a different scope's same-named
-	// profile.
+	// profile. A cache whose status is stale is still returned so planning
+	// waits for it; readiness checks must apply profileCacheStatusTrusted.
 	cacheList := controllerutils.FetchList(ctx, c, &aimv1alpha2.AIMProfileCacheList{}, client.InNamespace(service.Namespace))
 	if cacheList.Error != nil {
 		return controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: cacheList.Error}
@@ -1583,6 +1610,10 @@ func fetchProfileCache(
 // responsible for routing the result through Apply vs ApplyWithoutOwnerRef
 // based on the same mode (see PlanResources) so Shared caches persist
 // independently of any one service.
+//
+// Returns nil when a cache already exists, whether created earlier by this
+// service, another service or the profile: it is left as found apart from
+// planProfileCacheAdapterDisk.
 func planProfileCache(
 	service *aimv1alpha1.AIMService,
 	obs ServiceObservation,
@@ -1653,6 +1684,36 @@ func planProfileCache(
 			RequiresAdapterDisk: service.Spec.AdaptersEnabled(),
 		},
 	}
+}
+
+// planProfileCacheAdapterDisk returns a partial AIMProfileCache that turns on
+// spec.requiresAdapterDisk when this service serves adapters and the existing
+// cache was created without an adapter disk (typically a Shared cache first
+// created by a service that does not serve adapters), and nil otherwise. The
+// profile cache controller then adds the adapter disk to the artifact it
+// already resolves.
+//
+// The object carries nothing but the flag so the dedicated field manager owns
+// only that field: the rest of the cache stays owned by whichever controller
+// created it, so a later apply from, e.g., the AIMProfile controller does not
+// conflict with this one. The flag only ever turns on: a Shared cache serves
+// every service resolving the profile, and another LoRA service may already
+// depend on the disk.
+func planProfileCacheAdapterDisk(
+	service *aimv1alpha1.AIMService,
+	existing *aimv1alpha2.AIMProfileCache,
+) *unstructured.Unstructured {
+	if existing == nil || !service.Spec.AdaptersEnabled() || existing.Spec.RequiresAdapterDisk {
+		return nil
+	}
+
+	patch := &unstructured.Unstructured{Object: map[string]any{
+		"spec": map[string]any{"requiresAdapterDisk": true},
+	}}
+	patch.SetGroupVersionKind(aimv1alpha2.GroupVersion.WithKind("AIMProfileCache"))
+	patch.SetName(existing.Name)
+	patch.SetNamespace(existing.Namespace)
+	return patch
 }
 
 // profileCacheModeFor maps the canonical AIMService caching mode (Shared or

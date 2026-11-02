@@ -1749,6 +1749,22 @@ func TestApply_SharedCommitReusesPinnedReadyProfileCache(t *testing.T) {
 	}
 }
 
+// A Shared artifact that a LoRA service gave an adapter disk still serves a
+// target cache that does not need one.
+func TestApply_SharedArtifactWithAdapterDiskServesPlainTarget(t *testing.T) {
+	fixture := newSharedApplyFixture(t, nil)
+	fixture.artifact.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
+	fixture.artifact.Status.AdapterPersistentVolumeClaim = "adapter-pvc"
+	refreshFixturePin(t, fixture, fixture.artifact, "source-artifact")
+
+	kubernetesClient := newApplyFakeClient(t, fixture.objects...)
+	if _, err := Apply(context.Background(), kubernetesClient, ApplyOptions{
+		PlanPath: writeApplyPlan(t, fixture.document),
+	}); err != nil {
+		t.Fatalf("Apply() error = %v, want nil", err)
+	}
+}
+
 func TestApply_SharedSemanticMismatchMatrixFailsBeforeWrites(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -1821,15 +1837,6 @@ func TestApply_SharedSemanticMismatchMatrixFailsBeforeWrites(t *testing.T) {
 				refreshFixturePin(t, f, f.artifact, "source-artifact")
 			},
 			want: "download images",
-		},
-		{
-			name: "adapter disk",
-			mutate: func(f *applyFixture) {
-				f.artifact.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
-				f.artifact.Status.AdapterPersistentVolumeClaim = "adapter-pvc"
-				refreshFixturePin(t, f, f.artifact, "source-artifact")
-			},
-			want: "adapter-disk",
 		},
 		{
 			name: "scope",

@@ -22,7 +22,11 @@
 
 package aimservice
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profilecache"
+)
 
 // Adapter staging mechanics (validation, staging Jobs, read-only subtree mount,
 // status mirroring, component health) live in the pipeline-agnostic
@@ -45,7 +49,8 @@ func resolveAdapterParentName(seed *ServiceObservation, result *ServiceFetchResu
 			"adapters require a single base model, but the resolved profile has %d model sources",
 			len(seed.resolvedProfileSpec.ModelSources))
 	}
-	if !result.profileCache.OK() || result.profileCache.Value == nil {
+	if !result.profileCache.OK() || result.profileCache.Value == nil ||
+		!profilecache.StatusCurrent(result.profileCache.Value) {
 		return "", nil
 	}
 	modelID := seed.resolvedProfileSpec.ModelSources[0].ModelID

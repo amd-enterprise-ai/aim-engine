@@ -97,7 +97,7 @@ The operator emits Kubernetes Events on AIM resources when conditions change. Ev
 
 | Type | When Emitted |
 |------|-------------|
-| `Normal` | Condition transitions to a healthy state |
+| `Normal` | Condition transitions to a healthy or still-progressing state, or an informational action was taken |
 | `Warning` | Condition transitions to an unhealthy state, or persists unhealthy on every reconcile |
 
 ### Event Reasons
@@ -111,8 +111,10 @@ Events use the condition's `reason` field as the event reason. Common event reas
 | `ProfileResolved` | Normal | Profile resolved successfully |
 | `ProfileNotFound` | Warning | No profile matched `spec.profile` / `spec.model` |
 | `BaseProfile` | Warning | Resolved profile is a base profile (not deployable) |
-| `CacheReady` | Normal | Profile cache is populated |
-| `CacheFailed` | Warning | Cache download failed |
+| `ProfileCacheReady` | Normal | Profile cache is populated |
+| `ProfileCacheNotFound` | Normal | Profile cache has not been created yet |
+| `ProfileCacheReconciling` | Normal | Adapter-enabled service is waiting for the profile cache controller to process a spec change |
+| `ProfileCacheNotReady` | Normal | Profile cache is not ready yet, including a failed download; the message carries the cache's own `Ready` message, and the Warning is on the `AIMArtifact` |
 | `RuntimeReady` | Normal | InferenceService is serving |
 | `InvalidImageReference` | Warning | Model image URI is invalid |
 | `PathTemplateInvalid` | Warning | Routing path template failed to resolve |
@@ -148,6 +150,13 @@ Events use the condition's `reason` field as the event reason. Common event reas
 |--------|------|-------------|
 | `Verified` | Normal | Download complete and verified |
 | `Downloading` | Normal | Download in progress |
+| `AdapterDiskRequested` | Normal | An `AIMProfileCache` that serves LoRA adapters added `spec.adapterDisk` in place |
+
+**AIMProfileCache (v1alpha2):**
+
+| Reason | Type | Description |
+|--------|------|-------------|
+| `AdapterDiskRequested` | Normal | An adapter-enabled `AIMService` turned on `spec.requiresAdapterDisk`; the message names the service |
 
 ### Viewing Events
 

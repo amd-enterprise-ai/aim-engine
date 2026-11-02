@@ -277,6 +277,17 @@ func newWatchTestClient(t *testing.T, scheme *runtime.Scheme, objs ...client.Obj
 			}
 			return artifact.Spec.CompatibleWith
 		}).
+		WithIndex(&aimv1alpha2.AIMProfileCache{}, aimv1alpha2.ProfileCacheArtifactNameIndexKey, func(obj client.Object) []string {
+			cache, ok := obj.(*aimv1alpha2.AIMProfileCache)
+			if !ok {
+				return nil
+			}
+			names := make([]string, 0, len(cache.Status.Artifacts))
+			for _, artifact := range cache.Status.Artifacts {
+				names = append(names, artifact.Name)
+			}
+			return names
+		}).
 		Build()
 }
 
@@ -703,6 +714,60 @@ func TestFindServicesForAdapterArtifact_FansOutByExactAndLogicalCompatibility(t 
 			t.Errorf("unexpected enqueue for %s", notWanted)
 		}
 	}
+}
+
+// TestFindServicesForAdapterArtifact_ReachesDynamicServiceViaProfileCache covers
+// a dynamic service with no declared adapters: it references no adapter
+// artifact, so the base artifact gaining its adapter disk must reach it through
+// the profile cache that resolved the artifact.
+func TestFindServicesForAdapterArtifact_ReachesDynamicServiceViaProfileCache(t *testing.T) {
+	scheme := newWatchTestScheme(t)
+
+	cacheFor := func(name, profile, artifactName string) *aimv1alpha2.AIMProfileCache {
+		return &aimv1alpha2.AIMProfileCache{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns"},
+			Spec: aimv1alpha2.AIMProfileCacheSpec{
+				ProfileName:  profile,
+				ProfileScope: aimv1alpha1.AIMResolutionScopeNamespace,
+				Mode:         aimv1alpha2.ProfileCacheModeShared,
+			},
+			Status: aimv1alpha2.AIMProfileCacheStatus{
+				Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
+					artifactName: {Name: artifactName, Model: "org/base"},
+				},
+			},
+		}
+	}
+	dynamicService := imageShapeService("svc-dynamic", "ns", "p", aimv1alpha1.AIMResolutionScopeNamespace)
+	dynamicService.Spec.AdapterMode = aimv1alpha1.AdapterModeDynamic
+
+	c := newWatchTestClient(t, scheme,
+		cacheFor("p-cache", "p", "base-artifact"),
+		cacheFor("other-cache", "other", "other-artifact"),
+		dynamicService,
+		// Shares the cache but serves no adapters, so the adapter disk is not its concern.
+		imageShapeService("svc-plain", "ns", "p", aimv1alpha1.AIMResolutionScopeNamespace),
+		imageShapeService("svc-other", "ns", "other", aimv1alpha1.AIMResolutionScopeNamespace),
+	)
+
+	model := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "base-artifact", Namespace: "ns"},
+		Spec: aimv1alpha1.AIMArtifactSpec{
+			Type:        aimv1alpha1.ArtifactTypeModel,
+			ModelID:     "org/base",
+			AdapterDisk: &aimv1alpha1.AIMAdapterDisk{},
+		},
+	}
+
+	t.Run("artifact with adapter disk reaches the cache's services", func(t *testing.T) {
+		assertRequests(t, findServicesForAdapterArtifact(c)(context.Background(), model), "ns/svc-dynamic")
+	})
+
+	t.Run("artifact without adapter disk does not fan out through caches", func(t *testing.T) {
+		diskless := model.DeepCopy()
+		diskless.Spec.AdapterDisk = nil
+		assertRequests(t, findServicesForAdapterArtifact(c)(context.Background(), diskless))
+	})
 }
 
 // TestAdapterArtifactRelevantChangePredicate_RankChange covers the gap that let

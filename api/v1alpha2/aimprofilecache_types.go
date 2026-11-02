@@ -92,10 +92,11 @@ type AIMProfileCacheSpec struct {
 	Mode AIMProfileCacheMode `json:"mode,omitempty"`
 
 	// RequiresAdapterDisk requests that the backing model artifact carry a shared
-	// ReadWriteMany adapter disk for LoRA serving. Set by the AIMService planner
-	// when the service serves adapters. When set, the cache stamps an adapterDisk
-	// onto the artifact it creates and won't adopt one lacking a disk; size and
-	// class come from AIMRuntimeConfig.Storage.
+	// ReadWriteMany adapter disk for LoRA serving. Set by an AIMService that serves
+	// adapters, including on an existing cache created without it; AIM Engine never
+	// turns it off. When set, the cache creates its artifact with an adapterDisk, or
+	// adds one in place to the artifact it already resolves; size and class come
+	// from AIMRuntimeConfig.Storage.
 	// +optional
 	RequiresAdapterDisk bool `json:"requiresAdapterDisk,omitempty"`
 }
