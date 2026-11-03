@@ -1,0 +1,12 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: chat-aggregated
+  namespace: team-a
+spec:
+  composition:
+    main:
+      profile:
+        ref:
+          kind: AIMProfile
+          name: existing-profile

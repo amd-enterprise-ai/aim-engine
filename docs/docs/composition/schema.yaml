@@ -1,0 +1,378 @@
+# Copyright © Advanced Micro Devices, Inc., or its affiliates.
+# SPDX-License-Identifier: MIT
+#
+# Review-only authoring schema. NOT an installable Kubernetes CRD.
+# New fields are closed. Existing Kubernetes/service subtypes are checked only
+# at their outer shape here; production CRDs remain authoritative for them.
+# No defaults are applied. Cross-object semantics and update admission are not
+# modeled. See api.md and implementation.md for those validation boundaries.
+$schema: https://json-schema.org/draft/2020-12/schema
+title: AIM composition authoring contract
+type: object
+additionalProperties: false
+required: [apiVersion, kind, metadata, spec]
+properties:
+  apiVersion: {type: string}
+  kind: {type: string}
+  metadata: {$ref: '#/$defs/Metadata'}
+  spec: {type: object}
+oneOf:
+  - properties:
+      apiVersion: {const: aim.eai.amd.com/v1alpha2}
+      kind: {const: AIMService}
+      spec: {$ref: '#/$defs/ServiceSpec'}
+  - properties:
+      apiVersion: {const: aim.eai.amd.com/v1alpha2}
+      kind: {const: AIMProfileComposition}
+      spec: {$ref: '#/$defs/Recipe'}
+  - properties:
+      apiVersion: {const: aim.eai.amd.com/v1alpha2}
+      kind: {const: AIMClusterProfileComposition}
+      metadata:
+        not: {required: [namespace]}
+      spec:
+        allOf:
+          - {$ref: '#/$defs/Recipe'}
+          - properties:
+              main: {$ref: '#/$defs/ClusterRole'}
+              prefill: {$ref: '#/$defs/ClusterRole'}
+              decode: {$ref: '#/$defs/ClusterRole'}
+  - properties:
+      apiVersion: {const: aim.eai.amd.com/v1alpha1}
+      kind: {const: AIMRuntimeConfig}
+      spec: {$ref: '#/$defs/RuntimeSpec'}
+  - properties:
+      apiVersion: {const: aim.eai.amd.com/v1alpha1}
+      kind: {const: AIMClusterRuntimeConfig}
+      metadata:
+        not: {required: [namespace]}
+      spec: {$ref: '#/$defs/RuntimeSpec'}
+$defs:
+  Name:
+    type: string
+    minLength: 1
+    maxLength: 253
+    pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$'
+  NonEmpty:
+    type: string
+    minLength: 1
+  Metadata:
+    type: object
+    required: [name]
+    properties:
+      name: {$ref: '#/$defs/Name'}
+      namespace: {$ref: '#/$defs/Name'}
+      labels: {type: object, additionalProperties: {type: string}}
+      annotations: {type: object, additionalProperties: {type: string}}
+  ServiceSpec:
+    type: object
+    additionalProperties: false
+    required: [composition]
+    properties:
+      composition: {$ref: '#/$defs/ServiceComposition'}
+      model:
+        type: object
+        additionalProperties: false
+        required: [name]
+        properties:
+          name: {$ref: '#/$defs/Name'}
+      runtimeConfigName: {$ref: '#/$defs/Name'}
+      routing: {type: object}
+      caching: {type: object}
+      storage: {type: object}
+      imagePullSecrets:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [name]
+          properties:
+            name: {$ref: '#/$defs/Name'}
+      serviceAccountName: {$ref: '#/$defs/Name'}
+      priorityClassName: {$ref: '#/$defs/Name'}
+      adapterMode: {const: static}
+      adapters: {type: array, maxItems: 0}
+      cacheModel: {type: boolean}
+  Recipe:
+    type: object
+    additionalProperties: false
+    properties: &recipeProperties
+      mode: {enum: [Aggregated, PrefillDecode]}
+      placement:
+        type: object
+        additionalProperties: false
+        properties:
+          scope: {enum: [AnyNode, SameNode]}
+      transport:
+        type: object
+        additionalProperties: false
+        required: [preset]
+        properties:
+          preset: {$ref: '#/$defs/Name'}
+      profileSelector: {$ref: '#/$defs/ProfileSelector'}
+      main: {$ref: '#/$defs/Role'}
+      prefill: {$ref: '#/$defs/Role'}
+      decode: {$ref: '#/$defs/Role'}
+      inheritSelectorDefaults: {type: boolean}
+    allOf:
+      - {$ref: '#/$defs/ModeRules'}
+      - {$ref: '#/$defs/InlineShape'}
+  ServiceComposition:
+    type: object
+    additionalProperties: false
+    properties:
+      <<: *recipeProperties
+      ref:
+        type: object
+        additionalProperties: false
+        required: [kind, name]
+        properties:
+          kind: {enum: [AIMProfileComposition, AIMClusterProfileComposition]}
+          name: {$ref: '#/$defs/Name'}
+      refreshToken: {type: string, minLength: 1, maxLength: 128}
+    allOf:
+      - {$ref: '#/$defs/ModeRules'}
+      - if: {required: [ref]}
+        then:
+          not:
+            anyOf:
+              - {required: [mode]}
+              - {required: [transport]}
+        else: {$ref: '#/$defs/InlineShape'}
+  InlineShape:
+    anyOf:
+      - {required: [mode]}
+      - {required: [main]}
+      - {required: [prefill]}
+      - {required: [decode]}
+  ModeRules:
+    allOf:
+      - not:
+          allOf:
+            - {required: [main]}
+            - anyOf:
+                - {required: [prefill]}
+                - {required: [decode]}
+      - if:
+          anyOf:
+            - {required: [main]}
+            - required: [mode]
+              properties:
+                mode: {const: Aggregated}
+        then:
+          not:
+            anyOf:
+              - {required: [prefill]}
+              - {required: [decode]}
+              - {required: [transport]}
+      - if:
+          required: [mode]
+          properties:
+            mode: {const: PrefillDecode}
+        then:
+          not: {required: [main]}
+  Worker:
+    type: object
+    additionalProperties: false
+    properties: &executionProperties
+      profile: {$ref: '#/$defs/ProfileBinding'}
+      launch: {$ref: '#/$defs/Launch'}
+      resources: {$ref: '#/$defs/Resources'}
+  Role:
+    type: object
+    additionalProperties: false
+    properties:
+      <<: *executionProperties
+      replicas: {type: integer, minimum: 1}
+      scaling: {$ref: '#/$defs/Scaling'}
+      parallelism:
+        type: object
+        additionalProperties: false
+        properties:
+          tensor: {type: integer, minimum: 1}
+          pipeline: {type: integer, minimum: 1}
+      worker: {$ref: '#/$defs/Worker'}
+    not: {required: [replicas, scaling]}
+  ClusterRole:
+    properties:
+      profile: &clusterBinding
+        properties:
+          ref:
+            properties:
+              kind: {const: AIMClusterProfile}
+      worker:
+        properties:
+          profile: *clusterBinding
+  ProfileBinding:
+    type: object
+    additionalProperties: false
+    properties:
+      ref:
+        type: object
+        additionalProperties: false
+        required: [kind, name]
+        properties:
+          kind: {enum: [AIMProfile, AIMClusterProfile]}
+          name: {$ref: '#/$defs/Name'}
+      selector: {$ref: '#/$defs/ProfileSelector'}
+    oneOf:
+      - {required: [ref]}
+      - {required: [selector]}
+  DefaultFields:
+    type: object
+    additionalProperties: false
+    properties: &defaultFields
+      engine: {$ref: '#/$defs/NonEmpty'}
+      metric: {enum: [latency, throughput]}
+      precision: {enum: [auto, fp4, fp8, fp16, fp32, fp64, bf16, int4, int8]}
+      acceleratorType: {enum: [cpu, gpu]}
+      acceleratorVendor: {enum: [amd, nvidia]}
+      acceleratorModel: {$ref: '#/$defs/NonEmpty'}
+      acceleratorPartitioningMode: {$ref: '#/$defs/NonEmpty'}
+      acceleratorCount: {type: integer, minimum: 0}
+  ProfileSelector:
+    type: object
+    additionalProperties: false
+    properties:
+      <<: *defaultFields
+      aimId: {$ref: '#/$defs/NonEmpty'}
+      modelId: {$ref: '#/$defs/NonEmpty'}
+      profileId: {$ref: '#/$defs/NonEmpty'}
+      modelRef:
+        type: object
+        additionalProperties: false
+        required: [name]
+        properties:
+          name: {$ref: '#/$defs/Name'}
+          scope: {enum: [Auto, Namespace, Cluster]}
+      type: {enum: [optimized, general, preview, unoptimized]}
+      minimumType: {enum: [optimized, general, preview, unoptimized, any]}
+      role: {const: deployable}
+      origin: {enum: [discovered, derived, generated, user-authored]}
+      engineArgs: {type: object}
+  Launch:
+    type: object
+    additionalProperties: false
+    properties:
+      containerEnv:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [name]
+          properties:
+            name: {$ref: '#/$defs/NonEmpty'}
+            value: {type: string}
+            valueFrom: {type: object}
+          not: {required: [value, valueFrom]}
+      engineEnv:
+        type: object
+        additionalProperties: {type: string}
+      engineArgs: {type: object}
+  Resources:
+    type: object
+    additionalProperties: false
+    properties:
+      requests: &quantities
+        type: object
+        additionalProperties:
+          anyOf:
+            - {type: string, minLength: 1}
+            - {type: integer}
+      limits: *quantities
+      claims:
+        type: array
+        items: {type: object}
+  Scaling:
+    type: object
+    additionalProperties: false
+    required: [maxReplicas]
+    properties:
+      minReplicas: {type: integer, minimum: 0}
+      maxReplicas: {type: integer, minimum: 1}
+      metrics:
+        type: array
+        minItems: 1
+        items: {$ref: '#/$defs/Metric'}
+      pollingInterval: {type: integer, minimum: 1}
+      cooldownPeriod: {type: integer, minimum: 0}
+    anyOf:
+      - {required: [metrics]}
+      - required: [minReplicas]
+        properties:
+          minReplicas: {const: 0}
+  Metric:
+    type: object
+    additionalProperties: false
+    required: [type, podmetric]
+    properties:
+      type: {const: PodMetric}
+      podmetric:
+        type: object
+        additionalProperties: false
+        required: [metric, target]
+        properties:
+          metric:
+            type: object
+            additionalProperties: false
+            properties:
+              backend: {const: opentelemetry}
+              serverAddress: {$ref: '#/$defs/NonEmpty'}
+              metricNames:
+                type: array
+                minItems: 1
+                items: {$ref: '#/$defs/NonEmpty'}
+              query: {$ref: '#/$defs/NonEmpty'}
+              operationOverTime:
+                enum: [last_one, avg, max, min, rate, count]
+            anyOf:
+              - {required: [query]}
+              - {required: [metricNames]}
+          target:
+            type: object
+            additionalProperties: false
+            required: [type]
+            properties:
+              type: {enum: [Value, AverageValue, Utilization]}
+              value: {$ref: '#/$defs/NonEmpty'}
+              averageValue: {$ref: '#/$defs/NonEmpty'}
+              averageUtilization: {type: integer}
+            allOf:
+              - if:
+                  properties:
+                    type: {const: Value}
+                then: {required: [value]}
+              - if:
+                  properties:
+                    type: {const: AverageValue}
+                then: {required: [averageValue]}
+              - if:
+                  properties:
+                    type: {const: Utilization}
+                then: {required: [averageUtilization]}
+  RuntimeSpec:
+    type: object
+    description: Existing runtime-config fields retain their production schema.
+    properties:
+      composition:
+        type: object
+        additionalProperties: false
+        properties:
+          selectorDefaults:
+            type: object
+            additionalProperties: false
+            properties:
+              common: {$ref: '#/$defs/DefaultFields'}
+              main: {$ref: '#/$defs/DefaultFields'}
+              prefill: {$ref: '#/$defs/DefaultFields'}
+              decode: {$ref: '#/$defs/DefaultFields'}
+          defaultTransportPreset: {$ref: '#/$defs/Name'}
+          transportPresets:
+            type: array
+            items:
+              type: object
+              additionalProperties: false
+              required: [name, integration]
+              properties:
+                name: {$ref: '#/$defs/Name'}
+                integration: {$ref: '#/$defs/NonEmpty'}
