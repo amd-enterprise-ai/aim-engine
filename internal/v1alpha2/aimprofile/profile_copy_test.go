@@ -308,6 +308,129 @@ func TestApplyProfileCopyOverrides_IdentityOverridesWinOverSource(t *testing.T) 
 	}
 }
 
+// TestApplyProfileCopyOverrides_RegeneratesCatalogProfileID runs a general
+// aim-base catalog entry, in its published metadata shape (legacy gpu and
+// gpu_count keys), through discovery parsing and a hardware override.
+func TestApplyProfileCopyOverrides_RegeneratesCatalogProfileID(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`metadata:
+  engine: vllm
+  gpu: MI250X
+  gpu_count: 1
+  manual_selection_only: false
+  metric: latency
+  precision: fp16
+  type: general
+engine_args:
+  tensor-parallel-size: 1
+env_vars: {}
+`)
+	item, err := parseProfileYAMLIntoCatalogItem(
+		raw,
+		"general/vllm-mi250x-fp16-tp1-latency.yaml",
+		"org/model",
+		"registry.example/aim-base:test",
+		"registry.example/aim-base:test",
+		"test",
+	)
+	if err != nil {
+		t.Fatalf("parseProfileYAMLIntoCatalogItem: %v", err)
+	}
+
+	spec, err := ApplyProfileCopyOverrides(item.Spec, &aimv1alpha1.ProfileOverrides{AcceleratorModel: "MI350P"}, "", "")
+	if err != nil {
+		t.Fatalf("ApplyProfileCopyOverrides() error = %v", err)
+	}
+	if spec.ProfileId != "vllm-mi350p-fp16-tp1-latency" {
+		t.Fatalf("ProfileId = %q, want %q", spec.ProfileId, "vllm-mi350p-fp16-tp1-latency")
+	}
+}
+
+func TestApplyProfileCopyOverrides_RegeneratesConventionalProfileID(t *testing.T) {
+	t.Parallel()
+
+	two := int32(2)
+	conventional := aimv1alpha2.AIMProfileSpecCommon{
+		ProfileId:        "vllm-mi250x-fp16-tp1-latency",
+		Engine:           "vllm",
+		AcceleratorModel: "MI250X",
+		AcceleratorCount: 1,
+		Precision:        aimv1alpha1.AIMPrecision("fp16"),
+		Metric:           aimv1alpha1.AIMMetric("latency"),
+	}
+	withVariant := conventional
+	withVariant.ProfileId = "vllm_omni-mi250x-fp16-tp1-latency-usp1"
+	withVariant.Engine = "vllm_omni"
+	withVariant.Variant = "usp1"
+	custom := conventional
+	custom.ProfileId = "gpu-default"
+	unset := conventional
+	unset.ProfileId = ""
+
+	cases := []struct {
+		name      string
+		source    aimv1alpha2.AIMProfileSpecCommon
+		overrides *aimv1alpha1.ProfileOverrides
+		want      string
+	}{
+		{
+			name:      "accelerator model override renames",
+			source:    conventional,
+			overrides: &aimv1alpha1.ProfileOverrides{AcceleratorModel: "MI350P"},
+			want:      "vllm-mi350p-fp16-tp1-latency",
+		},
+		{
+			name:      "accelerator count override renames",
+			source:    conventional,
+			overrides: &aimv1alpha1.ProfileOverrides{AcceleratorCount: &two},
+			want:      "vllm-mi250x-fp16-tp2-latency",
+		},
+		{
+			name:      "engine and variant segments are kept",
+			source:    withVariant,
+			overrides: &aimv1alpha1.ProfileOverrides{AcceleratorModel: "MI355X"},
+			want:      "vllm_omni-mi355x-fp16-tp1-latency-usp1",
+		},
+		{
+			name:      "unchanged hardware keeps the source id",
+			source:    conventional,
+			overrides: &aimv1alpha1.ProfileOverrides{EngineEnv: map[string]string{"KEY": "value"}},
+			want:      "vllm-mi250x-fp16-tp1-latency",
+		},
+		{
+			name:      "custom source id is kept",
+			source:    custom,
+			overrides: &aimv1alpha1.ProfileOverrides{AcceleratorModel: "MI350P"},
+			want:      "gpu-default",
+		},
+		{
+			name:      "unset source id stays unset",
+			source:    unset,
+			overrides: &aimv1alpha1.ProfileOverrides{AcceleratorModel: "MI350P"},
+			want:      "",
+		},
+		{
+			name:      "explicit profileId override wins",
+			source:    conventional,
+			overrides: &aimv1alpha1.ProfileOverrides{AcceleratorModel: "MI350P", ProfileId: "my-profile"},
+			want:      "my-profile",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			spec, err := ApplyProfileCopyOverrides(tc.source, tc.overrides, "", "")
+			if err != nil {
+				t.Fatalf("ApplyProfileCopyOverrides() error = %v", err)
+			}
+			if spec.ProfileId != tc.want {
+				t.Fatalf("ProfileId = %q, want %q", spec.ProfileId, tc.want)
+			}
+		})
+	}
+}
+
 func TestApplyProfileCopyOverrides_AddsFeaturesAsSetUnion(t *testing.T) {
 	t.Parallel()
 

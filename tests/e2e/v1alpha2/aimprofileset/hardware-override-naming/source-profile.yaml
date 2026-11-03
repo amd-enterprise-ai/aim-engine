@@ -1,0 +1,25 @@
+# Copyable source whose profileId is in the generated
+# <engine>-<accelerator>-<precision>-tp<count>-<metric> form. Availability is
+# irrelevant to naming, so the hardware does not need to exist in the cluster.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: hw-override-source
+  annotations:
+    aim.eai.amd.com/profile-copyable: "true"
+    aim.eai.amd.com/profile-yaml-contract: '{"codec":"aim-profile/v1","metadataFields":["accelerator_count","accelerator_model","accelerator_type","engine","metric","precision","type"]}'
+spec:
+  aimId: acme/hw-override
+  modelId: acme/hw-override
+  profileId: vllm-mi250x-fp16-tp1-latency
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  engine: vllm
+  metric: latency
+  precision: fp16
+  type: general
+  acceleratorType: gpu
+  acceleratorModel: MI250X
+  acceleratorCount: 1
+  modelSources:
+    - modelId: acme/hw-override
+      sourceUri: hf://acme/hw-override

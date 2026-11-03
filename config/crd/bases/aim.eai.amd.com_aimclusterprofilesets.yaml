@@ -529,10 +529,7 @@ spec:
                       type: object
                     type: array
                   profileId:
-                    description: |-
-                      ProfileId stamps the derived profile's spec.profileId. Optional —
-                      most callers leave this empty and let the source profile's profileId
-                      carry through (or the reconciler synthesise one).
+                    description: ProfileId stamps the derived profile's spec.profileId.
                     type: string
                 type: object
               selector:
