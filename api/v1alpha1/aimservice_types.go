@@ -134,10 +134,10 @@ type AIMServiceAdapterReference struct {
 	Rank *int32 `json:"rank,omitempty"`
 }
 
-// AIMAdapterState is the disk-side lifecycle state of an adapter within a service's
-// subtree. The controller tracks staging and removal directly; the engine-reported
-// states (Loaded/LoadRejected) are reserved until the inference container exposes a
-// per-adapter load-status surface.
+// AIMAdapterState is the lifecycle state of an adapter within a service. The
+// controller tracks staging and removal directly and derives Loaded from each
+// ready replica's /v1/models response. LoadRejected remains reserved for an
+// explicit engine rejection signal.
 // +kubebuilder:validation:Enum=Pending;Downloading;Downloaded;Failed;Deleting;Loaded;LoadRejected
 type AIMAdapterState string
 
@@ -155,11 +155,12 @@ const (
 	// bytes are being reclaimed from the service subtree by the subtree-sync Job.
 	// The entry is dropped from status once the prune completes.
 	AdapterStateDeleting AIMAdapterState = "Deleting"
-	// AdapterStateLoaded means the inference engine has the adapter in memory.
-	// RESERVED: engine-reported, not yet populated by the controller.
+	// AdapterStateLoaded means every ready serving replica reported the adapter
+	// through its /v1/models endpoint.
 	AdapterStateLoaded AIMAdapterState = "Loaded"
 	// AdapterStateLoadRejected means the bytes are present but the engine declined
-	// to load the adapter. RESERVED: engine-reported, not yet populated.
+	// to load the adapter. Reserved for an explicit engine rejection signal;
+	// absence from /v1/models alone does not imply rejection.
 	AdapterStateLoadRejected AIMAdapterState = "LoadRejected"
 )
 
@@ -176,16 +177,16 @@ type AIMServiceAdapterStatus struct {
 	// +optional
 	ModelID string `json:"modelId,omitempty"`
 
-	// State is the disk-side state of the adapter for this service.
+	// State is the staged and runtime-observed state of the adapter for this service.
 	// +optional
 	State AIMAdapterState `json:"state,omitempty"`
 
-	// LoadedReplicas reports how many serving replicas have the adapter loaded,
-	// as "loaded/total" (e.g. "3/3"). RESERVED: engine-reported, not yet populated.
+	// LoadedReplicas reports the last complete observation of how many ready
+	// serving replicas have the adapter loaded, as "loaded/total" (e.g. "3/3").
 	// +optional
 	LoadedReplicas string `json:"loadedReplicas,omitempty"`
 
-	// LastObserved is when the controller last observed this adapter's state.
+	// LastObserved is when the reported adapter state or replica summary last changed.
 	// +optional
 	LastObserved *metav1.Time `json:"lastObserved,omitempty"`
 
