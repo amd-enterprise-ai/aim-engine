@@ -113,7 +113,7 @@ func TestGenerateCustomModelName_DifferentEndpoints(t *testing.T) {
 				ModelID:   "my-org/my-model",
 				SourceURI: "s3://bucket/model",
 				Env: []corev1.EnvVar{
-					{Name: "AWS_ENDPOINT_URL", Value: "https://minio-1.local"},
+					{Name: "AWS_ENDPOINT_URL", Value: "https://seaweedfs-1.local"},
 				},
 			},
 		},
@@ -126,7 +126,7 @@ func TestGenerateCustomModelName_DifferentEndpoints(t *testing.T) {
 				ModelID:   "my-org/my-model",
 				SourceURI: "s3://bucket/model",
 				Env: []corev1.EnvVar{
-					{Name: "AWS_ENDPOINT_URL", Value: "https://minio-2.local"},
+					{Name: "AWS_ENDPOINT_URL", Value: "https://seaweedfs-2.local"},
 				},
 			},
 		},
@@ -212,14 +212,14 @@ func TestModelSourcesMatch(t *testing.T) {
 				{
 					ModelID:   "org/model",
 					SourceURI: "s3://bucket/model",
-					Env:       []corev1.EnvVar{{Name: "AWS_ENDPOINT_URL", Value: "https://minio-1.local"}},
+					Env:       []corev1.EnvVar{{Name: "AWS_ENDPOINT_URL", Value: "https://seaweedfs-1.local"}},
 				},
 			},
 			b: []aimv1alpha1.AIMModelSource{
 				{
 					ModelID:   "org/model",
 					SourceURI: "s3://bucket/model",
-					Env:       []corev1.EnvVar{{Name: "AWS_ENDPOINT_URL", Value: "https://minio-2.local"}},
+					Env:       []corev1.EnvVar{{Name: "AWS_ENDPOINT_URL", Value: "https://seaweedfs-2.local"}},
 				},
 			},
 			expected: false,
@@ -230,14 +230,14 @@ func TestModelSourcesMatch(t *testing.T) {
 				{
 					ModelID:   "org/model",
 					SourceURI: "s3://bucket/model",
-					Env:       []corev1.EnvVar{{Name: "AWS_ENDPOINT_URL", Value: "https://minio.local"}},
+					Env:       []corev1.EnvVar{{Name: "AWS_ENDPOINT_URL", Value: "https://seaweedfs.local"}},
 				},
 			},
 			b: []aimv1alpha1.AIMModelSource{
 				{
 					ModelID:   "org/model",
 					SourceURI: "s3://bucket/model",
-					Env:       []corev1.EnvVar{{Name: "AWS_ENDPOINT_URL", Value: "https://minio.local"}},
+					Env:       []corev1.EnvVar{{Name: "AWS_ENDPOINT_URL", Value: "https://seaweedfs.local"}},
 				},
 			},
 			expected: true,

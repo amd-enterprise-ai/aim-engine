@@ -4,7 +4,7 @@
 #
 # This test validates an end-to-end GPU flow using an S3-backed model source:
 # 1) Download model from HuggingFace
-# 2) Upload model to MinIO (S3-compatible)
+# 2) Upload model to SeaweedFS (S3-compatible)
 # 3) Create AIMModel referencing s3:// source
 # 4) Create AIMService referencing the model by name
 # 5) Verify runtime uses GPU container successfully
@@ -29,40 +29,25 @@ spec:
         - apply:
             file: runtime-config.yaml
 
-    - name: Deploy MinIO
-      try:
-        - apply:
-            file: minio-service.yaml
-        - apply:
-            file: minio-deployment.yaml
+    - name: Deploy SeaweedFS
+      use:
+        template: ../../../_shared/seaweedfs-step.yaml
 
-    - name: Wait for MinIO to be ready
-      try:
-        - assert:
-            timeout: 120s
-            resource:
-              apiVersion: apps/v1
-              kind: Deployment
-              metadata:
-                name: minio
-              status:
-                availableReplicas: 1
-
-    - name: Create MinIO bucket
+    - name: Create SeaweedFS bucket
       try:
         - apply:
-            file: minio-setup-job.yaml
+            file: seaweedfs-setup-job.yaml
         - assert:
             timeout: 120s
             resource:
               apiVersion: batch/v1
               kind: Job
               metadata:
-                name: minio-setup
+                name: seaweedfs-setup
               status:
                 succeeded: 1
 
-    - name: Download from HF and upload to MinIO
+    - name: Download from HF and upload to SeaweedFS
       try:
         - apply:
             file: model-upload-job.yaml

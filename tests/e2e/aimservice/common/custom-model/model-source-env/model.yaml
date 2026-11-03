@@ -14,7 +14,7 @@ spec:
       # Environment variables for S3 download authentication
       env:
         - name: AWS_ENDPOINT_URL
-          value: https://minio.example.com
+          value: https://seaweedfs.example.com
         - name: AWS_DEFAULT_REGION
           value: us-east-1
 
