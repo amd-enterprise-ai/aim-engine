@@ -162,7 +162,7 @@ Target identity for the derived profile lives entirely in `overrides`. The selec
 | `overrides.modelId` | Stamped on derived profile. Wins over the source's `spec.modelId` AND over `modelSources[0].modelId` auto-derivation. | Yes (CEL) |
 | `overrides.profileId` | Stamped on derived profile. Wins over the source's `spec.profileId`. | No |
 
-For `role=deployable` remixes (where you're re-derivating an already-deployable profile to e.g. expand across accelerator variants), all three identity overrides are optional — the source profile's existing identity carries through if you don't override it. For `role=base` derivations they're required (well, `aimId` and `modelId`) because the source has no identity to inherit.
+For `role=deployable` remixes (where you're re-derivating an already-deployable profile to e.g. expand across accelerator variants), all three identity overrides are optional — the source profile's existing identity carries through if you don't override it (a generated-form `profileId` is regenerated, see below). For `role=base` derivations they're required (well, `aimId` and `modelId`) because the source has no identity to inherit.
 
 This is enforced at admission time by CEL on both `AIMProfileSetSpec` and `AIMModelProfilesSpec`:
 
@@ -176,6 +176,8 @@ selector.role=base requires overrides.aimId and overrides.modelId
 ```
 
 So an attempt to set `selector.aimId` under `selector.role=base` is rejected by the API server before reaching the controller.
+
+When `overrides.profileId` is unset and the source's `spec.profileId` is exactly the ID AIM Engine would generate from the source's own fields (`<engine>-<accelerator>-<precision>-tp<count>-<metric>[-<variant>]`, see [Projected profile filename](../concepts/inference-engines.md#projected-profile-filename)), the derived `spec.profileId` is regenerated from the derived fields. For example, `vllm-mi250x-fp16-tp1-latency` with `overrides.acceleratorModel: MI350P` becomes `vllm-mi350p-fp16-tp1-latency`. Any other source `profileId` is copied unchanged. The derived `AIMProfile` resource name is built from the derived `profileId`.
 
 ## Common patterns
 

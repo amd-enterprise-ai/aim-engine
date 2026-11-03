@@ -1044,8 +1044,9 @@ spec:
                       profileId:
                         description: |-
                           ProfileId stamps the derived profile's spec.profileId. Optional —
-                          most callers leave this empty and let the source profile's profileId
-                          carry through (or the reconciler synthesise one).
+                          when empty, a source profileId in the generated
+                          <engine>-<accelerator>-<precision>-tp<count>-<metric> form is
+                          regenerated from the derived spec; other IDs are copied unchanged.
                         type: string
                     type: object
                   selector:
@@ -2320,8 +2321,9 @@ spec:
                       profileId:
                         description: |-
                           ProfileId stamps the derived profile's spec.profileId. Optional —
-                          most callers leave this empty and let the source profile's profileId
-                          carry through (or the reconciler synthesise one).
+                          when empty, a source profileId in the generated
+                          <engine>-<accelerator>-<precision>-tp<count>-<metric> form is
+                          regenerated from the derived spec; other IDs are copied unchanged.
                         type: string
                     type: object
                   selector:
@@ -3148,8 +3150,9 @@ spec:
                       profileId:
                         description: |-
                           ProfileId stamps the derived profile's spec.profileId. Optional —
-                          most callers leave this empty and let the source profile's profileId
-                          carry through (or the reconciler synthesise one).
+                          when empty, a source profileId in the generated
+                          <engine>-<accelerator>-<precision>-tp<count>-<metric> form is
+                          regenerated from the derived spec; other IDs are copied unchanged.
                         type: string
                     type: object
                   version:
@@ -5034,8 +5037,9 @@ spec:
                       profileId:
                         description: |-
                           ProfileId stamps the derived profile's spec.profileId. Optional —
-                          most callers leave this empty and let the source profile's profileId
-                          carry through (or the reconciler synthesise one).
+                          when empty, a source profileId in the generated
+                          <engine>-<accelerator>-<precision>-tp<count>-<metric> form is
+                          regenerated from the derived spec; other IDs are copied unchanged.
                         type: string
                     type: object
                   selector:
@@ -6310,8 +6314,9 @@ spec:
                       profileId:
                         description: |-
                           ProfileId stamps the derived profile's spec.profileId. Optional —
-                          most callers leave this empty and let the source profile's profileId
-                          carry through (or the reconciler synthesise one).
+                          when empty, a source profileId in the generated
+                          <engine>-<accelerator>-<precision>-tp<count>-<metric> form is
+                          regenerated from the derived spec; other IDs are copied unchanged.
                         type: string
                     type: object
                   selector:
@@ -7138,8 +7143,9 @@ spec:
                       profileId:
                         description: |-
                           ProfileId stamps the derived profile's spec.profileId. Optional —
-                          most callers leave this empty and let the source profile's profileId
-                          carry through (or the reconciler synthesise one).
+                          when empty, a source profileId in the generated
+                          <engine>-<accelerator>-<precision>-tp<count>-<metric> form is
+                          regenerated from the derived spec; other IDs are copied unchanged.
                         type: string
                     type: object
                   version:

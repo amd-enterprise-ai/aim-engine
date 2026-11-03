@@ -308,14 +308,14 @@ func buildDesiredNamespaceProfiles(set *aimv1alpha2.AIMProfileSet, candidates []
 	desired := make([]desiredProfile, 0, len(matched))
 	failures := &sourceErrors{}
 	for _, source := range matched {
-		name, err := derivedProfileName(set.Name, source)
-		if err != nil {
-			failures.add(source.SourceGroup, fmt.Errorf("generate derived profile name: %w", err))
-			continue
-		}
 		copiedSpec, err := aimprofile.ApplyProfileCopyOverrides(source.Spec, set.Spec.Overrides, set.Spec.Image, source.BaseImage)
 		if err != nil {
 			failures.add(source.SourceGroup, err)
+			continue
+		}
+		name, err := derivedProfileName(set.Name, source, copiedSpec.ProfileId)
+		if err != nil {
+			failures.add(source.SourceGroup, fmt.Errorf("generate derived profile name: %w", err))
 			continue
 		}
 		profile := &aimv1alpha2.AIMProfile{}
@@ -354,14 +354,14 @@ func buildDesiredClusterProfiles(set *aimv1alpha2.AIMClusterProfileSet, candidat
 	desired := make([]desiredProfile, 0, len(matched))
 	failures := &sourceErrors{}
 	for _, source := range matched {
-		name, err := derivedProfileName(set.Name, source)
-		if err != nil {
-			failures.add(source.SourceGroup, fmt.Errorf("generate derived profile name: %w", err))
-			continue
-		}
 		copiedSpec, err := aimprofile.ApplyProfileCopyOverrides(source.Spec, set.Spec.Overrides, set.Spec.Image, source.BaseImage)
 		if err != nil {
 			failures.add(source.SourceGroup, err)
+			continue
+		}
+		name, err := derivedProfileName(set.Name, source, copiedSpec.ProfileId)
+		if err != nil {
+			failures.add(source.SourceGroup, fmt.Errorf("generate derived profile name: %w", err))
 			continue
 		}
 		profile := &aimv1alpha2.AIMClusterProfile{}
@@ -425,7 +425,9 @@ func inheritsLegacyCatalogNaming(source aimprofile.ProfileCopyCandidate, spec ai
 	return source.LegacyCatalogNaming && (spec.Overrides == nil || spec.Overrides.AcceleratorVendor == "")
 }
 
-func derivedProfileName(setName string, source aimprofile.ProfileCopyCandidate) (string, error) {
+// derivedProfileName uses the copied spec's profileId as the readable part so
+// the name matches the derived hardware; the hash stays keyed on source identity.
+func derivedProfileName(setName string, source aimprofile.ProfileCopyCandidate, derivedProfileID string) (string, error) {
 	// The old catalog parser did not decode vendor. Keep that historical
 	// fingerprint for catalog lineage while retaining vendor in actual specs.
 	// Direct CRD sources were already vendor-aware and keep that behavior.
@@ -433,7 +435,7 @@ func derivedProfileName(setName string, source aimprofile.ProfileCopyCandidate) 
 		source.Spec.AcceleratorVendor = ""
 	}
 	return utils.GenerateDerivedName(
-		[]string{setName, firstNonEmpty(source.Spec.ProfileId, source.Name)},
+		[]string{setName, firstNonEmpty(derivedProfileID, source.Name)},
 		utils.WithHashSource(setName, legacyNamingIdentity(source)),
 	)
 }
