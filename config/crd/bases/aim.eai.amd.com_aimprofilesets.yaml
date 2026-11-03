@@ -529,7 +529,11 @@ spec:
                       type: object
                     type: array
                   profileId:
-                    description: ProfileId stamps the derived profile's spec.profileId.
+                    description: |-
+                      ProfileId stamps the derived profile's spec.profileId. Optional —
+                      when empty, a source profileId in the generated
+                      <engine>-<accelerator>-<precision>-tp<count>-<metric> form is
+                      regenerated from the derived spec; other IDs are copied unchanged.
                     type: string
                 type: object
               selector:

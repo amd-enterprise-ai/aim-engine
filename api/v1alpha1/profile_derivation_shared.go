@@ -297,9 +297,8 @@ type ProfileOverrides struct {
 
 	// ProfileId stamps the derived profile's spec.profileId. Optional —
 	// when empty, a source profileId in the generated
-	// <engine>-<accelerator>-<precision>-tp<count>-<metric>[-<variant>] form
-	// is regenerated from the derived spec; any other source profileId is
-	// copied unchanged.
+	// <engine>-<accelerator>-<precision>-tp<count>-<metric> form is
+	// regenerated from the derived spec; other IDs are copied unchanged.
 	// +optional
 	ProfileId string `json:"profileId,omitempty"`
 
