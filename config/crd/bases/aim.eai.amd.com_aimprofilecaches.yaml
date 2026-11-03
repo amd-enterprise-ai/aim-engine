@@ -243,8 +243,9 @@ spec:
               requiresAdapterDisk:
                 description: |-
                   RequiresAdapterDisk requests that the backing model artifact carry a shared
-                  ReadWriteMany adapter disk for LoRA serving. Set by the AIMService planner
-                  when the service serves adapters.
+                  ReadWriteMany adapter disk for LoRA serving. Set by an AIMService that serves
+                  adapters, including on an existing cache created without it; AIM Engine never
+                  turns it off.
                 type: boolean
               runtimeConfigName:
                 description: Name is the name of the runtime config to use for this

@@ -2118,12 +2118,16 @@ func validateSharedArtifactSemantics(
 		!semanticEnvEqual(artifact.Spec.Env, targetEnv) {
 		return fmt.Errorf("shared source and target download environments do not exactly match")
 	}
-	requiresAdapterDisk := artifact.Spec.AdapterDisk != nil
-	if targetCache.Spec.RequiresAdapterDisk != requiresAdapterDisk {
-		return fmt.Errorf("shared source and target adapter-disk requirements do not exactly match")
-	}
-	if requiresAdapterDisk && artifact.Status.AdapterPersistentVolumeClaim == "" {
-		return fmt.Errorf("shared source artifact adapter disk is not Ready")
+	// A disk-bearing artifact also serves caches that do not need the disk: a
+	// LoRA service may have added it to a Shared artifact other services use.
+	hasAdapterDisk := artifact.Spec.AdapterDisk != nil
+	if targetCache.Spec.RequiresAdapterDisk {
+		if !hasAdapterDisk {
+			return fmt.Errorf("target cache requires an adapter disk the shared source artifact does not have")
+		}
+		if artifact.Status.AdapterPersistentVolumeClaim == "" {
+			return fmt.Errorf("shared source artifact adapter disk is not Ready")
+		}
 	}
 	if len(artifact.Spec.ImagePullSecrets) != 0 {
 		return fmt.Errorf("shared source artifact image pull secrets do not match the target cache")
@@ -2165,7 +2169,7 @@ func validateSharedArtifactSemantics(
 			DownloadFilter:     nil,
 		},
 	}
-	if requiresAdapterDisk {
+	if hasAdapterDisk {
 		hypothetical.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
 	}
 	if effectiveDownloadImage(artifact, runtimeConfig.Value) !=

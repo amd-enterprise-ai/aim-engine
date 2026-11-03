@@ -109,11 +109,11 @@ Replaces v1alpha1's `CacheReady`. Tracks the `AIMProfileCache` lifecycle.
 
 | Status | Reason | Description |
 |---|---|---|
-| `True` | `CacheReady` | All cache artifacts are downloaded and verified |
-| `False` | `CacheCreating` | Creating the profile cache |
-| `False` | `CacheNotReady` | Cache exists but download is incomplete |
-| `False` | `CacheFailed` | Cache download failed |
-| `False` | `CacheLost` | Previously-ready cache is no longer available |
+| `True` | `ProfileCacheReady` | All cache artifacts are downloaded and verified |
+| `False` | `ProfileCacheNotFound` | The profile cache has not been created yet |
+| `False` | `ProfileCacheReconciling` | Adapter-enabled services only: the profile cache exists but its controller has not yet processed its latest spec change, for example right after the cache was created or an adapter disk was requested. Clears once the `AIMProfileCache` controller reconciles it. |
+| `False` | `ProfileCacheNotReady` | The profile cache exists but is not `Ready`; the message carries the cache's own `Ready` condition message |
+| `False` | `FetchError` | AIM Engine could not read the profile cache |
 
 ### ProfileRuntimeReady
 

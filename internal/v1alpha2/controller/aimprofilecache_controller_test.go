@@ -324,9 +324,10 @@ func TestFindProfileCachesForArtifact_SkipsStorageClassMismatch(t *testing.T) {
 		[]string{testNamespace + "/" + matching.Name, testNamespace + "/" + unset.Name})
 }
 
-// A cache that needs an adapter disk cannot adopt a diskless artifact, so it must not be
-// woken for one - PlanResources would only re-plan a disk-bearing artifact of its own.
-func TestFindProfileCachesForArtifact_SkipsDisklessArtifactForAdapterCache(t *testing.T) {
+// A cache that needs an adapter disk adds one in place to a diskless model artifact it
+// can otherwise use, so it is woken for one; a diskless adapter artifact is never a
+// candidate.
+func TestFindProfileCachesForArtifact_AdapterCacheWakesForDisklessModelArtifact(t *testing.T) {
 	adapterCache := makeSharedProfileCache("cache-lora")
 	adapterCache.Spec.RequiresAdapterDisk = true
 	plainCache := makeSharedProfileCache("cache-plain")
@@ -336,6 +337,14 @@ func TestFindProfileCachesForArtifact_SkipsDisklessArtifactForAdapterCache(t *te
 	r := newProfileCacheTestReconciler(t, adapterCache, plainCache, diskless)
 
 	assertRequestKeys(t, r.findProfileCachesForArtifact(context.Background(), diskless),
+		[]string{testNamespace + "/" + adapterCache.Name, testNamespace + "/" + plainCache.Name})
+
+	adapterArtifact := makeWatchedArtifact("artifact-adapter")
+	adapterArtifact.Spec.Type = aimv1alpha1.ArtifactTypeAdapter
+
+	r = newProfileCacheTestReconciler(t, adapterCache, plainCache, adapterArtifact)
+
+	assertRequestKeys(t, r.findProfileCachesForArtifact(context.Background(), adapterArtifact),
 		[]string{testNamespace + "/" + plainCache.Name})
 
 	withDisk := makeWatchedArtifact("artifact-with-disk")

@@ -196,6 +196,35 @@ Before a service can serve adapters:
    and storage class resolve through `AIMRuntimeConfig.spec.storage` /
    `AIMClusterRuntimeConfig.spec.storage` unless explicitly set on the artifact.
    The storage class must support `ReadWriteMany`.
+
+   On the profile pipeline (v1alpha2), the base model may already be cached by a
+   service that does not serve adapters, or by the profile itself. In that case,
+   the first adapter-enabled service on the same profile sets
+   `spec.requiresAdapterDisk` on the existing shared `AIMProfileCache`. The
+   `AIMProfileCache` controller then adds `spec.adapterDisk` to the base model
+   artifact it already uses, and keeps reporting that artifact as ready while
+   the adapter disk PVC is created. The base model weights are not downloaded
+   again, and services already running on the cache are not restarted or
+   remounted. Each step records a Normal `AdapterDiskRequested` event: on the
+   `AIMProfileCache`, naming the service, and on the `AIMArtifact`, naming the
+   cache. The new PVC is `ReadWriteMany` and 50Gi unless
+   `spec.storage.adapterDiskSize` is set on the runtime config, so budget for it
+   on any cache an adapter-enabled service may share.
+
+   AIM Engine never turns the flag off, because other adapter-enabled services
+   may depend on the disk. Setting it to `false` by hand has no effect on an
+   artifact that already has the disk. If a GitOps tool manages the
+   `AIMProfileCache`, configure it to ignore `spec.requiresAdapterDisk`;
+   otherwise the two keep overwriting each other. To reclaim the adapter disk,
+   delete every adapter-enabled service on the profile, then delete both the
+   `AIMProfileCache` and its base model `AIMArtifact`. Deleting only the artifact
+   does not work: the cache recreates it with a disk and downloads the model
+   again. The next service to use the profile downloads the model into a new
+   artifact.
+
+   The template pipeline (v1alpha1) does not do this: an `AIMTemplateCache`
+   never requests an adapter disk, so its base model artifact must already
+   carry one, as in the worked example below.
 2. **Use `Shared` caching and an exact `sourceUri` match.** The service resolves
    its parent base model by matching the resolved base model id against the
    cache's resolved artifacts — the `AIMProfileCache` on the profile pipeline,
@@ -308,11 +337,58 @@ status:
 
 | Reason | Meaning |
 |--------|---------|
-| `ParentLacksAdapterDisk` | The resolved base model has no adapter disk yet (`Progressing`). |
+| `ParentLacksAdapterDisk` | The resolved base model has no adapter disk yet, for example while it is being added to an existing base model artifact (`Progressing`). |
 | `AdapterSubtreeProvisioning` | The per-service subtree is being created; the ISVC is gated on this (`Progressing`). |
 | `AdapterConfigInvalid` | Multiple model sources, an incompatible model ID, an exact-parent mismatch, a duplicate adapter path, or a non-adapter artifact was referenced (`Failed`, blocks the ISVC). |
 | `AdaptersStaging` | The subtree is ready but one or more adapters are not `Downloaded` (`Ready` aggregate condition). Dynamic serving continues; static ISVC creation remains gated. |
 | `AdaptersStaged` | All declared adapters are staged (`Ready`). |
+
+### Service stays at `AdaptersReady=False / ParentLacksAdapterDisk`
+
+These steps apply to the profile pipeline (v1alpha2) with `Shared` caching.
+Follow the chain from the service to the adapter disk PVC:
+
+```bash
+# The profile cache the service uses. status.cache is set once the cache has
+# been Ready; if it is empty, find the cache whose profile matches
+# status.resolvedProfile.name (and .scope).
+kubectl get aimservice <name> -n <namespace> -o jsonpath='{.status.cache.profileCacheRef.name}'
+kubectl get aimservice <name> -n <namespace> -o jsonpath='{.status.resolvedProfile}'
+kubectl get aimprofilecache -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,PROFILE:.spec.profileName,SCOPE:.spec.profileScope
+
+# Whether the cache requests an adapter disk (empty output means false), and
+# whether its controller has caught up with that request.
+kubectl get aimprofilecache <cache-name> -n <namespace> \
+  -o jsonpath='{.spec.requiresAdapterDisk}{"\n"}{.metadata.generation} {.status.observedGeneration}{"\n"}'
+
+# The base model artifact the cache resolved, and its adapter disk.
+# status.artifacts[*].persistentVolumeClaim is the model PVC, not the adapter disk.
+kubectl get aimprofilecache <cache-name> -n <namespace> -o jsonpath='{.status.artifacts}' | jq
+kubectl get aimartifact <artifact-name> -n <namespace> \
+  -o jsonpath='{.spec.adapterDisk}{"\n"}{.status.adapterPersistentVolumeClaim}{"\n"}'
+kubectl get pvc <adapter-pvc-name> -n <namespace>
+```
+
+- `requiresAdapterDisk` is not `true`: the service has not reconciled since it
+  found the cache, or setting the flag failed. A failed apply shows as
+  `DependenciesReachable=False` on the service; otherwise check the
+  [operator logs](../admin/troubleshooting.md#operator-logs) for the service.
+- `generation` is ahead of `observedGeneration`: the `AIMProfileCache` controller
+  has not processed the request yet, and the service reports
+  `ProfileCacheReady=False / ProfileCacheReconciling`. Check the operator logs
+  for the cache.
+- The artifact has no `spec.adapterDisk`: the `AIMProfileCache` controller could
+  not add it. Check the cache's `DependenciesReachable` condition and its events.
+  When present, `{}` means the disk uses the default size and storage class.
+- The artifact has `spec.adapterDisk` but no `status.adapterPersistentVolumeClaim`:
+  the adapter disk PVC could not be created. Check the artifact's events and
+  that the resolved storage class supports `ReadWriteMany`.
+
+Once the adapter disk PVC exists, the service moves on to
+`AdapterSubtreeProvisioning`. If it stays there, check the PVC: a PVC stuck in
+`Pending` means the storage class cannot provision `ReadWriteMany` volumes, so
+the Job that creates the service's subtree cannot start.
 
 ## Reclaim
 

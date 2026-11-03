@@ -640,7 +640,8 @@ func adapterArtifactRelevantChangePredicate() predicate.Predicate {
 // name are enqueued directly. For model artifacts, the change is hopped through
 // both the exact parent-name index and logical compatible-model-ID index, then
 // to services, so a model gaining or replacing its adapter disk re-triggers
-// staging in either compatibility mode.
+// staging in either compatibility mode. A model artifact with an adapter disk
+// also reaches the services of the profile caches that resolved it.
 func findServicesForAdapterArtifact(c client.Client) handler.MapFunc {
 	return func(ctx context.Context, obj client.Object) []reconcile.Request {
 		artifact, ok := obj.(*aimv1alpha1.AIMArtifact)
@@ -653,6 +654,13 @@ func findServicesForAdapterArtifact(c client.Client) handler.MapFunc {
 		case aimv1alpha1.ArtifactTypeAdapter:
 			collectAllServicesByField(ctx, c, requests, aimv1alpha1.AIMServiceAdapterArtifactIndexKey, artifact.Name, artifact.Namespace)
 		default:
+			// A dynamic service with no declared adapters references no adapter
+			// artifact, so it is reached through the profile caches that resolved
+			// this model artifact. It must wake when the adapter disk binds.
+			if artifact.Spec.AdapterDisk != nil {
+				collectServicesForResolvedArtifact(ctx, c, requests, artifact)
+			}
+
 			// Exact-binding adapters whose parent is this concrete artifact.
 			var adapters aimv1alpha1.AIMArtifactList
 			if err := c.List(ctx, &adapters,
@@ -686,6 +694,47 @@ func findServicesForAdapterArtifact(c client.Client) handler.MapFunc {
 		}
 
 		return requestsFromSet(requests)
+	}
+}
+
+// collectServicesForResolvedArtifact adds the adapter-serving services of every
+// profile cache whose status.artifacts lists the given model artifact. The field
+// index it queries is registered by the AIMProfileCache controller
+// (aimprofilecache_controller.go), which shares this manager's cache.
+func collectServicesForResolvedArtifact(
+	ctx context.Context,
+	c client.Client,
+	requests map[types.NamespacedName]struct{},
+	artifact *aimv1alpha1.AIMArtifact,
+) {
+	logger := log.FromContext(ctx)
+	var caches aimv1alpha2.AIMProfileCacheList
+	if err := c.List(ctx, &caches,
+		client.InNamespace(artifact.Namespace),
+		client.MatchingFields{aimv1alpha2.ProfileCacheArtifactNameIndexKey: artifact.Name},
+	); err != nil {
+		logger.Error(err, "failed to list profile caches for model artifact",
+			"artifact", artifact.Name, "namespace", artifact.Namespace)
+		return
+	}
+	servicesForCache := findServicesForProfileCache(c)
+	for i := range caches.Items {
+		for _, request := range servicesForCache(ctx, &caches.Items[i]) {
+			if _, seen := requests[request.NamespacedName]; seen {
+				continue
+			}
+			var service aimv1alpha2.AIMService
+			if err := c.Get(ctx, request.NamespacedName, &service); err != nil {
+				if !isNotFoundLike(err) {
+					logger.Error(err, "failed to get service for model artifact fan-out",
+						"service", request.NamespacedName, "artifact", artifact.Name)
+				}
+				continue
+			}
+			if service.Spec.AdaptersEnabled() {
+				requests[request.NamespacedName] = struct{}{}
+			}
+		}
 	}
 }
 

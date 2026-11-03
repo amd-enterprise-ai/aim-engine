@@ -33,9 +33,11 @@ import (
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -2060,6 +2062,251 @@ func TestPlanProfileCache_SkipsWhenExisting(t *testing.T) {
 	}
 	if got := planProfileCache(service, obs); got != nil {
 		t.Fatalf("planProfileCache should return nil when cache already exists, got %+v", got)
+	}
+}
+
+// profileCachePlanForTest plans a service whose ready, deployable profile has a
+// model source, against the given existing profile cache (nil when none exists).
+func profileCachePlanForTest(
+	t *testing.T,
+	service *aimv1alpha1.AIMService,
+	existing *aimv1alpha2.AIMProfileCache,
+) controllerutils.PlanResult {
+	t.Helper()
+	spec := sampleProfileSpec()
+	spec.ModelSources = []aimv1alpha1.AIMModelSource{{ModelID: "org/model", SourceURI: "hf://org/model"}}
+	cacheFetch := controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Value: existing}
+	if existing == nil {
+		cacheFetch = controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{
+			Error: apierrors.NewNotFound(schema.GroupResource{Resource: "aimprofilecaches"}, "missing"),
+		}
+	}
+	obs := ServiceObservation{
+		ServiceFetchResult:  ServiceFetchResult{service: service, profileCache: cacheFetch},
+		resolvedProfileSpec: spec,
+		resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{
+			Status:     constants.AIMStatusReady,
+			Deployable: true,
+		},
+		profileName:      testProfileA,
+		profileScope:     aimv1alpha1.AIMResolutionScopeNamespace,
+		profileAssembled: true,
+		hasModelSources:  true,
+	}
+	return (&ProfileServiceReconciler{}).PlanResources(context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service}, obs)
+}
+
+func plannedProfileCaches(plan controllerutils.PlanResult) (owned, unowned []*aimv1alpha2.AIMProfileCache) {
+	for _, obj := range plan.GetToApply() {
+		if pc, ok := obj.(*aimv1alpha2.AIMProfileCache); ok {
+			owned = append(owned, pc)
+		}
+	}
+	for _, obj := range plan.GetToApplyWithoutOwnerRef() {
+		if pc, ok := obj.(*aimv1alpha2.AIMProfileCache); ok {
+			unowned = append(unowned, pc)
+		}
+	}
+	return owned, unowned
+}
+
+// TestPlanResources_SharedAdapterCacheIsUnowned verifies that a LoRA service
+// creates its Shared cache without an owner reference, so deleting the service
+// does not garbage-collect a cache other services resolve, and with
+// requiresAdapterDisk set.
+func TestPlanResources_SharedAdapterCacheIsUnowned(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile:     &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			AdapterMode: aimv1alpha1.AdapterModeDynamic,
+		},
+	}
+	owned, unowned := plannedProfileCaches(profileCachePlanForTest(t, service, nil))
+	if len(owned) != 0 || len(unowned) != 1 {
+		t.Fatalf("planned %d owned and %d unowned caches, want 0 and 1", len(owned), len(unowned))
+	}
+	if !unowned[0].Spec.RequiresAdapterDisk {
+		t.Error("expected the created cache to require an adapter disk")
+	}
+}
+
+// TestPlanResources_TurnsOnAdapterDiskOnExistingCache covers a LoRA service
+// resolving to a cache created without an adapter disk (by a non-LoRA service, or
+// by the AIMProfile). The service must set only spec.requiresAdapterDisk, under its
+// own field manager, so it does not take co-ownership of the creator's env,
+// storage class or labels; and nothing else ever turns the flag off.
+func TestPlanResources_TurnsOnAdapterDiskOnExistingCache(t *testing.T) {
+	tests := []struct {
+		name                string
+		adapterMode         aimv1alpha1.AIMAdapterMode
+		requiresAdapterDisk bool
+		wantPatch           bool
+	}{
+		{name: "LoRA service, diskless cache", adapterMode: aimv1alpha1.AdapterModeDynamic, wantPatch: true},
+		{name: "LoRA service, adapter cache", adapterMode: aimv1alpha1.AdapterModeDynamic, requiresAdapterDisk: true},
+		{name: "plain service, adapter cache", requiresAdapterDisk: true},
+		{name: "plain service, diskless cache"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			existing := &aimv1alpha2.AIMProfileCache{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "p-cache-abc",
+					Namespace: "ns",
+					Labels:    map[string]string{constants.LabelService: "first-service"},
+				},
+				Spec: aimv1alpha2.AIMProfileCacheSpec{
+					ProfileName:         testProfileA,
+					ProfileScope:        aimv1alpha1.AIMResolutionScopeNamespace,
+					StorageClassName:    "fast-rwo",
+					Env:                 []corev1.EnvVar{{Name: "HF_TOKEN", Value: "from-first-service"}},
+					Mode:                aimv1alpha2.ProfileCacheModeShared,
+					RequiresAdapterDisk: tt.requiresAdapterDisk,
+				},
+			}
+			service := &aimv1alpha1.AIMService{
+				ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+				Spec: aimv1alpha1.AIMServiceSpec{
+					Profile:     &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+					AdapterMode: tt.adapterMode,
+					Caching:     &aimv1alpha1.AIMServiceCachingConfig{Env: []corev1.EnvVar{{Name: "HF_TOKEN", Value: "from-lora-service"}}},
+				},
+			}
+
+			plan := profileCachePlanForTest(t, service, existing)
+			if owned, unowned := plannedProfileCaches(plan); len(owned)+len(unowned) != 0 {
+				t.Fatalf("an existing cache must not be re-applied in full, got %d owned and %d unowned", len(owned), len(unowned))
+			}
+
+			fields := plan.GetToApplyFields()
+			if !tt.wantPatch {
+				if len(fields) != 0 {
+					t.Fatalf("planned %d field applies, want none", len(fields))
+				}
+				return
+			}
+			if len(fields) != 1 {
+				t.Fatalf("planned %d field applies, want 1", len(fields))
+			}
+			if fields[0].FieldManagerSuffix != constants.FieldManagerSuffixAdapterDisk {
+				t.Errorf("field manager suffix = %q, want %q", fields[0].FieldManagerSuffix, constants.FieldManagerSuffixAdapterDisk)
+			}
+			patch, ok := fields[0].Object.(*unstructured.Unstructured)
+			if !ok {
+				t.Fatalf("field apply object = %T, want *unstructured.Unstructured", fields[0].Object)
+			}
+			if patch.GetKind() != "AIMProfileCache" || patch.GetNamespace() != existing.Namespace || patch.GetName() != existing.Name {
+				t.Errorf("field apply targets %s %s/%s, want the existing cache", patch.GetKind(), patch.GetNamespace(), patch.GetName())
+			}
+			if len(patch.GetLabels()) != 0 || len(patch.GetOwnerReferences()) != 0 {
+				t.Errorf("field apply must carry no labels or owner references, got %v / %v", patch.GetLabels(), patch.GetOwnerReferences())
+			}
+			wantSpec := map[string]any{"requiresAdapterDisk": true}
+			if spec, _, _ := unstructured.NestedMap(patch.Object, "spec"); !equality.Semantic.DeepEqual(spec, wantSpec) {
+				t.Errorf("field apply spec = %v, want %v", spec, wantSpec)
+			}
+			if ev := fields[0].Event; ev == nil || ev.Target != existing || ev.Reason != constants.ReasonAdapterDiskRequested {
+				t.Errorf("field apply event = %+v, want %s on the existing cache", ev, constants.ReasonAdapterDiskRequested)
+			}
+		})
+	}
+}
+
+// TestFetchProfileCache_StaleSharedCacheIsWaitedOn covers the window after a
+// Shared cache's spec changes and before its controller observes it: the fetch
+// must still return the cache so planning does not build a replacement over it.
+// An adapter-enabled service treats the stale status as untrusted, while a plain
+// service on the same cache keeps reporting it Ready.
+func TestFetchProfileCache_StaleSharedCacheIsWaitedOn(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := aimv1alpha2.AddToScheme(scheme); err != nil {
+		t.Fatalf("add v1alpha2 to scheme: %v", err)
+	}
+	stale := &aimv1alpha2.AIMProfileCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "p-cache-abc",
+			Namespace:  "ns",
+			Generation: 2,
+			Labels:     map[string]string{constants.LabelService: "first-service"},
+		},
+		Spec: aimv1alpha2.AIMProfileCacheSpec{
+			ProfileName:         testProfileA,
+			ProfileScope:        aimv1alpha1.AIMResolutionScopeCluster,
+			Mode:                aimv1alpha2.ProfileCacheModeShared,
+			RequiresAdapterDisk: true,
+		},
+		Status: aimv1alpha2.AIMProfileCacheStatus{
+			ObservedGeneration: 1,
+			Status:             constants.AIMStatusReady,
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(stale).Build()
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+		Spec:       aimv1alpha1.AIMServiceSpec{AdapterMode: aimv1alpha1.AdapterModeDynamic},
+	}
+
+	fetched := fetchProfileCache(context.Background(), c, service, testProfileA, aimv1alpha1.AIMResolutionScopeCluster)
+	if !fetched.OK() || fetched.Value == nil || fetched.Value.Name != stale.Name {
+		t.Fatalf("expected the stale shared cache to be returned, got value=%v err=%v", fetched.Value, fetched.Error)
+	}
+
+	obs := ServiceObservation{
+		ServiceFetchResult: ServiceFetchResult{service: service, profileCache: fetched},
+		profileName:        testProfileA,
+		profileScope:       aimv1alpha1.AIMResolutionScopeCluster,
+		resolvedProfileSpec: func() *aimv1alpha2.AIMProfileSpecCommon {
+			spec := sampleProfileSpec()
+			spec.ModelSources = []aimv1alpha1.AIMModelSource{{ModelID: "org/model", SourceURI: "hf://org/model"}}
+			return spec
+		}(),
+	}
+	if got := planProfileCache(service, obs); got != nil {
+		t.Fatalf("a stale existing cache must not be re-planned, got %+v", got)
+	}
+
+	health := obs.getProfileCacheHealth()
+	if health.State != constants.AIMStatusProgressing || health.Reason != reasonProfileCacheReconciling {
+		t.Errorf("adapter-enabled service health = %s/%s, want Progressing/%s", health.State, health.Reason, reasonProfileCacheReconciling)
+	}
+
+	plain := service.DeepCopy()
+	plain.Spec.AdapterMode = ""
+	obs.service = plain
+	if health := obs.getProfileCacheHealth(); health.State != constants.AIMStatusReady {
+		t.Errorf("plain service health = %s/%s, want Ready", health.State, health.Reason)
+	}
+}
+
+// TestResolveAdapterParentName_WaitsForCurrentCacheStatus verifies that adapters
+// do not bind to the artifact a cache advertised before its latest spec change -
+// e.g. before it added the adapter disk - and bind once the cache catches up.
+func TestResolveAdapterParentName_WaitsForCurrentCacheStatus(t *testing.T) {
+	spec := sampleProfileSpec()
+	spec.ModelSources = []aimv1alpha1.AIMModelSource{{ModelID: "org/model", SourceURI: "hf://org/model"}}
+	seed := &ServiceObservation{resolvedProfileSpec: spec}
+
+	cache := &aimv1alpha2.AIMProfileCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "p-cache-abc", Namespace: "ns", Generation: 2},
+		Status: aimv1alpha2.AIMProfileCacheStatus{
+			ObservedGeneration: 1,
+			Status:             constants.AIMStatusReady,
+			Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
+				"base": {Name: "base", Model: "org/model"},
+			},
+		},
+	}
+	result := &ServiceFetchResult{profileCache: controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Value: cache}}
+
+	if name, err := resolveAdapterParentName(seed, result); err != nil || name != "" {
+		t.Fatalf("stale cache resolved parent %q (err %v), want none yet", name, err)
+	}
+
+	cache.Status.ObservedGeneration = cache.Generation
+	if name, err := resolveAdapterParentName(seed, result); err != nil || name != "base" {
+		t.Fatalf("current cache resolved parent %q (err %v), want base", name, err)
 	}
 }
 

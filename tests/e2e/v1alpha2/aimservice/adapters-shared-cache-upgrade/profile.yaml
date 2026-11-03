@@ -1,0 +1,28 @@
+# Namespace AIMProfile shared by both services. No accelerator fields, so it has
+# no hardware requirement and reaches Ready on any node, kind included.
+# "adapters" in features lets a service serve LoRA adapters on it, and a single
+# model source gives the adapter-enabled service an unambiguous base model.
+#
+# aim-dummy is the lightweight AIM stand-in built for the e2e lanes: it serves
+# health checks on the runtime port without a GPU or real weights, so both
+# InferenceServices become Ready.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: adapters-upgrade-profile
+spec:
+  aimId: Qwen/Qwen3-0.6B
+  modelId: Qwen/Qwen3-0.6B
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  features:
+    - adapters
+  modelSources:
+    - modelId: Qwen/Qwen3-0.6B
+      sourceUri: hf://Qwen/Qwen3-0.6B
+      # The download is simulated (no real bytes), so this only needs to
+      # provision, not hold real weights.
+      size: 1Gi
