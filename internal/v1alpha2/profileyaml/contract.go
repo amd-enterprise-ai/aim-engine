@@ -402,6 +402,9 @@ func inspectV1(profile map[string]any) (Contract, error) {
 		if _, owned := v1OwnedTopLevelFields[key]; owned {
 			continue
 		}
+		if key == "download_filter" {
+			continue
+		}
 		extensions.TopLevel[key] = value
 	}
 	if err := validateRequiredV1MetadataFields(fields); err != nil {

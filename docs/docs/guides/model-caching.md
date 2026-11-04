@@ -100,7 +100,15 @@ flat model repositories, but repository layouts such as Diffusers commonly
 store required transformer, VAE, text-encoder, scheduler, and tokenizer files
 under nested directories.
 
-Set an explicitly empty filter to download all files:
+An AIM image can declare the filter its model needs in its profile YAML
+(`download_filter`, see
+[Projected profile YAML compatibility](../concepts/profiles.md#projected-profile-yaml-compatibility)).
+Discovered profiles carry that declaration onto their model source, where it
+takes precedence over the runtime config filter, so no configuration is needed
+for those images.
+
+For images that do not declare a filter, set an explicitly empty filter to
+download all files:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
