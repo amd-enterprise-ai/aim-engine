@@ -194,6 +194,22 @@ oc rollout status daemonset/nfd-worker -n openshift-nfd --timeout=5m
 oc get nodefeaturediscovery -n openshift-nfd
 ```
 
+Verify that NFD is publishing node-feature labels before installing AIM
+Engine. This captures the baseline NFD labels; the AIM-specific accelerator
+labels are expected only after AIM's detector runs:
+
+```bash
+oc get nodefeature -n openshift-nfd
+oc get nodes -o json | jq -r '
+  .items[] as $node
+  | $node.metadata.name as $name
+  | ($node.metadata.labels // {})
+  | to_entries[]
+  | select(.key | startswith("feature.node.kubernetes.io/"))
+  | "\($name)\t\(.key)=\(.value)"
+' | sort
+```
+
 If NFD is already managed by the platform, verify that its worker is healthy
 and that the AIM `feature.node.kubernetes.io/aim-accelerator.*` labels appear
 after the detector is installed.
@@ -515,6 +531,14 @@ oc get daemonset -n aim-system \
 oc get pods -n aim-system \
   -l app.kubernetes.io/component=gpu-detection
 oc get nodes --show-labels | rg -i 'amd-gpu=true|amd.com/gpu|aim-accelerator'
+oc get nodes -o json | jq -r '
+  .items[] as $node
+  | $node.metadata.name as $name
+  | ($node.metadata.labels // {})
+  | to_entries[]
+  | select(.key | startswith("feature.node.kubernetes.io/aim-accelerator."))
+  | "\($name)\t\(.key)=\(.value)"
+' | sort
 ```
 
 The GPU detector's `DESIRED` count should match the number of AMD GPU nodes.
@@ -695,8 +719,10 @@ they match a deployable profile provided by the AIM Engine release.
 
 Large FP8 checkpoints can spend most of startup processing safetensors weights
 on the CPU before the weights are transferred to the AMD GPU. For the Qwen3-32B
-FP8 example, configure bounded CPU parallelism before waiting for the predictor
-to become ready:
+FP8 example, configure bounded CPU parallelism while the model cache/download
+is progressing and before the predictor starts loading weights. The patch does
+not restart the download job. If the predictor is already processing weights,
+the profile change may recreate it and repeat that weight-loading step:
 
 ```bash
 oc patch aimservice -n aim-models qwen3-32b-chat --type=merge -p '{
