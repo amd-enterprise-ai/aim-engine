@@ -568,19 +568,22 @@ jobs:
         if: always()
         run: rm -f "${KUBECONFIG}"
 
-  # Scheduling onto fake AMD GPU nodes run by KWOK (requires=kwok tests). The
-  # fleet's GPU-labelled nodes would change the node counts other tests assert
-  # on, so this lane runs on its own cluster. See
+  # Scheduling onto fake AMD GPU nodes run by KWOK, and the operator's view of
+  # them (requires=kwok tests). The fleet's GPU-labelled nodes would change the
+  # node counts other tests assert on, so this lane runs on its own cluster. See
   # docs/docs/contributing/testing.md#fake-gpu-nodes-kwok.
   test-e2e-kwok:
     name: test-e2e-kwok
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     concurrency:
       group: test-e2e-kwok-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
     env:
       KIND_CLUSTER: aim-kwok-${{ github.run_id }}-${{ github.run_attempt }}
+      OPERATOR_IMAGE_REPOSITORY: aim-engine
+      OPERATOR_IMAGE_TAG: ${{ github.run_id }}-${{ github.run_attempt }}-kwok
+      OPERATOR_IMAGE: aim-engine:${{ github.run_id }}-${{ github.run_attempt }}-kwok
     steps:
       - name: Clone the code
         uses: actions/checkout@v4
@@ -631,6 +634,55 @@ jobs:
           make kwok-install
           make fake-gpu-fleet
 
+      - name: Set per-run isolated Helm and Helmfile config
+        run: |
+          HELM_BASE="${RUNNER_TEMP}/helm-kwok"
+          HELMFILE_BASE="${RUNNER_TEMP}/helmfile-kwok"
+          {
+            echo "HELM_CACHE_HOME=${HELM_BASE}/cache"
+            echo "HELM_CONFIG_HOME=${HELM_BASE}/config"
+            echo "HELM_DATA_HOME=${HELM_BASE}/data"
+            echo "HELM_REGISTRY_CONFIG=${HELM_BASE}/registry/config.json"
+            echo "HELMFILE_CACHE_HOME=${HELMFILE_BASE}/cache"
+          } >> "${GITHUB_ENV}"
+          mkdir -p "${HELM_BASE}/cache" "${HELM_BASE}/config" "${HELM_BASE}/data" "${HELM_BASE}/registry" "${HELMFILE_BASE}/cache"
+          echo '{}' > "${HELM_BASE}/registry/config.json"
+
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # The operator watches KServe, Gateway API and KEDA resources, so it
+      # needs the same dependencies as the main e2e job. Their pods run on the
+      # kind nodes: the fake GPU nodes are tainted.
+      - name: Install core dependencies
+        run: helmfile sync -f hack/dependencies/helmfile.yaml.gotmpl
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build operator image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ${{ env.OPERATOR_IMAGE }}
+          build-args: |
+            VERSION=${{ env.OPERATOR_IMAGE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install the operator
+        run: |
+          set -euo pipefail
+          kind load docker-image "${OPERATOR_IMAGE}" --name "${KIND_CLUSTER}"
+          make crds helm
+          kubectl apply --server-side -f dist/crds.yaml
+          helm install aim-engine dist/chart --namespace aim-system --create-namespace \
+            --set manager.image.repository="${OPERATOR_IMAGE_REPOSITORY}" \
+            --set manager.image.tag="${OPERATOR_IMAGE_TAG}" \
+            --set acceleratorDetector.enable=false
+          kubectl wait --for=condition=Available --timeout=180s deployment/aim-engine-controller-manager -n aim-system
+
       - name: Run KWOK Chainsaw tests
         run: make test-chainsaw-kwok ENV=kind
 
@@ -661,6 +713,11 @@ jobs:
           kubectl get resourceslices,deviceclasses || true
           echo "=== KWOK controller ==="
           kubectl logs -n kube-system deployment/kwok-controller --tail=200 || true
+          echo "=== Operator ==="
+          kubectl get pods -n aim-system -o wide || true
+          kubectl logs -n aim-system -l control-plane=controller-manager --tail=200 || true
+          echo "=== Profiles ==="
+          kubectl get aimclusterprofiles,aimprofiles -A -o yaml || true
           echo "=== Non-running pods ==="
           kubectl get pods -A --field-selector 'status.phase!=Running,status.phase!=Succeeded' -o wide || true
           echo "=== Events (warnings only) ==="
