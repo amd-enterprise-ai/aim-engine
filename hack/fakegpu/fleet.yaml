@@ -20,6 +20,13 @@ groups:
     count: 1
     gpus:
       - {model: r9700, count: 4}
+  # Two GPU models on one node: the device plugin advertises them as one
+  # amd.com/gpu pool, so a pod may get either model.
+  - name: dp-mixed-models
+    count: 1
+    gpus:
+      - {model: mi350p, count: 4}
+      - {model: r9700, count: 2}
 
   # DRA nodes: a gpu.amd.com ResourceSlice, no allocatable amd.com/gpu.
   - name: dra-mi355x
@@ -34,3 +41,19 @@ groups:
     numaNodes: 2
     gpus:
       - {model: mi300x, count: 8, partition: cpx-nps4}
+  # Two GPU models on one node; each device carries its own deviceID.
+  - name: dra-mixed-models
+    count: 1
+    mode: dra
+    gpus:
+      - {model: mi350p, count: 4}
+      - {model: r9700, count: 2}
+  # GPUs of one model in different partition modes. Device-plugin nodes can't
+  # have this shape with resource_naming_strategy single.
+  - name: dra-mixed-partitions
+    count: 1
+    mode: dra
+    numaNodes: 2
+    gpus:
+      - {model: mi300x, count: 4}
+      - {model: mi300x, count: 4, partition: cpx-nps1}
