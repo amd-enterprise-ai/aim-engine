@@ -86,6 +86,30 @@ func TestProfileRelevantChangePredicate_ResourcesChange(t *testing.T) {
 	}
 }
 
+// A Ready profile that gains DRA nodes keeps its status and device-plugin
+// count, but services waiting for DRA nodes must be enqueued.
+func TestProfileRelevantChangePredicate_DRANodeCountChange(t *testing.T) {
+	pred := profileRelevantChangePredicate()
+
+	oldP := &aimv1alpha2.AIMClusterProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "p"},
+		Status: aimv1alpha2.AIMProfileStatus{
+			Status:                    constants.AIMStatusReady,
+			MatchingNodes:             2,
+			MatchingNodesByAllocation: &aimv1alpha2.AIMProfileMatchingNodes{DevicePlugin: 2},
+		},
+	}
+	newP := oldP.DeepCopy()
+	newP.Status.MatchingNodesByAllocation.DRA = 3
+
+	if !pred.Update(event.UpdateEvent{ObjectOld: oldP, ObjectNew: newP}) {
+		t.Error("expected a DRA node count change to fire the predicate")
+	}
+	if pred.Update(event.UpdateEvent{ObjectOld: oldP, ObjectNew: oldP.DeepCopy()}) {
+		t.Error("expected unchanged node counts not to fire the predicate")
+	}
+}
+
 // TestProfileRelevantChangePredicate_AffinityChange is the companion case:
 // the resolved node affinity can change without a Generation bump when node
 // labels shift. The AIMService must re-reconcile so the ISVC's affinity

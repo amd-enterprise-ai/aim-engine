@@ -88,6 +88,10 @@ kubectl delete clusterrolebinding envoy-gateway-metrics-collector \
   --ignore-not-found
 ```
 
+### GPU inference services restart once
+
+Every GPU profile's node affinity now excludes nodes with more than one GPU model (see [Nodes with mixed GPU models](../concepts/accelerator-detection.md#nodes-with-mixed-gpu-models)). The affinity change rolls every GPU InferenceService once after the upgrade. Replacement pods can't land on mixed-model nodes through the device plugin, so on clusters with such nodes, plan capacity on single-model nodes or allocate those GPUs through DRA.
+
 ### 3. Verify
 
 ```bash

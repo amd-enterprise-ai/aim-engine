@@ -239,13 +239,13 @@ GPU profiles also get a `feature.node.kubernetes.io/aim-accelerator.mixed-models
 
 ### Nodes with DRA GPUs
 
-Nodes whose GPUs are published by the AMD GPU DRA driver, in `gpu.amd.com` ResourceSlices, don't advertise `amd.com/gpu`. AIM Engine reads their GPUs from the ResourceSlices instead of the node labels. An AMD GPU profile matches a DRA node when the node has `acceleratorCount` devices of a single GPU model that fit the profile:
+The AMD GPU DRA driver publishes a node's GPUs in `gpu.amd.com` ResourceSlices instead of advertising `amd.com/gpu`. AIM Engine reads the GPUs of these nodes from the ResourceSlices, not the node labels. A node that publishes ResourceSlices while `amd.com/gpu` is still allocatable counts as both kinds of node. An AMD GPU profile matches a DRA node when the node has `acceleratorCount` devices of a single GPU model that fit the profile:
 
 - **Model:** the device's PCI device ID is one of the IDs of `acceleratorModel`. Profiles without a model, or with the family-level model `GPU`, accept any model.
-- **Partitioning:** `unpartitioned` takes whole GPUs, `partitioned` takes partitions, and a scheme such as `CPX-NPS4` takes devices with that partition profile (`cpx_nps4`).
+- **Partitioning:** `unpartitioned` takes whole GPUs in the default SPX-NPS1 mode, as on device-plugin nodes, `partitioned` takes partitions, and a scheme such as `CPX-NPS4` takes devices with that partition profile (`cpx_nps4`).
 - **Host resources:** the node has room for the profile's CPU and memory requests.
 
-`status.matchingNodes` counts both kinds of node, and `status.matchingNodesByAllocation` reports them separately. Which kind an AIMService uses depends on its [accelerator allocation mode](runtime-config.md#accelerator-allocation). The runtimes AIM Engine projects for a profile (`status.projectedRuntimeName` and the model-slug runtime) request GPUs as `amd.com/gpu`, so they are projected only when a device-plugin node matches. A ServingRuntime can't carry a ResourceClaim on its own.
+Both kinds of node are matched against what they have, not what is free: a node whose GPUs are all in use still matches. `status.matchingNodes` counts each matching node once, and `status.matchingNodesByAllocation` reports the device-plugin and DRA matches separately. Which kind an AIMService uses depends on its [accelerator allocation mode](runtime-config.md#accelerator-allocation). The runtimes AIM Engine projects for a profile (`status.projectedRuntimeName` and the model-slug runtime) request GPUs as `amd.com/gpu`, so they are projected only when a device-plugin node matches. A ServingRuntime can't carry a ResourceClaim on its own.
 
 ### Hardware support
 

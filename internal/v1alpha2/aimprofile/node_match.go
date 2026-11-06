@@ -95,7 +95,10 @@ type NodeMatchResult struct {
 	MatchingNodes int32
 	// DRAMatchingNodes counts the matching nodes whose GPUs are published
 	// through the AMD GPU DRA driver.
-	DRAMatchingNodes  int32
+	DRAMatchingNodes int32
+	// BothMatchingNodes counts the nodes included in both counts above: DRA
+	// nodes that also advertise amd.com/gpu.
+	BothMatchingNodes int32
 	NodeAffinity      *corev1.NodeAffinity
 	NodeMismatches    []NodeMismatch
 	OmittedMismatches int
@@ -104,7 +107,7 @@ type NodeMatchResult struct {
 // TotalMatchingNodes counts the nodes that can serve the profile with either
 // allocation method.
 func (r NodeMatchResult) TotalMatchingNodes() int32 {
-	return r.MatchingNodes + r.DRAMatchingNodes
+	return r.MatchingNodes + r.DRAMatchingNodes - r.BothMatchingNodes
 }
 
 // ResolveResources merges the accelerator-derived device request with explicit
@@ -461,14 +464,16 @@ func matchNodes(
 	for i := range inventory.Nodes {
 		node := &inventory.Nodes[i]
 		var reasons []string
+		draMatch, devicePluginMatch := false, false
 		devices, draNode := inventory.DRADevices[node.Name]
 		if draNode && draReq != nil {
-			if reasons = draReq.mismatchReasons(node, devices); len(reasons) == 0 {
-				result.DRAMatchingNodes++
-				continue
-			}
-		} else {
-			reasons = nodeMismatchReasons(
+			reasons = draReq.mismatchReasons(node, devices)
+			draMatch = len(reasons) == 0
+		}
+		// A node can publish DRA devices while amd.com/gpu is still allocatable,
+		// for example while it moves from the device plugin to the DRA driver.
+		if !draNode || draReq == nil || advertisesAMDGPUs(node) {
+			devicePluginReasons := nodeMismatchReasons(
 				node,
 				vendorReq,
 				accelModel,
@@ -476,10 +481,20 @@ func matchNodes(
 				mixedModelsReq,
 				resolvedResources,
 			)
-			if len(reasons) == 0 {
-				result.MatchingNodes++
-				continue
-			}
+			devicePluginMatch = len(devicePluginReasons) == 0
+			reasons = append(reasons, devicePluginReasons...)
+		}
+		if draMatch {
+			result.DRAMatchingNodes++
+		}
+		if devicePluginMatch {
+			result.MatchingNodes++
+		}
+		if draMatch && devicePluginMatch {
+			result.BothMatchingNodes++
+		}
+		if draMatch || devicePluginMatch {
+			continue
 		}
 		if len(result.NodeMismatches) < maxRecordedNodeMismatches {
 			result.NodeMismatches = append(result.NodeMismatches, NodeMismatch{
@@ -504,12 +519,17 @@ func nodeMismatchReasons(
 	var reasons []string
 	if mixedModelsReq != nil {
 		if _, mixed := node.Labels[mixedModelsReq.Key]; mixed {
-			reasons = append(reasons, fmt.Sprintf(
+			reason := fmt.Sprintf(
 				"node carries more than one GPU model (label %q): device-plugin scheduling "+
-					"cannot choose which model a pod receives; install the GPU DRA driver on "+
-					"this node and use DRA allocation to schedule onto nodes with mixed GPU models",
+					"cannot choose which model a pod receives",
 				mixedModelsReq.Key,
-			))
+			)
+			// Only AMD GPUs have a DRA allocation path in AIM Engine.
+			if nodeHasAMDGPUs(node) {
+				reason += "; install the AMD GPU DRA driver on this node and use DRA allocation " +
+					"to schedule onto nodes with mixed GPU models"
+			}
+			reasons = append(reasons, reason)
 		}
 	}
 	if !nodeMatchesVendor(node, vendorReq) {
@@ -645,6 +665,20 @@ func vendorNodeSelectorRequirement(
 			strings.ToUpper(string(vendor)),
 		Operator: corev1.NodeSelectorOpExists,
 	}
+}
+
+// advertisesAMDGPUs reports whether the node has allocatable amd.com/gpu.
+func advertisesAMDGPUs(node *corev1.Node) bool {
+	quantity, ok := node.Status.Allocatable[corev1.ResourceName(constants.AMDGPUResourceName)]
+	return ok && !quantity.IsZero()
+}
+
+// nodeHasAMDGPUs reports whether the detector labelled the node's GPUs as AMD.
+func nodeHasAMDGPUs(node *corev1.Node) bool {
+	_, ok := node.Labels[AcceleratorVendorLabelPrefix+
+		strings.ToUpper(string(aimv1alpha1.AcceleratorTypeGPU))+"."+
+		strings.ToUpper(string(aimv1alpha1.AcceleratorVendorAMD))]
+	return ok
 }
 
 // nodeMatchesVendor evaluates a resolved vendor selector against node labels.
