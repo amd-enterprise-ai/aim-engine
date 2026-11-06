@@ -369,8 +369,17 @@ type AIMProfileStatus struct {
 
 	// MatchingNodes is the count of cluster nodes matching both the accelerator
 	// model label and status.resources requests. Zero means NotAvailable.
+	// Nodes whose GPUs are published through the AMD GPU DRA driver are not
+	// counted, because AIM Engine does not allocate GPUs through DRA yet; see
+	// matchingNodesByAllocation.
 	// +optional
 	MatchingNodes int32 `json:"matchingNodes"`
+
+	// MatchingNodesByAllocation counts the nodes matching a GPU profile by how
+	// they present their GPUs: as device-plugin resources, or through the AMD
+	// GPU DRA driver. Unset for profiles without a GPU requirement.
+	// +optional
+	MatchingNodesByAllocation *AIMProfileMatchingNodes `json:"matchingNodesByAllocation,omitempty"`
 
 	// HardwareSummary is a human-readable string describing the hardware requirements.
 	// Format: "{count} x {model}" for GPU (e.g., "1 x MI300X") or "CPU" for CPU-only.
@@ -414,6 +423,18 @@ type AIMProfileStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// AIMProfileMatchingNodes counts the nodes matching a GPU profile by how they
+// present their GPUs.
+type AIMProfileMatchingNodes struct {
+	// DevicePlugin is the number of matching nodes that advertise their GPUs as
+	// device-plugin resources, such as amd.com/gpu.
+	DevicePlugin int32 `json:"devicePlugin"`
+
+	// DRA is the number of matching nodes whose GPUs are published by the AMD
+	// GPU DRA driver in gpu.amd.com ResourceSlices.
+	DRA int32 `json:"dra"`
 }
 
 func (s *AIMProfileStatus) GetConditions() []metav1.Condition {
@@ -460,7 +481,11 @@ const (
 const (
 	AIMProfileReasonHardwareAvailable    = "HardwareAvailable"
 	AIMProfileReasonHardwareNotAvailable = "HardwareNotAvailable"
-	AIMProfileReasonNoAccelerator        = "NoAcceleratorSpecified"
+	// AIMProfileReasonHardwareOnlyOnDRANodes indicates that only nodes whose
+	// GPUs are published through the AMD GPU DRA driver match, and AIM Engine
+	// does not allocate GPUs through DRA yet.
+	AIMProfileReasonHardwareOnlyOnDRANodes = "HardwareOnlyOnDRANodes"
+	AIMProfileReasonNoAccelerator          = "NoAcceleratorSpecified"
 
 	// AIMProfileReasonDeployable indicates the profile is fully materialised
 	// (aimId + modelSources both populated). Iteration 1 producers always

@@ -826,6 +826,28 @@ spec:
                   model label and status.resources requests. Zero means NotAvailable.
                 format: int32
                 type: integer
+              matchingNodesByAllocation:
+                description: |-
+                  MatchingNodesByAllocation counts the nodes matching a GPU profile by how
+                  they present their GPUs: as device-plugin resources, or through the AMD
+                  GPU DRA driver. Unset for profiles without a GPU requirement.
+                properties:
+                  devicePlugin:
+                    description: |-
+                      DevicePlugin is the number of matching nodes that advertise their GPUs as
+                      device-plugin resources, such as amd.com/gpu.
+                    format: int32
+                    type: integer
+                  dra:
+                    description: |-
+                      DRA is the number of matching nodes whose GPUs are published by the AMD
+                      GPU DRA driver in gpu.amd.com ResourceSlices.
+                    format: int32
+                    type: integer
+                required:
+                - devicePlugin
+                - dra
+                type: object
               observedGeneration:
                 description: ObservedGeneration is the most recent generation observed
                   by the controller.

@@ -90,7 +90,15 @@ type NodeMismatch struct {
 
 // NodeMatchResult holds the result of matching a profile against cluster nodes.
 type NodeMatchResult struct {
-	MatchingNodes     int32
+	// MatchingNodes counts the matching nodes that present their GPUs as
+	// device-plugin resources, and matching nodes of profiles without GPUs.
+	MatchingNodes int32
+	// DRAMatchingNodes counts the matching nodes whose GPUs are published
+	// through the AMD GPU DRA driver.
+	DRAMatchingNodes int32
+	// BothMatchingNodes counts the nodes included in both counts above: DRA
+	// nodes that also advertise amd.com/gpu.
+	BothMatchingNodes int32
 	NodeAffinity      *corev1.NodeAffinity
 	NodeMismatches    []NodeMismatch
 	OmittedMismatches int
@@ -417,13 +425,13 @@ func gpuResourceName(vendor aimv1alpha1.AcceleratorVendor, partitioningMode stri
 // requirements (model +, for GPU profiles, partition), and the resolved
 // resource capacity requirements of a profile.
 func MatchNodes(nodes []corev1.Node, accelType aimv1alpha1.AcceleratorType, accelModel, partitioningMode string, resolvedResources *corev1.ResourceRequirements) NodeMatchResult {
-	return matchNodes(nodes, accelType, "", accelModel, partitioningMode, resolvedResources)
+	return matchNodes(NodesOnly(nodes), accelType, "", accelModel, partitioningMode, resolvedResources)
 }
 
 // MatchProfileNodes checks node compatibility using all profile hardware axes.
-func MatchProfileNodes(nodes []corev1.Node, spec aimv1alpha2.AIMProfileSpecCommon, resolvedResources *corev1.ResourceRequirements) NodeMatchResult {
+func MatchProfileNodes(inventory NodeInventory, spec aimv1alpha2.AIMProfileSpecCommon, resolvedResources *corev1.ResourceRequirements) NodeMatchResult {
 	return matchNodes(
-		nodes,
+		inventory,
 		spec.AcceleratorType,
 		spec.AcceleratorVendor,
 		spec.AcceleratorModel,
@@ -433,7 +441,7 @@ func MatchProfileNodes(nodes []corev1.Node, spec aimv1alpha2.AIMProfileSpecCommo
 }
 
 func matchNodes(
-	nodes []corev1.Node,
+	inventory NodeInventory,
 	accelType aimv1alpha1.AcceleratorType,
 	accelVendor aimv1alpha1.AcceleratorVendor,
 	accelModel, partitioningMode string,
@@ -443,39 +451,55 @@ func matchNodes(
 	vendorReq := vendorNodeSelectorRequirement(accelType, accelVendor)
 	partitionReq := partitionNodeSelectorRequirement(accelType, partitioningMode)
 	mixedModelsReq := mixedModelsNodeSelectorRequirement(accelType)
+	draReq := newDRARequirement(accelType, accelVendor, accelModel, partitioningMode, resolvedResources)
 
-	var count int32
-	var resultMismatches []NodeMismatch
-	var omittedMismatches int
-	for i := range nodes {
-		reasons := nodeMismatchReasons(
-			&nodes[i],
-			vendorReq,
-			accelModel,
-			partitionReq,
-			mixedModelsReq,
-			resolvedResources,
-		)
-		if len(reasons) == 0 {
-			count++
+	var result NodeMatchResult
+	result.NodeAffinity = affinity
+	for i := range inventory.Nodes {
+		node := &inventory.Nodes[i]
+		var reasons []string
+		draMatch, devicePluginMatch := false, false
+		devices, draNode := inventory.DRADevices[node.Name]
+		if draNode && draReq != nil {
+			reasons = draReq.mismatchReasons(node, devices)
+			draMatch = len(reasons) == 0
+		}
+		// A node can publish DRA devices while amd.com/gpu is still allocatable,
+		// for example while it moves from the device plugin to the DRA driver.
+		if !draNode || draReq == nil || advertisesAMDGPUs(node) {
+			devicePluginReasons := nodeMismatchReasons(
+				node,
+				vendorReq,
+				accelModel,
+				partitionReq,
+				mixedModelsReq,
+				resolvedResources,
+			)
+			devicePluginMatch = len(devicePluginReasons) == 0
+			reasons = append(reasons, devicePluginReasons...)
+		}
+		if draMatch {
+			result.DRAMatchingNodes++
+		}
+		if devicePluginMatch {
+			result.MatchingNodes++
+		}
+		if draMatch && devicePluginMatch {
+			result.BothMatchingNodes++
+		}
+		if draMatch || devicePluginMatch {
 			continue
 		}
-		if len(resultMismatches) < maxRecordedNodeMismatches {
-			resultMismatches = append(resultMismatches, NodeMismatch{
-				NodeName: nodes[i].Name,
+		if len(result.NodeMismatches) < maxRecordedNodeMismatches {
+			result.NodeMismatches = append(result.NodeMismatches, NodeMismatch{
+				NodeName: node.Name,
 				Reasons:  reasons,
 			})
 		} else {
-			omittedMismatches++
+			result.OmittedMismatches++
 		}
 	}
-
-	return NodeMatchResult{
-		MatchingNodes:     count,
-		NodeAffinity:      affinity,
-		NodeMismatches:    resultMismatches,
-		OmittedMismatches: omittedMismatches,
-	}
+	return result
 }
 
 func nodeMismatchReasons(
@@ -632,6 +656,12 @@ func vendorNodeSelectorRequirement(
 			strings.ToUpper(string(vendor)),
 		Operator: corev1.NodeSelectorOpExists,
 	}
+}
+
+// advertisesAMDGPUs reports whether the node has allocatable amd.com/gpu.
+func advertisesAMDGPUs(node *corev1.Node) bool {
+	quantity, ok := node.Status.Allocatable[corev1.ResourceName(constants.AMDGPUResourceName)]
+	return ok && !quantity.IsZero()
 }
 
 // nodeMatchesVendor evaluates a resolved vendor selector against node labels.

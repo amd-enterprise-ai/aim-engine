@@ -389,8 +389,8 @@ func TestModelPlanResources_PreservesLegacyNativeAndMixedOutputs(t *testing.T) {
 		reconciler := &ModelReconciler{}
 		fetch := ModelFetchResult{
 			model: model,
-			nodes: controllerutils.FetchResult[[]corev1.Node]{
-				Value: []corev1.Node{testNVIDIANode()},
+			nodes: controllerutils.FetchResult[aimprofile.NodeInventory]{
+				Value: aimprofile.NodesOnly([]corev1.Node{testNVIDIANode()}),
 			},
 			existingProfiles: controllerutils.FetchResult[[]managedProfile]{},
 			runtimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{
@@ -418,7 +418,7 @@ func TestModelPlanResources_PreservesLegacyNativeAndMixedOutputs(t *testing.T) {
 		}
 		reconciler, fetch := namespaceLegacyFixture(t, model)
 		fetch.discovery = readyDiscoveryDecision()
-		fetch.nodes = controllerutils.FetchResult[[]corev1.Node]{}
+		fetch.nodes = controllerutils.FetchResult[aimprofile.NodeInventory]{}
 
 		obs := reconciler.ComposeState(
 			context.Background(),
@@ -466,8 +466,8 @@ func TestClusterModelPlanResources_PreservesLegacyNativeAndMixedOutputs(t *testi
 		reconciler := &ClusterModelReconciler{}
 		fetch := ClusterModelFetchResult{
 			model: model,
-			nodes: controllerutils.FetchResult[[]corev1.Node]{
-				Value: []corev1.Node{testNVIDIANode()},
+			nodes: controllerutils.FetchResult[aimprofile.NodeInventory]{
+				Value: aimprofile.NodesOnly([]corev1.Node{testNVIDIANode()}),
 			},
 			existingClusterProfiles: controllerutils.FetchResult[[]managedProfile]{},
 			runtimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{
@@ -495,7 +495,7 @@ func TestClusterModelPlanResources_PreservesLegacyNativeAndMixedOutputs(t *testi
 		}
 		reconciler, fetch := clusterLegacyFixture(t, model)
 		fetch.discovery = readyDiscoveryDecision()
-		fetch.nodes = controllerutils.FetchResult[[]corev1.Node]{}
+		fetch.nodes = controllerutils.FetchResult[aimprofile.NodeInventory]{}
 
 		obs := reconciler.ComposeState(
 			context.Background(),

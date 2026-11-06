@@ -388,6 +388,23 @@ AIMProfileList contains a list of AIMProfile.
 | `items` _[AIMProfile](#aimprofile) array_ |  |  |  |
 
 
+#### AIMProfileMatchingNodes
+
+
+
+AIMProfileMatchingNodes counts the nodes matching a GPU profile by how they present their GPUs.
+
+
+
+_Appears in:_
+- [AIMProfileStatus](#aimprofilestatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `devicePlugin` _integer_ | DevicePlugin is the number of matching nodes that advertise their GPUs as device-plugin resources, such as amd.com/gpu. |  |  |
+| `dra` _integer_ | DRA is the number of matching nodes whose GPUs are published by the AMD GPU DRA driver in gpu.amd.com ResourceSlices. |  |  |
+
+
 #### AIMProfileSet
 
 
@@ -533,7 +550,8 @@ _Appears in:_
 | `origin` _[ProfileOrigin](#profileorigin)_ | Origin classifies how this profile was produced:<br />- discovered: emitted by image discovery (AIMModel.spec.image).<br />- derived: emitted by an AIMProfileSet or AIMModel.spec.profiles.derivedFrom.<br />- generated: emitted from AIMModel.spec.modelId and a RuntimeConfig fallback.<br />- user-authored: created independently by a user.<br />Backfilled by the AIMProfile reconciler when not stamped at creation time; user-authored profiles default to `user-authored`. |  | Enum: [discovered derived generated user-authored] <br />Optional: \{\} |
 | `version` _string_ | Version is extracted from the spec.image tag during reconciliation (e.g., "0.8.5"). |  | Optional: \{\} |
 | `baseImage` _string_ | BaseImage is the AIM_BASE_IMAGE_REF the inspector extracted from the source image when this profile was materialised by AIMModel discovery. Used by derivation flows (AIMService overlays, AIMProfileSet) to rebase the deployment image onto the source's base when overriding model sources, so private mirrors stay self-contained. Empty for user-authored profiles. |  | Optional: \{\} |
-| `matchingNodes` _integer_ | MatchingNodes is the count of cluster nodes matching both the accelerator model label and status.resources requests. Zero means NotAvailable. |  | Optional: \{\} |
+| `matchingNodes` _integer_ | MatchingNodes is the count of cluster nodes matching both the accelerator model label and status.resources requests. Zero means NotAvailable. Nodes whose GPUs are published through the AMD GPU DRA driver are not counted, because AIM Engine does not allocate GPUs through DRA yet; see matchingNodesByAllocation. |  | Optional: \{\} |
+| `matchingNodesByAllocation` _[AIMProfileMatchingNodes](#aimprofilematchingnodes)_ | MatchingNodesByAllocation counts the nodes matching a GPU profile by how they present their GPUs: as device-plugin resources, or through the AMD GPU DRA driver. Unset for profiles without a GPU requirement. |  | Optional: \{\} |
 | `hardwareSummary` _string_ | HardwareSummary is a human-readable string describing the hardware requirements. Format: "\{count\} x \{model\}" for GPU (e.g., "1 x MI300X") or "CPU" for CPU-only. |  | Optional: \{\} |
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#resourcerequirements-v1-core)_ | Resources contains the definitive K8s resource requests/limits used for deployment. Computed by AIM Engine from AcceleratorType, AcceleratorCount, and cluster-level configuration, then merged with any spec.resources override. |  | Optional: \{\} |
 | `resolvedNodeAffinity` _[NodeAffinity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#nodeaffinity-v1-core)_ | ResolvedNodeAffinity contains the computed node affinity rules derived from spec.acceleratorModel. Used by AIMService when building InferenceService pods. |  | Optional: \{\} |

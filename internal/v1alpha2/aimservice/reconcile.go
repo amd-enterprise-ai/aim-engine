@@ -132,7 +132,7 @@ type ServiceFetchResult struct {
 	// resourceMatchNodes are fetched only when spec.resources overrides an
 	// accelerator-backed profile. They let the service evaluate its effective
 	// footprint independently of the base profile's default-resource readiness.
-	resourceMatchNodes   []corev1.Node
+	resourceMatchNodes   aimprofile.NodeInventory
 	resourceMatchNodeErr error
 
 	// adapterDeps holds the per-adapter artifacts, staging Jobs, and resolved
@@ -670,11 +670,11 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 	// default block a smaller, valid service.
 	if service.Spec.Resources != nil && resourceMatchSpec != nil &&
 		aimprofile.HasProfileAcceleratorRequirement(*resourceMatchSpec) {
-		var nodeList corev1.NodeList
-		if err := c.List(ctx, &nodeList); err != nil {
+		inventory, err := aimprofile.ListNodeInventory(ctx, c)
+		if err != nil {
 			result.resourceMatchNodeErr = err
 		} else {
-			result.resourceMatchNodes = nodeList.Items
+			result.resourceMatchNodes = inventory
 		}
 	}
 

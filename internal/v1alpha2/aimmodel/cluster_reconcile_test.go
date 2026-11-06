@@ -105,7 +105,7 @@ func TestBuildDesiredOfficialClusterModelProfiles_StampsRoleAndOriginLabels(t *t
 		}},
 	}
 
-	desired, err := buildDesiredOfficialClusterModelProfiles(model, catalog, nil, nil)
+	desired, err := buildDesiredOfficialClusterModelProfiles(model, catalog, aimprofile.NodeInventory{}, nil)
 	if err != nil {
 		t.Fatalf("buildDesiredOfficialClusterModelProfiles() error = %v", err)
 	}
@@ -150,7 +150,7 @@ func TestBuildDesiredOfficialClusterModelProfiles_BaseEntriesStampedAsBase(t *te
 		}},
 	}
 
-	desired, err := buildDesiredOfficialClusterModelProfiles(model, catalog, nil, nil)
+	desired, err := buildDesiredOfficialClusterModelProfiles(model, catalog, aimprofile.NodeInventory{}, nil)
 	if err != nil {
 		t.Fatalf("buildDesiredOfficialClusterModelProfiles() error = %v", err)
 	}

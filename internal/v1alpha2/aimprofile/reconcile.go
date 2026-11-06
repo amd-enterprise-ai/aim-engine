@@ -76,9 +76,9 @@ type ClusterProfileReconciler struct {
 
 // ProfileFetchResult holds fetched resources for namespace-scoped profiles.
 type ProfileFetchResult struct {
-	profile *aimv1alpha2.AIMProfile
-	nodes   []corev1.Node
-	nodeErr error
+	profile   *aimv1alpha2.AIMProfile
+	inventory NodeInventory
+	nodeErr   error
 
 	// modelSlugWinner is true only for the deterministic winner among
 	// same-namespace primary profiles sharing this profile's aimId.
@@ -96,9 +96,9 @@ type ProfileFetchResult struct {
 
 // ClusterProfileFetchResult holds fetched resources for cluster-scoped profiles.
 type ClusterProfileFetchResult struct {
-	profile *aimv1alpha2.AIMClusterProfile
-	nodes   []corev1.Node
-	nodeErr error
+	profile   *aimv1alpha2.AIMClusterProfile
+	inventory NodeInventory
+	nodeErr   error
 
 	// modelSlugWinner is true only for the deterministic winner among
 	// cluster primary profiles sharing this profile's aimId.
@@ -119,8 +119,8 @@ func (r *ProfileReconciler) FetchRemoteState(
 	result := ProfileFetchResult{profile: profile}
 
 	if HasProfileAcceleratorRequirement(profile.Spec.AIMProfileSpecCommon) {
-		nodes, err := listNodes(ctx, c)
-		result.nodes = nodes
+		inventory, err := listNodes(ctx, c)
+		result.inventory = inventory
 		result.nodeErr = err
 	}
 
@@ -150,8 +150,8 @@ func (r *ClusterProfileReconciler) FetchRemoteState(
 	result := ClusterProfileFetchResult{profile: profile}
 
 	if HasProfileAcceleratorRequirement(profile.Spec.AIMProfileSpecCommon) {
-		nodes, err := listNodes(ctx, c)
-		result.nodes = nodes
+		inventory, err := listNodes(ctx, c)
+		result.inventory = inventory
 		result.nodeErr = err
 	}
 
@@ -240,7 +240,7 @@ func (r *ProfileReconciler) ComposeState(
 	spec := fetch.profile.Spec.AIMProfileSpecCommon
 	obs.resolvedResources = ResolveProfileResources(spec)
 	if HasProfileAcceleratorRequirement(spec) {
-		obs.matchResult = MatchProfileNodes(fetch.nodes, spec, obs.resolvedResources)
+		obs.matchResult = MatchProfileNodes(fetch.inventory, spec, obs.resolvedResources)
 	}
 	obs.deployable = IsProfileDeployable(spec)
 	obs.sourceModel = SourceModelFromOwnerRefs(fetch.profile, fetch.profile.Namespace)
@@ -285,7 +285,7 @@ func (r *ClusterProfileReconciler) ComposeState(
 	spec := fetch.profile.Spec.AIMProfileSpecCommon
 	obs.resolvedResources = ResolveProfileResources(spec)
 	if HasProfileAcceleratorRequirement(spec) {
-		obs.matchResult = MatchProfileNodes(fetch.nodes, spec, obs.resolvedResources)
+		obs.matchResult = MatchProfileNodes(fetch.inventory, spec, obs.resolvedResources)
 	}
 	obs.deployable = IsProfileDeployable(spec)
 	// Cluster profiles have no namespace by definition; SourceModelFromOwnerRefs
@@ -484,6 +484,13 @@ func decorateProfileStatus(
 	status.Resources = resolvedResources
 	status.ResolvedNodeAffinity = matchResult.NodeAffinity
 	status.MatchingNodes = matchResult.MatchingNodes
+	status.MatchingNodesByAllocation = nil
+	if spec.AcceleratorType == aimv1alpha1.AcceleratorTypeGPU && nodeErr == nil {
+		status.MatchingNodesByAllocation = &aimv1alpha2.AIMProfileMatchingNodes{
+			DevicePlugin: matchResult.MatchingNodes,
+			DRA:          matchResult.DRAMatchingNodes,
+		}
+	}
 	status.Deployable = deployable
 	status.SourceModel = sourceModel
 	status.Origin = origin
@@ -520,6 +527,7 @@ func decorateProfileStatus(
 		return
 	}
 
+	reason, message := hardwareUnavailableReason(matchResult)
 	if matchResult.MatchingNodes > 0 {
 		cm.MarkTrue(
 			aimv1alpha2.AIMProfileConditionHardwareAvailable,
@@ -527,12 +535,22 @@ func decorateProfileStatus(
 			"Matching nodes found in cluster",
 		)
 	} else {
-		cm.MarkFalse(
-			aimv1alpha2.AIMProfileConditionHardwareAvailable,
-			aimv1alpha2.AIMProfileReasonHardwareNotAvailable,
-			"No cluster nodes match accelerator labels and resource requests",
+		cm.MarkFalse(aimv1alpha2.AIMProfileConditionHardwareAvailable, reason, message)
+	}
+}
+
+// hardwareUnavailableReason is the reason and message for a profile no node
+// can serve.
+func hardwareUnavailableReason(matchResult NodeMatchResult) (string, string) {
+	if matchResult.DRAMatchingNodes > 0 {
+		return aimv1alpha2.AIMProfileReasonHardwareOnlyOnDRANodes, fmt.Sprintf(
+			"Only %d node(s) whose GPUs are published through the AMD GPU DRA driver match, "+
+				"and AIM Engine does not allocate GPUs through DRA yet",
+			matchResult.DRAMatchingNodes,
 		)
 	}
+	return aimv1alpha2.AIMProfileReasonHardwareNotAvailable,
+		"No cluster nodes match accelerator labels and resource requests"
 }
 
 // ============================================================================
@@ -542,13 +560,13 @@ func decorateProfileStatus(
 // TODO: For large clusters, consider filtering nodes by accelerator labels using a label
 // selector built from spec.acceleratorModel. This would reduce the working set
 // from all nodes to only relevant ones.
-func listNodes(ctx context.Context, c client.Client) ([]corev1.Node, error) {
-	var nodeList corev1.NodeList
-	if err := c.List(ctx, &nodeList); err != nil {
+func listNodes(ctx context.Context, c client.Client) (NodeInventory, error) {
+	inventory, err := ListNodeInventory(ctx, c)
+	if err != nil {
 		log.FromContext(ctx).Error(err, "failed to list nodes")
-		return nil, err
+		return NodeInventory{}, err
 	}
-	return nodeList.Items, nil
+	return inventory, nil
 }
 
 func buildComponentHealth(
@@ -581,12 +599,13 @@ func buildComponentHealth(
 		}
 	}
 
+	reason, message := hardwareUnavailableReason(matchResult)
 	return []controllerutils.ComponentHealth{
 		{
 			Component: "Hardware",
 			State:     constants.AIMStatusNotAvailable,
-			Reason:    aimv1alpha2.AIMProfileReasonHardwareNotAvailable,
-			Message:   "No cluster nodes match accelerator labels and resource requests",
+			Reason:    reason,
+			Message:   message,
 		},
 	}
 }

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Populate this section during release-prep, then rename to the release version -->
 
 ### Added
+- **Profiles see nodes with DRA GPUs.** AIM Engine reads the `gpu.amd.com` ResourceSlices of the AMD GPU DRA driver, and profiles report device-plugin and DRA matches separately in `status.matchingNodesByAllocation`. GPUs are not allocated through DRA yet, so a profile whose GPUs exist only on DRA nodes reports `HardwareAvailable=False` with the reason `HardwareOnlyOnDRANodes`. The operator now needs `get`, `list` and `watch` on `resource.k8s.io` ResourceSlices; the chart's ClusterRole includes them.
 - **Tolerations for inference pods.** Set `spec.tolerations` in an `AIMRuntimeConfig`, `AIMClusterRuntimeConfig` or `AIMService` to let inference pods onto tainted nodes. An AIMService's list replaces the runtime config's, and a namespace runtime config's replaces the cluster's.
 
 ### Changed
@@ -18,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **v1alpha1 MI350P templates match MI350P VF nodes.** The AMD device-ID table now maps `75b8` (MI350P VF) to MI350P, so the `amd.com/gpu.device-id` node affinity of v1alpha1 MI350P templates also accepts these nodes. Services from those templates restart once on upgrade.
+- **DRA nodes no longer count as device-plugin matches.** A node whose GPUs are published through DRA carries the AcceleratorDetector's labels but advertises no `amd.com/gpu`, and the profile matcher used to count it. Profiles then reported `Ready` while their pods could never be scheduled there.
 
 ## [0.2.7] - 2026-10-08
 

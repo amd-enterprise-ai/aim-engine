@@ -189,7 +189,7 @@ env_vars: {}
 		}},
 	}
 
-	desired, err := buildDesiredOfficialProfiles(model, catalog, nil, nil)
+	desired, err := buildDesiredOfficialProfiles(model, catalog, aimprofile.NodeInventory{}, nil)
 	if err != nil {
 		t.Fatalf("buildDesiredOfficialProfiles() error = %v", err)
 	}
@@ -313,7 +313,7 @@ func TestBuildDesiredOfficialProfiles_PrimaryFallbackFromRecommendedDeployments(
 		},
 	}}
 
-	desired, err := buildDesiredOfficialProfiles(model, catalog, nodes, rds)
+	desired, err := buildDesiredOfficialProfiles(model, catalog, aimprofile.NodesOnly(nodes), rds)
 	if err != nil {
 		t.Fatalf("buildDesiredOfficialProfiles() error = %v", err)
 	}
@@ -461,7 +461,7 @@ func TestComposeState_NodeListFailurePreventsPruningManagedProfiles(t *testing.T
 			State:   &aimv1alpha1.ModelDiscoveryState{},
 			Reason:  "DiscoveryCacheValid",
 		},
-		nodes: controllerutils.FetchResult[[]corev1.Node]{Error: errListNodesFailed},
+		nodes: controllerutils.FetchResult[aimprofile.NodeInventory]{Error: errListNodesFailed},
 		existingProfiles: controllerutils.FetchResult[[]managedProfile]{Value: []managedProfile{{
 			Object: &aimv1alpha2.AIMProfile{ObjectMeta: metav1.ObjectMeta{Name: "existing", Namespace: "team-a"}},
 		}}},
@@ -497,8 +497,8 @@ func TestComposeState_ProfileInventoryFailuresBlockNativeMutation(t *testing.T) 
 			fetch: func(model *aimv1alpha2.AIMModel) ModelFetchResult {
 				return ModelFetchResult{
 					model: model,
-					nodes: controllerutils.FetchResult[[]corev1.Node]{
-						Value: []corev1.Node{testNVIDIANode()},
+					nodes: controllerutils.FetchResult[aimprofile.NodeInventory]{
+						Value: aimprofile.NodesOnly([]corev1.Node{testNVIDIANode()}),
 					},
 					existingProfiles: controllerutils.FetchResult[[]managedProfile]{
 						Value: []managedProfile{{
@@ -691,7 +691,7 @@ func TestPlanResources_DiscoveredProfilesCarryOwnerRefBranch(t *testing.T) {
 			State:   &aimv1alpha1.ModelDiscoveryState{},
 			Reason:  "DiscoveryCacheValid",
 		},
-		nodes:            controllerutils.FetchResult[[]corev1.Node]{Value: nil, Error: nil},
+		nodes:            controllerutils.FetchResult[aimprofile.NodeInventory]{},
 		existingProfiles: controllerutils.FetchResult[[]managedProfile]{Value: nil, Error: nil},
 	}
 
@@ -945,7 +945,7 @@ func TestBuildDesiredOfficialProfiles_StampsRoleAndOriginLabels(t *testing.T) {
 		}},
 	}
 
-	desired, err := buildDesiredOfficialProfiles(model, catalog, nil, nil)
+	desired, err := buildDesiredOfficialProfiles(model, catalog, aimprofile.NodeInventory{}, nil)
 	if err != nil {
 		t.Fatalf("buildDesiredOfficialProfiles() error = %v", err)
 	}
@@ -993,7 +993,7 @@ func TestBuildDesiredOfficialProfiles_BaseEntriesStampedAsBase(t *testing.T) {
 		}},
 	}
 
-	desired, err := buildDesiredOfficialProfiles(model, catalog, nil, nil)
+	desired, err := buildDesiredOfficialProfiles(model, catalog, aimprofile.NodeInventory{}, nil)
 	if err != nil {
 		t.Fatalf("buildDesiredOfficialProfiles() error = %v", err)
 	}
