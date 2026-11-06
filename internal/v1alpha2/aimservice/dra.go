@@ -76,12 +76,13 @@ func requestedAllocationMode(
 // decideAllocation resolves the allocation mode of a service with a GPU
 // profile. An explicit mode is used as is. Auto keeps the mode of an existing
 // InferenceService, so adding or removing DRA nodes never moves a running
-// service; a new service uses DRA when a DRA node has the profile's GPUs.
+// service; a new service uses DRA when only DRA nodes have the profile's
+// GPUs. nodes are the matching-node counts for the service's resources.
 func decideAllocation(
 	service *aimv1alpha1.AIMService,
 	profileName string,
 	spec *aimv1alpha2.AIMProfileSpecCommon,
-	status *aimv1alpha2.AIMProfileStatus,
+	nodes *aimv1alpha2.AIMProfileMatchingNodes,
 	existing *servingv1beta1.InferenceService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) allocationDecision {
@@ -112,7 +113,10 @@ func decideAllocation(
 		}
 		return dp
 	}
-	if status != nil && status.MatchingNodesByAllocation != nil && status.MatchingNodesByAllocation.DRA > 0 {
+	// Device-plugin GPUs count against amd.com/gpu quotas and tolerate GPU
+	// taints through ExtendedResourceToleration, so Auto uses DRA only when no
+	// device-plugin node fits.
+	if nodes != nil && nodes.DevicePlugin == 0 && nodes.DRA > 0 {
 		return dra
 	}
 	return dp
@@ -326,6 +330,20 @@ func applyDRAClaim(isvc *servingv1beta1.InferenceService, template *resourcev1.R
 	if isvc.Spec.Predictor.Model != nil {
 		isvc.Spec.Predictor.Model.Resources.Claims = []corev1.ResourceClaim{{Name: draClaimName}}
 	}
+	// The ExtendedResourceToleration admission plugin adds this toleration to
+	// pods that request amd.com/gpu. DRA pods don't request it, and the claim
+	// already limits them to GPU nodes.
+	gpuToleration := corev1.Toleration{
+		Key:      constants.AMDGPUResourceName,
+		Operator: corev1.TolerationOpExists,
+		Effect:   corev1.TaintEffectNoSchedule,
+	}
+	for i := range isvc.Spec.Predictor.Tolerations {
+		if isvc.Spec.Predictor.Tolerations[i].MatchToleration(&gpuToleration) {
+			return
+		}
+	}
+	isvc.Spec.Predictor.Tolerations = append(isvc.Spec.Predictor.Tolerations, gpuToleration)
 }
 
 // withoutDevicePluginGPU drops the AMD device-plugin GPU resource from a

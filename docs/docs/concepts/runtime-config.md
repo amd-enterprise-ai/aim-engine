@@ -383,7 +383,7 @@ than cumulative counter totals, because the activation trigger uses a fixed
 
 `spec.acceleratorAllocation.mode` selects how the inference pods of profile-based AIMServices request GPUs:
 
-- **`Auto`** (the default) uses DRA when a node with the AMD GPU DRA driver has the profile's GPUs, and the device plugin otherwise. A service that already runs keeps the mode it runs with, so adding or removing DRA nodes never moves it.
+- **`Auto`** (the default) uses the device plugin when a device-plugin node has the profile's GPUs, and DRA when only nodes with the AMD GPU DRA driver have them, such as nodes with more than one GPU model. With a `spec.resources` override, the nodes that fit the service's resources decide. A service that already runs keeps the mode it runs with, so adding or removing nodes never moves it.
 - **`DRA`** requests the GPUs through a ResourceClaim for the AMD GPU DRA driver. Only AMD GPU profiles support it.
 - **`DevicePlugin`** requests them as `amd.com/gpu` (or `nvidia.com/gpu`).
 
@@ -397,10 +397,6 @@ spec:
     mode: Auto
   dra:
     deviceClassName: gpu.amd.com
-  tolerations:
-    - key: amd.com/gpu
-      operator: Exists
-      effect: NoSchedule
 ```
 
 The mode follows the normal hierarchy:
@@ -413,12 +409,12 @@ AIMService.spec.acceleratorAllocation  >  namespace AIMRuntimeConfig  >  cluster
 
 A DRA service gets a ResourceClaimTemplate in its namespace, owned by the service. It requests `acceleratorCount` devices of one GPU model from `spec.dra.deviceClassName` (default `gpu.amd.com`). The devices are selected by the profile's model, by PCI device ID, and by its partitioning mode, the same way profiles match DRA nodes (see [Profiles](profiles.md#nodes-with-dra-gpus)). Its InferenceService references a variant of the profile's ServingRuntime without the `amd.com/gpu` request and node affinity, because the claim decides where the pod runs. A DRA service must not set `amd.com/gpu` in `spec.resources`. `spec.dra` applies only to runtime configs.
 
-DRA pods don't request `amd.com/gpu`, so the `ExtendedResourceToleration` admission plugin gives them no toleration for GPU node taints. Set the tolerations they need in `spec.tolerations`, as in the example above.
+DRA pods don't request `amd.com/gpu`, so the `ExtendedResourceToleration` admission plugin doesn't add its toleration to them. AIM Engine adds the same toleration (`amd.com/gpu`, `Exists`, `NoSchedule`) to DRA pods itself. Set any other taints they need to tolerate in `spec.tolerations`.
 
 :::{admonition} Quotas and dashboards
 :class: warning
 
-GPUs allocated through DRA are not `amd.com/gpu` requests. A namespace `ResourceQuota` on `requests.amd.com/gpu` does not limit them, and dashboards or chargeback built on `amd.com/gpu` requests do not see them. Limit DRA devices with quota on the DeviceClass instead (`gpu.amd.com.deviceclass.resource.k8s.io/devices`), or set the mode to `DevicePlugin` until quotas and dashboards are updated.
+GPUs allocated through DRA are not `amd.com/gpu` requests. A namespace `ResourceQuota` on `requests.amd.com/gpu` does not limit them, and dashboards or chargeback built on `amd.com/gpu` requests do not see them. Limit DRA devices with quota on the DeviceClass instead (`gpu.amd.com.deviceclass.resource.k8s.io/devices`), or set the mode to `DevicePlugin` until quotas and dashboards are updated. With `Auto`, this applies to services whose GPUs exist only on DRA nodes.
 :::
 
 Template-based AIMServices always request GPUs through the device plugin; they report `AcceleratorAllocationUnsupported` when they set the mode to `DRA` themselves.

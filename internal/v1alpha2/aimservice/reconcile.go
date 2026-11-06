@@ -681,12 +681,36 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 			Error: runtimeCacheErr,
 		}
 
+		// Profile status reflects the profile's own defaults, but service
+		// resources are a documented per-key overlay. Fetch nodes here so the
+		// allocation mode and ComposeState can evaluate the final service
+		// footprint, and an oversized base default doesn't block a smaller,
+		// valid service.
+		var nodeCounts *aimv1alpha2.AIMProfileMatchingNodes
+		if seedObs.resolvedProfileStatus != nil {
+			nodeCounts = seedObs.resolvedProfileStatus.MatchingNodesByAllocation
+		}
+		if service.Spec.Resources != nil && aimprofile.HasProfileAcceleratorRequirement(*resourceMatchSpec) {
+			inventory, err := aimprofile.ListNodeInventory(ctx, c)
+			if err != nil {
+				result.resourceMatchNodeErr = err
+			} else {
+				result.resourceMatchNodes = inventory
+				match := aimprofile.MatchProfileNodes(inventory, *resourceMatchSpec,
+					effectiveResourcesForService(service, resourceMatchSpec, seedObs.resolvedProfileStatus))
+				nodeCounts = &aimv1alpha2.AIMProfileMatchingNodes{
+					DevicePlugin: match.MatchingNodes,
+					DRA:          match.DRAMatchingNodes,
+				}
+			}
+		}
+
 		var existing *servingv1beta1.InferenceService
 		if result.inferenceService.OK() {
 			existing = result.inferenceService.Value
 		}
 		result.allocation = decideAllocation(
-			service, cacheProfileName, resourceMatchSpec, seedObs.resolvedProfileStatus,
+			service, cacheProfileName, resourceMatchSpec, nodeCounts,
 			existing, result.mergedRuntimeConfig.Value,
 		)
 		if result.allocation.mode != "" {
@@ -710,20 +734,6 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 			Namespace: service.Namespace,
 			Name:      runtimeName,
 		}, &corev1.ConfigMap{})
-	}
-
-	// Profile status reflects the profile's own defaults, but service resources
-	// are a documented per-key overlay. Fetch nodes here so ComposeState can
-	// evaluate the final service footprint and avoid letting an oversized base
-	// default block a smaller, valid service.
-	if service.Spec.Resources != nil && resourceMatchSpec != nil &&
-		aimprofile.HasProfileAcceleratorRequirement(*resourceMatchSpec) {
-		inventory, err := aimprofile.ListNodeInventory(ctx, c)
-		if err != nil {
-			result.resourceMatchNodeErr = err
-		} else {
-			result.resourceMatchNodes = inventory
-		}
 	}
 
 	bundleReader := client.Reader(c)

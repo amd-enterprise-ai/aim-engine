@@ -195,9 +195,10 @@ type AIMServiceRuntimeConfig struct {
 type AcceleratorAllocationMode string
 
 const (
-	// AcceleratorAllocationAuto uses DRA when a node with the AMD GPU DRA
-	// driver has the profile's GPUs, and the device plugin otherwise. A
-	// service that already runs keeps the mode it runs with.
+	// AcceleratorAllocationAuto uses the device plugin when a device-plugin
+	// node has the profile's GPUs, and DRA when only nodes with the AMD GPU
+	// DRA driver have them. A service that already runs keeps the mode it
+	// runs with.
 	AcceleratorAllocationAuto AcceleratorAllocationMode = "Auto"
 	// AcceleratorAllocationDRA requests GPUs through ResourceClaims for the
 	// AMD GPU DRA driver. Only AMD GPU profiles support it.

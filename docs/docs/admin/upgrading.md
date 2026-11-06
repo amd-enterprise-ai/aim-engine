@@ -92,6 +92,10 @@ kubectl delete clusterrolebinding envoy-gateway-metrics-collector \
 
 Every GPU profile's node affinity now excludes nodes with more than one GPU model (see [Nodes with mixed GPU models](../concepts/accelerator-detection.md#nodes-with-mixed-gpu-models)). The affinity change rolls every GPU InferenceService once after the upgrade. Replacement pods can't land on mixed-model nodes through the device plugin, so on clusters with such nodes, plan capacity on single-model nodes or allocate those GPUs through DRA.
 
+### GPU allocation through DRA
+
+Existing services keep requesting `amd.com/gpu`. With the default `acceleratorAllocation.mode: Auto`, a new service allocates its GPUs through DRA only when nodes with the AMD GPU DRA driver are the only ones with its GPUs. DRA allocations don't count against `requests.amd.com/gpu` quotas; see [Accelerator allocation](../concepts/runtime-config.md#accelerator-allocation) before adding DRA nodes.
+
 ### 3. Verify
 
 ```bash

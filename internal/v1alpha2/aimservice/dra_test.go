@@ -23,6 +23,7 @@
 package aimservice
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -32,6 +33,7 @@ import (
 	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
@@ -74,8 +76,10 @@ func TestDecideAllocation(t *testing.T) {
 		wantErrSubstr string
 	}{
 		{name: "CPU profiles need no allocation", spec: cpu, status: profileStatusWith(1, 1), want: ""},
-		{name: "Auto prefers DRA nodes", spec: amd, status: profileStatusWith(1, 1), want: aimv1alpha1.AcceleratorAllocationDRA},
+		{name: "Auto prefers device-plugin nodes", spec: amd, status: profileStatusWith(1, 1), want: aimv1alpha1.AcceleratorAllocationDevicePlugin},
+		{name: "Auto uses DRA when only DRA nodes match", spec: amd, status: profileStatusWith(0, 2), want: aimv1alpha1.AcceleratorAllocationDRA},
 		{name: "Auto without DRA nodes", spec: amd, status: profileStatusWith(1, 0), want: aimv1alpha1.AcceleratorAllocationDevicePlugin},
+		{name: "Auto without any matching node", spec: amd, status: profileStatusWith(0, 0), want: aimv1alpha1.AcceleratorAllocationDevicePlugin},
 		{
 			name: "Auto keeps a running device-plugin service on the device plugin", spec: amd,
 			status: profileStatusWith(1, 2), existing: devicePluginISVC, want: aimv1alpha1.AcceleratorAllocationDevicePlugin,
@@ -99,7 +103,7 @@ func TestDecideAllocation(t *testing.T) {
 		},
 		{
 			name: "runtime config mode applies", runtimeMode: aimv1alpha1.AcceleratorAllocationDevicePlugin, spec: amd,
-			status: profileStatusWith(1, 1), want: aimv1alpha1.AcceleratorAllocationDevicePlugin,
+			status: profileStatusWith(0, 1), want: aimv1alpha1.AcceleratorAllocationDevicePlugin,
 		},
 		{
 			name: "service mode overrides the runtime config", serviceMode: aimv1alpha1.AcceleratorAllocationDRA,
@@ -118,7 +122,7 @@ func TestDecideAllocation(t *testing.T) {
 				runtimeConfig = &aimv1alpha1.AIMRuntimeConfigCommon{}
 				runtimeConfig.AcceleratorAllocation = withAllocationMode(tt.runtimeMode)
 			}
-			got := decideAllocation(service, "profile", tt.spec, tt.status, tt.existing, runtimeConfig)
+			got := decideAllocation(service, "profile", tt.spec, tt.status.MatchingNodesByAllocation, tt.existing, runtimeConfig)
 			if got.mode != tt.want {
 				t.Errorf("mode = %q, want %q", got.mode, tt.want)
 			}
@@ -227,6 +231,16 @@ func TestBuildInferenceServiceFromProfile_DRA(t *testing.T) {
 	if cpu := resources.Requests[corev1.ResourceCPU]; cpu.String() != "16" {
 		t.Errorf("CPU request = %s, want the service override", cpu.String())
 	}
+	wantToleration := corev1.Toleration{Key: constants.AMDGPUResourceName, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	if tolerations := isvc.Spec.Predictor.Tolerations; len(tolerations) != 1 || tolerations[0] != wantToleration {
+		t.Errorf("tolerations = %+v, want only the amd.com/gpu NoSchedule toleration", tolerations)
+	}
+
+	service.Spec.Tolerations = []corev1.Toleration{wantToleration, {Key: "dedicated", Operator: corev1.TolerationOpExists}}
+	isvc = buildInferenceServiceFromProfile(service, obs)
+	if len(isvc.Spec.Predictor.Tolerations) != 2 {
+		t.Errorf("tolerations = %+v, want the service's two without a duplicate", isvc.Spec.Predictor.Tolerations)
+	}
 }
 
 func TestComposeAllocationRejectsInvalidDRAServices(t *testing.T) {
@@ -296,5 +310,78 @@ func TestStaleClaimTemplateCleanup(t *testing.T) {
 	planStaleClaimTemplateCleanup(&plan, obs)
 	if len(plan.GetToDelete()) != 2 {
 		t.Errorf("a service that stopped using DRA keeps templates: %v", plan.GetToDelete())
+	}
+}
+
+func TestFetchDecidesAutoAllocationFromServiceResources(t *testing.T) {
+	gpuLabels := map[string]string{
+		aimprofile.AcceleratorLabelPrefix + "MI300X":                                    "8",
+		aimprofile.PartitioningSchemeLabelPrefix + aimprofile.PartitioningSchemeDefault: "8",
+	}
+	node := func(name, cpu string, devicePluginGPUs bool) *corev1.Node {
+		allocatable := corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse(cpu),
+			corev1.ResourceMemory: resource.MustParse("1Ti"),
+		}
+		if devicePluginGPUs {
+			allocatable[corev1.ResourceName(constants.AMDGPUResourceName)] = resource.MustParse("8")
+		}
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Labels: gpuLabels},
+			Status:     corev1.NodeStatus{Allocatable: allocatable},
+		}
+	}
+	slice := &resourcev1.ResourceSlice{
+		ObjectMeta: metav1.ObjectMeta{Name: "dra"},
+		Spec: resourcev1.ResourceSliceSpec{
+			Driver:   constants.AMDGPUDRADriverName,
+			NodeName: ptr.To("dra"),
+			Pool:     resourcev1.ResourcePool{Name: "dra", Generation: 1, ResourceSliceCount: 1},
+			Devices: []resourcev1.Device{{
+				Name: "gpu-0",
+				Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
+					"deviceID":         {StringValue: ptr.To("0x74a1")},
+					"type":             {StringValue: ptr.To(aimprofile.DRADeviceTypeGPU)},
+					"partitionProfile": {StringValue: ptr.To(aimprofile.DRAUnpartitionedProfile)},
+				},
+			}},
+		},
+	}
+
+	tests := []struct {
+		name      string
+		resources *corev1.ResourceRequirements
+		want      aimv1alpha1.AcceleratorAllocationMode
+	}{
+		{name: "profile defaults fit both kinds of node", want: aimv1alpha1.AcceleratorAllocationDevicePlugin},
+		{
+			name:      "the CPU override fits only the DRA node",
+			resources: &corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100")}},
+			want:      aimv1alpha1.AcceleratorAllocationDRA,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &aimv1alpha1.AIMService{
+				ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+				Spec: aimv1alpha1.AIMServiceSpec{
+					Profile:   &aimv1alpha1.AIMServiceProfileConfig{Name: testClusterProfileName},
+					Resources: tt.resources,
+				},
+			}
+			profile := &aimv1alpha2.AIMClusterProfile{
+				ObjectMeta: metav1.ObjectMeta{Name: testClusterProfileName, UID: "profile-uid"},
+				Spec:       aimv1alpha2.AIMClusterProfileSpec{AIMProfileSpecCommon: *sampleProfileSpec()},
+				Status:     *profileStatusWith(1, 1),
+			}
+			profile.Status.Deployable = true
+			c, pipeline := newProfileRuntimePipelineFixture(t, service, profile, node("dp", "8", true), node("dra", "192", false), slice)
+
+			fetched := pipeline.Reconciler.FetchRemoteState(context.Background(), c,
+				controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service})
+			if fetched.allocation.mode != tt.want {
+				t.Errorf("allocation mode = %q, want %q", fetched.allocation.mode, tt.want)
+			}
+		})
 	}
 }
