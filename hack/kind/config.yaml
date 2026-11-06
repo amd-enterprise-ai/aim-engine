@@ -22,9 +22,22 @@
 # Both worker nodes carry the EPYC_ZEN5 CPU label because that is what the
 # AcceleratorDetector emits in production for AMD EPYC hosts that also house
 # Instinct accelerators (CPU and GPU labels co-exist on the same node).
+#
+# ExtendedResourceToleration adds a toleration for amd.com/gpu:NoSchedule to
+# pods that request amd.com/gpu, as many GPU clusters do. It lets inference
+# pods onto the tainted fake GPU nodes of the KWOK lane (hack/fakegpu) without
+# tolerations of their own; pods that request no GPU stay off them.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: aim-engine
+kubeadmConfigPatches:
+  - |
+    apiVersion: kubeadm.k8s.io/v1beta4
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        - name: enable-admission-plugins
+          value: NodeRestriction,ExtendedResourceToleration
 nodes:
   - role: control-plane
   - role: worker
