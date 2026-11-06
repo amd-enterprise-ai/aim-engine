@@ -101,13 +101,20 @@ func (r *draRequirement) matchesDevice(d DRADevice) bool {
 	}
 	switch r.partitioning {
 	case "", PartitioningModeUnpartitioned:
-		return d.Type == DRADeviceTypeGPU
+		// Like the detector's partitioning-scheme.default label, whole GPUs in
+		// other memory modes such as spx_nps2 don't count as unpartitioned.
+		return d.Type == DRADeviceTypeGPU &&
+			(d.PartitionProfile == "" || d.PartitionProfile == DRAUnpartitionedProfile)
 	case PartitioningModePartitioned:
 		return d.Type == DRADeviceTypePartition
 	default:
 		return d.PartitionProfile == draPartitionProfile(r.partitioning)
 	}
 }
+
+// DRAUnpartitionedProfile is the partitionProfile of a whole GPU in its
+// default compute and memory mode (SPX-NPS1).
+const DRAUnpartitionedProfile = "spx_nps1"
 
 // draPartitionProfile is the DRA driver's spelling of a partition scheme:
 // CPX-NPS4 is published as cpx_nps4.

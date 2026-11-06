@@ -144,6 +144,46 @@ func TestMatchProfileNodesSeparatesDevicePluginAndDRANodes(t *testing.T) {
 	}
 }
 
+func TestUnpartitionedDRAMatchesOnlyDefaultWholeGPUs(t *testing.T) {
+	req := &draRequirement{partitioning: PartitioningModeUnpartitioned}
+	for _, tt := range []struct {
+		device DRADevice
+		want   bool
+	}{
+		{DRADevice{Type: DRADeviceTypeGPU, PartitionProfile: "spx_nps1"}, true},
+		{DRADevice{Type: DRADeviceTypeGPU}, true},
+		{DRADevice{Type: DRADeviceTypeGPU, PartitionProfile: "spx_nps2"}, false},
+		{DRADevice{Type: DRADeviceTypePartition, PartitionProfile: "cpx_nps1"}, false},
+	} {
+		if got := req.matchesDevice(tt.device); got != tt.want {
+			t.Errorf("matchesDevice(%+v) = %v, want %v", tt.device, got, tt.want)
+		}
+	}
+}
+
+func TestMatchProfileNodesCountsDRANodeWithDevicePluginGPUsAsBoth(t *testing.T) {
+	capacity := hostCapacity("192")
+	capacity["amd.com/gpu"] = resource.MustParse("8")
+	node := makeNode("dra-and-dp", map[string]string{
+		AcceleratorVendorLabelPrefix + "GPU.AMD":                  "8",
+		AcceleratorLabelPrefix + "MI355X":                         "8",
+		PartitioningSchemeLabelPrefix + PartitioningSchemeDefault: "8",
+	}, capacity)
+	inventory := BuildNodeInventory([]corev1.Node{node}, []resourcev1.ResourceSlice{
+		amdSlice("dra-and-dp", "dra-and-dp", "dra-and-dp", 1, repeatDevices(8, "0x75a3", DRADeviceTypeGPU, "spx_nps1")...),
+	})
+	spec := aimv1alpha2.AIMProfileSpecCommon{
+		AcceleratorType:  aimv1alpha1.AcceleratorTypeGPU,
+		AcceleratorModel: "MI355X",
+		AcceleratorCount: 8,
+	}
+	result := MatchProfileNodes(inventory, spec, ResolveProfileResources(spec))
+	if result.MatchingNodes != 1 || result.DRAMatchingNodes != 1 || result.BothMatchingNodes != 1 {
+		t.Errorf("device plugin %d, DRA %d, both %d; want 1, 1 and 1",
+			result.MatchingNodes, result.DRAMatchingNodes, result.BothMatchingNodes)
+	}
+}
+
 func TestMatchProfileNodesExplainsDRAMismatches(t *testing.T) {
 	spec := aimv1alpha2.AIMProfileSpecCommon{
 		AcceleratorType:  aimv1alpha1.AcceleratorTypeGPU,

@@ -408,6 +408,11 @@ func profileRelevantChangePredicate() predicate.Predicate {
 			if !equality.Semantic.DeepEqual(oldAff, newAff) {
 				return true
 			}
+			oldCount, oldByAllocation := profileNodeCounts(e.ObjectOld)
+			newCount, newByAllocation := profileNodeCounts(e.ObjectNew)
+			if oldCount != newCount || !equality.Semantic.DeepEqual(oldByAllocation, newByAllocation) {
+				return true
+			}
 			return provenanceLabelsChanged(e.ObjectOld.GetLabels(), e.ObjectNew.GetLabels())
 		},
 	}
@@ -479,6 +484,21 @@ func profileRelevantFields(obj client.Object) (
 		return p.Status.Status, p.Status.ObservedGeneration, p.Status.Resources, p.Status.ResolvedNodeAffinity
 	default:
 		return "", 0, nil, nil
+	}
+}
+
+// profileNodeCounts extracts the profile's matching-node counts. They can
+// change while the profile stays Ready, for example when DRA nodes join a
+// profile that already has device-plugin nodes, and services read them to
+// check that nodes exist for their GPU allocation mode.
+func profileNodeCounts(obj client.Object) (int32, *aimv1alpha2.AIMProfileMatchingNodes) {
+	switch p := obj.(type) {
+	case *aimv1alpha2.AIMProfile:
+		return p.Status.MatchingNodes, p.Status.MatchingNodesByAllocation
+	case *aimv1alpha2.AIMClusterProfile:
+		return p.Status.MatchingNodes, p.Status.MatchingNodesByAllocation
+	default:
+		return 0, nil
 	}
 }
 
