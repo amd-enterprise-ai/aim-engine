@@ -662,6 +662,33 @@ def test_build_feature_lines_mixed_models_sum_family():
     assert not any(k.endswith(".AMD") for k in labels)
 
 
+MIXED_GPU_KEY = f"{mod.LABEL_PREFIX}.mixed-models.GPU"
+
+
+def test_build_feature_lines_marks_mixed_gpu_models():
+    hw = [
+        {"accelerator_type": "GPU", "accelerator_model": "MI350P", "accelerator_count": 4},
+        {"accelerator_type": "GPU", "accelerator_model": "R9700", "accelerator_count": 2},
+    ]
+    labels = _labels(mod.build_feature_lines(hw))
+    assert labels[MIXED_GPU_KEY] == "2"
+
+
+def test_build_feature_lines_single_gpu_model_has_no_mixed_marker():
+    hw = [{"accelerator_type": "GPU", "accelerator_model": "MI300X", "accelerator_count": 8}]
+    assert MIXED_GPU_KEY not in _labels(mod.build_feature_lines(hw))
+
+
+def test_build_feature_lines_gpu_plus_cpu_model_is_not_mixed():
+    # A CPU model label on a GPU node is a different accelerator type, not a
+    # second GPU model.
+    hw = [
+        {"accelerator_type": "GPU", "accelerator_model": "MI300X", "accelerator_count": 8},
+        {"accelerator_type": "CPU", "accelerator_model": "EPYC_ZEN5", "accelerator_count": 1},
+    ]
+    assert not any(".mixed-models." in k for k in _labels(mod.build_feature_lines(hw)))
+
+
 # ---------------------------------------------------------------------------
 # Env parsing: ACCELERATOR_VENDOR must fail fast on typos (so it can't silently
 # route to the wrong backend), and DETECT_INTERVAL must not crash the loop.

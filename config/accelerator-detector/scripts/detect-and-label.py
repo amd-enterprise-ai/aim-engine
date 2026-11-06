@@ -65,6 +65,10 @@ HEALTH_FILE = "/tmp/healthy"
 # nvidia.com/gpu). Partition-specific AMD resource names remain a future
 # extension of that resolver.
 VENDOR_LABEL_INFIX = "vendor"
+# Marker on nodes carrying several GPU models; mirrored by
+# MixedModelsLabelPrefix in internal/v1alpha2/aimprofile/node_match.go.
+MIXED_MODELS_LABEL_INFIX = "mixed-models"
+GPU_FAMILY = "GPU"
 DEFAULT_VENDOR = "AMD"
 NVIDIA_VENDOR = "NVIDIA"
 # Vendors this detector knows how to handle. main() fails fast on anything else
@@ -634,9 +638,16 @@ def build_feature_lines(detections: list, vendor: str = DEFAULT_VENDOR) -> list:
 
     Family (and vendor) counts sum across all model entries of the same type
     (e.g. a node with 4 x MI350P and 2 x R9700 aggregates to GPU=6).
+
+    A node carrying more than one GPU model also gets
+    feature.node.kubernetes.io/aim-accelerator.mixed-models.GPU={model count}.
+    Device-plugin resources (amd.com/gpu, nvidia.com/gpu) are one pool per node,
+    so a pod on such a node may receive any of its GPU models; the operator
+    keeps device-plugin placements off nodes with this label.
     """
     seen_models = set()
     family_counts: dict[str, int] = {}
+    family_models: dict[str, set] = {}
     model_lines: list[str] = []
 
     for det in detections:
@@ -650,6 +661,7 @@ def build_feature_lines(detections: list, vendor: str = DEFAULT_VENDOR) -> list:
             model_lines.append(f"{LABEL_PREFIX}.{model}={count}")
         if family:
             family_counts[family] = family_counts.get(family, 0) + count
+            family_models.setdefault(family, set()).add(model)
 
     family_lines = [
         f"{LABEL_PREFIX}.{family}={count}"
@@ -661,7 +673,11 @@ def build_feature_lines(detections: list, vendor: str = DEFAULT_VENDOR) -> list:
             f"{LABEL_PREFIX}.{VENDOR_LABEL_INFIX}.{family}.{vendor}={count}"
             for family, count in sorted(family_counts.items())
         ]
-    lines = model_lines + family_lines + vendor_lines
+    gpu_models = family_models.get(GPU_FAMILY, set())
+    mixed_lines = []
+    if len(gpu_models) > 1:
+        mixed_lines = [f"{LABEL_PREFIX}.{MIXED_MODELS_LABEL_INFIX}.{GPU_FAMILY}={len(gpu_models)}"]
+    lines = model_lines + family_lines + vendor_lines + mixed_lines
 
     if lines:
         logger.info("Labels: %s", ", ".join(lines))
