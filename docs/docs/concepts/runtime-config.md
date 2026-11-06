@@ -379,6 +379,30 @@ with the query's expected names and labels and must emit delta values rather
 than cumulative counter totals, because the activation trigger uses a fixed
 `operationOverTime=avg`.
 
+## Tolerations for inference pods
+
+`spec.tolerations` adds tolerations to the pods of AIMService inference workloads, so they can be scheduled onto tainted nodes, such as GPU nodes reserved for inference:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: default
+spec:
+  tolerations:
+    - key: amd.com/gpu
+      operator: Exists
+      effect: NoSchedule
+```
+
+Each level replaces the list of the level below it as a whole; lists are not merged:
+
+```
+AIMService.spec.tolerations  >  namespace AIMRuntimeConfig  >  cluster AIMClusterRuntimeConfig
+```
+
+An empty list on an AIMService (`tolerations: []`) removes the runtime config's tolerations for that service. Clusters that enable the `ExtendedResourceToleration` admission plugin already give pods requesting `amd.com/gpu` or `nvidia.com/gpu` a toleration for a taint with that key, whatever this field says.
+
 ## Environment variable overrides
 
 `spec.env` injects environment variables into managed workloads. Most commonly used to set the HuggingFace downloader fallback chain.
