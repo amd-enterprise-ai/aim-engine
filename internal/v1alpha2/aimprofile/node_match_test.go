@@ -972,6 +972,32 @@ func TestMatchProfileNodes_ExcludesNodesWithMixedGPUModels(t *testing.T) {
 	}
 }
 
+func TestMatchProfileNodes_MixedNVIDIANodeReasonOmitsDRA(t *testing.T) {
+	node := makeNode("mixed-nvidia-node",
+		map[string]string{
+			AcceleratorLabelPrefix + "H100":             "4",
+			AcceleratorLabelPrefix + "A100":             "4",
+			AcceleratorVendorLabelPrefix + "GPU.NVIDIA": "8",
+			MixedModelsLabelPrefix + "GPU":              "2",
+		},
+		corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("8")},
+	)
+	spec := aimv1alpha2.AIMProfileSpecCommon{
+		AcceleratorVendor: aimv1alpha1.AcceleratorVendorNVIDIA,
+		AcceleratorType:   aimv1alpha1.AcceleratorTypeGPU,
+		AcceleratorModel:  "H100",
+		AcceleratorCount:  1,
+	}
+	result := MatchProfileNodes([]corev1.Node{node}, spec, ResolveProfileResources(spec))
+	if result.MatchingNodes != 0 || len(result.NodeMismatches) != 1 {
+		t.Fatalf("result = %+v, want the mixed NVIDIA node excluded", result)
+	}
+	reason := result.NodeMismatches[0].Reasons[0]
+	if !strings.Contains(reason, "more than one GPU model") || strings.Contains(reason, "DRA") {
+		t.Fatalf("reason = %q, want the mixed-model reason without DRA advice", reason)
+	}
+}
+
 func TestResolveResources_generatedValuesRespectExplicitOppositeSide(t *testing.T) {
 	tests := []struct {
 		name      string

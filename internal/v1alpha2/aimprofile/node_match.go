@@ -489,12 +489,17 @@ func nodeMismatchReasons(
 	var reasons []string
 	if mixedModelsReq != nil {
 		if _, mixed := node.Labels[mixedModelsReq.Key]; mixed {
-			reasons = append(reasons, fmt.Sprintf(
+			reason := fmt.Sprintf(
 				"node carries more than one GPU model (label %q): device-plugin scheduling "+
-					"cannot choose which model a pod receives; install the GPU DRA driver on "+
-					"this node and use DRA allocation to schedule onto nodes with mixed GPU models",
+					"cannot choose which model a pod receives",
 				mixedModelsReq.Key,
-			))
+			)
+			// Only AMD GPUs have a DRA allocation path in AIM Engine.
+			if nodeHasAMDGPUs(node) {
+				reason += "; install the AMD GPU DRA driver on this node and use DRA allocation " +
+					"to schedule onto nodes with mixed GPU models"
+			}
+			reasons = append(reasons, reason)
 		}
 	}
 	if !nodeMatchesVendor(node, vendorReq) {
@@ -630,6 +635,14 @@ func vendorNodeSelectorRequirement(
 			strings.ToUpper(string(vendor)),
 		Operator: corev1.NodeSelectorOpExists,
 	}
+}
+
+// nodeHasAMDGPUs reports whether the detector labelled the node's GPUs as AMD.
+func nodeHasAMDGPUs(node *corev1.Node) bool {
+	_, ok := node.Labels[AcceleratorVendorLabelPrefix+
+		strings.ToUpper(string(aimv1alpha1.AcceleratorTypeGPU))+"."+
+		strings.ToUpper(string(aimv1alpha1.AcceleratorVendorAMD))]
+	return ok
 }
 
 // nodeMatchesVendor evaluates a resolved vendor selector against node labels.
