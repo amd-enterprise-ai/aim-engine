@@ -617,6 +617,15 @@ jobs:
       - name: Create Kind cluster
         run: kind create cluster --name "${KIND_CLUSTER}" --config hack/kind/config.yaml
 
+      - name: Check the API server enables ExtendedResourceToleration
+        run: |
+          args=$(kubectl -n kube-system get pod -l component=kube-apiserver -o jsonpath='{.items[0].spec.containers[0].command}')
+          echo "$args" | tr ',' '\n' | grep -- '--enable-admission-plugins' || true
+          if ! echo "$args" | grep -q ExtendedResourceToleration; then
+            echo "::error::kind did not apply the kubeadm patch in hack/kind/config.yaml"
+            exit 1
+          fi
+
       - name: Install KWOK and the fake GPU fleet
         run: |
           make kwok-install

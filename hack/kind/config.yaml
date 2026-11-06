@@ -26,18 +26,20 @@
 # ExtendedResourceToleration adds a toleration for amd.com/gpu:NoSchedule to
 # pods that request amd.com/gpu, as many GPU clusters do. It lets inference
 # pods onto the tainted fake GPU nodes of the KWOK lane (hack/fakegpu) without
-# tolerations of their own; pods that request no GPU stay off them.
+# tolerations of their own; pods that request no GPU stay off them. kind
+# generates a kubeadm v1beta3 ClusterConfiguration (as of kind v0.31) and skips
+# patches for any other apiVersion; the KWOK CI lane fails if this one stops
+# applying.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: aim-engine
 kubeadmConfigPatches:
   - |
-    apiVersion: kubeadm.k8s.io/v1beta4
+    apiVersion: kubeadm.k8s.io/v1beta3
     kind: ClusterConfiguration
     apiServer:
       extraArgs:
-        - name: enable-admission-plugins
-          value: NodeRestriction,ExtendedResourceToleration
+        enable-admission-plugins: NodeRestriction,ExtendedResourceToleration
 nodes:
   - role: control-plane
   - role: worker
