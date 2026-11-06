@@ -227,14 +227,6 @@ def _recording_run(*responses):
     return run, calls
 
 
-def _with_verbose_support(fn):
-    """Run fn() and restore the module's --verbose support flag afterwards."""
-    try:
-        return fn()
-    finally:
-        mod._verbose_detection_supported = True
-
-
 def test_detect_hardware_requests_verbose_output():
     run, calls = _recording_run(_FakeProc(stdout="[]"))
     _with_run(run, lambda: mod.detect_hardware("gpu"))
@@ -253,23 +245,42 @@ def test_detect_hardware_splits_mixed_gpu_models():
     ]
 
 
-def test_detect_hardware_keeps_known_gpus_when_first_is_unrecognized():
+def test_unrecognized_gpu_marks_node_as_mixed():
     # The runtime's single-model output would drop the whole node here because
-    # the first card's device ID is unknown.
+    # the first card's device ID is unknown. The device plugin still offers the
+    # unknown card as amd.com/gpu, so the node counts as having two models.
     gpus = [_gpu("0x1234", None)] + [_gpu("0x74a1", "MI300X")] * 7
     out = _with_run(
         lambda *a, **k: _FakeProc(stdout=_verbose_gpu_payload(gpus, model=None)),
         lambda: mod.detect_hardware("gpu"),
     )
-    assert out == [{"accelerator_type": "GPU", "accelerator_model": "MI300X", "accelerator_count": 7}]
+    assert out == [
+        {"accelerator_type": "GPU", "accelerator_model": "MI300X", "accelerator_count": 7},
+        {"accelerator_type": "GPU", "accelerator_model": "", "device_id": "0x1234", "accelerator_count": 1},
+    ]
+    lines = mod.build_feature_lines(out, vendor="AMD")
+    assert f"{mod.LABEL_PREFIX}.MI300X=7" in lines
+    assert f"{mod.LABEL_PREFIX}.{mod.MIXED_MODELS_LABEL_INFIX}.GPU=2" in lines
+    assert not any("0x1234" in line for line in lines)
+    assert mod.gpu_unit_count(out) == 7
 
 
-def test_detect_hardware_only_unrecognized_gpus_is_confident_empty():
+def test_unrecognized_gpus_of_one_device_id_count_as_one_model():
+    gpus = [_gpu("0x1234", None)] * 2 + [_gpu("0x74a1", "MI300X")] * 6
+    out = _with_run(
+        lambda *a, **k: _FakeProc(stdout=_verbose_gpu_payload(gpus, model=None)),
+        lambda: mod.detect_hardware("gpu"),
+    )
+    assert f"{mod.LABEL_PREFIX}.{mod.MIXED_MODELS_LABEL_INFIX}.GPU=2" in mod.build_feature_lines(out, vendor="AMD")
+
+
+def test_only_unrecognized_gpus_publish_no_labels():
     out = _with_run(
         lambda *a, **k: _FakeProc(stdout=_verbose_gpu_payload([_gpu("0x1234", None)], model=None)),
         lambda: mod.detect_hardware("gpu"),
     )
-    assert out == []
+    assert mod.build_feature_lines(out, vendor="AMD") == []
+    assert mod.gpu_unit_count(out) == 0
 
 
 def test_detect_hardware_normalizes_verbose_cpu_entry():
@@ -285,32 +296,6 @@ def test_detect_hardware_normalizes_verbose_cpu_entry():
         lambda: mod.detect_hardware("cpu"),
     )
     assert out == [{"accelerator_type": "CPU", "accelerator_model": "EPYC_9965", "accelerator_count": 192}]
-
-
-def test_detect_hardware_falls_back_when_verbose_unsupported():
-    plain = '[{"accelerator_type": "GPU", "accelerator_model": "MI300X", "accelerator_count": 8}]'
-    run, calls = _recording_run(
-        _FakeProc(returncode=2, stderr="Error: No such option: --verbose"),
-        _FakeProc(stdout=plain),
-    )
-
-    def two_cycles():
-        first = mod.detect_hardware("gpu")
-        second = mod.detect_hardware("gpu")
-        return first, second
-
-    first, second = _with_verbose_support(lambda: _with_run(run, two_cycles))
-    expected = [{"accelerator_type": "GPU", "accelerator_model": "MI300X", "accelerator_count": 8}]
-    assert first == expected and second == expected
-    # The unsupported flag is not retried on later cycles.
-    assert ["--verbose" in cmd for cmd in calls] == [True, False, False]
-
-
-def test_detect_hardware_verbose_failure_is_not_retried_without_flag():
-    run, calls = _recording_run(_FakeProc(returncode=1, stderr="amdsmi init failed"))
-    out = _with_verbose_support(lambda: _with_run(run, lambda: mod.detect_hardware("gpu")))
-    assert out is None
-    assert len(calls) == 1
 
 
 # ---------------------------------------------------------------------------
