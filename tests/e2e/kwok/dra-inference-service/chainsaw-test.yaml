@@ -20,6 +20,40 @@ spec:
   timeouts:
     assert: 180s
   steps:
+    # Created first so that it is deleted last, after the predictor pod that mounts it.
+    - name: model volume for the frozen profile cache
+      try:
+        - apply:
+            resource:
+              apiVersion: v1
+              kind: PersistentVolume
+              metadata:
+                name: (join('-', ['kwok-dra-weights', $namespace]))
+              spec:
+                capacity:
+                  storage: 1Gi
+                accessModes: [ReadWriteMany]
+                storageClassName: ""
+                persistentVolumeReclaimPolicy: Retain
+                hostPath:
+                  path: /tmp/kwok-dra-weights
+                claimRef:
+                  namespace: ($namespace)
+                  name: kwok-dra-weights
+        - apply:
+            resource:
+              apiVersion: v1
+              kind: PersistentVolumeClaim
+              metadata:
+                name: kwok-dra-weights
+              spec:
+                accessModes: [ReadWriteMany]
+                storageClassName: ""
+                volumeName: (join('-', ['kwok-dra-weights', $namespace]))
+                resources:
+                  requests:
+                    storage: 1Gi
+
     - name: MI355X profile, available only on DRA nodes
       try:
         - apply:
@@ -77,36 +111,6 @@ spec:
                 name: kwok-dra-service
               status:
                 acceleratorAllocation: DRA
-        - apply:
-            resource:
-              apiVersion: v1
-              kind: PersistentVolume
-              metadata:
-                name: (join('-', ['kwok-dra-weights', $namespace]))
-              spec:
-                capacity:
-                  storage: 1Gi
-                accessModes: [ReadWriteMany]
-                storageClassName: ""
-                persistentVolumeReclaimPolicy: Delete
-                hostPath:
-                  path: /tmp/kwok-dra-weights
-                claimRef:
-                  namespace: ($namespace)
-                  name: kwok-dra-weights
-        - apply:
-            resource:
-              apiVersion: v1
-              kind: PersistentVolumeClaim
-              metadata:
-                name: kwok-dra-weights
-              spec:
-                accessModes: [ReadWriteMany]
-                storageClassName: ""
-                volumeName: (join('-', ['kwok-dra-weights', $namespace]))
-                resources:
-                  requests:
-                    storage: 1Gi
         - script:
             timeout: 120s
             content: |
