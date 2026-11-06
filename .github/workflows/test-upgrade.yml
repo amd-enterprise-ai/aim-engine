@@ -28,7 +28,7 @@ env:
 jobs:
   upgrade-e2e:
     name: upgrade-e2e (${{ matrix.name }})
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 75
     strategy:
       fail-fast: false
@@ -41,16 +41,9 @@ jobs:
             scenario: generic
             setup_dir: tests/e2e/upgrade-compatibility/setup
             verify_dir: tests/e2e/upgrade-compatibility/verify
-          - name: private-main
-            slug: private
-            repository: silogen/aim-engine
-            ref: main
-            scenario: generic
-            setup_dir: tests/e2e/upgrade-compatibility/setup
-            verify_dir: tests/e2e/upgrade-compatibility/verify
           - name: v1alpha1-bridge-v0.2.6
             slug: bridge-v026
-            repository: silogen/aim-engine
+            repository: amd-enterprise-ai/aim-engine
             ref: 3f6558ebb3921d2f8954446cfeb8be64c4410202
             scenario: v1alpha1-bridge
             setup_dir: tests/e2e/upgrade-compatibility/bridge/setup

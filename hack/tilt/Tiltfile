@@ -37,7 +37,7 @@ DEBUG_MODE = cfg.get("debug", False)
 # Root of the project (two levels up from hack/tilt)
 ROOT = "../.."
 
-# Image name - must match what kustomize outputs (see kustomize/kustomization.yaml images section)
+# Image name - must match the manager image set in kustomize/kustomization.yaml
 IMAGE_NAME = "ttl.sh/aim-placeholder/manager:tilt"
 
 VERSION = str(local(

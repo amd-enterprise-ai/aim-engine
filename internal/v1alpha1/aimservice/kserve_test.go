@@ -638,8 +638,8 @@ func TestBuildInferenceService_PriorityClassName(t *testing.T) {
 // different images (e.g. different versions per copy with versionPolicy=any
 // or aim-base vs aim-epyc-base for the same aimId across owners).
 func TestResolveDeploymentImage(t *testing.T) {
-	const stampedImage = "ghcr.io/silogen/aim-base:0.11"
-	const modelImage = "ghcr.io/silogen/aim-base:0.10"
+	const stampedImage = "ghcr.io/amdenterpriseai/aim-base:0.11"
+	const modelImage = "ghcr.io/amdenterpriseai/aim-base:0.10"
 
 	tests := []struct {
 		name string

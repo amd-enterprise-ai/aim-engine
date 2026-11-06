@@ -108,6 +108,23 @@ Use `SCREAMING_SNAKE_CASE` for env vars and document them in the module header o
 - **Cute or ironic names** (`magic`, `fixup`, `doTheThing`).
 - **Misleading symmetry** — two functions with parallel names should do parallel things. If one path detects hardware and another publishes a placeholder, the names should reflect that difference.
 
+### Disambiguate overloaded domain terms
+
+Words like **runtime**, **profile**, **model**, **cache**, and **template** name multiple distinct concepts in this codebase. Unqualified reuse in the same file, PR, or doc is a defect — readers cannot tell which object or behavior you mean.
+
+Qualify on first use and whenever the referent changes:
+
+
+| Ambiguous | Prefer |
+| --------- | ------ |
+| "runtime" | `KServe ServingRuntime`, `AIMRuntimeConfig`, or "runtime behavior" / "reconcile loop" |
+| "profile" | `AIMProfile` / `AIMClusterProfile`, or "hardware profile" only when that is the intent |
+| "model" | `AIMModel` / `AIMClusterModel`, model image, or HuggingFace model ID |
+| "cache" | `AIMProfileCache`, `AIMArtifact` cache PVC, or HTTP cache — never just "the cache" |
+| "template" | `AIMServiceTemplate` (v1alpha1) vs profile derivation / `profileCopy` (v1alpha2) |
+
+The same rule applies to comments, commit messages, PR descriptions, and docs.
+
 ---
 
 ## Go conventions
@@ -257,10 +274,36 @@ There is no fixed percentage gate, but:
 
 ## Comments and documentation
 
-- **Comments explain why**, not what. The code and function name should explain what.
+### Comments
+
+Comments explain **what the code does and why that shape matters**, not the debugging history that produced it.
+
+- Prefer short, action-oriented comments focused on non-obvious implications (invariants, ordering constraints, upgrade hazards, intentional divergences from a sibling path).
+- Do **not** narrate past iterations, removed alternatives, or "we tried X but it failed because Y, so now we do Z". That belongs in the PR description or an ADR, not beside the final code.
+- Do **not** restate what a clear function name already says.
 - Export godoc on public APIs: one sentence summary, then detail if needed.
-- User-facing behavior belongs in `docs/docs/`; link from godoc when operators need runbooks.
 - `TODO` comments include an issue reference or milestone (`TODO(MIG): issue #123`).
+
+```go
+// Avoid: process diary
+// We originally listed all caches by label, but that raced with the finalizer,
+// so after trying an index we settled on FindReadyShared which ignores stale
+// observedGeneration and returns StatusStaleError instead of failing Ready.
+
+// Prefer: current contract
+// FindReadyShared treats observedGeneration lag as StatusStaleError so callers
+// can defer projection instead of marking the profile Failed.
+```
+
+### Docs and samples must stand alone
+
+Guides, admin docs, reference pages, and `config/samples/` are consumed by external contributors and downstream users. They must not depend on Silogen-internal knowledge:
+
+- No references to private registries, proprietary label namespaces, or closed-source tooling that an external reader cannot resolve or pull.
+- Prefer public image refs (`docker.io/amdenterpriseai/...`) and public label/API names in examples.
+- If an internal-only path must be documented (e.g. pre-promotion install), isolate it under an explicitly labeled internal section and keep the public path complete without it.
+
+User-facing behavior belongs in `docs/docs/`; link from godoc when operators need runbooks.
 
 ---
 
@@ -268,15 +311,19 @@ There is no fixed percentage gate, but:
 
 Before requesting review:
 
-- [ ]  Names read clearly without institutional knowledge.
+- [ ]  Names read clearly without institutional knowledge; overloaded terms (`runtime`, `profile`, `model`, …) are qualified.
 - [ ]  Functions are focused; no new god functions.
 - [ ]  Fetch / plan / apply phases respected.
 - [ ]  Errors wrapped; user-visible messages actionable.
+- [ ]  Comments explain current behavior and why — not iteration history.
+- [ ]  Docs and samples stand alone (no unresolved internal registries, labels, or tooling).
 - [ ]  Unit tests cover new behavior and failure paths.
 - [ ]  E2e or integration test added when behavior crosses controller boundaries.
 - [ ]  `make fmt`, `make vet`, `make lint`, and `make test` pass.
 - [ ]  API or Helm changes regenerated (`make generate`, `make manifests`, `make generate-helm-docs` as applicable).
 - [ ]  No secrets, tokens, or cluster-specific values committed.
+
+Reviewers apply a deeper production lens using [PR Review Guidelines](pr-review-guidelines.md).
 
 ---
 
@@ -359,6 +406,7 @@ func TestResolveResources_explicitGPUCountWins(t *testing.T) {
 
 ## Related documentation
 
+- [PR Review Guidelines](pr-review-guidelines.md) — Reviewer checklist and production readiness bar
 - [Development Setup](development-setup.md) — Toolchain and local cluster
 - [Controller Patterns](controller-patterns.md) — Reconciliation pipeline
 - [Observation Design](observation-design.md) — Structuring fetch and observation types

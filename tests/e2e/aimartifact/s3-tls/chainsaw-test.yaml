@@ -7,9 +7,9 @@ spec:
     Verifies RuntimeConfig combined trust and S3-specific CA bundles from
     ConfigMaps and Secrets, rejection of an untrusted CA and hostname mismatch,
     and the explicit insecure diagnostic escape hatch against a cert-manager
-    issued HTTPS MinIO endpoint.
+    issued HTTPS SeaweedFS endpoint.
   steps:
-  - name: Issue private CA and MinIO serving certificate
+  - name: Issue private CA and SeaweedFS serving certificate
     try:
     - apply:
         file: pki.yaml
@@ -29,12 +29,12 @@ spec:
           apiVersion: cert-manager.io/v1
           kind: Certificate
           metadata:
-            name: minio-tls
+            name: seaweedfs-tls
           status:
             (conditions[?type == 'Ready']):
             - status: "True"
 
-  - name: Materialize ConfigMap CA source and deploy HTTPS MinIO
+  - name: Materialize ConfigMap CA source and deploy HTTPS SeaweedFS
     try:
     - script:
         timeout: 30s
@@ -49,14 +49,14 @@ spec:
             --dry-run=client -o yaml |
             kubectl apply -f -
     - apply:
-        file: minio.yaml
+        file: seaweedfs.yaml
     - assert:
         timeout: 2m
         resource:
           apiVersion: apps/v1
           kind: Deployment
           metadata:
-            name: minio-tls
+            name: seaweedfs-tls
           status:
             availableReplicas: 1
 
@@ -70,7 +70,7 @@ spec:
           apiVersion: batch/v1
           kind: Job
           metadata:
-            name: seed-minio-tls
+            name: seed-seaweedfs-tls
           status:
             succeeded: 1
 

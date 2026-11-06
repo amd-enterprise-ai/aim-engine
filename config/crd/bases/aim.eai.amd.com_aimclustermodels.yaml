@@ -1437,31 +1437,30 @@ spec:
                     description: |-
                       BaseImageRef is the value of the AIM_BASE_IMAGE_REF environment variable
                       baked into the image's OCI config at build time. For AIM model images this
-                      records the base image (e.g. "ghcr.io/silogen/aim-base:0.8.5") that the
-                      model image was built from.
+                      records the base image (e.g. "docker.io/amdenterpriseai/aim-base:0.8.
                     type: string
                   model:
-                    description: Model contains AMD Silogen model-specific metadata.
+                    description: Model contains AIM model-specific metadata.
                     properties:
                       canonicalName:
                         description: |-
                           CanonicalName is the canonical model identifier (e.g., mistralai/Mixtral-8x22B-Instruct-v0.1).
-                          Extracted from: org.amd.silogen.model.canonicalName
+                          Extracted from: com.amd.aim.model.canonicalName
                         type: string
                       descriptionFull:
                         description: |-
                           DescriptionFull is the full description.
-                          Extracted from: org.amd.silogen.description.full
+                          Extracted from: com.amd.aim.description.full
                         type: string
                       hfTokenRequired:
                         description: |-
                           HFTokenRequired indicates if a HuggingFace token is required.
-                          Extracted from: org.amd.silogen.hfToken.required
+                          Extracted from: com.amd.aim.hfToken.required
                         type: boolean
                       recommendedDeployments:
                         description: |-
                           RecommendedDeployments contains recommended deployment configurations.
-                          Extracted from: org.amd.silogen.model.recommendedDeployments (parsed from JSON array)
+                          Extracted from: com.amd.aim.model.recommendedDeployments (parsed from JSON array)
                         items:
                           description: RecommendedDeployment describes a recommended
                             deployment configuration for a model.
@@ -1497,36 +1496,36 @@ spec:
                       releaseNotes:
                         description: |-
                           ReleaseNotes contains release notes for this version.
-                          Extracted from: org.amd.silogen.release.notes
+                          Extracted from: com.amd.aim.release.notes
                         type: string
                       source:
                         description: |-
                           Source is the URL where the model can be found.
-                          Extracted from: org.amd.silogen.model.source
+                          Extracted from: com.amd.aim.model.source
                         type: string
                       tags:
                         description: |-
                           Tags are descriptive tags (e.g., ["text-generation", "chat", "instruction"]).
-                          Extracted from: org.amd.silogen.model.tags (comma-separated)
+                          Extracted from: com.amd.aim.model.tags (comma-separated)
                         items:
                           type: string
                         type: array
                       title:
                         description: |-
-                          Title is the Silogen-specific title for the model.
-                          Extracted from: org.amd.silogen.title
+                          Title is the AIM-specific title for the model.
+                          Extracted from: com.amd.aim.title
                         type: string
                       variants:
                         description: |-
                           Variants lists model variants.
-                          Extracted from: org.amd.silogen.model.variants (comma-separated)
+                          Extracted from: com.amd.aim.model.variants (comma-separated)
                         items:
                           type: string
                         type: array
                       versions:
                         description: |-
                           Versions lists available versions.
-                          Extracted from: org.amd.silogen.model.versions (comma-separated)
+                          Extracted from: com.amd.aim.model.versions (comma-separated)
                         items:
                           type: string
                         type: array
@@ -3691,31 +3690,30 @@ spec:
                     description: |-
                       BaseImageRef is the value of the AIM_BASE_IMAGE_REF environment variable
                       baked into the image's OCI config at build time. For AIM model images this
-                      records the base image (e.g. "ghcr.io/silogen/aim-base:0.8.5") that the
-                      model image was built from.
+                      records the base image (e.g. "docker.io/amdenterpriseai/aim-base:0.8.
                     type: string
                   model:
-                    description: Model contains AMD Silogen model-specific metadata.
+                    description: Model contains AIM model-specific metadata.
                     properties:
                       canonicalName:
                         description: |-
                           CanonicalName is the canonical model identifier (e.g., mistralai/Mixtral-8x22B-Instruct-v0.1).
-                          Extracted from: org.amd.silogen.model.canonicalName
+                          Extracted from: com.amd.aim.model.canonicalName
                         type: string
                       descriptionFull:
                         description: |-
                           DescriptionFull is the full description.
-                          Extracted from: org.amd.silogen.description.full
+                          Extracted from: com.amd.aim.description.full
                         type: string
                       hfTokenRequired:
                         description: |-
                           HFTokenRequired indicates if a HuggingFace token is required.
-                          Extracted from: org.amd.silogen.hfToken.required
+                          Extracted from: com.amd.aim.hfToken.required
                         type: boolean
                       recommendedDeployments:
                         description: |-
                           RecommendedDeployments contains recommended deployment configurations.
-                          Extracted from: org.amd.silogen.model.recommendedDeployments (parsed from JSON array)
+                          Extracted from: com.amd.aim.model.recommendedDeployments (parsed from JSON array)
                         items:
                           description: RecommendedDeployment describes a recommended
                             deployment configuration for a model.
@@ -3751,36 +3749,36 @@ spec:
                       releaseNotes:
                         description: |-
                           ReleaseNotes contains release notes for this version.
-                          Extracted from: org.amd.silogen.release.notes
+                          Extracted from: com.amd.aim.release.notes
                         type: string
                       source:
                         description: |-
                           Source is the URL where the model can be found.
-                          Extracted from: org.amd.silogen.model.source
+                          Extracted from: com.amd.aim.model.source
                         type: string
                       tags:
                         description: |-
                           Tags are descriptive tags (e.g., ["text-generation", "chat", "instruction"]).
-                          Extracted from: org.amd.silogen.model.tags (comma-separated)
+                          Extracted from: com.amd.aim.model.tags (comma-separated)
                         items:
                           type: string
                         type: array
                       title:
                         description: |-
-                          Title is the Silogen-specific title for the model.
-                          Extracted from: org.amd.silogen.title
+                          Title is the AIM-specific title for the model.
+                          Extracted from: com.amd.aim.title
                         type: string
                       variants:
                         description: |-
                           Variants lists model variants.
-                          Extracted from: org.amd.silogen.model.variants (comma-separated)
+                          Extracted from: com.amd.aim.model.variants (comma-separated)
                         items:
                           type: string
                         type: array
                       versions:
                         description: |-
                           Versions lists available versions.
-                          Extracted from: org.amd.silogen.model.versions (comma-separated)
+                          Extracted from: com.amd.aim.model.versions (comma-separated)
                         items:
                           type: string
                         type: array
@@ -5432,31 +5430,30 @@ spec:
                     description: |-
                       BaseImageRef is the value of the AIM_BASE_IMAGE_REF environment variable
                       baked into the image's OCI config at build time. For AIM model images this
-                      records the base image (e.g. "ghcr.io/silogen/aim-base:0.8.5") that the
-                      model image was built from.
+                      records the base image (e.g. "docker.io/amdenterpriseai/aim-base:0.8.
                     type: string
                   model:
-                    description: Model contains AMD Silogen model-specific metadata.
+                    description: Model contains AIM model-specific metadata.
                     properties:
                       canonicalName:
                         description: |-
                           CanonicalName is the canonical model identifier (e.g., mistralai/Mixtral-8x22B-Instruct-v0.1).
-                          Extracted from: org.amd.silogen.model.canonicalName
+                          Extracted from: com.amd.aim.model.canonicalName
                         type: string
                       descriptionFull:
                         description: |-
                           DescriptionFull is the full description.
-                          Extracted from: org.amd.silogen.description.full
+                          Extracted from: com.amd.aim.description.full
                         type: string
                       hfTokenRequired:
                         description: |-
                           HFTokenRequired indicates if a HuggingFace token is required.
-                          Extracted from: org.amd.silogen.hfToken.required
+                          Extracted from: com.amd.aim.hfToken.required
                         type: boolean
                       recommendedDeployments:
                         description: |-
                           RecommendedDeployments contains recommended deployment configurations.
-                          Extracted from: org.amd.silogen.model.recommendedDeployments (parsed from JSON array)
+                          Extracted from: com.amd.aim.model.recommendedDeployments (parsed from JSON array)
                         items:
                           description: RecommendedDeployment describes a recommended
                             deployment configuration for a model.
@@ -5492,36 +5489,36 @@ spec:
                       releaseNotes:
                         description: |-
                           ReleaseNotes contains release notes for this version.
-                          Extracted from: org.amd.silogen.release.notes
+                          Extracted from: com.amd.aim.release.notes
                         type: string
                       source:
                         description: |-
                           Source is the URL where the model can be found.
-                          Extracted from: org.amd.silogen.model.source
+                          Extracted from: com.amd.aim.model.source
                         type: string
                       tags:
                         description: |-
                           Tags are descriptive tags (e.g., ["text-generation", "chat", "instruction"]).
-                          Extracted from: org.amd.silogen.model.tags (comma-separated)
+                          Extracted from: com.amd.aim.model.tags (comma-separated)
                         items:
                           type: string
                         type: array
                       title:
                         description: |-
-                          Title is the Silogen-specific title for the model.
-                          Extracted from: org.amd.silogen.title
+                          Title is the AIM-specific title for the model.
+                          Extracted from: com.amd.aim.title
                         type: string
                       variants:
                         description: |-
                           Variants lists model variants.
-                          Extracted from: org.amd.silogen.model.variants (comma-separated)
+                          Extracted from: com.amd.aim.model.variants (comma-separated)
                         items:
                           type: string
                         type: array
                       versions:
                         description: |-
                           Versions lists available versions.
-                          Extracted from: org.amd.silogen.model.versions (comma-separated)
+                          Extracted from: com.amd.aim.model.versions (comma-separated)
                         items:
                           type: string
                         type: array
@@ -7686,31 +7683,30 @@ spec:
                     description: |-
                       BaseImageRef is the value of the AIM_BASE_IMAGE_REF environment variable
                       baked into the image's OCI config at build time. For AIM model images this
-                      records the base image (e.g. "ghcr.io/silogen/aim-base:0.8.5") that the
-                      model image was built from.
+                      records the base image (e.g. "docker.io/amdenterpriseai/aim-base:0.8.
                     type: string
                   model:
-                    description: Model contains AMD Silogen model-specific metadata.
+                    description: Model contains AIM model-specific metadata.
                     properties:
                       canonicalName:
                         description: |-
                           CanonicalName is the canonical model identifier (e.g., mistralai/Mixtral-8x22B-Instruct-v0.1).
-                          Extracted from: org.amd.silogen.model.canonicalName
+                          Extracted from: com.amd.aim.model.canonicalName
                         type: string
                       descriptionFull:
                         description: |-
                           DescriptionFull is the full description.
-                          Extracted from: org.amd.silogen.description.full
+                          Extracted from: com.amd.aim.description.full
                         type: string
                       hfTokenRequired:
                         description: |-
                           HFTokenRequired indicates if a HuggingFace token is required.
-                          Extracted from: org.amd.silogen.hfToken.required
+                          Extracted from: com.amd.aim.hfToken.required
                         type: boolean
                       recommendedDeployments:
                         description: |-
                           RecommendedDeployments contains recommended deployment configurations.
-                          Extracted from: org.amd.silogen.model.recommendedDeployments (parsed from JSON array)
+                          Extracted from: com.amd.aim.model.recommendedDeployments (parsed from JSON array)
                         items:
                           description: RecommendedDeployment describes a recommended
                             deployment configuration for a model.
@@ -7746,36 +7742,36 @@ spec:
                       releaseNotes:
                         description: |-
                           ReleaseNotes contains release notes for this version.
-                          Extracted from: org.amd.silogen.release.notes
+                          Extracted from: com.amd.aim.release.notes
                         type: string
                       source:
                         description: |-
                           Source is the URL where the model can be found.
-                          Extracted from: org.amd.silogen.model.source
+                          Extracted from: com.amd.aim.model.source
                         type: string
                       tags:
                         description: |-
                           Tags are descriptive tags (e.g., ["text-generation", "chat", "instruction"]).
-                          Extracted from: org.amd.silogen.model.tags (comma-separated)
+                          Extracted from: com.amd.aim.model.tags (comma-separated)
                         items:
                           type: string
                         type: array
                       title:
                         description: |-
-                          Title is the Silogen-specific title for the model.
-                          Extracted from: org.amd.silogen.title
+                          Title is the AIM-specific title for the model.
+                          Extracted from: com.amd.aim.title
                         type: string
                       variants:
                         description: |-
                           Variants lists model variants.
-                          Extracted from: org.amd.silogen.model.variants (comma-separated)
+                          Extracted from: com.amd.aim.model.variants (comma-separated)
                         items:
                           type: string
                         type: array
                       versions:
                         description: |-
                           Versions lists available versions.
-                          Extracted from: org.amd.silogen.model.versions (comma-separated)
+                          Extracted from: com.amd.aim.model.versions (comma-separated)
                         items:
                           type: string
                         type: array

@@ -58,6 +58,15 @@ spec:
 
     - name: Assert model ownership is bound to the source service UID
       try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-inline-custom-model
+              status:
+                resolvedModel:
+                  (name != ''): true
         - script:
             env:
               - name: NAMESPACE

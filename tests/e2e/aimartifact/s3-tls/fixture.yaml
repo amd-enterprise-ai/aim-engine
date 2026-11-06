@@ -1,15 +1,15 @@
 apiVersion: v1
 kind: Secret
 metadata:
-  name: minio-credentials
+  name: seaweedfs-credentials
 stringData:
-  accessKeyId: minioadmin
-  secretAccessKey: minioadmin
+  accessKeyId: seaweedadmin
+  secretAccessKey: seaweedadmin
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: seed-minio-tls
+  name: seed-seaweedfs-tls
 spec:
   backoffLimit: 2
   template:
@@ -17,22 +17,44 @@ spec:
       restartPolicy: Never
       containers:
       - name: seed
-        image: docker.io/pgsty/mc:RELEASE.2026-09-16T00-00-00Z
+        image: docker.io/amazon/aws-cli:2.38.6
         imagePullPolicy: IfNotPresent
+        env:
+        - name: AWS_ENDPOINT_URL
+          value: https://seaweedfs-admin:8333
+        - name: AWS_CA_BUNDLE
+          value: /etc/s3-ca/ca.crt
+        - name: AWS_ACCESS_KEY_ID
+          value: seaweedadmin
+        - name: AWS_SECRET_ACCESS_KEY
+          value: seaweedadmin
+        - name: AWS_DEFAULT_REGION
+          value: us-east-1
         command:
         - /bin/sh
         - -c
         args:
         - |
           set -eu
-          until mc --insecure alias set minio https://minio-admin:9000 minioadmin minioadmin; do
+          until aws s3 ls >/dev/null; do
             sleep 2
           done
-          mc --insecure mb --ignore-existing minio/models
+          aws s3api head-bucket --bucket models 2>/dev/null || aws s3 mb s3://models
           mkdir -p /tmp/seed/nested
           printf '{"tls":true}\n' > /tmp/seed/config.json
           printf 'private-ca model weights\n' > /tmp/seed/nested/weights.bin
-          mc --insecure cp --recursive /tmp/seed/ minio/models/tls-model/
+          aws s3 cp --recursive --no-progress /tmp/seed/ s3://models/tls-model/
+        volumeMounts:
+        - name: s3-ca
+          mountPath: /etc/s3-ca
+          readOnly: true
+      volumes:
+      - name: s3-ca
+        secret:
+          secretName: s3-root-ca
+          items:
+          - key: tls.crt
+            path: ca.crt
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMRuntimeConfig
@@ -44,14 +66,14 @@ spec:
     key: ca.crt
   artifact:
     s3:
-      endpoint: https://minio-admin:9000
+      endpoint: https://seaweedfs-admin:8333
       region: us-east-1
       addressingStyle: path
       signatureVersion: s3v4
       auth:
         mode: static
         credentialsSecretRef:
-          name: minio-credentials
+          name: seaweedfs-credentials
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMRuntimeConfig
@@ -60,14 +82,14 @@ metadata:
 spec:
   artifact:
     s3:
-      endpoint: https://minio-admin:9000
+      endpoint: https://seaweedfs-admin:8333
       region: us-east-1
       addressingStyle: path
       signatureVersion: s3v4
       auth:
         mode: static
         credentialsSecretRef:
-          name: minio-credentials
+          name: seaweedfs-credentials
       tls:
         caBundleRef:
           kind: Secret
@@ -81,14 +103,14 @@ metadata:
 spec:
   artifact:
     s3:
-      endpoint: https://minio-mismatch:9000
+      endpoint: https://seaweedfs-mismatch:8333
       region: us-east-1
       addressingStyle: path
       signatureVersion: s3v4
       auth:
         mode: static
         credentialsSecretRef:
-          name: minio-credentials
+          name: seaweedfs-credentials
       tls:
         insecureSkipVerify: true
 ---
@@ -99,14 +121,14 @@ metadata:
 spec:
   artifact:
     s3:
-      endpoint: https://minio-admin:9000
+      endpoint: https://seaweedfs-admin:8333
       region: us-east-1
       addressingStyle: path
       signatureVersion: s3v4
       auth:
         mode: static
         credentialsSecretRef:
-          name: minio-credentials
+          name: seaweedfs-credentials
 ---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMRuntimeConfig
@@ -115,14 +137,14 @@ metadata:
 spec:
   artifact:
     s3:
-      endpoint: https://minio-mismatch:9000
+      endpoint: https://seaweedfs-mismatch:8333
       region: us-east-1
       addressingStyle: path
       signatureVersion: s3v4
       auth:
         mode: static
         credentialsSecretRef:
-          name: minio-credentials
+          name: seaweedfs-credentials
       tls:
         caBundleRef:
           kind: Secret

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Ensure a Docker Hub image-pull secret exists in the test namespace.
 #
-# The private AIM images (docker.io/silogenai/*) need a dockerconfigjson pull
+# Private AIM images need a dockerconfigjson pull
 # secret. Rather than baking a personal file path into every test and HARD-
 # FAILING when it is missing, this helper resolves the secret from whatever a
 # developer / CI runner has available and — crucially — WARNS AND CONTINUES
@@ -93,7 +93,7 @@ ensure-pull-secret: no Docker Hub pull secret found for namespace '$NS'.
     (override with DOCKERHUB_PULL_SECRET_FILE=/path/to/secret.yaml)
   - no secret/$SECRET_NAME in namespace '$SOURCE_NS'
     (override the source with PULL_SECRET_SOURCE_NS)
-If docker.io/silogenai images are private, pulls in '$NS' will ImagePullBackOff.
+Pulls of private images in '$NS' will ImagePullBackOff.
 Create the secret once, e.g.:
   kubectl create secret docker-registry $SECRET_NAME \\
     --docker-server=docker.io --docker-username=<user> \\

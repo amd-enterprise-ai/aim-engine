@@ -28,14 +28,14 @@ spec:
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: minio-tls
+  name: seaweedfs-tls
 spec:
-  secretName: minio-tls
+  secretName: seaweedfs-tls
   issuerRef:
     name: s3-ca
     kind: Issuer
   dnsNames:
-  - minio-admin
-  - (join('.', ['minio-admin', $namespace]))
-  - (join('.', ['minio-admin', $namespace, 'svc']))
-  - (join('.', ['minio-admin', $namespace, 'svc', 'cluster', 'local']))
+  - seaweedfs-admin
+  - (join('.', ['seaweedfs-admin', $namespace]))
+  - (join('.', ['seaweedfs-admin', $namespace, 'svc']))
+  - (join('.', ['seaweedfs-admin', $namespace, 'svc', 'cluster', 'local']))

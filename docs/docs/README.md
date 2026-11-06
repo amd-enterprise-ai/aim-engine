@@ -1,6 +1,6 @@
 # AIM Engine
 
-AIM (AMD Inference Microservice) Engine is a Kubernetes operator that simplifies the deployment and management of AI inference workloads on supported AMD and NVIDIA GPUs. It provides a declarative, cloud-native approach to running ML models at scale.
+AIM Engine is a Kubernetes operator that simplifies the deployment and management of AI inference workloads in Kubernetes environments. It provides a declarative, cloud-native approach to running ML models at scale and is designed to support a vendor-agnostic strategy for AI infrastructure and operations.
 
 ## Quick example
 

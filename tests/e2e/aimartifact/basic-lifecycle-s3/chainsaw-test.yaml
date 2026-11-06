@@ -1,46 +1,31 @@
 
 # basic-lifecycle-s3: end-to-end happy path for an S3-backed AIMArtifact.
-# Scaffolding (MinIO + a synthetic seed of small random files) stands in for a
-# real model store, so the test has no external/HuggingFace dependency and runs
-# fast and deterministically. It asserts the AIMArtifact controller provisions a
-# PVC, runs the aim-artifact-downloader Job against s3://, and reaches Ready at
-# 100%. HF-source coverage lives in basic-lifecycle-hf.
+# Scaffolding (SeaweedFS + a synthetic seed of small random files) stands in for
+# a real model store, so the test has no external/HuggingFace dependency and
+# runs fast and deterministically. It asserts the AIMArtifact controller
+# provisions a PVC, runs the aim-artifact-downloader Job against s3://, and
+# reaches Ready at 100%. HF-source coverage lives in basic-lifecycle-hf.
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
   name: basic-lifecycle-s3
 spec:
   steps:
-    - name: Deploy Minio
-      try:
-        - apply:
-            file: minio-service.yaml
-        - apply:
-            file: minio-deployment.yaml
-
-    - name: Wait for Minio to be ready
-      try:
-        - assert:
-            timeout: 60s
-            resource:
-              apiVersion: apps/v1
-              kind: Deployment
-              metadata:
-                name: minio
-              status:
-                availableReplicas: 1
+    - name: Deploy SeaweedFS
+      use:
+        template: ../../_shared/seaweedfs-step.yaml
 
     - name: Create bucket and seed a synthetic model
       try:
         - apply:
-            file: minio-setup-job.yaml
+            file: seaweedfs-setup-job.yaml
         - assert:
             timeout: 120s
             resource:
               apiVersion: batch/v1
               kind: Job
               metadata:
-                name: minio-setup
+                name: seaweedfs-setup
               status:
                 (succeeded != null): true
                 succeeded: 1

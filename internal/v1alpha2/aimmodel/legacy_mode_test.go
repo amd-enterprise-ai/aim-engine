@@ -48,20 +48,20 @@ func TestEnsureBaseImageBridge(t *testing.T) {
 			spec: aimv1alpha1.AIMModelSpec{},
 			status: aimv1alpha1.AIMModelStatus{
 				ImageMetadata: &aimv1alpha1.ImageMetadata{
-					BaseImageRef: "ghcr.io/silogen/aim-base:0.11",
+					BaseImageRef: "ghcr.io/amdenterpriseai/aim-base:0.11",
 				},
 			},
-			wantBaseImage:    "ghcr.io/silogen/aim-base:0.11",
-			wantImageMetaRef: "ghcr.io/silogen/aim-base:0.11",
+			wantBaseImage:    "ghcr.io/amdenterpriseai/aim-base:0.11",
+			wantImageMetaRef: "ghcr.io/amdenterpriseai/aim-base:0.11",
 		},
 		{
 			name: "v1alpha2 status.baseImage propagates into imageMetadata",
 			spec: aimv1alpha1.AIMModelSpec{},
 			status: aimv1alpha1.AIMModelStatus{
-				BaseImage: "ghcr.io/silogen/aim-base:0.11",
+				BaseImage: "ghcr.io/amdenterpriseai/aim-base:0.11",
 			},
-			wantBaseImage:    "ghcr.io/silogen/aim-base:0.11",
-			wantImageMetaRef: "ghcr.io/silogen/aim-base:0.11",
+			wantBaseImage:    "ghcr.io/amdenterpriseai/aim-base:0.11",
+			wantImageMetaRef: "ghcr.io/amdenterpriseai/aim-base:0.11",
 		},
 		{
 			name: "existing imageMetadata.baseImageRef is preserved when baseImage is empty",
@@ -78,13 +78,13 @@ func TestEnsureBaseImageBridge(t *testing.T) {
 			name: "both fields already aligned - bridge is idempotent",
 			spec: aimv1alpha1.AIMModelSpec{},
 			status: aimv1alpha1.AIMModelStatus{
-				BaseImage: "ghcr.io/silogen/aim-base:0.11",
+				BaseImage: "ghcr.io/amdenterpriseai/aim-base:0.11",
 				ImageMetadata: &aimv1alpha1.ImageMetadata{
-					BaseImageRef: "ghcr.io/silogen/aim-base:0.11",
+					BaseImageRef: "ghcr.io/amdenterpriseai/aim-base:0.11",
 				},
 			},
-			wantBaseImage:    "ghcr.io/silogen/aim-base:0.11",
-			wantImageMetaRef: "ghcr.io/silogen/aim-base:0.11",
+			wantBaseImage:    "ghcr.io/amdenterpriseai/aim-base:0.11",
+			wantImageMetaRef: "ghcr.io/amdenterpriseai/aim-base:0.11",
 		},
 	}
 	for _, tc := range cases {

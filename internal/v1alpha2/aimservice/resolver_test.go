@@ -45,7 +45,7 @@ import (
 // testImageRef is a stable image reference used throughout the
 // image-shape resolver tests so the lint goconst rule stays satisfied
 // (the value itself is arbitrary; only its uniqueness matters).
-const testImageRef = "ghcr.io/silogen/aim-dummy:0.2.0"
+const testImageRef = "ghcr.io/amdenterpriseai/aim-dummy:0.2.0"
 
 // Shared identifiers for the TestStickyBinding_* family. Centralising
 // these keeps the helpers (resolverProfileBuilderWithUID,
@@ -992,7 +992,7 @@ func TestGenerateAutoModelName_Deterministic(t *testing.T) {
 func TestGenerateAutoModelName_DifferentInputsDifferentNames(t *testing.T) {
 	a, _ := GenerateAutoModelName("svc-a", testImageRef)
 	b, _ := GenerateAutoModelName("svc-b", testImageRef)
-	c, _ := GenerateAutoModelName("svc-a", "ghcr.io/silogen/aim-dummy:0.3.0")
+	c, _ := GenerateAutoModelName("svc-a", "ghcr.io/amdenterpriseai/aim-dummy:0.3.0")
 
 	if a == b {
 		t.Errorf("different services should produce different names; both got %q", a)
