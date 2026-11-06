@@ -7,6 +7,7 @@ Run with: python3 -m pytest config/accelerator-detector/scripts/
 """
 
 import importlib.util
+import json
 import os
 
 _SPEC = importlib.util.spec_from_file_location(
@@ -194,6 +195,107 @@ def test_detect_hardware_parses_detections():
         lambda: mod.detect_hardware("gpu"),
     )
     assert out == [{"accelerator_type": "GPU", "accelerator_model": "MI300X", "accelerator_count": 8}]
+
+
+# ---------------------------------------------------------------------------
+# detect_hardware: per-model detections from the --verbose output, so nodes
+# that mix GPU models are labelled with every model instead of the first GPU's.
+# ---------------------------------------------------------------------------
+
+
+def _gpu(device_id, model):
+    return {"device_id": device_id, "model": model, "vram_total": 1, "vram_used": 0}
+
+
+def _verbose_gpu_payload(gpus, model="MI350P"):
+    return json.dumps([{
+        "accelerator_type": "gpu",
+        "accelerator_model": model,
+        "accelerator_count": len(gpus),
+        "gpu_info": gpus,
+    }])
+
+
+def _recording_run(*responses):
+    """fake subprocess.run returning `responses` in order and recording argv."""
+    calls = []
+
+    def run(cmd, *a, **k):
+        calls.append(cmd)
+        return responses[min(len(calls), len(responses)) - 1]
+
+    return run, calls
+
+
+def test_detect_hardware_requests_verbose_output():
+    run, calls = _recording_run(_FakeProc(stdout="[]"))
+    _with_run(run, lambda: mod.detect_hardware("gpu"))
+    assert calls[0][-1] == "--verbose"
+
+
+def test_detect_hardware_splits_mixed_gpu_models():
+    gpus = [_gpu("0x75a8", "MI350P")] * 4 + [_gpu("0x7551", "R9700")] * 2
+    out = _with_run(
+        lambda *a, **k: _FakeProc(stdout=_verbose_gpu_payload(gpus)),
+        lambda: mod.detect_hardware("gpu"),
+    )
+    assert out == [
+        {"accelerator_type": "GPU", "accelerator_model": "MI350P", "accelerator_count": 4},
+        {"accelerator_type": "GPU", "accelerator_model": "R9700", "accelerator_count": 2},
+    ]
+
+
+def test_unrecognized_gpu_marks_node_as_mixed():
+    # The runtime's single-model output would drop the whole node here because
+    # the first card's device ID is unknown. The device plugin still offers the
+    # unknown card as amd.com/gpu, so the node counts as having two models.
+    gpus = [_gpu("0x1234", None)] + [_gpu("0x74a1", "MI300X")] * 7
+    out = _with_run(
+        lambda *a, **k: _FakeProc(stdout=_verbose_gpu_payload(gpus, model=None)),
+        lambda: mod.detect_hardware("gpu"),
+    )
+    assert out == [
+        {"accelerator_type": "GPU", "accelerator_model": "MI300X", "accelerator_count": 7},
+        {"accelerator_type": "GPU", "accelerator_model": "", "device_id": "0x1234", "accelerator_count": 1},
+    ]
+    lines = mod.build_feature_lines(out, vendor="AMD")
+    assert f"{mod.LABEL_PREFIX}.MI300X=7" in lines
+    assert f"{mod.LABEL_PREFIX}.{mod.MIXED_MODELS_LABEL_INFIX}.GPU=2" in lines
+    assert not any("0x1234" in line for line in lines)
+    assert mod.gpu_unit_count(out) == 7
+
+
+def test_unrecognized_gpus_of_one_device_id_count_as_one_model():
+    gpus = [_gpu("0x1234", None)] * 2 + [_gpu("0x74a1", "MI300X")] * 6
+    out = _with_run(
+        lambda *a, **k: _FakeProc(stdout=_verbose_gpu_payload(gpus, model=None)),
+        lambda: mod.detect_hardware("gpu"),
+    )
+    assert f"{mod.LABEL_PREFIX}.{mod.MIXED_MODELS_LABEL_INFIX}.GPU=2" in mod.build_feature_lines(out, vendor="AMD")
+
+
+def test_only_unrecognized_gpus_publish_no_labels():
+    out = _with_run(
+        lambda *a, **k: _FakeProc(stdout=_verbose_gpu_payload([_gpu("0x1234", None)], model=None)),
+        lambda: mod.detect_hardware("gpu"),
+    )
+    assert mod.build_feature_lines(out, vendor="AMD") == []
+    assert mod.gpu_unit_count(out) == 0
+
+
+def test_detect_hardware_normalizes_verbose_cpu_entry():
+    payload = json.dumps([{
+        "accelerator_type": "cpu",
+        "accelerator_model": "EPYC_9965",
+        "accelerator_count": 192,
+        "cpu_info": {"model_name": "AMD EPYC 9965"},
+        "cpu_cores": 192,
+    }])
+    out = _with_run(
+        lambda *a, **k: _FakeProc(stdout=payload),
+        lambda: mod.detect_hardware("cpu"),
+    )
+    assert out == [{"accelerator_type": "CPU", "accelerator_model": "EPYC_9965", "accelerator_count": 192}]
 
 
 # ---------------------------------------------------------------------------
@@ -543,6 +645,33 @@ def test_build_feature_lines_mixed_models_sum_family():
     assert labels[f"{mod.LABEL_PREFIX}.GPU"] == "8"
     assert labels[f"{mod.LABEL_PREFIX}.vendor.GPU.NVIDIA"] == "8"
     assert not any(k.endswith(".AMD") for k in labels)
+
+
+MIXED_GPU_KEY = f"{mod.LABEL_PREFIX}.mixed-models.GPU"
+
+
+def test_build_feature_lines_marks_mixed_gpu_models():
+    hw = [
+        {"accelerator_type": "GPU", "accelerator_model": "MI350P", "accelerator_count": 4},
+        {"accelerator_type": "GPU", "accelerator_model": "R9700", "accelerator_count": 2},
+    ]
+    labels = _labels(mod.build_feature_lines(hw))
+    assert labels[MIXED_GPU_KEY] == "2"
+
+
+def test_build_feature_lines_single_gpu_model_has_no_mixed_marker():
+    hw = [{"accelerator_type": "GPU", "accelerator_model": "MI300X", "accelerator_count": 8}]
+    assert MIXED_GPU_KEY not in _labels(mod.build_feature_lines(hw))
+
+
+def test_build_feature_lines_gpu_plus_cpu_model_is_not_mixed():
+    # A CPU model label on a GPU node is a different accelerator type, not a
+    # second GPU model.
+    hw = [
+        {"accelerator_type": "GPU", "accelerator_model": "MI300X", "accelerator_count": 8},
+        {"accelerator_type": "CPU", "accelerator_model": "EPYC_ZEN5", "accelerator_count": 1},
+    ]
+    assert not any(".mixed-models." in k for k in _labels(mod.build_feature_lines(hw)))
 
 
 # ---------------------------------------------------------------------------
