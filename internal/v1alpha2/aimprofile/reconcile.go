@@ -483,7 +483,7 @@ func decorateProfileStatus(
 	status.HardwareSummary = FormatProfileHardwareSummary(spec)
 	status.Resources = resolvedResources
 	status.ResolvedNodeAffinity = matchResult.NodeAffinity
-	status.MatchingNodes = matchResult.MatchingNodes
+	status.MatchingNodes = matchResult.TotalMatchingNodes()
 	status.MatchingNodesByAllocation = nil
 	if spec.AcceleratorType == aimv1alpha1.AcceleratorTypeGPU && nodeErr == nil {
 		status.MatchingNodesByAllocation = &aimv1alpha2.AIMProfileMatchingNodes{
@@ -527,30 +527,19 @@ func decorateProfileStatus(
 		return
 	}
 
-	reason, message := hardwareUnavailableReason(matchResult)
-	if matchResult.MatchingNodes > 0 {
+	if matchResult.TotalMatchingNodes() > 0 {
 		cm.MarkTrue(
 			aimv1alpha2.AIMProfileConditionHardwareAvailable,
 			aimv1alpha2.AIMProfileReasonHardwareAvailable,
 			"Matching nodes found in cluster",
 		)
 	} else {
-		cm.MarkFalse(aimv1alpha2.AIMProfileConditionHardwareAvailable, reason, message)
-	}
-}
-
-// hardwareUnavailableReason is the reason and message for a profile no node
-// can serve.
-func hardwareUnavailableReason(matchResult NodeMatchResult) (string, string) {
-	if matchResult.DRAMatchingNodes > 0 {
-		return aimv1alpha2.AIMProfileReasonHardwareOnlyOnDRANodes, fmt.Sprintf(
-			"Only %d node(s) whose GPUs are published through the AMD GPU DRA driver match, "+
-				"and AIM Engine does not allocate GPUs through DRA yet",
-			matchResult.DRAMatchingNodes,
+		cm.MarkFalse(
+			aimv1alpha2.AIMProfileConditionHardwareAvailable,
+			aimv1alpha2.AIMProfileReasonHardwareNotAvailable,
+			"No cluster nodes match accelerator labels and resource requests",
 		)
 	}
-	return aimv1alpha2.AIMProfileReasonHardwareNotAvailable,
-		"No cluster nodes match accelerator labels and resource requests"
 }
 
 // ============================================================================
@@ -589,7 +578,7 @@ func buildComponentHealth(
 		}
 	}
 
-	if matchResult.MatchingNodes > 0 {
+	if matchResult.TotalMatchingNodes() > 0 {
 		return []controllerutils.ComponentHealth{
 			{
 				Component: "Hardware",
@@ -599,13 +588,12 @@ func buildComponentHealth(
 		}
 	}
 
-	reason, message := hardwareUnavailableReason(matchResult)
 	return []controllerutils.ComponentHealth{
 		{
 			Component: "Hardware",
 			State:     constants.AIMStatusNotAvailable,
-			Reason:    reason,
-			Message:   message,
+			Reason:    aimv1alpha2.AIMProfileReasonHardwareNotAvailable,
+			Message:   "No cluster nodes match accelerator labels and resource requests",
 		},
 	}
 }

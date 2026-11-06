@@ -33,6 +33,7 @@ import (
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -125,6 +126,16 @@ type ServiceFetchResult struct {
 	// materialised the profile volume.
 	profileRuntime          controllerutils.FetchResult[*kservev1alpha1.ServingRuntime]
 	profileRuntimeConfigMap controllerutils.FetchResult[*corev1.ConfigMap]
+	// profileRuntimeName is the namespaced ServingRuntime the InferenceService
+	// references: the profile's runtime, or its DRA variant for DRA services.
+	profileRuntimeName string
+
+	// allocation is how the inference pods request GPUs. It is decided while
+	// fetching, because DRA services reference a different ServingRuntime.
+	allocation allocationDecision
+	// claimTemplates are the ResourceClaimTemplates the service owns, fetched
+	// for GPU profiles so templates of earlier device requests can be removed.
+	claimTemplates controllerutils.FetchResult[[]resourcev1.ResourceClaimTemplate]
 
 	mergedRuntimeConfig controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
 	additionalCABundle  controllerutils.FetchResult[*corev1.ConfigMap]
@@ -187,6 +198,10 @@ type ServiceObservation struct {
 	// converges stale existing resources under its own field manager.
 	desiredProfileRuntime          *kservev1alpha1.ServingRuntime
 	desiredProfileRuntimeConfigMap *corev1.ConfigMap
+
+	// desiredClaimTemplate is the ResourceClaimTemplate a DRA service's pods
+	// claim their GPUs from; nil for other services.
+	desiredClaimTemplate *resourcev1.ResourceClaimTemplate
 
 	// configErr records failures encountered while deriving profile-dependent
 	// artefacts (e.g. ISVC name generation, profile YAML assembly). It is
@@ -523,10 +538,20 @@ func (obs ServiceObservation) getProfileHealth() controllerutils.ComponentHealth
 			}
 			return health
 		}
-		if obs.serviceResourceMatchEvaluated && obs.serviceResourceMatch.MatchingNodes == 0 {
+		if obs.serviceResourceMatchEvaluated && obs.serviceResourceMatchingNodes() == 0 {
 			health.State = constants.AIMStatusNotAvailable
 			health.Reason = aimv1alpha1.AIMServiceReasonProfileNotReady
 			health.Message = fmt.Sprintf("No cluster nodes match profile %s with the service resource override", obs.profileName)
+			if obs.allocation.mode != "" {
+				health.Message += fmt.Sprintf(" and %s allocation", obs.allocation.mode)
+			}
+			return health
+		}
+		if obs.resolvedProfileStatus != nil && obs.resolvedProfileStatus.Status == constants.AIMStatusReady &&
+			!obs.allocationHasNodes() {
+			health.State = constants.AIMStatusNotAvailable
+			health.Reason = aimv1alpha1.AIMServiceReasonNoNodesForAllocation
+			health.Message = noNodesForAllocationMessage(obs.profileName, obs.allocation, obs.resolvedProfileStatus.MatchingNodesByAllocation)
 			return health
 		}
 		if obs.resourceMatchNodeErr != nil {
@@ -611,6 +636,13 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 	// than one candidate tied under ranking.
 	result.profile, result.clusterProfile, result.resolution = resolveProfileCandidates(ctx, c, r.Recorder, service)
 
+	// Fetch the merged AIMRuntimeConfig. It supplies routing (HTTPRoute),
+	// label-propagation and accelerator-allocation settings.
+	// FetchMergedRuntimeConfig falls back to the default cluster-scoped
+	// AIMClusterRuntimeConfig when the ref is empty.
+	runtimeConfigRef := service.GetRuntimeConfigRef()
+	result.mergedRuntimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, runtimeConfigRef.Name, service.Namespace)
+
 	// If the resolver picked a candidate, fetch any service-owned overlay
 	// derived from it (so ComposeState can switch downstream resolution
 	// onto the overlay) and the AIMProfileCache feeding the projected
@@ -649,11 +681,51 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 			Error: runtimeCacheErr,
 		}
 
+		// Profile status reflects the profile's own defaults, but service
+		// resources are a documented per-key overlay. Fetch nodes here so the
+		// allocation mode and ComposeState can evaluate the final service
+		// footprint, and an oversized base default doesn't block a smaller,
+		// valid service.
+		var nodeCounts *aimv1alpha2.AIMProfileMatchingNodes
+		if seedObs.resolvedProfileStatus != nil {
+			nodeCounts = seedObs.resolvedProfileStatus.MatchingNodesByAllocation
+		}
+		if service.Spec.Resources != nil && aimprofile.HasProfileAcceleratorRequirement(*resourceMatchSpec) {
+			inventory, err := aimprofile.ListNodeInventory(ctx, c)
+			if err != nil {
+				result.resourceMatchNodeErr = err
+			} else {
+				result.resourceMatchNodes = inventory
+				match := aimprofile.MatchProfileNodes(inventory, *resourceMatchSpec,
+					effectiveResourcesForService(service, resourceMatchSpec, seedObs.resolvedProfileStatus))
+				nodeCounts = &aimv1alpha2.AIMProfileMatchingNodes{
+					DevicePlugin: match.MatchingNodes,
+					DRA:          match.DRAMatchingNodes,
+				}
+			}
+		}
+
+		var existing *servingv1beta1.InferenceService
+		if result.inferenceService.OK() {
+			existing = result.inferenceService.Value
+		}
+		result.allocation = decideAllocation(
+			service, cacheProfileName, resourceMatchSpec, nodeCounts,
+			existing, result.mergedRuntimeConfig.Value,
+		)
+		if result.allocation.mode != "" {
+			result.claimTemplates = fetchResourceClaimTemplates(ctx, c, service)
+		}
+
 		// Fetch both namespaced projection resources before planning the ISVC.
 		// Cluster profiles only project a bare ClusterServingRuntime eagerly; the
 		// namespaced ServingRuntime and ConfigMap must be present first so KServe
 		// cannot render an initial pod without the profile mount.
 		runtimeName := serving.RuntimeName(cacheProfileName)
+		if result.allocation.dra() {
+			runtimeName = serving.DRARuntimeName(cacheProfileName)
+		}
+		result.profileRuntimeName = runtimeName
 		result.profileRuntime = controllerutils.Fetch(ctx, c, client.ObjectKey{
 			Namespace: service.Namespace,
 			Name:      runtimeName,
@@ -664,25 +736,6 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 		}, &corev1.ConfigMap{})
 	}
 
-	// Profile status reflects the profile's own defaults, but service resources
-	// are a documented per-key overlay. Fetch nodes here so ComposeState can
-	// evaluate the final service footprint and avoid letting an oversized base
-	// default block a smaller, valid service.
-	if service.Spec.Resources != nil && resourceMatchSpec != nil &&
-		aimprofile.HasProfileAcceleratorRequirement(*resourceMatchSpec) {
-		inventory, err := aimprofile.ListNodeInventory(ctx, c)
-		if err != nil {
-			result.resourceMatchNodeErr = err
-		} else {
-			result.resourceMatchNodes = inventory
-		}
-	}
-
-	// Fetch the merged AIMRuntimeConfig. It supplies routing (HTTPRoute) and
-	// label-propagation settings. FetchMergedRuntimeConfig falls back to the
-	// default cluster-scoped AIMClusterRuntimeConfig when the ref is empty.
-	runtimeConfigRef := service.GetRuntimeConfigRef()
-	result.mergedRuntimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, runtimeConfigRef.Name, service.Namespace)
 	bundleReader := client.Reader(c)
 	if r.APIReader != nil {
 		bundleReader = r.APIReader
@@ -805,6 +858,7 @@ func (r *ProfileServiceReconciler) ComposeState(
 		obs.profileCacheReady = fetch.profileCache.Value.Status.Status == constants.AIMStatusReady
 	}
 
+	composeAllocation(&obs)
 	r.composeDerivedNames(ctx, &obs)
 	r.composeProfileRuntimeProjection(&obs)
 
@@ -859,7 +913,7 @@ func (r *ProfileServiceReconciler) composeProfileRuntimeProjection(obs *ServiceO
 
 	state := runtimeprojection.ProjectionState{AnnotatedProfile: backingProfile}
 	state.Cache = obs.runtimeProfileCache.Value
-	runtimeName := serving.RuntimeName(obs.profileName)
+	runtimeName := obs.inferenceServiceRuntimeName()
 	desired, err := runtimeprojection.DesiredForRuntime(obs.service.Namespace, runtimeName, state)
 	if err != nil {
 		obs.configErr = fmt.Errorf("build profile KServe ServingRuntime projection: %w", err)
@@ -878,6 +932,15 @@ func (r *ProfileServiceReconciler) composeProfileRuntimeProjection(obs *ServiceO
 	desired.ConfigMap.SetOwnerReferences([]metav1.OwnerReference{ownerRef})
 	obs.desiredProfileRuntime = desired.Runtime
 	obs.desiredProfileRuntimeConfigMap = desired.ConfigMap
+}
+
+// inferenceServiceRuntimeName is the namespaced ServingRuntime the
+// InferenceService references.
+func (obs *ServiceObservation) inferenceServiceRuntimeName() string {
+	if obs.profileRuntimeName != "" {
+		return obs.profileRuntimeName
+	}
+	return serving.RuntimeName(obs.profileName)
 }
 
 // profileRuntimeCurrent requires both the effective projection content and the
@@ -996,9 +1059,27 @@ func (obs *ServiceObservation) profileReadyForService() bool {
 		return (obs.resolvedProfileStatus.Status == constants.AIMStatusReady ||
 			obs.resolvedProfileStatus.Status == constants.AIMStatusNotAvailable) &&
 			obs.serviceResourceMatchEvaluated &&
-			obs.serviceResourceMatch.MatchingNodes > 0
+			obs.serviceResourceMatchingNodes() > 0
 	}
-	return obs.resolvedProfileStatus.Status == constants.AIMStatusReady
+	return obs.resolvedProfileStatus.Status == constants.AIMStatusReady && obs.allocationHasNodes()
+}
+
+// serviceResourceMatchingNodes counts the nodes that fit the service resource
+// override with the service's allocation mode.
+func (obs *ServiceObservation) serviceResourceMatchingNodes() int32 {
+	if obs.allocation.dra() {
+		return obs.serviceResourceMatch.DRAMatchingNodes
+	}
+	return obs.serviceResourceMatch.MatchingNodes
+}
+
+// allocationHasNodes reports whether a node can serve the profile with the
+// service's allocation mode. Profiles without GPUs need no allocation.
+func (obs *ServiceObservation) allocationHasNodes() bool {
+	if obs.allocation.mode == "" {
+		return true
+	}
+	return allocationAvailable(obs.allocation, obs.resolvedProfileStatus)
 }
 
 func (obs *ServiceObservation) resolveFetchedProfile() {
@@ -1280,7 +1361,11 @@ func (r *ProfileServiceReconciler) PlanResources(
 						obs.adapterState.MaxRank,
 					)
 				}
+				if obs.desiredClaimTemplate != nil {
+					planResult.Apply(obs.desiredClaimTemplate)
+				}
 				planResult.Apply(isvc)
+				planStaleClaimTemplateCleanup(&planResult, obs)
 			}
 		}
 	}
@@ -1427,6 +1512,10 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 	obs ServiceObservation,
 ) {
 	controllerutils.SetTemplateMigrationRequired(cm, false)
+
+	if obs.allocation.err == nil {
+		status.AcceleratorAllocation = obs.allocation.mode
+	}
 
 	// Report-only: whether KEDA can read the scale-from-zero activation
 	// trigger. Shared with v1alpha1; never gates readiness.

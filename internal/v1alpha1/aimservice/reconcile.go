@@ -291,6 +291,9 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	if cfg := AutoscalingTriggerComponentHealth(obs.service); cfg.Component != "" {
 		health = append(health, cfg)
 	}
+	if cfg := AcceleratorAllocationComponentHealth(obs.service); cfg.Component != "" {
+		health = append(health, cfg)
+	}
 
 	return health
 }

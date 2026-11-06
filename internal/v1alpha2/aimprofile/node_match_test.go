@@ -943,8 +943,9 @@ func TestMatchProfileNodes_ExcludesNodesWithMixedGPUModels(t *testing.T) {
 				if mismatch.NodeName != mixedNode.Name {
 					continue
 				}
-				if len(mismatch.Reasons) != 1 || !strings.Contains(mismatch.Reasons[0], "more than one GPU model") {
-					t.Fatalf("mixed node reasons = %#v, want only the mixed-model reason", mismatch.Reasons)
+				if len(mismatch.Reasons) != 1 || !strings.Contains(mismatch.Reasons[0], "more than one GPU model") ||
+					!strings.Contains(mismatch.Reasons[0], "AMD GPU DRA driver") {
+					t.Fatalf("mixed node reasons = %#v, want only the mixed-model reason, pointing to DRA", mismatch.Reasons)
 				}
 				return
 			}

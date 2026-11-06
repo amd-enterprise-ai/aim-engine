@@ -367,11 +367,10 @@ type AIMProfileStatus struct {
 	// +optional
 	BaseImage string `json:"baseImage,omitempty"`
 
-	// MatchingNodes is the count of cluster nodes matching both the accelerator
-	// model label and status.resources requests. Zero means NotAvailable.
-	// Nodes whose GPUs are published through the AMD GPU DRA driver are not
-	// counted, because AIM Engine does not allocate GPUs through DRA yet; see
-	// matchingNodesByAllocation.
+	// MatchingNodes is the count of cluster nodes that can serve the profile:
+	// nodes matching the accelerator labels and status.resources requests, and
+	// nodes whose AMD GPU DRA devices match the profile. Zero means
+	// NotAvailable. See matchingNodesByAllocation for the split.
 	// +optional
 	MatchingNodes int32 `json:"matchingNodes"`
 
@@ -481,11 +480,7 @@ const (
 const (
 	AIMProfileReasonHardwareAvailable    = "HardwareAvailable"
 	AIMProfileReasonHardwareNotAvailable = "HardwareNotAvailable"
-	// AIMProfileReasonHardwareOnlyOnDRANodes indicates that only nodes whose
-	// GPUs are published through the AMD GPU DRA driver match, and AIM Engine
-	// does not allocate GPUs through DRA yet.
-	AIMProfileReasonHardwareOnlyOnDRANodes = "HardwareOnlyOnDRANodes"
-	AIMProfileReasonNoAccelerator          = "NoAcceleratorSpecified"
+	AIMProfileReasonNoAccelerator        = "NoAcceleratorSpecified"
 
 	// AIMProfileReasonDeployable indicates the profile is fully materialised
 	// (aimId + modelSources both populated). Iteration 1 producers always

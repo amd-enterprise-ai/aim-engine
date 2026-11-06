@@ -1,0 +1,201 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# An AIMService whose profile's GPUs exist only on AMD GPU DRA nodes of the
+# fake fleet (hack/fakegpu/fleet.yaml): with the default Auto allocation mode
+# it requests its GPUs through a ResourceClaim, references the DRA variant of
+# the profile's ServingRuntime, and its predictor pod lands on a DRA node.
+#
+# Needs the KWOK lane with the operator and KServe installed. KWOK only reports
+# pods as running, so the model never serves. The lane has no model downloads:
+# the service's profile cache is paused and patched Ready, pointing at a
+# statically bound PVC that the predictor pod can mount.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: kwok-dra-inference-service
+  labels:
+    requires: kwok
+spec:
+  description: An Auto-mode AIMService on DRA-only hardware claims its GPUs through DRA and runs on a DRA node.
+  timeouts:
+    assert: 180s
+  steps:
+    # Created first so that it is deleted last, after the predictor pod that mounts it.
+    - name: model volume for the frozen profile cache
+      try:
+        - apply:
+            resource:
+              apiVersion: v1
+              kind: PersistentVolume
+              metadata:
+                name: (join('-', ['kwok-dra-weights', $namespace]))
+              spec:
+                capacity:
+                  storage: 1Gi
+                accessModes: [ReadWriteMany]
+                storageClassName: ""
+                persistentVolumeReclaimPolicy: Retain
+                hostPath:
+                  path: /tmp/kwok-dra-weights
+                claimRef:
+                  namespace: ($namespace)
+                  name: kwok-dra-weights
+        - apply:
+            resource:
+              apiVersion: v1
+              kind: PersistentVolumeClaim
+              metadata:
+                name: kwok-dra-weights
+              spec:
+                accessModes: [ReadWriteMany]
+                storageClassName: ""
+                volumeName: (join('-', ['kwok-dra-weights', $namespace]))
+                resources:
+                  requests:
+                    storage: 1Gi
+
+    - name: MI355X profile, available only on DRA nodes
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: kwok-dra-mi355x
+              spec:
+                aimId: test/kwok-dra-model
+                modelId: test/kwok-dra-model
+                image: registry.example.com/test-image:1.0.0
+                modelSources:
+                  - modelId: test/kwok-dra-model
+                    sourceUri: hf://test/kwok-dra-model
+                acceleratorVendor: amd
+                acceleratorModel: MI355X
+                acceleratorType: gpu
+                acceleratorCount: 8
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: kwok-dra-mi355x
+              status:
+                status: Ready
+                matchingNodesByAllocation:
+                  devicePlugin: 0
+                  dra: 2
+
+    - name: the service allocates its GPUs through DRA
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: kwok-dra-service
+              spec:
+                profile:
+                  name: kwok-dra-mi355x
+                replicas: 1
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: kwok-dra-service
+              status:
+                acceleratorAllocation: DRA
+        - script:
+            timeout: 120s
+            content: |
+              set -eu
+              for i in $(seq 1 60); do
+                PC=$(kubectl get aimprofilecache -n "$NAMESPACE" -l aim.eai.amd.com/service=kwok-dra-service \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                ART=$(kubectl get aimartifact -n "$NAMESPACE" -l aim.eai.amd.com/profile.name=kwok-dra-mi355x \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                [ -n "$PC" ] && [ -n "$ART" ] && break
+                if [ "$i" -eq 60 ]; then
+                  echo "ERROR: no profile cache or artifact for kwok-dra-service"
+                  exit 1
+                fi
+                sleep 2
+              done
+              ART_UID=$(kubectl get aimartifact -n "$NAMESPACE" "$ART" -o jsonpath='{.metadata.uid}')
+              kubectl annotate aimprofilecache -n "$NAMESPACE" "$PC" aim.eai.amd.com/reconciliation-paused=true --overwrite
+              kubectl patch aimprofilecache -n "$NAMESPACE" "$PC" --type=merge --subresource=status -p "{
+                \"status\": {
+                  \"status\": \"Ready\",
+                  \"conditions\": [
+                    {\"type\": \"ProfileFound\", \"status\": \"True\", \"reason\": \"ProfileResolved\", \"message\": \"Profile resolved\", \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"},
+                    {\"type\": \"ArtifactsReady\", \"status\": \"True\", \"reason\": \"AllCachesReady\", \"message\": \"All artifacts are ready\", \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"}
+                  ],
+                  \"artifacts\": {
+                    \"$ART\": {
+                      \"name\": \"$ART\",
+                      \"uid\": \"$ART_UID\",
+                      \"model\": \"test/kwok-dra-model\",
+                      \"status\": \"Ready\",
+                      \"persistentVolumeClaim\": \"kwok-dra-weights\",
+                      \"mountPoint\": \"/workspace/cache/test/kwok-dra-model\"
+                    }
+                  }
+                }
+              }"
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: kwok-dra-service
+              spec:
+                predictor:
+                  (resourceClaims[?name == 'gpus'] | length(@)): 1
+                  # Tolerates the fake nodes' amd.com/gpu taint without spec.tolerations.
+                  (tolerations[?key == 'amd.com/gpu' && operator == 'Exists' && effect == 'NoSchedule'] | length(@)): 1
+                  model:
+                    (resources.claims[?name == 'gpus'] | length(@)): 1
+                    (resources.limits."amd.com/gpu" || ''): ''
+        - assert:
+            resource:
+              apiVersion: resource.k8s.io/v1
+              kind: ResourceClaimTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: kwok-dra-service
+              spec:
+                spec:
+                  devices:
+                    (requests[0].exactly.deviceClassName): gpu.amd.com
+                    (requests[0].exactly.count): 8
+        - script:
+            timeout: 180s
+            content: |
+              set -eu
+              ISVC=$(kubectl get inferenceservice -n "$NAMESPACE" -l aim.eai.amd.com/service=kwok-dra-service \
+                -o jsonpath='{.items[0].metadata.name}')
+              RUNTIME=$(kubectl get inferenceservice -n "$NAMESPACE" "$ISVC" -o jsonpath='{.spec.predictor.model.runtime}')
+              if kubectl get servingruntime -n "$NAMESPACE" "$RUNTIME" -o jsonpath='{.spec.containers[0].resources}' | grep -q 'amd.com/gpu'; then
+                echo "ERROR: the DRA ServingRuntime $RUNTIME requests amd.com/gpu"
+                exit 1
+              fi
+              for i in $(seq 1 90); do
+                NODE=$(kubectl get pods -n "$NAMESPACE" -l "serving.kserve.io/inferenceservice=$ISVC" \
+                  -o jsonpath='{.items[0].spec.nodeName}' 2>/dev/null || true)
+                case "$NODE" in
+                  fake-gpu-dra-mi355x-*) break ;;
+                esac
+                if [ "$i" -eq 90 ]; then
+                  echo "ERROR: predictor pod of $ISVC is not on a DRA MI355X node (node: '$NODE')"
+                  kubectl get pods -n "$NAMESPACE" -o wide
+                  exit 1
+                fi
+                sleep 2
+              done
+              DEVICES=$(kubectl get resourceclaims -n "$NAMESPACE" -o jsonpath='{.items[0].status.allocation.devices.results[*].device}' | wc -w)
+              if [ "$DEVICES" -ne 8 ]; then
+                echo "ERROR: the predictor's claim has $DEVICES devices allocated, want 8"
+                exit 1
+              fi
+              echo "predictor on $NODE with $DEVICES devices"

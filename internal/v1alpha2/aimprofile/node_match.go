@@ -104,6 +104,12 @@ type NodeMatchResult struct {
 	OmittedMismatches int
 }
 
+// TotalMatchingNodes counts the nodes that can serve the profile with either
+// allocation method.
+func (r NodeMatchResult) TotalMatchingNodes() int32 {
+	return r.MatchingNodes + r.DRAMatchingNodes - r.BothMatchingNodes
+}
+
 // ResolveResources merges the accelerator-derived device request with explicit
 // resources using the legacy accelerator contract. Empty vendor preserves the
 // historical AMD whole-GPU resource name.
@@ -532,12 +538,17 @@ func nodeMismatchReasons(
 	// never serve the profile isn't explained by its mix of models.
 	if len(reasons) == 0 && mixedModelsReq != nil {
 		if _, mixed := node.Labels[mixedModelsReq.Key]; mixed {
-			reasons = append(reasons, fmt.Sprintf(
+			reason := fmt.Sprintf(
 				"node carries more than one GPU model (label %q): device-plugin scheduling "+
 					"cannot choose which model a pod receives, so GPU workloads are not "+
 					"scheduled onto this node",
 				mixedModelsReq.Key,
-			))
+			)
+			// Only AMD GPUs have a DRA allocation path in AIM Engine.
+			if nodeHasAMDGPUs(node) {
+				reason += "; install the AMD GPU DRA driver on this node to serve it through DRA allocation"
+			}
+			reasons = append(reasons, reason)
 		}
 	}
 	return reasons
@@ -662,6 +673,14 @@ func vendorNodeSelectorRequirement(
 func advertisesAMDGPUs(node *corev1.Node) bool {
 	quantity, ok := node.Status.Allocatable[corev1.ResourceName(constants.AMDGPUResourceName)]
 	return ok && !quantity.IsZero()
+}
+
+// nodeHasAMDGPUs reports whether the detector labelled the node's GPUs as AMD.
+func nodeHasAMDGPUs(node *corev1.Node) bool {
+	_, ok := node.Labels[AcceleratorVendorLabelPrefix+
+		strings.ToUpper(string(aimv1alpha1.AcceleratorTypeGPU))+"."+
+		strings.ToUpper(string(aimv1alpha1.AcceleratorVendorAMD))]
+	return ok
 }
 
 // nodeMatchesVendor evaluates a resolved vendor selector against node labels.

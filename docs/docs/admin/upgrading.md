@@ -92,13 +92,17 @@ kubectl delete clusterrolebinding envoy-gateway-metrics-collector \
 
 Every GPU profile's node affinity now excludes nodes with more than one GPU model (see [Nodes with mixed GPU models](../concepts/accelerator-detection.md#nodes-with-mixed-gpu-models)). A node with one unrecognised GPU next to known ones counts as mixed too. The affinity change rolls every GPU InferenceService once after the upgrade, so plan for spare GPU capacity: where no GPUs are free for the replacement pods, a rollout waits with the old pods still serving.
 
-Pods already running on a mixed-model node keep running, but their replacement pods can't be scheduled there. If a model's only GPUs are on mixed-model nodes, its replacement pods stay Pending until an administrator changes the cluster, for example by adding single-model nodes. They don't recover on their own.
+Pods already running on a mixed-model node keep running, but their replacement pods can't be scheduled there. If a model's only GPUs are on mixed-model nodes, its replacement pods stay Pending until an administrator changes the cluster, for example by adding single-model nodes, or by installing the AMD GPU DRA driver on those nodes and setting `acceleratorAllocation.mode: DRA` for the affected services (running services keep the device plugin in `Auto` mode; see [GPU allocation through DRA](#gpu-allocation-through-dra)). They don't recover on their own.
 
 Once the accelerator detector has relabelled the nodes after the upgrade, list the mixed-model nodes with:
 
 ```bash
 kubectl get nodes -l feature.node.kubernetes.io/aim-accelerator.mixed-models.GPU
 ```
+
+### GPU allocation through DRA
+
+Existing services keep requesting `amd.com/gpu`. With the default `acceleratorAllocation.mode: Auto`, a new service allocates its GPUs through DRA only when nodes with the AMD GPU DRA driver are the only ones with its GPUs. DRA allocations don't count against `requests.amd.com/gpu` quotas; see [Accelerator allocation](../concepts/runtime-config.md#accelerator-allocation) before adding DRA nodes.
 
 ### 3. Verify
 

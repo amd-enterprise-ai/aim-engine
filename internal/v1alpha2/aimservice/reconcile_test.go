@@ -33,6 +33,7 @@ import (
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	resourcev1 "k8s.io/api/resource/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1138,6 +1139,7 @@ func newProfileRuntimePipelineFixture(
 	t *testing.T,
 	service *aimv1alpha1.AIMService,
 	clusterProfile *aimv1alpha2.AIMClusterProfile,
+	extra ...client.Object,
 ) (client.Client, *profileRuntimeTestPipeline) {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -1148,6 +1150,7 @@ func newProfileRuntimePipelineFixture(
 		aimv1alpha2.AddToScheme,
 		kservev1alpha1.AddToScheme,
 		servingv1beta1.AddToScheme,
+		resourcev1.AddToScheme,
 		gatewayapiv1.Install,
 	} {
 		if err := addToScheme(scheme); err != nil {
@@ -1158,7 +1161,7 @@ func newProfileRuntimePipelineFixture(
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithStatusSubresource(&aimv1alpha1.AIMService{}).
-		WithObjects(service, clusterProfile).
+		WithObjects(append([]client.Object{service, clusterProfile}, extra...)...).
 		Build()
 	recorder := record.NewFakeRecorder(20)
 	reconciler := &ProfileServiceReconciler{Scheme: scheme, Recorder: recorder}
