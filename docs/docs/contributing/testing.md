@@ -208,6 +208,8 @@ Kind has no GPUs, and the labelled worker nodes in `hack/kind/config.yaml` adver
 - **`device-plugin`**: allocatable `amd.com/gpu`, one per GPU or per compute partition, as the AMD device plugin advertises it with `resource_naming_strategy: single`.
 - **`dra`**: a `gpu.amd.com` ResourceSlice in the AMD GPU DRA driver's format: one device per GPU or partition, with the driver's `type`, `deviceID`, `productName`, `partitionProfile`, `numaNode` and PCI attributes and its `memory`, `computeUnits` and `simdUnits` capacities.
 
+The default fleet has both kinds of node with whole GPUs and with CPX partitions, and with two GPU models on one node (AMD Instinct MI350P and Radeon AI PRO R9700). It also has a DRA node whose GPUs are in different partition modes. Device-plugin nodes can't have that shape with `resource_naming_strategy: single`, so the generator rejects it for them.
+
 Every node also gets the labels the AMD GPU Operator's node labeller and AIM Engine's AcceleratorDetector would publish, and the taint `amd.com/gpu:NoSchedule`. The kind config enables the `ExtendedResourceToleration` admission plugin, which adds a toleration for that taint to every pod requesting `amd.com/gpu`. So inference pods reach the device-plugin nodes without changes, and pods that request no GPU stay off all fake nodes. DRA pods request no `amd.com/gpu` and need their own toleration.
 
 ```bash
