@@ -127,15 +127,6 @@ def detection_command() -> list:
     return ["aim-runtime"]
 
 
-# The default detect-hardware output reports one model per accelerator type (the
-# first GPU's) with the count of all GPUs, which mislabels nodes that mix GPU
-# models. The --verbose output lists every GPU with its resolved model, so
-# detections are rebuilt per model from it. Runtimes that predate --verbose
-# reject the flag; the detector then uses the default output for the rest of
-# its lifetime.
-_verbose_detection_supported = True
-
-
 def detect_hardware(detect_type: str) -> list | None:
     """Run detect-hardware and return one detection per accelerator model.
 
@@ -147,19 +138,12 @@ def detect_hardware(detect_type: str) -> list | None:
         "no hardware": overwriting a previously-good feature file with empty
         results on a transient failure is what makes the published node labels
         (and therefore every consumer's profile/model availability) flap.
+
+    The default output reports one model per accelerator type (the first
+    GPU's) with the count of all GPUs, which mislabels nodes that mix GPU
+    models. The --verbose output lists every GPU with its resolved model.
     """
-    global _verbose_detection_supported
-    cmd = detection_command() + ["detect-hardware", "--type", detect_type, "--format", "json"]
-    if _verbose_detection_supported:
-        result = _run_detect_hardware(cmd + ["--verbose"])
-        if result is None or result.returncode == 0 or "no such option" not in result.stderr.lower():
-            return _parse_detections(result)
-        logger.warning(
-            "detect-hardware does not support --verbose; falling back to its "
-            "default output, which labels a node with mixed GPU models as a "
-            "single model"
-        )
-        _verbose_detection_supported = False
+    cmd = detection_command() + ["detect-hardware", "--type", detect_type, "--format", "json", "--verbose"]
     return _parse_detections(_run_detect_hardware(cmd))
 
 
@@ -195,7 +179,7 @@ def _parse_detections(result: subprocess.CompletedProcess | None) -> list | None
         logger.info(
             "Detected: type=%s model=%s count=%s",
             det["accelerator_type"],
-            det["accelerator_model"],
+            det["accelerator_model"] or f"unrecognized device ID {det.get('device_id')}",
             det["accelerator_count"],
         )
     if not detections:
@@ -210,8 +194,10 @@ def detections_per_model(payload: list) -> list:
     Accepts both output shapes: the default label form (one entry per type,
     upper-case type) and the --verbose detail form (lower-case type plus a
     per-GPU `gpu_info` list). When `gpu_info` is present the GPUs are grouped by
-    their resolved model; GPUs whose device ID the runtime does not recognise
-    are left out and logged rather than hiding the recognised ones.
+    their resolved model. GPUs whose device ID the runtime does not recognise
+    are grouped by device ID, with an empty accelerator_model and the ID in
+    device_id: they get no model labels, but still count as another GPU model
+    on the node.
     """
     detections = []
     for entry in payload:
@@ -219,23 +205,31 @@ def detections_per_model(payload: list) -> list:
         gpus = entry.get("gpu_info")
         if gpus:
             counts: dict[str, int] = {}
-            unknown = []
+            unknown: dict[str, int] = {}
             for gpu in gpus:
                 model = gpu.get("model")
                 if model:
                     counts[model] = counts.get(model, 0) + 1
                 else:
-                    unknown.append(str(gpu.get("device_id", "?")))
+                    device_id = str(gpu.get("device_id", "?")).lower()
+                    unknown[device_id] = unknown.get(device_id, 0) + 1
             if unknown:
                 logger.warning(
-                    "Skipping %d GPU(s) with unrecognized device IDs: %s",
-                    len(unknown), ", ".join(sorted(unknown)),
+                    "%d GPU(s) with unrecognized device IDs get no model labels: %s",
+                    sum(unknown.values()), ", ".join(sorted(unknown)),
                 )
             for model in sorted(counts):
                 detections.append({
                     "accelerator_type": accelerator_type,
                     "accelerator_model": model,
                     "accelerator_count": counts[model],
+                })
+            for device_id in sorted(unknown):
+                detections.append({
+                    "accelerator_type": accelerator_type,
+                    "accelerator_model": "",
+                    "device_id": device_id,
+                    "accelerator_count": unknown[device_id],
                 })
         elif entry.get("accelerator_model"):
             detections.append({
@@ -641,6 +635,8 @@ def build_feature_lines(detections: list, vendor: str = DEFAULT_VENDOR) -> list:
 
     A node carrying more than one GPU model also gets
     feature.node.kubernetes.io/aim-accelerator.mixed-models.GPU={model count}.
+    GPUs with unrecognized device IDs count as one model per device ID here,
+    and get no other labels.
     Device-plugin resources (amd.com/gpu, nvidia.com/gpu) are one pool per node,
     so a pod on such a node may receive any of its GPU models; the operator
     keeps device-plugin placements off nodes with this label.
@@ -655,6 +651,8 @@ def build_feature_lines(detections: list, vendor: str = DEFAULT_VENDOR) -> list:
         family = det.get("accelerator_type")
         count = det.get("accelerator_count", 0)
         if not model:
+            if family and det.get("device_id"):
+                family_models.setdefault(family, set()).add("device-id:" + det["device_id"])
             continue
         if model not in seen_models:
             seen_models.add(model)
@@ -714,7 +712,7 @@ def gpu_unit_count(detections: list) -> int:
     """Sum physical GPU units across GPU detections (for the default sentinel)."""
     total = 0
     for det in detections:
-        if det.get("accelerator_type") == "GPU":
+        if det.get("accelerator_type") == "GPU" and det.get("accelerator_model"):
             total += det.get("accelerator_count", 0) or 0
     return total
 
