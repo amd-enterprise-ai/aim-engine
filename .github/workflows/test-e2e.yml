@@ -675,7 +675,8 @@ jobs:
         run: |
           set -euo pipefail
           kind load docker-image "${OPERATOR_IMAGE}" --name "${KIND_CLUSTER}"
-          make crds helm
+          # kustomize and kubebuilder are dev tools (mise.local.toml), which CI doesn't load.
+          mise exec kustomize@5.7.1 kubebuilder@4.10.1 -- make crds helm
           kubectl apply --server-side -f dist/crds.yaml
           helm install aim-engine dist/chart --namespace aim-system --create-namespace \
             --set manager.image.repository="${OPERATOR_IMAGE_REPOSITORY}" \
