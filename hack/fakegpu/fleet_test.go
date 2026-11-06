@@ -262,6 +262,7 @@ func TestMixedModelNode(t *testing.T) {
 			aimLabelPrefix + ".MI350P":                     "4",
 			aimLabelPrefix + ".R9700":                      "2",
 			aimLabelPrefix + ".GPU":                        "6",
+			aimMixedModelsLabel:                            "2",
 			aimPartitionPrefix + ".default":                "6",
 			"amd.com/gpu.device-id.75a8":                   "4",
 			"amd.com/gpu.device-id.7551":                   "2",
@@ -302,7 +303,7 @@ func TestMixedPartitionDRANode(t *testing.T) {
 		aimLabelPrefix + ".MI300X":       "8",
 		aimPartitionPrefix + ".SPX-NPS1": "4",
 		aimPartitionPrefix + ".CPX-NPS1": "32",
-	}, aimPartitionPrefix+".default")
+	}, aimPartitionPrefix+".default", aimMixedModelsLabel)
 
 	counts := map[string]int{}
 	for _, d := range slices["fake-gpu-parts-0"].Spec.Devices {

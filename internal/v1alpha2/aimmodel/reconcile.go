@@ -116,7 +116,7 @@ type ModelFetchResult struct {
 	legacyAutoCustom bool
 	legacyModelErr   error
 	discovery        DiscoveryDecision
-	nodes            controllerutils.FetchResult[[]corev1.Node]
+	nodes            controllerutils.FetchResult[aimprofile.NodeInventory]
 	existingProfiles controllerutils.FetchResult[[]managedProfile]
 	childProfileSet  controllerutils.FetchResult[*aimv1alpha2.AIMProfileSet]
 	runtimeConfig    controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
@@ -252,9 +252,8 @@ func (r *ModelReconciler) FetchRemoteState(
 
 	}
 	if model.Spec.Image != "" || model.Spec.ModelID != "" {
-		var nodes corev1.NodeList
-		nodeErr := c.List(ctx, &nodes)
-		result.nodes = controllerutils.FetchResult[[]corev1.Node]{Value: nodes.Items, Error: nodeErr}
+		nodes, nodeErr := aimprofile.ListNodeInventory(ctx, c)
+		result.nodes = controllerutils.FetchResult[aimprofile.NodeInventory]{Value: nodes, Error: nodeErr}
 	}
 	profiles, err := listManagedNamespaceProfiles(ctx, c, model.Namespace, string(model.UID))
 	result.existingProfiles = controllerutils.FetchResult[[]managedProfile]{Value: profiles, Error: err}
@@ -755,7 +754,7 @@ func buildModelComponentHealth(obs ModelObservation) []controllerutils.Component
 		health = append(health, discoveryComponentHealth(obs))
 	}
 	if nativeDiscoveryApplicable(&obs.model.Spec) && derivationSpec(&obs.model.Spec) == nil {
-		health = append(health, obs.nodes.ToComponentHealth(componentNodeInventory, func(_ []corev1.Node) controllerutils.ComponentHealth {
+		health = append(health, obs.nodes.ToComponentHealth(componentNodeInventory, func(_ aimprofile.NodeInventory) controllerutils.ComponentHealth {
 			return controllerutils.ComponentHealth{State: constants.AIMStatusReady, Reason: "NodeInventoryAvailable"}
 		}))
 	}
@@ -1146,7 +1145,7 @@ func nativeDiscoveryApplicable(spec *aimv1alpha1.AIMModelSpec) bool {
 		shouldRunNativeDiscovery(spec)
 }
 
-func summarizeDiscoveredProfiles(catalog aimprofile.DiscoveryCatalog, nodes []corev1.Node, nodeErr error) aimv1alpha1.DiscoveredProfileCounts {
+func summarizeDiscoveredProfiles(catalog aimprofile.DiscoveryCatalog, nodes aimprofile.NodeInventory, nodeErr error) aimv1alpha1.DiscoveredProfileCounts {
 	result := aimv1alpha1.DiscoveredProfileCounts{Total: int32(len(catalog.Profiles))}
 	if nodeErr != nil {
 		return result
@@ -1226,7 +1225,7 @@ func summarizeDiscoveredProfiles(catalog aimprofile.DiscoveryCatalog, nodes []co
 func buildDesiredOfficialProfiles(
 	model *aimv1alpha2.AIMModel,
 	catalog aimprofile.DiscoveryCatalog,
-	nodes []corev1.Node,
+	nodes aimprofile.NodeInventory,
 	recommendedDeployments []aimv1alpha1.RecommendedDeployment,
 	existing ...managedProfile,
 ) ([]desiredProfile, error) {
@@ -1369,7 +1368,7 @@ func buildDesiredProfileSet(model *aimv1alpha2.AIMModel, cacheRef *aimv1alpha1.D
 	return profileSet
 }
 
-func isSupportedProfile(spec aimv1alpha2.AIMProfileSpecCommon, nodes []corev1.Node) bool {
+func isSupportedProfile(spec aimv1alpha2.AIMProfileSpecCommon, nodes aimprofile.NodeInventory) bool {
 	if !aimprofile.HasProfileAcceleratorRequirement(spec) {
 		return true
 	}

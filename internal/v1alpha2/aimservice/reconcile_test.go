@@ -1526,7 +1526,7 @@ func TestPlanResources_serviceOverrideRescuesProfileReadiness(t *testing.T) {
 		ServiceFetchResult{
 			service:            service,
 			profile:            controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: profile},
-			resourceMatchNodes: []corev1.Node{node},
+			resourceMatchNodes: aimprofile.NodesOnly([]corev1.Node{node}),
 		},
 	)
 	if obs.serviceResourceMatch.MatchingNodes != 1 {

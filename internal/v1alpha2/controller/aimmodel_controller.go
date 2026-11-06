@@ -28,6 +28,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	resourcev1 "k8s.io/api/resource/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -300,7 +301,7 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return directModelRequest(obj)
 	})
 
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha2.AIMModel{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&batchv1.Job{}).
@@ -338,9 +339,16 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&aimv1alpha2.AIMProfile{},
 			childHandler,
 			builder.WithPredicates(predicate.NewPredicateFuncs(hasDirectModelOwnerAnnotations)),
-		).
-		Named(modelControllerName).
-		Complete(r)
+		)
+	// AMD GPU DRA ResourceSlices change which nodes match, like node changes.
+	if utils.ResourceSliceAPIAvailable(mgr.GetRESTMapper()) {
+		b = b.Watches(
+			&resourcev1.ResourceSlice{},
+			handler.EnqueueRequestsFromMapFunc(r.findModelsForNodeChange),
+			builder.WithPredicates(utils.AMDGPUResourceSlicePredicate()),
+		)
+	}
+	return b.Named(modelControllerName).Complete(r)
 }
 
 func (r *AIMModelReconciler) cleanupManagedProfiles(ctx context.Context, namespace, modelUID string) error {
@@ -516,7 +524,9 @@ func (r *AIMModelReconciler) findModelsForClusterRuntimeConfig(ctx context.Conte
 }
 
 func (r *AIMModelReconciler) findModelsForNodeChange(ctx context.Context, obj client.Object) []reconcile.Request {
-	if _, ok := obj.(*corev1.Node); !ok {
+	switch obj.(type) {
+	case *corev1.Node, *resourcev1.ResourceSlice:
+	default:
 		return nil
 	}
 

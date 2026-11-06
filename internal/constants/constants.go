@@ -297,6 +297,9 @@ const (
 	// DefaultGPUResourceName is retained for legacy v1alpha1 and profiles that
 	// predate acceleratorVendor. Empty vendor continues to mean AMD.
 	DefaultGPUResourceName = AMDGPUResourceName
+	// AMDGPUDRADriverName is the driver name of the AMD GPU DRA driver, which
+	// publishes the GPUs of DRA nodes in ResourceSlices.
+	AMDGPUDRADriverName = "gpu.amd.com"
 	// DefaultCPURequestPerGPU is the default host CPU request for each GPU.
 	DefaultCPURequestPerGPU int64 = 4
 	// DefaultMemoryRequestGiPerGPU is the default host memory request, in GiB,

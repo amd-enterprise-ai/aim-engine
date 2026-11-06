@@ -832,7 +832,7 @@ func TestMatchProfileNodes_NVIDIAVendorWithoutModel(t *testing.T) {
 		},
 	}
 
-	result := MatchProfileNodes(nodes, spec, resources)
+	result := MatchProfileNodes(NodesOnly(nodes), spec, resources)
 	if result.MatchingNodes != 1 {
 		t.Fatalf("MatchingNodes = %d, want 1", result.MatchingNodes)
 	}
@@ -871,7 +871,7 @@ func TestMatchProfileNodes_ReportsResourceAndLabelMismatches(t *testing.T) {
 		}},
 	}
 
-	result := MatchProfileNodes([]corev1.Node{node}, spec, resources)
+	result := MatchProfileNodes(NodesOnly([]corev1.Node{node}), spec, resources)
 	if result.MatchingNodes != 0 {
 		t.Fatalf("MatchingNodes = %d, want 0", result.MatchingNodes)
 	}
@@ -889,7 +889,7 @@ func TestMatchProfileNodes_ReportsResourceAndLabelMismatches(t *testing.T) {
 
 	delete(node.Labels, AcceleratorVendorLabelPrefix+"GPU.NVIDIA")
 	delete(node.Labels, PartitioningSchemeLabelPrefix+PartitioningSchemeDefault)
-	result = MatchProfileNodes([]corev1.Node{node}, spec, resources)
+	result = MatchProfileNodes(NodesOnly([]corev1.Node{node}), spec, resources)
 	want = []string{
 		`required node label "feature.node.kubernetes.io/aim-accelerator.vendor.GPU.NVIDIA" is missing`,
 		`required node label "feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.default" is missing`,
@@ -938,7 +938,7 @@ func TestMatchProfileNodes_ExcludesNodesWithMixedGPUModels(t *testing.T) {
 				AcceleratorModel:  model,
 				AcceleratorCount:  1,
 			}
-			result := MatchProfileNodes(nodes, spec, ResolveProfileResources(spec))
+			result := MatchProfileNodes(NodesOnly(nodes), spec, ResolveProfileResources(spec))
 			for _, mismatch := range result.NodeMismatches {
 				if mismatch.NodeName != mixedNode.Name {
 					continue
@@ -958,7 +958,7 @@ func TestMatchProfileNodes_ExcludesNodesWithMixedGPUModels(t *testing.T) {
 		AcceleratorModel:  "MI350P",
 		AcceleratorCount:  1,
 	}
-	if got := MatchProfileNodes(nodes, spec, ResolveProfileResources(spec)).MatchingNodes; got != 1 {
+	if got := MatchProfileNodes(NodesOnly(nodes), spec, ResolveProfileResources(spec)).MatchingNodes; got != 1 {
 		t.Fatalf("MI350P MatchingNodes = %d, want 1 (the single-model node)", got)
 	}
 
@@ -967,7 +967,7 @@ func TestMatchProfileNodes_ExcludesNodesWithMixedGPUModels(t *testing.T) {
 		AcceleratorModel: "EPYC_ZEN5",
 		AcceleratorCount: 32,
 	}
-	if got := MatchProfileNodes(nodes, cpuSpec, ResolveProfileResources(cpuSpec)).MatchingNodes; got != 1 {
+	if got := MatchProfileNodes(NodesOnly(nodes), cpuSpec, ResolveProfileResources(cpuSpec)).MatchingNodes; got != 1 {
 		t.Fatalf("CPU MatchingNodes = %d, want 1 (mixed GPU models do not affect CPU profiles)", got)
 	}
 }
