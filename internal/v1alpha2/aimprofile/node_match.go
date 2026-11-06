@@ -517,21 +517,6 @@ func nodeMismatchReasons(
 	resolvedResources *corev1.ResourceRequirements,
 ) []string {
 	var reasons []string
-	if mixedModelsReq != nil {
-		if _, mixed := node.Labels[mixedModelsReq.Key]; mixed {
-			reason := fmt.Sprintf(
-				"node carries more than one GPU model (label %q): device-plugin scheduling "+
-					"cannot choose which model a pod receives",
-				mixedModelsReq.Key,
-			)
-			// Only AMD GPUs have a DRA allocation path in AIM Engine.
-			if nodeHasAMDGPUs(node) {
-				reason += "; install the AMD GPU DRA driver on this node and use DRA allocation " +
-					"to schedule onto nodes with mixed GPU models"
-			}
-			reasons = append(reasons, reason)
-		}
-	}
 	if !nodeMatchesVendor(node, vendorReq) {
 		reasons = append(reasons, fmt.Sprintf("required node label %q is missing", vendorReq.Key))
 	}
@@ -549,6 +534,23 @@ func nodeMismatchReasons(
 		}
 	}
 	reasons = append(reasons, resourceMismatchReasons(node, resolvedResources)...)
+	// Reported only when it is the node's only mismatch, so a node that could
+	// never serve the profile isn't explained by its mix of models.
+	if len(reasons) == 0 && mixedModelsReq != nil {
+		if _, mixed := node.Labels[mixedModelsReq.Key]; mixed {
+			reason := fmt.Sprintf(
+				"node carries more than one GPU model (label %q): device-plugin scheduling "+
+					"cannot choose which model a pod receives, so GPU workloads are not "+
+					"scheduled onto this node",
+				mixedModelsReq.Key,
+			)
+			// Only AMD GPUs have a DRA allocation path in AIM Engine.
+			if nodeHasAMDGPUs(node) {
+				reason += "; install the AMD GPU DRA driver on this node to serve it through DRA allocation"
+			}
+			reasons = append(reasons, reason)
+		}
+	}
 	return reasons
 }
 
