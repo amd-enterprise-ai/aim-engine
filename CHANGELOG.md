@@ -11,13 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Profiles see nodes with DRA GPUs.** AIM Engine reads the `gpu.amd.com` ResourceSlices of the AMD GPU DRA driver, and profiles report device-plugin and DRA matches separately in `status.matchingNodesByAllocation`. GPUs are not allocated through DRA yet, so a profile whose GPUs exist only on DRA nodes reports `HardwareAvailable=False` with the reason `HardwareOnlyOnDRANodes`. The operator now needs `get`, `list` and `watch` on `resource.k8s.io` ResourceSlices; the chart's ClusterRole includes them.
-
-### Fixed
-- **DRA nodes no longer count as device-plugin matches.** A node whose GPUs are published through DRA carries the AcceleratorDetector's labels but advertises no `amd.com/gpu`, and the profile matcher used to count it. Profiles then reported `Ready` while their pods could never be scheduled there.
+- **Tolerations for inference pods.** Set `spec.tolerations` in an `AIMRuntimeConfig`, `AIMClusterRuntimeConfig` or `AIMService` to let inference pods onto tainted nodes. An AIMService's list replaces the runtime config's, and a namespace runtime config's replaces the cluster's.
 
 ### Changed
 - **GPU workloads are kept off nodes with more than one GPU model.** The accelerator detector now labels every GPU model on a node; it used to label only the first card's model, with the count of all GPUs. Nodes with several GPU models also get `feature.node.kubernetes.io/aim-accelerator.mixed-models.GPU`, and every GPU profile's node affinity requires that label to be absent, because the device plugin can't choose which model a pod receives. The profile's hardware mismatch reasons name these nodes and point to DRA, which is needed to schedule onto them.
 - **Upgrading restarts every GPU inference service once.** The new affinity term changes every GPU profile's node affinity, so every projected runtime and InferenceService pod template changes, and each GPU service rolls out once. Plan for spare GPU capacity: where there are no free GPUs for the replacement pods, a rollout waits with the old pods still serving. Services already running on a node with mixed GPU models keep running, but their replacement pods can't be scheduled there and stay Pending until capacity is available on a single-model node.
+
+### Fixed
+- **DRA nodes no longer count as device-plugin matches.** A node whose GPUs are published through DRA carries the AcceleratorDetector's labels but advertises no `amd.com/gpu`, and the profile matcher used to count it. Profiles then reported `Ready` while their pods could never be scheduled there.
 
 ## [0.2.7] - 2026-10-08
 
