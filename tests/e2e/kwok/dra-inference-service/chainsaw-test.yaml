@@ -6,8 +6,9 @@
 # the profile's ServingRuntime, and its predictor pod lands on a DRA node.
 #
 # Needs the KWOK lane with the operator and KServe installed. KWOK only reports
-# pods as running, so the model never serves; caching is off for the same
-# reason.
+# pods as running, so the model never serves. The lane has no model downloads:
+# the service's profile cache is paused and patched Ready, pointing at a
+# statically bound PVC that the predictor pod can mount.
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -62,8 +63,6 @@ spec:
                 profile:
                   name: kwok-dra-mi355x
                 replicas: 1
-                caching:
-                  mode: Never
                 # DRA pods request no amd.com/gpu, so ExtendedResourceToleration
                 # adds no toleration for the fake nodes' taint.
                 tolerations:
@@ -78,6 +77,73 @@ spec:
                 name: kwok-dra-service
               status:
                 acceleratorAllocation: DRA
+        - apply:
+            resource:
+              apiVersion: v1
+              kind: PersistentVolume
+              metadata:
+                name: (join('-', ['kwok-dra-weights', $namespace]))
+              spec:
+                capacity:
+                  storage: 1Gi
+                accessModes: [ReadWriteMany]
+                storageClassName: ""
+                persistentVolumeReclaimPolicy: Delete
+                hostPath:
+                  path: /tmp/kwok-dra-weights
+                claimRef:
+                  namespace: ($namespace)
+                  name: kwok-dra-weights
+        - apply:
+            resource:
+              apiVersion: v1
+              kind: PersistentVolumeClaim
+              metadata:
+                name: kwok-dra-weights
+              spec:
+                accessModes: [ReadWriteMany]
+                storageClassName: ""
+                volumeName: (join('-', ['kwok-dra-weights', $namespace]))
+                resources:
+                  requests:
+                    storage: 1Gi
+        - script:
+            timeout: 120s
+            content: |
+              set -eu
+              for i in $(seq 1 60); do
+                PC=$(kubectl get aimprofilecache -n "$NAMESPACE" -l aim.eai.amd.com/service=kwok-dra-service \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                ART=$(kubectl get aimartifact -n "$NAMESPACE" -l aim.eai.amd.com/profile.name=kwok-dra-mi355x \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                [ -n "$PC" ] && [ -n "$ART" ] && break
+                if [ "$i" -eq 60 ]; then
+                  echo "ERROR: no profile cache or artifact for kwok-dra-service"
+                  exit 1
+                fi
+                sleep 2
+              done
+              ART_UID=$(kubectl get aimartifact -n "$NAMESPACE" "$ART" -o jsonpath='{.metadata.uid}')
+              kubectl annotate aimprofilecache -n "$NAMESPACE" "$PC" aim.eai.amd.com/reconciliation-paused=true --overwrite
+              kubectl patch aimprofilecache -n "$NAMESPACE" "$PC" --type=merge --subresource=status -p "{
+                \"status\": {
+                  \"status\": \"Ready\",
+                  \"conditions\": [
+                    {\"type\": \"ProfileFound\", \"status\": \"True\", \"reason\": \"ProfileResolved\", \"message\": \"Profile resolved\", \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"},
+                    {\"type\": \"ArtifactsReady\", \"status\": \"True\", \"reason\": \"AllCachesReady\", \"message\": \"All artifacts are ready\", \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"}
+                  ],
+                  \"artifacts\": {
+                    \"$ART\": {
+                      \"name\": \"$ART\",
+                      \"uid\": \"$ART_UID\",
+                      \"model\": \"test/kwok-dra-model\",
+                      \"status\": \"Ready\",
+                      \"persistentVolumeClaim\": \"kwok-dra-weights\",
+                      \"mountPoint\": \"/workspace/cache/test/kwok-dra-model\"
+                    }
+                  }
+                }
+              }"
         - assert:
             resource:
               apiVersion: serving.kserve.io/v1beta1
