@@ -622,6 +622,11 @@ type AIMServiceStatus struct {
 	// +optional
 	ResolvedProfile *AIMResolvedReference `json:"resolvedProfile,omitempty"`
 
+	// AcceleratorAllocation is how the service's inference pods request GPUs:
+	// DRA or DevicePlugin. Unset for services whose profile needs no GPUs.
+	// +optional
+	AcceleratorAllocation AcceleratorAllocationMode `json:"acceleratorAllocation,omitempty"`
+
 	// Cache captures cache-related status for this service.
 	// +optional
 	Cache *AIMServiceCacheStatus `json:"cache,omitempty"`
@@ -820,6 +825,10 @@ const (
 	// manages replicas when a ScaledObject with at least one trigger exists, so
 	// the declared bounds are never enforced. Drives ConfigValid=False.
 	AIMServiceReasonAutoscalingRequiresMetrics = "AutoscalingRequiresMetrics"
+	// AIMServiceReasonAcceleratorAllocationUnsupported indicates an
+	// acceleratorAllocation.mode the service's reconciliation path cannot use,
+	// such as DRA on a template-based service.
+	AIMServiceReasonAcceleratorAllocationUnsupported = "AcceleratorAllocationUnsupported"
 
 	// Scale-from-zero activation signal (ActivationMetricAvailable).
 	// AIMServiceReasonActivationMetricAvailable indicates the HPA reports the
@@ -844,6 +853,9 @@ const (
 	AIMServiceReasonProfileResolved          = "ProfileResolved"
 	AIMServiceReasonBaseProfile              = "BaseProfile"
 	AIMServiceReasonProfileSelectorAmbiguous = "ProfileSelectorAmbiguous"
+	// AIMServiceReasonNoNodesForAllocation indicates that the profile has
+	// matching nodes, but none for the service's accelerator allocation mode.
+	AIMServiceReasonNoNodesForAllocation = "NoNodesForAllocation"
 	// AIMServiceReasonProfileRebound is emitted (Normal severity) when the
 	// resolver picks a different profile than the one currently recorded
 	// in status.resolvedProfile. Carries the previous and new profile

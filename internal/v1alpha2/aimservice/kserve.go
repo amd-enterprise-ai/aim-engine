@@ -118,6 +118,9 @@ func buildInferenceServiceFromProfile(
 	if obs.isvcName == "" {
 		return nil
 	}
+	if obs.allocation.dra() && obs.desiredClaimTemplate == nil {
+		return nil
+	}
 
 	// The model overlay references the runtime by name. When the service carries
 	// a resource override, write the fully merged block rather than the partial
@@ -125,13 +128,16 @@ func buildInferenceServiceFromProfile(
 	// could otherwise leave a service request above the retained runtime limit.
 	model := &servingv1beta1.ModelSpec{
 		ModelFormat: servingv1beta1.ModelFormat{Name: serving.RuntimeModelFormat},
-		Runtime:     ptr.To(serving.RuntimeName(obs.profileName)),
+		Runtime:     ptr.To(obs.inferenceServiceRuntimeName()),
 	}
 	if service.Spec.Resources != nil {
 		if obs.effectiveResources != nil {
 			model.Resources = *obs.effectiveResources.DeepCopy()
 		} else {
 			model.Resources = resolveResourcesFromProfile(service, profileSpec, profileStatus)
+		}
+		if obs.allocation.dra() {
+			model.Resources = withoutDevicePluginGPU(model.Resources)
 		}
 	}
 
@@ -168,6 +174,10 @@ func buildInferenceServiceFromProfile(
 	// the v1alpha1 template pipeline so both paths produce the same HPA shape
 	// and semantics for Spec.Replicas / MinReplicas / MaxReplicas / AutoScaling.
 	v1alpha1svc.ConfigureReplicasAndAutoscaling(isvc, service)
+
+	if obs.desiredClaimTemplate != nil {
+		applyDRAClaim(isvc, obs.desiredClaimTemplate)
+	}
 
 	// A service-owned (Dedicated) cache is overlaid onto the referenced runtime;
 	// a profile-owned (Shared) cache is mounted by the runtime itself.

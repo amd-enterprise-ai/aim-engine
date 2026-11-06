@@ -101,6 +101,12 @@ type NodeMatchResult struct {
 	OmittedMismatches int
 }
 
+// TotalMatchingNodes counts the nodes that can serve the profile with either
+// allocation method.
+func (r NodeMatchResult) TotalMatchingNodes() int32 {
+	return r.MatchingNodes + r.DRAMatchingNodes
+}
+
 // ResolveResources merges the accelerator-derived device request with explicit
 // resources using the legacy accelerator contract. Empty vendor preserves the
 // historical AMD whole-GPU resource name.

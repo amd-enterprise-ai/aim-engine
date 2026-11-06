@@ -1,0 +1,135 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# An AIMService whose profile's GPUs exist only on AMD GPU DRA nodes of the
+# fake fleet (hack/fakegpu/fleet.yaml): with the default Auto allocation mode
+# it requests its GPUs through a ResourceClaim, references the DRA variant of
+# the profile's ServingRuntime, and its predictor pod lands on a DRA node.
+#
+# Needs the KWOK lane with the operator and KServe installed. KWOK only reports
+# pods as running, so the model never serves; caching is off for the same
+# reason.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: kwok-dra-inference-service
+  labels:
+    requires: kwok
+spec:
+  description: An Auto-mode AIMService on DRA-only hardware claims its GPUs through DRA and runs on a DRA node.
+  timeouts:
+    assert: 180s
+  steps:
+    - name: MI355X profile, available only on DRA nodes
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: kwok-dra-mi355x
+              spec:
+                aimId: test/kwok-dra-model
+                modelId: test/kwok-dra-model
+                image: registry.example.com/test-image:1.0.0
+                modelSources:
+                  - modelId: test/kwok-dra-model
+                    sourceUri: hf://test/kwok-dra-model
+                acceleratorVendor: amd
+                acceleratorModel: MI355X
+                acceleratorType: gpu
+                acceleratorCount: 8
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: kwok-dra-mi355x
+              status:
+                status: Ready
+                matchingNodesByAllocation:
+                  devicePlugin: 0
+                  dra: 2
+
+    - name: the service allocates its GPUs through DRA
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: kwok-dra-service
+              spec:
+                profile:
+                  name: kwok-dra-mi355x
+                replicas: 1
+                caching:
+                  mode: Never
+                # DRA pods request no amd.com/gpu, so ExtendedResourceToleration
+                # adds no toleration for the fake nodes' taint.
+                tolerations:
+                  - key: amd.com/gpu
+                    operator: Exists
+                    effect: NoSchedule
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: kwok-dra-service
+              status:
+                acceleratorAllocation: DRA
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: kwok-dra-service
+              spec:
+                predictor:
+                  (resourceClaims[?name == 'gpus'] | length(@)): 1
+                  model:
+                    (resources.claims[?name == 'gpus'] | length(@)): 1
+                    (resources.limits."amd.com/gpu" || ''): ''
+        - assert:
+            resource:
+              apiVersion: resource.k8s.io/v1
+              kind: ResourceClaimTemplate
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: kwok-dra-service
+              spec:
+                spec:
+                  devices:
+                    (requests[0].exactly.deviceClassName): gpu.amd.com
+                    (requests[0].exactly.count): 8
+        - script:
+            timeout: 180s
+            content: |
+              set -eu
+              ISVC=$(kubectl get inferenceservice -n "$NAMESPACE" -l aim.eai.amd.com/service=kwok-dra-service \
+                -o jsonpath='{.items[0].metadata.name}')
+              RUNTIME=$(kubectl get inferenceservice -n "$NAMESPACE" "$ISVC" -o jsonpath='{.spec.predictor.model.runtime}')
+              if kubectl get servingruntime -n "$NAMESPACE" "$RUNTIME" -o jsonpath='{.spec.containers[0].resources}' | grep -q 'amd.com/gpu'; then
+                echo "ERROR: the DRA ServingRuntime $RUNTIME requests amd.com/gpu"
+                exit 1
+              fi
+              for i in $(seq 1 90); do
+                NODE=$(kubectl get pods -n "$NAMESPACE" -l "serving.kserve.io/inferenceservice=$ISVC" \
+                  -o jsonpath='{.items[0].spec.nodeName}' 2>/dev/null || true)
+                case "$NODE" in
+                  fake-gpu-dra-mi355x-*) break ;;
+                esac
+                if [ "$i" -eq 90 ]; then
+                  echo "ERROR: predictor pod of $ISVC is not on a DRA MI355X node (node: '$NODE')"
+                  kubectl get pods -n "$NAMESPACE" -o wide
+                  exit 1
+                fi
+                sleep 2
+              done
+              DEVICES=$(kubectl get resourceclaims -n "$NAMESPACE" -o jsonpath='{.items[0].status.allocation.devices.results[*].device}' | wc -w)
+              if [ "$DEVICES" -ne 8 ]; then
+                echo "ERROR: the predictor's claim has $DEVICES devices allocated, want 8"
+                exit 1
+              fi
+              echo "predictor on $NODE with $DEVICES devices"

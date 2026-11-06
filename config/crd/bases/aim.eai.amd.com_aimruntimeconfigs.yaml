@@ -46,6 +46,20 @@ spec:
             description: AIMRuntimeConfigSpec defines namespace-scoped overrides for
               AIM resources.
             properties:
+              acceleratorAllocation:
+                description: |-
+                  AcceleratorAllocation selects how inference pods request GPUs: as
+                  device-plugin resources such as amd.com/gpu, or through Dynamic Resource
+                  Allocation (DRA). Applies to profile-based services.
+                properties:
+                  mode:
+                    description: Mode is Auto (the default), DRA or DevicePlugin.
+                    enum:
+                    - Auto
+                    - DRA
+                    - DevicePlugin
+                    type: string
+                type: object
               adapterRuntime:
                 description: |-
                   AdapterRuntime configures LoRA adapter capacity for inference containers.
@@ -411,6 +425,19 @@ spec:
                   For backward compatibility, if this field is set and Storage.DefaultStorageClassName is not set,
                   the value will be automatically migrated.
                 type: string
+              dra:
+                description: |-
+                  DRA configures GPU allocation through Dynamic Resource Allocation for
+                  services whose accelerator allocation mode resolves to DRA.
+                  This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services.
+                properties:
+                  deviceClassName:
+                    description: |-
+                      DeviceClassName is the DeviceClass that AMD GPU ResourceClaims request
+                      devices from. Defaults to gpu.amd.com, the class the AMD GPU DRA driver
+                      installs.
+                    type: string
+                type: object
               env:
                 description: |-
                   Env specifies environment variables for inference containers.

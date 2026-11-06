@@ -1373,7 +1373,7 @@ func isSupportedProfile(spec aimv1alpha2.AIMProfileSpecCommon, nodes aimprofile.
 		return true
 	}
 	resolvedResources := aimprofile.ResolveProfileResources(spec)
-	return aimprofile.MatchProfileNodes(nodes, spec, resolvedResources).MatchingNodes > 0
+	return aimprofile.MatchProfileNodes(nodes, spec, resolvedResources).TotalMatchingNodes() > 0
 }
 
 func summarizeManagedProfiles(desired []desiredProfile, existing []managedProfile) (aimv1alpha1.ManagedProfileCounts, int32) {

@@ -75,6 +75,20 @@ spec:
               Binds a canonical model to an AIMServiceTemplate and configures replicas,
               caching behavior, and optional overrides.
             properties:
+              acceleratorAllocation:
+                description: |-
+                  AcceleratorAllocation selects how inference pods request GPUs: as
+                  device-plugin resources such as amd.com/gpu, or through Dynamic Resource
+                  Allocation (DRA). Applies to profile-based services.
+                properties:
+                  mode:
+                    description: Mode is Auto (the default), DRA or DevicePlugin.
+                    enum:
+                    - Auto
+                    - DRA
+                    - DevicePlugin
+                    type: string
+                type: object
               adapterMode:
                 default: static
                 description: |-
@@ -2067,6 +2081,15 @@ spec:
           status:
             description: AIMServiceStatus defines the observed state of AIMService.
             properties:
+              acceleratorAllocation:
+                description: |-
+                  AcceleratorAllocation is how the service's inference pods request GPUs:
+                  DRA or DevicePlugin. Unset for services whose profile needs no GPUs.
+                enum:
+                - Auto
+                - DRA
+                - DevicePlugin
+                type: string
               adapterDiskPersistentVolumeClaim:
                 description: |-
                   AdapterDiskPersistentVolumeClaim is the shared adapter-disk PVC whose
@@ -2540,6 +2563,20 @@ spec:
               Binds a canonical model to an AIMServiceTemplate and configures replicas,
               caching behavior, and optional overrides.
             properties:
+              acceleratorAllocation:
+                description: |-
+                  AcceleratorAllocation selects how inference pods request GPUs: as
+                  device-plugin resources such as amd.com/gpu, or through Dynamic Resource
+                  Allocation (DRA). Applies to profile-based services.
+                properties:
+                  mode:
+                    description: Mode is Auto (the default), DRA or DevicePlugin.
+                    enum:
+                    - Auto
+                    - DRA
+                    - DevicePlugin
+                    type: string
+                type: object
               adapterMode:
                 default: static
                 description: |-
@@ -4532,6 +4569,15 @@ spec:
           status:
             description: AIMServiceStatus defines the observed state of AIMService.
             properties:
+              acceleratorAllocation:
+                description: |-
+                  AcceleratorAllocation is how the service's inference pods request GPUs:
+                  DRA or DevicePlugin. Unset for services whose profile needs no GPUs.
+                enum:
+                - Auto
+                - DRA
+                - DevicePlugin
+                type: string
               adapterDiskPersistentVolumeClaim:
                 description: |-
                   AdapterDiskPersistentVolumeClaim is the shared adapter-disk PVC whose

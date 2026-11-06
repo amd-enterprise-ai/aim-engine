@@ -27,6 +27,8 @@ import (
 
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
@@ -405,6 +407,59 @@ func TestDesiredForRuntime_UsesRuntimeKeyAndExistingOwnerFirst(t *testing.T) {
 	}
 	if got.Owner != existing {
 		t.Fatalf("owner = %v, want existing sibling owner %q", got.Owner, existing.Name)
+	}
+}
+
+func TestDesiredForRuntime_DRAVariantDropsDevicePluginGPU(t *testing.T) {
+	profile := makeClusterProfile("dra-profile")
+	profile.Status.Resources = &corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceName(constants.AMDGPUResourceName): resource.MustParse("8"),
+			corev1.ResourceCPU: resource.MustParse("32"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceName(constants.AMDGPUResourceName): resource.MustParse("8"),
+		},
+	}
+	profile.Status.ResolvedNodeAffinity = &corev1.NodeAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{{
+				Key: "feature.node.kubernetes.io/aim-accelerator.MI355X", Operator: corev1.NodeSelectorOpExists,
+			}}}},
+		},
+	}
+	runtimeName := serving.DRARuntimeName(profile.Name)
+
+	got, err := DesiredForRuntime("ns", runtimeName, ProjectionState{AnnotatedProfile: profile})
+	if err != nil {
+		t.Fatalf("DesiredForRuntime() error = %v", err)
+	}
+	if got.Runtime == nil || got.ConfigMap == nil || got.Runtime.Name != runtimeName || got.ConfigMap.Name != runtimeName {
+		t.Fatalf("expected the DRA ServingRuntime and ConfigMap named %s, got %+v", runtimeName, got)
+	}
+	resources := got.Runtime.Spec.Containers[0].Resources
+	if _, ok := resources.Requests[corev1.ResourceName(constants.AMDGPUResourceName)]; ok {
+		t.Errorf("DRA runtime requests %s: %v", constants.AMDGPUResourceName, resources.Requests)
+	}
+	if _, ok := resources.Limits[corev1.ResourceName(constants.AMDGPUResourceName)]; ok {
+		t.Errorf("DRA runtime limits %s: %v", constants.AMDGPUResourceName, resources.Limits)
+	}
+	if cpu := resources.Requests[corev1.ResourceCPU]; cpu.String() != "32" {
+		t.Errorf("DRA runtime CPU request = %s, want the profile's 32", cpu.String())
+	}
+	if got.Runtime.Spec.Affinity != nil {
+		t.Errorf("DRA runtime has node affinity %+v; the ResourceClaim decides placement", got.Runtime.Spec.Affinity)
+	}
+	if _, ok := profile.Status.Resources.Requests[corev1.ResourceName(constants.AMDGPUResourceName)]; !ok {
+		t.Error("DesiredForRuntime modified the profile's status resources")
+	}
+
+	devicePlugin, err := DesiredForRuntime("ns", serving.RuntimeName(profile.Name), ProjectionState{AnnotatedProfile: profile})
+	if err != nil || devicePlugin.Runtime == nil {
+		t.Fatalf("per-profile runtime: %v, %v", devicePlugin, err)
+	}
+	if _, ok := devicePlugin.Runtime.Spec.Containers[0].Resources.Requests[corev1.ResourceName(constants.AMDGPUResourceName)]; !ok {
+		t.Error("the per-profile runtime lost its device-plugin GPU request")
 	}
 }
 

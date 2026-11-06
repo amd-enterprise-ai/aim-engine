@@ -981,8 +981,10 @@ spec:
                 type: string
               matchingNodes:
                 description: |-
-                  MatchingNodes is the count of cluster nodes matching both the accelerator
-                  model label and status.resources requests. Zero means NotAvailable.
+                  MatchingNodes is the count of cluster nodes that can serve the profile:
+                  nodes matching the accelerator labels and status.resources requests, and
+                  nodes whose AMD GPU DRA devices match the profile. Zero means
+                  NotAvailable.
                 format: int32
                 type: integer
               matchingNodesByAllocation:
