@@ -988,7 +988,7 @@ func TestMatchProfileNodes_MixedNVIDIANodeReasonOmitsDRA(t *testing.T) {
 		AcceleratorModel:  "H100",
 		AcceleratorCount:  1,
 	}
-	result := MatchProfileNodes([]corev1.Node{node}, spec, ResolveProfileResources(spec))
+	result := MatchProfileNodes(NodesOnly([]corev1.Node{node}), spec, ResolveProfileResources(spec))
 	if result.MatchingNodes != 0 || len(result.NodeMismatches) != 1 {
 		t.Fatalf("result = %+v, want the mixed NVIDIA node excluded", result)
 	}

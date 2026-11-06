@@ -95,7 +95,10 @@ type NodeMatchResult struct {
 	MatchingNodes int32
 	// DRAMatchingNodes counts the matching nodes whose GPUs are published
 	// through the AMD GPU DRA driver.
-	DRAMatchingNodes  int32
+	DRAMatchingNodes int32
+	// BothMatchingNodes counts the nodes included in both counts above: DRA
+	// nodes that also advertise amd.com/gpu.
+	BothMatchingNodes int32
 	NodeAffinity      *corev1.NodeAffinity
 	NodeMismatches    []NodeMismatch
 	OmittedMismatches int
@@ -455,14 +458,16 @@ func matchNodes(
 	for i := range inventory.Nodes {
 		node := &inventory.Nodes[i]
 		var reasons []string
+		draMatch, devicePluginMatch := false, false
 		devices, draNode := inventory.DRADevices[node.Name]
 		if draNode && draReq != nil {
-			if reasons = draReq.mismatchReasons(node, devices); len(reasons) == 0 {
-				result.DRAMatchingNodes++
-				continue
-			}
-		} else {
-			reasons = nodeMismatchReasons(
+			reasons = draReq.mismatchReasons(node, devices)
+			draMatch = len(reasons) == 0
+		}
+		// A node can publish DRA devices while amd.com/gpu is still allocatable,
+		// for example while it moves from the device plugin to the DRA driver.
+		if !draNode || draReq == nil || advertisesAMDGPUs(node) {
+			devicePluginReasons := nodeMismatchReasons(
 				node,
 				vendorReq,
 				accelModel,
@@ -470,10 +475,20 @@ func matchNodes(
 				mixedModelsReq,
 				resolvedResources,
 			)
-			if len(reasons) == 0 {
-				result.MatchingNodes++
-				continue
-			}
+			devicePluginMatch = len(devicePluginReasons) == 0
+			reasons = append(reasons, devicePluginReasons...)
+		}
+		if draMatch {
+			result.DRAMatchingNodes++
+		}
+		if devicePluginMatch {
+			result.MatchingNodes++
+		}
+		if draMatch && devicePluginMatch {
+			result.BothMatchingNodes++
+		}
+		if draMatch || devicePluginMatch {
+			continue
 		}
 		if len(result.NodeMismatches) < maxRecordedNodeMismatches {
 			result.NodeMismatches = append(result.NodeMismatches, NodeMismatch{
@@ -644,6 +659,12 @@ func vendorNodeSelectorRequirement(
 			strings.ToUpper(string(vendor)),
 		Operator: corev1.NodeSelectorOpExists,
 	}
+}
+
+// advertisesAMDGPUs reports whether the node has allocatable amd.com/gpu.
+func advertisesAMDGPUs(node *corev1.Node) bool {
+	quantity, ok := node.Status.Allocatable[corev1.ResourceName(constants.AMDGPUResourceName)]
+	return ok && !quantity.IsZero()
 }
 
 // nodeHasAMDGPUs reports whether the detector labelled the node's GPUs as AMD.
