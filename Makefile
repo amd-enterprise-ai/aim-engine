@@ -197,6 +197,27 @@ install-nvidia-dependencies: ## Install the NVIDIA device plugin and its bundled
 	NVIDIA_DEVICE_PLUGIN_VERSION=$(NVIDIA_DEVICE_PLUGIN_VERSION) \
 		helmfile sync -f hack/nvidia/helmfile.yaml.gotmpl
 
+# Fake AMD GPU nodes run by KWOK, for the KWOK e2e lane. See
+# docs/docs/contributing/testing.md#fake-gpu-nodes-kwok.
+FAKE_GPU_FLEET ?= hack/fakegpu/fleet.yaml
+FAKE_GPU_SELECTOR := aim.eai.amd.com/fake-gpu=true
+
+.PHONY: kwok-install
+kwok-install: ## Install the KWOK controller, which runs the fake GPU nodes.
+	hack/kwok/install.sh
+
+.PHONY: fake-gpu-fleet
+fake-gpu-fleet: ## (Re)create the fake GPU nodes of FAKE_GPU_FLEET on the current cluster; needs `make kwok-install`.
+	kubectl delete nodes,resourceslices -l $(FAKE_GPU_SELECTOR) --ignore-not-found
+	@kubectl get deviceclass gpu.amd.com >/dev/null 2>&1 || \
+		go run ./hack/fakegpu -device-class | kubectl create -f -
+	go run ./hack/fakegpu -f $(FAKE_GPU_FLEET) | kubectl create -f -
+	kubectl wait --for=condition=Ready nodes -l $(FAKE_GPU_SELECTOR) --timeout=120s
+
+.PHONY: fake-gpu-fleet-delete
+fake-gpu-fleet-delete: ## Delete the fake GPU nodes, their ResourceSlices, and the DeviceClass if fake-gpu-fleet created it.
+	kubectl delete nodes,resourceslices,deviceclasses -l $(FAKE_GPU_SELECTOR) --ignore-not-found
+
 .PHONY: kind-create
 kind-create: manifests ## Create kind cluster with all dependencies for local development.
 	@echo "=== Setting up kind cluster for local development ==="
@@ -349,6 +370,13 @@ CHAINSAW_PROJECTION_MODE_EXCLUDE := reduced-mode
 # not be discovered as independent tests by the regular Chainsaw lanes.
 CHAINSAW_UPGRADE_WORKFLOW_EXCLUDE := upgrade-workflow
 
+# Tests against the fake GPU nodes (requires=kwok) need KWOK and the fleet
+# (make kwok-install fake-gpu-fleet). The fleet adds GPU-labelled nodes that
+# would change other tests' node counts, so these run only in their own lane,
+# `make test-chainsaw-kwok`, and are excluded from every other selector.
+CHAINSAW_KWOK_EXCLUDE := kwok
+CHAINSAW_KWOK_DIR := tests/e2e/kwok
+
 # The mode-gated projection tests all live under one tree. The
 # `test-chainsaw-projection-mode` target below is the inverse entry point of the
 # exclusion above: it runs ONLY the gated tests for a chosen MODE by flipping the
@@ -368,25 +396,25 @@ CHAINSAW_PROJECTION_MODE_DIR := tests/e2e/v1alpha2/runtime-projection
 # longhorn storage and NFD-gated tests. Expensive / operator-gated
 # tests (e.g. multi-hundred-GiB live model downloads) gate themselves via one of
 # these `requires` values rather than a separate tier axis.
-CHAINSAW_SELECTOR_KIND := requires notin (gpu,gpu-amd,gpu-nvidia,longhorn,nfd,$(CHAINSAW_PROJECTION_MODE_EXCLUDE),$(CHAINSAW_UPGRADE_WORKFLOW_EXCLUDE)),$(CHAINSAW_NEEDS_SECRET_EXCLUDE)
+CHAINSAW_SELECTOR_KIND := requires notin (gpu,gpu-amd,gpu-nvidia,longhorn,nfd,$(CHAINSAW_PROJECTION_MODE_EXCLUDE),$(CHAINSAW_UPGRADE_WORKFLOW_EXCLUDE),$(CHAINSAW_KWOK_EXCLUDE)),$(CHAINSAW_NEEDS_SECRET_EXCLUDE)
 
 # AMD GPU environment: runs AMD GPU tests (gpu, gpu-amd) end-to-end. Excludes
 # Kind-only tests (mocked node labels), NVIDIA-only tests, and NFD-gated
 # tests. Run an excluded test explicitly by invoking chainsaw directly against
 # its dir without a selector.
-CHAINSAW_SELECTOR_GPU := requires notin (kind,gpu-nvidia,nfd,$(CHAINSAW_PROJECTION_MODE_EXCLUDE),$(CHAINSAW_UPGRADE_WORKFLOW_EXCLUDE)),$(CHAINSAW_NEEDS_SECRET_EXCLUDE)
+CHAINSAW_SELECTOR_GPU := requires notin (kind,gpu-nvidia,nfd,$(CHAINSAW_PROJECTION_MODE_EXCLUDE),$(CHAINSAW_UPGRADE_WORKFLOW_EXCLUDE),$(CHAINSAW_KWOK_EXCLUDE)),$(CHAINSAW_NEEDS_SECRET_EXCLUDE)
 
 # NVIDIA GPU environment: runs only NVIDIA GPU tests (gpu-nvidia). Excludes
 # Kind-only tests and the AMD GPU values (bare gpu is AMD-built today), plus
 # NFD-gated tests.
-CHAINSAW_SELECTOR_NVIDIA := requires notin (kind,gpu,gpu-amd,nfd,$(CHAINSAW_PROJECTION_MODE_EXCLUDE),$(CHAINSAW_UPGRADE_WORKFLOW_EXCLUDE)),$(CHAINSAW_NEEDS_SECRET_EXCLUDE)
+CHAINSAW_SELECTOR_NVIDIA := requires notin (kind,gpu,gpu-amd,nfd,$(CHAINSAW_PROJECTION_MODE_EXCLUDE),$(CHAINSAW_UPGRADE_WORKFLOW_EXCLUDE),$(CHAINSAW_KWOK_EXCLUDE)),$(CHAINSAW_NEEDS_SECRET_EXCLUDE)
 
 # Dedicated authenticated lane for tests whose model/size makes a token a hard
 # prerequisite. Normal trusted suites also receive HF_TOKEN and exercise all
 # other hf-access=live tests.
-CHAINSAW_HF_SELECTOR_KIND := needs-secret in (hf_token),requires notin (gpu,gpu-amd,gpu-nvidia,longhorn,nfd,$(CHAINSAW_PROJECTION_MODE_EXCLUDE),$(CHAINSAW_UPGRADE_WORKFLOW_EXCLUDE))
-CHAINSAW_HF_SELECTOR_GPU := needs-secret in (hf_token),requires notin (kind,gpu-nvidia,nfd,$(CHAINSAW_PROJECTION_MODE_EXCLUDE),$(CHAINSAW_UPGRADE_WORKFLOW_EXCLUDE))
-CHAINSAW_HF_SELECTOR_NVIDIA := needs-secret in (hf_token),requires notin (kind,gpu,gpu-amd,nfd,$(CHAINSAW_PROJECTION_MODE_EXCLUDE),$(CHAINSAW_UPGRADE_WORKFLOW_EXCLUDE))
+CHAINSAW_HF_SELECTOR_KIND := needs-secret in (hf_token),requires notin (gpu,gpu-amd,gpu-nvidia,longhorn,nfd,$(CHAINSAW_PROJECTION_MODE_EXCLUDE),$(CHAINSAW_UPGRADE_WORKFLOW_EXCLUDE),$(CHAINSAW_KWOK_EXCLUDE))
+CHAINSAW_HF_SELECTOR_GPU := needs-secret in (hf_token),requires notin (kind,gpu-nvidia,nfd,$(CHAINSAW_PROJECTION_MODE_EXCLUDE),$(CHAINSAW_UPGRADE_WORKFLOW_EXCLUDE),$(CHAINSAW_KWOK_EXCLUDE))
+CHAINSAW_HF_SELECTOR_NVIDIA := needs-secret in (hf_token),requires notin (kind,gpu,gpu-amd,nfd,$(CHAINSAW_PROJECTION_MODE_EXCLUDE),$(CHAINSAW_UPGRADE_WORKFLOW_EXCLUDE),$(CHAINSAW_KWOK_EXCLUDE))
 
 # Select appropriate config based on ENV and CI detection
 # CI is detected via CI env var (set by GitHub Actions, GitLab CI, etc.)
@@ -444,6 +472,12 @@ test-chainsaw-projection-mode: ## Run ONLY the mode-gated projection tests (MODE
 	$(MAKE) test-chainsaw \
 		CHAINSAW_TEST_DIR=$(CHAINSAW_PROJECTION_MODE_DIR) \
 		CHAINSAW_ENV_SELECTOR="--selector \"requires in ($$gate)\""
+
+.PHONY: test-chainsaw-kwok
+test-chainsaw-kwok: ## Run ONLY the fake GPU node tests (requires=kwok) against the current cluster. Run `make kwok-install fake-gpu-fleet` first and `make fake-gpu-fleet-delete` afterwards.
+	$(MAKE) test-chainsaw \
+		CHAINSAW_TEST_DIR=$(CHAINSAW_KWOK_DIR) \
+		CHAINSAW_ENV_SELECTOR="--selector \"requires in ($(CHAINSAW_KWOK_EXCLUDE))\""
 
 .PHONY: test-chainsaw-kind-zot
 test-chainsaw-kind-zot: aim-dummy-zot-push ## Run Kind e2e against the ephemeral in-cluster Zot registry.

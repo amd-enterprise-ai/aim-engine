@@ -57,7 +57,7 @@ host with `make watch`.
 
 ### Environment Selectors
 
-Tests are filtered by environment. When `ENV=kind` (default), tests tagged with `requires=longhorn` or other infrastructure requirements are excluded automatically.
+Tests are filtered by environment. When `ENV=kind` (default), tests tagged with `requires=longhorn` or other infrastructure requirements are excluded automatically. Tests tagged `requires=kwok` are excluded in every environment; they run only in the [KWOK lane](#fake-gpu-nodes-kwok).
 
 ### Credentials for opt-in tests
 
@@ -199,6 +199,28 @@ To run **all** the gated tests for the mode in one shot (instead of pointing `CH
 
 CI exercises both shapes: `.github/workflows/test-e2e.yml` runs the e2e job as a matrix over `runtime-projection-mode: [Both, Reduced]`. The `Both` leg is the full default suite (gated tests excluded); the `Reduced` leg installs the operator with `manager.runtimeProjectionMode` set, asserts the live arg, and runs only the mode-gated tests via `make test-chainsaw-projection-mode`.
 
+### Fake GPU nodes (KWOK)
+
+Kind has no GPUs, and the labelled worker nodes in `hack/kind/config.yaml` advertise no `amd.com/gpu`, so pods that request GPUs never schedule there. The KWOK lane adds fake AMD GPU nodes that exist only in the API, run by [KWOK](https://kwok.sigs.k8s.io). The scheduler places pods on them as on real GPU nodes, and KWOK reports the pods as running. This tests where GPU workloads are scheduled, not the workloads themselves.
+
+`hack/fakegpu` generates the nodes from a fleet file, by default `hack/fakegpu/fleet.yaml`. Each group of identical nodes presents its GPUs in one of two ways:
+
+- **`device-plugin`**: allocatable `amd.com/gpu`, one per GPU or per compute partition, as the AMD device plugin advertises it with `resource_naming_strategy: single`.
+- **`dra`**: a `gpu.amd.com` ResourceSlice in the AMD GPU DRA driver's format: one device per GPU or partition, with the driver's `type`, `deviceID`, `productName`, `partitionProfile`, `numaNode` and PCI attributes and its `memory`, `computeUnits` and `simdUnits` capacities.
+
+Every node also gets the labels the AMD GPU Operator's node labeller and AIM Engine's AcceleratorDetector would publish, and the taint `amd.com/gpu:NoSchedule`. The kind config enables the `ExtendedResourceToleration` admission plugin, which adds a toleration for that taint to every pod requesting `amd.com/gpu`. So inference pods reach the device-plugin nodes without changes, and pods that request no GPU stay off all fake nodes. DRA pods request no `amd.com/gpu` and need their own toleration.
+
+```bash
+make kwok-install            # KWOK controller and its fast stages
+make fake-gpu-fleet          # (re)create the fleet; FAKE_GPU_FLEET=<file> for another
+make test-chainsaw-kwok      # tests labelled requires=kwok, in tests/e2e/kwok
+make fake-gpu-fleet-delete   # remove the fleet
+```
+
+`make fake-gpu-fleet` also creates the `gpu.amd.com` DeviceClass if the cluster has none. The fleet's GPU-labelled nodes change the node counts other tests assert on, so `requires=kwok` tests are excluded from every other selector and run only in this lane. Tests should pin their pods to a fleet group with the `aim.eai.amd.com/fake-gpu-group` node label, so that other GPU nodes in the cluster can't satisfy them. Clusters running HAMi's scheduler hand every `amd.com/gpu` pod to HAMi, which rejects nodes its device plugin didn't register; label test namespaces `hami.io/webhook=ignore` there.
+
+The generator's unit tests compare its devices with ResourceSlices that the AMD GPU DRA driver's discovery code published (`hack/fakegpu/testdata`). Refresh them from a node running the driver with `kubectl get resourceslice -o yaml --field-selector spec.nodeName=<node>`, and add GPU models in `hack/fakegpu/models.go`.
+
 ### Test Reports
 
 JSON reports are written to `.tmp/chainsaw-reports/chainsaw-report.json`. Analyze failures:
@@ -274,6 +296,7 @@ Key e2e test areas:
 | `tests/e2e/aimservicetemplate/` | Template discovery, inline sources, GPU availability |
 | `tests/e2e/aimservice/` | Full service lifecycle including frozen models and GPU tests |
 | `tests/e2e/aimartifact/` | Model artifact downloads, quotas, and protocols |
+| `tests/e2e/kwok/` | Scheduling onto fake GPU nodes, device plugin and DRA (KWOK lane only) |
 
 Run a specific test area:
 
