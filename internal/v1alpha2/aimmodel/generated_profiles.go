@@ -318,7 +318,7 @@ func generatedCandidates(
 		profileSpec := generatedProfileSpec(spec, fallback)
 		resolvedResources := aimprofile.ResolveProfileResources(profileSpec)
 		matchResult := aimprofile.MatchProfileNodes(nodes, profileSpec, resolvedResources)
-		available := matchResult.MatchingNodes > 0
+		available := matchResult.TotalMatchingNodes() > 0
 		if _, retained := existingFallbacks[fallback.Name]; !available && !retained {
 			resolution.rejections = append(resolution.rejections, generatedProfileRejection{
 				fallbackName: fallback.Name,
