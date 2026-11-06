@@ -943,13 +943,26 @@ func TestMatchProfileNodes_ExcludesNodesWithMixedGPUModels(t *testing.T) {
 				if mismatch.NodeName != mixedNode.Name {
 					continue
 				}
-				if len(mismatch.Reasons) == 0 || !strings.Contains(mismatch.Reasons[0], "DRA") {
-					t.Fatalf("mixed node reasons = %#v, want a first reason pointing to DRA", mismatch.Reasons)
+				if len(mismatch.Reasons) != 1 || !strings.Contains(mismatch.Reasons[0], "more than one GPU model") {
+					t.Fatalf("mixed node reasons = %#v, want only the mixed-model reason", mismatch.Reasons)
 				}
 				return
 			}
 			t.Fatalf("mixed node not reported as a mismatch: %#v", result.NodeMismatches)
 		})
+	}
+
+	otherModel := aimv1alpha2.AIMProfileSpecCommon{
+		AcceleratorVendor: aimv1alpha1.AcceleratorVendorAMD,
+		AcceleratorType:   aimv1alpha1.AcceleratorTypeGPU,
+		AcceleratorModel:  "MI300X",
+		AcceleratorCount:  1,
+	}
+	for _, mismatch := range MatchProfileNodes(NodesOnly(nodes), otherModel, ResolveProfileResources(otherModel)).NodeMismatches {
+		if reasons := strings.Join(mismatch.Reasons, "; "); strings.Contains(reasons, "more than one GPU model") {
+			t.Errorf("%s reasons = %q; a node without the profile's model must not be explained by its mix of models",
+				mismatch.NodeName, reasons)
+		}
 	}
 
 	spec := aimv1alpha2.AIMProfileSpecCommon{
@@ -975,10 +988,11 @@ func TestMatchProfileNodes_ExcludesNodesWithMixedGPUModels(t *testing.T) {
 func TestMatchProfileNodes_MixedNVIDIANodeReasonOmitsDRA(t *testing.T) {
 	node := makeNode("mixed-nvidia-node",
 		map[string]string{
-			AcceleratorLabelPrefix + "H100":             "4",
-			AcceleratorLabelPrefix + "A100":             "4",
-			AcceleratorVendorLabelPrefix + "GPU.NVIDIA": "8",
-			MixedModelsLabelPrefix + "GPU":              "2",
+			AcceleratorLabelPrefix + "H100":                           "4",
+			AcceleratorLabelPrefix + "A100":                           "4",
+			AcceleratorVendorLabelPrefix + "GPU.NVIDIA":               "8",
+			PartitioningSchemeLabelPrefix + PartitioningSchemeDefault: "8",
+			MixedModelsLabelPrefix + "GPU":                            "2",
 		},
 		corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("8")},
 	)
