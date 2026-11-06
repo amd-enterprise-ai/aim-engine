@@ -57,8 +57,8 @@ HEALTH_FILE = "/tmp/healthy"
 #   feature.node.kubernetes.io/aim-accelerator.vendor.GPU.NVIDIA=8
 #   feature.node.kubernetes.io/aim-accelerator.vendor.CPU.AMD=1
 # Consumers match on key existence (Exists), so vendor is a per-type label
-# rather than a single node-wide one. Assumes one vendor (and one model) per
-# accelerator type per node.
+# rather than a single node-wide one. Assumes one vendor per accelerator type
+# per node; a node may carry several models of that type.
 #
 # AIMProfile.spec.acceleratorVendor consumes this axis to select both node
 # affinity and the corresponding whole-device resource (amd.com/gpu or
@@ -123,8 +123,17 @@ def detection_command() -> list:
     return ["aim-runtime"]
 
 
+# The default detect-hardware output reports one model per accelerator type (the
+# first GPU's) with the count of all GPUs, which mislabels nodes that mix GPU
+# models. The --verbose output lists every GPU with its resolved model, so
+# detections are rebuilt per model from it. Runtimes that predate --verbose
+# reject the flag; the detector then uses the default output for the rest of
+# its lifetime.
+_verbose_detection_supported = True
+
+
 def detect_hardware(detect_type: str) -> list | None:
-    """Run detect-hardware and return the parsed JSON output.
+    """Run detect-hardware and return one detection per accelerator model.
 
     Return value carries a crucial distinction:
       - a list (possibly empty) => detection SUCCEEDED. An empty list is a
@@ -135,35 +144,102 @@ def detect_hardware(detect_type: str) -> list | None:
         results on a transient failure is what makes the published node labels
         (and therefore every consumer's profile/model availability) flap.
     """
+    global _verbose_detection_supported
     cmd = detection_command() + ["detect-hardware", "--type", detect_type, "--format", "json"]
+    if _verbose_detection_supported:
+        result = _run_detect_hardware(cmd + ["--verbose"])
+        if result is None or result.returncode == 0 or "no such option" not in result.stderr.lower():
+            return _parse_detections(result)
+        logger.warning(
+            "detect-hardware does not support --verbose; falling back to its "
+            "default output, which labels a node with mixed GPU models as a "
+            "single model"
+        )
+        _verbose_detection_supported = False
+    return _parse_detections(_run_detect_hardware(cmd))
+
+
+def _run_detect_hardware(cmd: list) -> subprocess.CompletedProcess | None:
+    """Run one detect-hardware invocation; None when it could not be run."""
     logger.info("Running: %s", " ".join(cmd))
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        if result.returncode != 0:
-            logger.error("detect-hardware failed (exit %d): %s", result.returncode, result.stderr.strip())
-            if result.stdout.strip():
-                logger.error("stdout: %s", result.stdout.strip())
-            if result.stderr.strip():
-                logger.error("stderr: %s", result.stderr.strip())
-            return None
-        detections = json.loads(result.stdout)
-        for det in detections:
-            logger.info(
-                "Detected: type=%s model=%s count=%s",
-                det.get("accelerator_type", "?"),
-                det.get("accelerator_model", "?"),
-                det.get("accelerator_count", "?"),
-            )
-        if not detections:
-            logger.warning("detect-hardware returned empty results")
-            logger.debug("Raw output: %s", result.stdout.strip())
-        return detections
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     except subprocess.TimeoutExpired:
         logger.error("detect-hardware timed out after 120s")
+    except Exception as exc:
+        logger.error("Failed to run detect-hardware: %s", exc)
+    return None
+
+
+def _parse_detections(result: subprocess.CompletedProcess | None) -> list | None:
+    """Turn a detect-hardware run into detections, or None on failure."""
+    if result is None:
         return None
+    if result.returncode != 0:
+        logger.error("detect-hardware failed (exit %d): %s", result.returncode, result.stderr.strip())
+        if result.stdout.strip():
+            logger.error("stdout: %s", result.stdout.strip())
+        if result.stderr.strip():
+            logger.error("stderr: %s", result.stderr.strip())
+        return None
+    try:
+        detections = detections_per_model(json.loads(result.stdout))
     except Exception as exc:
         logger.error("Failed to parse detect-hardware output: %s", exc)
         return None
+    for det in detections:
+        logger.info(
+            "Detected: type=%s model=%s count=%s",
+            det["accelerator_type"],
+            det["accelerator_model"],
+            det["accelerator_count"],
+        )
+    if not detections:
+        logger.warning("detect-hardware returned empty results")
+        logger.debug("Raw output: %s", result.stdout.strip())
+    return detections
+
+
+def detections_per_model(payload: list) -> list:
+    """Normalize detect-hardware output into one detection per accelerator model.
+
+    Accepts both output shapes: the default label form (one entry per type,
+    upper-case type) and the --verbose detail form (lower-case type plus a
+    per-GPU `gpu_info` list). When `gpu_info` is present the GPUs are grouped by
+    their resolved model; GPUs whose device ID the runtime does not recognise
+    are left out and logged rather than hiding the recognised ones.
+    """
+    detections = []
+    for entry in payload:
+        accelerator_type = str(entry.get("accelerator_type", "")).upper()
+        gpus = entry.get("gpu_info")
+        if gpus:
+            counts: dict[str, int] = {}
+            unknown = []
+            for gpu in gpus:
+                model = gpu.get("model")
+                if model:
+                    counts[model] = counts.get(model, 0) + 1
+                else:
+                    unknown.append(str(gpu.get("device_id", "?")))
+            if unknown:
+                logger.warning(
+                    "Skipping %d GPU(s) with unrecognized device IDs: %s",
+                    len(unknown), ", ".join(sorted(unknown)),
+                )
+            for model in sorted(counts):
+                detections.append({
+                    "accelerator_type": accelerator_type,
+                    "accelerator_model": model,
+                    "accelerator_count": counts[model],
+                })
+        elif entry.get("accelerator_model"):
+            detections.append({
+                "accelerator_type": accelerator_type,
+                "accelerator_model": entry["accelerator_model"],
+                "accelerator_count": entry.get("accelerator_count", 0),
+            })
+    return detections
 
 
 # Canonical NVIDIA datacenter GPU tokens. nvidia-smi reports verbose product
@@ -557,7 +633,7 @@ def build_feature_lines(detections: list, vendor: str = DEFAULT_VENDOR) -> list:
     the DaemonSet's ACCELERATOR_VENDOR env, not from detection output.
 
     Family (and vendor) counts sum across all model entries of the same type
-    (e.g. a hypothetical mixed MI300X+MI325X node aggregates to GPU=12).
+    (e.g. a node with 4 x MI350P and 2 x R9700 aggregates to GPU=6).
     """
     seen_models = set()
     family_counts: dict[str, int] = {}
