@@ -2197,6 +2197,13 @@ func (in *AIMServiceRuntimeConfig) DeepCopyInto(out *AIMServiceRuntimeConfig) {
 		*out = new(AIMScaleFromZeroConfig)
 		**out = **in
 	}
+	if in.Tolerations != nil {
+		in, out := &in.Tolerations, &out.Tolerations
+		*out = make([]v1.Toleration, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
 	if in.Env != nil {
 		in, out := &in.Env, &out.Env
 		*out = make([]v1.EnvVar, len(*in))

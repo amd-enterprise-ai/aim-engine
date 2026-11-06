@@ -37,6 +37,7 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
+	servicepolicy "github.com/amd-enterprise-ai/aim-engine/internal/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
@@ -156,6 +157,7 @@ func buildInferenceServiceFromProfile(
 					ImagePullSecrets:   utils.CopyPullSecrets(service.Spec.ImagePullSecrets),
 					ServiceAccountName: serviceAccountName,
 					PriorityClassName:  service.Spec.PriorityClassName,
+					Tolerations:        servicepolicy.InferenceTolerations(service, obs.mergedRuntimeConfig.Value),
 				},
 				Model: model,
 			},
