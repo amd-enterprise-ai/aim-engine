@@ -196,8 +196,14 @@ func (f *Fleet) validate() error {
 		if len(g.GPUs) > 0 && g.CPU != nil {
 			return fmt.Errorf("group %s: cpu labels only apply to nodes without GPUs", g.Name)
 		}
-		if _, err := expandDevices(g); err != nil {
+		devices, err := expandDevices(g)
+		if err != nil {
 			return fmt.Errorf("group %s: %w", g.Name, err)
+		}
+		if g.Mode != ModeDRA && len(partitionModes(devices)) > 1 {
+			return fmt.Errorf("group %s: GPUs in partition modes %v on one device-plugin node need the "+
+				"device plugin's mixed resource naming, which is not modelled; use mode: dra",
+				g.Name, partitionModes(devices))
 		}
 	}
 	return nil
@@ -222,6 +228,23 @@ func parsePartition(gpu GPU, m gpuModel) (compute, memory string, err error) {
 		return "", "", fmt.Errorf("amdgpu does not accept partition %q", gpu.Partition)
 	}
 	return compute, memory, nil
+}
+
+// partitionModes returns the distinct partition modes of the GPUs that can be
+// partitioned, such as [cpx-nps1 spx-nps1]. With resource_naming_strategy
+// single, the AMD device plugin supports only nodes with at most one.
+func partitionModes(devices []device) []string {
+	var modes []string
+	for _, d := range devices {
+		if d.compute == "" {
+			continue
+		}
+		if mode := d.compute + "-" + d.memory; !slices.Contains(modes, mode) {
+			modes = append(modes, mode)
+		}
+	}
+	slices.Sort(modes)
+	return modes
 }
 
 // expandDevices lays out the PCI GPUs of one node of the group: one PCIe root

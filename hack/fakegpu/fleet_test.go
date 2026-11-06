@@ -249,6 +249,88 @@ func TestDRANodes(t *testing.T) {
 	}
 }
 
+func TestMixedModelNode(t *testing.T) {
+	fleet := &Fleet{Groups: []Group{
+		{Name: "mixed", Count: 1, GPUs: []GPU{{Model: "mi350p", Count: 4}, {Model: "r9700", Count: 2}}},
+		{Name: "mixed-dra", Count: 1, Mode: ModeDRA, GPUs: []GPU{{Model: "mi350p", Count: 4}, {Model: "r9700", Count: 2}}},
+	}}
+	nodes, slices := nodesByName(t, fleet)
+	for _, name := range []string{"fake-gpu-mixed-0", "fake-gpu-mixed-dra-0"} {
+		// The labeller reports each value with its count when a node has
+		// several, and leaves out the single-value label.
+		assertLabels(t, nodes[name], map[string]string{
+			aimLabelPrefix + ".MI350P":                     "4",
+			aimLabelPrefix + ".R9700":                      "2",
+			aimLabelPrefix + ".GPU":                        "6",
+			aimPartitionPrefix + ".default":                "6",
+			"amd.com/gpu.device-id.75a8":                   "4",
+			"amd.com/gpu.device-id.7551":                   "2",
+			"amd.com/gpu.family.AI":                        "4",
+			"amd.com/gpu.family.GC_12_0_0":                 "2",
+			"amd.com/gpu.product-name.AMD_Instinct_MI350P": "4",
+		}, "amd.com/gpu.device-id", "amd.com/gpu.family")
+	}
+	if got := nodes["fake-gpu-mixed-0"].Status.Allocatable[ResourceGPU]; got.Value() != 6 {
+		t.Errorf("device-plugin node allocatable %s = %s, want one pool of 6", ResourceGPU, got.String())
+	}
+
+	devices := slices["fake-gpu-mixed-dra-0"].Spec.Devices
+	if len(devices) != 6 {
+		t.Fatalf("slice has %d devices, want 6", len(devices))
+	}
+	for i, d := range devices {
+		wantID := "0x75a8"
+		if i >= 4 {
+			wantID = "0x7551"
+		}
+		if got := *d.Attributes["deviceID"].StringValue; got != wantID {
+			t.Errorf("device %d deviceID = %s, want %s", i, got, wantID)
+		}
+		if _, ok := d.Attributes["partitionProfile"]; ok {
+			t.Errorf("device %d of models that cannot be partitioned has a partitionProfile", i)
+		}
+	}
+}
+
+func TestMixedPartitionDRANode(t *testing.T) {
+	fleet := &Fleet{Groups: []Group{{
+		Name: "parts", Count: 1, Mode: ModeDRA,
+		GPUs: []GPU{{Model: "mi300x", Count: 4}, {Model: "mi300x", Count: 4, Partition: "cpx-nps1"}},
+	}}}
+	nodes, slices := nodesByName(t, fleet)
+	assertLabels(t, nodes["fake-gpu-parts-0"], map[string]string{
+		aimLabelPrefix + ".MI300X":       "8",
+		aimPartitionPrefix + ".SPX-NPS1": "4",
+		aimPartitionPrefix + ".CPX-NPS1": "32",
+	}, aimPartitionPrefix+".default")
+
+	counts := map[string]int{}
+	for _, d := range slices["fake-gpu-parts-0"].Spec.Devices {
+		counts[*d.Attributes["type"].StringValue+"/"+*d.Attributes["partitionProfile"].StringValue]++
+	}
+	want := map[string]int{"amdgpu/spx_nps1": 4, "amdgpu-partition/cpx_nps1": 32}
+	if !equality.Semantic.DeepEqual(counts, want) {
+		t.Errorf("devices by type and partition = %v, want %v", counts, want)
+	}
+}
+
+func TestMI350PDevice(t *testing.T) {
+	devices, err := expandDevices(Group{GPUs: []GPU{{Model: "mi350p", Count: 1}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := sliceDevices(devices, "")[0]
+	if got := *d.Attributes["productName"].StringValue; got != "AMD_Instinct_MI350P" {
+		t.Errorf("productName = %s", got)
+	}
+	if got := d.Capacity["computeUnits"].Value; got.Value() != 128 {
+		t.Errorf("computeUnits = %s, want 128", got.String())
+	}
+	if got := d.Capacity["memory"].Value; got.String() != "147440Mi" {
+		t.Errorf("memory = %s, want 147440Mi", got.String())
+	}
+}
+
 func TestParseFleetRejectsInvalidGroups(t *testing.T) {
 	tests := map[string]string{
 		"unknown field":      "groups: [{name: a, count: 1, gpu: []}]",
@@ -261,6 +343,8 @@ func TestParseFleetRejectsInvalidGroups(t *testing.T) {
 		"invalid group name": "groups: [{name: A_B, count: 1}]",
 		"no nodes":           "groups: [{name: a, count: 0}]",
 		"cpu on a GPU node":  "groups: [{name: a, count: 1, cpu: {model: EPYC_9965, cores: 192}, gpus: [{model: mi300x, count: 1}]}]",
+		"mixed partition modes on a device-plugin node": "groups: [{name: a, count: 1, gpus: [" +
+			"{model: mi300x, count: 1}, {model: mi300x, count: 1, partition: cpx-nps1}]}]",
 	}
 	for name, input := range tests {
 		t.Run(name, func(t *testing.T) {

@@ -15,7 +15,7 @@ metadata:
   labels:
     requires: kwok
 spec:
-  description: amd.com/gpu requests land on fake device-plugin nodes with enough GPUs.
+  description: amd.com/gpu requests land on fake device-plugin nodes with enough GPUs, whatever their models.
   timeouts:
     assert: 60s
   steps:
@@ -100,5 +100,33 @@ spec:
                 name: forty-cpx-partitions
               spec:
                 nodeName: fake-gpu-dp-mi300x-cpx-0
+              status:
+                phase: Running
+
+    - name: two GPU models on one node are a single amd.com/gpu pool
+      try:
+        - apply:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: six-mixed-gpus
+              spec:
+                nodeSelector:
+                  aim.eai.amd.com/fake-gpu-group: dp-mixed-models
+                containers:
+                  - name: main
+                    image: registry.k8s.io/pause:3.10
+                    resources:
+                      limits:
+                        amd.com/gpu: "6"
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: six-mixed-gpus
+              spec:
+                nodeName: fake-gpu-dp-mixed-models-0
               status:
                 phase: Running

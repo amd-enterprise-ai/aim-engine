@@ -67,6 +67,21 @@ var gpuModels = map[string]gpuModel{
 		computeModes:     []string{"spx", "dpx", "cpx"},
 		memoryModes:      []string{"nps1", "nps2"},
 	},
+	// The PCIe card of the MI350 series, with half the compute dies and memory
+	// of an MI350X. Its product_name and partition modes are not published, so
+	// it uses libdrm's name and is not partitionable until checked against
+	// hardware.
+	"mi350p": {
+		deviceID:         "0x75a8",
+		productName:      "AMD Instinct MI350P",
+		marketName:       "AMD Instinct MI350P",
+		aimModel:         "MI350P",
+		gfxTargetVersion: 90500,
+		computeUnits:     128,
+		simdPerCU:        4,
+		xcc:              4,
+		vramMiB:          147440,
+	},
 	"mi325x": {
 		deviceID:    "0x74a5",
 		productName: "AMD Instinct MI325X OAM",
