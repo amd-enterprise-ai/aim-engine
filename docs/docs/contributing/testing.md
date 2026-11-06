@@ -219,7 +219,7 @@ make test-chainsaw-kwok      # tests labelled requires=kwok, in tests/e2e/kwok
 make fake-gpu-fleet-delete   # remove the fleet
 ```
 
-`make fake-gpu-fleet` also creates the `gpu.amd.com` DeviceClass if the cluster has none. The fleet's GPU-labelled nodes change the node counts other tests assert on, so `requires=kwok` tests are excluded from every other selector and run only in this lane. Tests should pin their pods to a fleet group with the `aim.eai.amd.com/fake-gpu-group` node label, so that other GPU nodes in the cluster can't satisfy them. Clusters running HAMi's scheduler hand every `amd.com/gpu` pod to HAMi, which rejects nodes its device plugin didn't register; label test namespaces `hami.io/webhook=ignore` there.
+CI runs this lane on its own kind cluster as the `test-e2e-kwok` job in `.github/workflows/test-e2e.yml`. `make fake-gpu-fleet` also creates the `gpu.amd.com` DeviceClass if the cluster has none. The fleet's GPU-labelled nodes change the node counts other tests assert on, so `requires=kwok` tests are excluded from every other selector and run only in this lane. Tests should pin their pods to a fleet group with the `aim.eai.amd.com/fake-gpu-group` node label, so that other GPU nodes in the cluster can't satisfy them. Clusters running HAMi's scheduler hand every `amd.com/gpu` pod to HAMi, which rejects nodes its device plugin didn't register; label test namespaces `hami.io/webhook=ignore` there.
 
 The generator's unit tests compare its devices with ResourceSlices that the AMD GPU DRA driver's discovery code published (`hack/fakegpu/testdata`). Refresh them from a node running the driver with `kubectl get resourceslice -o yaml --field-selector spec.nodeName=<node>`, and add GPU models in `hack/fakegpu/models.go`.
 
