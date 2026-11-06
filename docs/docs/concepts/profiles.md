@@ -237,6 +237,16 @@ The label value (count) is informational only — the selector operator is `Exis
 
 GPU profiles also get a `feature.node.kubernetes.io/aim-accelerator.mixed-models.GPU` (`DoesNotExist`) term, which keeps them off nodes that carry more than one GPU model. See [Nodes with mixed GPU models](accelerator-detection.md#nodes-with-mixed-gpu-models).
 
+### Nodes with DRA GPUs
+
+Nodes whose GPUs are published by the AMD GPU DRA driver, in `gpu.amd.com` ResourceSlices, don't advertise `amd.com/gpu`. AIM Engine reads their GPUs from the ResourceSlices instead of the node labels. An AMD GPU profile matches a DRA node when the node has `acceleratorCount` devices of a single GPU model that fit the profile:
+
+- **Model:** the device's PCI device ID is one of the IDs of `acceleratorModel`. Profiles without a model, or with the family-level model `GPU`, accept any model.
+- **Partitioning:** `unpartitioned` takes whole GPUs, `partitioned` takes partitions, and a scheme such as `CPX-NPS4` takes devices with that partition profile (`cpx_nps4`).
+- **Host resources:** the node has room for the profile's CPU and memory requests.
+
+`status.matchingNodesByAllocation` reports the device-plugin and DRA matches separately. AIM Engine does not allocate GPUs through DRA yet, so DRA nodes don't count in `status.matchingNodes`. A profile whose GPUs exist only on DRA nodes reports `HardwareAvailable=False` with the reason `HardwareOnlyOnDRANodes`.
+
 ### Hardware support
 
 Optimized AIM images declare the concrete AMD hardware family they support:

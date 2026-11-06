@@ -27,6 +27,7 @@ import (
 
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
@@ -77,6 +78,7 @@ type AIMClusterProfileReconciler struct {
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterprofiles/finalizers,verbs=update
 // +kubebuilder:rbac:groups=serving.kserve.io,resources=clusterservingruntimes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=resource.k8s.io,resources=resourceslices,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 func (r *AIMClusterProfileReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -197,7 +199,7 @@ func (r *AIMClusterProfileReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return requests
 	})
 
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha2.AIMClusterProfile{}).
 		// Re-elect the model-slug owner when a same-model candidate changes or
 		// disappears. This same-kind secondary watch fans the event out to peers.
@@ -205,7 +207,10 @@ func (r *AIMClusterProfileReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// Own the projected ClusterServingRuntime so drift (hand-edits) and
 		// node-inventory changes (via the Node watch) self-heal through reconcile.
 		Owns(&kservev1alpha1.ClusterServingRuntime{}).
-		Watches(&corev1.Node{}, nodeHandler, builder.WithPredicates(utils.NodeGPUChangePredicate())).
-		Named(clusterProfileControllerName).
-		Complete(r)
+		Watches(&corev1.Node{}, nodeHandler, builder.WithPredicates(utils.NodeGPUChangePredicate()))
+	// AMD GPU DRA ResourceSlices change which nodes match, like node changes.
+	if utils.ResourceSliceAPIAvailable(mgr.GetRESTMapper()) {
+		b = b.Watches(&resourcev1.ResourceSlice{}, nodeHandler, builder.WithPredicates(utils.AMDGPUResourceSlicePredicate()))
+	}
+	return b.Named(clusterProfileControllerName).Complete(r)
 }

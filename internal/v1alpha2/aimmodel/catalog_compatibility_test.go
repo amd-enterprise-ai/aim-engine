@@ -126,9 +126,9 @@ func TestCopyabilityOptOutSurvivesHardwareLoss(t *testing.T) {
 					meta.Namespace = ""
 					live = &aimv1alpha2.AIMClusterProfile{ObjectMeta: meta}
 					existing[0].Object = live
-					desired, err = buildDesiredOfficialClusterModelProfiles(&aimv1alpha2.AIMClusterModel{ObjectMeta: model.ObjectMeta}, catalog, nil, nil, existing...)
+					desired, err = buildDesiredOfficialClusterModelProfiles(&aimv1alpha2.AIMClusterModel{ObjectMeta: model.ObjectMeta}, catalog, aimprofile.NodeInventory{}, nil, existing...)
 				} else {
-					desired, err = buildDesiredOfficialProfiles(model, catalog, nil, nil, existing...)
+					desired, err = buildDesiredOfficialProfiles(model, catalog, aimprofile.NodeInventory{}, nil, existing...)
 				}
 				if err != nil {
 					t.Fatal(err)
