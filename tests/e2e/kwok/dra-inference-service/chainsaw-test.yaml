@@ -97,12 +97,6 @@ spec:
                 profile:
                   name: kwok-dra-mi355x
                 replicas: 1
-                # DRA pods request no amd.com/gpu, so ExtendedResourceToleration
-                # adds no toleration for the fake nodes' taint.
-                tolerations:
-                  - key: amd.com/gpu
-                    operator: Exists
-                    effect: NoSchedule
         - assert:
             resource:
               apiVersion: aim.eai.amd.com/v1alpha2
@@ -158,6 +152,8 @@ spec:
               spec:
                 predictor:
                   (resourceClaims[?name == 'gpus'] | length(@)): 1
+                  # Tolerates the fake nodes' amd.com/gpu taint without spec.tolerations.
+                  (tolerations[?key == 'amd.com/gpu' && operator == 'Exists' && effect == 'NoSchedule'] | length(@)): 1
                   model:
                     (resources.claims[?name == 'gpus'] | length(@)): 1
                     (resources.limits."amd.com/gpu" || ''): ''

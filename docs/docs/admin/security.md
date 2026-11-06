@@ -29,6 +29,7 @@ The operator runs with a ClusterRole (`aim-engine-manager-role`) that grants:
 - Create/manage Gateway API HTTPRoutes
 - Read storage classes
 - Read DRA ResourceSlices (`resource.k8s.io`), to see GPUs published by the AMD GPU DRA driver
+- Create/manage DRA ResourceClaimTemplates (`resource.k8s.io`), one per AIMService that allocates GPUs through DRA
 
 ### Helper Roles
 

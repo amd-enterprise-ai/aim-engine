@@ -227,6 +227,10 @@ Once the accelerator detector has relabelled the nodes after the upgrade, list t
 kubectl get nodes -l feature.node.kubernetes.io/aim-accelerator.mixed-models.GPU
 ```
 
+### GPU allocation through DRA
+
+Existing services keep requesting `amd.com/gpu`. With the default `acceleratorAllocation.mode: Auto`, a new service allocates its GPUs through DRA only when nodes with the AMD GPU DRA driver are the only ones with its GPUs. DRA allocations don't count against `requests.amd.com/gpu` quotas; see [Accelerator allocation](../concepts/runtime-config.md#accelerator-allocation) before adding DRA nodes.
+
 ### 5. Verify
 
 ```bash
