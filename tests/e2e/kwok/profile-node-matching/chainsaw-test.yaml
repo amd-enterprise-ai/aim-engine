@@ -1,9 +1,9 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
 #
 # Profile node matching against the fake GPU fleet (hack/fakegpu/fleet.yaml):
-# device-plugin nodes and AMD GPU DRA nodes are counted separately in
-# status.matchingNodesByAllocation, and only device-plugin nodes make a
-# profile available until AIM Engine allocates GPUs through DRA.
+# status.matchingNodes counts device-plugin nodes and AMD GPU DRA nodes, and
+# status.matchingNodesByAllocation reports them separately. A profile whose GPUs
+# exist only on DRA nodes is available, but has no projected ServingRuntime.
 #
 # Needs the KWOK lane with the operator installed. The models used here are on
 # fleet nodes only, not on the labelled kind workers, so the counts are exact.
@@ -14,7 +14,7 @@ metadata:
   labels:
     requires: kwok
 spec:
-  description: GPU profiles count device-plugin and DRA nodes separately, and DRA-only hardware is not available yet.
+  description: GPU profiles count device-plugin and DRA nodes, and report each kind separately.
   timeouts:
     assert: 60s
   steps:
@@ -44,13 +44,13 @@ spec:
               metadata:
                 name: kwok-mi355x-x8
               status:
-                matchingNodes: 0
+                matchingNodes: 2
                 matchingNodesByAllocation:
                   devicePlugin: 0
                   dra: 2
                 (conditions[?type == 'HardwareAvailable'] | [0]):
-                  status: "False"
-                  reason: HardwareOnlyOnDRANodes
+                  status: "True"
+                (projectedRuntimeName || ''): ''
       finally:
         - delete:
             ref:
@@ -85,7 +85,7 @@ spec:
                 name: kwok-r9700-x2
               status:
                 # dp-r9700; dp-mixed-models carries the mixed-models marker.
-                matchingNodes: 1
+                matchingNodes: 2
                 matchingNodesByAllocation:
                   devicePlugin: 1
                   # dra-mixed-models: two R9700 devices.
@@ -128,7 +128,7 @@ spec:
               status:
                 # dp-mi300x-cpx and dra-mi300x-cpx; dra-mixed-partitions is
                 # in CPX-NPS1, not CPX-NPS4.
-                matchingNodes: 1
+                matchingNodes: 2
                 matchingNodesByAllocation:
                   devicePlugin: 1
                   dra: 1
