@@ -38,6 +38,7 @@ import (
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 )
 
 func makeProfileCache(name string, profileName string, scope aimv1alpha1.AIMResolutionScope, mode aimv1alpha2.AIMProfileCacheMode, storageClass string) *aimv1alpha2.AIMProfileCache {
@@ -981,6 +982,96 @@ func TestArtifactName_DivergesByDeclaredFilter(t *testing.T) {
 	}
 }
 
+// Drives a declared download_filter from profile YAML, through the discovery catalog
+// parser, into the artifact the cache plans, so a filter dropped anywhere in between
+// fails here rather than only in the parser or planner tests.
+func TestPlanResources_ArtifactFromDeclaredProfileYAML(t *testing.T) {
+	const noFilterName = "hf---org-model-04cea1e1c0"
+
+	plan := func(t *testing.T, declaration string) *aimv1alpha1.AIMArtifact {
+		t.Helper()
+		raw := `aim_id: org/model
+model_id: org/model
+metadata:
+  engine: vllm
+  metric: latency
+  precision: fp16
+  type: optimized
+` + declaration
+		catalog, err := aimprofile.ParseDiscoveryCatalog(&corev1.ConfigMap{
+			Data: map[string]string{
+				aimprofile.FlattenProfilePath("org/model/vllm-mi300x-fp16-tp1-latency.yaml"): raw,
+			},
+		})
+		if err != nil {
+			t.Fatalf("ParseDiscoveryCatalog: %v", err)
+		}
+		if len(catalog.Profiles) != 1 || len(catalog.Profiles[0].Spec.ModelSources) != 1 {
+			t.Fatalf("catalog = %+v, want one profile with one model source", catalog.Profiles)
+		}
+
+		pc := &aimv1alpha2.AIMProfileCache{
+			ObjectMeta: metav1.ObjectMeta{Name: "pc"},
+			Spec:       aimv1alpha2.AIMProfileCacheSpec{Mode: aimv1alpha2.ProfileCacheModeShared},
+		}
+		result := (&ProfileCacheReconciler{}).PlanResources(
+			context.Background(),
+			controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: pc},
+			ProfileCacheObservation{
+				ProfileCacheFetchResult: ProfileCacheFetchResult{profileCache: pc},
+				MissingCaches:           catalog.Profiles[0].Spec.ModelSources,
+			},
+		)
+		planned := result.GetToApplyWithoutOwnerRef()
+		if len(planned) != 1 {
+			t.Fatalf("planned %d objects, want 1 artifact", len(planned))
+		}
+		return planned[0].(*aimv1alpha1.AIMArtifact)
+	}
+
+	if got := plan(t, "").Name; got != noFilterName {
+		t.Fatalf("artifact name without a declaration = %q, want the pinned %q", got, noFilterName)
+	}
+
+	whole := plan(t, "download_filter: {}\n")
+	if !reflect.DeepEqual(whole.Spec.DownloadFilter, &aimv1alpha1.AIMDownloadFilter{}) {
+		t.Errorf("download_filter: {} planned spec.downloadFilter = %#v, want an empty filter", whole.Spec.DownloadFilter)
+	}
+
+	globs := plan(t, `download_filter:
+  include: ["vae/*", "*.json", "transformer/*"]
+  exclude: ["*.bin", "*.md"]
+`)
+	wantGlobs := &aimv1alpha1.AIMDownloadFilter{
+		Include: []string{"*.json", "transformer/*", "vae/*"},
+		Exclude: []string{"*.bin", "*.md"},
+	}
+	if !reflect.DeepEqual(globs.Spec.DownloadFilter, wantGlobs) {
+		t.Errorf("include/exclude planned spec.downloadFilter = %#v, want %#v", globs.Spec.DownloadFilter, wantGlobs)
+	}
+
+	reordered := plan(t, `download_filter:
+  include: ["transformer/*", "vae/*", "*.json"]
+  exclude: ["*.md", "*.bin"]
+`)
+	if reordered.Name != globs.Name {
+		t.Errorf("reordered globs renamed the artifact: %q vs %q", reordered.Name, globs.Name)
+	}
+
+	names := map[string]string{
+		"no declaration":  noFilterName,
+		"empty filter":    whole.Name,
+		"include/exclude": globs.Name,
+	}
+	seen := map[string]string{}
+	for label, name := range names {
+		if other, ok := seen[name]; ok {
+			t.Errorf("%s and %s share artifact name %q", label, other, name)
+		}
+		seen[name] = label
+	}
+}
+
 func TestComposeState_MatchesArtifactByDownloadFilter(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -990,7 +1081,21 @@ func TestComposeState_MatchesArtifactByDownloadFilter(t *testing.T) {
 	}{
 		{name: "both absent", wantAdopted: true},
 		{name: "source declares, artifact has none", sourceFilter: &aimv1alpha1.AIMDownloadFilter{}},
-		{name: "artifact has one, source declares none", artifactFilter: &aimv1alpha1.AIMDownloadFilter{}},
+		{
+			name:           "whole-repository artifact serves a source without a filter",
+			artifactFilter: &aimv1alpha1.AIMDownloadFilter{},
+			wantAdopted:    true,
+		},
+		{
+			name:           "whole-repository artifact serves a narrower declared filter",
+			artifactFilter: &aimv1alpha1.AIMDownloadFilter{},
+			sourceFilter:   &aimv1alpha1.AIMDownloadFilter{Include: []string{"*.safetensors"}},
+			wantAdopted:    true,
+		},
+		{
+			name:           "filtered artifact does not serve a source without a filter",
+			artifactFilter: &aimv1alpha1.AIMDownloadFilter{Include: []string{"*.safetensors"}},
+		},
 		{
 			name:           "different filters",
 			artifactFilter: &aimv1alpha1.AIMDownloadFilter{Exclude: []string{"*/*"}},

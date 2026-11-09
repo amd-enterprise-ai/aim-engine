@@ -1812,7 +1812,7 @@ func TestApply_SharedSemanticMismatchMatrixFailsBeforeWrites(t *testing.T) {
 				f.artifact.Spec.DownloadFilter = &aimv1alpha1.AIMDownloadFilter{Include: []string{"*.safetensors"}}
 				refreshFixturePin(t, f, f.artifact, "source-artifact")
 			},
-			want: "download filters",
+			want: "download filter",
 		},
 		{
 			name: "download image",
@@ -1954,6 +1954,15 @@ func TestValidateSharedArtifactSemantics_DownloadFilter(t *testing.T) {
 			targetFilter:   &aimv1alpha1.AIMDownloadFilter{Exclude: []string{"*.md", "*.bin"}},
 		},
 		{
+			name:           "artifact holds the whole repository",
+			artifactFilter: &aimv1alpha1.AIMDownloadFilter{},
+		},
+		{
+			name:           "whole-repository artifact covers a narrower target filter",
+			artifactFilter: &aimv1alpha1.AIMDownloadFilter{},
+			targetFilter:   &aimv1alpha1.AIMDownloadFilter{Include: []string{"*.safetensors"}},
+		},
+		{
 			name:         "target declares a filter the artifact lacks",
 			targetFilter: &aimv1alpha1.AIMDownloadFilter{},
 			wantError:    true,
@@ -1997,8 +2006,8 @@ func TestValidateSharedArtifactSemantics_DownloadFilter(t *testing.T) {
 	}
 }
 
-// The controller never adopts an artifact whose filter differs from the source's,
-// so such an artifact must not count toward adoption ambiguity either.
+// Candidates must mirror the controller's adoption rule: an artifact the controller
+// would not adopt must not count toward ambiguity, and one it would adopt must.
 func TestValidateSharedArtifactCandidates_IgnoresOtherDownloadFilters(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -2006,7 +2015,8 @@ func TestValidateSharedArtifactCandidates_IgnoresOtherDownloadFilters(t *testing
 		wantAmbiguous bool
 	}{
 		{name: "same filter is ambiguous", wantAmbiguous: true},
-		{name: "different filter is not a candidate", otherFilter: &aimv1alpha1.AIMDownloadFilter{}},
+		{name: "whole-repository artifact is a candidate", otherFilter: &aimv1alpha1.AIMDownloadFilter{}, wantAmbiguous: true},
+		{name: "different filter is not a candidate", otherFilter: &aimv1alpha1.AIMDownloadFilter{Include: []string{"*.safetensors"}}},
 	}
 
 	for _, test := range tests {

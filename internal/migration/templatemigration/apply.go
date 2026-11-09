@@ -2172,14 +2172,14 @@ func validateSharedArtifactSemantics(
 		effectiveDownloadImage(hypothetical, runtimeConfig.Value) {
 		return fmt.Errorf("shared source and target download images do not exactly match")
 	}
-	if !v1alpha2aimprofilecache.DownloadFilterMatches(
+	if !v1alpha2aimprofilecache.ArtifactFilterServes(
 		effectiveDownloadFilter(artifact, runtimeConfig.Value),
 		effectiveDownloadFilter(hypothetical, runtimeConfig.Value),
 	) {
-		return fmt.Errorf("shared source and target download filters do not exactly match")
+		return fmt.Errorf("shared source download filter does not cover the target's download filter")
 	}
-	if !v1alpha2aimprofilecache.DownloadFilterMatches(artifact.Spec.DownloadFilter, modelSource.DownloadFilter) {
-		return fmt.Errorf("shared source artifact declared download filter does not exactly match the target profile")
+	if !v1alpha2aimprofilecache.ArtifactFilterServes(artifact.Spec.DownloadFilter, modelSource.DownloadFilter) {
+		return fmt.Errorf("shared source artifact declared download filter does not serve the target profile")
 	}
 	return nil
 }
@@ -2246,7 +2246,7 @@ func validateSharedArtifactCandidates(
 				candidate.Spec.RuntimeConfigRef,
 				targetCache.Spec.RuntimeConfigRef,
 			) ||
-			!v1alpha2aimprofilecache.DownloadFilterMatches(candidate.Spec.DownloadFilter, modelSource.DownloadFilter) ||
+			!v1alpha2aimprofilecache.ArtifactFilterServes(candidate.Spec.DownloadFilter, modelSource.DownloadFilter) ||
 			candidate.DeletionTimestamp != nil ||
 			candidate.Status.Status == "" {
 			continue

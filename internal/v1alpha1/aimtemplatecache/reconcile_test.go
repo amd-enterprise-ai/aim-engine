@@ -558,7 +558,21 @@ func TestComposeState_MatchesArtifactByDownloadFilter(t *testing.T) {
 	}{
 		{name: "both absent", wantAdopted: true},
 		{name: "source declares, artifact has none", sourceFilter: &aimv1alpha1.AIMDownloadFilter{}},
-		{name: "artifact has one, source declares none", artifactFilter: &aimv1alpha1.AIMDownloadFilter{}},
+		{
+			name:           "whole-repository artifact serves a source without a filter",
+			artifactFilter: &aimv1alpha1.AIMDownloadFilter{},
+			wantAdopted:    true,
+		},
+		{
+			name:           "whole-repository artifact serves a narrower declared filter",
+			artifactFilter: &aimv1alpha1.AIMDownloadFilter{},
+			sourceFilter:   &aimv1alpha1.AIMDownloadFilter{Include: []string{"*.safetensors"}},
+			wantAdopted:    true,
+		},
+		{
+			name:           "filtered artifact does not serve a source without a filter",
+			artifactFilter: &aimv1alpha1.AIMDownloadFilter{Include: []string{"*.safetensors"}},
+		},
 		{
 			name:           "different filters",
 			artifactFilter: &aimv1alpha1.AIMDownloadFilter{Exclude: []string{"*/*"}},

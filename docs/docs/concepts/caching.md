@@ -49,7 +49,7 @@ The cache and its artifacts persist independently of any single service. When a 
 The deduplication boundary is per-namespace:
 
 - The cache controller finds an existing shared `AIMProfileCache` for the same profile and reuses it (no new cache resource).
-- If a new cache is created, the artifact controller finds existing shared `AIMArtifact`s for the same `sourceUri` (+ storage class + downloader env) and reuses them.
+- If a new cache is created, the artifact controller finds existing shared `AIMArtifact`s for the same `sourceUri` (+ storage class + downloader env) and reuses them. The artifact's `downloadFilter` must also select the same files as the model source's: an artifact with no filter serves a source with no filter, and equal filters match regardless of glob order. An artifact with `downloadFilter: {}` holds the whole repository and serves any source with the same `sourceUri`.
 
 Result: multiple services that share a profile fan in onto a single set of `AIMArtifact`s, one download per artifact per namespace.
 
