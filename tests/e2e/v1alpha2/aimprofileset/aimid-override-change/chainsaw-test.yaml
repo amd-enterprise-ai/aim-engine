@@ -1,0 +1,79 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimprofileset-aimid-override-change
+spec:
+  description: |
+    Verifies that changing overrides.aimId on an existing AIMProfileSet replaces
+    its derived AIMProfile. spec.aimId is immutable on AIMProfile, so the set
+    must create a replacement under a new name and prune the old profile
+    instead of attempting an in-place update that admission rejects.
+  timeouts:
+    assert: 90s
+  steps:
+    - name: Seed the discovery cache
+      try:
+        - apply:
+            file: discovery-configmap.yaml
+
+    - name: Create the AIMProfileSet with the original aimId override
+      try:
+        - apply:
+            file: profileset.yaml
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                annotations:
+                  aim.eai.amd.com/profile-source: copy
+                  aim.eai.amd.com/profile-set-name: aimid-override-profiles
+              spec:
+                aimId: acme/custom-model
+                profileId: cpu-default
+              status:
+                status: Ready
+
+    - name: Change the aimId override
+      try:
+        - apply:
+            file: profileset-new-aimid.yaml
+
+    - name: Assert a replacement profile carries the new aimId
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                annotations:
+                  aim.eai.amd.com/profile-source: copy
+                  aim.eai.amd.com/profile-set-name: aimid-override-profiles
+              spec:
+                aimId: acme/custom-model-v2
+                profileId: cpu-default
+              status:
+                status: Ready
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileSet
+              metadata:
+                name: aimid-override-profiles
+              status:
+                status: Ready
+                managedProfiles:
+                  total: 1
+                  ready: 1
+
+    - name: Assert the profile with the previous aimId was pruned
+      try:
+        - error:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                annotations:
+                  aim.eai.amd.com/profile-set-name: aimid-override-profiles
+              spec:
+                aimId: acme/custom-model

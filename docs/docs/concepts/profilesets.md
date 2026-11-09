@@ -47,6 +47,8 @@ Each model definition and its corresponding materialised resource represent one 
 
 Derived names preserve the previous release's naming inputs. The controller carries an internal `aim.eai.amd.com/legacy-catalog-naming` annotation through catalog-derived profiles so newly decoded vendor metadata does not rename downstream, explicitly opted-in derivations. Explicit vendor overrides retain their existing naming behavior. This marker is regenerated from source lineage if children are recreated; it is not an adopted-name map and should not be edited by users.
 
+`spec.aimId` is immutable on `AIMProfile` and `AIMClusterProfile`. Changing `overrides.aimId` on an existing set therefore replaces each affected derived profile: the controller creates the replacement under a deterministic alternate name, keeps that name on later reconciles, and prunes the old profile. Services that pin the old profile by `spec.profile.name` must be updated to the new name.
+
 Current, valid discovery makes image definitions available independently of the source model's overall `Ready` status. Selected outputs are materialised with the requested overrides and evaluated against their target hardware. Source hardware availability does not filter the derivation pool.
 
 Image models publish discovered definitions without transformation. Apply overrides in a separate profile set or derived model; `image` and `profiles` remain mutually exclusive on new v1alpha2 models.
