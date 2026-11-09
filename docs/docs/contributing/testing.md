@@ -281,6 +281,12 @@ Run a specific test area:
 make test-chainsaw CHAINSAW_ARGS="--test-dir tests/e2e/aimmodel/fine-tuned"
 ```
 
+## Continuous Integration
+
+Pull requests merge on a single required status check, `all-checks` (`.github/workflows/all-checks.yml`). Most pull request workflows only run when their `on.pull_request` path filters match the changed files, and a workflow that does not run reports no status, so they cannot be required individually. `all-checks` evaluates those filters against the pull request's changed files and passes once every triggered workflow has passed on the head commit. A new pull request workflow is gated automatically, with no list to update.
+
+Re-running a failed workflow does not re-run `all-checks`. Re-run the **All checks** workflow as well; it waits for in-progress runs, so both can be re-run at the same time.
+
 ## Next Steps
 
 - [Development Setup](development-setup.md) — Local environment configuration
