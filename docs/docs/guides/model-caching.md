@@ -105,7 +105,19 @@ An AIM image can declare the filter its model needs in its profile YAML
 [Projected profile YAML compatibility](../concepts/profiles.md#projected-profile-yaml-compatibility)).
 Discovered profiles carry that declaration onto their model source, where it
 takes precedence over the runtime config filter, so no configuration is needed
-for those images.
+for those images. Only v1alpha2 profile discovery reads the declaration:
+v1alpha1 `AIMServiceTemplate` discovery records each model's name, source, and
+size, so a template discovered from the same image gets no filter and needs the
+runtime config filter below.
+
+A derivation that replaces `overrides.modelSources`, such as a
+[fine-tune](fine-tuned-models.md), does not inherit the source profile's filter;
+see [Overrides](../concepts/profilesets.md#overrides).
+
+An artifact created with `downloadFilter: {}` holds the whole repository. A
+shared profile cache reuses it for any model source with the same `sourceURI`,
+whatever filter that source declares, so pre-creating one shares a complete
+copy across profiles.
 
 For images that do not declare a filter, set an explicitly empty filter to
 download all files:

@@ -295,7 +295,7 @@ func matchArtifactForSource(
 			continue
 		}
 
-		if !DownloadFilterMatches(cached.Spec.DownloadFilter, modelSource.DownloadFilter) {
+		if !ArtifactFilterServes(cached.Spec.DownloadFilter, modelSource.DownloadFilter) {
 			continue
 		}
 
@@ -542,15 +542,23 @@ func s3RuntimeConfigMatches(
 		normalizedRuntimeConfigName(left) == normalizedRuntimeConfigName(right)
 }
 
-// DownloadFilterMatches reports whether an artifact's filter selects the same file
-// set as a source's declared filter. Nil (fall back to runtime config or default)
-// and an empty filter (download everything) are deliberately distinct.
-func DownloadFilterMatches(left, right *aimv1alpha1.AIMDownloadFilter) bool {
-	if left == nil || right == nil {
-		return left == right
+// ArtifactFilterServes reports whether an artifact downloaded with artifactFilter
+// holds the files a source declaring sourceFilter needs. An artifact holding the
+// whole repository serves any source, which keeps a pre-created complete copy in
+// use. Otherwise the filters must select the same file set: a nil filter (runtime
+// config or default) and an empty one are deliberately distinct.
+func ArtifactFilterServes(artifactFilter, sourceFilter *aimv1alpha1.AIMDownloadFilter) bool {
+	if artifactFilter == nil {
+		return sourceFilter == nil
 	}
-	l, r := canonicalDownloadFilter(left), canonicalDownloadFilter(right)
-	return slices.Equal(l.Include, r.Include) && slices.Equal(l.Exclude, r.Exclude)
+	if len(artifactFilter.Include) == 0 && len(artifactFilter.Exclude) == 0 {
+		return true
+	}
+	if sourceFilter == nil {
+		return false
+	}
+	a, s := canonicalDownloadFilter(artifactFilter), canonicalDownloadFilter(sourceFilter)
+	return slices.Equal(a.Include, s.Include) && slices.Equal(a.Exclude, s.Exclude)
 }
 
 // canonicalDownloadFilter sorts and deduplicates the globs so that filters selecting
