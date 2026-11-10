@@ -131,13 +131,33 @@ func downloadFilterEnvVars(filter *aimv1alpha1.AIMDownloadFilter) []corev1.EnvVa
 		return nil
 	}
 	var envs []corev1.EnvVar
-	if len(filter.Include) > 0 {
-		envs = append(envs, corev1.EnvVar{Name: "AIM_HF_INCLUDE", Value: strings.Join(filter.Include, ",")})
+	if include := downloaderGlobs(filter.Include); include != "" {
+		envs = append(envs, corev1.EnvVar{Name: "AIM_HF_INCLUDE", Value: include})
 	}
-	if len(filter.Exclude) > 0 {
-		envs = append(envs, corev1.EnvVar{Name: "AIM_HF_EXCLUDE", Value: strings.Join(filter.Exclude, ",")})
+	if exclude := downloaderGlobs(filter.Exclude); exclude != "" {
+		envs = append(envs, corev1.EnvVar{Name: "AIM_HF_EXCLUDE", Value: exclude})
 	}
 	return envs
+}
+
+// downloaderGlobs renders globs in the form every downloader script evaluates the same
+// way. `hf download` treats a trailing "/" as the whole directory, while the size
+// check, the file verification and the S3 downloader use plain fnmatch, where "vae/"
+// matches no file; expanding it here keeps the sized PVC and the downloaded files in
+// agreement.
+func downloaderGlobs(globs []string) string {
+	rendered := make([]string, 0, len(globs))
+	for _, glob := range globs {
+		glob = strings.TrimSpace(glob)
+		if glob == "" {
+			continue
+		}
+		if strings.HasSuffix(glob, "/") {
+			glob += "*"
+		}
+		rendered = append(rendered, glob)
+	}
+	return strings.Join(rendered, ",")
 }
 
 func getDownloadJobName(mc *aimv1alpha1.AIMArtifact) string {
