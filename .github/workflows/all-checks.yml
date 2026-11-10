@@ -1,0 +1,56 @@
+name: All checks
+
+# The single required status check for merging. Path-filtered workflows report
+# no status when a pull request does not trigger them, so they cannot be
+# required directly. This workflow works out which workflows the changed files
+# trigger (from each workflow's own on.pull_request filters) and passes only
+# once every one of them has passed on the head commit.
+#
+# Re-running a failed workflow does not re-run this one. Re-run it as well; it
+# waits for in-progress runs, so both can be re-run at the same time.
+on:
+  pull_request:
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: all-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Opt JavaScript actions onto Node 24 ahead of GitHub's June 16, 2026 default
+# flip. See https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  all-checks:
+    name: all-checks
+    runs-on: ubuntu-latest
+    # Covers the slowest gated workflow (upgrade-e2e, 75 min timeout) plus queueing.
+    timeout-minutes: 150
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml==6.0.3
+
+      - name: Test the gate
+        run: python3 -B .github/scripts/test_all_checks.py
+
+      - name: Wait for triggered workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.base_ref }}
+          PR_ACTION: ${{ github.event.action }}
+        run: python3 -B .github/scripts/all-checks.py

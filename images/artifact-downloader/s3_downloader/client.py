@@ -24,8 +24,8 @@
 
 Defaults fall back to boto3 behaviour (Signature V4, auto path-vs-virtual
 addressing, and the standard credential chain). Validated end-to-end against
-MinIO; AWS S3, Cloudflare R2, Backblaze B2, GCS and Ceph RGW use the same boto3
-path and are expected to work. Optional AIM_S3_* knobs override region,
+SeaweedFS; AWS S3, MinIO, Cloudflare R2, Backblaze B2, GCS and Ceph RGW use the
+same boto3 path and are expected to work. Optional AIM_S3_* knobs override region,
 addressing style, signature version and multipart tuning when a backend needs
 it.
 

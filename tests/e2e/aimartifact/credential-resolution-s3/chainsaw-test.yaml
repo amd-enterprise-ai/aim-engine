@@ -5,8 +5,8 @@ metadata:
 spec:
   description: >
     Pins when the S3 downloader is allowed to fall back to anonymous (unsigned)
-    requests. Two artifacts read from one MinIO, which serves an anonymously
-    readable bucket and a private one.
+    requests. Two artifacts read from one SeaweedFS, which serves an
+    anonymously readable bucket and a private one.
 
     explicit-anonymous asks for anonymous access with the "anonymous" sentinel
     against the public bucket and must reach Ready. That is the form the built-in
@@ -21,44 +21,34 @@ spec:
     Nothing supplies credentials in this namespace, so the chain comes up empty
     and the downloader reports "Unable to locate credentials".
 
-    Asserting AuthError here is the point of the test: it has to name credentials
-    as the cause. Reading absent keys as a public bucket instead produces a 403
-    and a log line announcing anonymous access, which sends the user looking at
-    their sourceUri.
+    Naming credentials as the cause is the point of the test. Reading absent keys
+    as a public bucket instead produces a 403 and a log line announcing anonymous
+    access, which sends the user looking at their sourceUri. That 403
+    (AccessDenied) is classified as AuthError too, so the reason alone cannot
+    tell the two apart; the size-check condition message must carry the
+    "Unable to locate credentials" excerpt.
   steps:
-    - name: Deploy Minio
-      try:
-        - apply:
-            file: minio-service.yaml
-        - apply:
-            file: minio-deployment.yaml
-        - assert:
-            timeout: 60s
-            resource:
-              apiVersion: apps/v1
-              kind: Deployment
-              metadata:
-                name: minio
-              status:
-                availableReplicas: 1
+    - name: Deploy SeaweedFS
+      use:
+        template: ../../_shared/seaweedfs-step.yaml
 
     - name: Create a public bucket and a private bucket, seeded identically
       try:
         - apply:
-            file: minio-setup-job.yaml
+            file: seaweedfs-setup-job.yaml
         - assert:
-            timeout: 60s
+            timeout: 120s
             resource:
               apiVersion: batch/v1
               kind: Job
               metadata:
-                name: minio-setup
+                name: seaweedfs-setup
               status:
                 (succeeded != null): true
                 succeeded: 1
       catch:
         - podLogs:
-            selector: job-name=minio-setup
+            selector: job-name=seaweedfs-setup
             tail: 50
 
     - name: Create both artifacts
@@ -108,6 +98,10 @@ spec:
                 (conditions[?type == 'AuthValid']):
                   - status: "False"
                     reason: "AuthError"
+                (conditions[?type == 'CheckSizeJobPodsReady']):
+                  - status: "False"
+                    reason: "AuthError"
+                    (contains(message || '', 'Unable to locate credentials')): true
       catch:
         - describe:
             apiVersion: aim.eai.amd.com/v1alpha1

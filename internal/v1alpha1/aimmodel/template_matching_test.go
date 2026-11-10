@@ -519,14 +519,14 @@ func TestBuildFineTunedServiceTemplates_MergesModelEnvIntoTemplateSpecEnv(t *tes
 		Name: "AWS_ACCESS_KEY_ID",
 		ValueFrom: &corev1.EnvVarSource{
 			SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{Name: "minio-credentials"},
-				Key:                  "minio-access-key",
+				LocalObjectReference: corev1.LocalObjectReference{Name: "seaweedfs-credentials"},
+				Key:                  "seaweedfs-access-key",
 			},
 		},
 	}
 	awsEndpoint := corev1.EnvVar{
 		Name:  "AWS_ENDPOINT_URL",
-		Value: "http://minio.example.svc:80",
+		Value: "http://seaweedfs.example.svc:80",
 	}
 
 	model := &aimv1alpha1.AIMModel{
@@ -584,7 +584,7 @@ func TestBuildFineTunedServiceTemplates_MergesModelEnvIntoTemplateSpecEnv(t *tes
 	// Fine-tuned model's spec.env wins over source template on collision.
 	if got, ok := envByName["AWS_ENDPOINT_URL"]; !ok {
 		t.Errorf("expected AWS_ENDPOINT_URL on tpl.Spec.Env, got %+v", tpl.Spec.Env)
-	} else if got.Value != "http://minio.example.svc:80" {
+	} else if got.Value != "http://seaweedfs.example.svc:80" {
 		t.Errorf("expected fine-tuned model's spec.env to win on collision, got %q", got.Value)
 	}
 
@@ -592,7 +592,7 @@ func TestBuildFineTunedServiceTemplates_MergesModelEnvIntoTemplateSpecEnv(t *tes
 	if got, ok := envByName["AWS_ACCESS_KEY_ID"]; !ok {
 		t.Errorf("expected AWS_ACCESS_KEY_ID on tpl.Spec.Env, got %+v", tpl.Spec.Env)
 	} else if got.ValueFrom == nil || got.ValueFrom.SecretKeyRef == nil ||
-		got.ValueFrom.SecretKeyRef.Name != "minio-credentials" {
+		got.ValueFrom.SecretKeyRef.Name != "seaweedfs-credentials" {
 		t.Errorf("expected AWS_ACCESS_KEY_ID to retain secret ref, got %+v", got)
 	}
 
