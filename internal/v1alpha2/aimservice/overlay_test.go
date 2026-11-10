@@ -25,6 +25,7 @@ package aimservice
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
@@ -294,6 +295,41 @@ func TestBuildServiceOverlayProfile_NameSurvivesRecreate(t *testing.T) {
 
 	if a, b := build("uid-old"), build("uid-new"); a == b {
 		t.Fatalf("overlay name must include service UID to survive delete-and-recreate, got %q == %q", a, b)
+	}
+}
+
+// TestBuildServiceOverlayProfile_RegeneratesConventionalProfileID pins that a
+// hardware override on a seed with a generated-form profileId yields an overlay
+// whose projected profile filename names the overlay's hardware, while the
+// overlay resource name stays keyed on the seed and service.
+func TestBuildServiceOverlayProfile_RegeneratesConventionalProfileID(t *testing.T) {
+	seed := sampleProfileSpec()
+	seed.ProfileId = "vllm-mi300x-fp8-tp1-latency"
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: types.UID("service-uid")},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile:          &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			ProfileOverrides: &aimv1alpha1.AIMServiceProfileOverrides{AcceleratorModel: "MI325X"},
+		},
+	}
+	obs := ServiceObservation{
+		ServiceFetchResult:    ServiceFetchResult{service: service},
+		resolvedProfileSpec:   seed,
+		resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{},
+		profileName:           testProfileA,
+		profileScope:          aimv1alpha1.AIMResolutionScopeNamespace,
+	}
+
+	overlay, overlaySpec, err := buildServiceOverlayProfile(service, obs)
+	if err != nil {
+		t.Fatalf("buildServiceOverlayProfile returned error: %v", err)
+	}
+
+	if overlaySpec.ProfileId != "vllm-mi325x-fp8-tp1-latency" {
+		t.Errorf("overlay profileId: got %q, want %q", overlaySpec.ProfileId, "vllm-mi325x-fp8-tp1-latency")
+	}
+	if strings.Contains(overlay.Name, "mi325x") {
+		t.Errorf("overlay name must stay keyed on the seed name, got %q", overlay.Name)
 	}
 }
 

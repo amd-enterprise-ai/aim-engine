@@ -45,7 +45,7 @@ Use any combination of source filters: accelerator model, partitioning mode, cou
 
 Each model definition and its corresponding materialised resource represent one logical source. Independent model definitions and direct profiles remain distinct even when they share a `profileId` or identical runtime settings. Hardware changes and source materialisation leave logical source identity and derived names stable.
 
-Derived names preserve the previous release's naming inputs. The controller carries an internal `aim.eai.amd.com/legacy-catalog-naming` annotation through catalog-derived profiles so newly decoded vendor metadata does not rename downstream, explicitly opted-in derivations. Explicit vendor overrides retain their existing naming behavior. This marker is regenerated from source lineage if children are recreated; it is not an adopted-name map and should not be edited by users.
+Derived names preserve the previous release's naming inputs, except that the readable part follows a regenerated `profileId` (see [Identity stamping](#identity-stamping)). The controller carries an internal `aim.eai.amd.com/legacy-catalog-naming` annotation through catalog-derived profiles so newly decoded vendor metadata does not rename downstream, explicitly opted-in derivations. Explicit vendor overrides retain their existing naming behavior. This marker is regenerated from source lineage if children are recreated; it is not an adopted-name map and should not be edited by users.
 
 Current, valid discovery makes image definitions available independently of the source model's overall `Ready` status. Selected outputs are materialised with the requested overrides and evaluated against their target hardware. Source hardware availability does not filter the derivation pool.
 
@@ -103,7 +103,9 @@ When `selector.role: base`, CEL on `AIMProfileSetSpec` and `AIMModelProfilesSpec
 | `overrides.modelId` required | Supplies the target model identity explicitly, including when `modelSources[0].modelId` is set. |
 | `overrides.profileId` optional | Most callers don't pin a profileId; the AIMProfile reconciler synthesises one if unset. |
 
-For `role: deployable` derivations (the AIMProfileSet remix case where you're re-deriving an already-deployable profile into accelerator/engine variants), all three identity overrides are optional — the source profile's existing identity carries through unchanged unless you explicitly override it.
+For `role: deployable` derivations (the AIMProfileSet remix case where you're re-deriving an already-deployable profile into accelerator/engine variants), all three identity overrides are optional — the source profile's existing identity carries through unchanged unless you explicitly override it, with one exception for `profileId`.
+
+When `overrides.profileId` is unset and the source's `spec.profileId` is exactly the ID AIM Engine would generate from the source's own fields (see [Projected profile filename](inference-engines.md#projected-profile-filename)), the derived profile gets an ID regenerated from its overridden fields, so `vllm-mi250x-fp16-tp1-latency` with `overrides.acceleratorModel: MI350P` becomes `vllm-mi350p-fp16-tp1-latency`. Any other source `profileId` is copied unchanged. Vendor and partitioning-mode overrides don't change the ID. The derived `AIMProfile` resource name uses the derived `profileId`.
 
 The same shape applies to [`AIMModel.spec.profiles.derivedFrom`](../guides/custom-models.md): selector filters source candidates, overrides stamp the target identity onto the derived profile. CEL enforces the split on both surfaces identically.
 
@@ -127,7 +129,7 @@ Versions describe the selected sources, before overrides. Use `all` to include v
 
 | Field | Merge semantics |
 |---|---|
-| `aimId`, `modelId`, `profileId` | Replace source identity fields. An explicit `modelId` wins over derivation from `modelSources`. |
+| `aimId`, `modelId`, `profileId` | Replace source identity fields. An explicit `modelId` wins over derivation from `modelSources`. Without an explicit `profileId`, a generated-form source ID is regenerated (see [Identity stamping](#identity-stamping)). |
 | `modelSources` | Replaces source `modelSources` entirely. The first source's `modelId` supplies the derived profile's `spec.modelId` when no explicit `modelId` override is set. |
 | `image` | Replaces the runtime image; takes precedence over top-level `spec.image`. |
 | `acceleratorModel` | Replaces source `acceleratorModel`. |
