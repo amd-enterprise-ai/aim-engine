@@ -33,6 +33,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
@@ -1135,6 +1136,424 @@ func TestComposeState_MatchesArtifactByDownloadFilter(t *testing.T) {
 			}
 			if wantMissing := !tt.wantAdopted; (len(obs.MissingCaches) == 1) != wantMissing {
 				t.Errorf("missing caches = %d, want missing=%v", len(obs.MissingCaches), wantMissing)
+			}
+		})
+	}
+}
+
+// replacementFixture stages a cache that serves served-artifact for a source whose
+// download filter has since changed, so served-artifact no longer matches it.
+type replacementFixture struct {
+	pc              *aimv1alpha2.AIMProfileCache
+	profile         *aimv1alpha2.AIMProfile
+	served          aimv1alpha1.AIMArtifact
+	replacementName string
+}
+
+func newReplacementFixture(t *testing.T, mode aimv1alpha2.AIMProfileCacheMode) replacementFixture {
+	t.Helper()
+	source := aimv1alpha1.AIMModelSource{
+		ModelID:        "org/model-a",
+		SourceURI:      "hf://org/model-a",
+		DownloadFilter: &aimv1alpha1.AIMDownloadFilter{Include: []string{"*.safetensors", "transformer/*"}},
+	}
+	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, mode, "")
+	served := makeArtifact("served-artifact", source.SourceURI, source.ModelID, constants.AIMStatusReady, "", ownerUIDsFor(pc)...)
+	served.Status.PersistentVolumeClaim = "served-artifact-pvc"
+	pc.Status.Artifacts = buildResolvedArtifacts(map[string]aimv1alpha1.AIMArtifact{source.ModelID: served})
+
+	replacementName, err := generateArtifactName(pc, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return replacementFixture{
+		pc:              pc,
+		profile:         makeProfile("my-profile", []aimv1alpha1.AIMModelSource{source}),
+		served:          served,
+		replacementName: replacementName,
+	}
+}
+
+func ownerUIDsFor(pc *aimv1alpha2.AIMProfileCache) []types.UID {
+	if pc.Spec.Mode == aimv1alpha2.ProfileCacheModeDedicated {
+		return []types.UID{pc.UID}
+	}
+	return nil
+}
+
+func (f replacementFixture) replacement(status constants.AIMStatus) aimv1alpha1.AIMArtifact {
+	artifact := makeArtifact(f.replacementName, "hf://org/model-a", "org/model-a", status, "", ownerUIDsFor(f.pc)...)
+	filter := canonicalDownloadFilter(f.profile.Spec.ModelSources[0].DownloadFilter)
+	artifact.Spec.DownloadFilter = &filter
+	artifact.Status.PersistentVolumeClaim = f.replacementName + "-pvc"
+	return artifact
+}
+
+func (f replacementFixture) fetch(artifacts ...aimv1alpha1.AIMArtifact) ProfileCacheFetchResult {
+	return ProfileCacheFetchResult{
+		profileCache: f.pc,
+		profile:      controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: f.profile},
+		artifacts: controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]{
+			Value: &aimv1alpha1.AIMArtifactList{Items: artifacts},
+		},
+	}
+}
+
+func (f replacementFixture) reconcile(t *testing.T, artifacts ...aimv1alpha1.AIMArtifact) (ProfileCacheObservation, *aimv1alpha2.AIMProfileCacheStatus, *controllerutils.ConditionManager) {
+	t.Helper()
+	return f.reconcileFetch(t, f.fetch(artifacts...))
+}
+
+func (f replacementFixture) reconcileFetch(t *testing.T, fetch ProfileCacheFetchResult) (ProfileCacheObservation, *aimv1alpha2.AIMProfileCacheStatus, *controllerutils.ConditionManager) {
+	t.Helper()
+	r := &ProfileCacheReconciler{}
+	obs := r.ComposeState(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: f.pc},
+		fetch,
+	)
+	status := f.pc.Status.DeepCopy()
+	cm := controllerutils.NewConditionManager(status.Conditions)
+	r.DecorateStatus(status, cm, obs)
+	status.Conditions = cm.Conditions()
+	return obs, status, cm
+}
+
+func (f replacementFixture) plannedApplies(t *testing.T, obs ProfileCacheObservation) controllerutils.PlanResult {
+	t.Helper()
+	return (&ProfileCacheReconciler{}).PlanResources(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: f.pc},
+		obs,
+	)
+}
+
+// emittedEvents returns the events the pipeline would record for the conditions cm
+// now holds, given the conditions the cache had before the reconcile.
+func emittedEvents(pc *aimv1alpha2.AIMProfileCache, previous []metav1.Condition, cm *controllerutils.ConditionManager) []string {
+	recorder := record.NewFakeRecorder(20)
+	controllerutils.EmitConditionTransitions(recorder, pc, controllerutils.DiffConditionTransitions(previous, cm.Conditions()), cm)
+	controllerutils.EmitRecurringEvents(recorder, pc, cm)
+	close(recorder.Events)
+	var events []string
+	for event := range recorder.Events {
+		events = append(events, event)
+	}
+	return events
+}
+
+func eventsWithReason(events []string, reason string) []string {
+	var matching []string
+	for _, event := range events {
+		if strings.Contains(event, " "+reason+" ") {
+			matching = append(matching, event)
+		}
+	}
+	return matching
+}
+
+func failedArtifactWithMessage(artifact aimv1alpha1.AIMArtifact, message string) aimv1alpha1.AIMArtifact {
+	artifact.Status.Conditions = []metav1.Condition{{
+		Type:    controllerutils.ConditionTypeReady,
+		Status:  metav1.ConditionFalse,
+		Message: message,
+	}}
+	return artifact
+}
+
+func TestReplacement_KeepsServedArtifactUntilReplacementIsReady(t *testing.T) {
+	tests := []struct {
+		name                string
+		mode                aimv1alpha2.AIMProfileCacheMode
+		replacement         func(replacementFixture) []aimv1alpha1.AIMArtifact
+		wantCreate          bool
+		wantReason          string
+		wantMessageContains string
+	}{
+		{
+			name:                "replacement not created yet",
+			replacement:         func(replacementFixture) []aimv1alpha1.AIMArtifact { return nil },
+			wantCreate:          true,
+			wantReason:          aimv1alpha2.AIMProfileCacheReasonReplacingArtifacts,
+			wantMessageContains: "is created",
+		},
+		{
+			name:                "dedicated cache creates its own replacement",
+			mode:                aimv1alpha2.ProfileCacheModeDedicated,
+			replacement:         func(replacementFixture) []aimv1alpha1.AIMArtifact { return nil },
+			wantCreate:          true,
+			wantReason:          aimv1alpha2.AIMProfileCacheReasonReplacingArtifacts,
+			wantMessageContains: "is created",
+		},
+		{
+			name: "replacement downloading",
+			replacement: func(f replacementFixture) []aimv1alpha1.AIMArtifact {
+				return []aimv1alpha1.AIMArtifact{f.replacement(constants.AIMStatusProgressing)}
+			},
+			wantReason:          aimv1alpha2.AIMProfileCacheReasonReplacingArtifacts,
+			wantMessageContains: "is Progressing",
+		},
+		{
+			name: "replacement failed",
+			replacement: func(f replacementFixture) []aimv1alpha1.AIMArtifact {
+				return []aimv1alpha1.AIMArtifact{failedArtifactWithMessage(f.replacement(constants.AIMStatusFailed), "download returned 403")}
+			},
+			wantReason:          aimv1alpha2.AIMProfileCacheReasonReplacementFailed,
+			wantMessageContains: "download returned 403",
+		},
+		{
+			name: "replacement download stalled",
+			replacement: func(f replacementFixture) []aimv1alpha1.AIMArtifact {
+				return []aimv1alpha1.AIMArtifact{failedArtifactWithMessage(f.replacement(constants.AIMStatusDegraded), "download made no progress")}
+			},
+			wantReason:          aimv1alpha2.AIMProfileCacheReasonReplacementFailed,
+			wantMessageContains: "download made no progress",
+		},
+		{
+			name: "previous replacement still deleting",
+			replacement: func(f replacementFixture) []aimv1alpha1.AIMArtifact {
+				return []aimv1alpha1.AIMArtifact{markTerminating(f.replacement(constants.AIMStatusProgressing))}
+			},
+			wantReason:          aimv1alpha2.AIMProfileCacheReasonReplacingArtifacts,
+			wantMessageContains: "finishes deleting",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mode := tt.mode
+			if mode == "" {
+				mode = aimv1alpha2.ProfileCacheModeShared
+			}
+			f := newReplacementFixture(t, mode)
+			obs, status, cm := f.reconcile(t, append([]aimv1alpha1.AIMArtifact{f.served}, tt.replacement(f)...)...)
+
+			resolved, ok := status.Artifacts[f.served.Name]
+			if !ok || len(status.Artifacts) != 1 || resolved.PersistentVolumeClaim != "served-artifact-pvc" {
+				t.Fatalf("status.artifacts = %+v, want only %s with its PVC", status.Artifacts, f.served.Name)
+			}
+			if ready := cm.Get(artifactsReadyConditionType); ready == nil || ready.Status != metav1.ConditionTrue {
+				t.Fatalf("%s = %+v, want True while the served artifact is Ready", artifactsReadyConditionType, ready)
+			}
+			replacing := cm.Get(aimv1alpha2.AIMProfileCacheConditionArtifactsReplacing)
+			if replacing == nil || replacing.Status != metav1.ConditionTrue || replacing.Reason != tt.wantReason {
+				t.Fatalf("ArtifactsReplacing = %+v, want True/%s", replacing, tt.wantReason)
+			}
+			if !strings.Contains(replacing.Message, f.served.Name) || !strings.Contains(replacing.Message, tt.wantMessageContains) {
+				t.Fatalf("ArtifactsReplacing message %q, want it to name %s and contain %q", replacing.Message, f.served.Name, tt.wantMessageContains)
+			}
+			if len(obs.TerminatingArtifactNames) != 0 {
+				t.Fatalf("terminating artifacts %v reported against the cache's readiness", obs.TerminatingArtifactNames)
+			}
+
+			plan := f.plannedApplies(t, obs)
+			applies := plan.GetToApplyWithoutOwnerRef()
+			if mode == aimv1alpha2.ProfileCacheModeDedicated {
+				if len(applies) != 0 {
+					t.Fatalf("dedicated cache planned %d applies without an owner", len(applies))
+				}
+				applies = plan.GetToApply()
+			}
+			if created := len(applies) == 1 && applies[0].GetName() == f.replacementName; created != tt.wantCreate || len(applies) > 1 {
+				t.Fatalf("planned applies %d (replacement created = %v), want replacement created = %v", len(applies), created, tt.wantCreate)
+			}
+		})
+	}
+}
+
+func TestReplacement_FailureEmitsWarning(t *testing.T) {
+	f := newReplacementFixture(t, aimv1alpha2.ProfileCacheModeShared)
+	_, _, cm := f.reconcile(t, f.served, failedArtifactWithMessage(f.replacement(constants.AIMStatusFailed), "download returned 403"))
+
+	failures := eventsWithReason(emittedEvents(f.pc, f.pc.Status.Conditions, cm), aimv1alpha2.AIMProfileCacheReasonReplacementFailed)
+	if len(failures) != 1 || !strings.HasPrefix(failures[0], corev1.EventTypeWarning+" ") {
+		t.Fatalf("replacement failure events = %v, want one Warning", failures)
+	}
+}
+
+func TestReplacement_SwitchesOnceReplacementIsReady(t *testing.T) {
+	f := newReplacementFixture(t, aimv1alpha2.ProfileCacheModeShared)
+	f.pc.Status.Conditions = []metav1.Condition{{
+		Type:   aimv1alpha2.AIMProfileCacheConditionArtifactsReplacing,
+		Status: metav1.ConditionTrue,
+		Reason: aimv1alpha2.AIMProfileCacheReasonReplacingArtifacts,
+	}}
+	artifacts := []aimv1alpha1.AIMArtifact{f.served, f.replacement(constants.AIMStatusReady)}
+
+	obs, status, cm := f.reconcile(t, artifacts...)
+
+	if len(obs.Replacements) != 0 || len(obs.MissingCaches) != 0 {
+		t.Fatalf("replacements = %v, missing = %v, want none once the replacement is Ready", obs.Replacements, obs.MissingCaches)
+	}
+	if _, ok := status.Artifacts[f.replacementName]; !ok || len(status.Artifacts) != 1 {
+		t.Fatalf("status.artifacts = %+v, want only %s", status.Artifacts, f.replacementName)
+	}
+	replacing := cm.Get(aimv1alpha2.AIMProfileCacheConditionArtifactsReplacing)
+	if replacing == nil || replacing.Status != metav1.ConditionFalse || replacing.Reason != aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced {
+		t.Fatalf("ArtifactsReplacing = %+v, want False/%s", replacing, aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced)
+	}
+	switchEvents := eventsWithReason(emittedEvents(f.pc, f.pc.Status.Conditions, cm), aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced)
+	if len(switchEvents) != 1 || !strings.HasPrefix(switchEvents[0], corev1.EventTypeNormal+" ") ||
+		!strings.Contains(switchEvents[0], f.served.Name) || !strings.Contains(switchEvents[0], f.replacementName) {
+		t.Fatalf("switch events = %v, want one Normal event naming %s and %s", switchEvents, f.served.Name, f.replacementName)
+	}
+
+	// The next reconcile starts from the status the switch wrote.
+	f.pc.Status = *status
+	_, _, cm = f.reconcile(t, artifacts...)
+	if again := eventsWithReason(emittedEvents(f.pc, f.pc.Status.Conditions, cm), aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced); len(again) != 0 {
+		t.Fatalf("reconcile after the switch emitted %v, want no further switch events", again)
+	}
+	if kept := cm.Get(aimv1alpha2.AIMProfileCacheConditionArtifactsReplacing); kept == nil || kept.Reason != aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced {
+		t.Fatalf("ArtifactsReplacing after the switch = %+v, want the switch kept on record", kept)
+	}
+}
+
+func TestReplacement_MoveToUnreadyArtifactIsNotReportedAsSwitch(t *testing.T) {
+	f := newReplacementFixture(t, aimv1alpha2.ProfileCacheModeShared)
+	f.pc.Status.Conditions = []metav1.Condition{{
+		Type:   aimv1alpha2.AIMProfileCacheConditionArtifactsReplacing,
+		Status: metav1.ConditionTrue,
+		Reason: aimv1alpha2.AIMProfileCacheReasonReplacingArtifacts,
+	}}
+
+	// The served artifact was deleted while its replacement was still downloading.
+	_, status, cm := f.reconcile(t, markTerminating(f.served), f.replacement(constants.AIMStatusProgressing))
+
+	if _, ok := status.Artifacts[f.replacementName]; !ok || len(status.Artifacts) != 1 {
+		t.Fatalf("status.artifacts = %+v, want only the downloading %s", status.Artifacts, f.replacementName)
+	}
+	if ready := cm.Get(artifactsReadyConditionType); ready == nil || ready.Status != metav1.ConditionFalse {
+		t.Fatalf("%s = %+v, want False while nothing Ready serves the model", artifactsReadyConditionType, ready)
+	}
+	if replacing := cm.Get(aimv1alpha2.AIMProfileCacheConditionArtifactsReplacing); replacing != nil {
+		t.Fatalf("ArtifactsReplacing = %+v, want the stale replacement condition removed", replacing)
+	}
+	if events := eventsWithReason(emittedEvents(f.pc, f.pc.Status.Conditions, cm), aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced); len(events) != 0 {
+		t.Fatalf("switch events = %v, want none for a move to an artifact that is not Ready", events)
+	}
+}
+
+func TestReplacement_UnservedSourceStillGatesReadiness(t *testing.T) {
+	f := newReplacementFixture(t, aimv1alpha2.ProfileCacheModeShared)
+	f.profile.Spec.ModelSources = append(f.profile.Spec.ModelSources,
+		aimv1alpha1.AIMModelSource{ModelID: "org/model-b", SourceURI: "hf://org/model-b"})
+
+	obs, status, cm := f.reconcile(t, f.served)
+
+	if len(obs.MissingCaches) != 2 {
+		t.Fatalf("missing caches = %d, want the replacement and the unserved source", len(obs.MissingCaches))
+	}
+	if _, ok := status.Artifacts[f.served.Name]; !ok || len(status.Artifacts) != 1 {
+		t.Fatalf("status.artifacts = %+v, want only %s", status.Artifacts, f.served.Name)
+	}
+	ready := cm.Get(artifactsReadyConditionType)
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != aimv1alpha2.AIMProfileCacheReasonCreatingCaches {
+		t.Fatalf("%s = %+v, want False/%s for the unserved source", artifactsReadyConditionType, ready, aimv1alpha2.AIMProfileCacheReasonCreatingCaches)
+	}
+	if replacing := cm.Get(aimv1alpha2.AIMProfileCacheConditionArtifactsReplacing); replacing == nil || replacing.Status != metav1.ConditionTrue {
+		t.Fatalf("ArtifactsReplacing = %+v, want True for the replaced source", replacing)
+	}
+}
+
+func TestReplacement_ProfileFetchErrorKeepsServedArtifact(t *testing.T) {
+	f := newReplacementFixture(t, aimv1alpha2.ProfileCacheModeShared)
+	f.pc.Status.Conditions = []metav1.Condition{
+		{Type: artifactsReadyConditionType, Status: metav1.ConditionTrue, Reason: aimv1alpha2.AIMProfileCacheReasonAllCachesReady},
+		{Type: aimv1alpha2.AIMProfileCacheConditionArtifactsReplacing, Status: metav1.ConditionTrue, Reason: aimv1alpha2.AIMProfileCacheReasonReplacingArtifacts},
+	}
+	fetch := f.fetch(f.served, f.replacement(constants.AIMStatusProgressing))
+	fetch.profile = controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Error: errors.New("transient profile read failure")}
+
+	_, status, cm := f.reconcileFetch(t, fetch)
+
+	if !reflect.DeepEqual(status.Artifacts, f.pc.Status.Artifacts) {
+		t.Fatalf("status.artifacts = %+v, want the served artifact kept: %+v", status.Artifacts, f.pc.Status.Artifacts)
+	}
+	for _, conditionType := range []string{artifactsReadyConditionType, aimv1alpha2.AIMProfileCacheConditionArtifactsReplacing} {
+		if condition := cm.Get(conditionType); condition == nil || condition.Status != metav1.ConditionTrue {
+			t.Fatalf("%s = %+v, want the last known True kept", conditionType, condition)
+		}
+	}
+}
+
+func TestReplacement_NotUsedWhenServedArtifactCannotServe(t *testing.T) {
+	tests := []struct {
+		name       string
+		adjust     func(*replacementFixture)
+		wantServed bool
+	}{
+		{
+			name: "whole-repository artifact already serves the new filter",
+			adjust: func(f *replacementFixture) {
+				f.served.Spec.DownloadFilter = &aimv1alpha1.AIMDownloadFilter{}
+			},
+			wantServed: true,
+		},
+		{
+			name: "served artifact is being deleted",
+			adjust: func(f *replacementFixture) {
+				f.served = markTerminating(f.served)
+			},
+		},
+		{
+			name: "served artifact is not Ready",
+			adjust: func(f *replacementFixture) {
+				f.served.Status.Status = constants.AIMStatusDegraded
+			},
+		},
+		{
+			name: "source points at a different repository",
+			adjust: func(f *replacementFixture) {
+				f.profile.Spec.ModelSources[0].SourceURI = "hf://org/model-b"
+			},
+		},
+		{
+			name: "served artifact was recreated under the same name",
+			adjust: func(f *replacementFixture) {
+				f.served.UID = "recreated-uid"
+			},
+		},
+		{
+			name: "cache now requires a different storage class",
+			adjust: func(f *replacementFixture) {
+				f.pc.Spec.StorageClassName = "fast"
+				f.served.Spec.StorageClassName = "slow"
+			},
+		},
+		{
+			name: "s3 source now resolves through a different runtime config",
+			adjust: func(f *replacementFixture) {
+				f.profile.Spec.ModelSources[0].SourceURI = "s3://bucket/model-a"
+				f.served.Spec.SourceURI = "s3://bucket/model-a"
+				f.served.Spec.RuntimeConfigRef = aimv1alpha1.RuntimeConfigRef{Name: "previous-s3"}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newReplacementFixture(t, aimv1alpha2.ProfileCacheModeShared)
+			tt.adjust(&f)
+			obs, _, cm := f.reconcile(t, f.served)
+
+			_, served := obs.BestArtifacts["org/model-a"]
+			if served != tt.wantServed {
+				t.Fatalf("model served = %v, want %v", served, tt.wantServed)
+			}
+			if len(obs.Replacements) != 0 {
+				t.Fatalf("replacements = %v, want none", obs.Replacements)
+			}
+			if replacing := cm.Get(aimv1alpha2.AIMProfileCacheConditionArtifactsReplacing); replacing != nil {
+				t.Fatalf("ArtifactsReplacing = %+v, want unset", replacing)
+			}
+			if wantMissing := !tt.wantServed; (len(obs.MissingCaches) == 1) != wantMissing {
+				t.Fatalf("missing caches = %d, want an artifact created = %v", len(obs.MissingCaches), wantMissing)
+			}
+			wantReady := metav1.ConditionFalse
+			if tt.wantServed {
+				wantReady = metav1.ConditionTrue
+			}
+			if ready := cm.Get(artifactsReadyConditionType); ready == nil || ready.Status != wantReady {
+				t.Fatalf("%s = %+v, want %s", artifactsReadyConditionType, ready, wantReady)
 			}
 		})
 	}

@@ -24,6 +24,8 @@ package aimprofilecache
 
 import (
 	"context"
+	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -123,6 +125,13 @@ func (result ProfileCacheFetchResult) GetComponentHealth() []controllerutils.Com
 	return health
 }
 
+// profileUnavailable reports whether the profile could not be read for a reason other
+// than not existing, which leaves the cache's model sources unknown.
+func (result ProfileCacheFetchResult) profileUnavailable() bool {
+	return (result.profile.Error != nil && !result.profile.IsNotFound()) ||
+		(result.clusterProfile.Error != nil && !result.clusterProfile.IsNotFound())
+}
+
 func getProfileHealth(status *aimv1alpha2.AIMProfileStatus) controllerutils.ComponentHealth {
 	for _, cond := range status.GetConditions() {
 		if cond.Type == controllerutils.ConditionTypeReady {
@@ -167,6 +176,26 @@ type ProfileCacheObservation struct {
 	// replacement hashes to the same name, so recreating one before the delete completes
 	// would patch the dying object instead.
 	TerminatingArtifactNames []string
+
+	// Replacements holds, by model ID, the sources whose served artifact no longer
+	// matches them, typically after their download filter changed. The served artifact
+	// stays in BestArtifacts so services keep their volume, while the matching artifact
+	// is created (the source is also in MissingCaches) and downloaded.
+	Replacements map[string]artifactReplacement
+}
+
+// artifactReplacement pairs the artifact still serving a model source with the
+// artifact that will replace it.
+type artifactReplacement struct {
+	serving aimv1alpha1.AIMArtifact
+	// replacementName names the artifact being created or downloaded. Empty while
+	// a previous replacement is still being deleted.
+	replacementName string
+	// replacement is nil until the replacement artifact reports a status.
+	replacement *aimv1alpha1.AIMArtifact
+	// terminatingNames lists matching artifacts still being deleted; the replacement
+	// is created only once they are gone, because in Shared mode it reuses the name.
+	terminatingNames []string
 }
 
 // GetComponentHealth overrides the embedded FetchResult's method to include artifact match health.
@@ -228,6 +257,7 @@ func (r *ProfileCacheReconciler) ComposeState(
 	}
 
 	obs.BestArtifacts = map[string]aimv1alpha1.AIMArtifact{}
+	obs.Replacements = map[string]artifactReplacement{}
 
 	logger.V(1).Info("ComposeState: checking artifacts",
 		"profileCache", pc.Name,
@@ -236,7 +266,20 @@ func (r *ProfileCacheReconciler) ComposeState(
 
 	for _, model := range modelSources {
 		match := matchArtifactForSource(pc, fetch.artifacts.Value.Items, model)
+		serving, keepServing := servedArtifactPendingReplacement(pc, fetch.artifacts.Value.Items, model, match)
 		switch {
+		case keepServing:
+			replacement := newArtifactReplacement(pc, model, serving, match)
+			logger.V(1).Info("ComposeState: keeping served artifact until its replacement is ready",
+				"modelID", model.ModelID,
+				"servedArtifact", serving.Name,
+				"replacementArtifact", replacement.replacementName,
+				"terminatingArtifacts", match.terminatingNames)
+			obs.BestArtifacts[model.ModelID] = serving
+			obs.Replacements[model.ModelID] = replacement
+			if !match.found && len(match.terminatingNames) == 0 {
+				obs.MissingCaches = append(obs.MissingCaches, model)
+			}
 		case match.found:
 			logger.V(1).Info("ComposeState: model source matched",
 				"modelID", model.ModelID,
@@ -320,6 +363,75 @@ func matchArtifactForSource(
 	return match
 }
 
+// servedArtifactPendingReplacement returns the artifact to keep serving modelSource
+// when no Ready artifact matches it yet.
+func servedArtifactPendingReplacement(
+	profileCache *aimv1alpha2.AIMProfileCache,
+	artifacts []aimv1alpha1.AIMArtifact,
+	modelSource aimv1alpha1.AIMModelSource,
+	match artifactMatch,
+) (aimv1alpha1.AIMArtifact, bool) {
+	if match.found && match.best.Status.Status == constants.AIMStatusReady {
+		return aimv1alpha1.AIMArtifact{}, false
+	}
+	return servedArtifact(profileCache, artifacts, modelSource)
+}
+
+// servedArtifact returns the artifact status.artifacts lists for modelSource when it
+// can keep serving the source until a matching artifact is Ready. It must still be the
+// same live, Ready object and pass every matchArtifactForSource check except the
+// download filter. Adoptability matters beyond the match: the artifact watch only wakes
+// this cache for artifacts it can adopt, so serving one it cannot would miss its deletion.
+func servedArtifact(
+	profileCache *aimv1alpha2.AIMProfileCache,
+	artifacts []aimv1alpha1.AIMArtifact,
+	modelSource aimv1alpha1.AIMModelSource,
+) (aimv1alpha1.AIMArtifact, bool) {
+	for _, resolved := range profileCache.Status.Artifacts {
+		if resolved.Model != modelSource.ModelID {
+			continue
+		}
+		for _, artifact := range artifacts {
+			if artifact.Name != resolved.Name || string(artifact.UID) != resolved.UID {
+				continue
+			}
+			servable := artifact.DeletionTimestamp == nil &&
+				artifact.Status.Status == constants.AIMStatusReady &&
+				artifact.Spec.SourceURI == modelSource.SourceURI &&
+				ArtifactAdoptableBy(profileCache, &artifact) &&
+				s3RuntimeConfigMatches(modelSource.SourceURI, artifact.Spec.RuntimeConfigRef, profileCache.Spec.RuntimeConfigRef)
+			if !servable {
+				return aimv1alpha1.AIMArtifact{}, false
+			}
+			return artifact, true
+		}
+	}
+	return aimv1alpha1.AIMArtifact{}, false
+}
+
+// newArtifactReplacement records what the replacement for a served source is waiting
+// on: the matching artifact if it already reports a status, a previous copy that is
+// still being deleted, or otherwise the name the artifact will be created under.
+func newArtifactReplacement(
+	profileCache *aimv1alpha2.AIMProfileCache,
+	modelSource aimv1alpha1.AIMModelSource,
+	serving aimv1alpha1.AIMArtifact,
+	match artifactMatch,
+) artifactReplacement {
+	replacement := artifactReplacement{serving: serving}
+	switch {
+	case match.found:
+		best := match.best
+		replacement.replacement = &best
+		replacement.replacementName = best.Name
+	case len(match.terminatingNames) > 0:
+		replacement.terminatingNames = match.terminatingNames
+	default:
+		replacement.replacementName, _ = generateArtifactName(profileCache, modelSource)
+	}
+	return replacement
+}
+
 func (r *ProfileCacheReconciler) PlanResources(
 	ctx context.Context,
 	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache],
@@ -390,9 +502,10 @@ func (r *ProfileCacheReconciler) DecorateStatus(
 	if obs.profileCache != nil {
 		status.ObservedGeneration = obs.profileCache.Generation
 	}
-	if !obs.artifacts.OK() {
-		// Keep the last known artifact/PVC projection while the list is
-		// unavailable. Fetch health records the dependency failure.
+	if !obs.artifacts.OK() || obs.profileUnavailable() {
+		// Keep the last known artifact/PVC projection while the list or the profile is
+		// unavailable. Fetch health records the dependency failure. Clearing it would
+		// also lose the served artifact an in-progress replacement still depends on.
 		return
 	}
 
@@ -400,6 +513,7 @@ func (r *ProfileCacheReconciler) DecorateStatus(
 	// until now has to stop being advertised, PVC included, the moment it starts
 	// being deleted.
 	status.Artifacts = buildResolvedArtifacts(obs.BestArtifacts)
+	decorateArtifactReplacements(cm, obs)
 
 	// Reported ahead of the missing artifacts it will turn into: "waiting for a delete"
 	// is the part an operator can act on.
@@ -408,7 +522,11 @@ func (r *ProfileCacheReconciler) DecorateStatus(
 			"Waiting for AIM artifacts to finish deleting before recreating them: "+strings.Join(obs.TerminatingArtifactNames, ", "))
 		return
 	}
-	if len(obs.MissingCaches) > 0 {
+	unserved := slices.ContainsFunc(obs.MissingCaches, func(model aimv1alpha1.AIMModelSource) bool {
+		_, served := obs.Replacements[model.ModelID]
+		return !served
+	})
+	if unserved {
 		cm.MarkFalse(artifactsReadyConditionType, aimv1alpha2.AIMProfileCacheReasonCreatingCaches, "Waiting for AIM artifacts to be created")
 		return
 	}
@@ -447,6 +565,89 @@ func (r *ProfileCacheReconciler) DecorateStatus(
 	} else {
 		cm.MarkFalse(artifactsReadyConditionType, aimv1alpha2.AIMProfileCacheReasonNoCaches, "No artifacts to track", controllerutils.AsError())
 	}
+}
+
+// decorateArtifactReplacements reports replacement downloads on their own condition so
+// they never gate Ready, and records each completed switch with an event naming both
+// artifacts. The served artifact is not deleted on switch: in Shared mode other caches
+// may still list it, so reclaiming it is left to the operator.
+func decorateArtifactReplacements(cm *controllerutils.ConditionManager, obs ProfileCacheObservation) {
+	conditionType := aimv1alpha2.AIMProfileCacheConditionArtifactsReplacing
+
+	if len(obs.Replacements) > 0 {
+		var failed, pending []string
+		for _, modelID := range slices.Sorted(maps.Keys(obs.Replacements)) {
+			replacement := obs.Replacements[modelID]
+			served := replacement.serving.Name
+			switch {
+			case len(replacement.terminatingNames) > 0:
+				pending = append(pending, fmt.Sprintf("%s: serving %s while %s finishes deleting",
+					modelID, served, strings.Join(replacement.terminatingNames, ", ")))
+			case replacement.replacement == nil:
+				pending = append(pending, fmt.Sprintf("%s: serving %s while %s is created",
+					modelID, served, replacement.replacementName))
+			case replacement.replacement.Status.Status == constants.AIMStatusFailed,
+				replacement.replacement.Status.Status == constants.AIMStatusDegraded:
+				failed = append(failed, fmt.Sprintf("%s: serving %s because %s is %s: %s",
+					modelID, served, replacement.replacementName, replacement.replacement.Status.Status,
+					readyConditionMessage(replacement.replacement)))
+			default:
+				pending = append(pending, fmt.Sprintf("%s: serving %s while %s is %s",
+					modelID, served, replacement.replacementName, replacement.replacement.Status.Status))
+			}
+		}
+		if len(failed) > 0 {
+			cm.MarkTrue(conditionType, aimv1alpha2.AIMProfileCacheReasonReplacementFailed,
+				strings.Join(append(failed, pending...), "; "), controllerutils.AsWarning())
+			return
+		}
+		cm.MarkTrue(conditionType, aimv1alpha2.AIMProfileCacheReasonReplacingArtifacts,
+			strings.Join(pending, "; "), controllerutils.AsInfo())
+		return
+	}
+
+	if switched := switchedArtifacts(obs); len(switched) > 0 {
+		// Recurring because a second switch can arrive while the condition already holds
+		// this reason, which is not a transition; the switch is detected only once.
+		cm.MarkFalse(conditionType, aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced,
+			strings.Join(switched, "; "), controllerutils.AsInfo(), controllerutils.WithRecurring())
+		return
+	}
+
+	if condition := cm.Get(conditionType); condition != nil && condition.Status == metav1.ConditionTrue {
+		cm.Delete(conditionType)
+	}
+}
+
+// switchedArtifacts describes each model source that moved to a Ready artifact other
+// than the one the previous status.artifacts listed for it. A move to an artifact that
+// is not Ready is not a completed replacement; ArtifactsReady reports it instead.
+func switchedArtifacts(obs ProfileCacheObservation) []string {
+	if obs.profileCache == nil {
+		return nil
+	}
+	var switched []string
+	for _, modelID := range slices.Sorted(maps.Keys(obs.BestArtifacts)) {
+		current := obs.BestArtifacts[modelID]
+		if current.Status.Status != constants.AIMStatusReady {
+			continue
+		}
+		for _, previous := range obs.profileCache.Status.Artifacts {
+			if previous.Model == modelID && previous.Name != current.Name {
+				switched = append(switched, fmt.Sprintf("%s: switched from %s to %s", modelID, previous.Name, current.Name))
+			}
+		}
+	}
+	return switched
+}
+
+func readyConditionMessage(artifact *aimv1alpha1.AIMArtifact) string {
+	for _, condition := range artifact.Status.Conditions {
+		if condition.Type == controllerutils.ConditionTypeReady {
+			return condition.Message
+		}
+	}
+	return string(artifact.Status.Status)
 }
 
 // buildResolvedArtifacts renders the resolved artifacts for status.artifacts, keyed by

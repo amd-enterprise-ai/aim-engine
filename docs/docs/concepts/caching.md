@@ -117,8 +117,19 @@ Cluster-scoped `AIMClusterProfile` resources cannot enable caching directly (clu
 |---|---|
 | `ProfileFound` | `ProfileResolved`, `ProfileNotFound` |
 | `ArtifactsReady` | `AllCachesReady`, `CreatingCaches`, `CachesNotReady`, `NoCaches` |
+| `ArtifactsReplacing` | `ReplacingArtifacts`, `ReplacementFailed`, `ArtifactsReplaced` |
 
 `status.artifacts` is a map from logical artifact name to the resolved `AIMArtifact` reference (`name`, `uid`).
+
+### Replacing an artifact
+
+When a model source's `downloadFilter` changes so the artifact a cache serves no longer selects the right files, the cache keeps serving that artifact while it creates and downloads one that matches. `status.artifacts` and `ArtifactsReady` follow the served artifact, so the cache and its services stay `Ready` during the download. `ArtifactsReplacing` is `True` and names both artifacts: `ReplacingArtifacts` with the replacement's status while it is created or downloads, and `ReplacementFailed` with the download error if the replacement fails or its download stalls (`Degraded`). In both cases the served artifact stays in use.
+
+Once the replacement is `Ready`, the cache switches `status.artifacts` to it, sets `ArtifactsReplacing` to `False` with reason `ArtifactsReplaced`, and emits an event naming the old and new artifacts. Services then mount the new artifact's PVC.
+
+The served artifact is kept only while it is still `Ready`, not being deleted, has the same `sourceUri`, could still be adopted by the cache, and, for `s3://` sources, uses the cache's runtime config. Otherwise the cache moves to the replacement and is not ready until it finishes. A served artifact that drops out of `Ready` even briefly is not picked up again, because the cache no longer lists it. The switch does not delete the old artifact; see [Upgrading](../admin/upgrading.md#download-filters-declared-by-aim-images) for reclaiming it.
+
+Both copies exist until the old artifact is deleted, so a replacement needs storage for a second copy of the model. Profile caches do not mark their artifacts as in use for [artifact storage quotas](../admin/storage-configuration.md#storage-quotas): if artifacts have a retention priority, a replacement's download can evict the artifact the cache is serving, and the cache is then not ready until the replacement finishes.
 
 ## Deletion behaviour
 

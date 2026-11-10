@@ -147,20 +147,22 @@ AIM images can declare the files their model needs with `download_filter` in the
 
 A profile's model source changes when the operator first reads a declaration for it. Usually that is the discovery of an image or image version that declares one. If the cluster discovered such an image under an earlier release, the declaration is applied by the first reconcile of its `AIMModel` or `AIMClusterModel` after the upgrade, because profiles are rebuilt from the stored discovery results.
 
-When a model source gains a filter, its profile cache does not reuse the artifact it already has. The filter is part of the artifact's identity, so the cache creates a new `AIMArtifact` under a new name and downloads the model again. Services that use the profile report not ready until that download finishes. An existing artifact with `downloadFilter: {}` holds the whole repository and is reused instead, so no second download happens.
+When a model source gains a filter, the filter becomes part of its artifact's identity, so the profile cache creates a new `AIMArtifact` under a new name and downloads the model again. An existing artifact with `downloadFilter: {}` holds the whole repository and keeps serving the source, so no second download happens.
 
-The old artifact and its PVC stay behind. A shared artifact has no owner, and a dedicated artifact is owned by its cache and deleted only with it. Profile cache cleanup removes only artifacts that are not `Ready`, and only while the cache itself is being deleted. To reclaim the storage:
+Otherwise the cache keeps serving the artifact it already lists in `status.artifacts` while the new one downloads, as long as that artifact is still `Ready`. The cache and its services stay `Ready`, and the cache's `ArtifactsReplacing` condition names both artifacts and reports the replacement's status, or its error if it fails or stalls. The namespace needs storage for both copies until the old one is deleted; with an artifact storage quota and retention priorities, the replacement's download can evict the served artifact. When the new artifact is `Ready`, the cache switches `status.artifacts` to it, sets `ArtifactsReplacing` to `False` with reason `ArtifactsReplaced`, and emits an event naming the old and new artifacts. Services then roll over to the new artifact's volume. See [Replacing an artifact](../concepts/caching.md#replacing-an-artifact).
 
-1. Wait until the new artifact is `Ready`. The profile cache's `status.artifacts` names the artifact it now uses:
+The old artifact and its PVC stay behind after the switch. A shared artifact has no owner, and a dedicated artifact is owned by its cache and deleted only with it. Profile cache cleanup removes only artifacts that are not `Ready`, and only while the cache itself is being deleted. Deleting the old artifact before the switch takes the cache out of service until the new download finishes. To reclaim the storage:
+
+1. Wait until the switch has happened: the cache's `status.artifacts` names the new artifact and no longer lists the old one. `status.artifacts` is the check to rely on. `ArtifactsReplacing` turns `False` with reason `ArtifactsReplaced` after a switch, but stays `True` while another model source of the same profile is still being replaced:
 
    ```bash
    kubectl get aimprofilecache -n <namespace> <profile-cache-name> \
      -o jsonpath='{.status.artifacts}' | jq
-   kubectl get aimartifact -n <namespace> \
-     -l aim.eai.amd.com/profile-cache.name=<profile-cache-name>
+   kubectl get aimprofilecache -n <namespace> <profile-cache-name> \
+     -o jsonpath='{.status.conditions[?(@.type=="ArtifactsReplacing")]}' | jq
    ```
 
-2. Confirm that no other cache still uses the old artifact. Shared artifacts serve every cache with a matching source, including v1alpha1 template caches, which do not read image declarations. This should print nothing:
+2. Confirm that no other cache still lists the old artifact. Shared artifacts serve every cache with a matching source, including v1alpha1 template caches, which do not read image declarations, and a profile cache that has not switched yet still serves the old one. This should print nothing:
 
    ```bash
    kubectl get aimprofilecache,aimtemplatecache -n <namespace> -o json | \
