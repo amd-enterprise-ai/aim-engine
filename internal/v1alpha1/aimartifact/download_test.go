@@ -191,6 +191,22 @@ func TestDownloadFilterEnvVars(t *testing.T) {
 				"AIM_HF_EXCLUDE": "*/*",
 			},
 		},
+		{
+			name: "trailing-slash directory globs select the directory's files",
+			filter: &aimv1alpha1.AIMDownloadFilter{
+				Include: []string{"vae/", "*.json"},
+				Exclude: []string{"original/"},
+			},
+			wantEnvs: map[string]string{
+				"AIM_HF_INCLUDE": "vae/*,*.json",
+				"AIM_HF_EXCLUDE": "original/*",
+			},
+		},
+		{
+			name:     "blank globs are dropped",
+			filter:   &aimv1alpha1.AIMDownloadFilter{Include: []string{" *.json ", ""}, Exclude: []string{" "}},
+			wantEnvs: map[string]string{"AIM_HF_INCLUDE": "*.json"},
+		},
 	}
 
 	for _, tt := range tests {
