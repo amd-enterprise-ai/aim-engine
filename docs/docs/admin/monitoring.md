@@ -113,7 +113,7 @@ Events use the condition's `reason` field as the event reason. Common event reas
 | `BaseProfile` | Warning | Resolved profile is a base profile (not deployable) |
 | `ProfileCacheReady` | Normal | Profile cache is populated |
 | `ProfileCacheNotFound` | Normal | Profile cache has not been created yet |
-| `ProfileCacheReconciling` | Normal | Adapter-enabled service is waiting for the profile cache controller to process a spec change |
+| `ProfileCacheReconciling` | Normal | Service is waiting for the profile cache controller to process a spec change; a running InferenceService keeps serving |
 | `ProfileCacheNotReady` | Normal | Profile cache is not ready yet, including a failed download; the message carries the cache's own `Ready` message, and the Warning is on the `AIMArtifact` |
 | `RuntimeReady` | Normal | InferenceService is serving |
 | `InvalidImageReference` | Warning | Model image URI is invalid |

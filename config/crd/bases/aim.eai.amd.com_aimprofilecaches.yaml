@@ -243,9 +243,7 @@ spec:
               requiresAdapterDisk:
                 description: |-
                   RequiresAdapterDisk requests that the backing model artifact carry a shared
-                  ReadWriteMany adapter disk for LoRA serving. Set by an AIMService that serves
-                  adapters, including on an existing cache created without it; AIM Engine never
-                  turns it off.
+                  ReadWriteMany adapter disk for LoRA serving.
                 type: boolean
               runtimeConfigName:
                 description: Name is the name of the runtime config to use for this
@@ -260,6 +258,11 @@ spec:
             - profileName
             - profileScope
             type: object
+            x-kubernetes-validations:
+            - fieldPath: .requiresAdapterDisk
+              message: requiresAdapterDisk cannot be turned off once set
+              rule: '!has(oldSelf.requiresAdapterDisk) || !oldSelf.requiresAdapterDisk
+                || (has(self.requiresAdapterDisk) && self.requiresAdapterDisk)'
           status:
             description: AIMProfileCacheStatus defines the observed state of AIMProfileCache.
             properties:
@@ -369,6 +372,8 @@ spec:
                 - NotAvailable
                 type: string
             type: object
+        required:
+        - spec
         type: object
     served: true
     storage: true

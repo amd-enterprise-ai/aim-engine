@@ -272,7 +272,7 @@ _Appears in:_
 | `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
 | `kind` _string_ | `AIMProfileCache` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
-| `spec` _[AIMProfileCacheSpec](#aimprofilecachespec)_ |  |  |  |
+| `spec` _[AIMProfileCacheSpec](#aimprofilecachespec)_ |  |  | Required: \{\} |
 | `status` _[AIMProfileCacheStatus](#aimprofilecachestatus)_ |  |  |  |
 
 
@@ -331,7 +331,7 @@ _Appears in:_
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for authentication when downloading models. These variables are used for authentication with model registries (e.g., HuggingFace tokens). |  | Optional: \{\} |
 | `runtimeConfigName` _string_ | Name is the name of the runtime config to use for this resource. If a runtime config with this name exists both as a namespace and a cluster runtime config, the values are merged together, the namespace config taking priority over the cluster config when there are conflicts. If this field is empty or set to `default`, the namespace / cluster runtime config with the name `default` is used, if it exists. |  | Optional: \{\} |
 | `mode` _[AIMProfileCacheMode](#aimprofilecachemode)_ | Mode controls the ownership behavior of artifacts created by this profile cache.<br />- Dedicated: artifacts are owned by this profile cache and garbage collected when it's deleted.<br />- Shared (default): artifacts have no owner references and persist independently. | Shared | Enum: [Dedicated Shared] <br />Optional: \{\} |
-| `requiresAdapterDisk` _boolean_ | RequiresAdapterDisk requests that the backing model artifact carry a shared ReadWriteMany adapter disk for LoRA serving. Set by an AIMService that serves adapters, including on an existing cache created without it; AIM Engine never turns it off. When set, the cache creates its artifact with an adapterDisk, or adds one in place to the artifact it already resolves; size and class come from AIMRuntimeConfig.Storage. |  | Optional: \{\} |
+| `requiresAdapterDisk` _boolean_ | RequiresAdapterDisk requests that the backing model artifact carry a shared ReadWriteMany adapter disk for LoRA serving. Set by an AIMService that serves adapters with a valid adapter configuration, including on an existing cache created without it; once set it cannot be turned off. When set, the cache creates its artifact with an adapterDisk, or adds one in place to the artifact it already resolves; size and class come from AIMRuntimeConfig.Storage. |  | Optional: \{\} |
 
 
 #### AIMProfileCacheStatus

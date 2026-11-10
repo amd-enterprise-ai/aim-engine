@@ -1185,3 +1185,41 @@ func (reader *failingReader) Get(
 	}
 	return reader.Reader.Get(ctx, key, object, options...)
 }
+
+// TestBuildControllerCompatibleProfileCache_AdapterDiskNeedsSingleModelSource
+// verifies the target cache requests an adapter disk only when the AIMService
+// can use it: adapters bind to a single base model, so a multi-source profile
+// must not leave a permanent disk on the shared artifact.
+func TestBuildControllerCompatibleProfileCache_AdapterDiskNeedsSingleModelSource(t *testing.T) {
+	tests := []struct {
+		name    string
+		sources int
+		want    bool
+	}{
+		{name: "single model source", sources: 1, want: true},
+		{name: "multiple model sources", sources: 2, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			profile := &aimv1alpha2.AIMProfile{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: testNamespace}}
+			for i := range tt.sources {
+				profile.Spec.ModelSources = append(profile.Spec.ModelSources, aimv1alpha1.AIMModelSource{
+					ModelID:   "org/model-" + string(rune('a'+i)),
+					SourceURI: "hf://org/model-" + string(rune('a'+i)),
+				})
+			}
+			spec := &aimv1alpha1.AIMServiceSpec{AdapterMode: aimv1alpha1.AdapterModeDynamic}
+			cache, err := buildControllerCompatibleProfileCacheFromSpec(
+				testNamespace, "svc", types.UID("svc-uid"), spec,
+				ResourceIdentity{Kind: testAIMProfileKind, Namespace: testNamespace, Name: "target"},
+				profile,
+			)
+			if err != nil {
+				t.Fatalf("build target cache: %v", err)
+			}
+			if cache.Spec.RequiresAdapterDisk != tt.want {
+				t.Errorf("requiresAdapterDisk = %t, want %t", cache.Spec.RequiresAdapterDisk, tt.want)
+			}
+		})
+	}
+}

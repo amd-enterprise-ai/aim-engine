@@ -55,6 +55,7 @@ import (
 	v1alpha1service "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservice"
 	v1alpha1utils "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profilecache"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/serving"
 )
 
@@ -1035,6 +1036,47 @@ func TestProfileRuntimeHealth_UnexpectedErrorWinsOverMissingSibling(t *testing.T
 	}
 	if plan.RequeueAfter != 0 {
 		t.Fatalf("runtime fetch error requested fixed requeue %s; want pipeline-managed retry", plan.RequeueAfter)
+	}
+}
+
+// TestProfileRuntimeHealth_StaleSharedCacheIsConverging covers a service whose
+// own cache is Ready while the Shared cache behind its runtime projection is
+// applying a spec change (e.g. an adapter-enabled service turned on
+// requiresAdapterDisk). That is convergence, not a fetch failure, and the
+// existing InferenceService must stay untouched until the cache catches up.
+func TestProfileRuntimeHealth_StaleSharedCacheIsConverging(t *testing.T) {
+	t.Parallel()
+
+	runtimeName := serving.RuntimeName(testClusterProfileName)
+	obs := ServiceObservation{
+		resolvedProfileSpec:   sampleProfileSpec(),
+		resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady},
+		hasModelSources:       true,
+		profileCacheReady:     true,
+		ServiceFetchResult: ServiceFetchResult{
+			profileRuntime: controllerutils.FetchResult[*kservev1alpha1.ServingRuntime]{
+				Value: &kservev1alpha1.ServingRuntime{ObjectMeta: metav1.ObjectMeta{Name: runtimeName}},
+			},
+			profileRuntimeConfigMap: controllerutils.FetchResult[*corev1.ConfigMap]{
+				Value: &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: runtimeName}},
+			},
+			runtimeProfileCache: controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{
+				Error: &profilecache.StatusStaleError{Namespace: "ns", Name: "shared-cache", Generation: 2, ObservedGeneration: 1},
+			},
+		},
+	}
+
+	health := obs.getProfileRuntimeHealth()
+	if health.State != constants.AIMStatusProgressing || health.Reason != reasonProfileRuntimeConverging {
+		t.Fatalf("health = %s/%s, want Progressing/%s", health.State, health.Reason, reasonProfileRuntimeConverging)
+	}
+	if len(health.Errors) != 0 {
+		t.Fatalf("health errors = %v, want none", health.Errors)
+	}
+
+	plan := controllerutils.PlanResult{}
+	if !planProfileRuntimeMaterialization(&plan, obs, logr.Discard()) {
+		t.Fatal("a stale Shared cache must defer InferenceService reconciliation")
 	}
 }
 
@@ -2067,10 +2109,13 @@ func TestPlanProfileCache_SkipsWhenExisting(t *testing.T) {
 
 // profileCachePlanForTest plans a service whose ready, deployable profile has a
 // model source, against the given existing profile cache (nil when none exists).
+// The base model artifact is resolved and the adapter config is valid unless
+// mutate says otherwise.
 func profileCachePlanForTest(
 	t *testing.T,
 	service *aimv1alpha1.AIMService,
 	existing *aimv1alpha2.AIMProfileCache,
+	mutate func(*ServiceObservation),
 ) controllerutils.PlanResult {
 	t.Helper()
 	spec := sampleProfileSpec()
@@ -2093,6 +2138,12 @@ func profileCachePlanForTest(
 		profileAssembled: true,
 		hasModelSources:  true,
 	}
+	obs.adapterDeps.ParentArtifact = &controllerutils.FetchResult[*aimv1alpha1.AIMArtifact]{
+		Value: &aimv1alpha1.AIMArtifact{ObjectMeta: metav1.ObjectMeta{Name: "base", Namespace: "ns"}},
+	}
+	if mutate != nil {
+		mutate(&obs)
+	}
 	return (&ProfileServiceReconciler{}).PlanResources(context.Background(),
 		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service}, obs)
 }
@@ -2114,7 +2165,8 @@ func plannedProfileCaches(plan controllerutils.PlanResult) (owned, unowned []*ai
 // TestPlanResources_SharedAdapterCacheIsUnowned verifies that a LoRA service
 // creates its Shared cache without an owner reference, so deleting the service
 // does not garbage-collect a cache other services resolve, and with
-// requiresAdapterDisk set.
+// requiresAdapterDisk set. The adapter-disk field manager co-owns the flag from
+// creation, so another service's racing full apply that omits it cannot drop it.
 func TestPlanResources_SharedAdapterCacheIsUnowned(t *testing.T) {
 	service := &aimv1alpha1.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
@@ -2123,12 +2175,53 @@ func TestPlanResources_SharedAdapterCacheIsUnowned(t *testing.T) {
 			AdapterMode: aimv1alpha1.AdapterModeDynamic,
 		},
 	}
-	owned, unowned := plannedProfileCaches(profileCachePlanForTest(t, service, nil))
+	plan := profileCachePlanForTest(t, service, nil, nil)
+	owned, unowned := plannedProfileCaches(plan)
 	if len(owned) != 0 || len(unowned) != 1 {
 		t.Fatalf("planned %d owned and %d unowned caches, want 0 and 1", len(owned), len(unowned))
 	}
 	if !unowned[0].Spec.RequiresAdapterDisk {
 		t.Error("expected the created cache to require an adapter disk")
+	}
+
+	fields := plan.GetToApplyFields()
+	if len(fields) != 1 || fields[0].FieldManagerSuffix != constants.FieldManagerSuffixAdapterDisk {
+		t.Fatalf("planned field applies %+v, want one under %q", fields, constants.FieldManagerSuffixAdapterDisk)
+	}
+	patch, ok := fields[0].Object.(*unstructured.Unstructured)
+	if !ok || patch.GetName() != unowned[0].Name || patch.GetNamespace() != unowned[0].Namespace {
+		t.Fatalf("field apply object = %+v, want a patch of the created cache %s/%s",
+			fields[0].Object, unowned[0].Namespace, unowned[0].Name)
+	}
+	if fields[0].Event != nil {
+		t.Errorf("field apply event = %+v, want none on create", fields[0].Event)
+	}
+}
+
+// TestPlanResources_InvalidAdapterConfigRequestsNoAdapterDisk verifies that a
+// LoRA service whose adapter config is rejected (e.g. a multi-source profile)
+// creates its cache without requiresAdapterDisk: the service never mounts the
+// disk, and the flag cannot be turned off again.
+func TestPlanResources_InvalidAdapterConfigRequestsNoAdapterDisk(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile:     &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			AdapterMode: aimv1alpha1.AdapterModeDynamic,
+		},
+	}
+	plan := profileCachePlanForTest(t, service, nil, func(obs *ServiceObservation) {
+		obs.adapterState.ConfigErr = errors.New("adapters require a single base model")
+	})
+	_, unowned := plannedProfileCaches(plan)
+	if len(unowned) != 1 {
+		t.Fatalf("planned %d unowned caches, want 1", len(unowned))
+	}
+	if unowned[0].Spec.RequiresAdapterDisk {
+		t.Error("a cache for a rejected adapter config must not require an adapter disk")
+	}
+	if fields := plan.GetToApplyFields(); len(fields) != 0 {
+		t.Errorf("planned %d field applies, want none", len(fields))
 	}
 }
 
@@ -2142,9 +2235,23 @@ func TestPlanResources_TurnsOnAdapterDiskOnExistingCache(t *testing.T) {
 		name                string
 		adapterMode         aimv1alpha1.AIMAdapterMode
 		requiresAdapterDisk bool
+		mutate              func(*ServiceObservation)
 		wantPatch           bool
 	}{
 		{name: "LoRA service, diskless cache", adapterMode: aimv1alpha1.AdapterModeDynamic, wantPatch: true},
+		{
+			name:        "LoRA service with invalid adapter config, diskless cache",
+			adapterMode: aimv1alpha1.AdapterModeDynamic,
+			mutate: func(obs *ServiceObservation) {
+				obs.adapterState.ConfigErr = errors.New("adapters require a single base model")
+			},
+		},
+		{
+			// Lineage checks against the base model artifact have not run yet.
+			name:        "LoRA service, diskless cache, base model artifact not resolved",
+			adapterMode: aimv1alpha1.AdapterModeDynamic,
+			mutate:      func(obs *ServiceObservation) { obs.adapterDeps.ParentArtifact = nil },
+		},
 		{name: "LoRA service, adapter cache", adapterMode: aimv1alpha1.AdapterModeDynamic, requiresAdapterDisk: true},
 		{name: "plain service, adapter cache", requiresAdapterDisk: true},
 		{name: "plain service, diskless cache"},
@@ -2175,7 +2282,7 @@ func TestPlanResources_TurnsOnAdapterDiskOnExistingCache(t *testing.T) {
 				},
 			}
 
-			plan := profileCachePlanForTest(t, service, existing)
+			plan := profileCachePlanForTest(t, service, existing, tt.mutate)
 			if owned, unowned := plannedProfileCaches(plan); len(owned)+len(unowned) != 0 {
 				t.Fatalf("an existing cache must not be re-applied in full, got %d owned and %d unowned", len(owned), len(unowned))
 			}
@@ -2217,8 +2324,8 @@ func TestPlanResources_TurnsOnAdapterDiskOnExistingCache(t *testing.T) {
 // TestFetchProfileCache_StaleSharedCacheIsWaitedOn covers the window after a
 // Shared cache's spec changes and before its controller observes it: the fetch
 // must still return the cache so planning does not build a replacement over it.
-// An adapter-enabled service treats the stale status as untrusted, while a plain
-// service on the same cache keeps reporting it Ready.
+// Every service on the cache treats the stale status as untrusted; that only
+// defers planning, so existing InferenceServices are left serving.
 func TestFetchProfileCache_StaleSharedCacheIsWaitedOn(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := aimv1alpha2.AddToScheme(scheme); err != nil {
@@ -2267,16 +2374,73 @@ func TestFetchProfileCache_StaleSharedCacheIsWaitedOn(t *testing.T) {
 		t.Fatalf("a stale existing cache must not be re-planned, got %+v", got)
 	}
 
-	health := obs.getProfileCacheHealth()
-	if health.State != constants.AIMStatusProgressing || health.Reason != reasonProfileCacheReconciling {
-		t.Errorf("adapter-enabled service health = %s/%s, want Progressing/%s", health.State, health.Reason, reasonProfileCacheReconciling)
-	}
-
 	plain := service.DeepCopy()
 	plain.Spec.AdapterMode = ""
-	obs.service = plain
-	if health := obs.getProfileCacheHealth(); health.State != constants.AIMStatusReady {
-		t.Errorf("plain service health = %s/%s, want Ready", health.State, health.Reason)
+	for _, svc := range []*aimv1alpha1.AIMService{service, plain} {
+		obs.service = svc
+		health := obs.getProfileCacheHealth()
+		if health.State != constants.AIMStatusProgressing || health.Reason != reasonProfileCacheReconciling {
+			t.Errorf("service (adapterMode %q) health = %s/%s, want Progressing/%s",
+				svc.Spec.AdapterMode, health.State, health.Reason, reasonProfileCacheReconciling)
+		}
+	}
+}
+
+// TestPlanResources_StaleSharedCacheLeavesRunningServiceAlone covers a plain
+// service that is already serving when its Shared cache's spec changes (e.g. an
+// adapter-enabled service turned on requiresAdapterDisk). ComposeState must not
+// trust the stale Ready status, and the plan must neither re-apply nor delete
+// the existing InferenceService while the cache catches up.
+func TestPlanResources_StaleSharedCacheLeavesRunningServiceAlone(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+		Spec:       aimv1alpha1.AIMServiceSpec{Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA}},
+	}
+	spec := sampleProfileSpec()
+	spec.ModelSources = []aimv1alpha1.AIMModelSource{{ModelID: "org/model", SourceURI: "hf://org/model"}}
+	profile := &aimv1alpha2.AIMProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: testProfileA, Namespace: "ns"},
+		Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *spec},
+		Status:     aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady, Deployable: true},
+	}
+	stale := &aimv1alpha2.AIMProfileCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "p-cache-abc", Namespace: "ns", Generation: 2},
+		Spec: aimv1alpha2.AIMProfileCacheSpec{
+			ProfileName:         testProfileA,
+			ProfileScope:        aimv1alpha1.AIMResolutionScopeNamespace,
+			Mode:                aimv1alpha2.ProfileCacheModeShared,
+			RequiresAdapterDisk: true,
+		},
+		Status: aimv1alpha2.AIMProfileCacheStatus{ObservedGeneration: 1, Status: constants.AIMStatusReady},
+	}
+	isvc := &servingv1beta1.InferenceService{ObjectMeta: metav1.ObjectMeta{Name: "running-isvc", Namespace: "ns"}}
+
+	r := &ProfileServiceReconciler{}
+	reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service}
+	obs := r.ComposeState(context.Background(), reconcileCtx, ServiceFetchResult{
+		service:          service,
+		profile:          controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: profile},
+		profileCache:     controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Value: stale},
+		inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: isvc},
+	})
+	if !obs.hasModelSources {
+		t.Fatal("expected the profile's model sources to be observed")
+	}
+	if obs.profileCacheReady {
+		t.Fatal("a stale Ready status must not mark the profile cache ready")
+	}
+
+	plan := r.PlanResources(context.Background(), reconcileCtx, obs)
+	for _, bucket := range [][]client.Object{
+		plan.GetToCreate(), plan.GetToApply(), plan.GetToApplyWithoutOwnerRef(),
+		plan.GetToApplyWithForce(), plan.GetToDelete(),
+	} {
+		if planAppliesType[*servingv1beta1.InferenceService](bucket) {
+			t.Fatal("the existing InferenceService must be left untouched while the cache is stale")
+		}
+	}
+	if deletes := plan.GetToDelete(); len(deletes) != 0 {
+		t.Fatalf("planned %d deletes, want none", len(deletes))
 	}
 }
 

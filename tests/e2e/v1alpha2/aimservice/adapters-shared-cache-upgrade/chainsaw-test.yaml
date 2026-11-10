@@ -9,7 +9,7 @@
 # adapter disk to the SAME artifact in place: no new artifact, no re-download,
 # and the first service's InferenceService and pod are left untouched. Both
 # steps record an AdapterDiskRequested event. The flag stays on after the
-# adapter-enabled service is deleted.
+# adapter-enabled service is deleted, and the API rejects turning it off.
 #
 # Full chain, nothing frozen: the profile, profile cache, artifact and service
 # controllers all reconcile naturally. No GPU is needed: the profile has no
@@ -229,3 +229,27 @@ spec:
               DISK=$(kubectl get aimartifact -n "$NAMESPACE" "$(state artifact)" -o jsonpath='{.spec.adapterDisk}')
               [ "$FLAG" = true ] && [ -n "$DISK" ] || { echo "ERROR: flag='$FLAG' adapterDisk='$DISK'"; exit 1; }
               echo "requiresAdapterDisk and the adapter disk survive the adapter-enabled service"
+
+    - name: Reject turning requiresAdapterDisk off
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              state() { kubectl get configmap adapters-upgrade-state -n "$NAMESPACE" -o jsonpath="{.data.$1}"; }
+              CACHE=$(state cache)
+              [ -n "$CACHE" ] || { echo "ERROR: no recorded cache name"; exit 1; }
+              for value in false null; do
+                if OUT=$(kubectl patch aimprofilecache -n "$NAMESPACE" "$CACHE" \
+                    --type merge -p "{\"spec\":{\"requiresAdapterDisk\":$value}}" 2>&1); then
+                  echo "ERROR: setting requiresAdapterDisk to $value was accepted"
+                  exit 1
+                fi
+                echo "$OUT" | grep -q 'requiresAdapterDisk cannot be turned off once set' \
+                  || { echo "ERROR: setting requiresAdapterDisk to $value failed for another reason: $OUT"; exit 1; }
+              done
+              FLAG=$(kubectl get aimprofilecache -n "$NAMESPACE" "$CACHE" -o jsonpath='{.spec.requiresAdapterDisk}')
+              [ "$FLAG" = true ] || { echo "ERROR: requiresAdapterDisk is '$FLAG' after the rejected patches"; exit 1; }
+              echo "OK: requiresAdapterDisk cannot be turned off"

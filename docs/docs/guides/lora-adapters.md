@@ -211,12 +211,14 @@ Before a service can serve adapters:
    `spec.storage.adapterDiskSize` is set on the runtime config, so budget for it
    on any cache an adapter-enabled service may share.
 
-   AIM Engine never turns the flag off, because other adapter-enabled services
-   may depend on the disk. Setting it to `false` by hand has no effect on an
-   artifact that already has the disk. If a GitOps tool manages the
-   `AIMProfileCache`, configure it to ignore `spec.requiresAdapterDisk`;
-   otherwise the two keep overwriting each other. To reclaim the adapter disk,
-   delete every adapter-enabled service on the profile, then delete both the
+   Once set, the flag cannot be turned off, because other adapter-enabled
+   services may depend on the disk: the API rejects setting it to `false` or
+   removing it. A service whose adapter configuration is rejected (for example
+   on a multi-source profile, see below) does not set the flag. If a GitOps tool
+   manages the `AIMProfileCache`, leave `spec.requiresAdapterDisk` out of the
+   manifest, or ignore it in diffs: a manifest that sets it to `false` is
+   rejected once the flag is on. To reclaim the adapter disk, delete every
+   adapter-enabled service on the profile, then delete both the
    `AIMProfileCache` and its base model `AIMArtifact`. Deleting only the artifact
    does not work: the cache recreates it with a disk and downloads the model
    again. The next service to use the profile downloads the model into a new
@@ -371,12 +373,14 @@ kubectl get pvc <adapter-pvc-name> -n <namespace>
 ```
 
 - `requiresAdapterDisk` is not `true`: the service has not reconciled since it
-  found the cache, or setting the flag failed. A failed apply shows as
+  found the cache, its adapter configuration is invalid (see its `ConfigValid`
+  condition), or setting the flag failed. A failed apply shows as
   `DependenciesReachable=False` on the service; otherwise check the
   [operator logs](../admin/troubleshooting.md#operator-logs) for the service.
 - `generation` is ahead of `observedGeneration`: the `AIMProfileCache` controller
-  has not processed the request yet, and the service reports
-  `ProfileCacheReady=False / ProfileCacheReconciling`. Check the operator logs
+  has not processed the request yet, and every service on the cache reports
+  `ProfileCacheReady=False / ProfileCacheReconciling`. Running services keep
+  serving meanwhile. Check the operator logs
   for the cache.
 - The artifact has no `spec.adapterDisk`: the `AIMProfileCache` controller could
   not add it. Check the cache's `DependenciesReachable` condition and its events.

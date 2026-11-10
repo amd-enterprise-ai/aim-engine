@@ -56,6 +56,7 @@ const (
 )
 
 // AIMProfileCacheSpec defines the desired state of AIMProfileCache.
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.requiresAdapterDisk) || !oldSelf.requiresAdapterDisk || (has(self.requiresAdapterDisk) && self.requiresAdapterDisk)",message="requiresAdapterDisk cannot be turned off once set",fieldPath=".requiresAdapterDisk"
 type AIMProfileCacheSpec struct {
 	// ProfileName is the name of the AIMProfile or AIMClusterProfile to cache.
 	// The controller resolves model sources from the referenced profile's spec.modelSources.
@@ -93,8 +94,9 @@ type AIMProfileCacheSpec struct {
 
 	// RequiresAdapterDisk requests that the backing model artifact carry a shared
 	// ReadWriteMany adapter disk for LoRA serving. Set by an AIMService that serves
-	// adapters, including on an existing cache created without it; AIM Engine never
-	// turns it off. When set, the cache creates its artifact with an adapterDisk, or
+	// adapters with a valid adapter configuration, including on an existing cache
+	// created without it; once set it cannot be turned off. When set, the cache
+	// creates its artifact with an adapterDisk, or
 	// adds one in place to the artifact it already resolves; size and class come
 	// from AIMRuntimeConfig.Storage.
 	// +optional
@@ -173,7 +175,8 @@ type AIMProfileCache struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   AIMProfileCacheSpec   `json:"spec,omitempty"`
+	// +required
+	Spec   AIMProfileCacheSpec   `json:"spec"`
 	Status AIMProfileCacheStatus `json:"status,omitempty"`
 }
 

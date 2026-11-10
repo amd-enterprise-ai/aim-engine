@@ -24,6 +24,7 @@ package aimservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -367,15 +368,6 @@ func (obs ServiceObservation) getConfigHealth() controllerutils.ComponentHealth 
 	}
 }
 
-// profileCacheStatusTrusted reports whether service may act on pc's reported
-// status. An adapter-enabled service needs the status to reflect the current
-// spec, because the spec change it makes (turning on requiresAdapterDisk) is
-// what its adapter disk depends on. Other services keep using the last reported
-// status, so that change never flips them to not-ready.
-func profileCacheStatusTrusted(service *aimv1alpha1.AIMService, pc *aimv1alpha2.AIMProfileCache) bool {
-	return !service.Spec.AdaptersEnabled() || profilecache.StatusCurrent(pc)
-}
-
 func (obs ServiceObservation) getProfileCacheHealth() controllerutils.ComponentHealth {
 	health := controllerutils.ComponentHealth{
 		Component:      "ProfileCache",
@@ -397,7 +389,7 @@ func (obs ServiceObservation) getProfileCacheHealth() controllerutils.ComponentH
 	}
 
 	pc := obs.profileCache.Value
-	if !profileCacheStatusTrusted(obs.service, pc) {
+	if !profilecache.StatusCurrent(pc) {
 		health.State = constants.AIMStatusProgressing
 		health.Reason = reasonProfileCacheReconciling
 		health.Message = fmt.Sprintf("Profile cache %s is applying a spec change", pc.Name)
@@ -438,7 +430,9 @@ func (obs ServiceObservation) getProfileRuntimeHealth() controllerutils.Componen
 		Component:      "ProfileRuntime",
 		DependencyType: controllerutils.DependencyTypeDownstream,
 	}
-	if hasUnexpectedFetchError(obs.runtimeProfileCache.Error) {
+	var staleCacheStatus *profilecache.StatusStaleError
+	runtimeCacheStale := errors.As(obs.runtimeProfileCache.Error, &staleCacheStatus)
+	if !runtimeCacheStale && hasUnexpectedFetchError(obs.runtimeProfileCache.Error) {
 		health.Errors = append(
 			health.Errors,
 			fmt.Errorf("resolve Shared AIMProfileCache for projected runtime: %w", obs.runtimeProfileCache.Error),
@@ -465,6 +459,14 @@ func (obs ServiceObservation) getProfileRuntimeHealth() controllerutils.Componen
 		health.State = constants.AIMStatusFailed
 		health.Reason = reasonFetchError
 		health.Message = "Failed to resolve projected profile runtime dependencies"
+		return health
+	}
+	// The projection waits for the Shared AIMProfileCache to catch up, and the
+	// existing InferenceService keeps serving with its current runtime meanwhile.
+	if runtimeCacheStale {
+		health.State = constants.AIMStatusProgressing
+		health.Reason = reasonProfileRuntimeConverging
+		health.Message = fmt.Sprintf("Waiting for Shared AIMProfileCache %s to process a spec change", staleCacheStatus.Name)
 		return health
 	}
 
@@ -820,7 +822,7 @@ func (r *ProfileServiceReconciler) ComposeState(
 
 	if obs.hasModelSources && fetch.profileCache.OK() && fetch.profileCache.Value != nil {
 		obs.profileCacheReady = fetch.profileCache.Value.Status.Status == constants.AIMStatusReady &&
-			profileCacheStatusTrusted(fetch.service, fetch.profileCache.Value)
+			profilecache.StatusCurrent(fetch.profileCache.Value)
 	}
 
 	r.composeDerivedNames(ctx, &obs)
@@ -1084,8 +1086,9 @@ func planProfileRuntimeMaterialization(
 		hasUnexpectedFetchError(obs.profileRuntimeConfigMap.Error) ||
 		hasUnexpectedFetchError(obs.runtimeProfileCache.Error) {
 		// The component health reports the fetch failure and lets the pipeline
-		// choose auth handling or exponential backoff. Keep the existing ISVC
-		// untouched, but do not add a fixed one-second retry here.
+		// choose auth handling or exponential backoff; a stale Shared
+		// AIMProfileCache status instead waits for the cache watch. Keep the
+		// existing ISVC untouched, but do not add a fixed one-second retry here.
 		return true
 	}
 
@@ -1197,32 +1200,10 @@ func (r *ProfileServiceReconciler) PlanResources(
 	// overlay's name via obs.profileName, so leaving an orphan overlay
 	// behind would leave a stale, cache-eligible profile in the namespace.
 	// 2. Plan AIMProfileCache if the profile has model sources.
-	//
-	// Cache ownership tracks the service's caching mode, mirroring v1alpha1:
-	//   - Shared: applied without an owner reference so the cache persists
-	//     across service deletions and is shared by every service in the
-	//     namespace that resolves to the same AIMProfile.
-	//   - Dedicated: applied with the AIMService as owner so the cache (and
-	//     transitively its Artifacts/PVC) is garbage-collected when the
-	//     service is deleted.
 	if obs.hasModelSources {
-		if pc := planProfileCache(service, obs); pc != nil {
-			if service.Spec.GetCachingMode() == aimv1alpha1.CachingModeShared {
-				planResult.ApplyWithoutOwnerRef(pc)
-			} else {
-				planResult.Apply(pc)
-			}
-		} else if patch := planProfileCacheAdapterDisk(service, obs.profileCache.Value); patch != nil {
-			planResult.ApplyFields(patch, constants.FieldManagerSuffixAdapterDisk, &controllerutils.FieldApplyEvent{
-				Target: obs.profileCache.Value,
-				Reason: constants.ReasonAdapterDiskRequested,
-				Message: fmt.Sprintf("AIMService %s serves adapters; turned on requiresAdapterDisk",
-					service.Name),
-			})
-		}
-
+		planProfileCacheResources(&planResult, service, obs)
 		if !obs.profileCacheReady {
-			logger.V(1).Info("Profile cache not ready, deferring ISVC creation", "profile", obs.profileName)
+			logger.V(1).Info("Profile cache not ready, deferring InferenceService changes", "profile", obs.profileName)
 			return planResult
 		}
 	}
@@ -1498,7 +1479,7 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 	}
 
 	if pc := obs.profileCache.Value; pc != nil && pc.Status.Status == constants.AIMStatusReady &&
-		profileCacheStatusTrusted(obs.service, pc) {
+		profilecache.StatusCurrent(pc) {
 		status.Cache = &aimv1alpha1.AIMServiceCacheStatus{
 			ProfileCacheRef: &aimv1alpha1.AIMResolvedReference{
 				Name:      obs.profileCache.Value.Name,
@@ -1582,7 +1563,7 @@ func fetchProfileCache(
 	// AIMTemplateCache resolution. ProfileScope must also match so we don't
 	// reuse a cache that was created for a different scope's same-named
 	// profile. A cache whose status is stale is still returned so planning
-	// waits for it; readiness checks must apply profileCacheStatusTrusted.
+	// waits for it; readiness checks must apply StatusCurrent.
 	cacheList := controllerutils.FetchList(ctx, c, &aimv1alpha2.AIMProfileCacheList{}, client.InNamespace(service.Namespace))
 	if cacheList.Error != nil {
 		return controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: cacheList.Error}
@@ -1674,45 +1655,108 @@ func planProfileCache(
 			},
 		},
 		Spec: aimv1alpha2.AIMProfileCacheSpec{
-			ProfileName:      obs.profileName,
-			ProfileScope:     obs.profileScope,
-			StorageClassName: storageClassName,
-			Mode:             profileCacheModeFor(cachingMode),
-			Env:              cacheEnv,
-			RuntimeConfigRef: service.GetRuntimeConfigRef(),
-			// Adapters need the base artifact to carry a shared RWX adapter disk.
-			RequiresAdapterDisk: service.Spec.AdaptersEnabled(),
+			ProfileName:         obs.profileName,
+			ProfileScope:        obs.profileScope,
+			StorageClassName:    storageClassName,
+			Mode:                profileCacheModeFor(cachingMode),
+			Env:                 cacheEnv,
+			RuntimeConfigRef:    service.GetRuntimeConfigRef(),
+			RequiresAdapterDisk: adapterDiskWanted(service, obs.adapterState),
 		},
 	}
 }
 
+// planProfileCacheResources plans the service's AIMProfileCache, or only turns
+// on requiresAdapterDisk when the cache already exists.
+//
+// Cache ownership tracks the service's caching mode, mirroring v1alpha1:
+//   - Shared: applied without an owner reference so the cache persists
+//     across service deletions and is shared by every service in the
+//     namespace that resolves to the same AIMProfile.
+//   - Dedicated: applied with the AIMService as owner so the cache (and
+//     transitively its Artifacts/PVC) is garbage-collected when the
+//     service is deleted.
+func planProfileCacheResources(
+	planResult *controllerutils.PlanResult,
+	service *aimv1alpha1.AIMService,
+	obs ServiceObservation,
+) {
+	if pc := planProfileCache(service, obs); pc != nil {
+		if service.Spec.GetCachingMode() == aimv1alpha1.CachingModeShared {
+			planResult.ApplyWithoutOwnerRef(pc)
+		} else {
+			planResult.Apply(pc)
+		}
+		// The dedicated field manager co-owns the flag from the start, so a
+		// full apply of the same Shared AIMProfileCache by another service that
+		// has not seen it yet (and omits the flag) does not drop it, which the
+		// CRD would reject.
+		if pc.Spec.RequiresAdapterDisk {
+			planResult.ApplyFields(requiresAdapterDiskPatch(pc.Namespace, pc.Name),
+				constants.FieldManagerSuffixAdapterDisk, nil)
+		}
+		return
+	}
+	if patch := planProfileCacheAdapterDisk(service, obs, obs.profileCache.Value); patch != nil {
+		planResult.ApplyFields(patch, constants.FieldManagerSuffixAdapterDisk, &controllerutils.FieldApplyEvent{
+			Target:  obs.profileCache.Value,
+			Reason:  constants.ReasonAdapterDiskRequested,
+			Message: fmt.Sprintf("AIMService %s serves adapters; turned on requiresAdapterDisk", service.Name),
+		})
+	}
+}
+
+// adapterDiskWanted reports whether the service needs the base model artifact
+// to carry a shared RWX adapter disk: it serves adapters and its adapter
+// configuration is valid. A service with an invalid configuration (for example
+// a multi-source profile, or one without the adapters feature) never mounts the
+// disk, and the AIMProfileCache flag cannot be turned off again.
+func adapterDiskWanted(service *aimv1alpha1.AIMService, adapterState aimadapter.State) bool {
+	return service.Spec.AdaptersEnabled() && adapterState.ConfigErr == nil
+}
+
 // planProfileCacheAdapterDisk returns a partial AIMProfileCache that turns on
-// spec.requiresAdapterDisk when this service serves adapters and the existing
-// cache was created without an adapter disk (typically a Shared cache first
-// created by a service that does not serve adapters), and nil otherwise. The
-// profile cache controller then adds the adapter disk to the artifact it
-// already resolves.
+// spec.requiresAdapterDisk when this service needs an adapter disk (see
+// adapterDiskWanted) and the existing AIMProfileCache was created without one
+// (typically a Shared cache first created by a service that does not serve
+// adapters), and nil otherwise. The AIMProfileCache controller then adds the
+// adapter disk to the base model artifact it already resolves.
+//
+// The patch waits for the base model artifact to resolve, because only then has
+// the adapter configuration been checked against it (parentArtifact and
+// compatibleWith); a mismatch must not leave a permanent disk on a shared
+// artifact.
 //
 // The object carries nothing but the flag so the dedicated field manager owns
 // only that field: the rest of the cache stays owned by whichever controller
 // created it, so a later apply from, e.g., the AIMProfile controller does not
-// conflict with this one. The flag only ever turns on: a Shared cache serves
-// every service resolving the profile, and another LoRA service may already
-// depend on the disk.
+// conflict with this one. The flag only ever turns on (the CRD rejects turning
+// it off): a Shared cache serves every service resolving the profile, and
+// another LoRA service may already depend on the disk.
 func planProfileCacheAdapterDisk(
 	service *aimv1alpha1.AIMService,
+	obs ServiceObservation,
 	existing *aimv1alpha2.AIMProfileCache,
 ) *unstructured.Unstructured {
-	if existing == nil || !service.Spec.AdaptersEnabled() || existing.Spec.RequiresAdapterDisk {
+	if existing == nil || existing.Spec.RequiresAdapterDisk || !adapterDiskWanted(service, obs.adapterState) {
 		return nil
 	}
+	parent := obs.adapterDeps.ParentArtifact
+	if parent == nil || !parent.OK() || parent.Value == nil {
+		return nil
+	}
+	return requiresAdapterDiskPatch(existing.Namespace, existing.Name)
+}
 
+// requiresAdapterDiskPatch builds a partial AIMProfileCache carrying only
+// spec.requiresAdapterDisk=true, for the dedicated adapter-disk field manager.
+func requiresAdapterDiskPatch(namespace, name string) *unstructured.Unstructured {
 	patch := &unstructured.Unstructured{Object: map[string]any{
 		"spec": map[string]any{"requiresAdapterDisk": true},
 	}}
 	patch.SetGroupVersionKind(aimv1alpha2.GroupVersion.WithKind("AIMProfileCache"))
-	patch.SetName(existing.Name)
-	patch.SetNamespace(existing.Namespace)
+	patch.SetName(name)
+	patch.SetNamespace(namespace)
 	return patch
 }
 

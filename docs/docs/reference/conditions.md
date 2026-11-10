@@ -111,7 +111,7 @@ Replaces v1alpha1's `CacheReady`. Tracks the `AIMProfileCache` lifecycle.
 |---|---|---|
 | `True` | `ProfileCacheReady` | All cache artifacts are downloaded and verified |
 | `False` | `ProfileCacheNotFound` | The profile cache has not been created yet |
-| `False` | `ProfileCacheReconciling` | Adapter-enabled services only: the profile cache exists but its controller has not yet processed its latest spec change, for example right after the cache was created or an adapter disk was requested. Clears once the `AIMProfileCache` controller reconciles it. |
+| `False` | `ProfileCacheReconciling` | The profile cache exists but its controller has not yet processed its latest spec change, for example right after the cache was created or an adapter disk was requested. A running InferenceService keeps serving. Clears once the `AIMProfileCache` controller reconciles it. |
 | `False` | `ProfileCacheNotReady` | The profile cache exists but is not `Ready`; the message carries the cache's own `Ready` condition message |
 | `False` | `FetchError` | AIM Engine could not read the profile cache |
 
@@ -123,7 +123,7 @@ Tracks the namespaced profile `ServingRuntime` and its same-name ConfigMap befor
 |---|---|---|
 | `True` | `ProfileRuntimeReady` | Both projection siblings match the current profile and cache content hash |
 | `False` | `ProfileRuntimeMaterializing` | One or both projection siblings do not exist yet |
-| `False` | `ProfileRuntimeConverging` | Both siblings exist, but one or both have not converged to the expected content hash |
+| `False` | `ProfileRuntimeConverging` | Both siblings exist, but one or both have not converged to the expected content hash, or the Shared `AIMProfileCache` behind the projection has not yet processed a spec change (the message names it) |
 | `False` | `FetchError` | AIM Engine could not read one of the projection siblings |
 
 `ProfileRuntimeConverging` can be transient because the two resources are updated independently. If it persists, check for unsupported out-of-band changes to generated `aim-*` resources. See [Consistency and rollout guarantees](../guides/bring-your-own-kserve.md#consistency-and-rollout-guarantees).
