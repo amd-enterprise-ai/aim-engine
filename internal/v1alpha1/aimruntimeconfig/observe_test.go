@@ -26,8 +26,10 @@ package aimruntimeconfig
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
@@ -678,5 +680,34 @@ func TestMergeRuntimeConfigs_AdditionalCABundleNamespacePrecedence(t *testing.T)
 	}
 	if got := merged.AdditionalCABundleRef.Key; got != "bundle.pem" {
 		t.Errorf("key = %q, want bundle.pem", got)
+	}
+}
+
+func TestMergeRuntimeConfigs_TolerationsNamespacePrecedence(t *testing.T) {
+	gpuTaint := corev1.Toleration{Key: "amd.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	poolTaint := corev1.Toleration{Key: "pool", Operator: corev1.TolerationOpEqual, Value: "inference", Effect: corev1.TaintEffectNoSchedule}
+	withTolerations := func(tolerations []corev1.Toleration) *aimv1alpha1.AIMRuntimeConfigCommon {
+		config := &aimv1alpha1.AIMRuntimeConfigCommon{}
+		config.Tolerations = tolerations
+		return config
+	}
+	cluster := withTolerations([]corev1.Toleration{gpuTaint, poolTaint})
+
+	tests := []struct {
+		name      string
+		namespace []corev1.Toleration
+		want      []corev1.Toleration
+	}{
+		{name: "unset keeps cluster's", namespace: nil, want: []corev1.Toleration{gpuTaint, poolTaint}},
+		{name: "list replaces cluster's", namespace: []corev1.Toleration{poolTaint}, want: []corev1.Toleration{poolTaint}},
+		{name: "empty list removes cluster's", namespace: []corev1.Toleration{}, want: []corev1.Toleration{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			merged := mergeRuntimeConfigs(withTolerations(tt.namespace), cluster)
+			if !reflect.DeepEqual(merged.Tolerations, tt.want) {
+				t.Errorf("tolerations = %v, want %v", merged.Tolerations, tt.want)
+			}
+		})
 	}
 }
