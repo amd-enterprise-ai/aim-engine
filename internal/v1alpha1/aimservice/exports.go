@@ -502,7 +502,7 @@ func ScaleToZeroActivationMetricComponentHealth(
 		return controllerutils.ComponentHealth{}
 	}
 
-	_, _, err := resolveScaleToZeroActivationMetric(service, runtimeConfig)
+	_, err := validateScaleToZeroActivationMetric(service, runtimeConfig)
 	if err == nil {
 		return controllerutils.ComponentHealth{}
 	}
@@ -528,4 +528,41 @@ func ScaleToZeroActivationMetricComponentHealth(
 			),
 		},
 	}
+}
+
+// PlanScaledObjectForDeployment plans the controller-owned KEDA ScaledObject
+// for an explicit serving Deployment rather than the InferenceService
+// predictor. The profile pipeline uses it for LLMInferenceService workloads.
+func PlanScaledObjectForDeployment(
+	ctx context.Context,
+	service *aimv1alpha1.AIMService,
+	effectiveResources *corev1.ResourceRequirements,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	deploymentName string,
+) client.Object {
+	return planScaledObjectForDeployment(ctx, service, effectiveResources, runtimeConfig, deploymentName)
+}
+
+// FetchHPAForDeployment fetches the HorizontalPodAutoscaler KEDA creates for a
+// ScaledObject targeting deploymentName (keda-hpa-<deployment>).
+func FetchHPAForDeployment(
+	ctx context.Context,
+	c client.Client,
+	namespace, deploymentName string,
+) controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler] {
+	return controllerutils.Fetch(ctx, c, client.ObjectKey{
+		Namespace: namespace,
+		Name:      "keda-hpa-" + deploymentName,
+	}, &autoscalingv2.HorizontalPodAutoscaler{})
+}
+
+// ScaledToZero reports whether a scale-to-zero service is currently idle at
+// zero replicas, using the same HPA evidence as the InferenceService pod
+// health verdict.
+func ScaledToZero(
+	service *aimv1alpha1.AIMService,
+	hpa controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler],
+	podCount int,
+) bool {
+	return scaledToZeroNow(service, hpa, podCount)
 }

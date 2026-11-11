@@ -25,9 +25,11 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 
 	"go.uber.org/zap/zapcore"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 
 	sharedcontroller "github.com/amd-enterprise-ai/aim-engine/internal/controller"
@@ -39,6 +41,7 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
+	kservev1alpha2 "github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
 	kservev1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -59,6 +62,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/serving"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -78,6 +82,7 @@ func init() {
 
 	// Register KServe schemes
 	utilruntime.Must(kservev1alpha1.AddToScheme(scheme))
+	utilruntime.Must(kservev1alpha2.AddToScheme(scheme))
 	utilruntime.Must(kservev1beta1.AddToScheme(scheme))
 
 	// +kubebuilder:scaffold:scheme
@@ -93,6 +98,8 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var runtimeProjectionModeFlag string
+	var enableLLMInferenceService bool
+	var kserveNamespace string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -116,6 +123,14 @@ func main() {
 			"Exhaustive (one scope-appropriate ServingRuntime or ClusterServingRuntime per projectable profile, autoSelect off), "+
 			"Reduced (one model-slug primary ServingRuntime or ClusterServingRuntime per model, autoSelect off), or Both. "+
 			"The lazy namespaced ServingRuntime-keyed projection is always on and not governed by this knob.")
+	flag.BoolVar(&enableLLMInferenceService, "enable-llm-inference-service", true,
+		"Manage KServe LLMInferenceService resources when the serving.kserve.io/v1alpha2 LLMInferenceService "+
+			"and LLMInferenceServiceConfig CRDs are installed: project LLMInferenceServiceConfigs from AIM profiles "+
+			"and serve AIMServices that set spec.servingAPI=LLMInferenceService. Has no effect when the CRDs are absent.")
+	flag.StringVar(&kserveNamespace, "kserve-namespace", "kserve-system",
+		"Namespace of the KServe control plane. KServe's LLMInferenceService controller resolves spec.baseRefs there "+
+			"when they are absent from the service's namespace, so AIMClusterProfiles project their "+
+			"LLMInferenceServiceConfigs into it.")
 	opts := zap.Options{
 		Development: false,
 		// Disable stack traces for errors - they're noisy for expected infrastructure errors.
@@ -289,6 +304,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	llmInferenceService, err := resolveLLMInferenceServiceSupport(
+		clientset.Discovery(), enableLLMInferenceService, kserveNamespace,
+	)
+	if err != nil {
+		setupLog.Error(err, "unable to detect KServe LLMInferenceService support")
+		os.Exit(1)
+	}
+	setupLog.Info("KServe LLMInferenceService support resolved",
+		"requested", enableLLMInferenceService,
+		"enabled", llmInferenceService.Enabled,
+		"kserveNamespace", llmInferenceService.KServeNamespace)
+
 	if err := (&v1alpha1controller.AIMRuntimeConfigReconciler{
 		Client:   mgr.GetClient(),
 		Recorder: mgr.GetEventRecorderFor("aimruntimeconfig"),
@@ -352,27 +379,30 @@ func main() {
 	}
 
 	if err := (&sharedcontroller.AIMServiceReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		Clientset:           clientset,
+		LLMInferenceService: llmInferenceService,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AIMService")
 		os.Exit(1)
 	}
 	if err := (&v1alpha2controller.AIMProfileReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		Clientset:      clientset,
-		ProjectionMode: runtimeProjectionMode,
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		Clientset:           clientset,
+		ProjectionMode:      runtimeProjectionMode,
+		LLMInferenceService: llmInferenceService,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AIMProfile")
 		os.Exit(1)
 	}
 	if err := (&v1alpha2controller.AIMClusterProfileReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		Clientset:      clientset,
-		ProjectionMode: runtimeProjectionMode,
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		Clientset:           clientset,
+		ProjectionMode:      runtimeProjectionMode,
+		LLMInferenceService: llmInferenceService,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AIMClusterProfile")
 		os.Exit(1)
@@ -418,9 +448,10 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&v1alpha2controller.RuntimeProjectionReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		Clientset:           clientset,
+		LLMInferenceService: llmInferenceService,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RuntimeProjection")
 		os.Exit(1)
@@ -441,6 +472,30 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// resolveLLMInferenceServiceSupport combines the operator flag with API
+// discovery. Support stays off when the flag disables it or the CRDs are not
+// installed; a discovery failure is returned rather than read as "not
+// installed" so a transient API error cannot silently disable the feature.
+func resolveLLMInferenceServiceSupport(
+	client discovery.DiscoveryInterface,
+	requested bool,
+	kserveNamespace string,
+) (serving.LLMInferenceServiceSupport, error) {
+	support := serving.LLMInferenceServiceSupport{KServeNamespace: kserveNamespace}
+	if !requested {
+		return support, nil
+	}
+	if kserveNamespace == "" {
+		return support, fmt.Errorf("--kserve-namespace must not be empty when --enable-llm-inference-service is set")
+	}
+	served, err := serving.DetectLLMInferenceServiceAPI(client)
+	if err != nil {
+		return support, err
+	}
+	support.Enabled = served
+	return support, nil
 }
 
 func configMapCacheOptions() cache.Options {

@@ -1,0 +1,11 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: llmisvc-conflict
+spec:
+  profile:
+    name: test-llmisvc-cluster
+  servingAPI: LLMInferenceService
+  llmInferenceService:
+    baseRefs:
+      - name: team-routing-preset

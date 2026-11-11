@@ -1106,11 +1106,27 @@ func AddVolumeMount(
 	maxRank int32,
 ) {
 	container := predictorInferenceContainer(isvc)
+	if container == nil {
+		return
+	}
+	AddToPod(&isvc.Spec.Predictor.Volumes, container, service, adapterDiskPVC, maxRank)
+}
+
+// AddToPod is AddVolumeMount for an arbitrary serving pod: it appends the
+// adapter-disk volume to volumes and mounts the service subtree into
+// container with the adapter container-contract env vars.
+func AddToPod(
+	volumes *[]corev1.Volume,
+	container *corev1.Container,
+	service *aimv1alpha1.AIMService,
+	adapterDiskPVC string,
+	maxRank int32,
+) {
 	if adapterDiskPVC == "" || container == nil {
 		return
 	}
 
-	isvc.Spec.Predictor.Volumes = append(isvc.Spec.Predictor.Volumes, corev1.Volume{
+	*volumes = append(*volumes, corev1.Volume{
 		Name: constants.VolumeAdapterDisk,
 		VolumeSource: corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{

@@ -1,5 +1,5 @@
 # Base: Go env + cached deps, used by builder
-FROM golang:1.25.4 AS base
+FROM golang:1.25.14 AS base
 WORKDIR /workspace
 
 COPY go.mod go.sum ./

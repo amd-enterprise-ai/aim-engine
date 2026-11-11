@@ -251,6 +251,58 @@ spec:
       memory: 128Gi
 ```
 
+## Serving API
+
+`spec.servingAPI` selects the KServe API that serves the service:
+
+| Value | Served by |
+|---|---|
+| `Auto` (default) | AIM Engine's choice. Currently `InferenceService`. |
+| `InferenceService` | A KServe `InferenceService` that references the profile's projected `ServingRuntime`. |
+| `LLMInferenceService` | A KServe `LLMInferenceService` that references the profile's projected `LLMInferenceServiceConfig` through `spec.baseRefs`. |
+
+The field is immutable. The resolved API is recorded in `status.servingAPI` the first time the service reconciles and is kept for its lifetime, so a later change to what `Auto` selects never moves an existing service to a different API.
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: qwen-chat
+spec:
+  profile:
+    name: qwen3-32b-mi300x
+  servingAPI: LLMInferenceService
+```
+
+`LLMInferenceService` requires:
+
+- `spec.profile`, because only the profile pipeline serves it;
+- the KServe LLMInferenceService controller and its CRDs, installed before AIM Engine starts (see [KServe Configuration](../admin/kserve-configuration.md#llminferenceservice-support));
+- a profile whose first model source has a URI scheme (for example `hf://`).
+
+Caching, replicas, autoscaling (including scale-to-zero), resource overrides, routing, LoRA adapters (`spec.adapters`, `adapterMode: dynamic`), pull secrets, the service account, priority class, and additional CA bundles behave as they do for an `InferenceService`. Adapters are staged onto the adapter disk and mounted into the `main` container exactly as for an `InferenceService`; KServe's own `spec.model.lora` download path is not used.
+
+AIM Engine keeps owning the `HTTPRoute` and the KEDA `ScaledObject`. It does not use the `LLMInferenceService` `spec.router` field (KServe-managed Gateway, `HTTPRoute`, scheduler and `InferencePool`) or the `spec.scaling` field (Workload Variant Autoscaler). See [KServe Configuration](../admin/kserve-configuration.md#llminferenceservice-support) for how the two models differ.
+
+### Additional LLMInferenceServiceConfigs
+
+`spec.llmInferenceService.baseRefs` merges additional `LLMInferenceServiceConfig`s into the workload, for example shared vLLM arguments, tracing sidecars, or scheduling constraints maintained by a platform team:
+
+```yaml
+spec:
+  profile:
+    name: qwen3-32b-mi300x
+  servingAPI: LLMInferenceService
+  llmInferenceService:
+    baseRefs:
+      - name: team-vllm-args
+      - name: team-tracing
+```
+
+KServe merges, in order: its built-in templates, the profile's projected config, the listed configs in list order, and finally the fields AIM Engine sets on the `LLMInferenceService` (model, replicas, resources, cache and adapter mounts). Later entries win. Each name resolves in the service's namespace first, then in KServe's system namespace, matching KServe's own lookup. Editing a referenced config rolls the workload.
+
+Referenced configs must not set fields AIM Engine owns: `spec.router`, `spec.replicas`, `spec.scaling`, `spec.prefill`, `spec.worker`, or `spec.model.lora`. A missing or conflicting config sets `LLMInferenceServiceBaseRefsReady=False` and `ConfigValid=False`, and AIM Engine does not create or update the `LLMInferenceService` until it is fixed. The list holds at most 16 unique names and the `aim-` prefix is reserved for configs AIM Engine projects.
+
 ## Routing
 
 Optionally expose the service through Gateway API:
@@ -284,6 +336,7 @@ The controller creates an `HTTPRoute` that attaches to the referenced Gateway. T
 | Field | Description |
 |---|---|
 | `resolvedProfile` | The profile that was resolved (`name`, `scope`, `kind`, `uid`). The single source of truth for which profile is backing this service. |
+| `servingAPI` | The KServe API serving the service (`InferenceService` or `LLMInferenceService`), recorded once and kept |
 | `resolvedRuntimeConfig` | The runtime config (if any) that contributed defaults |
 | `cache` | Cache state — `profileCacheRef` (v1alpha2 profile pipeline) or `templateCacheRef` (v1alpha1 template pipeline), `retryAttempts` |
 | `runtime` | Replica counts when autoscaling is active (`currentReplicas`, `desiredReplicas`, `minReplicas`, `maxReplicas`) |
@@ -299,6 +352,9 @@ The v1alpha2 service reports these component conditions:
 | `ProfileReady` | Profile resolution (`ProfileResolved`, `ProfileNotFound`, `BaseProfile`) |
 | `ProfileCacheReady` | `AIMProfileCache` artifact downloads |
 | `InferenceServiceReady` | KServe `InferenceService` readiness |
+| `LLMInferenceServiceReady` | KServe `LLMInferenceService` readiness (replaces `InferenceServiceReady` when `servingAPI` is `LLMInferenceService`) |
+| `LLMInferenceServiceBaseRefsReady` | Resolution of `spec.llmInferenceService.baseRefs` (`LLMInferenceServiceConfigsResolved`, `LLMInferenceServiceConfigNotFound`, `LLMInferenceServiceConfigConflict`); only when the field is set |
+| `ServingAPIReady` | Reported `False` (`ServingAPIUnsupported`, together with `ConfigValid=False`) when the requested serving API cannot be served, for example without the LLMInferenceService CRDs |
 | `HTTPRouteReady` | Gateway API route acceptance (only when routing is enabled) |
 | `HPAReady` | KEDA-managed autoscaler health (only when autoscaling is enabled) |
 | `Ready` | Aggregate of all above |
@@ -319,6 +375,10 @@ CEL admission rules reject a handful of v1alpha1-isms outright:
 | `spec.profileOverrides` without `spec.profile.name` | Provide `spec.profile.name` |
 | `spec.profile.selector.role: base` | Omit `role` or set `deployable` |
 | `spec.profile.selector` without `aimId`, `modelRef`, or paired `spec.model` | Add one of those anchor fields |
+| Changing `spec.servingAPI` after creation | Create a new service |
+| `spec.servingAPI: LLMInferenceService` without `spec.profile` | Set `spec.profile` |
+| `spec.llmInferenceService` without `spec.servingAPI: LLMInferenceService` | Set `spec.servingAPI: LLMInferenceService` or drop the field |
+| `spec.llmInferenceService.baseRefs` with duplicate names, empty names, or the `aim-` prefix | Use unique, non-reserved names |
 
 See [Resource lifecycle → validation](resource-lifecycle.md#validation) for the canonical list of validation rules across all v1alpha2 CRDs.
 

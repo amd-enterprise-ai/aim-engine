@@ -28,7 +28,9 @@ import (
 	"slices"
 	"sort"
 
+	kservev1alpha2 "github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	kserveconstants "github.com/kserve/kserve/pkg/constants"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -57,6 +59,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservice"
 	profileservice "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimservice"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/serving"
 )
 
 const (
@@ -130,6 +133,10 @@ type AIMServiceReconciler struct {
 	Recorder  record.EventRecorder
 	Clientset kubernetes.Interface
 
+	// LLMInferenceService enables serving profile-pipeline services through a
+	// KServe LLMInferenceService.
+	LLMInferenceService serving.LLMInferenceServiceSupport
+
 	// templateReconciler handles the v1alpha1 template-based path.
 	templateReconciler controllerutils.DomainReconciler[*aimv1alpha1.AIMService, *aimv1alpha1.AIMServiceStatus, aimservice.ServiceFetchResult, aimservice.ServiceObservation]
 	templatePipeline   aimServicePipeline
@@ -155,9 +162,12 @@ type AIMServiceReconciler struct {
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterruntimeconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=serving.kserve.io,resources=inferenceservices,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=serving.kserve.io,resources=servingruntimes,verbs=get;create;patch
+// +kubebuilder:rbac:groups=serving.kserve.io,resources=llminferenceservices,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=serving.kserve.io,resources=llminferenceserviceconfigs,verbs=get;list;watch;create;patch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get;list;watch
 // +kubebuilder:rbac:groups=keda.sh,resources=scaledobjects,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=opentelemetry.io,resources=opentelemetrycollectors,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
@@ -364,9 +374,10 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	]{pipeline: templatePipeline}
 
 	r.profileReconciler = &profileservice.ProfileServiceReconciler{
-		Scheme:    r.Scheme,
-		Recorder:  recorder,
-		APIReader: mgr.GetAPIReader(),
+		Scheme:              r.Scheme,
+		Recorder:            recorder,
+		APIReader:           mgr.GetAPIReader(),
+		LLMInferenceService: r.LLMInferenceService,
 	}
 	profilePipeline := &controllerutils.Pipeline[
 		*aimv1alpha1.AIMService,
@@ -406,6 +417,20 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&batchv1.Job{})
+
+	// The kinds can only be watched when their CRDs are installed.
+	if r.LLMInferenceService.Enabled {
+		if err := mgr.GetFieldIndexer().IndexField(
+			ctx, &aimv1alpha2.AIMService{}, llmBaseRefIndexKey, indexServiceLLMBaseRefs,
+		); err != nil {
+			return err
+		}
+		b = b.Owns(&kservev1alpha2.LLMInferenceService{}).
+			Watches(
+				&kservev1alpha2.LLMInferenceServiceConfig{},
+				handler.EnqueueRequestsFromMapFunc(r.findServicesForLLMBaseRef),
+			)
+	}
 
 	b, err := aimservice.RegisterWatches(ctx, mgr, b, c)
 	if err != nil {
@@ -466,6 +491,11 @@ func (r *AIMServiceReconciler) findServicesForInferenceServicePod(ctx context.Co
 		return nil
 	}
 
+	if r.LLMInferenceService.Enabled &&
+		pod.Labels[kserveconstants.KubernetesPartOfLabelKey] == kserveconstants.LLMInferenceServicePartOfValue {
+		return r.findServicesForLLMInferenceServicePod(ctx, pod)
+	}
+
 	isvcName, hasLabel := pod.Labels[constants.LabelKServeInferenceService]
 	if !hasLabel {
 		return nil
@@ -477,7 +507,69 @@ func (r *AIMServiceReconciler) findServicesForInferenceServicePod(ctx context.Co
 	}
 
 	for _, ownerRef := range isvc.OwnerReferences {
-		if ownerRef.Kind == "AIMService" {
+		if ownerRef.Kind == aimServiceKind {
+			return []reconcile.Request{{
+				NamespacedName: types.NamespacedName{Name: ownerRef.Name, Namespace: pod.Namespace},
+			}}
+		}
+	}
+	return nil
+}
+
+// llmBaseRefIndexKey indexes AIMServices by the names in
+// spec.llmInferenceService.baseRefs.
+const llmBaseRefIndexKey = ".spec.llmInferenceService.baseRefs"
+
+func indexServiceLLMBaseRefs(obj client.Object) []string {
+	service, ok := obj.(*aimv1alpha2.AIMService)
+	if !ok || service.Spec.LLMInferenceService == nil {
+		return nil
+	}
+	names := make([]string, 0, len(service.Spec.LLMInferenceService.BaseRefs))
+	for _, ref := range service.Spec.LLMInferenceService.BaseRefs {
+		names = append(names, ref.Name)
+	}
+	return names
+}
+
+// findServicesForLLMBaseRef enqueues the AIMServices that list a changed
+// LLMInferenceServiceConfig in spec.llmInferenceService.baseRefs, so a
+// missing or conflicting config is re-evaluated as soon as it changes. A
+// config in the KServe namespace can back services in any namespace.
+func (r *AIMServiceReconciler) findServicesForLLMBaseRef(ctx context.Context, obj client.Object) []reconcile.Request {
+	opts := []client.ListOption{client.MatchingFields{llmBaseRefIndexKey: obj.GetName()}}
+	if obj.GetNamespace() != r.LLMInferenceService.KServeNamespace {
+		opts = append(opts, client.InNamespace(obj.GetNamespace()))
+	}
+	var services aimv1alpha2.AIMServiceList
+	if err := r.List(ctx, &services, opts...); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMServices referencing an LLMInferenceServiceConfig",
+			"config", obj.GetName(), "namespace", obj.GetNamespace())
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(services.Items))
+	for i := range services.Items {
+		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&services.Items[i])})
+	}
+	return requests
+}
+
+// aimServiceKind is the owner reference kind of AIMService-owned KServe objects.
+const aimServiceKind = "AIMService"
+
+// findServicesForLLMInferenceServicePod maps an LLMInferenceService workload
+// pod to the AIMService that owns its LLMInferenceService.
+func (r *AIMServiceReconciler) findServicesForLLMInferenceServicePod(ctx context.Context, pod *corev1.Pod) []reconcile.Request {
+	name := pod.Labels[kserveconstants.KubernetesAppNameLabelKey]
+	if name == "" {
+		return nil
+	}
+	llmService := &kservev1alpha2.LLMInferenceService{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: name}, llmService); err != nil {
+		return nil
+	}
+	for _, ownerRef := range llmService.OwnerReferences {
+		if ownerRef.Kind == aimServiceKind {
 			return []reconcile.Request{{
 				NamespacedName: types.NamespacedName{Name: ownerRef.Name, Namespace: pod.Namespace},
 			}}
@@ -505,7 +597,7 @@ func (r *AIMServiceReconciler) findServicesForInferenceServiceEvent(ctx context.
 	}
 
 	for _, ownerRef := range isvc.OwnerReferences {
-		if ownerRef.Kind == "AIMService" {
+		if ownerRef.Kind == aimServiceKind {
 			return []reconcile.Request{{
 				NamespacedName: types.NamespacedName{Name: ownerRef.Name, Namespace: evt.InvolvedObject.Namespace},
 			}}

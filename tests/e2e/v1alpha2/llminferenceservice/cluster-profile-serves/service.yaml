@@ -1,0 +1,18 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: llmisvc-cluster
+spec:
+  profile:
+    name: test-llmisvc-cluster
+  servingAPI: LLMInferenceService
+  llmInferenceService:
+    baseRefs:
+      - name: team-preset
+  replicas: 1
+  caching:
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "2"

@@ -279,6 +279,6 @@ mise exec -- make release VERSION=v0.2.0
 
 ## External Dependencies
 
-- **KServe** (v0.16.1): InferenceService API for model serving
-- **Gateway API** (v1.3.0): HTTPRoute for traffic routing
-- **controller-runtime** (v0.22.4): Kubernetes operator framework
+- **KServe** (v0.20.0): InferenceService API for model serving
+- **Gateway API** (v1.5.1): HTTPRoute for traffic routing
+- **controller-runtime** (v0.22.5, pinned via `replace` in `go.mod` to match KServe): Kubernetes operator framework

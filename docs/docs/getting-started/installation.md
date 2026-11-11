@@ -9,7 +9,8 @@ This guide covers installing AIM Engine on a Kubernetes cluster.
 | Kubernetes | 1.32+ | Cluster with supported AMD or NVIDIA GPU nodes; CPU-only profiles are also supported |
 | [AMD GPU Operator](https://github.com/ROCm/gpu-operator) | — | AMD GPU stack; advertises `amd.com/gpu`, labels AMD nodes, and installs NFD |
 | [NVIDIA GPU Operator](https://github.com/NVIDIA/gpu-operator) | — | NVIDIA GPU stack; advertises `nvidia.com/gpu`, installs NFD, and provides the NVIDIA runtime |
-| KServe | v0.16.1 | See [KServe Configuration](../admin/kserve-configuration.md) |
+| KServe | v0.16.1 | Tested with v0.20.0. See [KServe Configuration](../admin/kserve-configuration.md) |
+| KServe LLMInferenceService controller | v0.20.0 | Optional. Required for `spec.servingAPI: LLMInferenceService`. See [LLMInferenceService support](../admin/kserve-configuration.md#llminferenceservice-support) |
 | Gateway API | v1.5.1+ | Required only when HTTP routing is enabled |
 | Envoy Gateway | v1.8.2 | Optional Gateway API data plane. Required only when that platform integration is selected. |
 | cert-manager | v1.16+ | Required by KServe and optional metrics TLS |

@@ -1,0 +1,8 @@
+# A preset that sets spec.router conflicts with the HTTPRoute AIM Engine owns.
+apiVersion: serving.kserve.io/v1alpha2
+kind: LLMInferenceServiceConfig
+metadata:
+  name: team-routing-preset
+spec:
+  router:
+    route: {}
