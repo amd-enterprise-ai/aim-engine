@@ -16,6 +16,12 @@
 #                                   modelSources stamped from overrides)
 #                       │
 #                       ▼
+#   fine-tuned AIMModel derived from the copyable custom profile
+#                       │
+#                       ▼
+#   fine-tuned AIMProfile retaining the effective AIM runtime image
+#                       │
+#                       ▼
 #   AIMService (spec.profile.selector pointing at the derived profile)
 #               status.ResolvedProfile populated
 #
@@ -38,10 +44,14 @@ spec:
   description: |
     Kind-runnable BYO base-image custom-model derivation. Validates that
     a seeded base AIMProfile + spec.profiles.derivedFrom + BYO
-    overrides.modelSources produce a deployable AIMProfile that an
-    AIMService can resolve.
+    overrides.modelSources produce a deployable AIMProfile. A second
+    fine-tune derived from that copyable custom profile must retain the
+    effective AIM runtime image rather than descending to its upstream
+    container base. The original custom profile remains resolvable by an
+    AIMService.
   timeouts:
     assert: 120s
+    cleanup: 120s
   steps:
     - name: Seed the base AIMProfile
       try:
@@ -86,6 +96,9 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfile
               metadata:
+                annotations:
+                  aim.eai.amd.com/base-image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+                  aim.eai.amd.com/profile-copyable: "true"
                 labels:
                   aim.eai.amd.com/profile-role: deployable
                   aim.eai.amd.com/source-model: byo-derived
@@ -100,6 +113,45 @@ spec:
                 modelSources:
                   - modelId: acme/byo-transformer
                     sourceUri: hf://acme/byo-transformer
+              status:
+                deployable: true
+
+    - name: Derive a fine-tuned model from the copyable custom model
+      try:
+        - apply:
+            file: fine-tune-model.yaml
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: byo-fine-tuned
+              status:
+                (profileSetRef.name != ""): true
+                managedProfiles:
+                  (deployable > `0`): true
+
+    - name: Assert the fine-tune retains the effective AIM runtime lineage
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                annotations:
+                  aim.eai.amd.com/base-image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+                labels:
+                  aim.eai.amd.com/profile-role: deployable
+                  aim.eai.amd.com/source-model: byo-fine-tuned
+              spec:
+                aimId: acme/byo-transformer
+                modelId: acme/byo-transformer-fine-tuned
+                image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+                modelSources:
+                  - modelId: acme/byo-transformer-fine-tuned
+                    sourceUri: s3://models/byo-transformer-fine-tuned
               status:
                 deployable: true
 

@@ -29,6 +29,8 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
+const currentImageMetadataVersion int32 = 1
+
 // isTransientMetadataError checks if a metadata error is transient (recoverable with retry)
 // vs permanent (image not found, invalid format).
 // Transient errors should trigger K8s exponential backoff retry when metadata is required.
@@ -71,7 +73,15 @@ func isTransientMetadataError(err error) bool {
 // ==============
 
 // shouldExtractMetadata checks if metadata extraction should be attempted.
-// Returns false if metadata already exists in status (cached).
+// Cached metadata produced before AIM_BASE_IMAGE_REF extraction is inspected
+// once. A legacy cache that already contains the reference needs no registry
+// request; DecorateStatus upgrades its version marker in place.
 func shouldExtractMetadata(status *aimv1alpha1.AIMModelStatus) bool {
-	return status == nil || status.ImageMetadata == nil
+	if status == nil || status.ImageMetadata == nil {
+		return true
+	}
+	if status.ImageMetadataVersion >= currentImageMetadataVersion {
+		return false
+	}
+	return status.ImageMetadata.BaseImageRef == ""
 }

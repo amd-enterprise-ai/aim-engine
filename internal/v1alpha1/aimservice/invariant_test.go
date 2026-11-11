@@ -104,6 +104,33 @@ func assertContainsNone(t *testing.T, subject, body string, forbidden ...string)
 	}
 }
 
+// Chart-installed mappings would be configured mappings, which outrank the
+// operator's compatibility fallbacks and could beat an administrator's broader
+// private-mirror mapping. The fallbacks must stay operator-owned.
+func TestHelmDefaultRuntimeConfigHasNoImageRegistryMappings(t *testing.T) {
+	root := repoRoot(t)
+
+	var values struct {
+		ClusterRuntimeConfig struct {
+			Spec struct {
+				ImageRegistry *struct {
+					Mappings []struct {
+						From string `yaml:"from"`
+						To   string `yaml:"to"`
+					} `yaml:"mappings"`
+				} `yaml:"imageRegistry"`
+			} `yaml:"spec"`
+		} `yaml:"clusterRuntimeConfig"`
+	}
+	if err := yaml.Unmarshal([]byte(readRepoFile(t, root, "config", "helm", "values.yaml")), &values); err != nil {
+		t.Fatalf("parse values.yaml: %v", err)
+	}
+
+	if got := values.ClusterRuntimeConfig.Spec.ImageRegistry; got != nil {
+		t.Fatalf("default cluster RuntimeConfig sets imageRegistry = %#v, want unset", got)
+	}
+}
+
 // TestGatewayActivationInvariant pins the scale-from-zero activation invariant
 // across every place it is independently expressed:
 //

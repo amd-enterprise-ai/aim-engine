@@ -33,12 +33,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofileset"
 )
 
@@ -69,6 +71,7 @@ type AIMClusterProfileSetReconciler struct {
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterprofilesets/finalizers,verbs=update
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterprofiles,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclustermodels,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterruntimeconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
@@ -142,11 +145,23 @@ func (r *AIMClusterProfileSetReconciler) SetupWithManager(mgr ctrl.Manager) erro
 	modelHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
 		return clusterProfileSetsForModel(ctx, r.Client, obj)
 	})
+	runtimeConfigHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		config, ok := obj.(*aimv1alpha1.AIMClusterRuntimeConfig)
+		if !ok || config.Name != aimruntimeconfig.DefaultRuntimeConfigName {
+			return nil
+		}
+		return allClusterProfileSets(ctx, r.Client)
+	})
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha2.AIMClusterProfileSet{}).
 		Watches(&aimv1alpha2.AIMClusterProfile{}, profileHandler).
 		Watches(&aimv1alpha2.AIMClusterModel{}, modelHandler, builder.WithPredicates(modelDefinitionPredicate())).
+		Watches(
+			&aimv1alpha1.AIMClusterRuntimeConfig{},
+			runtimeConfigHandler,
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
+		).
 		Watches(
 			&corev1.ConfigMap{},
 			configMapHandler,
@@ -154,6 +169,20 @@ func (r *AIMClusterProfileSetReconciler) SetupWithManager(mgr ctrl.Manager) erro
 		).
 		Named(clusterProfileSetControllerName).
 		Complete(r)
+}
+
+func allClusterProfileSets(ctx context.Context, c client.Client) []reconcile.Request {
+	return listRequests(ctx, func(ctx context.Context) ([]*aimv1alpha2.AIMClusterProfileSet, error) {
+		var sets aimv1alpha2.AIMClusterProfileSetList
+		if err := c.List(ctx, &sets); err != nil {
+			return nil, err
+		}
+		items := make([]*aimv1alpha2.AIMClusterProfileSet, 0, len(sets.Items))
+		for i := range sets.Items {
+			items = append(items, &sets.Items[i])
+		}
+		return items, nil
+	}, "failed to list AIMClusterProfileSets for default ClusterRuntimeConfig event")
 }
 
 func directClusterProfileSetRequest(obj client.Object) []reconcile.Request {

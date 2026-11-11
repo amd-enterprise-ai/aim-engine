@@ -351,6 +351,20 @@ func (obs ServiceObservation) getConfigHealth() controllerutils.ComponentHealth 
 	if obs.configErr == nil {
 		return controllerutils.ComponentHealth{}
 	}
+	if aimprofile.IsBaseImageUnresolved(obs.configErr) {
+		return controllerutils.ComponentHealth{
+			Component:      "ProfileConfig",
+			State:          constants.AIMStatusDegraded,
+			DependencyType: controllerutils.DependencyTypeUpstream,
+			Errors: []error{
+				controllerutils.NewMissingUpstreamDependencyError(
+					aimprofile.ReasonBaseImageUnresolved,
+					obs.configErr.Error(),
+					obs.configErr,
+				),
+			},
+		}
+	}
 	return controllerutils.ComponentHealth{
 		Component:      "ProfileConfig",
 		State:          constants.AIMStatusFailed,

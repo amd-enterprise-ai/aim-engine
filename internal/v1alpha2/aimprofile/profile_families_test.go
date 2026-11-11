@@ -73,7 +73,7 @@ func TestProfileSetImagePrecedenceAndLiteralTPSelection(t *testing.T) {
 	if err != nil || matches {
 		t.Fatal("missing TP treated as 1")
 	}
-	result, err := ApplyProfileCopyOverrides(source, &aimv1alpha1.ProfileOverrides{Image: "nested"}, "top-level", "")
+	result, err := ApplyProfileCopyOverrides(source, &aimv1alpha1.ProfileOverrides{Image: "nested"}, "top-level", "", nil)
 	if err != nil || result.Image != "nested" {
 		t.Fatal("nested image override precedence changed")
 	}

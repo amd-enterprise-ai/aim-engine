@@ -38,9 +38,11 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
 )
@@ -115,6 +117,7 @@ type profileSetCandidate struct {
 
 type ProfileSetFetchResult struct {
 	set                  *aimv1alpha2.AIMProfileSet
+	runtimeConfig        controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
 	candidates           controllerutils.FetchResult[[]profileSetCandidate]
 	ineligibleCandidates []profileSetCandidate
 	managed              controllerutils.FetchResult[[]managedProfile]
@@ -122,6 +125,7 @@ type ProfileSetFetchResult struct {
 
 type ClusterProfileSetFetchResult struct {
 	set                  *aimv1alpha2.AIMClusterProfileSet
+	runtimeConfig        controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
 	candidates           controllerutils.FetchResult[[]profileSetCandidate]
 	ineligibleCandidates []profileSetCandidate
 	managed              controllerutils.FetchResult[[]managedProfile]
@@ -167,6 +171,7 @@ func (r *ProfileSetReconciler) FetchRemoteState(
 	managed, managedErr := listManagedNamespaceProfiles(ctx, c, set.Namespace, string(set.UID))
 	return ProfileSetFetchResult{
 		set:                  set,
+		runtimeConfig:        aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, aimruntimeconfig.DefaultRuntimeConfigName, set.Namespace),
 		candidates:           controllerutils.FetchResult[[]profileSetCandidate]{Value: candidatePools.eligible, Error: candidateErr},
 		ineligibleCandidates: candidatePools.excludedByCopyable,
 		managed:              controllerutils.FetchResult[[]managedProfile]{Value: managed, Error: managedErr},
@@ -183,6 +188,7 @@ func (r *ClusterProfileSetReconciler) FetchRemoteState(
 	managed, managedErr := listManagedClusterProfiles(ctx, c, string(set.UID))
 	return ClusterProfileSetFetchResult{
 		set:                  set,
+		runtimeConfig:        aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, aimruntimeconfig.DefaultRuntimeConfigName, ""),
 		candidates:           controllerutils.FetchResult[[]profileSetCandidate]{Value: candidatePools.eligible, Error: candidateErr},
 		ineligibleCandidates: candidatePools.excludedByCopyable,
 		managed:              controllerutils.FetchResult[[]managedProfile]{Value: managed, Error: managedErr},
@@ -195,7 +201,7 @@ func (r *ProfileSetReconciler) ComposeState(
 	fetch ProfileSetFetchResult,
 ) ProfileSetObservation {
 	obs := ProfileSetObservation{}
-	if fetch.candidates.Error == nil && fetch.managed.Error == nil {
+	if fetch.runtimeConfig.Error == nil && fetch.candidates.Error == nil && fetch.managed.Error == nil {
 		var selected []aimprofile.ProfileCopyCandidate
 		req := profileCopyRequest(fetch.set.Spec)
 		selected, obs.buildErr = resolveSelectedProfileSetCandidates(fetch.candidates.Value, req)
@@ -203,15 +209,22 @@ func (r *ProfileSetReconciler) ComposeState(
 		obs.ineligibleMatchCount, matchErr = matchingProfileSetCandidateCount(fetch.ineligibleCandidates, req)
 		obs.buildErr = errors.Join(obs.buildErr, matchErr)
 		var buildErr error
-		obs.desiredProfiles, buildErr = buildDesiredNamespaceProfiles(fetch.set, selected)
+		obs.desiredProfiles, buildErr = buildDesiredNamespaceProfiles(
+			fetch.set,
+			selected,
+			aimruntimeconfig.ImageRegistryMappings(fetch.runtimeConfig.Value),
+		)
 		obs.buildErr = errors.Join(obs.buildErr, buildErr)
 	}
-	obs.pruneSafe = fetch.candidates.Error == nil && fetch.managed.Error == nil && obs.buildErr == nil
+	// ProfileSet output is atomic across source groups. If any selected source
+	// cannot resolve its runtime lineage, retain every existing managed profile
+	// until the producer metadata or RuntimeConfig is fixed.
+	obs.pruneSafe = fetch.runtimeConfig.Error == nil && fetch.candidates.Error == nil && fetch.managed.Error == nil && obs.buildErr == nil
 	if fetch.managed.Error == nil {
 		obs.existingManaged = fetch.managed.Value
 		obs.managedProfiles, obs.existingDesiredCount = summarizeManagedProfiles(obs.desiredProfiles, fetch.managed.Value)
 	}
-	obs.componentHealth = buildComponentHealth(collectErrors(fetch.candidates.Error, fetch.managed.Error), obs.buildErr, obs.managedProfiles, obs.existingDesiredCount, obs.ineligibleMatchCount)
+	obs.componentHealth = buildComponentHealth(collectErrors(fetch.runtimeConfig.Error, fetch.candidates.Error, fetch.managed.Error), obs.buildErr, obs.managedProfiles, obs.existingDesiredCount, obs.ineligibleMatchCount)
 	return obs
 }
 
@@ -221,7 +234,7 @@ func (r *ClusterProfileSetReconciler) ComposeState(
 	fetch ClusterProfileSetFetchResult,
 ) ClusterProfileSetObservation {
 	obs := ClusterProfileSetObservation{}
-	if fetch.candidates.Error == nil && fetch.managed.Error == nil {
+	if fetch.runtimeConfig.Error == nil && fetch.candidates.Error == nil && fetch.managed.Error == nil {
 		var selected []aimprofile.ProfileCopyCandidate
 		req := profileCopyRequest(fetch.set.Spec)
 		selected, obs.buildErr = resolveSelectedProfileSetCandidates(fetch.candidates.Value, req)
@@ -229,15 +242,22 @@ func (r *ClusterProfileSetReconciler) ComposeState(
 		obs.ineligibleMatchCount, matchErr = matchingProfileSetCandidateCount(fetch.ineligibleCandidates, req)
 		obs.buildErr = errors.Join(obs.buildErr, matchErr)
 		var buildErr error
-		obs.desiredProfiles, buildErr = buildDesiredClusterProfiles(fetch.set, selected)
+		obs.desiredProfiles, buildErr = buildDesiredClusterProfiles(
+			fetch.set,
+			selected,
+			aimruntimeconfig.ImageRegistryMappings(fetch.runtimeConfig.Value),
+		)
 		obs.buildErr = errors.Join(obs.buildErr, buildErr)
 	}
-	obs.pruneSafe = fetch.candidates.Error == nil && fetch.managed.Error == nil && obs.buildErr == nil
+	// ProfileSet output is atomic across source groups. If any selected source
+	// cannot resolve its runtime lineage, retain every existing managed profile
+	// until the producer metadata or RuntimeConfig is fixed.
+	obs.pruneSafe = fetch.runtimeConfig.Error == nil && fetch.candidates.Error == nil && fetch.managed.Error == nil && obs.buildErr == nil
 	if fetch.managed.Error == nil {
 		obs.existingManaged = fetch.managed.Value
 		obs.managedProfiles, obs.existingDesiredCount = summarizeManagedProfiles(obs.desiredProfiles, fetch.managed.Value)
 	}
-	obs.componentHealth = buildComponentHealth(collectErrors(fetch.candidates.Error, fetch.managed.Error), obs.buildErr, obs.managedProfiles, obs.existingDesiredCount, obs.ineligibleMatchCount)
+	obs.componentHealth = buildComponentHealth(collectErrors(fetch.runtimeConfig.Error, fetch.candidates.Error, fetch.managed.Error), obs.buildErr, obs.managedProfiles, obs.existingDesiredCount, obs.ineligibleMatchCount)
 	return obs
 }
 
@@ -299,7 +319,11 @@ func (r *ClusterProfileSetReconciler) DecorateStatus(
 	status.ManagedProfiles = obs.managedProfiles
 }
 
-func buildDesiredNamespaceProfiles(set *aimv1alpha2.AIMProfileSet, candidates []aimprofile.ProfileCopyCandidate) ([]desiredProfile, error) {
+func buildDesiredNamespaceProfiles(
+	set *aimv1alpha2.AIMProfileSet,
+	candidates []aimprofile.ProfileCopyCandidate,
+	registryMappings []aimimage.RegistryMapping,
+) ([]desiredProfile, error) {
 	req := profileCopyRequest(set.Spec)
 	matched, err := aimprofile.FilterProfileCopyCandidates(candidates, req)
 	if err != nil {
@@ -313,11 +337,19 @@ func buildDesiredNamespaceProfiles(set *aimv1alpha2.AIMProfileSet, candidates []
 			failures.add(source.SourceGroup, fmt.Errorf("generate derived profile name: %w", err))
 			continue
 		}
-		copiedSpec, err := aimprofile.ApplyProfileCopyOverrides(source.Spec, set.Spec.Overrides, set.Spec.Image, source.BaseImage)
+		copiedSpec, err := aimprofile.ApplyProfileCopyOverrides(source.Spec, set.Spec.Overrides, set.Spec.Image, source.BaseImage, registryMappings)
 		if err != nil {
-			failures.add(source.SourceGroup, err)
+			failures.add(source.SourceGroup, profileCopyError(err))
 			continue
 		}
+		derivedBaseImage := aimprofile.ResolveDerivedProfileBaseImage(
+			source.BaseImage,
+			copiedSpec.Image,
+			set.Spec.Image,
+			set.Spec.Overrides,
+			aimprofile.IsProfileDeployable(source.Spec),
+		)
+		copiedSpec.BaseImageRef = derivedBaseImage
 		profile := &aimv1alpha2.AIMProfile{}
 		profile.Namespace = set.Namespace
 		profile.Name = name
@@ -328,7 +360,7 @@ func buildDesiredNamespaceProfiles(set *aimv1alpha2.AIMProfileSet, candidates []
 			annotationProfileSetLineage:      appendProfileSetLineage(source.ProfileSetUIDs, string(set.UID)),
 			aimprofile.AnnotationSourceID:    source.SourceID,
 			aimprofile.AnnotationSourceGroup: source.SourceGroup,
-			aimprofile.AnnotationBaseImage:   source.BaseImage,
+			aimprofile.AnnotationBaseImage:   derivedBaseImage,
 		}, aimprofile.ProfileSourceCopy)
 		profile.Annotations = profileyaml.Mark(profile.Annotations, source.YAMLContract)
 		if set.Spec.OutputPolicy != nil && set.Spec.OutputPolicy.Copyable {
@@ -345,7 +377,11 @@ func buildDesiredNamespaceProfiles(set *aimv1alpha2.AIMProfileSet, candidates []
 	return desired, errors.Join(failures.err(), validateDerivedNames(desired))
 }
 
-func buildDesiredClusterProfiles(set *aimv1alpha2.AIMClusterProfileSet, candidates []aimprofile.ProfileCopyCandidate) ([]desiredProfile, error) {
+func buildDesiredClusterProfiles(
+	set *aimv1alpha2.AIMClusterProfileSet,
+	candidates []aimprofile.ProfileCopyCandidate,
+	registryMappings []aimimage.RegistryMapping,
+) ([]desiredProfile, error) {
 	req := profileCopyRequest(set.Spec)
 	matched, err := aimprofile.FilterProfileCopyCandidates(candidates, req)
 	if err != nil {
@@ -359,11 +395,19 @@ func buildDesiredClusterProfiles(set *aimv1alpha2.AIMClusterProfileSet, candidat
 			failures.add(source.SourceGroup, fmt.Errorf("generate derived profile name: %w", err))
 			continue
 		}
-		copiedSpec, err := aimprofile.ApplyProfileCopyOverrides(source.Spec, set.Spec.Overrides, set.Spec.Image, source.BaseImage)
+		copiedSpec, err := aimprofile.ApplyProfileCopyOverrides(source.Spec, set.Spec.Overrides, set.Spec.Image, source.BaseImage, registryMappings)
 		if err != nil {
-			failures.add(source.SourceGroup, err)
+			failures.add(source.SourceGroup, profileCopyError(err))
 			continue
 		}
+		derivedBaseImage := aimprofile.ResolveDerivedProfileBaseImage(
+			source.BaseImage,
+			copiedSpec.Image,
+			set.Spec.Image,
+			set.Spec.Overrides,
+			aimprofile.IsProfileDeployable(source.Spec),
+		)
+		copiedSpec.BaseImageRef = derivedBaseImage
 		profile := &aimv1alpha2.AIMClusterProfile{}
 		profile.Name = name
 		profile.Annotations = aimprofile.MarkProfileSource(map[string]string{
@@ -372,7 +416,7 @@ func buildDesiredClusterProfiles(set *aimv1alpha2.AIMClusterProfileSet, candidat
 			annotationProfileSetLineage:      appendProfileSetLineage(source.ProfileSetUIDs, string(set.UID)),
 			aimprofile.AnnotationSourceID:    source.SourceID,
 			aimprofile.AnnotationSourceGroup: source.SourceGroup,
-			aimprofile.AnnotationBaseImage:   source.BaseImage,
+			aimprofile.AnnotationBaseImage:   derivedBaseImage,
 		}, aimprofile.ProfileSourceCopy)
 		profile.Annotations = profileyaml.Mark(profile.Annotations, source.YAMLContract)
 		if set.Spec.OutputPolicy != nil && set.Spec.OutputPolicy.Copyable {
@@ -387,6 +431,17 @@ func buildDesiredClusterProfiles(set *aimv1alpha2.AIMClusterProfileSet, candidat
 		desired = append(desired, desiredProfile{Object: profile})
 	}
 	return desired, errors.Join(failures.err(), validateDerivedNames(desired))
+}
+
+func profileCopyError(err error) error {
+	if aimprofile.IsBaseImageUnresolved(err) {
+		return controllerutils.NewMissingUpstreamDependencyError(
+			aimprofile.ReasonBaseImageUnresolved,
+			err.Error(),
+			err,
+		)
+	}
+	return controllerutils.NewInvalidSpecError("InvalidProfileOverrides", err.Error(), err)
 }
 
 func appendProfileSetLineage(lineage []string, uid string) string {

@@ -6,6 +6,10 @@ metadata:
     app.kubernetes.io/part-of: aim-engine-upgrade-compatibility
   annotations:
     aim.eai.amd.com/profile-copyable: "true"
+    # Producer-owned AIM_BASE_IMAGE_REF metadata. Keep the legacy rolling tag
+    # so the baseline and candidate resolve the same runtime; exact patch-tag
+    # preservation is covered by the dedicated lineage tests.
+    aim.eai.amd.com/base-image: registry.example.com/aim-base:0.2
 spec:
   aimId: upgrade-example/namespace-model
   modelId: upgrade-example/namespace-model
@@ -48,6 +52,9 @@ metadata:
     app.kubernetes.io/part-of: aim-engine-upgrade-compatibility
   annotations:
     aim.eai.amd.com/profile-copyable: "true"
+    # Producer-owned AIM_BASE_IMAGE_REF metadata, matching the namespace
+    # fixture above.
+    aim.eai.amd.com/base-image: registry.example.com/aim-base:0.2
 spec:
   aimId: upgrade-example/cluster-model
   modelId: upgrade-example/cluster-model

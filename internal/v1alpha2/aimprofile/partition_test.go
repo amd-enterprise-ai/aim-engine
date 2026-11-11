@@ -142,7 +142,7 @@ func TestApplyProfileCopyOverrides_PartitioningMode(t *testing.T) {
 	t.Run("override replaces mode", func(t *testing.T) {
 		out, err := ApplyProfileCopyOverrides(source, &aimv1alpha1.ProfileOverrides{
 			AcceleratorPartitioningMode: "CPX-NPS4",
-		}, "", "")
+		}, "", "", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -152,7 +152,7 @@ func TestApplyProfileCopyOverrides_PartitioningMode(t *testing.T) {
 	})
 
 	t.Run("empty override leaves source mode untouched", func(t *testing.T) {
-		out, err := ApplyProfileCopyOverrides(source, &aimv1alpha1.ProfileOverrides{}, "", "")
+		out, err := ApplyProfileCopyOverrides(source, &aimv1alpha1.ProfileOverrides{}, "", "", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
