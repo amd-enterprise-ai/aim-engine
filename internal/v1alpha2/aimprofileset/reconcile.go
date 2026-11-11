@@ -204,7 +204,7 @@ func (r *ProfileSetReconciler) ComposeState(
 		obs.buildErr = errors.Join(obs.buildErr, matchErr)
 		var buildErr error
 		obs.desiredProfiles, buildErr = buildDesiredNamespaceProfiles(fetch.set, selected)
-		obs.buildErr = errors.Join(obs.buildErr, buildErr, stabilizeDerivedProfileNames(obs.desiredProfiles, fetch.managed.Value))
+		obs.buildErr = errors.Join(obs.buildErr, buildErr)
 	}
 	obs.pruneSafe = fetch.candidates.Error == nil && fetch.managed.Error == nil && obs.buildErr == nil
 	if fetch.managed.Error == nil {
@@ -230,7 +230,7 @@ func (r *ClusterProfileSetReconciler) ComposeState(
 		obs.buildErr = errors.Join(obs.buildErr, matchErr)
 		var buildErr error
 		obs.desiredProfiles, buildErr = buildDesiredClusterProfiles(fetch.set, selected)
-		obs.buildErr = errors.Join(obs.buildErr, buildErr, stabilizeDerivedProfileNames(obs.desiredProfiles, fetch.managed.Value))
+		obs.buildErr = errors.Join(obs.buildErr, buildErr)
 	}
 	obs.pruneSafe = fetch.candidates.Error == nil && fetch.managed.Error == nil && obs.buildErr == nil
 	if fetch.managed.Error == nil {
@@ -246,20 +246,10 @@ func (r *ProfileSetReconciler) PlanResources(
 	_ controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileSet],
 	obs ProfileSetObservation,
 ) controllerutils.PlanResult {
-	var plan controllerutils.PlanResult
 	if !obs.pruneSafe {
-		return plan
+		return controllerutils.PlanResult{}
 	}
-	for _, desired := range obs.desiredProfiles {
-		plan.Apply(desired.Object)
-	}
-	desiredNames := desiredProfileNames(obs.desiredProfiles)
-	for _, existingProfile := range obs.existingManaged {
-		if _, keep := desiredNames[client.ObjectKeyFromObject(existingProfile.Object).String()]; !keep {
-			plan.Delete(existingProfile.Object)
-		}
-	}
-	return plan
+	return planDerivedProfiles(obs.desiredProfiles, obs.existingManaged)
 }
 
 func (r *ClusterProfileSetReconciler) PlanResources(
@@ -267,20 +257,56 @@ func (r *ClusterProfileSetReconciler) PlanResources(
 	_ controllerutils.ReconcileContext[*aimv1alpha2.AIMClusterProfileSet],
 	obs ClusterProfileSetObservation,
 ) controllerutils.PlanResult {
-	var plan controllerutils.PlanResult
 	if !obs.pruneSafe {
-		return plan
+		return controllerutils.PlanResult{}
 	}
-	for _, desired := range obs.desiredProfiles {
-		plan.Apply(desired.Object)
+	return planDerivedProfiles(obs.desiredProfiles, obs.existingManaged)
+}
+
+// planDerivedProfiles applies the desired profiles and prunes managed profiles
+// that are no longer desired. spec.aimId is immutable once set, so a desired
+// profile whose name is held by a managed profile with a different aimId is
+// replaced under the same name: this pass deletes the old profile, and a later
+// pass creates the new one once the deletion has finished. Applying over a
+// terminating profile would update it instead of recreating it, so desired
+// profiles wait while their name is still being deleted.
+func planDerivedProfiles(desired []desiredProfile, existing []managedProfile) controllerutils.PlanResult {
+	var plan controllerutils.PlanResult
+	existingByKey := make(map[string]managedProfile, len(existing))
+	for _, profile := range existing {
+		existingByKey[client.ObjectKeyFromObject(profile.Object).String()] = profile
 	}
-	desiredNames := desiredProfileNames(obs.desiredProfiles)
-	for _, existingProfile := range obs.existingManaged {
-		if _, keep := desiredNames[client.ObjectKeyFromObject(existingProfile.Object).String()]; !keep {
-			plan.Delete(existingProfile.Object)
+	for _, profile := range desired {
+		current, found := existingByKey[client.ObjectKeyFromObject(profile.Object).String()]
+		switch {
+		case !found:
+			plan.Apply(profile.Object)
+		case current.Object.GetDeletionTimestamp() != nil:
+		case aimIDChanged(current.Object, profile.Object):
+			plan.Delete(current.Object)
+		default:
+			plan.Apply(profile.Object)
+		}
+	}
+	desiredNames := desiredProfileNames(desired)
+	for _, profile := range existing {
+		if _, keep := desiredNames[client.ObjectKeyFromObject(profile.Object).String()]; !keep {
+			plan.Delete(profile.Object)
 		}
 	}
 	return plan
+}
+
+// aimIDChanged reports whether updating current to desired would change an
+// aimId that admission no longer allows to change. An empty aimId can still be
+// set in place.
+func aimIDChanged(current, desired client.Object) bool {
+	currentSpec, ok := profileSpecCommon(current)
+	if !ok || currentSpec.AimId == "" {
+		return false
+	}
+	desiredSpec, ok := profileSpecCommon(desired)
+	return ok && desiredSpec.AimId != currentSpec.AimId
 }
 
 func (r *ProfileSetReconciler) DecorateStatus(
@@ -415,69 +441,6 @@ func validateDerivedNames(profiles []desiredProfile) error {
 				fmt.Sprintf("multiple source definitions produce derived profile %q; narrow the selector", key), nil)
 		}
 		seen[key] = true
-	}
-	return nil
-}
-
-// stabilizeDerivedProfileNames preserves the historical name for ordinary
-// derivations, but rolls to a deterministic alternate when that name is
-// occupied by an owned profile whose non-empty aimId cannot be updated in
-// place. Once the alternate exists for the requested identity, it remains the
-// desired name so the controller does not oscillate back after pruning the old
-// profile.
-func stabilizeDerivedProfileNames(desired []desiredProfile, existing []managedProfile) error {
-	if len(desired) == 0 || len(existing) == 0 {
-		return nil
-	}
-
-	existingByKey := make(map[string]managedProfile, len(existing))
-	for _, profile := range existing {
-		existingByKey[client.ObjectKeyFromObject(profile.Object).String()] = profile
-	}
-
-	for i := range desired {
-		wantedSpec, ok := profileSpecCommon(desired[i].Object)
-		if !ok {
-			return fmt.Errorf("cannot resolve immutable identity for unsupported desired profile type %T", desired[i].Object)
-		}
-		baseKey := client.ObjectKeyFromObject(desired[i].Object)
-		alternateName, err := utils.GenerateDerivedName(
-			[]string{baseKey.Name},
-			utils.WithHashSource(baseKey.Name, "aimId", wantedSpec.AimId),
-		)
-		if err != nil {
-			return fmt.Errorf("generate identity-safe derived profile name: %w", err)
-		}
-		alternateKey := client.ObjectKey{Namespace: baseKey.Namespace, Name: alternateName}
-
-		if alternate, found := existingByKey[alternateKey.String()]; found {
-			alternateSpec, recognized := profileSpecCommon(alternate.Object)
-			if !recognized {
-				return fmt.Errorf("cannot inspect identity-safe profile %s of type %T", alternateKey, alternate.Object)
-			}
-			if alternateSpec.AimId != "" && alternateSpec.AimId != wantedSpec.AimId {
-				return fmt.Errorf(
-					"identity-safe profile name %s is occupied by immutable aimId %q instead of %q",
-					alternateKey,
-					alternateSpec.AimId,
-					wantedSpec.AimId,
-				)
-			}
-			desired[i].Object.SetName(alternateName)
-			continue
-		}
-
-		current, found := existingByKey[baseKey.String()]
-		if !found {
-			continue
-		}
-		currentSpec, recognized := profileSpecCommon(current.Object)
-		if !recognized {
-			return fmt.Errorf("cannot inspect existing profile %s of type %T", baseKey, current.Object)
-		}
-		if currentSpec.AimId != "" && currentSpec.AimId != wantedSpec.AimId {
-			desired[i].Object.SetName(alternateName)
-		}
 	}
 	return nil
 }

@@ -6,8 +6,8 @@ spec:
   description: |
     Verifies that changing overrides.aimId on an existing AIMProfileSet replaces
     its derived AIMProfile. spec.aimId is immutable on AIMProfile, so the set
-    must create a replacement under a new name and prune the old profile
-    instead of attempting an in-place update that admission rejects.
+    must delete the old profile and recreate it under the same name instead of
+    attempting an in-place update that admission rejects.
   timeouts:
     assert: 90s
   steps:
@@ -34,26 +34,39 @@ spec:
               status:
                 status: Ready
 
-    - name: Change the aimId override
+    - name: Change the aimId override and assert the profile keeps its name
+      description: |
+        Record the derived profile's name, change overrides.aimId, and wait for
+        a profile with that same name to carry the new aimId and become Ready.
       try:
-        - apply:
-            file: profileset-new-aimid.yaml
+        - script:
+            timeout: 120s
+            content: |
+              set -eu
+              profiles() {
+                kubectl get aimprofiles.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" -o json | jq -c '[.items[]
+                  | select(.metadata.annotations["aim.eai.amd.com/profile-set-name"] == "aimid-override-profiles")
+                  | {name: .metadata.name, aimId: .spec.aimId, status: .status.status}]'
+              }
+              BEFORE=$(profiles)
+              NAME=$(echo "$BEFORE" | jq -r 'if length == 1 then .[0].name else empty end')
+              [ -n "$NAME" ] || { echo "ERROR: want exactly one derived profile before the change, got $BEFORE"; exit 1; }
+              echo "Derived profile before the change: $NAME"
 
-    - name: Assert a replacement profile carries the new aimId
-      try:
-        - assert:
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha2
-              kind: AIMProfile
-              metadata:
-                annotations:
-                  aim.eai.amd.com/profile-source: copy
-                  aim.eai.amd.com/profile-set-name: aimid-override-profiles
-              spec:
-                aimId: acme/custom-model-v2
-                profileId: cpu-default
-              status:
-                status: Ready
+              kubectl patch aimprofilesets.v1alpha2.aim.eai.amd.com aimid-override-profiles -n "$NAMESPACE" --type=merge \
+                -p '{"spec":{"overrides":{"aimId":"acme/custom-model-v2"}}}'
+
+              for _ in $(seq 1 90); do
+                MATCH=$(profiles | jq -r --arg name "$NAME" \
+                  'length == 1 and .[0].name == $name and .[0].aimId == "acme/custom-model-v2" and .[0].status == "Ready"')
+                if [ "$MATCH" = "true" ]; then
+                  echo "OK: $NAME was recreated with the new aimId and is Ready"
+                  exit 0
+                fi
+                sleep 1
+              done
+              echo "ERROR: want only $NAME with aimId acme/custom-model-v2 and Ready, got $(profiles)"
+              exit 1
         - assert:
             resource:
               apiVersion: aim.eai.amd.com/v1alpha2

@@ -24,8 +24,10 @@ package aimprofileset
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
@@ -103,17 +105,17 @@ func transitionErrors(t *testing.T, structural *schema.Structural, validator *ce
 	return out
 }
 
-func identityRenameCandidate() profileSetCandidate {
+func identityRenameCandidate(profileID string) profileSetCandidate {
 	return profileSetCandidate{
 		ProfileCopyCandidate: aimprofile.ProfileCopyCandidate{
 			SourceGroup:  "AIMClusterModel//qwen3-32b/model-uid",
-			SourceID:     "AIMClusterModel//qwen3-32b/model-uid/mi300x-fp8-latency.yaml",
-			Name:         "qwen3-32b-mi300x-fp8-latency",
+			SourceID:     "AIMClusterModel//qwen3-32b/model-uid/" + profileID + ".yaml",
+			Name:         "qwen3-32b-" + profileID,
 			YAMLContract: profileyaml.DefaultContract(),
 			Spec: aimv1alpha2.AIMProfileSpecCommon{
 				AimId:            "qwen/qwen3-32b",
 				ModelId:          "Qwen/Qwen3-32B",
-				ProfileId:        "mi300x-fp8-latency",
+				ProfileId:        profileID,
 				Image:            "docker.io/amdenterpriseai/aim-qwen-qwen3-32b:0.11.0",
 				Engine:           "vllm",
 				AcceleratorModel: "MI300X",
@@ -143,112 +145,333 @@ func asReadyManaged(obj client.Object) managedProfile {
 	}
 }
 
-// identityRenameReconciler runs ComposeState and PlanResources for one scope.
-type identityRenameReconciler func(spec aimv1alpha1.AIMProfileSetSpec, existing []managedProfile) (applied, deleted []client.Object)
+// identityRenameScope runs ComposeState and PlanResources for one profile set scope.
+type identityRenameScope struct {
+	name      string
+	resource  string
+	reconcile func(t *testing.T, candidates []profileSetCandidate, spec aimv1alpha1.AIMProfileSetSpec, existing []managedProfile) (applied, deleted []client.Object)
+}
 
-// Changing overrides.aimId on an existing set must not plan an in-place update
-// of a profile whose spec.aimId is immutable. The replacement takes a new
-// name, the old profile is pruned, and the next reconcile keeps that name.
-func TestProfileSetOverrideAimIDChangeReplacesImmutableProfile(t *testing.T) {
-	t.Parallel()
-
-	candidates := controllerutils.FetchResult[[]profileSetCandidate]{Value: []profileSetCandidate{identityRenameCandidate()}}
-
-	namespaced := func(spec aimv1alpha1.AIMProfileSetSpec, existing []managedProfile) ([]client.Object, []client.Object) {
-		set := &aimv1alpha2.AIMProfileSet{
-			ObjectMeta: metav1.ObjectMeta{Name: "mi308x-variants", Namespace: "team-a", UID: "set-uid"},
-			Spec:       spec,
-		}
-		reconciler := &ProfileSetReconciler{}
-		rc := controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileSet]{Object: set}
-		obs := reconciler.ComposeState(context.Background(), rc, ProfileSetFetchResult{
-			set:        set,
-			candidates: candidates,
-			managed:    controllerutils.FetchResult[[]managedProfile]{Value: existing},
-		})
-		if obs.buildErr != nil {
-			t.Fatalf("ComposeState() buildErr = %v", obs.buildErr)
-		}
-		plan := reconciler.PlanResources(context.Background(), rc, obs)
-		return plan.GetToApply(), plan.GetToDelete()
-	}
-	cluster := func(spec aimv1alpha1.AIMProfileSetSpec, existing []managedProfile) ([]client.Object, []client.Object) {
-		set := &aimv1alpha2.AIMClusterProfileSet{
-			ObjectMeta: metav1.ObjectMeta{Name: "mi308x-variants", UID: "set-uid"},
-			Spec:       spec,
-		}
-		reconciler := &ClusterProfileSetReconciler{}
-		rc := controllerutils.ReconcileContext[*aimv1alpha2.AIMClusterProfileSet]{Object: set}
-		obs := reconciler.ComposeState(context.Background(), rc, ClusterProfileSetFetchResult{
-			set:        set,
-			candidates: candidates,
-			managed:    controllerutils.FetchResult[[]managedProfile]{Value: existing},
-		})
-		if obs.buildErr != nil {
-			t.Fatalf("ComposeState() buildErr = %v", obs.buildErr)
-		}
-		plan := reconciler.PlanResources(context.Background(), rc, obs)
-		return plan.GetToApply(), plan.GetToDelete()
-	}
-
-	for _, tc := range []struct {
-		name      string
-		resource  string
-		reconcile identityRenameReconciler
-	}{
-		{name: "AIMProfileSet", resource: "aimprofiles", reconcile: namespaced},
-		{name: "AIMClusterProfileSet", resource: "aimclusterprofiles", reconcile: cluster},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			structural, validator := generatedProfileValidator(t, tc.resource)
-
-			firstApplied, _ := tc.reconcile(identityRenameSpec("acme/qwen3-32b-mi308x"), nil)
-			if len(firstApplied) != 1 {
-				t.Fatalf("first reconcile applied %d profiles, want 1", len(firstApplied))
-			}
-			original := firstApplied[0]
-			existing := []managedProfile{asReadyManaged(original)}
-
-			applied, deleted := tc.reconcile(identityRenameSpec("acme/qwen3-32b-mi308x-v2"), existing)
-			if len(applied) != 1 {
-				t.Fatalf("second reconcile applied %d profiles, want 1", len(applied))
-			}
-			replacement := applied[0]
-			wantAimID := "acme/qwen3-32b-mi308x-v2"
-			if spec, _ := profileSpecCommon(replacement); spec.AimId != wantAimID {
-				t.Fatalf("replacement aimId = %q, want %q", spec.AimId, wantAimID)
-			}
-			if replacement.GetName() == original.GetName() {
-				if errs := transitionErrors(t, structural, validator, original, replacement); len(errs) > 0 {
-					t.Fatalf("planned in-place update of %s is rejected by admission: %v", original.GetName(), errs)
+func identityRenameScopes() []identityRenameScope {
+	return []identityRenameScope{
+		{
+			name:     "AIMProfileSet",
+			resource: "aimprofiles",
+			reconcile: func(t *testing.T, candidates []profileSetCandidate, spec aimv1alpha1.AIMProfileSetSpec, existing []managedProfile) ([]client.Object, []client.Object) {
+				t.Helper()
+				set := &aimv1alpha2.AIMProfileSet{
+					ObjectMeta: metav1.ObjectMeta{Name: "mi308x-variants", Namespace: "team-a", UID: "set-uid"},
+					Spec:       spec,
 				}
-			}
-			if len(deleted) != 1 || deleted[0].GetName() != original.GetName() {
-				t.Fatalf("deleted = %v, want the original profile %s", objectNames(deleted), original.GetName())
-			}
-
-			afterPrune := []managedProfile{asReadyManaged(replacement)}
-			stable, _ := tc.reconcile(identityRenameSpec(wantAimID), afterPrune)
-			if len(stable) != 1 || stable[0].GetName() != replacement.GetName() {
-				t.Fatalf("third reconcile applied %v, want stable name %s", objectNames(stable), replacement.GetName())
-			}
-
-			reverted, revertDeleted := tc.reconcile(identityRenameSpec("acme/qwen3-32b-mi308x"), afterPrune)
-			if len(reverted) != 1 || reverted[0].GetName() != original.GetName() {
-				t.Fatalf("reverted override applied %v, want original name %s", objectNames(reverted), original.GetName())
-			}
-			if len(revertDeleted) != 1 || revertDeleted[0].GetName() != replacement.GetName() {
-				t.Fatalf("reverted override deleted %v, want %s", objectNames(revertDeleted), replacement.GetName())
-			}
-		})
+				reconciler := &ProfileSetReconciler{}
+				rc := controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileSet]{Object: set}
+				obs := reconciler.ComposeState(context.Background(), rc, ProfileSetFetchResult{
+					set:        set,
+					candidates: controllerutils.FetchResult[[]profileSetCandidate]{Value: candidates},
+					managed:    controllerutils.FetchResult[[]managedProfile]{Value: existing},
+				})
+				if obs.buildErr != nil {
+					t.Fatalf("ComposeState() buildErr = %v", obs.buildErr)
+				}
+				plan := reconciler.PlanResources(context.Background(), rc, obs)
+				return plan.GetToApply(), plan.GetToDelete()
+			},
+		},
+		{
+			name:     "AIMClusterProfileSet",
+			resource: "aimclusterprofiles",
+			reconcile: func(t *testing.T, candidates []profileSetCandidate, spec aimv1alpha1.AIMProfileSetSpec, existing []managedProfile) ([]client.Object, []client.Object) {
+				t.Helper()
+				set := &aimv1alpha2.AIMClusterProfileSet{
+					ObjectMeta: metav1.ObjectMeta{Name: "mi308x-variants", UID: "set-uid"},
+					Spec:       spec,
+				}
+				reconciler := &ClusterProfileSetReconciler{}
+				rc := controllerutils.ReconcileContext[*aimv1alpha2.AIMClusterProfileSet]{Object: set}
+				obs := reconciler.ComposeState(context.Background(), rc, ClusterProfileSetFetchResult{
+					set:        set,
+					candidates: controllerutils.FetchResult[[]profileSetCandidate]{Value: candidates},
+					managed:    controllerutils.FetchResult[[]managedProfile]{Value: existing},
+				})
+				if obs.buildErr != nil {
+					t.Fatalf("ComposeState() buildErr = %v", obs.buildErr)
+				}
+				plan := reconciler.PlanResources(context.Background(), rc, obs)
+				return plan.GetToApply(), plan.GetToDelete()
+			},
+		},
 	}
 }
 
-func objectNames(objects []client.Object) []string {
-	names := make([]string, 0, len(objects))
-	for _, obj := range objects {
-		names = append(names, client.ObjectKeyFromObject(obj).String())
+// profileSetSim holds the profiles a profile set has derived and carries out
+// each planned delete and apply the way the API server would: applies are
+// checked against the CRD's CEL rules, and deleted profiles stay terminating
+// until finishDeletion removes them.
+type profileSetSim struct {
+	t          *testing.T
+	scope      identityRenameScope
+	structural *schema.Structural
+	validator  *cel.Validator
+	candidates []profileSetCandidate
+	profiles   map[string]managedProfile
+}
+
+func newProfileSetSim(t *testing.T, scope identityRenameScope, candidates []profileSetCandidate) *profileSetSim {
+	t.Helper()
+	structural, validator := generatedProfileValidator(t, scope.resource)
+	return &profileSetSim{
+		t:          t,
+		scope:      scope,
+		structural: structural,
+		validator:  validator,
+		candidates: candidates,
+		profiles:   map[string]managedProfile{},
 	}
-	return names
+}
+
+// reconcile runs one pass with overrides.aimId set to aimID and returns the
+// sorted names it applied and deleted.
+func (s *profileSetSim) reconcile(aimID string) (applied, deleted []string) {
+	s.t.Helper()
+	existing := make([]managedProfile, 0, len(s.profiles))
+	for _, name := range s.names() {
+		existing = append(existing, s.profiles[name])
+	}
+	toApply, toDelete := s.scope.reconcile(s.t, s.candidates, identityRenameSpec(aimID), existing)
+	for _, obj := range toDelete {
+		if profile, found := s.profiles[obj.GetName()]; found && profile.Object.GetDeletionTimestamp() == nil {
+			now := metav1.Now()
+			profile.Object.SetDeletionTimestamp(&now)
+		}
+		deleted = append(deleted, obj.GetName())
+	}
+	for _, obj := range toApply {
+		name := obj.GetName()
+		if current, found := s.profiles[name]; found {
+			if current.Object.GetDeletionTimestamp() != nil {
+				s.t.Fatalf("applied %s while it is still being deleted", name)
+			}
+			if errs := transitionErrors(s.t, s.structural, s.validator, current.Object, obj); len(errs) > 0 {
+				s.t.Fatalf("update of %s is rejected by admission: %v", name, errs)
+			}
+		}
+		s.profiles[name] = asReadyManaged(obj)
+		applied = append(applied, name)
+	}
+	slices.Sort(applied)
+	slices.Sort(deleted)
+	return applied, deleted
+}
+
+// converge reconciles until a pass plans no deletes, finishing each pass's
+// deletions before the next one.
+func (s *profileSetSim) converge(aimID string) {
+	s.t.Helper()
+	for range 5 {
+		_, deleted := s.reconcile(aimID)
+		s.finishDeletion()
+		if len(deleted) == 0 {
+			return
+		}
+	}
+	s.t.Fatalf("profile set did not converge on aimId %q", aimID)
+}
+
+// finishDeletion removes the named terminating profiles, or all of them when
+// no names are given.
+func (s *profileSetSim) finishDeletion(names ...string) {
+	for name, profile := range s.profiles {
+		if profile.Object.GetDeletionTimestamp() != nil && (len(names) == 0 || slices.Contains(names, name)) {
+			delete(s.profiles, name)
+		}
+	}
+}
+
+func (s *profileSetSim) markTerminating(name string) {
+	now := metav1.Now()
+	s.profiles[name].Object.SetDeletionTimestamp(&now)
+}
+
+func (s *profileSetSim) setAimID(name, aimID string) {
+	switch profile := s.profiles[name].Object.(type) {
+	case *aimv1alpha2.AIMProfile:
+		profile.Spec.AimId = aimID
+	case *aimv1alpha2.AIMClusterProfile:
+		profile.Spec.AimId = aimID
+	}
+}
+
+func (s *profileSetSim) names() []string {
+	return slices.Sorted(maps.Keys(s.profiles))
+}
+
+// aimIDs maps each profile name to its aimId.
+func (s *profileSetSim) aimIDs() map[string]string {
+	out := make(map[string]string, len(s.profiles))
+	for name, profile := range s.profiles {
+		spec, _ := profileSpecCommon(profile.Object)
+		out[name] = spec.AimId
+	}
+	return out
+}
+
+func sameAimID(names []string, aimID string) map[string]string {
+	out := make(map[string]string, len(names))
+	for _, name := range names {
+		out[name] = aimID
+	}
+	return out
+}
+
+// Changing overrides.aimId on an existing set must not plan an in-place update
+// of a profile whose spec.aimId is immutable. The profile is deleted and
+// recreated under the same name, so the name depends only on the set's spec.
+func TestProfileSetOverrideAimIDChangeReplacesImmutableProfile(t *testing.T) {
+	t.Parallel()
+
+	const (
+		aimA = "acme/qwen3-32b-mi308x"
+		aimB = "acme/qwen3-32b-mi308x-v2"
+		aimC = "acme/qwen3-32b-mi308x-v3"
+	)
+	single := []profileSetCandidate{identityRenameCandidate("mi300x-fp8-latency")}
+	pair := []profileSetCandidate{identityRenameCandidate("mi300x-fp8-latency"), identityRenameCandidate("mi300x-fp8-throughput")}
+
+	for _, tc := range []struct {
+		name       string
+		candidates []profileSetCandidate
+		run        func(t *testing.T, s *profileSetSim)
+	}{
+		{
+			name:       "changed aimId deletes the profile without applying over it",
+			candidates: single,
+			run: func(t *testing.T, s *profileSetSim) {
+				s.converge(aimA)
+				original := s.names()
+				applied, deleted := s.reconcile(aimB)
+				if len(applied) != 0 || !slices.Equal(deleted, original) {
+					t.Fatalf("planned apply %v and delete %v, want only delete %v", applied, deleted, original)
+				}
+			},
+		},
+		{
+			name:       "name is kept through A to B to C to A",
+			candidates: single,
+			run: func(t *testing.T, s *profileSetSim) {
+				s.converge(aimA)
+				original := s.names()
+				for _, aimID := range []string{aimB, aimC, aimA} {
+					s.converge(aimID)
+					if got, want := s.aimIDs(), sameAimID(original, aimID); !maps.Equal(got, want) {
+						t.Fatalf("after changing aimId to %q, profiles = %v, want %v", aimID, got, want)
+					}
+				}
+			},
+		},
+		{
+			name:       "edited set gets the same name as a new set with the same spec",
+			candidates: single,
+			run: func(t *testing.T, s *profileSetSim) {
+				s.converge(aimA)
+				s.converge(aimB)
+				fresh := newProfileSetSim(t, s.scope, s.candidates)
+				fresh.converge(aimB)
+				if got, want := s.aimIDs(), fresh.aimIDs(); !maps.Equal(got, want) {
+					t.Fatalf("edited set has profiles %v, new set has %v", got, want)
+				}
+			},
+		},
+		{
+			name:       "empty aimId is set in place",
+			candidates: single,
+			run: func(t *testing.T, s *profileSetSim) {
+				s.converge(aimA)
+				names := s.names()
+				s.setAimID(names[0], "")
+				applied, deleted := s.reconcile(aimA)
+				if !slices.Equal(applied, names) || len(deleted) != 0 {
+					t.Fatalf("planned apply %v and delete %v, want only apply %v", applied, deleted, names)
+				}
+			},
+		},
+		{
+			name:       "terminating profile is not applied over",
+			candidates: single,
+			run: func(t *testing.T, s *profileSetSim) {
+				s.converge(aimA)
+				names := s.names()
+				s.markTerminating(names[0])
+				if applied, deleted := s.reconcile(aimA); len(applied) != 0 || len(deleted) != 0 {
+					t.Fatalf("planned apply %v and delete %v while %s is terminating, want nothing", applied, deleted, names[0])
+				}
+				s.finishDeletion()
+				if applied, _ := s.reconcile(aimA); !slices.Equal(applied, names) {
+					t.Fatalf("after deletion finished, applied %v, want %v", applied, names)
+				}
+			},
+		},
+		{
+			name:       "revert while the old profile is still being deleted",
+			candidates: single,
+			run: func(t *testing.T, s *profileSetSim) {
+				s.converge(aimA)
+				original := s.names()
+				s.reconcile(aimB)
+				if applied, deleted := s.reconcile(aimA); len(applied) != 0 || len(deleted) != 0 {
+					t.Fatalf("planned apply %v and delete %v while the old profile is terminating, want nothing", applied, deleted)
+				}
+				s.finishDeletion()
+				s.converge(aimA)
+				if got, want := s.aimIDs(), sameAimID(original, aimA); !maps.Equal(got, want) {
+					t.Fatalf("profiles = %v, want %v", got, want)
+				}
+			},
+		},
+		{
+			name:       "two outputs are replaced independently",
+			candidates: pair,
+			run: func(t *testing.T, s *profileSetSim) {
+				s.converge(aimA)
+				names := s.names()
+				if len(names) != 2 {
+					t.Fatalf("derived %v, want 2 profiles", names)
+				}
+				s.reconcile(aimB)
+				s.finishDeletion(names[0])
+				if applied, deleted := s.reconcile(aimB); !slices.Equal(applied, names[:1]) || len(deleted) != 0 {
+					t.Fatalf("planned apply %v and delete %v, want only apply %v while %s is terminating", applied, deleted, names[:1], names[1])
+				}
+				s.finishDeletion()
+				s.converge(aimB)
+				if got, want := s.aimIDs(), sameAimID(names, aimB); !maps.Equal(got, want) {
+					t.Fatalf("profiles = %v, want %v", got, want)
+				}
+			},
+		},
+		{
+			name:       "profiles that are no longer selected are pruned",
+			candidates: single,
+			run: func(t *testing.T, s *profileSetSim) {
+				s.converge(aimA)
+				kept := s.names()
+				s.candidates = pair
+				s.converge(aimA)
+				if len(s.names()) != 2 {
+					t.Fatalf("derived %v, want 2 profiles", s.names())
+				}
+				s.candidates = single
+				s.converge(aimA)
+				if got := s.names(); !slices.Equal(got, kept) {
+					t.Fatalf("profiles = %v, want %v", got, kept)
+				}
+			},
+		},
+	} {
+		for _, scope := range identityRenameScopes() {
+			t.Run(scope.name+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				tc.run(t, newProfileSetSim(t, scope, tc.candidates))
+			})
+		}
+	}
 }
