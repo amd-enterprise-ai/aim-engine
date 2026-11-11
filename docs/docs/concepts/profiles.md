@@ -235,6 +235,8 @@ The [AcceleratorDetector](accelerator-detection.md) DaemonSet labels each node w
 
 The label value (count) is informational only — the selector operator is `Exists`. Actual capacity is enforced via the computed device resource request.
 
+GPU profiles also get a `feature.node.kubernetes.io/aim-accelerator.mixed-models.GPU` (`DoesNotExist`) term, which keeps them off nodes that carry more than one GPU model. See [Nodes with mixed GPU models](accelerator-detection.md#nodes-with-mixed-gpu-models).
+
 ### Hardware support
 
 Optimized AIM images declare the concrete AMD hardware family they support:

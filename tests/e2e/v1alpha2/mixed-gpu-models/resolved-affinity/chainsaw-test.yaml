@@ -1,0 +1,83 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Nodes with mixed GPU models: GPU profiles exclude them via resolvedNodeAffinity.
+#
+# Node-independent: status.resolvedNodeAffinity is computed from the spec
+# regardless of whether any node currently matches, so this runs on kind.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: mixed-gpu-models-resolved-affinity
+spec:
+  description: GPU profiles require the mixed-models.GPU node label to be absent; CPU profiles do not.
+  timeouts:
+    assert: 30s
+  steps:
+    - name: GPU profile excludes nodes with mixed GPU models
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-mixed-models-gpu
+              spec:
+                aimId: test/mixed-model
+                modelId: test/mixed-model-fp8
+                image: registry.example.com/test-image:1.0.0
+                modelSources:
+                  - modelId: test/mixed-model-fp8
+                    sourceUri: hf://test/mixed-model
+                acceleratorVendor: amd
+                acceleratorModel: MI350P
+                acceleratorType: gpu
+                acceleratorCount: 1
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-mixed-models-gpu
+              status:
+                (resolvedNodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[?key == 'feature.node.kubernetes.io/aim-accelerator.mixed-models.GPU' && operator == 'DoesNotExist'] | length(@)): 1
+      finally:
+        - delete:
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              name: test-mixed-models-gpu
+
+    - name: CPU profile has no mixed-models term
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-mixed-models-cpu
+              spec:
+                aimId: test/mixed-model
+                modelId: test/mixed-model-fp8
+                image: registry.example.com/test-image:1.0.0
+                modelSources:
+                  - modelId: test/mixed-model-fp8
+                    sourceUri: hf://test/mixed-model
+                acceleratorModel: EPYC_ZEN5
+                acceleratorType: cpu
+                acceleratorCount: 32
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-mixed-models-cpu
+              status:
+                (resolvedNodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[?key == 'feature.node.kubernetes.io/aim-accelerator.EPYC_ZEN5'] | length(@)): 1
+                (resolvedNodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[?starts_with(key, 'feature.node.kubernetes.io/aim-accelerator.mixed-models.')] | length(@)): 0
+      finally:
+        - delete:
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              name: test-mixed-models-cpu
