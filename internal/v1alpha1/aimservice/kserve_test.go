@@ -550,6 +550,35 @@ func TestPlanInferenceService_UpdatesReplicasWhenISVCExists(t *testing.T) {
 }
 
 // ============================================================================
+// TOLERATION TESTS
+// ============================================================================
+
+func TestBuildInferenceService_Tolerations(t *testing.T) {
+	gpuTaint := corev1.Toleration{Key: "amd.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	poolTaint := corev1.Toleration{Key: "pool", Operator: corev1.TolerationOpEqual, Value: "inference", Effect: corev1.TaintEffectNoSchedule}
+	runtimeConfig := &aimv1alpha1.AIMRuntimeConfigCommon{}
+	runtimeConfig.Tolerations = []corev1.Toleration{gpuTaint}
+
+	service := NewService("svc").WithModelImage("test-image:v1").Build()
+	obs := ServiceObservation{ServiceFetchResult: ServiceFetchResult{
+		service:             service,
+		mergedRuntimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{Value: runtimeConfig},
+	}}
+	templateSpec := &aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: testModelName}
+
+	isvc := buildInferenceService(service, "test-template", templateSpec, nil, obs)
+	if got := isvc.Spec.Predictor.Tolerations; len(got) != 1 || got[0] != gpuTaint {
+		t.Fatalf("tolerations from the runtime config = %v, want [%v]", got, gpuTaint)
+	}
+
+	service.Spec.Tolerations = []corev1.Toleration{poolTaint}
+	isvc = buildInferenceService(service, "test-template", templateSpec, nil, obs)
+	if got := isvc.Spec.Predictor.Tolerations; len(got) != 1 || got[0] != poolTaint {
+		t.Fatalf("service tolerations = %v, want [%v]", got, poolTaint)
+	}
+}
+
+// ============================================================================
 // PRIORITY CLASS NAME TESTS
 // ============================================================================
 
