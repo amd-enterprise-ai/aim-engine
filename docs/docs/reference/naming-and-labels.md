@@ -169,6 +169,7 @@ Labels written by the [AcceleratorDetector](../concepts/accelerator-detection.md
 | `feature.node.kubernetes.io/aim-accelerator.{family}` | `aim-accelerator.GPU` | `"8"` | Accelerator family (`GPU`/`CPU`) for generic profiles |
 | `feature.node.kubernetes.io/aim-accelerator.vendor.{family}.{vendor}` | `aim-accelerator.vendor.GPU.NVIDIA` | `"8"` | Accelerator vendor, keyed per family so cross-vendor nodes don't conflict |
 | `feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.{scheme}` | `aim-accelerator.partitioning-scheme.CPX-NPS4` | `"64"` | GPU partition state — the `default` sentinel (canonical-unpartitioned or non-partitionable hardware) or an explicit `<Compute>-<Memory>` scheme. Matched by `AIMProfile.spec.acceleratorPartitioningMode` via `Exists`/`DoesNotExist` |
+| `feature.node.kubernetes.io/aim-accelerator.mixed-models.{family}` | `aim-accelerator.mixed-models.GPU` | `"2"` | Present only when the node carries more than one GPU model; the value is the number of models. Every GPU profile's node affinity requires it to be absent |
 
 Both axes use the **value-in-key** pattern; the value (accelerator/partition count) is informational only and the matcher keys off the label key. See [Accelerator Detection](../concepts/accelerator-detection.md) for details on label production.
 

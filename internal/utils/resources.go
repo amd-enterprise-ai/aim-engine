@@ -101,6 +101,7 @@ var KnownAmdDevices = map[string]string{
 	"75b0": "MI350X", // MI350X VF
 	"75b3": "MI355X", // MI355X VF
 	"75a8": "MI350P",
+	"75b8": "MI350P", // MI350P VF
 	// AMD Radeon Pro
 	"7460": "V710",
 	"7461": "V710", // Radeon Pro V710 MxGPU
