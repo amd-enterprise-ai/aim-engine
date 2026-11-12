@@ -129,7 +129,7 @@ Once the replacement is `Ready`, the cache switches `status.artifacts` to it, se
 
 The served artifact is kept only while it is still `Ready`, not being deleted, has the same `sourceUri`, could still be adopted by the cache, and, for `s3://` sources, uses the cache's runtime config. Otherwise the cache moves to the replacement and is not ready until it finishes. A served artifact that drops out of `Ready` even briefly is not picked up again, because the cache no longer lists it. The switch does not delete the old artifact; see [Upgrading](../admin/upgrading.md#download-filters-declared-by-aim-images) for reclaiming it.
 
-Both copies exist until the old artifact is deleted, so a replacement needs storage for a second copy of the model. Profile caches do not mark their artifacts as in use for [artifact storage quotas](../admin/storage-configuration.md#storage-quotas): if artifacts have a retention priority, a replacement's download can evict the artifact the cache is serving, and the cache is then not ready until the replacement finishes.
+Both copies exist until the old artifact is deleted, so a replacement needs storage for a second copy of the model. The artifact the cache is serving counts as in use for [artifact storage quotas](../admin/storage-configuration.md#storage-quotas) and is never evicted to make room for its replacement: if the quota has no space left, the replacement is blocked with `StorageQuotaExceeded` and the cache keeps serving the old artifact.
 
 ## Deletion behaviour
 
