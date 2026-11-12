@@ -26,6 +26,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1212,7 +1213,9 @@ func (f replacementFixture) reconcileFetch(t *testing.T, fetch ProfileCacheFetch
 		controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: f.pc},
 		fetch,
 	)
-	status := f.pc.Status.DeepCopy()
+	// The pipeline decorates the reconciled object's own status, which is also the
+	// object the observation holds; a copy would hide reads of overwritten fields.
+	status := &f.pc.Status
 	cm := controllerutils.NewConditionManager(status.Conditions)
 	r.DecorateStatus(status, cm, obs)
 	status.Conditions = cm.Conditions()
@@ -1362,9 +1365,10 @@ func TestReplacement_KeepsServedArtifactUntilReplacementIsReady(t *testing.T) {
 
 func TestReplacement_FailureEmitsWarning(t *testing.T) {
 	f := newReplacementFixture(t, aimv1alpha2.ProfileCacheModeShared)
+	previous := slices.Clone(f.pc.Status.Conditions)
 	_, _, cm := f.reconcile(t, f.served, failedArtifactWithMessage(f.replacement(constants.AIMStatusFailed), "download returned 403"))
 
-	failures := eventsWithReason(emittedEvents(f.pc, f.pc.Status.Conditions, cm), aimv1alpha2.AIMProfileCacheReasonReplacementFailed)
+	failures := eventsWithReason(emittedEvents(f.pc, previous, cm), aimv1alpha2.AIMProfileCacheReasonReplacementFailed)
 	if len(failures) != 1 || !strings.HasPrefix(failures[0], corev1.EventTypeWarning+" ") {
 		t.Fatalf("replacement failure events = %v, want one Warning", failures)
 	}
@@ -1379,6 +1383,7 @@ func TestReplacement_SwitchesOnceReplacementIsReady(t *testing.T) {
 	}}
 	artifacts := []aimv1alpha1.AIMArtifact{f.served, f.replacement(constants.AIMStatusReady)}
 
+	previous := slices.Clone(f.pc.Status.Conditions)
 	obs, status, cm := f.reconcile(t, artifacts...)
 
 	if len(obs.Replacements) != 0 || len(obs.MissingCaches) != 0 {
@@ -1391,16 +1396,16 @@ func TestReplacement_SwitchesOnceReplacementIsReady(t *testing.T) {
 	if replacing == nil || replacing.Status != metav1.ConditionFalse || replacing.Reason != aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced {
 		t.Fatalf("ArtifactsReplacing = %+v, want False/%s", replacing, aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced)
 	}
-	switchEvents := eventsWithReason(emittedEvents(f.pc, f.pc.Status.Conditions, cm), aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced)
+	switchEvents := eventsWithReason(emittedEvents(f.pc, previous, cm), aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced)
 	if len(switchEvents) != 1 || !strings.HasPrefix(switchEvents[0], corev1.EventTypeNormal+" ") ||
 		!strings.Contains(switchEvents[0], f.served.Name) || !strings.Contains(switchEvents[0], f.replacementName) {
 		t.Fatalf("switch events = %v, want one Normal event naming %s and %s", switchEvents, f.served.Name, f.replacementName)
 	}
 
 	// The next reconcile starts from the status the switch wrote.
-	f.pc.Status = *status
+	previous = slices.Clone(f.pc.Status.Conditions)
 	_, _, cm = f.reconcile(t, artifacts...)
-	if again := eventsWithReason(emittedEvents(f.pc, f.pc.Status.Conditions, cm), aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced); len(again) != 0 {
+	if again := eventsWithReason(emittedEvents(f.pc, previous, cm), aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced); len(again) != 0 {
 		t.Fatalf("reconcile after the switch emitted %v, want no further switch events", again)
 	}
 	if kept := cm.Get(aimv1alpha2.AIMProfileCacheConditionArtifactsReplacing); kept == nil || kept.Reason != aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced {
@@ -1417,6 +1422,7 @@ func TestReplacement_MoveToUnreadyArtifactIsNotReportedAsSwitch(t *testing.T) {
 	}}
 
 	// The served artifact was deleted while its replacement was still downloading.
+	previous := slices.Clone(f.pc.Status.Conditions)
 	_, status, cm := f.reconcile(t, markTerminating(f.served), f.replacement(constants.AIMStatusProgressing))
 
 	if _, ok := status.Artifacts[f.replacementName]; !ok || len(status.Artifacts) != 1 {
@@ -1428,7 +1434,7 @@ func TestReplacement_MoveToUnreadyArtifactIsNotReportedAsSwitch(t *testing.T) {
 	if replacing := cm.Get(aimv1alpha2.AIMProfileCacheConditionArtifactsReplacing); replacing != nil {
 		t.Fatalf("ArtifactsReplacing = %+v, want the stale replacement condition removed", replacing)
 	}
-	if events := eventsWithReason(emittedEvents(f.pc, f.pc.Status.Conditions, cm), aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced); len(events) != 0 {
+	if events := eventsWithReason(emittedEvents(f.pc, previous, cm), aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced); len(events) != 0 {
 		t.Fatalf("switch events = %v, want none for a move to an artifact that is not Ready", events)
 	}
 }
