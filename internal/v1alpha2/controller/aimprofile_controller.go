@@ -26,6 +26,7 @@ import (
 	"context"
 
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
+	kservev1alpha2 "github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -44,6 +45,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimmodel"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofileset"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/serving"
 )
 
 const (
@@ -59,6 +61,9 @@ type AIMProfileReconciler struct {
 
 	// ProjectionMode governs eager ServingRuntime projection.
 	ProjectionMode aimv1alpha2.RuntimeProjectionMode
+
+	// LLMInferenceService enables LLMInferenceServiceConfig projection.
+	LLMInferenceService serving.LLMInferenceServiceSupport
 
 	reconciler controllerutils.DomainReconciler[
 		*aimv1alpha2.AIMProfile,
@@ -79,6 +84,7 @@ type AIMProfileReconciler struct {
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimprofiles/finalizers,verbs=update
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimprofilecaches,verbs=get;list;watch
 // +kubebuilder:rbac:groups=serving.kserve.io,resources=servingruntimes,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=serving.kserve.io,resources=llminferenceserviceconfigs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
@@ -105,9 +111,10 @@ func (r *AIMProfileReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
 
 	r.reconciler = &aimprofile.ProfileReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         r.Scheme,
-		ProjectionMode: r.ProjectionMode,
+		Client:              mgr.GetClient(),
+		Scheme:              r.Scheme,
+		ProjectionMode:      r.ProjectionMode,
+		LLMInferenceService: r.LLMInferenceService,
 	}
 
 	r.pipeline = controllerutils.Pipeline[
@@ -205,7 +212,7 @@ func (r *AIMProfileReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return requests
 	})
 
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha2.AIMProfile{}).
 		// Re-elect the model-slug owner when a same-model candidate changes or
 		// disappears. This same-kind secondary watch fans the event out to peers.
@@ -226,9 +233,12 @@ func (r *AIMProfileReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&aimv1alpha2.AIMProfileCache{},
 			handler.EnqueueRequestsFromMapFunc(findProfilesForProfileCache),
 			builder.WithPredicates(profileCacheProjectionPredicate()),
-		).
-		Named(profileControllerName).
-		Complete(r)
+		)
+	// The kind can only be watched when its CRD is installed.
+	if r.LLMInferenceService.Enabled {
+		b = b.Owns(&kservev1alpha2.LLMInferenceServiceConfig{})
+	}
+	return b.Named(profileControllerName).Complete(r)
 }
 
 // findProfilesForProfileCache maps a changed AIMProfileCache to the namespace

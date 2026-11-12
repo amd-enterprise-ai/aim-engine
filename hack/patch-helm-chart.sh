@@ -57,6 +57,20 @@ else
 fi
 
 # ------------------------------------------------------------------------------
+# Wire enableLLMInferenceService and kserveNamespace to the operator's
+# --enable-llm-inference-service / --kserve-namespace args, anchored on the same
+# fixed health-probe line. Both are guarded so a release upgraded with
+# --reuse-values from a chart that predates them renders no arg and the
+# operator keeps its compiled-in defaults.
+# ------------------------------------------------------------------------------
+echo "  - Wiring enableLLMInferenceService / kserveNamespace args..."
+if [[ -f "${MANAGER_YAML}" ]]; then
+    sed -i 's|^\( *\)- --health-probe-bind-address=:8081$|&\n\1{{- if hasKey .Values.manager "enableLLMInferenceService" }}\n\1- --enable-llm-inference-service={{ .Values.manager.enableLLMInferenceService }}\n\1{{- end }}\n\1{{- if .Values.manager.kserveNamespace }}\n\1- --kserve-namespace={{ .Values.manager.kserveNamespace }}\n\1{{- end }}|' "${MANAGER_YAML}"
+else
+    echo "    Warning: ${MANAGER_YAML} not found, skipping LLMInferenceService arg wiring"
+fi
+
+# ------------------------------------------------------------------------------
 # Inject manager env block: scale-from-zero controller defaults, the dedicated
 # manager.artifactDownloaderImage override (exposed as
 # AIM_ARTIFACT_DOWNLOADER_IMAGE), plus any operator-supplied passthrough from

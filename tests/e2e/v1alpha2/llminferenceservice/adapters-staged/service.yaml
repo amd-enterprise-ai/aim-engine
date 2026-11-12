@@ -1,0 +1,14 @@
+# v1alpha2 AIMService that serves one LoRA adapter on the bootstrapped base
+# model through a KServe LLMInferenceService (static adapter mode).
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: llmisvc-adapters
+spec:
+  profile:
+    name: llmisvc-adapters-profile
+  servingAPI: LLMInferenceService
+  adapters:
+    - name: llmisvc-adapters-lora
+      kind: AIMArtifact
+  replicas: 1

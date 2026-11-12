@@ -59,6 +59,12 @@ The Kind stack includes an ephemeral, TLS-enabled Zot registry for image
 metadata discovery in e2e tests. cert-manager issues the registry certificate,
 and `make kind-create` publishes the local `aim-dummy` fixture tags to it.
 
+The dependency Helmfile (`hack/dependencies/helmfile.yaml.gotmpl`) installs
+KServe's InferenceService and LLMInferenceService controllers, so the default
+e2e lanes exercise both `spec.servingAPI` values. The operator detects the
+LLMInferenceService CRDs at startup: restart it if you install the
+dependencies after starting `make watch`.
+
 ## Running the Operator
 
 ### Standard Mode

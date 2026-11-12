@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
+	kservev1alpha2 "github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -94,6 +95,10 @@ type RuntimeProjectionReconciler struct {
 	// ConfigMap. Nil in unit tests, which fall back to Client.
 	APIReader client.Reader
 	Clientset kubernetes.Interface
+
+	// LLMInferenceService adds KServe LLMInferenceServices as consumers and an
+	// LLMInferenceServiceConfig to every materialized projection.
+	LLMInferenceService serving.LLMInferenceServiceSupport
 }
 
 // configMapReader returns the reader used for ConfigMap point reads that must
@@ -109,6 +114,8 @@ func (r *RuntimeProjectionReconciler) configMapReader() client.Reader {
 // +kubebuilder:rbac:groups=serving.kserve.io,resources=inferenceservices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=serving.kserve.io,resources=servingruntimes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=serving.kserve.io,resources=clusterservingruntimes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=serving.kserve.io,resources=llminferenceservices,verbs=get;list;watch
+// +kubebuilder:rbac:groups=serving.kserve.io,resources=llminferenceserviceconfigs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterprofiles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimprofiles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimprofilecaches,verbs=get;list;watch
@@ -131,6 +138,9 @@ func (r *RuntimeProjectionReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	}
 
 	objects := []client.Object{desired.Runtime, desired.ConfigMap}
+	if config := r.desiredLLMConfig(ctx, req.NamespacedName, state); config != nil {
+		objects = append(objects, config)
+	}
 	if err := controllerutils.ApplyDesiredStateWithForceFailFast(
 		ctx, r.Client, runtimeProjectionFieldOwner, r.Scheme, objects, desired.Owner,
 	); err != nil {
@@ -142,6 +152,32 @@ func (r *RuntimeProjectionReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		"namespace", desired.Runtime.Namespace,
 		"profile", desired.Owner.GetName())
 	return ctrl.Result{}, nil
+}
+
+// desiredLLMConfig returns the LLMInferenceServiceConfig materialized with the
+// ServingRuntime of the same name. A config that cannot be rendered is
+// reported as a warning event on the backing profile and skipped, so it never
+// blocks the ServingRuntime or turns into an endless retry; the profile's
+// LLMInferenceServiceConfigProjected condition carries the same error.
+func (r *RuntimeProjectionReconciler) desiredLLMConfig(
+	ctx context.Context,
+	key types.NamespacedName,
+	state runtimeprojection.ProjectionState,
+) *kservev1alpha2.LLMInferenceServiceConfig {
+	if !r.LLMInferenceService.Enabled {
+		return nil
+	}
+	config, err := runtimeprojection.DesiredLLMInferenceServiceConfigForRuntime(key.Namespace, key.Name, state)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "skipping namespaced LLMInferenceServiceConfig", "name", key.Name)
+		if profile := state.BackingProfile(); profile != nil && r.Recorder != nil {
+			r.Recorder.Eventf(profile, corev1.EventTypeWarning,
+				aimv1alpha2.AIMProfileReasonLLMInferenceServiceConfigProjectionFailed,
+				"LLMInferenceServiceConfig %s/%s not materialized: %v", key.Namespace, key.Name, err)
+		}
+		return nil
+	}
+	return config
 }
 
 // resolveState reads the state for one namespace/KServe-ServingRuntime-name key.
@@ -171,13 +207,32 @@ func (r *RuntimeProjectionReconciler) resolveState(
 	if err != nil {
 		return state, err
 	}
+	llmConsumers, err := r.activeLLMInferenceServicesForRuntime(ctx, key)
+	if err != nil {
+		return state, err
+	}
+	config, err := r.llmConfigSibling(ctx, key)
+	if err != nil {
+		return state, err
+	}
+
+	siblings := make([]client.Object, 0, 3)
+	if sr != nil {
+		siblings = append(siblings, sr)
+	}
+	if cm != nil {
+		siblings = append(siblings, cm)
+	}
+	if config != nil {
+		siblings = append(siblings, config)
+	}
 
 	// A stale queue entry must not resurrect a fully removed inactive shadow.
-	if sr == nil && cm == nil && len(consumers) == 0 {
+	if len(siblings) == 0 && len(consumers) == 0 && len(llmConsumers) == 0 {
 		return state, nil
 	}
 
-	state.ExistingShadowProfile, err = r.profileFromLazySiblings(ctx, sr, cm)
+	state.ExistingShadowProfile, err = r.profileFromLazySiblings(ctx, siblings)
 	if err != nil {
 		return state, err
 	}
@@ -188,7 +243,14 @@ func (r *RuntimeProjectionReconciler) resolveState(
 		}
 	}
 	if state.ExistingShadowProfile == nil && state.ManagedRuntimeProfile == nil {
-		state.AnnotatedProfile, err = r.profileFromInferenceServices(ctx, key.Name, consumers)
+		annotated := make([]client.Object, 0, len(consumers)+len(llmConsumers))
+		for i := range consumers {
+			annotated = append(annotated, &consumers[i])
+		}
+		for i := range llmConsumers {
+			annotated = append(annotated, &llmConsumers[i])
+		}
+		state.AnnotatedProfile, err = r.profileFromAnnotatedConsumers(ctx, key.Name, annotated)
 		if err != nil {
 			return state, err
 		}
@@ -306,17 +368,9 @@ func ownedByLazyProjection(obj client.Object) bool {
 
 func (r *RuntimeProjectionReconciler) profileFromLazySiblings(
 	ctx context.Context,
-	sr *kservev1alpha1.ServingRuntime,
-	cm *corev1.ConfigMap,
+	siblings []client.Object,
 ) (runtimeprojection.BackingProfile, error) {
-	objects := make([]client.Object, 0, 2)
-	if sr != nil {
-		objects = append(objects, sr)
-	}
-	if cm != nil {
-		objects = append(objects, cm)
-	}
-	for _, obj := range objects {
+	for _, obj := range siblings {
 		if !isManagedLazyRuntimeObject(obj) {
 			continue
 		}
@@ -387,14 +441,17 @@ func (r *RuntimeProjectionReconciler) activeInferenceServicesForRuntime(
 	return active, nil
 }
 
-func (r *RuntimeProjectionReconciler) profileFromInferenceServices(
+// profileFromAnnotatedConsumers resolves the backing profile from the
+// AIMService-stamped runtime-profile annotation on InferenceService or
+// LLMInferenceService consumers, in the order given.
+func (r *RuntimeProjectionReconciler) profileFromAnnotatedConsumers(
 	ctx context.Context,
 	runtimeName string,
-	isvcs []servingv1beta1.InferenceService,
+	consumers []client.Object,
 ) (runtimeprojection.BackingProfile, error) {
-	for i := range isvcs {
-		profileName := isvcs[i].GetAnnotations()[constants.AnnotationRuntimeProfile]
-		profile, err := r.lookupBackingProfile(ctx, isvcs[i].Namespace, profileName)
+	for _, consumer := range consumers {
+		profileName := consumer.GetAnnotations()[constants.AnnotationRuntimeProfile]
+		profile, err := r.lookupBackingProfile(ctx, consumer.GetNamespace(), profileName)
 		if err != nil {
 			return nil, err
 		}
@@ -519,11 +576,21 @@ func (r *RuntimeProjectionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	); err != nil {
 		return err
 	}
+	if r.LLMInferenceService.Enabled {
+		if err := mgr.GetFieldIndexer().IndexField(
+			context.Background(),
+			&kservev1alpha2.LLMInferenceService{},
+			llmInferenceServiceBaseRefIndexKey,
+			indexLLMInferenceServiceBaseRefs,
+		); err != nil {
+			return err
+		}
+	}
 
 	// KServe ServingRuntime is the primary source, so every queue key is
 	// consistently namespace/ServingRuntime-name. Other sources map to that same
 	// key shape.
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(
 			&kservev1alpha1.ServingRuntime{},
 			builder.WithPredicates(managedRuntimeObjectPredicate()),
@@ -552,9 +619,22 @@ func (r *RuntimeProjectionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&aimv1alpha2.AIMProfileCache{},
 			handler.EnqueueRequestsFromMapFunc(r.findInferenceServicesForProfileCache),
 			builder.WithPredicates(profileCacheProjectionPredicate()),
-		).
-		Named(runtimeProjectionControllerName).
-		Complete(r)
+		)
+	// The kinds can only be watched when their CRDs are installed.
+	if r.LLMInferenceService.Enabled {
+		b = b.
+			Watches(
+				&kservev1alpha2.LLMInferenceService{},
+				handler.EnqueueRequestsFromMapFunc(runtimeKeysForLLMInferenceService),
+				builder.WithPredicates(llmInferenceServiceProjectionPredicate()),
+			).
+			Watches(
+				&kservev1alpha2.LLMInferenceServiceConfig{},
+				handler.EnqueueRequestsFromMapFunc(r.findInferenceServicesForManagedRuntimeObject),
+				builder.WithPredicates(managedRuntimeObjectPredicate()),
+			)
+	}
+	return b.Named(runtimeProjectionControllerName).Complete(r)
 }
 
 // indexInferenceServiceRuntime extracts the KServe ServingRuntime or
@@ -611,8 +691,10 @@ func (r *RuntimeProjectionReconciler) findInferenceServicesForClusterProfile(
 	if !ok {
 		return nil
 	}
+	names := runtimeNamesForProfile(profile.Name, profile.Spec.AimId)
 	return mergeRequests(
-		r.inferenceServicesReferencingRuntimes(ctx, "", runtimeNamesForProfile(profile.Name, profile.Spec.AimId)),
+		r.inferenceServicesReferencingRuntimes(ctx, "", names),
+		r.llmInferenceServicesReferencingRuntimes(ctx, "", names),
 		r.lazyShadowRequestsForProfile(ctx, profile, ""),
 	)
 }
@@ -626,8 +708,10 @@ func (r *RuntimeProjectionReconciler) findInferenceServicesForProfile(
 	if !ok {
 		return nil
 	}
+	names := runtimeNamesForProfile(profile.Name, profile.Spec.AimId)
 	return mergeRequests(
-		r.inferenceServicesReferencingRuntimes(ctx, profile.Namespace, runtimeNamesForProfile(profile.Name, profile.Spec.AimId)),
+		r.inferenceServicesReferencingRuntimes(ctx, profile.Namespace, names),
+		r.llmInferenceServicesReferencingRuntimes(ctx, profile.Namespace, names),
 		r.lazyShadowRequestsForProfile(ctx, profile, profile.Namespace),
 	)
 }
@@ -651,10 +735,10 @@ func (r *RuntimeProjectionReconciler) findInferenceServicesForProfileCache(
 	if profile != nil {
 		aimID = profile.GetProfileSpecCommon().AimId
 	}
-	requests := r.inferenceServicesReferencingRuntimes(
-		ctx,
-		cache.Namespace,
-		runtimeNamesForProfile(cache.Spec.ProfileName, aimID),
+	names := runtimeNamesForProfile(cache.Spec.ProfileName, aimID)
+	requests := mergeRequests(
+		r.inferenceServicesReferencingRuntimes(ctx, cache.Namespace, names),
+		r.llmInferenceServicesReferencingRuntimes(ctx, cache.Namespace, names),
 	)
 	if profile != nil {
 		requests = mergeRequests(requests, r.lazyShadowRequestsForProfile(ctx, profile, cache.Namespace))
@@ -771,6 +855,7 @@ func (r *RuntimeProjectionReconciler) lazyShadowRequestsForProfile(
 			r.addOwnedLazyShadowRequest(requests, &configMaps.Items[i], profile)
 		}
 	}
+	r.addLazyLLMConfigShadowRequests(ctx, requests, profile, opts)
 	return requestsFromSet(requests)
 }
 

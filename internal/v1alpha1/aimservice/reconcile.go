@@ -268,6 +268,13 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 		health = append(health, aimadapter.Health(obs.adapterState, len(obs.service.Spec.Adapters)))
 	}
 
+	// The template pipeline only builds InferenceServices; an
+	// LLMInferenceService request routed here (via the pipeline annotation)
+	// must fail visibly instead of being served through the wrong API.
+	if cfg := templatePipelineServingAPIHealth(obs.service); cfg.Component != "" {
+		health = append(health, cfg)
+	}
+
 	// Scale-from-zero requires routing; surface the invalid combination as
 	// ConfigValid=False instead of letting the service idle to a state it can
 	// never wake from.
@@ -1103,7 +1110,7 @@ func activationMetricCondition(
 	if !isRoutingEnabled(service, runtimeConfig) {
 		return "", "", "", false
 	}
-	_, activationRequired, activationErr := resolveScaleToZeroActivationMetric(service, runtimeConfig)
+	activationRequired, activationErr := validateScaleToZeroActivationMetric(service, runtimeConfig)
 	if !activationRequired || activationErr != nil {
 		// Invalid activation configuration is reported by ScaleToZeroConfig.
 		// Do not inspect a potentially stale, user-only HPA and mislabel its s0
@@ -1707,5 +1714,24 @@ func (r *ServiceReconciler) DecorateStatus(
 	// Mirror adapter staging state (spec.adapters) and any in-flight removals.
 	if aimadapter.IsActive(obs.service) {
 		aimadapter.DecorateStatus(status, obs.adapterState)
+	}
+}
+
+// templatePipelineServingAPIHealth rejects spec.servingAPI=LLMInferenceService,
+// which only the profile (v1alpha2) pipeline serves.
+func templatePipelineServingAPIHealth(service *aimv1alpha1.AIMService) controllerutils.ComponentHealth {
+	if service.Spec.GetServingAPI() != aimv1alpha1.ServingAPILLMInferenceService {
+		return controllerutils.ComponentHealth{}
+	}
+	const reason = "ServingAPIUnsupported"
+	message := "spec.servingAPI=LLMInferenceService is only supported by the profile pipeline; " +
+		"set spec.profile or remove the reconciler-pipeline annotation that selects the template pipeline"
+	return controllerutils.ComponentHealth{
+		Component:      "ServingAPI",
+		State:          constants.AIMStatusFailed,
+		Reason:         reason,
+		Message:        message,
+		DependencyType: controllerutils.DependencyTypeUpstream,
+		Errors:         []error{controllerutils.NewInvalidSpecError(reason, message, nil)},
 	}
 }

@@ -37,6 +37,7 @@ import (
 	"strings"
 
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
+	kservev1alpha2 "github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -168,33 +169,83 @@ func DesiredFor(isvc *servingv1beta1.InferenceService, state ProjectionState) (D
 // Names outside the reserved aim- prefix are left alone: AIM Engine never reads,
 // creates, or modifies ServingRuntime objects it does not own.
 func DesiredForRuntime(namespace, runtimeName string, state ProjectionState) (DesiredProjection, error) {
+	input, profile, err := resolveNamespaceInput(namespace, runtimeName, state)
+	if err != nil || profile == nil {
+		return DesiredProjection{}, err
+	}
+
+	runtime, configMap, err := serving.BuildNamespaceServingRuntime(input)
+	if err != nil {
+		return DesiredProjection{}, fmt.Errorf("build namespaced KServe ServingRuntime for profile %q: %w", profile.GetName(), err)
+	}
+
+	// Mark both objects as lazily materialized so the controller can tell this
+	// shadow apart from an eager per-profile projection of the same name (they
+	// otherwise share the AIMProfile ownerReference for a namespace profile) and
+	// re-apply it on every reconcile to self-heal.
+	markLazyProjection(runtime)
+	markLazyProjection(configMap)
+
+	return DesiredProjection{Runtime: runtime, ConfigMap: configMap, Owner: profile}, nil
+}
+
+// DesiredLLMInferenceServiceConfigForRuntime returns the namespaced KServe
+// LLMInferenceServiceConfig the lazy projection materializes next to the
+// ServingRuntime of the same name, under exactly the gates DesiredForRuntime
+// applies. It mounts the ConfigMap DesiredForRuntime returns. Nil when
+// DesiredForRuntime materializes nothing.
+func DesiredLLMInferenceServiceConfigForRuntime(
+	namespace, runtimeName string,
+	state ProjectionState,
+) (*kservev1alpha2.LLMInferenceServiceConfig, error) {
+	input, profile, err := resolveNamespaceInput(namespace, runtimeName, state)
+	if err != nil || profile == nil {
+		return nil, err
+	}
+	config, err := serving.BuildNamespaceLLMInferenceServiceConfig(input)
+	if err != nil {
+		return nil, fmt.Errorf("build namespaced LLMInferenceServiceConfig for profile %q: %w", profile.GetName(), err)
+	}
+	markLazyProjection(config)
+	return config, nil
+}
+
+// resolveNamespaceInput applies the lazy projection gates for a
+// namespace/name key and returns the builder input for the resolved backing
+// profile. A nil profile means nothing should be materialized: the name is
+// outside the reserved aim- prefix, a complete eager or hand-authored
+// projection already owns it, or no backing profile projects that name.
+func resolveNamespaceInput(
+	namespace, runtimeName string,
+	state ProjectionState,
+) (serving.NamespaceRuntimeInput, BackingProfile, error) {
 	if runtimeName == "" {
-		return DesiredProjection{}, nil
+		return serving.NamespaceRuntimeInput{}, nil, nil
 	}
 
 	// Only ever touch names under the reserved aim- prefix; any other name is a
 	// hand-authored ServingRuntime AIM Engine must not shadow.
 	if !strings.HasPrefix(runtimeName, serving.RuntimeNamePrefix) {
-		return DesiredProjection{}, nil
+		return serving.NamespaceRuntimeInput{}, nil, nil
 	}
 
 	// The referenced KServe ServingRuntime or ClusterServingRuntime name already
 	// resolves to a complete namespaced ServingRuntime here (same-namespace
 	// profile or a prior shadow) — nothing to do.
 	if state.NamespaceRuntimeComplete {
-		return DesiredProjection{}, nil
+		return serving.NamespaceRuntimeInput{}, nil, nil
 	}
 
 	profile := state.BackingProfile()
 	if profile == nil {
-		return DesiredProjection{}, nil
+		return serving.NamespaceRuntimeInput{}, nil, nil
 	}
 
 	// Only shadow a ServingRuntime name the resolved profile actually projects.
 	// A mismatch means the reference does not belong to this profile, so
 	// materializing under runtimeName would not shadow it.
 	if !runtimeNameMatchesProfile(profile, runtimeName) {
-		return DesiredProjection{}, nil
+		return serving.NamespaceRuntimeInput{}, nil, nil
 	}
 
 	spec := profile.GetProfileSpecCommon()
@@ -202,7 +253,7 @@ func DesiredForRuntime(namespace, runtimeName string, state ProjectionState) (De
 	origin := profileyaml.EffectiveOrigin(profile.GetLabels(), status.Origin)
 	yamlContract, err := profileyaml.ForProfile(profile.GetAnnotations(), origin, &spec)
 	if err != nil {
-		return DesiredProjection{}, fmt.Errorf("parse profile YAML contract for profile %q: %w", profile.GetName(), err)
+		return serving.NamespaceRuntimeInput{}, nil, fmt.Errorf("parse profile YAML contract for profile %q: %w", profile.GetName(), err)
 	}
 	input := serving.NamespaceRuntimeInput{
 		ProfileName:  profile.GetName(),
@@ -225,20 +276,7 @@ func DesiredForRuntime(namespace, runtimeName string, state ProjectionState) (De
 	if runtimeName != serving.RuntimeName(profile.GetName()) && matchesModelSlugRuntime(profile, runtimeName) {
 		input.Name = runtimeName
 	}
-
-	runtime, configMap, err := serving.BuildNamespaceServingRuntime(input)
-	if err != nil {
-		return DesiredProjection{}, fmt.Errorf("build namespaced KServe ServingRuntime for profile %q: %w", profile.GetName(), err)
-	}
-
-	// Mark both objects as lazily materialized so the controller can tell this
-	// shadow apart from an eager per-profile projection of the same name (they
-	// otherwise share the AIMProfile ownerReference for a namespace profile) and
-	// re-apply it on every reconcile to self-heal.
-	markLazyProjection(runtime)
-	markLazyProjection(configMap)
-
-	return DesiredProjection{Runtime: runtime, ConfigMap: configMap, Owner: profile}, nil
+	return input, profile, nil
 }
 
 // markLazyProjection stamps the lazy-projection marker label on a materialized

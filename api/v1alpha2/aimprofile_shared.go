@@ -454,6 +454,15 @@ const (
 	// condition, so it is informational; construction failures separately feed
 	// component health and do gate the aggregated Ready status.
 	AIMProfileConditionRuntimeProjected = "RuntimeProjected"
+
+	// AIMProfileConditionLLMInferenceServiceConfigProjected reflects the KServe
+	// LLMInferenceServiceConfig projected next to each ServingRuntime of the
+	// same name when the operator runs with LLMInferenceService support: True
+	// while it is projected, False when it cannot be rendered (for example, the
+	// profile has no model source with a URI scheme). Informational: it does
+	// not gate the aggregated Ready status, and a failure leaves the
+	// ServingRuntime projection untouched.
+	AIMProfileConditionLLMInferenceServiceConfigProjected = "LLMInferenceServiceConfigProjected"
 )
 
 // Profile condition reasons.
@@ -484,4 +493,12 @@ const (
 	// AIMProfileReasonRuntimeProjectionFailed indicates the profile passed the
 	// projection gates but its runtime configuration could not be rendered.
 	AIMProfileReasonRuntimeProjectionFailed = "RuntimeProjectionFailed"
+
+	// AIMProfileReasonLLMInferenceServiceConfigProjected indicates the
+	// profile's LLMInferenceServiceConfig is projected.
+	AIMProfileReasonLLMInferenceServiceConfigProjected = "LLMInferenceServiceConfigProjected"
+
+	// AIMProfileReasonLLMInferenceServiceConfigProjectionFailed indicates the
+	// profile's LLMInferenceServiceConfig could not be rendered.
+	AIMProfileReasonLLMInferenceServiceConfigProjectionFailed = "LLMInferenceServiceConfigProjectionFailed"
 )

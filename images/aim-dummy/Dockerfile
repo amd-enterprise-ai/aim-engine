@@ -42,5 +42,9 @@ COPY profiles/ /workspace/aim-runtime/profiles/
 
 COPY --from=profile-builder /app/dry-run /
 COPY --from=server-builder /app/server /
+# AIM images launch as ./entrypoint.py from /workspace. AIM Engine starts
+# LLMInferenceService workloads with exactly that command, so the dummy
+# server is also installed there.
+COPY --from=server-builder /app/server /workspace/entrypoint.py
 
 CMD ["server"]

@@ -791,6 +791,22 @@ _Appears in:_
 | `cpu` _[AIMCpuRequirements](#aimcpurequirements)_ | CPU specifies CPU requirements. |  | Optional: \{\} |
 
 
+#### AIMLLMInferenceServiceConfigReference
+
+
+
+AIMLLMInferenceServiceConfigReference names a KServe LLMInferenceServiceConfig.
+
+
+
+_Appears in:_
+- [AIMServiceLLMInferenceServiceConfig](#aimservicellminferenceserviceconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name of the LLMInferenceServiceConfig. The aim- prefix is reserved for configs AIM Engine projects from profiles. |  | MaxLength: 253 <br />MinLength: 1 |
+
+
 #### AIMMetric
 
 _Underlying type:_ _string_
@@ -1776,6 +1792,22 @@ _Appears in:_
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env supplies credentials for model downloads (for example a HuggingFace token via secretKeyRef). Unlike the inference container env, these variables reach only the model-download Job, so download-only secrets are never injected into the serving container. They are also reachable for cluster-scoped and overlay profiles, where the profile's own caching.env does not exist. Merged over the profile's caching.env (service wins). |  | Optional: \{\} |
 
 
+#### AIMServiceLLMInferenceServiceConfig
+
+
+
+AIMServiceLLMInferenceServiceConfig configures the KServe LLMInferenceService that serves an AIMService.
+
+
+
+_Appears in:_
+- [AIMServiceSpec](#aimservicespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `baseRefs` _[AIMLLMInferenceServiceConfigReference](#aimllminferenceserviceconfigreference) array_ | BaseRefs lists additional KServe LLMInferenceServiceConfigs to merge into the LLMInferenceService after the resolved profile's projected config. Later entries override earlier ones; fields the AIMService owns (replicas, resources, caching, adapters, pull secrets, service account, priority class, CA trust) still take precedence. Each name resolves in the service namespace first, then in the KServe namespace, as KServe resolves baseRefs. Names under the reserved aim- prefix are rejected. A config that sets spec.router, spec.replicas, spec.scaling, spec.prefill, spec.worker, or spec.model.lora conflicts with AIM Engine's routing, autoscaling, workload topology, or adapters and makes the service ConfigValid=False. |  | MaxItems: 16 <br />Optional: \{\} |
+
+
 #### AIMServiceList
 
 
@@ -2048,6 +2080,8 @@ _Appears in:_
 | `template` _[AIMServiceTemplateConfig](#aimservicetemplateconfig)_ | Template contains template selection and configuration. Use Template.Name to specify an explicit template, or omit to auto-select. Mutually exclusive with Profile (v1alpha2). |  | Optional: \{\} |
 | `profile` _[AIMServiceProfileConfig](#aimserviceprofileconfig)_ | Profile contains profile selection configuration (v1alpha2 only). When set, the service uses a profile-based reconciliation path. Mutually exclusive with Template. |  | Optional: \{\} |
 | `profileOverrides` _[AIMServiceProfileOverrides](#aimserviceprofileoverrides)_ | ProfileOverrides allows overriding specific profile parameters for this service. Only valid when Profile is set. |  | Optional: \{\} |
+| `servingAPI` _[AIMServingAPI](#aimservingapi)_ | ServingAPI selects the KServe API that serves this service. Auto (the default) currently resolves to InferenceService. The resolved API is recorded in status.servingAPI and kept for the service's lifetime, so a later change to what Auto selects never moves an existing service. LLMInferenceService requires spec.profile (aim.eai.amd.com/v1alpha2) and an operator running with LLMInferenceService support, which needs the KServe LLMInferenceService CRDs. Immutable after creation. | Auto | Enum: [Auto InferenceService LLMInferenceService] <br />Optional: \{\} |
+| `llmInferenceService` _[AIMServiceLLMInferenceServiceConfig](#aimservicellminferenceserviceconfig)_ | LLMInferenceService configures the KServe LLMInferenceService that serves the service. Only valid with spec.servingAPI=LLMInferenceService. |  | Optional: \{\} |
 | `adapterMode` _[AIMAdapterMode](#aimadaptermode)_ | AdapterMode is the immutable adapter contract for the service, mapped directly to the AIM_ADAPTER_MODE container env. static (default) freezes spec.adapters and mounts the adapter disk only when adapters are declared; dynamic allows editing spec.adapters and mounts the disk even at zero adapters (so add/remove never restarts the pod). It is immutable after creation. | static | Enum: [static dynamic] <br />Optional: \{\} |
 | `adapters` _[AIMServiceAdapterReference](#aimserviceadapterreference) array_ | Adapters is the load-bearing list of LoRA adapters this service serves. The list may only be edited after creation when adapterMode is dynamic (static freezes it). Omitting the list serves no adapters. Supported on both the template (v1alpha1) and profile (v1alpha2) pipelines: the base model the adapters attach to is resolved from the service's template cache or profile cache respectively. In dynamic mode the list may be edited after creation: adding an adapter stages it into the service's subtree and the aim-runtime hot-loads it; removing one lets the runtime unload it (subtree cleanup is reclaimed out-of-band). The InferenceService is never modified for adapter changes — it mounts the whole per-service subtree read-only. Entries are pure references; (kind, name) pairs must be unique. Omitting the list serves no adapters. |  | MaxItems: 64 <br />Optional: \{\} |
 | `caching` _[AIMServiceCachingConfig](#aimservicecachingconfig)_ | Caching controls caching behavior for this service. When nil, defaults to Shared mode. |  | Optional: \{\} |
@@ -2084,6 +2118,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `observedGeneration` _integer_ | ObservedGeneration is the most recent generation observed by the controller. |  |  |
 | `reconcilerPipeline` _string_ | ReconcilerPipeline records which pipeline owns pipeline-specific status. The controller persists this before dispatch so transitions can retire old resolved references and conditions before the new pipeline fetches state. |  | Enum: [template profile] <br />Optional: \{\} |
+| `servingAPI` _[AIMServingAPI](#aimservingapi)_ | ServingAPI is the KServe API this service resolved to. It is recorded on first resolution and kept for the service's lifetime. |  | Enum: [InferenceService LLMInferenceService] <br />Optional: \{\} |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#condition-v1-meta) array_ | Conditions represent the latest observations of template state. |  |  |
 | `resolvedRuntimeConfig` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedRuntimeConfig captures metadata about the runtime config that was resolved. |  | Optional: \{\} |
 | `resolvedModel` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedModel captures metadata about the image that was resolved. |  | Optional: \{\} |
@@ -2263,6 +2298,26 @@ _Appears in:_
 | `profile` _[AIMDiscoveredProfile](#aimdiscoveredprofile)_ | Profile contains the full discovery result profile as a free-form JSON object. This includes metadata, engine args, environment variables, and model details. |  |  |
 | `discoveryJob` _[AIMResolvedReference](#aimresolvedreference)_ | DiscoveryJob is a reference to the job that was run for discovery |  |  |
 | `discovery` _[DiscoveryState](#discoverystate)_ | Discovery contains state tracking for the discovery process, including retry attempts and backoff timing for the circuit breaker pattern. |  | Optional: \{\} |
+
+
+#### AIMServingAPI
+
+_Underlying type:_ _string_
+
+AIMServingAPI selects the KServe API that serves an AIMService.
+
+_Validation:_
+- Enum: [Auto InferenceService LLMInferenceService]
+
+_Appears in:_
+- [AIMServiceSpec](#aimservicespec)
+- [AIMServiceStatus](#aimservicestatus)
+
+| Field | Description |
+| --- | --- |
+| `Auto` | ServingAPIAuto lets AIM Engine choose the KServe API. It currently resolves to InferenceService. |
+| `InferenceService` | ServingAPIInferenceService serves the service through a KServe InferenceService that references the profile's projected ServingRuntime. |
+| `LLMInferenceService` | ServingAPILLMInferenceService serves the service through a KServe LLMInferenceService that references the profile's projected LLMInferenceServiceConfig. |
 
 
 #### AIMStorageConfig

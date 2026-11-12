@@ -131,6 +131,33 @@ func PlanHTTPRoute(
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	gateway *gatewayapiv1.Gateway,
 ) client.Object {
+	return PlanHTTPRouteToBackend(ctx, service, runtimeConfig, gateway, predictorRouteBackend(service))
+}
+
+// RouteBackend is the Kubernetes Service an AIMService HTTPRoute forwards to.
+type RouteBackend struct {
+	ServiceName string
+	Port        int32
+}
+
+// predictorRouteBackend is the KServe InferenceService predictor Service.
+func predictorRouteBackend(service *aimv1alpha1.AIMService) RouteBackend {
+	isvcName, _ := GenerateInferenceServiceName(service.Name, service.Namespace)
+	return RouteBackend{
+		ServiceName: isvcName + constants.PredictorServiceSuffix,
+		Port:        constants.DefaultGatewayPort,
+	}
+}
+
+// PlanHTTPRouteToBackend is PlanHTTPRoute with an explicit backend Service,
+// for services whose serving workload is not an InferenceService predictor.
+func PlanHTTPRouteToBackend(
+	ctx context.Context,
+	service *aimv1alpha1.AIMService,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	gateway *gatewayapiv1.Gateway,
+	backend RouteBackend,
+) client.Object {
 	logger := log.FromContext(ctx).WithName("planHTTPRoute")
 
 	logger.V(1).Info("checking routing",
@@ -159,7 +186,7 @@ func PlanHTTPRoute(
 	}
 
 	logger.V(1).Info("creating HTTPRoute", "gatewayRef", gatewayRef.Name, "hostnames", hostnames)
-	return buildHTTPRoute(service, gatewayRef, runtimeConfig, hostnames)
+	return buildHTTPRoute(service, gatewayRef, runtimeConfig, hostnames, backend)
 }
 
 // requiresHostname reports whether the parent gateway forces a hostname pin,
@@ -207,6 +234,7 @@ func buildHTTPRoute(
 	gatewayRef *gatewayapiv1.ParentReference,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	hostnames []gatewayapiv1.Hostname,
+	backend RouteBackend,
 ) *gatewayapiv1.HTTPRoute {
 	routeName, _ := GenerateHTTPRouteName(service.Name, service.Namespace)
 
@@ -238,16 +266,13 @@ func buildHTTPRoute(
 		Value: ptr.To(path),
 	}
 
-	// Build backend reference - points to KServe predictor service
-	isvcName, _ := GenerateInferenceServiceName(service.Name, service.Namespace)
-	predictorServiceName := isvcName + constants.PredictorServiceSuffix
 	backendRef := gatewayapiv1.HTTPBackendRef{
 		BackendRef: gatewayapiv1.BackendRef{
 			BackendObjectReference: gatewayapiv1.BackendObjectReference{
 				Kind:      ptr.To(gatewayapiv1.Kind("Service")),
-				Name:      gatewayapiv1.ObjectName(predictorServiceName),
+				Name:      gatewayapiv1.ObjectName(backend.ServiceName),
 				Namespace: ptr.To(gatewayapiv1.Namespace(service.Namespace)),
-				Port:      ptr.To(gatewayapiv1.PortNumber(constants.DefaultGatewayPort)),
+				Port:      ptr.To(backend.Port),
 			},
 		},
 	}

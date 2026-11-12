@@ -1,0 +1,268 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService LLMInferenceService Test: LoRA adapter staging and mount
+#
+# The LLMInferenceService counterpart of aimservice/frozen/adapters-staged.
+# Adapter staging is serving-API independent; this test proves the adapter
+# contract reaches the workload KServe renders from an LLMInferenceService:
+# 1. A bootstrapped base model artifact (adapterDisk) provisions the shared
+#    adapter disk PVC; a logical adapter artifact is staged onto it with
+#    simulated bytes.
+# 2. A v1alpha2 AIMService with servingAPI LLMInferenceService and
+#    spec.adapters (static mode) gates the LLMInferenceService on staging.
+# 3. The LLMInferenceService main container mounts the adapter disk read-only
+#    at /adapters (subPath = service UID) with the AIM_ADAPTER_* contract env,
+#    and KServe's merged <name>-kserve Deployment keeps that mount.
+# 4. A rank change re-resolves AIM_ADAPTER_MAX_RANK on the LLMInferenceService.
+# 5. A transient gap in the parent's adapter-disk PVC status does not drop the
+#    mount (sticky status fallback).
+#
+# Test type: Frozen dependency test (AIMClusterProfile + AIMProfileCache
+# frozen). The image is never pulled; assertions stop at the rendered specs.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: llmisvc-adapters-staged
+spec:
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Bootstrap the base model artifact with an adapter disk
+      try:
+        - apply:
+            file: base-artifact.yaml
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: llmisvc-adapters-base
+              status:
+                status: Ready
+                (adapterPersistentVolumeClaim != ""): true
+
+    - name: Create the logical adapter artifact
+      try:
+        - apply:
+            file: adapter-artifact.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: llmisvc-adapters-lora
+              status:
+                status: Ready
+
+    - name: Create the frozen cluster profile
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-profile.yaml --status-only
+
+    - name: Create the LLMInferenceService-backed service that serves the adapter
+      try:
+        - apply:
+            file: service.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: llmisvc-adapters
+
+    - name: Freeze the service-owned profile cache, pointing at the base artifact
+      try:
+        - script:
+            timeout: 30s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              PC_NAME=$(kubectl get aimprofilecache -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=llmisvc-adapters \
+                -o jsonpath='{.items[0].metadata.name}')
+              CACHE_PVC=$(kubectl get pvc -n "$NAMESPACE" \
+                -l aim.eai.amd.com/cache.name=llmisvc-adapters-base \
+                -o jsonpath='{.items[0].metadata.name}')
+
+              kubectl annotate aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+
+              kubectl patch aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                --type=merge --subresource=status \
+                -p "{
+                  \"status\": {
+                    \"status\": \"Ready\",
+                    \"conditions\": [
+                      {\"type\": \"ProfileFound\", \"status\": \"True\", \"reason\": \"ProfileResolved\", \"message\": \"resolved\", \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"},
+                      {\"type\": \"ArtifactsReady\", \"status\": \"True\", \"reason\": \"AllCachesReady\", \"message\": \"ready\", \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"}
+                    ],
+                    \"artifacts\": {
+                      \"llmisvc-adapters-base\": {
+                        \"name\": \"llmisvc-adapters-base\",
+                        \"model\": \"test-org/base-weights\",
+                        \"status\": \"Ready\",
+                        \"persistentVolumeClaim\": \"$CACHE_PVC\",
+                        \"mountPoint\": \"/workspace/cache/test-org/base-weights\"
+                      }
+                    }
+                  }
+                }"
+
+    - name: Assert the adapter is staged
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: llmisvc-adapters
+              status:
+                servingAPI: LLMInferenceService
+                (adapters[?name == 'llmisvc-adapters-lora']):
+                  - state: Downloaded
+
+    - name: Assert the LLMInferenceService mounts the adapter subtree read-only
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: serving.kserve.io/v1alpha2
+              kind: LLMInferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: llmisvc-adapters
+              spec:
+                template:
+                  (containers[?name == 'main']):
+                    - (volumeMounts[?mountPath == '/adapters']):
+                        - readOnly: true
+                      (env[?name == 'AIM_ADAPTER_SOURCE']):
+                        - value: /adapters
+                      (env[?name == 'AIM_ADAPTER_MODE']):
+                        - value: static
+                      (env[?name == 'AIM_ADAPTER_MAX_RANK']):
+                        - value: "16"
+        - script:
+            timeout: 30s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              SVC_UID=$(kubectl get aimservice -n "$NAMESPACE" llmisvc-adapters -o jsonpath='{.metadata.uid}')
+              ADAPTER_PVC=$(kubectl get aimartifact -n "$NAMESPACE" llmisvc-adapters-base -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+              TEMPLATE=$(kubectl get llminferenceservice -n "$NAMESPACE" -l aim.eai.amd.com/service=llmisvc-adapters -o json | jq '.items[0]')
+              SUBPATH=$(echo "$TEMPLATE" | jq -r '.spec.template.containers[] | select(.name == "main") | .volumeMounts[] | select(.mountPath == "/adapters") | .subPath')
+              CLAIM=$(echo "$TEMPLATE" | jq -r '.spec.template.volumes[] | select(.persistentVolumeClaim.claimName != null) | select(.persistentVolumeClaim.readOnly == true) | .persistentVolumeClaim.claimName' | grep -Fx "$ADAPTER_PVC" || true)
+              [ "$SUBPATH" = "$SVC_UID" ] || { echo "ERROR: subPath=$SUBPATH, want service UID $SVC_UID"; exit 1; }
+              [ -n "$CLAIM" ] || { echo "ERROR: adapter disk PVC $ADAPTER_PVC is not a read-only volume"; echo "$TEMPLATE" | jq '.spec.template.volumes'; exit 1; }
+              echo "OK: /adapters -> $ADAPTER_PVC subPath $SUBPATH"
+
+    - name: Assert KServe's rendered Deployment keeps the adapter mount
+      description: |
+        KServe merges its built-in template, the profile config, and the
+        LLMInferenceService spec into the <name>-kserve Deployment; the adapter
+        volume and mount must survive that merge.
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                labels:
+                  app.kubernetes.io/part-of: llminferenceservice
+                  app.kubernetes.io/component: llminferenceservice-workload
+              spec:
+                template:
+                  spec:
+                    (containers[?name == 'main']):
+                      - (volumeMounts[?mountPath == '/adapters']):
+                          - readOnly: true
+                        (env[?name == 'AIM_ADAPTER_SOURCE']):
+                          - value: /adapters
+
+    - name: A raised adapter rank re-resolves the ceiling on the LLMInferenceService
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              kubectl patch aimartifact llmisvc-adapters-lora -n "$NAMESPACE" \
+                --type=merge -p '{"spec":{"rank":64}}'
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: serving.kserve.io/v1alpha2
+              kind: LLMInferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: llmisvc-adapters
+              spec:
+                template:
+                  (containers[?name == 'main']):
+                    - (env[?name == 'AIM_ADAPTER_MAX_RANK']):
+                        - value: "64"
+
+    - name: Adapter mount survives a transient parent adapter-disk PVC gap
+      try:
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: llmisvc-adapters
+              status:
+                (adapterDiskPersistentVolumeClaim != ''): true
+        - script:
+            timeout: 60s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              kubectl annotate aimartifact -n "$NAMESPACE" llmisvc-adapters-base \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+              kubectl patch aimartifact -n "$NAMESPACE" llmisvc-adapters-base \
+                --type=merge --subresource=status \
+                -p '{"status":{"adapterPersistentVolumeClaim":""}}'
+              kubectl annotate aimservice -n "$NAMESPACE" llmisvc-adapters \
+                aim.eai.amd.com/test-nudge="$(date +%s)" --overwrite
+              sleep 15
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: serving.kserve.io/v1alpha2
+              kind: LLMInferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: llmisvc-adapters
+              spec:
+                template:
+                  (containers[?name == 'main']):
+                    - (volumeMounts[?mountPath == '/adapters']):
+                        - readOnly: true
+      finally:
+        - script:
+            timeout: 60s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              kubectl annotate aimartifact -n "$NAMESPACE" llmisvc-adapters-base \
+                aim.eai.amd.com/reconciliation-paused- --overwrite || true
