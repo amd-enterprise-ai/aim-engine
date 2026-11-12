@@ -512,8 +512,11 @@ func (r *ProfileCacheReconciler) DecorateStatus(
 	// Must run ahead of the early returns below: an artifact this cache advertised
 	// until now has to stop being advertised, PVC included, the moment it starts
 	// being deleted.
+	// status is the reconciled object's own status, which obs.profileCache also points
+	// at, so the previous artifacts have to be taken before they are overwritten.
+	previous := status.Artifacts
 	status.Artifacts = buildResolvedArtifacts(obs.BestArtifacts)
-	decorateArtifactReplacements(cm, obs)
+	decorateArtifactReplacements(cm, obs, previous)
 
 	// Reported ahead of the missing artifacts it will turn into: "waiting for a delete"
 	// is the part an operator can act on.
@@ -571,7 +574,11 @@ func (r *ProfileCacheReconciler) DecorateStatus(
 // they never gate Ready, and records each completed switch with an event naming both
 // artifacts. The served artifact is not deleted on switch: in Shared mode other caches
 // may still list it, so reclaiming it is left to the operator.
-func decorateArtifactReplacements(cm *controllerutils.ConditionManager, obs ProfileCacheObservation) {
+func decorateArtifactReplacements(
+	cm *controllerutils.ConditionManager,
+	obs ProfileCacheObservation,
+	previous map[string]aimv1alpha1.AIMResolvedArtifact,
+) {
 	conditionType := aimv1alpha2.AIMProfileCacheConditionArtifactsReplacing
 
 	if len(obs.Replacements) > 0 {
@@ -606,7 +613,7 @@ func decorateArtifactReplacements(cm *controllerutils.ConditionManager, obs Prof
 		return
 	}
 
-	if switched := switchedArtifacts(obs); len(switched) > 0 {
+	if switched := switchedArtifacts(obs.BestArtifacts, previous); len(switched) > 0 {
 		// Recurring because a second switch can arrive while the condition already holds
 		// this reason, which is not a transition; the switch is detected only once.
 		cm.MarkFalse(conditionType, aimv1alpha2.AIMProfileCacheReasonArtifactsReplaced,
@@ -622,19 +629,19 @@ func decorateArtifactReplacements(cm *controllerutils.ConditionManager, obs Prof
 // switchedArtifacts describes each model source that moved to a Ready artifact other
 // than the one the previous status.artifacts listed for it. A move to an artifact that
 // is not Ready is not a completed replacement; ArtifactsReady reports it instead.
-func switchedArtifacts(obs ProfileCacheObservation) []string {
-	if obs.profileCache == nil {
-		return nil
-	}
+func switchedArtifacts(
+	bestArtifacts map[string]aimv1alpha1.AIMArtifact,
+	previous map[string]aimv1alpha1.AIMResolvedArtifact,
+) []string {
 	var switched []string
-	for _, modelID := range slices.Sorted(maps.Keys(obs.BestArtifacts)) {
-		current := obs.BestArtifacts[modelID]
+	for _, modelID := range slices.Sorted(maps.Keys(bestArtifacts)) {
+		current := bestArtifacts[modelID]
 		if current.Status.Status != constants.AIMStatusReady {
 			continue
 		}
-		for _, previous := range obs.profileCache.Status.Artifacts {
-			if previous.Model == modelID && previous.Name != current.Name {
-				switched = append(switched, fmt.Sprintf("%s: switched from %s to %s", modelID, previous.Name, current.Name))
+		for _, resolved := range previous {
+			if resolved.Model == modelID && resolved.Name != current.Name {
+				switched = append(switched, fmt.Sprintf("%s: switched from %s to %s", modelID, resolved.Name, current.Name))
 			}
 		}
 	}
