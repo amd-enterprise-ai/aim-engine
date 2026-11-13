@@ -7,8 +7,9 @@
 # profile must reuse that cache rather than create a second one, turn on
 # spec.requiresAdapterDisk, and have the AIMProfileCache controller add the
 # adapter disk to the SAME artifact in place: no new artifact, no re-download,
-# and the first service's InferenceService and pod are left untouched. Both
-# steps record an AdapterDiskRequested event. The flag stays on after the
+# and the first service's InferenceService and pod are left untouched, and its
+# Ready condition never transitions. Both steps record an AdapterDiskRequested
+# event. The flag stays on after the
 # adapter-enabled service is deleted, and the API rejects turning it off.
 #
 # Full chain, nothing frozen: the profile, profile cache, artifact and service
@@ -74,6 +75,15 @@ spec:
               status:
                 (conditions[?type == 'Ready']):
                   - status: "True"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: adapters-upgrade-plain
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
 
     - name: Record the cache, its artifact, and the first service's InferenceService and pods
       try:
@@ -94,15 +104,21 @@ spec:
               ISVC_GEN=$(kubectl get inferenceservice -n "$NAMESPACE" "$ISVC" -o jsonpath='{.metadata.generation}')
               PODS=$(kubectl get pods -n "$NAMESPACE" -l serving.kserve.io/inferenceservice="$ISVC" \
                 -o jsonpath='{.items[*].metadata.uid}')
-              echo "cache=$CACHE artifact=$ARTIFACT uid=$ARTIFACT_UID isvc=$ISVC generation=$ISVC_GEN pods=$PODS"
-              [ -n "$ARTIFACT" ] && [ -n "$ARTIFACT_UID" ] && [ -n "$ISVC_GEN" ] && [ -n "$PODS" ] \
+              READY_SINCE=$(kubectl get aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" adapters-upgrade-plain \
+                -o jsonpath='{.status.conditions[?(@.type=="Ready")].lastTransitionTime}')
+              echo "cache=$CACHE artifact=$ARTIFACT uid=$ARTIFACT_UID isvc=$ISVC generation=$ISVC_GEN pods=$PODS readySince=$READY_SINCE"
+              [ -n "$ARTIFACT" ] && [ -n "$ARTIFACT_UID" ] && [ -n "$ISVC_GEN" ] && [ -n "$PODS" ] && [ -n "$READY_SINCE" ] \
                 || { echo "ERROR: missing state"; exit 1; }
               [ -z "$FLAG" ] || [ "$FLAG" = false ] || { echo "ERROR: cache already requires an adapter disk"; exit 1; }
               [ -z "$DISK" ] || { echo "ERROR: artifact already has an adapter disk: $DISK"; exit 1; }
               kubectl create configmap adapters-upgrade-state -n "$NAMESPACE" \
                 --from-literal=cache="$CACHE" --from-literal=artifact="$ARTIFACT" \
                 --from-literal=artifactUID="$ARTIFACT_UID" --from-literal=isvc="$ISVC" \
-                --from-literal=isvcGeneration="$ISVC_GEN" --from-literal=pods="$PODS"
+                --from-literal=isvcGeneration="$ISVC_GEN" --from-literal=pods="$PODS" \
+                --from-literal=readySince="$READY_SINCE"
+              # lastTransitionTime has one-second precision: any Ready transition
+              # after this point, even one reverted at once, records a later time.
+              sleep 1
 
     - name: Create the dynamic-adapter service on the same profile
       try:
@@ -200,6 +216,11 @@ spec:
               [ "$GEN" = "$(state isvcGeneration)" ] || { echo "ERROR: InferenceService generation changed: $(state isvcGeneration) -> $GEN"; exit 1; }
               [ "$PODS" = "$(state pods)" ] || { echo "ERROR: predictor pods changed: $(state pods) -> $PODS"; exit 1; }
               echo "InferenceService $ISVC unchanged at generation $GEN with the same pods"
+              READY=$(kubectl get aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" adapters-upgrade-plain \
+                -o jsonpath='{.status.conditions[?(@.type=="Ready")].status} {.status.conditions[?(@.type=="Ready")].lastTransitionTime}')
+              [ "$READY" = "True $(state readySince)" ] \
+                || { echo "ERROR: Ready transitioned while the adapter disk was added: True $(state readySince) -> $READY"; exit 1; }
+              echo "AIMService adapters-upgrade-plain stayed Ready since $(state readySince)"
 
     - name: Delete the dynamic-adapter service
       try:

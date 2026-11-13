@@ -64,7 +64,6 @@ import (
 const (
 	reasonFetchError               = "FetchError"
 	reasonProfileRuntimeConverging = "ProfileRuntimeConverging"
-	reasonProfileCacheReconciling  = "ProfileCacheReconciling"
 	serviceControllerNameLabel     = constants.AimLabelDomain + "/service.name"
 )
 
@@ -389,12 +388,6 @@ func (obs ServiceObservation) getProfileCacheHealth() controllerutils.ComponentH
 	}
 
 	pc := obs.profileCache.Value
-	if !profilecache.StatusCurrent(pc) {
-		health.State = constants.AIMStatusProgressing
-		health.Reason = reasonProfileCacheReconciling
-		health.Message = fmt.Sprintf("Profile cache %s is applying a spec change", pc.Name)
-		return health
-	}
 	if pc.Status.Status == constants.AIMStatusReady {
 		health.State = constants.AIMStatusReady
 		health.Reason = "ProfileCacheReady"
@@ -461,12 +454,24 @@ func (obs ServiceObservation) getProfileRuntimeHealth() controllerutils.Componen
 		health.Message = "Failed to resolve projected profile runtime dependencies"
 		return health
 	}
-	// The projection waits for the Shared AIMProfileCache to catch up, and the
-	// existing InferenceService keeps serving with its current runtime meanwhile.
+	// A Shared AIMProfileCache whose controller has not yet observed its latest
+	// spec may advertise artifacts of an earlier spec, so the projection is not
+	// rebuilt from it. Existing projection resources keep serving until the
+	// cache catches up; only a projection that does not exist yet waits.
 	if runtimeCacheStale {
+		if obs.profileRuntime.Value != nil && obs.profileRuntimeConfigMap.Value != nil {
+			health.State = constants.AIMStatusReady
+			health.Reason = "ProfileRuntimeReady"
+			health.Message = fmt.Sprintf(
+				"Profile ServingRuntime and ConfigMap are ready; updates wait for Shared AIMProfileCache %s to observe its latest spec",
+				staleCacheStatus.Name)
+			return health
+		}
 		health.State = constants.AIMStatusProgressing
 		health.Reason = reasonProfileRuntimeConverging
-		health.Message = fmt.Sprintf("Waiting for Shared AIMProfileCache %s to process a spec change", staleCacheStatus.Name)
+		health.Message = fmt.Sprintf(
+			"Waiting for Shared AIMProfileCache %s to observe its latest spec before materializing the profile ServingRuntime and ConfigMap",
+			staleCacheStatus.Name)
 		return health
 	}
 
@@ -821,8 +826,7 @@ func (r *ProfileServiceReconciler) ComposeState(
 	}
 
 	if obs.hasModelSources && fetch.profileCache.OK() && fetch.profileCache.Value != nil {
-		obs.profileCacheReady = fetch.profileCache.Value.Status.Status == constants.AIMStatusReady &&
-			profilecache.StatusCurrent(fetch.profileCache.Value)
+		obs.profileCacheReady = fetch.profileCache.Value.Status.Status == constants.AIMStatusReady
 	}
 
 	r.composeDerivedNames(ctx, &obs)
@@ -1478,8 +1482,7 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 		}
 	}
 
-	if pc := obs.profileCache.Value; pc != nil && pc.Status.Status == constants.AIMStatusReady &&
-		profilecache.StatusCurrent(pc) {
+	if obs.profileCache.Value != nil && obs.profileCache.Value.Status.Status == constants.AIMStatusReady {
 		status.Cache = &aimv1alpha1.AIMServiceCacheStatus{
 			ProfileCacheRef: &aimv1alpha1.AIMResolvedReference{
 				Name:      obs.profileCache.Value.Name,
@@ -1562,8 +1565,8 @@ func fetchProfileCache(
 	// profile in Shared mode and prefer the healthiest. Mirrors v1alpha1's
 	// AIMTemplateCache resolution. ProfileScope must also match so we don't
 	// reuse a cache that was created for a different scope's same-named
-	// profile. A cache whose status is stale is still returned so planning
-	// waits for it; readiness checks must apply StatusCurrent.
+	// profile. A cache whose controller has not yet observed its latest spec is
+	// still returned, so the service does not plan a replacement on top of it.
 	cacheList := controllerutils.FetchList(ctx, c, &aimv1alpha2.AIMProfileCacheList{}, client.InNamespace(service.Namespace))
 	if cacheList.Error != nil {
 		return controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: cacheList.Error}
@@ -1655,19 +1658,22 @@ func planProfileCache(
 			},
 		},
 		Spec: aimv1alpha2.AIMProfileCacheSpec{
-			ProfileName:         obs.profileName,
-			ProfileScope:        obs.profileScope,
-			StorageClassName:    storageClassName,
-			Mode:                profileCacheModeFor(cachingMode),
-			Env:                 cacheEnv,
-			RuntimeConfigRef:    service.GetRuntimeConfigRef(),
-			RequiresAdapterDisk: adapterDiskWanted(service, obs.adapterState),
+			ProfileName:      obs.profileName,
+			ProfileScope:     obs.profileScope,
+			StorageClassName: storageClassName,
+			Mode:             profileCacheModeFor(cachingMode),
+			Env:              cacheEnv,
+			RuntimeConfigRef: service.GetRuntimeConfigRef(),
 		},
 	}
 }
 
 // planProfileCacheResources plans the service's AIMProfileCache, or only turns
 // on requiresAdapterDisk when the cache already exists.
+//
+// A new cache never carries the flag. Leaving it to planProfileCacheAdapterDisk
+// means every adapter disk is requested the same way, after the base model
+// artifact has resolved, and the dedicated field manager is its only owner.
 //
 // Cache ownership tracks the service's caching mode, mirroring v1alpha1:
 //   - Shared: applied without an owner reference so the cache persists
@@ -1686,14 +1692,6 @@ func planProfileCacheResources(
 			planResult.ApplyWithoutOwnerRef(pc)
 		} else {
 			planResult.Apply(pc)
-		}
-		// The dedicated field manager co-owns the flag from the start, so a
-		// full apply of the same Shared AIMProfileCache by another service that
-		// has not seen it yet (and omits the flag) does not drop it, which the
-		// CRD would reject.
-		if pc.Spec.RequiresAdapterDisk {
-			planResult.ApplyFields(requiresAdapterDiskPatch(pc.Namespace, pc.Name),
-				constants.FieldManagerSuffixAdapterDisk, nil)
 		}
 		return
 	}

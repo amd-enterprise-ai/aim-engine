@@ -1186,40 +1186,68 @@ func (reader *failingReader) Get(
 	return reader.Reader.Get(ctx, key, object, options...)
 }
 
-// TestBuildControllerCompatibleProfileCache_AdapterDiskNeedsSingleModelSource
-// verifies the target cache requests an adapter disk only when the AIMService
-// can use it: adapters bind to a single base model, so a multi-source profile
-// must not leave a permanent disk on the shared artifact.
-func TestBuildControllerCompatibleProfileCache_AdapterDiskNeedsSingleModelSource(t *testing.T) {
-	tests := []struct {
-		name    string
-		sources int
-		want    bool
-	}{
-		{name: "single model source", sources: 1, want: true},
-		{name: "multiple model sources", sources: 2, want: false},
+// TestBuildControllerCompatibleProfileCache_LeavesAdapterDiskFlagUnset verifies
+// the target cache mirrors the AIMService controller: it is created without
+// requiresAdapterDisk, which an adapter-enabled AIMService turns on only after
+// validating its adapters against the resolved base model artifact.
+func TestBuildControllerCompatibleProfileCache_LeavesAdapterDiskFlagUnset(t *testing.T) {
+	profile := &aimv1alpha2.AIMProfile{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: testNamespace}}
+	profile.Spec.ModelSources = []aimv1alpha1.AIMModelSource{{ModelID: "org/model", SourceURI: "hf://org/model"}}
+	spec := &aimv1alpha1.AIMServiceSpec{AdapterMode: aimv1alpha1.AdapterModeDynamic}
+	cache, err := buildControllerCompatibleProfileCacheFromSpec(
+		testNamespace, "svc", types.UID("svc-uid"), spec,
+		ResourceIdentity{Kind: testAIMProfileKind, Namespace: testNamespace, Name: "target"},
+		profile,
+	)
+	if err != nil {
+		t.Fatalf("build target cache: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			profile := &aimv1alpha2.AIMProfile{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: testNamespace}}
-			for i := range tt.sources {
-				profile.Spec.ModelSources = append(profile.Spec.ModelSources, aimv1alpha1.AIMModelSource{
-					ModelID:   "org/model-" + string(rune('a'+i)),
-					SourceURI: "hf://org/model-" + string(rune('a'+i)),
-				})
-			}
-			spec := &aimv1alpha1.AIMServiceSpec{AdapterMode: aimv1alpha1.AdapterModeDynamic}
-			cache, err := buildControllerCompatibleProfileCacheFromSpec(
-				testNamespace, "svc", types.UID("svc-uid"), spec,
-				ResourceIdentity{Kind: testAIMProfileKind, Namespace: testNamespace, Name: "target"},
-				profile,
-			)
-			if err != nil {
-				t.Fatalf("build target cache: %v", err)
-			}
-			if cache.Spec.RequiresAdapterDisk != tt.want {
-				t.Errorf("requiresAdapterDisk = %t, want %t", cache.Spec.RequiresAdapterDisk, tt.want)
-			}
-		})
+	if cache.Spec.RequiresAdapterDisk {
+		t.Error("requiresAdapterDisk = true, want unset")
+	}
+}
+
+// TestPlan_SharedTargetCacheWithAdapterDiskIsReused covers a plain service
+// migrating to a profile whose Shared cache an adapter-enabled AIMService has
+// already given an adapter disk. The flag cannot be turned off, so treating it
+// as a spec conflict would leave deleting the cache as the only way forward.
+func TestPlan_SharedTargetCacheWithAdapterDiskIsReused(t *testing.T) {
+	fixture := newPlanFixture("adapter-disk-cache")
+	first := runFixturePlan(t, fixture)
+	create := findKindOperation(first.Document.Units[0], resourceKindProfileCache, OperationCreate)
+	if create == nil {
+		t.Fatalf("initial plan has no AIMProfileCache create: %#v", first.Document.Units[0])
+	}
+	encoded, err := json.Marshal(create.Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing := &aimv1alpha2.AIMProfileCache{}
+	if err := json.Unmarshal(encoded, existing); err != nil {
+		t.Fatal(err)
+	}
+	existing.UID = types.UID("profile-cache-uid")
+	existing.ResourceVersion = "7"
+	existing.Generation = 2
+	existing.Spec.RequiresAdapterDisk = true
+	existing.Status = aimv1alpha2.AIMProfileCacheStatus{
+		ObservedGeneration: 2,
+		Status:             constants.AIMStatusReady,
+		Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
+			fixture.artifact.Name: {
+				UID:                   string(fixture.artifact.UID),
+				Name:                  fixture.artifact.Name,
+				Model:                 fixture.artifact.Spec.ModelID,
+				Status:                constants.AIMStatusReady,
+				PersistentVolumeClaim: fixture.artifact.Status.PersistentVolumeClaim,
+			},
+		},
+	}
+
+	result := runPlanWithObjects(t, append(fixture.objects(), existing)...)
+	unit := result.Document.Units[0]
+	if hasManualCode(&unit, "TargetCacheConflict") ||
+		findKindOperation(unit, resourceKindProfileCache, OperationReuse) == nil {
+		t.Fatalf("Shared cache with an adapter disk was not reused: %#v", unit)
 	}
 }

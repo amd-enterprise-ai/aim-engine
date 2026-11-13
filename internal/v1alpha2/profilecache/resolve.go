@@ -109,7 +109,7 @@ func FindReadyShared(
 		if !matchesShared(cache, profileName, scope) {
 			continue
 		}
-		if !StatusCurrent(cache) {
+		if !cacheStatusCurrent(cache) {
 			if stale == nil || cache.Name < stale.Name {
 				stale = cache
 			}
@@ -174,10 +174,7 @@ func cacheReadinessUnknown(cache *aimv1alpha2.AIMProfileCache) bool {
 	return false
 }
 
-// StatusCurrent reports whether the cache's status describes its current spec
-// generation. A stale status (including one never written) must not be trusted
-// for readiness or resolved artifacts.
-func StatusCurrent(cache *aimv1alpha2.AIMProfileCache) bool {
+func cacheStatusCurrent(cache *aimv1alpha2.AIMProfileCache) bool {
 	return cache.Status.ObservedGeneration == cache.Generation
 }
 
@@ -186,9 +183,9 @@ func StatusCurrent(cache *aimv1alpha2.AIMProfileCache) bool {
 // generation are ranked by health. When every match is stale (just created, or
 // its spec just changed), the first by name is returned anyway: the cache exists
 // and will converge, and reporting it as absent would make the caller plan a
-// replacement on top of it. Callers must check StatusCurrent before trusting
-// the returned cache's status. Equal-health candidates are ordered by name so
-// every caller chooses the same cache independently of API list order.
+// replacement on top of it. Its status may then still describe the previous
+// generation. Equal-health candidates are ordered by name so every caller
+// chooses the same cache independently of API list order.
 func SelectBestShared(
 	caches []aimv1alpha2.AIMProfileCache,
 	profileName string,
@@ -208,7 +205,7 @@ func SelectBestShared(
 		if !matchesShared(&cache, profileName, scope) {
 			continue
 		}
-		if !StatusCurrent(&cache) {
+		if !cacheStatusCurrent(&cache) {
 			if stale == nil || cache.Name < stale.Name {
 				stale = &cache
 			}

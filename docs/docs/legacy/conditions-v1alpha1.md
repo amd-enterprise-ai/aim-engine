@@ -118,7 +118,7 @@ Whether the parent template exists and is accessible.
 The v1alpha2 condition catalog reuses many of the same reason strings (e.g. `RuntimeReady`, `HTTPRouteAccepted`). The differences:
 
 - `TemplateReady` → `ProfileReady` (`TemplateNotFound` → `ProfileNotFound`, etc.).
-- `CacheReady` on AIMService is now `ProfileCacheReady`, with reasons `ProfileCacheReady`, `ProfileCacheNotFound`, `ProfileCacheReconciling` and `ProfileCacheNotReady`.
+- `CacheReady` on AIMService is now `ProfileCacheReady`, with reasons `ProfileCacheReady`, `ProfileCacheNotFound` and `ProfileCacheNotReady`.
 - The model-level template rollup (`AllTemplatesReady`, etc.) becomes the profile rollup (`ManagedProfilesReady`, `ManagedProfilesPartiallyReady`, etc.).
 
 See [Migrating to v1alpha2](migrating.md) for the full migration story.

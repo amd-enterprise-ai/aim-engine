@@ -1481,7 +1481,7 @@ func (p *planner) planTargetCache(state *unitState) {
 		Imputation{Field: "targetCache.spec.env", Source: "AIMProfile and AIMService caching environments", Rule: "merge with service values taking precedence"},
 		Imputation{Field: "targetCache.spec.runtimeConfigName", Source: "AIMService runtime configuration reference", Rule: "copied exactly"},
 		Imputation{Field: "targetCache.spec.mode", Source: "AIMService effective caching mode", Rule: "map Dedicated or Shared exactly"},
-		Imputation{Field: "targetCache.spec.requiresAdapterDisk", Source: "AIMService adapter mode and references", Rule: "enable when adapters require a disk and the target profile has a single model source"},
+		Imputation{Field: "targetCache.spec.requiresAdapterDisk", Source: "AIMService controller", Rule: "left unset; an adapter-enabled AIMService turns it on once its base model artifact resolves"},
 	)
 	existing := &aimv1alpha2.AIMProfileCache{}
 	err = p.reader.Get(p.context, client.ObjectKey{Namespace: desired.Namespace, Name: desired.Name}, existing)
@@ -1514,7 +1514,7 @@ func (p *planner) planTargetCache(state *unitState) {
 			return
 		}
 		identity = p.observe(state, existing, aimv1alpha2.GroupVersion.String(), identity.Kind, identity.Role, true)
-		if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
+		if !profileCacheSpecServes(existing.Spec, desired.Spec) {
 			addManual(state.unit, "TargetCacheConflict", "the existing target AIMProfileCache has a conflicting spec")
 			return
 		}
@@ -1610,7 +1610,6 @@ func buildControllerCompatibleProfileCacheFromSpec(
 	}
 	scope := aimv1alpha1.AIMResolutionScopeNamespace
 	var profileCaching *aimv1alpha2.AIMProfileCachingConfig
-	var modelSourceCount int
 	switch typed := profile.(type) {
 	case *aimv1alpha2.AIMProfile:
 		if targetProfile.Kind != resourceKindProfile ||
@@ -1619,7 +1618,6 @@ func buildControllerCompatibleProfileCacheFromSpec(
 			return nil, fmt.Errorf("namespace target profile does not match its pinned identity")
 		}
 		profileCaching = typed.Spec.Caching
-		modelSourceCount = len(typed.Spec.ModelSources)
 	case *aimv1alpha2.AIMClusterProfile:
 		if targetProfile.Kind != resourceKindClusterProfile ||
 			typed.Namespace != "" ||
@@ -1627,7 +1625,6 @@ func buildControllerCompatibleProfileCacheFromSpec(
 			return nil, fmt.Errorf("cluster target profile does not match its pinned identity")
 		}
 		scope = aimv1alpha1.AIMResolutionScopeCluster
-		modelSourceCount = len(typed.Spec.ModelSources)
 	default:
 		return nil, fmt.Errorf("unsupported target profile type %T", profile)
 	}
@@ -1681,9 +1678,6 @@ func buildControllerCompatibleProfileCacheFromSpec(
 			Env:              cacheEnv,
 			RuntimeConfigRef: serviceSpec.RuntimeConfigRef,
 			Mode:             mode,
-			// Adapters bind to a single base model; the AIMService rejects
-			// adapters on a multi-source profile and never mounts the disk.
-			RequiresAdapterDisk: serviceSpec.AdaptersEnabled() && modelSourceCount == 1,
 		},
 	}, nil
 }

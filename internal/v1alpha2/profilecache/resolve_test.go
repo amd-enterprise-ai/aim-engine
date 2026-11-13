@@ -357,8 +357,8 @@ func TestSelectBestShared_FallsBackToStaleCache(t *testing.T) {
 	if got == nil || got.Name != unobserved.Name {
 		t.Fatalf("SelectBestShared() = %v, want stale cache %q chosen by name", got, unobserved.Name)
 	}
-	if StatusCurrent(got) {
-		t.Fatal("StatusCurrent() = true for a cache whose status has not observed its generation")
+	if cacheStatusCurrent(got) {
+		t.Fatal("cacheStatusCurrent() = true for a cache whose status has not observed its generation")
 	}
 
 	other := cache("other-profile", "other", scope, shared, constants.AIMStatusReady)

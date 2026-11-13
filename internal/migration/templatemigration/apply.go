@@ -4364,7 +4364,7 @@ func prepareFreshProfileCache(
 func matchFreshProfileCache(existing, desired *aimv1alpha2.AIMProfileCache) error {
 	if existing.Namespace != desired.Namespace ||
 		existing.Name != desired.Name ||
-		!equality.Semantic.DeepEqual(existing.Spec, desired.Spec) ||
+		!profileCacheSpecServes(existing.Spec, desired.Spec) ||
 		!freshCacheOwnershipMatches(existing, desired) {
 		return fmt.Errorf(
 			"existing AIMProfileCache %s/%s conflicts with the complete fresh-cache spec or scope",
@@ -4373,6 +4373,17 @@ func matchFreshProfileCache(existing, desired *aimv1alpha2.AIMProfileCache) erro
 		)
 	}
 	return nil
+}
+
+// profileCacheSpecServes reports whether an existing AIMProfileCache spec serves
+// the desired one. It ignores requiresAdapterDisk when only the existing cache
+// has it: an adapter-enabled AIMService may have turned it on for a Shared cache
+// other services use, and it cannot be turned off.
+func profileCacheSpecServes(existing, desired aimv1alpha2.AIMProfileCacheSpec) bool {
+	if existing.RequiresAdapterDisk && !desired.RequiresAdapterDisk {
+		existing.RequiresAdapterDisk = false
+	}
+	return equality.Semantic.DeepEqual(existing, desired)
 }
 
 func freshCacheOwnershipMatches(

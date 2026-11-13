@@ -197,19 +197,21 @@ Before a service can serve adapters:
    `AIMClusterRuntimeConfig.spec.storage` unless explicitly set on the artifact.
    The storage class must support `ReadWriteMany`.
 
-   On the profile pipeline (v1alpha2), the base model may already be cached by a
-   service that does not serve adapters, or by the profile itself. In that case,
-   the first adapter-enabled service on the same profile sets
-   `spec.requiresAdapterDisk` on the existing shared `AIMProfileCache`. The
-   `AIMProfileCache` controller then adds `spec.adapterDisk` to the base model
-   artifact it already uses, and keeps reporting that artifact as ready while
-   the adapter disk PVC is created. The base model weights are not downloaded
-   again, and services already running on the cache are not restarted or
-   remounted. Each step records a Normal `AdapterDiskRequested` event: on the
-   `AIMProfileCache`, naming the service, and on the `AIMArtifact`, naming the
-   cache. The new PVC is `ReadWriteMany` and 50Gi unless
-   `spec.storage.adapterDiskSize` is set on the runtime config, so budget for it
-   on any cache an adapter-enabled service may share.
+   On the profile pipeline (v1alpha2), an adapter-enabled service sets
+   `spec.requiresAdapterDisk` on its `AIMProfileCache` once the cache has
+   resolved the base model artifact. This applies equally to a cache the
+   service just created and to a shared cache that a service without adapters,
+   or the profile itself, created earlier. The `AIMProfileCache` controller
+   then adds `spec.adapterDisk` to the base model artifact it already uses, and
+   keeps reporting that artifact as ready while the adapter disk PVC is created.
+   The base model weights are not downloaded again, and services already
+   running on the cache are not restarted or remounted. Each step records a
+   Normal `AdapterDiskRequested` event: on the `AIMProfileCache`, naming the
+   service, and on the `AIMArtifact`, naming the cache. The new PVC is
+   `ReadWriteMany` and 50Gi unless `spec.storage.adapterDiskSize` is set on the
+   runtime config, so budget for it on any cache an adapter-enabled service may
+   share. While the disk exists, the artifact also runs a short
+   [reaper Job](#reclaim) every 15 minutes.
 
    Once set, the flag cannot be turned off, because other adapter-enabled
    services may depend on the disk: the API rejects setting it to `false` or
@@ -372,16 +374,16 @@ kubectl get aimartifact <artifact-name> -n <namespace> \
 kubectl get pvc <adapter-pvc-name> -n <namespace>
 ```
 
-- `requiresAdapterDisk` is not `true`: the service has not reconciled since it
-  found the cache, its adapter configuration is invalid (see its `ConfigValid`
-  condition), or setting the flag failed. A failed apply shows as
+- `requiresAdapterDisk` is not `true`: the cache has not resolved the base model
+  artifact yet, the service's adapter configuration is invalid (see its
+  `ConfigValid` condition), or setting the flag failed. A failed apply shows as
   `DependenciesReachable=False` on the service; otherwise check the
   [operator logs](../admin/troubleshooting.md#operator-logs) for the service.
 - `generation` is ahead of `observedGeneration`: the `AIMProfileCache` controller
-  has not processed the request yet, and every service on the cache reports
-  `ProfileCacheReady=False / ProfileCacheReconciling`. Running services keep
-  serving meanwhile. Check the operator logs
-  for the cache.
+  has not processed the request yet. Other services on the cache are not
+  affected. Check that the cache does not carry the
+  `aim.eai.amd.com/reconciliation-paused` annotation, and check the operator
+  logs for the cache.
 - The artifact has no `spec.adapterDisk`: the `AIMProfileCache` controller could
   not add it. Check the cache's `DependenciesReachable` condition and its events.
   When present, `{}` means the disk uses the default size and storage class.
@@ -392,7 +394,10 @@ kubectl get pvc <adapter-pvc-name> -n <namespace>
 Once the adapter disk PVC exists, the service moves on to
 `AdapterSubtreeProvisioning`. If it stays there, check the PVC: a PVC stuck in
 `Pending` means the storage class cannot provision `ReadWriteMany` volumes, so
-the Job that creates the service's subtree cannot start.
+the Job that creates the service's subtree cannot start. To fix it, set
+`spec.storage.adapterDiskStorageClassName` on the runtime config to a class that
+supports `ReadWriteMany`, then delete the `Pending` PVC. The artifact recreates
+it with the new class; the base model is not downloaded again.
 
 ## Reclaim
 
