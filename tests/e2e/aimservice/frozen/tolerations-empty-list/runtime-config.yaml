@@ -1,0 +1,13 @@
+# Namespace-local runtime config whose tolerations the service inherits until
+# it sets its own list. Kept namespaced so the test does not touch the
+# cluster-scoped defaults other tests run against.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+spec:
+  tolerations:
+    - key: example.com/dedicated
+      operator: Equal
+      value: inference
+      effect: NoSchedule
