@@ -24,6 +24,7 @@ package aimprofile
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -314,11 +315,11 @@ func TestBuildNodeAffinity(t *testing.T) {
 			wantNil:    true,
 		},
 		{
-			name:             "gpu model with default mode produces model + default partition term",
+			name:             "gpu model with default mode produces model + default partition + mixed-models terms",
 			accelType:        aimv1alpha1.AcceleratorTypeGPU,
 			accelModel:       "MI300X",
 			partitioningMode: "unpartitioned",
-			wantExprs:        2,
+			wantExprs:        3,
 			wantPartitionKey: PartitioningSchemeLabelPrefix + PartitioningSchemeDefault,
 			wantPartitionOp:  corev1.NodeSelectorOpExists,
 		},
@@ -327,7 +328,7 @@ func TestBuildNodeAffinity(t *testing.T) {
 			accelType:        aimv1alpha1.AcceleratorTypeGPU,
 			accelModel:       "MI300X",
 			partitioningMode: "partitioned",
-			wantExprs:        2,
+			wantExprs:        3,
 			wantPartitionKey: PartitioningSchemeLabelPrefix + PartitioningSchemeDefault,
 			wantPartitionOp:  corev1.NodeSelectorOpDoesNotExist,
 		},
@@ -336,7 +337,7 @@ func TestBuildNodeAffinity(t *testing.T) {
 			accelType:        aimv1alpha1.AcceleratorTypeGPU,
 			accelModel:       "MI300X",
 			partitioningMode: "CPX-NPS4",
-			wantExprs:        2,
+			wantExprs:        3,
 			wantPartitionKey: PartitioningSchemeLabelPrefix + "CPX-NPS4",
 			wantPartitionOp:  corev1.NodeSelectorOpExists,
 		},
@@ -405,7 +406,31 @@ func TestBuildNodeAffinity(t *testing.T) {
 					t.Errorf("partition operator = %q, want %q", exprs[1].Operator, tt.wantPartitionOp)
 				}
 			}
+			hasMixedModelsTerm := false
+			for _, expr := range exprs {
+				if expr.Key == MixedModelsLabelPrefix+"GPU" {
+					hasMixedModelsTerm = expr.Operator == corev1.NodeSelectorOpDoesNotExist
+				}
+			}
+			if wantMixed := tt.accelType == aimv1alpha1.AcceleratorTypeGPU; hasMixedModelsTerm != wantMixed {
+				t.Errorf("mixed-models DoesNotExist term present = %v, want %v", hasMixedModelsTerm, wantMixed)
+			}
 		})
+	}
+}
+
+func TestBuildNodeAffinity_GPUWithoutModelExcludesMixedModelNodes(t *testing.T) {
+	result := BuildNodeAffinity(aimv1alpha1.AcceleratorTypeGPU, "", "unpartitioned")
+	if result == nil {
+		t.Fatal("expected non-nil NodeAffinity for a GPU profile without a model")
+	}
+	want := []corev1.NodeSelectorRequirement{{
+		Key:      MixedModelsLabelPrefix + "GPU",
+		Operator: corev1.NodeSelectorOpDoesNotExist,
+	}}
+	got := result.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expressions = %#v, want %#v", got, want)
 	}
 }
 
@@ -812,8 +837,8 @@ func TestMatchProfileNodes_NVIDIAVendorWithoutModel(t *testing.T) {
 		t.Fatalf("MatchingNodes = %d, want 1", result.MatchingNodes)
 	}
 	expressions := result.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions
-	if len(expressions) != 2 {
-		t.Fatalf("affinity expressions = %#v, want vendor + partition", expressions)
+	if len(expressions) != 3 {
+		t.Fatalf("affinity expressions = %#v, want vendor + partition + mixed-models", expressions)
 	}
 	if expressions[0].Key != AcceleratorVendorLabelPrefix+"GPU.NVIDIA" {
 		t.Fatalf("vendor affinity key = %q", expressions[0].Key)
@@ -872,6 +897,118 @@ func TestMatchProfileNodes_ReportsResourceAndLabelMismatches(t *testing.T) {
 	}
 	if !reflect.DeepEqual(result.NodeMismatches[0].Reasons, want) {
 		t.Fatalf("Reasons = %#v, want %#v", result.NodeMismatches[0].Reasons, want)
+	}
+}
+
+func TestMatchProfileNodes_ExcludesNodesWithMixedGPUModels(t *testing.T) {
+	mixedNode := makeNode("mixed-gpu-node",
+		map[string]string{
+			AcceleratorLabelPrefix + "MI350P":                         "4",
+			AcceleratorLabelPrefix + "R9700":                          "2",
+			AcceleratorLabelPrefix + "EPYC_ZEN5":                      "128",
+			AcceleratorVendorLabelPrefix + "GPU.AMD":                  "6",
+			PartitioningSchemeLabelPrefix + PartitioningSchemeDefault: "6",
+			MixedModelsLabelPrefix + "GPU":                            "2",
+		},
+		corev1.ResourceList{
+			"amd.com/gpu":         resource.MustParse("6"),
+			corev1.ResourceCPU:    resource.MustParse("128"),
+			corev1.ResourceMemory: resource.MustParse("1024Gi"),
+		},
+	)
+	singleModelNode := makeNode("mi350p-node",
+		map[string]string{
+			AcceleratorLabelPrefix + "MI350P":                         "8",
+			AcceleratorVendorLabelPrefix + "GPU.AMD":                  "8",
+			PartitioningSchemeLabelPrefix + PartitioningSchemeDefault: "8",
+		},
+		corev1.ResourceList{
+			"amd.com/gpu":         resource.MustParse("8"),
+			corev1.ResourceCPU:    resource.MustParse("128"),
+			corev1.ResourceMemory: resource.MustParse("1024Gi"),
+		},
+	)
+	nodes := []corev1.Node{mixedNode, singleModelNode}
+
+	for _, model := range []string{"MI350P", "R9700"} {
+		t.Run(model, func(t *testing.T) {
+			spec := aimv1alpha2.AIMProfileSpecCommon{
+				AcceleratorVendor: aimv1alpha1.AcceleratorVendorAMD,
+				AcceleratorType:   aimv1alpha1.AcceleratorTypeGPU,
+				AcceleratorModel:  model,
+				AcceleratorCount:  1,
+			}
+			result := MatchProfileNodes(nodes, spec, ResolveProfileResources(spec))
+			for _, mismatch := range result.NodeMismatches {
+				if mismatch.NodeName != mixedNode.Name {
+					continue
+				}
+				if len(mismatch.Reasons) != 1 || !strings.Contains(mismatch.Reasons[0], "more than one GPU model") {
+					t.Fatalf("mixed node reasons = %#v, want only the mixed-model reason", mismatch.Reasons)
+				}
+				return
+			}
+			t.Fatalf("mixed node not reported as a mismatch: %#v", result.NodeMismatches)
+		})
+	}
+
+	otherModel := aimv1alpha2.AIMProfileSpecCommon{
+		AcceleratorVendor: aimv1alpha1.AcceleratorVendorAMD,
+		AcceleratorType:   aimv1alpha1.AcceleratorTypeGPU,
+		AcceleratorModel:  "MI300X",
+		AcceleratorCount:  1,
+	}
+	for _, mismatch := range MatchProfileNodes(nodes, otherModel, ResolveProfileResources(otherModel)).NodeMismatches {
+		if reasons := strings.Join(mismatch.Reasons, "; "); strings.Contains(reasons, "more than one GPU model") {
+			t.Errorf("%s reasons = %q; a node without the profile's model must not be explained by its mix of models",
+				mismatch.NodeName, reasons)
+		}
+	}
+
+	spec := aimv1alpha2.AIMProfileSpecCommon{
+		AcceleratorVendor: aimv1alpha1.AcceleratorVendorAMD,
+		AcceleratorType:   aimv1alpha1.AcceleratorTypeGPU,
+		AcceleratorModel:  "MI350P",
+		AcceleratorCount:  1,
+	}
+	if got := MatchProfileNodes(nodes, spec, ResolveProfileResources(spec)).MatchingNodes; got != 1 {
+		t.Fatalf("MI350P MatchingNodes = %d, want 1 (the single-model node)", got)
+	}
+
+	cpuSpec := aimv1alpha2.AIMProfileSpecCommon{
+		AcceleratorType:  aimv1alpha1.AcceleratorTypeCPU,
+		AcceleratorModel: "EPYC_ZEN5",
+		AcceleratorCount: 32,
+	}
+	if got := MatchProfileNodes(nodes, cpuSpec, ResolveProfileResources(cpuSpec)).MatchingNodes; got != 1 {
+		t.Fatalf("CPU MatchingNodes = %d, want 1 (mixed GPU models do not affect CPU profiles)", got)
+	}
+}
+
+func TestMatchProfileNodes_MixedNVIDIANodeReasonOmitsDRA(t *testing.T) {
+	node := makeNode("mixed-nvidia-node",
+		map[string]string{
+			AcceleratorLabelPrefix + "H100":                           "4",
+			AcceleratorLabelPrefix + "A100":                           "4",
+			AcceleratorVendorLabelPrefix + "GPU.NVIDIA":               "8",
+			PartitioningSchemeLabelPrefix + PartitioningSchemeDefault: "8",
+			MixedModelsLabelPrefix + "GPU":                            "2",
+		},
+		corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("8")},
+	)
+	spec := aimv1alpha2.AIMProfileSpecCommon{
+		AcceleratorVendor: aimv1alpha1.AcceleratorVendorNVIDIA,
+		AcceleratorType:   aimv1alpha1.AcceleratorTypeGPU,
+		AcceleratorModel:  "H100",
+		AcceleratorCount:  1,
+	}
+	result := MatchProfileNodes([]corev1.Node{node}, spec, ResolveProfileResources(spec))
+	if result.MatchingNodes != 0 || len(result.NodeMismatches) != 1 {
+		t.Fatalf("result = %+v, want the mixed NVIDIA node excluded", result)
+	}
+	reason := result.NodeMismatches[0].Reasons[0]
+	if !strings.Contains(reason, "more than one GPU model") || strings.Contains(reason, "DRA") {
+		t.Fatalf("reason = %q, want the mixed-model reason without DRA advice", reason)
 	}
 }
 

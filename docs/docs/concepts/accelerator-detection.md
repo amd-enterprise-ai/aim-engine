@@ -81,7 +81,7 @@ feature.node.kubernetes.io/aim-accelerator.vendor.CPU.AMD: "1"
 | NVIDIA H100 ×8 | `aim-accelerator.vendor.GPU.NVIDIA=8` |
 | AMD EPYC CPU-only | `aim-accelerator.vendor.CPU.AMD=192` |
 
-Like the other labels, the value is the accelerator count and is informational; consumers match on the key via `Exists`. This iteration assumes a single vendor — and a single model — per accelerator type on a given node.
+Like the other labels, the value is the accelerator count and is informational; consumers match on the key via `Exists`. This iteration assumes a single vendor per accelerator type on a given node. A node can carry several GPU models; see [Nodes with mixed GPU models](#nodes-with-mixed-gpu-models).
 
 :::{note}
 `AIMProfile.spec.acceleratorVendor` consumes this label when resolving nodes
@@ -89,6 +89,23 @@ and the device-plugin resource. `amd` selects `amd.com/gpu`; `nvidia` selects
 `nvidia.com/gpu`. A generic NVIDIA profile can omit `acceleratorModel` and
 match any detected NVIDIA GPU node.
 :::
+
+## Nodes with mixed GPU models
+
+A node can have more than one GPU model, for example AMD Instinct MI350P and Radeon AI PRO R9700 cards in the same server. The detector labels each model with its own count and adds a marker label whose value is the number of distinct GPU models:
+
+```
+feature.node.kubernetes.io/aim-accelerator.MI350P: "4"
+feature.node.kubernetes.io/aim-accelerator.R9700: "2"
+feature.node.kubernetes.io/aim-accelerator.GPU: "6"
+feature.node.kubernetes.io/aim-accelerator.mixed-models.GPU: "2"
+```
+
+GPUs whose device ID the detector doesn't recognise get no model labels, and don't count in the `GPU` family label. They still count toward the marker, one model per device ID: the device plugin offers them as `amd.com/gpu` like any other GPU. A node with seven MI300X GPUs and one unrecognised GPU is labelled `MI300X=7` and `mixed-models.GPU=2`.
+
+AIM Engine does not schedule GPU workloads onto nodes with the `mixed-models.GPU` marker. The device-plugin resources (`amd.com/gpu`, `nvidia.com/gpu`) are a single pool per node, so a pod there could be given any of the node's GPUs, whatever model its profile targets. Every GPU profile's node affinity therefore includes a `mixed-models.GPU` `DoesNotExist` term, and these nodes appear in the profile's hardware mismatch reasons. CPU profiles are not affected.
+
+Scheduling onto nodes with mixed GPU models requires the GPU vendor's DRA (Dynamic Resource Allocation) driver on those nodes, so that devices can be selected by model. DRA allocation in AIM Engine is in development.
 
 ## GPU Partition Scheme Labels
 
