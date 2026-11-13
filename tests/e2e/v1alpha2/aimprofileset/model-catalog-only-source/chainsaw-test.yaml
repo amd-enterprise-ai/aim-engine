@@ -1,0 +1,146 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimprofileset-model-catalog-only-source
+  labels:
+    # The Kind inventory advertises MI300X and MI350X only, so the MI325X
+    # source stays catalog-only and the MI308X outputs report NotAvailable
+    # deterministically.
+    requires: kind
+spec:
+  description: |
+    Verifies that AIMProfileSet and AIMClusterProfileSet derive profiles from an
+    image-backed AIMClusterModel's discovery catalog even when the selected
+    definition was never materialised as an AIMClusterProfile, because its
+    hardware (MI325X) is absent from the cluster. Both sets select that
+    definition through selector.modelRef and retarget it to MI308X.
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create the image-backed source model
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for discovery to publish supported and unsupported definitions
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterModel
+              metadata:
+                name: profileset-catalog-only-source
+              status:
+                aimId: HuggingFaceTB/SmolLM2-135M
+                (discoveryCacheRef.name != ''): true
+                (discoveredProfiles.supported > `0`): true
+                (discoveredProfiles.unsupported > `0`): true
+
+    - name: Prove the selected definition exists only in the discovery catalog
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              set -eu
+
+              MODEL=profileset-catalog-only-source
+              PROFILE_ID=mi325x-fp8-latency
+              CACHE_NAME=$(kubectl get aimclustermodel "$MODEL" \
+                -o jsonpath='{.status.discoveryCacheRef.name}')
+              CACHE_NAMESPACE=$(kubectl get aimclustermodel "$MODEL" \
+                -o jsonpath='{.status.discoveryCacheRef.namespace}')
+
+              kubectl get configmap -n "$CACHE_NAMESPACE" "$CACHE_NAME" -o json \
+                | jq -e --arg profile_id "$PROFILE_ID" \
+                    '[.data | to_entries[] |
+                      select(.key | test("^profiles\\..*\\.yaml$")) |
+                      select(.key | contains($profile_id))] |
+                     length == 1' >/dev/null \
+                || {
+                  echo "ERROR: expected exactly one $PROFILE_ID definition in the discovery catalog"
+                  kubectl get configmap -n "$CACHE_NAMESPACE" "$CACHE_NAME" -o json \
+                    | jq -r '.data | keys[]'
+                  exit 1
+                }
+
+              MATERIALIZED=$(kubectl get aimclusterprofiles -o json \
+                | jq -r --arg model "$MODEL" --arg profile_id "$PROFILE_ID" \
+                    '[.items[] |
+                      select(.metadata.labels["aim.eai.amd.com/source-model"] == $model) |
+                      select(.spec.profileId == $profile_id)] |
+                     length')
+              if [ "$MATERIALIZED" -ne 0 ]; then
+                echo "ERROR: the MI325X definition was materialised on a cluster without MI325X"
+                kubectl get aimclusterprofiles -o yaml
+                exit 1
+              fi
+
+    - name: Create namespace and cluster profile sets targeting MI308X
+      try:
+        - apply:
+            file: profilesets.yaml
+
+    - name: Assert the namespace profile set derived the catalog-only definition
+      try:
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                annotations:
+                  aim.eai.amd.com/profile-source: copy
+                  aim.eai.amd.com/profile-set-name: catalog-only-mi308x
+              spec:
+                aimId: HuggingFaceTB/SmolLM2-135M
+                profileId: mi325x-fp8-latency
+                acceleratorModel: MI308X
+              status:
+                status: NotAvailable
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileSet
+              metadata:
+                name: catalog-only-mi308x
+              status:
+                status: NotAvailable
+                managedProfiles:
+                  total: 1
+                  ready: 0
+                  notAvailable: 1
+                  deployable: 1
+
+    - name: Assert the cluster profile set derived the catalog-only definition
+      try:
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                annotations:
+                  aim.eai.amd.com/profile-source: copy
+                  aim.eai.amd.com/profile-set-name: catalog-only-mi308x
+              spec:
+                aimId: HuggingFaceTB/SmolLM2-135M
+                profileId: mi325x-fp8-latency
+                acceleratorModel: MI308X
+              status:
+                status: NotAvailable
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfileSet
+              metadata:
+                name: catalog-only-mi308x
+              status:
+                status: NotAvailable
+                managedProfiles:
+                  total: 1
+                  ready: 0
+                  notAvailable: 1
+                  deployable: 1
