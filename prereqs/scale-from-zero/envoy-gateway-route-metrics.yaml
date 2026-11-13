@@ -1,0 +1,38 @@
+# One platform-owned EnvoyExtensionPolicy for the Gateway that fronts
+# AIMServices. Apply this as gateway infrastructure; AIM Engine does not create
+# per-service extension policies.
+# Setup and security guidance:
+# https://github.com/amd-enterprise-ai/aim-engine/blob/main/docs/docs/admin/envoy-gateway-scale-from-zero.md
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyExtensionPolicy
+metadata:
+  name: route-activation-metrics
+  namespace: envoy-gateway-system  # EDIT: namespace containing the Gateway
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: kserve-ingress-gateway  # EDIT: Gateway that fronts AIMServices
+  lua:
+    - type: Inline
+      inline: |
+        local function metric_token(value)
+          return (string.gsub(value, "([^%a%d])", function(character)
+            return string.format("_x%02x", string.byte(character))
+          end))
+        end
+
+        function envoy_on_request(request_handle)
+          local route_name = request_handle:streamInfo():routeName()
+          local kind, namespace, name = string.match(
+            route_name, "^([^/]+)/([^/]+)/([^/]+)/")
+          if kind ~= "httproute" or namespace == nil or name == nil then
+            return
+          end
+
+          local metric_name = "aim_activation_requests.n" ..
+            string.len(namespace) .. "." .. metric_token(namespace) ..
+            ".r" .. string.len(name) .. "." .. metric_token(name)
+          request_handle:stats():counter(metric_name):inc()
+        end

@@ -1,0 +1,383 @@
+# Default values for aim-engine
+# This is a YAML-formatted file.
+# Structure matches kubebuilder helm/v2-alpha plugin expectations
+#
+# Documentation comments:
+#   # -- description     → documented parameter (appears in generated reference)
+#   # @default -- `val`  → override the displayed default for arrays/objects
+#   # plain comment       → ignored by the doc generator
+#
+# Run `make generate-helm-docs` to regenerate docs/docs/reference/helm-values.md
+
+# -- Controller manager configuration
+manager:
+  # -- Number of operator replicas
+  replicas: 1
+  # Image configuration
+  image:
+    # -- Operator container image repository
+    repository: docker.io/silogenai/aim-engine
+    # -- Operator container image tag
+    tag: publish-main-7f1aa36
+    # -- Image pull policy
+    pullPolicy: IfNotPresent
+  # -- Secrets for pulling the operator image from private registries
+  # @default -- `[]`
+  # imagePullSecrets:
+  #   - name: ghcr-pull-secret
+  imagePullSecrets:
+    - name: dockerhub-regcred
+  # -- Controller command-line arguments
+  # @default -- `["--leader-elect"]`
+  args:
+    - --leader-elect
+  # -- Eager KServe ServingRuntime/ClusterServingRuntime projection mode for the
+  # profile reconcilers, rendered as the operator's --runtime-projection-mode
+  # arg. Exhaustive projects one scope-appropriate ServingRuntime or
+  # ClusterServingRuntime per projectable profile. Reduced projects one
+  # model-slug primary ServingRuntime or ClusterServingRuntime per model that
+  # native KServe references by name. Both runs the two together. All projected
+  # ServingRuntimes and ClusterServingRuntimes keep autoSelect off
+  # (all share one model format, so autoSelect would collide across models).
+  # The lazy namespaced
+  # ServingRuntime-keyed projection is always on and is not governed by this
+  # value. See the runtime-projection ADR (docs/adr).
+  runtimeProjectionMode: Both
+  # -- Override the artifact-downloader image the operator spawns for model
+  # download and size-check Jobs. Empty uses the public mirror image baked into
+  # the operator binary at build time. Set this to install from a private
+  # downloader mirror instead. Per-resource (spec.modelDownloadImage) and
+  # runtime-config overrides still take precedence over this install-time default.
+  artifactDownloaderImage: ""
+  # -- Additional environment variables for the controller. Variables managed
+  # by dedicated chart values cannot be overridden here.
+  env: []
+  # -- Additional volume mounts for the controller
+  # @default -- `[]`
+  extraVolumeMounts: []
+  # -- Additional volumes for the controller pod
+  # @default -- `[]`
+  extraVolumes: []
+  # Pod-level security settings
+  podSecurityContext:
+    # -- Require non-root user
+    runAsNonRoot: true
+    seccompProfile:
+      # -- Seccomp profile type
+      type: RuntimeDefault
+  # Container-level security settings
+  securityContext:
+    # -- Prevent privilege escalation
+    allowPrivilegeEscalation: false
+    capabilities:
+      # -- Dropped Linux capabilities
+      # @default -- `["ALL"]`
+      drop:
+        - ALL
+    # -- Read-only root filesystem
+    readOnlyRootFilesystem: true
+  # Resource limits and requests
+  resources:
+    limits:
+      # -- Memory limit
+      memory: 4Gi
+    requests:
+      # -- CPU request
+      cpu: 100m
+      # -- Memory request
+      memory: 256Mi
+# -- Create admin/editor/viewer ClusterRoles for each CRD
+rbacHelpers:
+  # -- Enable RBAC helper roles
+  enable: true
+# -- Custom Resource Definitions
+crd:
+  # -- Install CRDs with the chart
+  enable: true
+  # -- Keep CRDs when uninstalling (prevents data loss)
+  keep: true
+# -- Controller metrics endpoint
+metrics:
+  # -- Enable metrics endpoint
+  enable: true
+  # -- Metrics endpoint port
+  port: 8443
+# -- Cert-manager integration for TLS certificates
+certManager:
+  # -- Enable cert-manager integration
+  enable: false
+# -- Prometheus ServiceMonitor for metrics scraping
+prometheus:
+  # -- Create a Prometheus ServiceMonitor resource
+  enable: false
+# -- Cluster-wide runtime configuration for AIM resources. By default the chart
+# creates `AIMClusterRuntimeConfig/default` with a generic NVIDIA vLLM fallback
+# so v1alpha2 `spec.modelId` onboarding can generate profiles immediately on
+# clusters that advertise NVIDIA GPU resources. Disable this when the cluster
+# already has a platform-managed config with the same name.
+clusterRuntimeConfig:
+  # -- Enable creation of the chart-managed AIMClusterRuntimeConfig resource
+  enable: true
+  # -- Name of the AIMClusterRuntimeConfig resource
+  name: default
+  # -- Spec fields for the AIMClusterRuntimeConfig.
+  # See [Runtime Configuration](../concepts/runtime-config.md) for details.
+  # The default fallback intentionally omits CPU and memory requests so profile
+  # generation is gated by the NVIDIA device resource, not a one-size-fits-all
+  # host-resource policy. Override the fallback to match your fleet and model
+  # sizes. Generated profiles remain truthfully `unoptimized`, while
+  # autoSelectionPolicy=any lets AIMServices use this runtime automatically
+  # only when no optimized profile matches.
+  # @default -- NVIDIA vLLM fallback for any NVIDIA GPU
+  spec:
+    model:
+      profileGeneration:
+        fallbacks:
+          - name: nvidia-vllm
+            priority: 10
+            type: unoptimized
+            autoSelectionPolicy: any
+            match:
+              acceleratorVendor: nvidia
+              acceleratorType: gpu
+            runtime:
+              image: vllm/vllm-openai:v0.17.1-cu130
+              engine: vllm
+              engineArgs:
+                max-model-len: 8192
+                gpu-memory-utilization: 0.9
+                # Additional examples:
+                #   storage:
+                #     defaultStorageClassName: "standard"
+                #     pvcHeadroomPercent: 10
+                #   routing:
+                #     enabled: true
+                #     gatewayRef:
+                #       group: gateway.networking.k8s.io
+                #       kind: Gateway
+                #       name: kserve-ingress-gateway
+                #       namespace: envoy-gateway-system
+                #     pathTemplate: "/{.metadata.namespace}/{.metadata.name}"
+                #     annotations: {}
+                #   model:
+                #     autoDiscovery: true
+                #   env: []
+                #   labelPropagation:
+                #     enabled: true
+                #     match:
+                #       - "aim.eai.amd.com/*"
+# -- Cluster-wide AIMClusterModelSource for automatic model discovery.
+# Creates an AIMClusterModelSource CR when enabled. The kubebuilder
+# helm/v2-alpha plugin always wraps the generated template in
+# `{{- if .Values.clusterModelSource.enable }}`, so this block must
+# exist even when the resource is not wanted -- otherwise `helm install`
+# fails with `nil pointer evaluating interface {}.enable`.
+clusterModelSource:
+  # -- Enable creation of the AIMClusterModelSource resource. Off by
+  # default so a fresh `helm install` succeeds without needing a
+  # registry pull secret in the operator namespace.
+  enable: false
+  # -- Name of the AIMClusterModelSource resource
+  name: default
+  # -- Spec fields for the AIMClusterModelSource.
+  # See [AIMClusterModelSource](../concepts/model-sources.md).
+  # @default -- `{}` (see examples below)
+  # spec:
+  #   registry: ghcr.io
+  #   syncInterval: 1h
+  #   maxModels: 10
+  #   imagePullSecrets:
+  #     - name: ghcr-regcred
+  #   images:
+  #     - "amdenterpriseai/aim-qwen-qwen3-32b:0.8.4"
+  spec: {}
+# -- Configure scale-from-zero triggers and the gateway-specific activation
+# collector.
+scaleFromZero:
+  # -- gRPC endpoint written to KEDA external metric triggers
+  scalerAddress: keda-otel-scaler.keda.svc:4318
+  # -- Seconds per GiB added to the default cooldown period
+  #
+  #   cooldownPeriod = clamp(300 + memGiB * cooldownSecondsPerGiMemory, 300, 1200)
+  #
+  # Per-service `spec.autoScaling.cooldownPeriod` always wins.
+  cooldownSecondsPerGiMemory: 5
+  # Note: the gateway-rate *activation* trigger's targetValue (a neutralizing
+  # 0->1 ceiling) and operationOverTime (`avg`) are compiled-in controller
+  # constants, not Helm values. Envoy Gateway supplies source-side deltas;
+  # kgateway currently uses the collector's cumulative-to-delta processor.
+
+  # -- Gateway implementation that supplies scale-from-zero activation
+  # metrics. Supported values are "none", "envoyGateway", "kgateway", and
+  # "custom". The default "none" installs no collector and makes
+  # minReplicas=0 invalid until a provider is selected. Known providers select
+  # both the controller's default metric contract and the collector rendered
+  # by Helm. "custom" requires external collector management and an
+  # activationMetricQueryTemplate on a service or its RuntimeConfig.
+  gatewayProvider: none
+  # -- OpenTelemetry collector that forwards gateway activation metrics to
+  # keda-otel-scaler. Envoy Gateway's EnvoyExtensionPolicy and source-side
+  # delta OTLP sink are managed separately on the platform-owned Gateway.
+  gatewayMetricsCollector:
+    # -- Collector ownership. Use "helm" to render the collector selected by
+    # gatewayProvider, or "external" when platform infrastructure manages it.
+    management: helm
+    # -- OTLP gRPC endpoint for keda-otel-add-on
+    otlpEndpoint: keda-otel-scaler.keda.svc:4317
+    # -- Metrics scrape interval used only by the kgateway collector. Envoy
+    # Gateway pushes source-side deltas over OTLP instead of being scraped.
+    scrapeInterval: 1s
+    # -- Number of collector replicas. Envoy Gateway can use multiple OTLP
+    # receivers for availability. Keep this at 1 for kgateway because its
+    # Prometheus receivers would scrape and export the same series repeatedly.
+    replicas: 1
+    kgateway:
+      # -- Value of the gateway.networking.k8s.io/gateway-name label on the
+      # kgateway proxy pods. Used only when gatewayProvider is "kgateway".
+      gatewayName: kserve-ingress-gateway
+    # -- Resource requests/limits for the collector pod
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+# -- AcceleratorDetector DaemonSets for hardware detection via NFD.
+# Detects GPU and CPU accelerators on cluster nodes and writes NFD feature
+# files so that AIM profiles can target specific hardware. Requires NFD
+# (Node Feature Discovery) to be installed on the cluster.
+#
+# GPU nodes additionally publish current partition state under
+# feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.* by reading
+# `amd-smi partition --current --json`. The GPU detector image must therefore
+# ship an amd-smi build that supports `partition --current --json`.
+#
+# Propagation floor: end-to-end latency from a partition flip to the label
+# changing is dominated by NFD's own scan interval, NOT detectInterval below.
+# For timely partition labels, lower NFD's local-source scan interval to match
+# (e.g. nfd-worker core.sleepInterval / -sleep-interval ~10s). NFD is an
+# external prerequisite of this chart and is configured in the NFD release.
+acceleratorDetector:
+  # -- Enable the AcceleratorDetector DaemonSets
+  enable: true
+  # -- Seconds between re-detection cycles. Lowered to 10s for low-latency
+  # partition-state labels; `amd-smi partition --current --json` is ~0.6s so
+  # 10s polling is essentially free. The effective floor is NFD's scan interval.
+  detectInterval: 10
+  # -- GPU node detection (uses aim-base image with ROCm/amdsmi).
+  # Detects AMD Instinct GPUs and writes NFD labels like
+  # feature.node.kubernetes.io/aim-accelerator.MI300X=8
+  # Only scheduled on nodes with feature.node.kubernetes.io/amd-gpu=true
+  # (set by the AMD GPU Operator NFD rule).
+  gpu:
+    # -- Enable GPU accelerator detection DaemonSet
+    enable: true
+    image:
+      # -- GPU detector image repository (aim-base)
+      repository: docker.io/amdenterpriseai/aim-base
+      # -- GPU detector image tag
+      tag: "0.12"
+      # -- Image pull policy
+      pullPolicy: IfNotPresent
+    # -- Secrets for pulling the GPU detector image from private registries
+    # @default -- `[]`
+    # imagePullSecrets:
+    #   - name: ghcr-pull-secret
+    imagePullSecrets: []
+    # -- Node selector to target GPU nodes (requires AMD GPU Operator NFD rule)
+    # @default -- `{feature.node.kubernetes.io/amd-gpu: "true"}`
+    nodeSelector:
+      feature.node.kubernetes.io/amd-gpu: "true"
+    # -- Tolerations for GPU nodes (defaults to tolerate all taints)
+    # @default -- `[{operator: Exists}]`
+    tolerations: []
+    # -- Resource limits and requests for GPU detector pods
+    resources:
+      limits:
+        memory: 512Mi
+      requests:
+        cpu: 50m
+        memory: 128Mi
+  # -- CPU node detection (uses aim-epyc-base image, lighter, no ROCm).
+  # Detects AMD EPYC CPUs and writes NFD labels like
+  # feature.node.kubernetes.io/aim-accelerator.EPYC_9965=128
+  # Only scheduled on nodes WITHOUT feature.node.kubernetes.io/amd-gpu label
+  # (i.e. CPU-only nodes).
+  cpu:
+    # -- Enable CPU accelerator detection DaemonSet
+    enable: true
+    image:
+      # -- CPU detector image repository (aim-epyc-base)
+      repository: docker.io/amdenterpriseai/aim-epyc-base
+      # -- CPU detector image tag
+      # NOTE: aim-epyc-base is only published up to 0.11; bump to 0.12 once it
+      # is released. The detector's runtime fallback (detect-and-label.py)
+      # already handles the 0.12 packaging change when that image lands.
+      tag: "0.11"
+      # -- Image pull policy
+      pullPolicy: IfNotPresent
+    # -- Secrets for pulling the CPU detector image from private registries
+    # @default -- `[]`
+    # imagePullSecrets:
+    #   - name: ghcr-pull-secret
+    imagePullSecrets: []
+    # -- Node selector for CPU-only nodes (no additional selector needed;
+    # the DaemonSet uses nodeAffinity DoesNotExist on the amd-gpu label)
+    # @default -- `{}`
+    nodeSelector: {}
+    # -- Tolerations for CPU detector pods (defaults to tolerate all taints)
+    # @default -- `[{operator: Exists}]`
+    tolerations: []
+    # -- Resource limits and requests for CPU detector pods
+    resources:
+      limits:
+        memory: 512Mi
+      requests:
+        cpu: 50m
+        memory: 128Mi
+  # -- NVIDIA GPU node detection. Uses a thin Python image; nvidia-smi and the
+  # driver libraries are injected at runtime by the nvidia-container-toolkit
+  # (NVIDIA_VISIBLE_DEVICES=all + NVIDIA_DRIVER_CAPABILITIES=utility under the
+  # nvidia runtime), so no CUDA/driver is baked into the image. Writes NFD labels
+  # like feature.node.kubernetes.io/aim-accelerator.H100=8 and
+  # feature.node.kubernetes.io/aim-accelerator.vendor.GPU.NVIDIA=8.
+  # Only scheduled on nodes labelled feature.node.kubernetes.io/pci-10de.present
+  # (set by the NVIDIA GPU Operator's NFD config). It won't deploy anywhere on a
+  # GPU-free or AMD-only cluster, so it is safe to leave enabled by default.
+  nvidia:
+    # -- Enable NVIDIA accelerator detection DaemonSet
+    enable: true
+    image:
+      # -- NVIDIA detector image repository (thin Python image)
+      repository: docker.io/library/python
+      # -- NVIDIA detector image tag
+      tag: "3-slim"
+      # -- Image pull policy
+      pullPolicy: IfNotPresent
+    # -- Secrets for pulling the NVIDIA detector image from private registries
+    # @default -- `[]`
+    # imagePullSecrets:
+    #   - name: ghcr-pull-secret
+    imagePullSecrets: []
+    # -- RuntimeClass that routes the pod through the nvidia-container-toolkit so
+    # nvidia-smi/libnvidia-ml are injected. The NVIDIA GPU Operator creates a
+    # RuntimeClass named "nvidia". Set to empty ("") to rely on the node default
+    # runtime instead.
+    runtimeClassName: nvidia
+    # -- Node selector to target NVIDIA GPU nodes. Default matches the NVIDIA GPU
+    # Operator's vendor-only PCI label; override for vanilla-NFD clusters that
+    # emit class+vendor keys (e.g. pci-0302_10de.present).
+    # @default -- `{feature.node.kubernetes.io/pci-10de.present: "true"}`
+    nodeSelector:
+      feature.node.kubernetes.io/pci-10de.present: "true"
+    # -- Tolerations for NVIDIA GPU nodes (defaults to tolerate all taints)
+    # @default -- `[{operator: Exists}]`
+    tolerations: []
+    # -- Resource limits and requests for NVIDIA detector pods
+    resources:
+      limits:
+        memory: 512Mi
+      requests:
+        cpu: 50m
+        memory: 128Mi
