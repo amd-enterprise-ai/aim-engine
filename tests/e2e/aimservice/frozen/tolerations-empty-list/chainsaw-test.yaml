@@ -1,0 +1,201 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: an empty tolerations list removes the inherited one (v1alpha2)
+#
+# A v1alpha2 AIMService first inherits the namespace runtime config's
+# tolerations on its InferenceService predictor. Setting spec.tolerations to []
+# on the service must then remove them. The unit tests cover the merge rule;
+# this test covers what they cannot: that an explicit [] survives admission,
+# storage and version conversion as an empty list rather than an unset one,
+# and that the toleration is removed from the existing InferenceService.
+#
+# Test type: Frozen dependency test
+# Frozen resources: AIMClusterProfile (Ready, CPU-only), AIMProfileCache and
+# AIMArtifact (Ready)
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: tolerations-empty-list
+  labels:
+    hf-access: live
+spec:
+  timeouts:
+    assert: 60s
+  steps:
+    - use:
+        template: ../../../_shared/hf-token-step.yaml
+
+    - name: Create the namespace runtime config with a toleration
+      try:
+        - apply:
+            file: runtime-config.yaml
+
+    - name: Create frozen CPU cluster profile with Ready status
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-profile.yaml --status-only
+
+    - name: Create the service without its own tolerations
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Freeze profile cache and artifact to Ready
+      # The profile carries a real hf:// source; freeze the cache and artifact
+      # so the InferenceService is planned without a download.
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+
+              for _ in $(seq 1 30); do
+                PC_NAME=$(kubectl get aimprofilecache -n "$NAMESPACE" \
+                  -l aim.eai.amd.com/service=test-tolerations-service \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                ART_NAME=$(kubectl get aimartifact -n "$NAMESPACE" \
+                  -l aim.eai.amd.com/profile.name=test-tolerations-profile \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                if [ -n "$PC_NAME" ] && [ -n "$ART_NAME" ]; then
+                  break
+                fi
+                sleep 1
+              done
+
+              if [ -z "$PC_NAME" ] || [ -z "$ART_NAME" ]; then
+                echo "ERROR: profile cache or artifact not found in time"
+                kubectl get aimprofilecache,aimartifact -n "$NAMESPACE" -o wide || true
+                exit 1
+              fi
+              echo "Found AIMProfileCache=$PC_NAME AIMArtifact=$ART_NAME"
+
+              ART_UID=$(kubectl get aimartifact "$ART_NAME" -n "$NAMESPACE" \
+                -o jsonpath='{.metadata.uid}')
+
+              kubectl annotate aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+              kubectl annotate aimartifact "$ART_NAME" -n "$NAMESPACE" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+
+              kubectl patch aimartifact "$ART_NAME" -n "$NAMESPACE" \
+                --type=merge --subresource=status \
+                -p '{
+                  "status": {
+                    "status": "Ready",
+                    "conditions": [
+                      {
+                        "type": "Ready",
+                        "status": "True",
+                        "reason": "Ready",
+                        "message": "Artifact frozen Ready by chainsaw test",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      }
+                    ],
+                    "persistentVolumeClaim": "'"$ART_NAME"'-pvc"
+                  }
+                }'
+
+              kubectl patch aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
+                --type=merge --subresource=status \
+                -p '{
+                  "status": {
+                    "status": "Ready",
+                    "conditions": [
+                      {
+                        "type": "ProfileFound",
+                        "status": "True",
+                        "reason": "ProfileResolved",
+                        "message": "Profile resolved",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      },
+                      {
+                        "type": "ArtifactsReady",
+                        "status": "True",
+                        "reason": "AllCachesReady",
+                        "message": "All artifacts are ready",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      },
+                      {
+                        "type": "Ready",
+                        "status": "True",
+                        "reason": "Ready",
+                        "message": "Profile cache frozen Ready by chainsaw test",
+                        "lastTransitionTime": "2025-01-01T00:00:00Z"
+                      }
+                    ],
+                    "artifacts": {
+                      "'"$ART_NAME"'": {
+                        "name": "'"$ART_NAME"'",
+                        "uid": "'"$ART_UID"'",
+                        "model": "Qwen/Qwen3-0.6B",
+                        "status": "Ready",
+                        "persistentVolumeClaim": "'"$ART_NAME"'-pvc",
+                        "mountPoint": "/workspace/cache/Qwen/Qwen3-0.6B"
+                      }
+                    }
+                  }
+                }'
+
+              echo "Patched $PC_NAME and $ART_NAME to Ready"
+
+    - name: Assert the InferenceService inherits the runtime config's toleration
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-tolerations-service
+              spec:
+                predictor:
+                  tolerations:
+                    - key: example.com/dedicated
+                      operator: Equal
+                      value: inference
+                      effect: NoSchedule
+
+    - name: Set an empty tolerations list on the service
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              # Target v1alpha2 explicitly; kubectl otherwise picks the first
+              # served version.
+              SVC_GV=aimservices.v1alpha2.aim.eai.amd.com
+              kubectl patch "$SVC_GV" test-tolerations-service -n "$NAMESPACE" \
+                --type=merge -p '{"spec":{"tolerations":[]}}'
+
+              # An empty list must be stored as [], not dropped to unset, in
+              # both served versions; unset would inherit the runtime config's.
+              for VERSION in v1alpha2 v1alpha1; do
+                STORED=$(kubectl get "aimservices.$VERSION.aim.eai.amd.com" test-tolerations-service \
+                  -n "$NAMESPACE" -o json | jq -c '.spec.tolerations')
+                if [ "$STORED" != "[]" ]; then
+                  echo "ERROR: $VERSION spec.tolerations is $STORED, want []"
+                  exit 1
+                fi
+              done
+              echo "OK: spec.tolerations is [] in v1alpha2 and v1alpha1"
+
+    - name: Assert the InferenceService no longer carries the inherited toleration
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: test-tolerations-service
+              spec:
+                predictor:
+                  (length(tolerations || `[]`)): 0
