@@ -172,6 +172,13 @@ spec:
                 - optimized
                 - any
                 type: string
+              baseImageRef:
+                description: |-
+                  BaseImageRef is the clean AIM runtime image to use when a derivation or
+                  service overlay replaces this deployable profile's modelSources. Image
+                  discovery populates it from AIM_BASE_IMAGE_REF.
+                minLength: 1
+                type: string
               containerEnv:
                 description: ContainerEnv specifies container-level env vars for the
                   AIM runtime process (K8s pod spec).
@@ -747,8 +754,9 @@ spec:
             properties:
               baseImage:
                 description: |-
-                  BaseImage is the AIM_BASE_IMAGE_REF the inspector extracted from the
-                  source image when this profile was materialised by AIMModel discovery.
+                  BaseImage is the canonical runtime lineage: spec.baseImageRef when set,
+                  otherwise the AIM_BASE_IMAGE_REF that AIMModel discovery extracted from
+                  the source image.
                 type: string
               conditions:
                 description: Conditions represent the latest observations of profile

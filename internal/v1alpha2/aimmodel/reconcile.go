@@ -57,11 +57,10 @@ const (
 	annotationModelNamespace = constants.AimLabelDomain + "/model-namespace"
 	// annotationBaseImage is the internal wire format the AIMModel reconciler
 	// uses to communicate the AIM_BASE_IMAGE_REF extracted from the source
-	// image to the AIMProfile reconciler. The AIMProfile reconciler launders
-	// this into AIMProfileStatus.BaseImage during status decoration; readers
-	// (AIMService overlay, AIMProfileSet) prefer the status value and only
-	// fall back to the annotation in the brief window before status is
-	// populated.
+	// image to the AIMProfile reconciler. The AIMProfile reconciler records
+	// this in AIMProfileStatus.BaseImage during status decoration; readers
+	// (AIMService overlay, AIMProfileSet) prefer the producer annotation so
+	// corrected lineage takes effect even while status is stale.
 	annotationBaseImage     = aimprofile.AnnotationBaseImage
 	ManagedModelUIDIndexKey = ".metadata.annotations." + annotationModelUID
 

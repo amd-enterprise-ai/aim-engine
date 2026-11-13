@@ -26,6 +26,10 @@ metadata:
     # Image-discovery profiles get it stamped automatically; hand-authored
     # seeds (this one) must opt in explicitly or they are silently skipped.
     aim.eai.amd.com/profile-copyable: "true"
+    # A real AIM base image records its own upstream FROM image. This value
+    # must not become the runtime of a later fine-tune after the custom-model
+    # derivation has established spec.image as the effective AIM runtime.
+    aim.eai.amd.com/base-image: docker.io/vllm/vllm-openai-rocm:v0.16.0
     # This seed stands in for discovery output, so it must carry the source
     # profile's persisted runtime-YAML contract just like a discovered profile.
     aim.eai.amd.com/profile-yaml-contract: '{"codec":"aim-profile/v1","metadataFields":["accelerator_count","accelerator_model","accelerator_type","engine","metric","precision","type"]}'

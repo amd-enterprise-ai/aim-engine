@@ -516,6 +516,7 @@ _Appears in:_
 | `scaleFromZero` _[AIMScaleFromZeroConfig](#aimscalefromzeroconfig)_ | ScaleFromZero configures the activation metric query for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for inference containers. When set on AIMService, these take highest precedence in the merge hierarchy. When set on RuntimeConfig, these provide namespace/cluster-level defaults. Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} |
 | `additionalCABundleRef` _[AdditionalCABundleReference](#additionalcabundlereference)_ | AdditionalCABundleRef selects PEM CA certificates that AIM Engine adds to its standard public trust roots for outbound TLS from inference, artifact-download, size-check, and adapter-staging containers. The ConfigMap is resolved in each workload namespace. When configured on an AIMClusterRuntimeConfig, each consuming namespace needs a ConfigMap with the same name and key to receive the additional trust. AIM Engine checks the reference directly during reconciliation and omits the projection when the ConfigMap or key is absent. Certificate parsing occurs only in a workload init container. CA changes are consumed when workloads are recreated; the ConfigMap is not watched for rotation. |  | Optional: \{\} |
+| `imageRegistry` _[AIMImageRegistryConfig](#aimimageregistryconfig)_ | ImageRegistry controls explicit image repository remapping. Image references remain unchanged when no mapping matches. |  | Optional: \{\} |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
 | `artifact` _[AIMArtifactConfig](#aimartifactconfig)_ | Artifact controls artifact-level defaults such as eviction policy. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
 | `artifactCache` _[ArtifactCacheConfig](#artifactcacheconfig)_ | DEPRECATED: The embedded Hugging Face-to-S3 artifact cache has been removed. This field is retained temporarily for API compatibility and is no longer honored by the controller. Use direct s3:// model sources with Artifact.S3 connection settings instead. |  | Optional: \{\} |
@@ -789,6 +790,41 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `gpu` _[AIMGpuRequirements](#aimgpurequirements)_ | GPU specifies GPU requirements. If not set, no GPUs are requested (CPU-only model). |  | Optional: \{\} |
 | `cpu` _[AIMCpuRequirements](#aimcpurequirements)_ | CPU specifies CPU requirements. |  | Optional: \{\} |
+
+
+#### AIMImageRegistryConfig
+
+
+
+AIMImageRegistryConfig controls explicit repository-prefix remapping for image references resolved by AIM Engine.
+
+
+
+_Appears in:_
+- [AIMClusterRuntimeConfigSpec](#aimclusterruntimeconfigspec)
+- [AIMRuntimeConfigCommon](#aimruntimeconfigcommon)
+- [AIMRuntimeConfigSpec](#aimruntimeconfigspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `mappings` _[AIMImageRegistryMapping](#aimimageregistrymapping) array_ | Mappings rewrite matching image repository prefixes. The longest matching From prefix wins. Namespace entries replace cluster entries with the same From value. Tags and digests are preserved exactly. |  | Optional: \{\} |
+
+
+#### AIMImageRegistryMapping
+
+
+
+AIMImageRegistryMapping rewrites one image repository prefix to another. Prefixes do not include a tag or digest.
+
+
+
+_Appears in:_
+- [AIMImageRegistryConfig](#aimimageregistryconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `from` _string_ | From is the source registry or repository prefix to match. |  | MaxLength: 512 <br />MinLength: 1 <br />Pattern: `^[^[:space:]@/:]+(?::[0-9]+)?(?:/[^[:space:]@/:]+)*$` |
+| `to` _string_ | To is the registry or repository prefix that replaces From. |  | MaxLength: 512 <br />MinLength: 1 <br />Pattern: `^[^[:space:]@/:]+(?::[0-9]+)?(?:/[^[:space:]@/:]+)*$` |
 
 
 #### AIMMetric
@@ -1125,6 +1161,7 @@ _Appears in:_
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#condition-v1-meta) array_ | Conditions represent the latest available observations of the model's state |  |  |
 | `resolvedRuntimeConfig` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedRuntimeConfig captures metadata about the runtime config that was resolved. |  | Optional: \{\} |
 | `imageMetadata` _[ImageMetadata](#imagemetadata)_ | ImageMetadata is the metadata extracted from an AIM image |  | Optional: \{\} |
+| `imageMetadataVersion` _integer_ | ImageMetadataVersion identifies the extraction contract used to populate ImageMetadata. Controllers use it to migrate cached metadata when new producer-owned fields are introduced without repeatedly inspecting images that legitimately omit those fields. |  | Optional: \{\} |
 | `sourceType` _[AIMModelSourceType](#aimmodelsourcetype)_ | SourceType indicates how this model's artifacts are sourced.<br />- "Image": Model discovered from container image labels<br />- "Custom": Model uses explicit spec.modelSources<br />Set by the controller based on whether spec.modelSources is populated. Note: only populated by the v1alpha1 controller; v1alpha2 consumers should read .status.kind instead, which distinguishes fine-tunes (Derived) from BYO base-image overlays (Custom). |  | Enum: [Image Custom] <br />Optional: \{\} |
 | `kind` _[AIMModelKind](#aimmodelkind)_ | Kind classifies the v1alpha2 onboarding flow that produced this model's profiles (Image / Generated / Derived / Custom). See AIMModelKind for the per-value semantics. Populated by the v1alpha2 controller from the spec shape; left empty by the v1alpha1 controller. |  | Enum: [Image Derived Custom Generated] <br />Optional: \{\} |
 | `profileGeneration` _[AIMModelProfileGenerationStatus](#aimmodelprofilegenerationstatus)_ | ProfileGeneration reports how a Generated model's profiles were resolved. Empty for every other kind. |  | Optional: \{\} |
@@ -1484,6 +1521,7 @@ _Appears in:_
 | `scaleFromZero` _[AIMScaleFromZeroConfig](#aimscalefromzeroconfig)_ | ScaleFromZero configures the activation metric query for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for inference containers. When set on AIMService, these take highest precedence in the merge hierarchy. When set on RuntimeConfig, these provide namespace/cluster-level defaults. Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} |
 | `additionalCABundleRef` _[AdditionalCABundleReference](#additionalcabundlereference)_ | AdditionalCABundleRef selects PEM CA certificates that AIM Engine adds to its standard public trust roots for outbound TLS from inference, artifact-download, size-check, and adapter-staging containers. The ConfigMap is resolved in each workload namespace. When configured on an AIMClusterRuntimeConfig, each consuming namespace needs a ConfigMap with the same name and key to receive the additional trust. AIM Engine checks the reference directly during reconciliation and omits the projection when the ConfigMap or key is absent. Certificate parsing occurs only in a workload init container. CA changes are consumed when workloads are recreated; the ConfigMap is not watched for rotation. |  | Optional: \{\} |
+| `imageRegistry` _[AIMImageRegistryConfig](#aimimageregistryconfig)_ | ImageRegistry controls explicit image repository remapping. Image references remain unchanged when no mapping matches. |  | Optional: \{\} |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
 | `artifact` _[AIMArtifactConfig](#aimartifactconfig)_ | Artifact controls artifact-level defaults such as eviction policy. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
 | `artifactCache` _[ArtifactCacheConfig](#artifactcacheconfig)_ | DEPRECATED: The embedded Hugging Face-to-S3 artifact cache has been removed. This field is retained temporarily for API compatibility and is no longer honored by the controller. Use direct s3:// model sources with Artifact.S3 connection settings instead. |  | Optional: \{\} |
@@ -1548,6 +1586,7 @@ _Appears in:_
 | `scaleFromZero` _[AIMScaleFromZeroConfig](#aimscalefromzeroconfig)_ | ScaleFromZero configures the activation metric query for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for inference containers. When set on AIMService, these take highest precedence in the merge hierarchy. When set on RuntimeConfig, these provide namespace/cluster-level defaults. Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} |
 | `additionalCABundleRef` _[AdditionalCABundleReference](#additionalcabundlereference)_ | AdditionalCABundleRef selects PEM CA certificates that AIM Engine adds to its standard public trust roots for outbound TLS from inference, artifact-download, size-check, and adapter-staging containers. The ConfigMap is resolved in each workload namespace. When configured on an AIMClusterRuntimeConfig, each consuming namespace needs a ConfigMap with the same name and key to receive the additional trust. AIM Engine checks the reference directly during reconciliation and omits the projection when the ConfigMap or key is absent. Certificate parsing occurs only in a workload init container. CA changes are consumed when workloads are recreated; the ConfigMap is not watched for rotation. |  | Optional: \{\} |
+| `imageRegistry` _[AIMImageRegistryConfig](#aimimageregistryconfig)_ | ImageRegistry controls explicit image repository remapping. Image references remain unchanged when no mapping matches. |  | Optional: \{\} |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
 | `artifact` _[AIMArtifactConfig](#aimartifactconfig)_ | Artifact controls artifact-level defaults such as eviction policy. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
 | `artifactCache` _[ArtifactCacheConfig](#artifactcacheconfig)_ | DEPRECATED: The embedded Hugging Face-to-S3 artifact cache has been removed. This field is retained temporarily for API compatibility and is no longer honored by the controller. Use direct s3:// model sources with Artifact.S3 connection settings instead. |  | Optional: \{\} |

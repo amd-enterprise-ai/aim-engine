@@ -25,6 +25,7 @@ package aimservice
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
@@ -39,6 +40,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
 )
 
@@ -363,6 +365,194 @@ func TestComposeState_OverridesMaterialiseOverlay(t *testing.T) {
 	}
 }
 
+func TestComposeState_WeightsReplacementAppliesRuntimeConfigImageMapping(t *testing.T) {
+	seedSpec := sampleProfileSpec()
+	seedSpec.Image = "ghcr.io/private-team/optimized:0.11"
+	seedSpec.ModelSources = []aimv1alpha1.AIMModelSource{
+		{ModelID: "base/model", SourceURI: "hf://base/model"},
+	}
+	seedProfile := &aimv1alpha2.AIMProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: testProfileA, Namespace: "ns",
+			Annotations: map[string]string{aimprofile.AnnotationBaseImage: "docker.io/amdenterpriseai/aim-base:0.11.2"},
+		},
+		Spec: aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *seedSpec},
+		Status: aimv1alpha2.AIMProfileStatus{
+			// The producer has corrected lineage, but profile status has
+			// not caught up. The overlay must use the new annotation now.
+			Status:    "Ready",
+			BaseImage: "docker.io/vllm/vllm-openai-rocm:v0.16.0",
+		},
+	}
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			ProfileOverrides: &aimv1alpha1.AIMServiceProfileOverrides{
+				ModelSources: []aimv1alpha1.AIMModelSource{
+					{ModelID: "user/weights", SourceURI: "s3://bucket/weights"},
+				},
+			},
+		},
+	}
+	fetch := ServiceFetchResult{
+		service: service,
+		profile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: seedProfile},
+		mergedRuntimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{
+			Value: &aimv1alpha1.AIMRuntimeConfigCommon{
+				ImageRegistry: &aimv1alpha1.AIMImageRegistryConfig{
+					Mappings: []aimv1alpha1.AIMImageRegistryMapping{
+						{
+							From: "docker.io/amdenterpriseai",
+							To:   "ghcr.io/private-team",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	obs := (&ProfileServiceReconciler{}).ComposeState(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{},
+		fetch,
+	)
+
+	if obs.configErr != nil {
+		t.Fatalf("ComposeState returned config error: %v", obs.configErr)
+	}
+	if obs.desiredOverlayProfile == nil {
+		t.Fatal("weights replacement must materialise an overlay")
+	}
+	if got, want := obs.desiredOverlayProfile.Spec.Image, "ghcr.io/private-team/aim-base:0.11.2"; got != want {
+		t.Fatalf("overlay image = %q, want mapped AIM_BASE_IMAGE_REF %q", got, want)
+	}
+	if got, want := obs.desiredOverlayProfile.Spec.BaseImageRef, "docker.io/amdenterpriseai/aim-base:0.11.2"; got != want {
+		t.Fatalf("overlay baseImageRef = %q, want canonical producer reference %q", got, want)
+	}
+	if got, want := obs.desiredOverlayProfile.Annotations[aimprofile.AnnotationBaseImage], "docker.io/amdenterpriseai/aim-base:0.11.2"; got != want {
+		t.Fatalf("overlay base-image annotation = %q, want canonical producer reference %q", got, want)
+	}
+}
+
+func TestComposeState_HandAuthoredBaseImageRefSupportsWeightReplacement(t *testing.T) {
+	seedSpec := sampleProfileSpec()
+	seedSpec.Image = "ghcr.io/private-team/optimized:0.11"
+	seedSpec.BaseImageRef = "ghcr.io/private-team/aim-base:0.11.2"
+	seedSpec.ModelSources = []aimv1alpha1.AIMModelSource{
+		{ModelID: "base/model", SourceURI: "hf://base/model"},
+	}
+	seedProfile := &aimv1alpha2.AIMProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: testProfileA, Namespace: "ns"},
+		Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *seedSpec},
+	}
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			ProfileOverrides: &aimv1alpha1.AIMServiceProfileOverrides{
+				ModelSources: []aimv1alpha1.AIMModelSource{
+					{ModelID: "user/weights", SourceURI: "s3://bucket/weights"},
+				},
+			},
+		},
+	}
+	fetch := ServiceFetchResult{
+		service: service,
+		profile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: seedProfile},
+	}
+
+	obs := (&ProfileServiceReconciler{}).ComposeState(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{},
+		fetch,
+	)
+
+	if obs.configErr != nil {
+		t.Fatalf("ComposeState returned config error: %v", obs.configErr)
+	}
+	if obs.desiredOverlayProfile == nil {
+		t.Fatal("hand-authored baseImageRef must allow the overlay to materialise")
+	}
+	if got, want := obs.desiredOverlayProfile.Spec.Image, seedSpec.BaseImageRef; got != want {
+		t.Fatalf("overlay image = %q, want declared baseImageRef %q", got, want)
+	}
+	if got, want := obs.desiredOverlayProfile.Spec.BaseImageRef, seedSpec.BaseImageRef; got != want {
+		t.Fatalf("overlay baseImageRef = %q, want %q", got, want)
+	}
+}
+
+func TestComposeState_WeightsReplacementWithoutBaseImageFailsGracefully(t *testing.T) {
+	seedSpec := sampleProfileSpec()
+	seedSpec.ModelSources = []aimv1alpha1.AIMModelSource{
+		{ModelID: "base/model", SourceURI: "hf://base/model"},
+	}
+	seedProfile := &aimv1alpha2.AIMProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: testProfileA, Namespace: "ns"},
+		Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *seedSpec},
+		Status:     aimv1alpha2.AIMProfileStatus{Status: "Ready"},
+	}
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
+			ProfileOverrides: &aimv1alpha1.AIMServiceProfileOverrides{
+				ModelSources: []aimv1alpha1.AIMModelSource{
+					{ModelID: "user/weights", SourceURI: "s3://bucket/weights"},
+				},
+			},
+		},
+	}
+	fetch := ServiceFetchResult{
+		service: service,
+		profile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: seedProfile},
+	}
+
+	reconciler := &ProfileServiceReconciler{}
+	obs := reconciler.ComposeState(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{},
+		fetch,
+	)
+
+	if obs.configErr == nil {
+		t.Fatal("ComposeState config error = nil, want controlled missing-base-image error")
+	}
+	if !strings.Contains(obs.configErr.Error(), "has no AIM_BASE_IMAGE_REF") {
+		t.Fatalf("ComposeState config error = %q, want missing AIM_BASE_IMAGE_REF", obs.configErr)
+	}
+	health := obs.getConfigHealth()
+	if len(health.Errors) != 1 {
+		t.Fatalf("config health errors = %v, want one actionable error", health.Errors)
+	}
+	categorized := controllerutils.CategorizeError(health.Errors[0])
+	if categorized.Reason() != aimprofile.ReasonBaseImageUnresolved {
+		t.Fatalf("config health reason = %q, want %q", categorized.Reason(), aimprofile.ReasonBaseImageUnresolved)
+	}
+	if categorized.Category() != controllerutils.ErrorCategoryMissingUpstreamDependency {
+		t.Fatalf("config health category = %s, want MissingReference", categorized.Category())
+	}
+	if health.State != constants.AIMStatusDegraded {
+		t.Fatalf("config health state = %q, want %q", health.State, constants.AIMStatusDegraded)
+	}
+	if obs.desiredOverlayProfile != nil {
+		t.Fatal("missing AIM_BASE_IMAGE_REF must not materialise an overlay")
+	}
+
+	plan := reconciler.PlanResources(
+		context.Background(),
+		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{},
+		obs,
+	)
+	if len(plan.GetToCreate()) != 0 ||
+		len(plan.GetToApply()) != 0 ||
+		len(plan.GetToApplyWithoutOwnerRef()) != 0 ||
+		len(plan.GetToApplyWithForce()) != 0 ||
+		len(plan.GetToDelete()) != 0 {
+		t.Fatal("missing AIM_BASE_IMAGE_REF must skip all resource mutations")
+	}
+}
+
 func TestComposeState_OverlayUsesFetchedStatusWhenPresent(t *testing.T) {
 	seedProfile := &aimv1alpha2.AIMProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: testProfileA, Namespace: "ns"},
@@ -379,7 +569,10 @@ func TestComposeState_OverlayUsesFetchedStatusWhenPresent(t *testing.T) {
 		},
 	}
 	seedObs := ServiceObservation{
-		ServiceFetchResult:    ServiceFetchResult{service: service},
+		ServiceFetchResult: ServiceFetchResult{
+			service: service,
+			profile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: seedProfile},
+		},
 		resolvedProfileSpec:   &seedProfile.Spec.AIMProfileSpecCommon,
 		resolvedProfileStatus: &seedProfile.Status,
 		profileName:           testProfileA,
@@ -419,7 +612,10 @@ func TestPlanResources_OverlayMustBeReadyBeforeCache(t *testing.T) {
 	seedProfile := &aimv1alpha2.AIMProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: testProfileA, Namespace: "ns"},
 		Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *seedSpec},
-		Status:     aimv1alpha2.AIMProfileStatus{Status: "Ready"},
+		Status: aimv1alpha2.AIMProfileStatus{
+			Status:    "Ready",
+			BaseImage: "docker.io/amdenterpriseai/aim-base:0.11",
+		},
 	}
 	service := &aimv1alpha1.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
@@ -467,7 +663,10 @@ func TestPlanResources_OverlayReadyPlansCacheForOverlayName(t *testing.T) {
 	seedProfile := &aimv1alpha2.AIMProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: testProfileA, Namespace: "ns"},
 		Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: *seedSpec},
-		Status:     aimv1alpha2.AIMProfileStatus{Status: "Ready"},
+		Status: aimv1alpha2.AIMProfileStatus{
+			Status:    "Ready",
+			BaseImage: "docker.io/amdenterpriseai/aim-base:0.11",
+		},
 	}
 	service := &aimv1alpha1.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
@@ -479,7 +678,10 @@ func TestPlanResources_OverlayReadyPlansCacheForOverlayName(t *testing.T) {
 		},
 	}
 	seedObs := ServiceObservation{
-		ServiceFetchResult:    ServiceFetchResult{service: service},
+		ServiceFetchResult: ServiceFetchResult{
+			service: service,
+			profile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: seedProfile},
+		},
 		resolvedProfileSpec:   &seedProfile.Spec.AIMProfileSpecCommon,
 		resolvedProfileStatus: &seedProfile.Status,
 		profileName:           testProfileA,

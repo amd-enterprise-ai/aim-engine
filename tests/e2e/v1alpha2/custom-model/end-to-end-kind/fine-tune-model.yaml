@@ -1,0 +1,17 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: byo-fine-tuned
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        aimId: acme/byo-transformer
+        modelId: acme/byo-transformer
+        role: deployable
+    versionPolicy: all
+    overrides:
+      modelId: acme/byo-transformer-fine-tuned
+      modelSources:
+        - modelId: acme/byo-transformer-fine-tuned
+          sourceUri: s3://models/byo-transformer-fine-tuned

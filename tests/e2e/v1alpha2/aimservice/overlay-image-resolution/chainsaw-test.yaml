@@ -9,9 +9,9 @@
 #     discard the model optimizations and silently downgrade the deployment to
 #     the lean aim-base runtime.
 #   - Weights replaced (spec.profileOverrides.modelSources): RESOLVE back to
-#     the seed's aim-base runtime (status.baseImage, normalised to MAJOR.MINOR
-#     and rebased onto the seed image's registry+org) so the new weights are
-#     loaded onto a clean runtime.
+#     the seed's aim-base runtime reference (status.baseImage), applying only
+#     the explicit RuntimeConfig repository-prefix mapping, so the new weights
+#     are loaded onto a clean runtime.
 #
 # Frozen + node-independent: the seed status is hand-patched and only
 # spec.image of the resulting overlay is asserted, so this runs in kind
@@ -33,6 +33,11 @@ spec:
   steps:
     - use:
         template: ../../../_shared/hf-token-step.yaml
+
+    - name: Configure the explicit runtime image mapping
+      try:
+        - apply:
+            file: runtime-config.yaml
 
     - name: Create the frozen deployable seed AIMClusterProfile (Ready, with baseImage)
       try:
@@ -63,12 +68,12 @@ spec:
                 image: registry.example.com/aim-opt-model:0.11
                 acceleratorPartitioningMode: CPX-NPS4
 
-    - name: Weights-replaced override resolves to aim-base (rebased onto seed registry+org)
+    - name: Weights-replaced override resolves to the explicitly mapped aim-base
       try:
         - apply:
             file: service-weights-replaced.yaml
-        # spec.image must RESOLVE to the seed's aim-base, rebased onto the seed
-        # image's registry+org, and the user's weights must have flowed onto
+        # spec.image must resolve from the seed's aim-base through the explicit
+        # RuntimeConfig mapping, and the user's weights must have flowed onto
         # the overlay's modelSources.
         - assert:
             resource:
