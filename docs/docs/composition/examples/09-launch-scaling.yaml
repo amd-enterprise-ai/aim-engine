@@ -1,0 +1,46 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: qwen-scaled
+  namespace: team-a
+spec:
+  model:
+    name: qwen3-32b
+  composition:
+    ref:
+      kind: AIMClusterProfileComposition
+      name: local-pd
+    decode:
+      scaling:
+        minReplicas: 1
+        maxReplicas: 3
+        metrics:
+          - type: PodMetric
+            podmetric:
+              metric:
+                backend: opentelemetry
+                metricNames:
+                  - vllm:num_requests_running
+                query: vllm:num_requests_running
+                operationOverTime: avg
+              target:
+                type: Value
+                value: "4"
+      launch:
+        containerEnv:
+          - name: DEPLOYMENT_PURPOSE
+            value: team-chat
+        engineArgs:
+          max-model-len: 8192
+      resources:
+        requests:
+          cpu: "8"
+          memory: 64Gi
+        limits:
+          cpu: "16"
+          memory: 128Gi
+  routing:
+    enabled: true
+    gatewayRef:
+      name: inference-gateway
+      namespace: gateways
