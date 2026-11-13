@@ -365,9 +365,9 @@ func TestComposeState_OverridesMaterialiseOverlay(t *testing.T) {
 	}
 }
 
-func TestComposeState_WeightsReplacementAppliesRuntimeConfigImageMapping(t *testing.T) {
+func TestComposeState_WeightsReplacementUsesRuntimeConfigBaseImageRegistry(t *testing.T) {
 	seedSpec := sampleProfileSpec()
-	seedSpec.Image = "ghcr.io/private-team/optimized:0.11"
+	seedSpec.Image = "registry.example.com/models/optimized:0.11"
 	seedSpec.ModelSources = []aimv1alpha1.AIMModelSource{
 		{ModelID: "base/model", SourceURI: "hf://base/model"},
 	}
@@ -400,14 +400,7 @@ func TestComposeState_WeightsReplacementAppliesRuntimeConfigImageMapping(t *test
 		profile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: seedProfile},
 		mergedRuntimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{
 			Value: &aimv1alpha1.AIMRuntimeConfigCommon{
-				ImageRegistry: &aimv1alpha1.AIMImageRegistryConfig{
-					Mappings: []aimv1alpha1.AIMImageRegistryMapping{
-						{
-							From: "docker.io/amdenterpriseai",
-							To:   "ghcr.io/private-team",
-						},
-					},
-				},
+				BaseImageRegistry: "registry.example.com/runtimes",
 			},
 		},
 	}
@@ -424,8 +417,8 @@ func TestComposeState_WeightsReplacementAppliesRuntimeConfigImageMapping(t *test
 	if obs.desiredOverlayProfile == nil {
 		t.Fatal("weights replacement must materialise an overlay")
 	}
-	if got, want := obs.desiredOverlayProfile.Spec.Image, "ghcr.io/private-team/aim-base:0.11.2"; got != want {
-		t.Fatalf("overlay image = %q, want mapped AIM_BASE_IMAGE_REF %q", got, want)
+	if got, want := obs.desiredOverlayProfile.Spec.Image, "registry.example.com/runtimes/aim-base:0.11.2"; got != want {
+		t.Fatalf("overlay image = %q, want AIM_BASE_IMAGE_REF from the configured registry %q", got, want)
 	}
 	if got, want := obs.desiredOverlayProfile.Spec.BaseImageRef, "docker.io/amdenterpriseai/aim-base:0.11.2"; got != want {
 		t.Fatalf("overlay baseImageRef = %q, want canonical producer reference %q", got, want)

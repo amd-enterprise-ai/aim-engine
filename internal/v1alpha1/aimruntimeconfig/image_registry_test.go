@@ -26,66 +26,57 @@ import (
 	"testing"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 )
 
-func TestImageRegistryMappings_CompatibilityFallback(t *testing.T) {
-	got, err := aimimage.ResolveReference(
-		"docker.io/silogenai/aim-base:2026.11.0",
-		ImageRegistryMappings(nil),
-	)
-	if err != nil {
-		t.Fatalf("resolve compatibility mapping: %v", err)
+func TestBaseImageRegistry(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		config *aimv1alpha1.AIMRuntimeConfigCommon
+		want   string
+	}{
+		{name: "no runtime config", want: ""},
+		{name: "unset", config: &aimv1alpha1.AIMRuntimeConfigCommon{}, want: ""},
+		{
+			name:   "set",
+			config: &aimv1alpha1.AIMRuntimeConfigCommon{BaseImageRegistry: "registry.example.com/amdenterpriseai"},
+			want:   "registry.example.com/amdenterpriseai",
+		},
 	}
-	if want := "docker.io/amdenterpriseai/aim-base:2026.11.0"; got != want {
-		t.Fatalf("resolved image = %q, want %q", got, want)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := BaseImageRegistry(tt.config); got != tt.want {
+				t.Fatalf("BaseImageRegistry() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
-func TestImageRegistryMappings_ConfiguredPolicyWinsFallback(t *testing.T) {
-	config := &aimv1alpha1.AIMRuntimeConfigCommon{
-		ImageRegistry: &aimv1alpha1.AIMImageRegistryConfig{
-			Mappings: []aimv1alpha1.AIMImageRegistryMapping{
-				{
-					From: "ghcr.io",
-					To:   "registry.internal/ghcr",
-				},
-			},
+func TestMergeRuntimeConfigs_BaseImageRegistryNamespacePrecedence(t *testing.T) {
+	t.Parallel()
+
+	cluster := &aimv1alpha1.AIMRuntimeConfigCommon{BaseImageRegistry: "registry.example.com/cluster"}
+	tests := []struct {
+		name      string
+		namespace *aimv1alpha1.AIMRuntimeConfigCommon
+		want      string
+	}{
+		{name: "namespace unset inherits the cluster's", namespace: &aimv1alpha1.AIMRuntimeConfigCommon{}, want: "registry.example.com/cluster"},
+		{
+			name:      "namespace value replaces the cluster's",
+			namespace: &aimv1alpha1.AIMRuntimeConfigCommon{BaseImageRegistry: "registry.example.com/team-a"},
+			want:      "registry.example.com/team-a",
 		},
 	}
-
-	got, err := aimimage.ResolveReference(
-		"ghcr.io/silogen/aim-base:0.13.1",
-		ImageRegistryMappings(config),
-	)
-	if err != nil {
-		t.Fatalf("resolve configured mapping: %v", err)
-	}
-	if want := "registry.internal/ghcr/silogen/aim-base:0.13.1"; got != want {
-		t.Fatalf("resolved image = %q, want %q", got, want)
-	}
-}
-
-func TestImageRegistryMappings_SelfMappingDisablesCompatibilityFallback(t *testing.T) {
-	config := &aimv1alpha1.AIMRuntimeConfigCommon{
-		ImageRegistry: &aimv1alpha1.AIMImageRegistryConfig{
-			Mappings: []aimv1alpha1.AIMImageRegistryMapping{
-				{
-					From: "docker.io/silogenai",
-					To:   "docker.io/silogenai",
-				},
-			},
-		},
-	}
-
-	got, err := aimimage.ResolveReference(
-		"docker.io/silogenai/aim-base:0.14.0-rc1",
-		ImageRegistryMappings(config),
-	)
-	if err != nil {
-		t.Fatalf("resolve configured self-mapping: %v", err)
-	}
-	if want := "docker.io/silogenai/aim-base:0.14.0-rc1"; got != want {
-		t.Fatalf("resolved image = %q, want %q", got, want)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			merged := mergeRuntimeConfigs(tt.namespace, cluster.DeepCopy())
+			if got := merged.BaseImageRegistry; got != tt.want {
+				t.Fatalf("merged BaseImageRegistry = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

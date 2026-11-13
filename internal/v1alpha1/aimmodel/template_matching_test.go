@@ -933,8 +933,8 @@ func TestBuildFineTunedServiceTemplates_DefersWhenCustomProfileWouldTripCEL(t *t
 // scenario that motivated moving image resolution onto each copy: a single
 // patched model.spec.image cannot honor heterogeneous owners.
 func TestBuildFineTunedClusterServiceTemplates_StampsAnnotationPerMatch(t *testing.T) {
-	mi300 := clusterOwner("qwen3-mi300", "ghcr.io/silogen/qwen3:0.11.0", "ghcr.io/silogen/aim-base:0.11")
-	epyc := clusterOwner("qwen3-epyc", "ghcr.io/silogen/qwen3-epyc:0.11.0", "ghcr.io/silogen/aim-epyc-base:0.11")
+	mi300 := clusterOwner("qwen3-mi300", "ghcr.io/amdenterpriseai/qwen3:0.11.0", "ghcr.io/amdenterpriseai/aim-base:0.11")
+	epyc := clusterOwner("qwen3-epyc", "ghcr.io/amdenterpriseai/qwen3-epyc:0.11.0", "ghcr.io/amdenterpriseai/aim-epyc-base:0.11")
 
 	model := &aimv1alpha1.AIMClusterModel{
 		ObjectMeta: metav1.ObjectMeta{Name: "ft-qwen"},
@@ -972,8 +972,8 @@ func TestBuildFineTunedClusterServiceTemplates_StampsAnnotationPerMatch(t *testi
 		gotImages[ref] = true
 	}
 	for _, want := range []string{
-		"docker.io/amdenterpriseai/aim-base:0.11",
-		"docker.io/amdenterpriseai/aim-epyc-base:0.11",
+		"ghcr.io/amdenterpriseai/aim-base:0.11",
+		"ghcr.io/amdenterpriseai/aim-epyc-base:0.11",
 	} {
 		if !gotImages[want] {
 			t.Errorf("expected at least one template stamped with %q, got %v", want, gotImages)
@@ -985,9 +985,9 @@ func TestBuildFineTunedClusterServiceTemplates_StampsAnnotationPerMatch(t *testi
 // applied), so a transiently-broken owner doesn't keep a stale, image-less
 // copy alive on the server.
 func TestBuildFineTunedClusterServiceTemplates_SkipsUnresolvableMatches(t *testing.T) {
-	resolvable := clusterOwner("qwen3-resolvable", "ghcr.io/silogen/qwen3:0.11.0", "ghcr.io/silogen/aim-base:0.11")
+	resolvable := clusterOwner("qwen3-resolvable", "ghcr.io/amdenterpriseai/qwen3:0.11.0", "ghcr.io/amdenterpriseai/aim-base:0.11")
 	// "deferred" has no baseImageRef, so the resolver defers without guessing.
-	deferred := clusterOwner("qwen3-deferred", "ghcr.io/silogen/qwen3:latest", "")
+	deferred := clusterOwner("qwen3-deferred", "ghcr.io/amdenterpriseai/qwen3:latest", "")
 
 	model := &aimv1alpha1.AIMClusterModel{
 		ObjectMeta: metav1.ObjectMeta{Name: "ft-qwen"},
@@ -1008,7 +1008,7 @@ func TestBuildFineTunedClusterServiceTemplates_SkipsUnresolvableMatches(t *testi
 	if len(templates) != 1 {
 		t.Fatalf("expected 1 template (deferred match skipped), got %d", len(templates))
 	}
-	if got := templates[0].Annotations[constants.AnnotationDeploymentImageRef]; got != "docker.io/amdenterpriseai/aim-base:0.11" {
+	if got := templates[0].Annotations[constants.AnnotationDeploymentImageRef]; got != "ghcr.io/amdenterpriseai/aim-base:0.11" {
 		t.Errorf("unexpected stamped image: %q", got)
 	}
 }

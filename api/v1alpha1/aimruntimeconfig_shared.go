@@ -342,34 +342,6 @@ type AdditionalCABundleReference struct {
 	Key string `json:"key"`
 }
 
-// AIMImageRegistryConfig controls explicit repository-prefix remapping for
-// image references resolved by AIM Engine.
-type AIMImageRegistryConfig struct {
-	// Mappings rewrite matching image repository prefixes. The longest matching
-	// From prefix wins. Namespace entries replace cluster entries with the same
-	// From value. Tags and digests are preserved exactly.
-	// +optional
-	// +listType=map
-	// +listMapKey=from
-	Mappings []AIMImageRegistryMapping `json:"mappings,omitempty"`
-}
-
-// AIMImageRegistryMapping rewrites one image repository prefix to another.
-// Prefixes do not include a tag or digest.
-type AIMImageRegistryMapping struct {
-	// From is the source registry or repository prefix to match.
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=512
-	// +kubebuilder:validation:Pattern=`^[^[:space:]@/:]+(?::[0-9]+)?(?:/[^[:space:]@/:]+)*$`
-	From string `json:"from"`
-
-	// To is the registry or repository prefix that replaces From.
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=512
-	// +kubebuilder:validation:Pattern=`^[^[:space:]@/:]+(?::[0-9]+)?(?:/[^[:space:]@/:]+)*$`
-	To string `json:"to"`
-}
-
 // AIMRuntimeConfigCommon captures configuration fields shared across cluster and namespace scopes.
 // These settings apply to both AIMRuntimeConfig (namespace-scoped) and AIMClusterRuntimeConfig (cluster-scoped).
 // It embeds AIMServiceRuntimeConfig which contains fields that can also be overridden at the service level.
@@ -391,10 +363,14 @@ type AIMRuntimeConfigCommon struct {
 	// +optional
 	AdditionalCABundleRef *AdditionalCABundleReference `json:"additionalCABundleRef,omitempty"`
 
-	// ImageRegistry controls explicit image repository remapping. Image
-	// references remain unchanged when no mapping matches.
+	// BaseImageRegistry is the registry and org that host aim-base, such as
+	// registry.example.com/amdenterpriseai. Models whose weights are replaced
+	// deploy aim-base from here. When unset, they use the model image's
+	// registry and org.
 	// +optional
-	ImageRegistry *AIMImageRegistryConfig `json:"imageRegistry,omitempty"`
+	// +kubebuilder:validation:MaxLength=512
+	// +kubebuilder:validation:Pattern=`^[^[:space:]@/:]+(?::[0-9]+)?(?:/[^[:space:]@/:]+)*$`
+	BaseImageRegistry string `json:"baseImageRegistry,omitempty"`
 
 	// Model controls model creation and discovery defaults.
 	// This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services.

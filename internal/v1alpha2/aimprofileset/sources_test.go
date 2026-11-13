@@ -251,9 +251,9 @@ func TestCatalogDerivationPreservesType(t *testing.T) {
 							}
 							var desired []desiredProfile
 							if namespace == "" {
-								desired, err = buildDesiredClusterProfiles(clusterSet, selected, nil)
+								desired, err = buildDesiredClusterProfiles(clusterSet, selected, "")
 							} else {
-								desired, err = buildDesiredNamespaceProfiles(set, selected, nil)
+								desired, err = buildDesiredNamespaceProfiles(set, selected, "")
 							}
 							if err != nil {
 								t.Fatal(err)
@@ -305,9 +305,9 @@ func TestCatalogNamingSurvivesOptedInDerivationChains(t *testing.T) {
 				}
 				var outputs []desiredProfile
 				if namespace == "" {
-					outputs, err = buildDesiredClusterProfiles(&aimv1alpha2.AIMClusterProfileSet{ObjectMeta: set.ObjectMeta, Spec: set.Spec}, []aimprofile.ProfileCopyCandidate{source}, nil)
+					outputs, err = buildDesiredClusterProfiles(&aimv1alpha2.AIMClusterProfileSet{ObjectMeta: set.ObjectMeta, Spec: set.Spec}, []aimprofile.ProfileCopyCandidate{source}, "")
 				} else {
-					outputs, err = buildDesiredNamespaceProfiles(set, []aimprofile.ProfileCopyCandidate{source}, nil)
+					outputs, err = buildDesiredNamespaceProfiles(set, []aimprofile.ProfileCopyCandidate{source}, "")
 				}
 				if err != nil || len(outputs) != 1 {
 					t.Fatalf("outputs=%d, %v", len(outputs), err)
@@ -340,11 +340,11 @@ func TestDistinctDefinitionsWithSameLegacyNameFailClosed(t *testing.T) {
 	duplicate := sources[0].ProfileCopyCandidate
 	duplicate.SourceID += "/distinct-definition"
 	candidates := []aimprofile.ProfileCopyCandidate{sources[0].ProfileCopyCandidate, duplicate}
-	if _, err := buildDesiredNamespaceProfiles(set, candidates, nil); err == nil {
+	if _, err := buildDesiredNamespaceProfiles(set, candidates, ""); err == nil {
 		t.Fatal("distinct definitions silently overwrote the same namespaced output")
 	}
 	cluster := &aimv1alpha2.AIMClusterProfileSet{ObjectMeta: metav1.ObjectMeta{Name: set.Name}, Spec: set.Spec}
-	if _, err := buildDesiredClusterProfiles(cluster, candidates, nil); err == nil {
+	if _, err := buildDesiredClusterProfiles(cluster, candidates, ""); err == nil {
 		t.Fatal("distinct definitions silently overwrote the same cluster output")
 	}
 }
@@ -673,9 +673,9 @@ func TestDefaultDefinitionsWithoutMaterialization(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			desired, err := buildDesiredNamespaceProfiles(set, selected, nil)
+			desired, err := buildDesiredNamespaceProfiles(set, selected, "")
 			if cluster {
-				desired, err = buildDesiredClusterProfiles(&aimv1alpha2.AIMClusterProfileSet{ObjectMeta: set.ObjectMeta, Spec: set.Spec}, selected, nil)
+				desired, err = buildDesiredClusterProfiles(&aimv1alpha2.AIMClusterProfileSet{ObjectMeta: set.ObjectMeta, Spec: set.Spec}, selected, "")
 			}
 			if err != nil || len(desired) != 2 {
 				t.Fatalf("outputs=%d err=%v", len(desired), err)
@@ -711,7 +711,7 @@ func TestDefinitionIdentityAndOptOutAcrossMaterialization(t *testing.T) {
 		t.Fatalf("before=%v err=%v", before, err)
 	}
 	selected, _ := resolveSelectedProfileSetCandidates(before, profileCopyRequest(set.Spec))
-	outputBefore, _ := buildDesiredNamespaceProfiles(set, selected, nil)
+	outputBefore, _ := buildDesiredNamespaceProfiles(set, selected, "")
 	name, _ := utils.GenerateDerivedName([]string{"model", "gpu"}, utils.WithHashSource("model", "gpu"))
 	live := &aimv1alpha2.AIMProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "team", Annotations: map[string]string{
@@ -728,7 +728,7 @@ func TestDefinitionIdentityAndOptOutAcrossMaterialization(t *testing.T) {
 		t.Fatalf("after=%v err=%v", after, err)
 	}
 	selected, _ = resolveSelectedProfileSetCandidates(after, profileCopyRequest(set.Spec))
-	outputAfter, _ := buildDesiredNamespaceProfiles(set, selected, nil)
+	outputAfter, _ := buildDesiredNamespaceProfiles(set, selected, "")
 	if !reflect.DeepEqual(outputBefore, outputAfter) {
 		t.Fatal("materialization changed derived name/spec/contract")
 	}
@@ -890,7 +890,7 @@ func TestPartialSourceFailureRetainsEntireSetWithoutWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	selected, _ := resolveSelectedProfileSetCandidates(candidates, profileCopyRequest(set.Spec))
-	outputs, _ := buildDesiredNamespaceProfiles(set, selected, nil)
+	outputs, _ := buildDesiredNamespaceProfiles(set, selected, "")
 	existing := make([]managedProfile, 0, len(outputs)+1)
 	for _, output := range outputs {
 		existing = append(existing, managedProfile{Object: output.Object})

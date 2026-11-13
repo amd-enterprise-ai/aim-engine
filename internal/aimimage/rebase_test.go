@@ -24,148 +24,124 @@ package aimimage
 
 import "testing"
 
-func TestResolveReference(t *testing.T) {
+func TestResolveBaseImage(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		ref      string
-		mappings []RegistryMapping
-		want     string
-		wantErr  bool
+		name        string
+		ref         string
+		sourceImage string
+		registry    string
+		want        string
 	}{
 		{
-			name: "no mappings preserves exact reference",
-			ref:  "docker.io/amdenterpriseai/aim-base:0.11.2",
-			want: "docker.io/amdenterpriseai/aim-base:0.11.2",
+			name:        "takes the registry and org from the source image",
+			ref:         "docker.io/silogenai/aim-base:0.13.1",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen-qwen3-32b:0.13.0",
+			want:        "docker.io/amdenterpriseai/aim-base:0.13.1",
 		},
 		{
-			name: "no match preserves exact reference",
-			ref:  "docker.io/amdenterpriseai/aim-base@sha256:abcd",
-			mappings: []RegistryMapping{
-				{From: "quay.io/amd", To: "registry.internal/quay"},
-			},
-			want: "docker.io/amdenterpriseai/aim-base@sha256:abcd",
+			name:        "follows a mirrored source image",
+			ref:         "docker.io/silogenai/aim-base:0.13.1",
+			sourceImage: "registry.example.com/mirror/aim-qwen-qwen3-32b:0.13.0",
+			want:        "registry.example.com/mirror/aim-base:0.13.1",
 		},
 		{
-			name: "repository prefix mapping preserves tag",
-			ref:  "docker.io/amdenterpriseai/aim-base:0.11.2",
-			mappings: []RegistryMapping{
-				{From: "docker.io/amdenterpriseai", To: "ghcr.io/private-team"},
-			},
-			want: "ghcr.io/private-team/aim-base:0.11.2",
+			name:        "configured registry wins over the source image",
+			ref:         "docker.io/silogenai/aim-base:0.13.1",
+			sourceImage: "registry.example.com/models/aim-qwen-qwen3-32b:0.13.0",
+			registry:    "registry.example.com/runtimes",
+			want:        "registry.example.com/runtimes/aim-base:0.13.1",
 		},
 		{
-			name: "repository prefix mapping preserves digest",
-			ref:  "docker.io/amdenterpriseai/runtime/aim-base@sha256:abcd",
-			mappings: []RegistryMapping{
-				{From: "docker.io/amdenterpriseai", To: "registry.internal/amd"},
-			},
-			want: "registry.internal/amd/runtime/aim-base@sha256:abcd",
+			name:        "registry with a port",
+			ref:         "docker.io/silogenai/aim-base:0.13.1",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen-qwen3-32b:0.13.0",
+			registry:    "registry.example:5000/amd",
+			want:        "registry.example:5000/amd/aim-base:0.13.1",
 		},
 		{
-			name: "longest matching prefix wins",
-			ref:  "docker.io/amdenterpriseai/aim-base:0.11",
-			mappings: []RegistryMapping{
-				{From: "docker.io", To: "registry.internal/docker"},
-				{From: "docker.io/amdenterpriseai", To: "registry.internal/aim"},
-			},
-			want: "registry.internal/aim/aim-base:0.11",
+			name:        "source image with a registry port",
+			ref:         "docker.io/silogenai/aim-base:0.13.1",
+			sourceImage: "registry.example:5000/amd/aim-qwen-qwen3-32b:0.13.0",
+			want:        "registry.example:5000/amd/aim-base:0.13.1",
 		},
 		{
-			name: "fallback applies when no configured mapping matches",
-			ref:  "ghcr.io/silogen/aim-base:0.11",
-			mappings: []RegistryMapping{
-				{
-					From:     "ghcr.io/silogen",
-					To:       "docker.io/amdenterpriseai",
-					Fallback: true,
-				},
-			},
-			want: "docker.io/amdenterpriseai/aim-base:0.11",
+			name:        "source image pinned by digest",
+			ref:         "docker.io/silogenai/aim-base:0.13.1",
+			sourceImage: "registry.example.com/mirror/aim-qwen-qwen3-32b@sha256:abcd",
+			want:        "registry.example.com/mirror/aim-base:0.13.1",
 		},
 		{
-			name: "configured broad mapping wins over specific fallback",
-			ref:  "ghcr.io/silogen/aim-base:0.11",
-			mappings: []RegistryMapping{
-				{From: "ghcr.io", To: "registry.internal/ghcr"},
-				{
-					From:     "ghcr.io/silogen",
-					To:       "docker.io/amdenterpriseai",
-					Fallback: true,
-				},
-			},
-			want: "registry.internal/ghcr/silogen/aim-base:0.11",
+			name:        "source image without a registry keeps the recorded prefix",
+			ref:         "docker.io/silogenai/aim-base:0.13.1",
+			sourceImage: "aim-qwen-qwen3-32b:0.13.0",
+			want:        "docker.io/silogenai/aim-base:0.13.1",
 		},
 		{
-			name: "longest matching fallback wins",
-			ref:  "ghcr.io/silogen/aim-base:0.11",
-			mappings: []RegistryMapping{
-				{From: "ghcr.io", To: "registry.fallback/ghcr", Fallback: true},
-				{
-					From:     "ghcr.io/silogen",
-					To:       "docker.io/amdenterpriseai",
-					Fallback: true,
-				},
-			},
-			want: "docker.io/amdenterpriseai/aim-base:0.11",
+			name: "no source image keeps the recorded prefix",
+			ref:  "docker.io/silogenai/aim-base:0.13.1",
+			want: "docker.io/silogenai/aim-base:0.13.1",
 		},
 		{
-			name: "segment boundary prevents partial prefix match",
-			ref:  "docker.io/amdenterpriseai-preview/aim-base:0.11",
-			mappings: []RegistryMapping{
-				{From: "docker.io/amdenterpriseai", To: "registry.internal/aim"},
-			},
-			want: "docker.io/amdenterpriseai-preview/aim-base:0.11",
+			name:        "recorded reference without a registry gets one",
+			ref:         "aim-base:0.13.1",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen-qwen3-32b:0.13.0",
+			want:        "docker.io/amdenterpriseai/aim-base:0.13.1",
 		},
 		{
-			name: "full repository mapping preserves tag",
-			ref:  "docker.io/amdenterpriseai/aim-base:0.11",
-			mappings: []RegistryMapping{
-				{From: "docker.io/amdenterpriseai/aim-base", To: "registry.internal/runtime/base"},
-			},
-			want: "registry.internal/runtime/base:0.11",
+			name:        "digest is kept exactly",
+			ref:         "docker.io/silogenai/aim-base@sha256:abcd",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen-qwen3-32b:0.13.0",
+			want:        "docker.io/amdenterpriseai/aim-base@sha256:abcd",
 		},
 		{
-			name: "registry port is supported",
-			ref:  "registry.example:5000/amd/aim-base:0.11",
-			mappings: []RegistryMapping{
-				{From: "registry.example:5000", To: "mirror.example:5443"},
-			},
-			want: "mirror.example:5443/amd/aim-base:0.11",
+			name:        "full release tag is kept exactly",
+			ref:         "docker.io/silogenai/aim-base:2026.11.0",
+			sourceImage: "docker.io/amdenterpriseai/aim-gemma4:2026.11.0",
+			want:        "docker.io/amdenterpriseai/aim-base:2026.11.0",
 		},
 		{
-			name: "mapping from tag is rejected",
-			ref:  "docker.io/amdenterpriseai/aim-base:0.11",
-			mappings: []RegistryMapping{
-				{From: "docker.io/amdenterpriseai:latest", To: "registry.internal/aim"},
-			},
-			wantErr: true,
+			name:        "pre-release tag rolls to MAJOR.MINOR",
+			ref:         "docker.io/silogenai/aim-base:2026.11.0-rc11",
+			sourceImage: "docker.io/amdenterpriseai/aim-gemma4:2026.11.0-rc1",
+			want:        "docker.io/amdenterpriseai/aim-base:2026.11",
 		},
 		{
-			name: "mapping to digest is rejected",
-			ref:  "docker.io/amdenterpriseai/aim-base:0.11",
-			mappings: []RegistryMapping{
-				{From: "docker.io/amdenterpriseai", To: "registry.internal/aim@sha256:abcd"},
-			},
-			wantErr: true,
+			name:        "multi-part pre-release tag rolls to MAJOR.MINOR",
+			ref:         "docker.io/silogenai/aim-base:2026.15.0-pr1656-rc2",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen3:2026.15.0-rc1",
+			want:        "docker.io/amdenterpriseai/aim-base:2026.15",
+		},
+		{
+			name:        "short pre-release tag rolls to MAJOR.MINOR",
+			ref:         "docker.io/silogenai/aim-base:0.11-rc21",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen3:0.11.0",
+			want:        "docker.io/amdenterpriseai/aim-base:0.11",
+		},
+		{
+			name:        "build metadata is kept exactly",
+			ref:         "docker.io/silogenai/aim-base:0.11.0+build.1",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen3:0.11.0",
+			want:        "docker.io/amdenterpriseai/aim-base:0.11.0+build.1",
+		},
+		{
+			name:        "non-version tag is kept exactly",
+			ref:         "docker.io/silogenai/aim-base:nightly-2026-05-27",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen3:0.11.0",
+			want:        "docker.io/amdenterpriseai/aim-base:nightly-2026-05-27",
+		},
+		{
+			name: "empty reference stays empty",
+			want: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ResolveReference(tt.ref, tt.mappings)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("ResolveReference() error = nil, want error")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("ResolveReference() unexpected error = %v", err)
-			}
-			if got != tt.want {
-				t.Fatalf("ResolveReference() = %q, want %q", got, tt.want)
+			t.Parallel()
+			if got := ResolveBaseImage(tt.ref, tt.sourceImage, tt.registry); got != tt.want {
+				t.Fatalf("ResolveBaseImage(%q, %q, %q) = %q, want %q", tt.ref, tt.sourceImage, tt.registry, got, tt.want)
 			}
 		})
 	}

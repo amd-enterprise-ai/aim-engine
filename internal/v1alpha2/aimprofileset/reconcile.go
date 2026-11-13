@@ -38,7 +38,6 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
-	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
@@ -212,7 +211,7 @@ func (r *ProfileSetReconciler) ComposeState(
 		obs.desiredProfiles, buildErr = buildDesiredNamespaceProfiles(
 			fetch.set,
 			selected,
-			aimruntimeconfig.ImageRegistryMappings(fetch.runtimeConfig.Value),
+			aimruntimeconfig.BaseImageRegistry(fetch.runtimeConfig.Value),
 		)
 		obs.buildErr = errors.Join(obs.buildErr, buildErr)
 	}
@@ -245,7 +244,7 @@ func (r *ClusterProfileSetReconciler) ComposeState(
 		obs.desiredProfiles, buildErr = buildDesiredClusterProfiles(
 			fetch.set,
 			selected,
-			aimruntimeconfig.ImageRegistryMappings(fetch.runtimeConfig.Value),
+			aimruntimeconfig.BaseImageRegistry(fetch.runtimeConfig.Value),
 		)
 		obs.buildErr = errors.Join(obs.buildErr, buildErr)
 	}
@@ -348,7 +347,7 @@ func (r *ClusterProfileSetReconciler) DecorateStatus(
 func buildDesiredNamespaceProfiles(
 	set *aimv1alpha2.AIMProfileSet,
 	candidates []aimprofile.ProfileCopyCandidate,
-	registryMappings []aimimage.RegistryMapping,
+	baseImageRegistry string,
 ) ([]desiredProfile, error) {
 	req := profileCopyRequest(set.Spec)
 	matched, err := aimprofile.FilterProfileCopyCandidates(candidates, req)
@@ -363,7 +362,7 @@ func buildDesiredNamespaceProfiles(
 			failures.add(source.SourceGroup, fmt.Errorf("generate derived profile name: %w", err))
 			continue
 		}
-		copiedSpec, err := aimprofile.ApplyProfileCopyOverrides(source.Spec, set.Spec.Overrides, set.Spec.Image, source.BaseImage, registryMappings)
+		copiedSpec, err := aimprofile.ApplyProfileCopyOverrides(source.Spec, set.Spec.Overrides, set.Spec.Image, source.BaseImage, baseImageRegistry)
 		if err != nil {
 			failures.add(source.SourceGroup, profileCopyError(err))
 			continue
@@ -406,7 +405,7 @@ func buildDesiredNamespaceProfiles(
 func buildDesiredClusterProfiles(
 	set *aimv1alpha2.AIMClusterProfileSet,
 	candidates []aimprofile.ProfileCopyCandidate,
-	registryMappings []aimimage.RegistryMapping,
+	baseImageRegistry string,
 ) ([]desiredProfile, error) {
 	req := profileCopyRequest(set.Spec)
 	matched, err := aimprofile.FilterProfileCopyCandidates(candidates, req)
@@ -421,7 +420,7 @@ func buildDesiredClusterProfiles(
 			failures.add(source.SourceGroup, fmt.Errorf("generate derived profile name: %w", err))
 			continue
 		}
-		copiedSpec, err := aimprofile.ApplyProfileCopyOverrides(source.Spec, set.Spec.Overrides, set.Spec.Image, source.BaseImage, registryMappings)
+		copiedSpec, err := aimprofile.ApplyProfileCopyOverrides(source.Spec, set.Spec.Overrides, set.Spec.Image, source.BaseImage, baseImageRegistry)
 		if err != nil {
 			failures.add(source.SourceGroup, profileCopyError(err))
 			continue

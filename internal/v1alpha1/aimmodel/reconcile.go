@@ -41,7 +41,7 @@ import (
 type ClusterModelReconciler struct {
 	// Client is needed in PlanResources to resolve fine-tuned template
 	// deployment images per-match (each copy needs its source owner's
-	// baseImageRef, with explicit RuntimeConfig mappings applied; matches may
+	// baseImageRef, resolved against the RuntimeConfig's baseImageRegistry; matches may
 	// span owners, so we GET them on demand with an in-memory cache).
 	Client    client.Client
 	Clientset kubernetes.Interface

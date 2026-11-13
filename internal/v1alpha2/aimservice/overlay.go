@@ -142,13 +142,12 @@ func buildServiceOverlayProfile(
 	overrides := asProfileOverrides(service.Spec.ProfileOverrides)
 
 	// Pull baseImage from the seed profile's typed spec, producer annotation,
-	// or legacy status. aimprofile uses it exactly, subject only to explicit
-	// mappings from the service's merged RuntimeConfig, when this overlay
-	// replaces the weights
-	// (spec.profileOverrides.modelSources). A partitioning-only or env-only
-	// overlay leaves the weights untouched, so it keeps the optimized seed
-	// image. If a deployable seed has no base image, resolution fails
-	// cleanly rather than guessing from the source image.
+	// or legacy status. aimprofile deploys it from the service's merged
+	// RuntimeConfig baseImageRegistry, or from the seed image's registry, when
+	// this overlay replaces the weights (spec.profileOverrides.modelSources).
+	// A partitioning-only or env-only overlay leaves the weights untouched, so
+	// it keeps the optimized seed image. If a deployable seed has no base
+	// image, resolution fails cleanly rather than guessing a tag.
 	seedBaseImage := seedBaseImageFromObservation(obs)
 
 	overlaySpec, err := aimprofile.ApplyProfileCopyOverrides(
@@ -156,7 +155,7 @@ func buildServiceOverlayProfile(
 		overrides,
 		"", // no image override at the service level today
 		seedBaseImage,
-		aimruntimeconfig.ImageRegistryMappings(obs.mergedRuntimeConfig.Value),
+		aimruntimeconfig.BaseImageRegistry(obs.mergedRuntimeConfig.Value),
 	)
 	if err != nil {
 		return nil, aimv1alpha2.AIMProfileSpecCommon{}, err

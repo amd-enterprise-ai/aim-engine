@@ -39,9 +39,9 @@
 //     version filter, so by definition all matches share it).
 //  2. Otherwise (latest/any, or pinned with empty image): fetch the source
 //     owner identified by match.Spec.ModelName + match.OwnerNamespace, take
-//     status.imageMetadata.baseImageRef, and apply explicit RuntimeConfig
-//     repository mappings. The producer-owned reference is otherwise used
-//     exactly.
+//     status.imageMetadata.baseImageRef, and deploy it from the RuntimeConfig's
+//     baseImageRegistry, or from the owner image's registry and org when that
+//     is unset (see aimimage.ResolveBaseImage).
 //
 // When resolution defers (owner not found or AIM_BASE_IMAGE_REF absent), the
 // caller skips Apply for that copy. A subsequent reconcile triggered by the
@@ -63,10 +63,10 @@ import (
 // It fetches each source owner at most once per reconcile via an in-memory
 // cache so multiple matches sharing one owner don't trigger redundant GETs.
 type imageResolver struct {
-	c                client.Client
-	modelSpec        *aimv1alpha1.AIMModelSpec
-	registryMappings []aimimage.RegistryMapping
-	cache            map[ownerKey]ownerInfo
+	c                 client.Client
+	modelSpec         *aimv1alpha1.AIMModelSpec
+	baseImageRegistry string
+	cache             map[ownerKey]ownerInfo
 }
 
 type ownerKey struct {
@@ -74,21 +74,24 @@ type ownerKey struct {
 }
 
 type ownerInfo struct {
+	specImage    string
 	baseImageRef string
 	found        bool
 }
 
 // newImageResolver constructs a resolver for the given fine-tuned model spec.
+// baseImageRegistry is the selected RuntimeConfig's aim-base registry, or ""
+// to deploy aim-base from the source owner's image registry.
 func newImageResolver(
 	c client.Client,
 	modelSpec *aimv1alpha1.AIMModelSpec,
-	registryMappings []aimimage.RegistryMapping,
+	baseImageRegistry string,
 ) *imageResolver {
 	return &imageResolver{
-		c:                c,
-		modelSpec:        modelSpec,
-		registryMappings: registryMappings,
-		cache:            map[ownerKey]ownerInfo{},
+		c:                 c,
+		modelSpec:         modelSpec,
+		baseImageRegistry: baseImageRegistry,
+		cache:             map[ownerKey]ownerInfo{},
 	}
 }
 
@@ -118,12 +121,7 @@ func (r *imageResolver) Resolve(ctx context.Context, match TemplateMatchResult) 
 			match.OwnerNamespace, match.Spec.ModelName)
 	}
 
-	resolved, err := aimimage.ResolveReference(baseRef, r.registryMappings)
-	if err != nil {
-		return "", fmt.Errorf("resolve base image for source owner %s/%s: %w",
-			match.OwnerNamespace, match.Spec.ModelName, err)
-	}
-	return resolved, nil
+	return aimimage.ResolveBaseImage(baseRef, owner.specImage, r.baseImageRegistry), nil
 }
 
 func (r *imageResolver) lookupOwner(ctx context.Context, namespace, name string) (ownerInfo, error) {
@@ -146,6 +144,7 @@ func (r *imageResolver) lookupOwner(ctx context.Context, namespace, name string)
 			return ownerInfo{}, fmt.Errorf("get AIMClusterModel %s: %w", name, err)
 		}
 		info = ownerInfo{
+			specImage:    owner.Spec.Image,
 			baseImageRef: owner.Spec.GetBaseImageRef(&owner.Status),
 			found:        true,
 		}
@@ -159,6 +158,7 @@ func (r *imageResolver) lookupOwner(ctx context.Context, namespace, name string)
 			return ownerInfo{}, fmt.Errorf("get AIMModel %s/%s: %w", namespace, name, err)
 		}
 		info = ownerInfo{
+			specImage:    owner.Spec.Image,
 			baseImageRef: owner.Spec.GetBaseImageRef(&owner.Status),
 			found:        true,
 		}

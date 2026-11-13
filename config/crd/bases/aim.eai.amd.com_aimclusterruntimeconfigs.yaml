@@ -429,6 +429,15 @@ spec:
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
                 type: object
+              baseImageRegistry:
+                description: |-
+                  BaseImageRegistry is the registry and org that host aim-base, such as
+                  registry.example.com/amdenterpriseai. Models whose weights are replaced
+                  deploy aim-base from here. When unset, they use the model image's
+                  registry and org.
+                maxLength: 512
+                pattern: ^[^[:space:]@/:]+(?::[0-9]+)?(?:/[^[:space:]@/:]+)*$
+                type: string
               defaultStorageClassName:
                 description: |-
                   DEPRECATED: Use Storage.DefaultStorageClassName instead. This field will be removed in a future version.
@@ -587,44 +596,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
-              imageRegistry:
-                description: |-
-                  ImageRegistry controls explicit image repository remapping. Image
-                  references remain unchanged when no mapping matches.
-                properties:
-                  mappings:
-                    description: |-
-                      Mappings rewrite matching image repository prefixes. The longest matching
-                      From prefix wins. Namespace entries replace cluster entries with the same
-                      From value. Tags and digests are preserved exactly.
-                    items:
-                      description: |-
-                        AIMImageRegistryMapping rewrites one image repository prefix to another.
-                        Prefixes do not include a tag or digest.
-                      properties:
-                        from:
-                          description: From is the source registry or repository prefix
-                            to match.
-                          maxLength: 512
-                          minLength: 1
-                          pattern: ^[^[:space:]@/:]+(?::[0-9]+)?(?:/[^[:space:]@/:]+)*$
-                          type: string
-                        to:
-                          description: To is the registry or repository prefix that
-                            replaces From.
-                          maxLength: 512
-                          minLength: 1
-                          pattern: ^[^[:space:]@/:]+(?::[0-9]+)?(?:/[^[:space:]@/:]+)*$
-                          type: string
-                      required:
-                      - from
-                      - to
-                      type: object
-                    type: array
-                    x-kubernetes-list-map-keys:
-                    - from
-                    x-kubernetes-list-type: map
-                type: object
               labelPropagation:
                 description: |-
                   LabelPropagation controls how labels from parent AIM resources are propagated to child resources.

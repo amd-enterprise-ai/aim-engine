@@ -253,7 +253,7 @@ func BuildFineTunedServiceTemplates(
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) []*aimv1alpha1.AIMServiceTemplate {
 	logger := log.FromContext(ctx)
-	resolver := newImageResolver(c, &model.Spec, aimruntimeconfig.ImageRegistryMappings(runtimeConfig))
+	resolver := newImageResolver(c, &model.Spec, aimruntimeconfig.BaseImageRegistry(runtimeConfig))
 	templates := make([]*aimv1alpha1.AIMServiceTemplate, 0, len(matches))
 	for _, m := range matches {
 		image, err := resolver.Resolve(ctx, m)
@@ -294,7 +294,7 @@ func BuildFineTunedClusterServiceTemplates(
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) []*aimv1alpha1.AIMClusterServiceTemplate {
 	logger := log.FromContext(ctx)
-	resolver := newImageResolver(c, &model.Spec, aimruntimeconfig.ImageRegistryMappings(runtimeConfig))
+	resolver := newImageResolver(c, &model.Spec, aimruntimeconfig.BaseImageRegistry(runtimeConfig))
 	templates := make([]*aimv1alpha1.AIMClusterServiceTemplate, 0, len(matches))
 	for _, m := range matches {
 		image, err := resolver.Resolve(ctx, m)

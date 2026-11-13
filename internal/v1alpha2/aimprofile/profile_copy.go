@@ -314,7 +314,7 @@ func ApplyProfileCopyOverrides(
 	overrides *aimv1alpha1.ProfileOverrides,
 	imageOverride string,
 	sourceBaseImage string,
-	registryMappings []aimimage.RegistryMapping,
+	baseImageRegistry string,
 ) (aimv1alpha2.AIMProfileSpecCommon, error) {
 	result := *source.DeepCopy()
 	resolvedImageOverride := imageOverride
@@ -344,7 +344,7 @@ func ApplyProfileCopyOverrides(
 		source.Image,
 		IsProfileDeployable(source),
 		weightsChanged,
-		registryMappings,
+		baseImageRegistry,
 	)
 	if err != nil {
 		return aimv1alpha2.AIMProfileSpecCommon{}, err
@@ -525,12 +525,13 @@ func MergeEngineArgs(base, overrides *apiextensionsv1.JSON) (*apiextensionsv1.JS
 //     base runtime. Resolving to the base image here would discard the model
 //     optimizations and silently downgrade the deployment.
 //  4. sourceBaseImage (the AIM_BASE_IMAGE_REF the inspector extracted from
-//     the source image) is used exactly unless an explicit RuntimeConfig
-//     repository-prefix mapping applies. The reference's tag or digest is
-//     preserved exactly: the image producer owns the mapping between a model
-//     image and its deployable base runtime. This is the fine-tuned flow:
-//     source is a model-optimized image, the derivation REPLACES its weights
-//     via overrides.modelSources, and we resolve back to the matching aim-base
+//     the source image) is deployed from baseImageRegistry, or from
+//     sourceImage's registry and org when that is unset, so a mirror of the
+//     model images also covers aim-base. Its tag is kept, except that a
+//     pre-release tag becomes the published MAJOR.MINOR rolling tag (see
+//     aimimage.ResolveBaseImage). This is the fine-tuned flow: source is a
+//     model-optimized image, the derivation REPLACES its weights via
+//     overrides.modelSources, and we resolve back to the matching aim-base
 //     runtime.
 //  5. If AIM_BASE_IMAGE_REF is absent, return a controlled error rather than
 //     deriving a runtime from the source image's tag or registry.
@@ -542,7 +543,7 @@ func MergeEngineArgs(base, overrides *apiextensionsv1.JSON) (*apiextensionsv1.JS
 func ResolveDerivedProfileImage(
 	imageOverride, sourceBaseImage, sourceImage string,
 	sourceIsDeployable, weightsChanged bool,
-	registryMappings []aimimage.RegistryMapping,
+	baseImageRegistry string,
 ) (string, error) {
 	if imageOverride != "" {
 		return imageOverride, nil
@@ -554,11 +555,7 @@ func ResolveDerivedProfileImage(
 		return sourceImage, nil
 	}
 	if sourceBaseImage != "" {
-		resolved, err := aimimage.ResolveReference(sourceBaseImage, registryMappings)
-		if err != nil {
-			return "", fmt.Errorf("resolve AIM_BASE_IMAGE_REF %q: %w", sourceBaseImage, err)
-		}
-		return resolved, nil
+		return aimimage.ResolveBaseImage(sourceBaseImage, sourceImage, baseImageRegistry), nil
 	}
 	return "", &BaseImageUnresolvedError{SourceImage: sourceImage}
 }
@@ -567,9 +564,10 @@ func ResolveDerivedProfileImage(
 // weight-replacing derivation should use.
 //
 // For a deployable source, a weight-replacing derivation keeps the producer's
-// canonical sourceBaseImage as lineage even when RuntimeConfig maps the
-// deployment image. This lets each downstream owner apply its own mapping and
-// avoids mapping an already-mapped reference. For a base-role source, the
+// canonical sourceBaseImage as lineage even though the deployment image may
+// come from another registry or a rolling tag. This lets each downstream owner
+// resolve it against its own registry and avoids resolving an already-resolved
+// reference. For a base-role source, the
 // source image itself becomes the reusable lineage; carrying that image's own
 // AIM_BASE_IMAGE_REF would descend one layer too far on the next copy (for
 // example from aim-base to its upstream vLLM FROM image). An explicit image

@@ -27,105 +27,80 @@
 package aimimage
 
 import (
-	"fmt"
+	"regexp"
 	"strings"
-	"unicode"
 )
 
-// RegistryMapping rewrites one image repository prefix to another.
-type RegistryMapping struct {
-	From     string
-	To       string
-	Fallback bool
-}
+// preReleaseTagRegex matches version tags with a pre-release suffix, such as
+// `2026.11.0-rc11`, `0.11-rc21`, or `2026.15.0-pr1656-rc2`, and captures
+// MAJOR and MINOR. Build metadata (`0.11.0+build.1`) is not a pre-release.
+var preReleaseTagRegex = regexp.MustCompile(`^v?(\d+)\.(\d+)(?:\.\d+)?-[0-9A-Za-z.-]+$`)
 
-// ResolveReference applies the longest matching repository-prefix mapping to
-// ref while preserving its repository suffix, tag, and digest exactly.
-// Configured mappings take precedence over fallback mappings even when the
-// fallback has a longer prefix. When no mapping matches, ref is returned
-// unchanged.
-func ResolveReference(ref string, mappings []RegistryMapping) (string, error) {
-	if ref == "" || len(mappings) == 0 {
-		return ref, nil
+// ResolveBaseImage returns the image a weight-replacing derivation deploys
+// for the recorded aim-base reference baseImageRef.
+//
+// The image name, tag, and digest come from baseImageRef. The registry and
+// org come from registry when it is set, and otherwise from sourceImage, the
+// model image the derivation starts from, so a mirror that hosts both the
+// model images and aim-base needs no configuration. A pre-release tag is
+// replaced by its MAJOR.MINOR rolling tag, because pre-release aim-base tags
+// recorded by model builds are not published; release tags and digests are
+// kept exactly.
+//
+// Examples:
+//
+//	ResolveBaseImage("docker.io/silogenai/aim-base:0.13.1",
+//	                 "registry.example.com/mirror/aim-qwen3:0.13.0", "")
+//	  → "registry.example.com/mirror/aim-base:0.13.1"
+//	ResolveBaseImage("docker.io/silogenai/aim-base:2026.11.0-rc11",
+//	                 "docker.io/amdenterpriseai/aim-gemma4:2026.11.0-rc1",
+//	                 "registry.example.com/aim")
+//	  → "registry.example.com/aim/aim-base:2026.11"
+func ResolveBaseImage(baseImageRef, sourceImage, registry string) string {
+	if baseImageRef == "" {
+		return ""
 	}
-
-	repository, suffix := splitReference(ref)
-	type match struct {
-		length int
-		from   string
-		to     string
-	}
-	configured := match{length: -1}
-	fallback := match{length: -1}
-	for i, mapping := range mappings {
-		if err := validateRepositoryPrefix(mapping.From); err != nil {
-			return "", fmt.Errorf("image registry mapping %d from %q: %w", i, mapping.From, err)
-		}
-		if err := validateRepositoryPrefix(mapping.To); err != nil {
-			return "", fmt.Errorf("image registry mapping %d to %q: %w", i, mapping.To, err)
-		}
-		if repository != mapping.From && !strings.HasPrefix(repository, mapping.From+"/") {
-			continue
-		}
-		best := &configured
-		if mapping.Fallback {
-			best = &fallback
-		}
-		if len(mapping.From) > best.length {
-			best.length = len(mapping.From)
-			best.from = mapping.From
-			best.to = mapping.To
-		}
-	}
-	best := configured
-	if best.length < 0 {
-		best = fallback
-	}
-	if best.length < 0 {
-		return ref, nil
-	}
-	return best.to + strings.TrimPrefix(repository, best.from) + suffix, nil
-}
-
-// splitReference separates the repository name from an optional tag/digest
-// suffix without normalizing the caller's reference.
-func splitReference(ref string) (string, string) {
-	end := len(ref)
-	if digest := strings.IndexByte(ref, '@'); digest >= 0 {
-		end = digest
-	}
-	if tag := strings.LastIndex(ref[:end], ":"); tag > strings.LastIndex(ref[:end], "/") {
-		end = tag
-	}
-	return ref[:end], ref[end:]
-}
-
-func validateRepositoryPrefix(prefix string) error {
+	ref := rollPreReleaseTag(baseImageRef)
+	prefix := registry
 	if prefix == "" {
-		return fmt.Errorf("prefix is empty")
+		prefix = repositoryPrefix(sourceImage)
 	}
-	if prefix != strings.TrimSpace(prefix) {
-		return fmt.Errorf("prefix has leading or trailing whitespace")
+	if prefix == "" {
+		return ref
 	}
-	if strings.ContainsAny(prefix, "@ \t\r\n") {
-		return fmt.Errorf("prefix contains a digest or whitespace")
-	}
-	if strings.HasPrefix(prefix, "/") || strings.HasSuffix(prefix, "/") || strings.Contains(prefix, "//") {
-		return fmt.Errorf("prefix has an invalid repository path")
-	}
+	return prefix + "/" + ref[strings.LastIndex(ref, "/")+1:]
+}
 
-	lastSlash := strings.LastIndex(prefix, "/")
-	lastColon := strings.LastIndex(prefix, ":")
-	if lastColon > lastSlash {
-		// A colon before a slash is a registry port. For a host-only mapping,
-		// accept a numeric suffix as a port as well.
-		hostOnlyPort := lastSlash < 0 && lastColon > 0 &&
-			strings.IndexFunc(prefix[lastColon+1:], func(r rune) bool { return !unicode.IsDigit(r) }) == -1
-		if !hostOnlyPort {
-			return fmt.Errorf("prefix must not include a tag")
-		}
+// repositoryPrefix returns the registry and org of imageRef, everything
+// before the last path segment, or "" when imageRef has no path.
+func repositoryPrefix(imageRef string) string {
+	name := imageRef
+	if at := strings.IndexByte(name, '@'); at >= 0 {
+		name = name[:at]
 	}
-	return nil
+	slash := strings.LastIndex(name, "/")
+	if slash <= 0 {
+		return ""
+	}
+	return name[:slash]
+}
+
+// rollPreReleaseTag replaces a pre-release tag on imageRef with its
+// MAJOR.MINOR rolling tag. Digest references and other tags are returned
+// unchanged.
+func rollPreReleaseTag(imageRef string) string {
+	if strings.Contains(imageRef, "@") {
+		return imageRef
+	}
+	colon := tagColonIndex(imageRef)
+	if colon < 0 {
+		return imageRef
+	}
+	m := preReleaseTagRegex.FindStringSubmatch(imageRef[colon+1:])
+	if m == nil {
+		return imageRef
+	}
+	return imageRef[:colon] + ":" + m[1] + "." + m[2]
 }
 
 // ExtractTag returns the tag substring of imageRef, or "" when imageRef

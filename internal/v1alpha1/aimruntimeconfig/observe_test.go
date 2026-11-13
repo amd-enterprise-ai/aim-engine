@@ -26,7 +26,6 @@ package aimruntimeconfig
 
 import (
 	"context"
-	"reflect"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,7 +35,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 )
 
 func newFakeClient(objs ...client.Object) client.Client {
@@ -170,19 +168,15 @@ func TestFetchRuntimeConfig_MergeNamespaceOverridesCluster(t *testing.T) {
 	}
 }
 
-func TestFetchRuntimeConfig_NamedUsesCompatibilityImageMapping(t *testing.T) {
+// Named runtime configs do not inherit the default cluster config, so a
+// service that selects one deploys aim-base from the model image's registry
+// unless the named config sets baseImageRegistry itself.
+func TestFetchRuntimeConfig_NamedDoesNotInheritDefaultBaseImageRegistry(t *testing.T) {
 	defaultClusterConfig := &aimv1alpha1.AIMClusterRuntimeConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: DefaultRuntimeConfigName},
 		Spec: aimv1alpha1.AIMClusterRuntimeConfigSpec{
 			AIMRuntimeConfigCommon: aimv1alpha1.AIMRuntimeConfigCommon{
-				ImageRegistry: &aimv1alpha1.AIMImageRegistryConfig{
-					Mappings: []aimv1alpha1.AIMImageRegistryMapping{
-						{
-							From: "ghcr.io/silogen",
-							To:   "docker.io/amdenterpriseai",
-						},
-					},
-				},
+				BaseImageRegistry: "registry.example.com/amdenterpriseai",
 			},
 		},
 	}
@@ -215,15 +209,8 @@ func TestFetchRuntimeConfig_NamedUsesCompatibilityImageMapping(t *testing.T) {
 	if result.Value.Routing == nil || result.Value.Routing.Enabled == nil || !*result.Value.Routing.Enabled {
 		t.Fatal("expected routing from named namespace config")
 	}
-	got, err := aimimage.ResolveReference(
-		"ghcr.io/silogen/aim-base:0.11",
-		ImageRegistryMappings(result.Value),
-	)
-	if err != nil {
-		t.Fatalf("resolve compatibility image mapping: %v", err)
-	}
-	if want := "docker.io/amdenterpriseai/aim-base:0.11"; got != want {
-		t.Fatalf("resolved deployment image = %q, want %q", got, want)
+	if got := BaseImageRegistry(result.Value); got != "" {
+		t.Fatalf("BaseImageRegistry = %q, want unset; the default cluster config must not leak into a named config", got)
 	}
 }
 
@@ -656,44 +643,6 @@ func TestMergeRuntimeConfigs_ProfileGenerationFallbacksByName(t *testing.T) {
 		if got[name] != image {
 			t.Fatalf("fallback %q image = %q, want %q", name, got[name], image)
 		}
-	}
-}
-
-func TestMergeRuntimeConfigs_ImageRegistryMappingsByFrom(t *testing.T) {
-	t.Parallel()
-
-	base := &aimv1alpha1.AIMRuntimeConfigCommon{
-		ImageRegistry: &aimv1alpha1.AIMImageRegistryConfig{
-			Mappings: []aimv1alpha1.AIMImageRegistryMapping{
-				{From: "docker.io/amdenterpriseai", To: "registry.cluster/amd"},
-				{From: "quay.io/amd", To: "registry.cluster/quay"},
-			},
-		},
-	}
-	priority := &aimv1alpha1.AIMRuntimeConfigCommon{
-		ImageRegistry: &aimv1alpha1.AIMImageRegistryConfig{
-			Mappings: []aimv1alpha1.AIMImageRegistryMapping{
-				{From: "docker.io/amdenterpriseai", To: "registry.namespace/amd"},
-				{From: "ghcr.io/amd", To: "registry.namespace/ghcr"},
-			},
-		},
-	}
-
-	merged := mergeRuntimeConfigs(priority, base)
-	if merged == nil || merged.ImageRegistry == nil {
-		t.Fatal("merged image registry config is nil")
-	}
-	got := make(map[string]string, len(merged.ImageRegistry.Mappings))
-	for _, mapping := range merged.ImageRegistry.Mappings {
-		got[mapping.From] = mapping.To
-	}
-	want := map[string]string{
-		"docker.io/amdenterpriseai": "registry.namespace/amd",
-		"quay.io/amd":               "registry.cluster/quay",
-		"ghcr.io/amd":               "registry.namespace/ghcr",
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("merged mappings = %#v, want %#v", got, want)
 	}
 }
 

@@ -33,7 +33,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 )
 
 // aimBase011 is the canonical aim-base:0.11 reference used across tests in
@@ -112,7 +111,7 @@ func TestImageResolver_ClusterOwner_BaseImageRef(t *testing.T) {
 			ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights",
 		}},
 		Custom: &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyLatest},
-	}, nil)
+	}, "")
 
 	got, err := r.Resolve(context.Background(), match("qwen3-0.9.0", "", "0.9.0"))
 	if err != nil {
@@ -123,7 +122,7 @@ func TestImageResolver_ClusterOwner_BaseImageRef(t *testing.T) {
 	}
 }
 
-func TestImageResolver_PreservesReleaseCandidateTag(t *testing.T) {
+func TestImageResolver_RollsReleaseCandidateTag(t *testing.T) {
 	owner := clusterOwner("qwen3-32b",
 		"amdenterpriseai/aim-qwen-qwen3-32b:0.11.0",
 		"ghcr.io/amdenterpriseai/aim-base:0.11-rc21",
@@ -134,18 +133,18 @@ func TestImageResolver_PreservesReleaseCandidateTag(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyLatest},
-	}, nil)
+	}, "")
 
 	got, err := r.Resolve(context.Background(), match("qwen3-32b", "", "0.11.0"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if want := "ghcr.io/amdenterpriseai/aim-base:0.11-rc21"; got != want {
-		t.Errorf("Resolve = %q, want exact producer-owned reference %q", got, want)
+	if want := "amdenterpriseai/aim-base:0.11"; got != want {
+		t.Errorf("Resolve = %q, want the owner image's registry with the rolling tag %q", got, want)
 	}
 }
 
-func TestImageResolver_PreservesBaseImageRegistry(t *testing.T) {
+func TestImageResolver_TakesRegistryFromOwnerImage(t *testing.T) {
 	owner := clusterOwner("qwen3-0.11.0",
 		"registry.example.com/mirror/qwen3:0.11.0",
 		"docker.io/amdenterpriseai/aim-base:0.11",
@@ -156,20 +155,20 @@ func TestImageResolver_PreservesBaseImageRegistry(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyAny},
-	}, nil)
+	}, "")
 
 	got, err := r.Resolve(context.Background(), match("qwen3-0.11.0", "", "0.11.0"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if want := "docker.io/amdenterpriseai/aim-base:0.11"; got != want {
-		t.Errorf("Resolve = %q, want exact producer-owned reference %q", got, want)
+	if want := "registry.example.com/mirror/aim-base:0.11"; got != want {
+		t.Errorf("Resolve = %q, want the owner image's registry %q", got, want)
 	}
 }
 
-func TestImageResolver_AppliesExplicitRegistryMapping(t *testing.T) {
+func TestImageResolver_UsesConfiguredBaseImageRegistry(t *testing.T) {
 	owner := clusterOwner("qwen3-0.11.0",
-		"ghcr.io/private-team/qwen3:0.11.0",
+		"registry.example.com/models/qwen3:0.11.0",
 		"docker.io/amdenterpriseai/aim-base:0.11.2",
 	)
 	c := newFakeClient(owner)
@@ -178,17 +177,14 @@ func TestImageResolver_AppliesExplicitRegistryMapping(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyAny},
-	}, []aimimage.RegistryMapping{{
-		From: "docker.io/amdenterpriseai",
-		To:   "ghcr.io/private-team",
-	}})
+	}, "registry.example.com/runtimes")
 
 	got, err := r.Resolve(context.Background(), match("qwen3-0.11.0", "", "0.11.0"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if want := "ghcr.io/private-team/aim-base:0.11.2"; got != want {
-		t.Errorf("Resolve = %q, want mapped reference %q", got, want)
+	if want := "registry.example.com/runtimes/aim-base:0.11.2"; got != want {
+		t.Errorf("Resolve = %q, want the configured registry %q", got, want)
 	}
 }
 
@@ -203,7 +199,7 @@ func TestImageResolver_DefersWhenBaseImageRefIsMissing(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyLatest},
-	}, nil)
+	}, "")
 
 	if _, err := r.Resolve(context.Background(), match("qwen3-0.11.0", "", "0.11.0")); err == nil {
 		t.Fatal("expected deferral error for missing AIM_BASE_IMAGE_REF")
@@ -219,7 +215,7 @@ func TestImageResolver_DefersWhenUnresolvable(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyLatest},
-	}, nil)
+	}, "")
 
 	if _, err := r.Resolve(context.Background(), match("qwen3-latest", "", "latest")); err == nil {
 		t.Fatal("expected deferral error, got nil")
@@ -234,7 +230,7 @@ func TestImageResolver_DefersWhenOwnerMissing(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyLatest},
-	}, nil)
+	}, "")
 
 	if _, err := r.Resolve(context.Background(), match("missing-owner", "", "0.9.0")); err == nil {
 		t.Fatal("expected deferral error when owner is missing")
@@ -253,7 +249,7 @@ func TestImageResolver_PinnedReturnsModelSpecImage(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyPinned},
-	}, nil)
+	}, "")
 
 	got, err := r.Resolve(context.Background(), match("qwen3-0.8.5", "", "0.8.5"))
 	if err != nil {
@@ -277,7 +273,7 @@ func TestImageResolver_NamespaceScopedOwner(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyLatest},
-	}, nil)
+	}, "")
 
 	got, err := r.Resolve(context.Background(), match("qwen3-0.9.0", "team-a", "0.9.0"))
 	if err != nil {
@@ -301,7 +297,7 @@ func TestImageResolver_PerMatchHeterogeneous(t *testing.T) {
 		AimId:        "qwen/qwen3-32b",
 		ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "qwen/qwen3-32b-fp8", SourceURI: "pvc://weights"}},
 		Custom:       &aimv1alpha1.AIMCustomModelSpec{VersionPolicy: aimv1alpha1.AIMVersionPolicyAny},
-	}, nil)
+	}, "")
 
 	gpuImage, err := r.Resolve(context.Background(), match("qwen3-mi300-0.11", "", "0.11.0"))
 	if err != nil {
