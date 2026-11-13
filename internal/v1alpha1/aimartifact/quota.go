@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	v1alpha1utils "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/utils"
 )
@@ -152,7 +153,7 @@ func effectiveRetentionPriority(a *aimv1alpha1.AIMArtifact, defaultPriority *int
 
 // findEvictable returns artifacts eligible for eviction, sorted by eviction priority
 // (lowest retentionPriority first, then oldest creationTimestamp).
-// inUseUIDs contains UIDs of artifacts referenced by AIMTemplateCaches; these are skipped.
+// inUseUIDs contains UIDs of artifacts served by template or profile caches; these are skipped.
 func findEvictable(artifacts []aimv1alpha1.AIMArtifact, selfUID types.UID, defaultPriority *int32, inUseUIDs map[types.UID]bool) []aimv1alpha1.AIMArtifact {
 	var candidates []aimv1alpha1.AIMArtifact
 	for i := range artifacts {
@@ -214,17 +215,25 @@ func computeEvictionPlan(evictable []aimv1alpha1.AIMArtifact, deficit int64, hea
 	return nil
 }
 
-// BuildInUseArtifactUIDs returns the set of artifact UIDs that are referenced by
-// any AIMTemplateCache. Artifacts in this set should not be evicted because their
-// PVCs are likely mounted by running inference pods and deletion won't free storage.
-func BuildInUseArtifactUIDs(caches []aimv1alpha1.AIMTemplateCache) map[types.UID]bool {
+// BuildInUseArtifactUIDs returns the set of artifact UIDs that any AIMTemplateCache
+// or AIMProfileCache lists in its status. Artifacts in this set should not be evicted
+// because their PVCs are likely mounted by running inference pods and deletion won't
+// free storage. This includes an artifact a profile cache keeps serving while its
+// replacement downloads, since that download is what tends to exceed the quota.
+func BuildInUseArtifactUIDs(templateCaches []aimv1alpha1.AIMTemplateCache, profileCaches []aimv1alpha2.AIMProfileCache) map[types.UID]bool {
 	inUse := make(map[types.UID]bool)
-	for i := range caches {
-		for _, resolved := range caches[i].Status.Artifacts {
+	addResolved := func(artifacts map[string]aimv1alpha1.AIMResolvedArtifact) {
+		for _, resolved := range artifacts {
 			if resolved.UID != "" {
 				inUse[types.UID(resolved.UID)] = true
 			}
 		}
+	}
+	for i := range templateCaches {
+		addResolved(templateCaches[i].Status.Artifacts)
+	}
+	for i := range profileCaches {
+		addResolved(profileCaches[i].Status.Artifacts)
 	}
 	return inUse
 }
@@ -233,7 +242,7 @@ func BuildInUseArtifactUIDs(caches []aimv1alpha1.AIMTemplateCache) map[types.UID
 // defaultRetentionPriority is the fallback from the runtime config; nil means
 // artifacts without an explicit spec.retentionPriority are never evictable.
 // inUseUIDs marks artifacts that should not be evicted because they are
-// referenced by template caches (their PVCs may be mounted).
+// served by template or profile caches (their PVCs may be mounted).
 //
 // Concurrency: The artifact controller serializes pipeline runs through a
 // Lease-based lock (WithQuotaLock) for artifacts that don't yet have a PVC.

@@ -23,6 +23,7 @@
 package aimprofile
 
 import (
+	"reflect"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -231,6 +232,92 @@ env_vars: {}
 				if item.YAMLContract.HasMetadataField(field) {
 					t.Errorf("YAMLContract unexpectedly contains %q: %s", field, item.YAMLContract.Encode())
 				}
+			}
+		})
+	}
+}
+
+func TestParseProfileYAMLIntoCatalogItem_DeclaredDownloadFilter(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		modelID     string
+		declaration string
+		wantSources []aimv1alpha1.AIMModelSource
+	}{
+		{
+			name:        "absent declaration keeps the default source",
+			modelID:     "org/model",
+			wantSources: []aimv1alpha1.AIMModelSource{{ModelID: "org/model", SourceURI: "hf://org/model"}},
+		},
+		{
+			name:        "null declaration is no declaration",
+			modelID:     "org/model",
+			declaration: "download_filter: null\n",
+			wantSources: []aimv1alpha1.AIMModelSource{{ModelID: "org/model", SourceURI: "hf://org/model"}},
+		},
+		{
+			name:        "empty object requests the complete repository",
+			modelID:     "org/model",
+			declaration: "download_filter: {}\n",
+			wantSources: []aimv1alpha1.AIMModelSource{{
+				ModelID: "org/model", SourceURI: "hf://org/model", DownloadFilter: &aimv1alpha1.AIMDownloadFilter{},
+			}},
+		},
+		{
+			name:    "include and exclude globs are carried",
+			modelID: "org/model",
+			declaration: `download_filter:
+  include: ["*.safetensors", "transformer/*"]
+  exclude: ["*.bin"]
+`,
+			wantSources: []aimv1alpha1.AIMModelSource{{
+				ModelID:   "org/model",
+				SourceURI: "hf://org/model",
+				DownloadFilter: &aimv1alpha1.AIMDownloadFilter{
+					Include: []string{"*.safetensors", "transformer/*"},
+					Exclude: []string{"*.bin"},
+				},
+			}},
+		},
+		{
+			name:        "a declaration without model_id has no source to attach to",
+			declaration: "download_filter: {}\n",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			raw := "aim_id: org/model\n"
+			if tc.modelID != "" {
+				raw += "model_id: " + tc.modelID + "\n"
+			}
+			raw += `metadata:
+  engine: vllm
+  metric: latency
+  precision: fp16
+  type: optimized
+engine_args: {}
+env_vars: {}
+` + tc.declaration
+			item, err := parseProfileYAMLIntoCatalogItem(
+				[]byte(raw),
+				"org/model/vllm-mi300x-fp16-tp1-latency.yaml",
+				"org/model",
+				"registry.example/aim-model:test",
+				"registry.example/aim-base:test",
+				"test",
+			)
+			if err != nil {
+				t.Fatalf("parseProfileYAMLIntoCatalogItem: %v", err)
+			}
+			if !reflect.DeepEqual(item.Spec.ModelSources, tc.wantSources) {
+				t.Errorf("ModelSources = %#v, want %#v", item.Spec.ModelSources, tc.wantSources)
+			}
+			if _, ok := item.YAMLContract.Extensions().TopLevel["download_filter"]; ok {
+				t.Errorf("download_filter must not be projected to the runtime profile: %s", item.YAMLContract.Encode())
 			}
 		})
 	}

@@ -103,6 +103,8 @@ Optional selector fields narrow the candidate pool:
 
 `overrides.modelSources` replaces the source profile's model sources with your fine-tune weights. `ApplyProfileCopyOverrides` automatically copies `modelSources[0].modelId` into the derived profile's `spec.modelId`, so the cache path tracks your weights.
 
+Your sources do not inherit the source profile's `downloadFilter`. Unless a runtime config sets a filter, an `hf://` source without one downloads only top-level files, so set `downloadFilter: {}` (or an explicit include/exclude list) when your repository stores required files in nested directories, as Diffusers models do. See [Download filters on replaced sources](../concepts/profilesets.md#download-filters-on-replaced-sources).
+
 Additional overrides:
 
 | Override | Behavior |

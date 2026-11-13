@@ -191,6 +191,22 @@ func TestDownloadFilterEnvVars(t *testing.T) {
 				"AIM_HF_EXCLUDE": "*/*",
 			},
 		},
+		{
+			name: "trailing-slash directory globs select the directory's files",
+			filter: &aimv1alpha1.AIMDownloadFilter{
+				Include: []string{"vae/", "*.json"},
+				Exclude: []string{"original/"},
+			},
+			wantEnvs: map[string]string{
+				"AIM_HF_INCLUDE": "vae/*,*.json",
+				"AIM_HF_EXCLUDE": "original/*",
+			},
+		},
+		{
+			name:     "blank globs are dropped",
+			filter:   &aimv1alpha1.AIMDownloadFilter{Include: []string{" *.json ", ""}, Exclude: []string{" "}},
+			wantEnvs: map[string]string{"AIM_HF_INCLUDE": "*.json"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -271,21 +287,38 @@ func TestBuildDownloadJobHasActiveDeadline(t *testing.T) {
 }
 
 func TestBothJobsGetSameFilterEnvVars(t *testing.T) {
-	mc := &aimv1alpha1.AIMArtifact{
-		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
-		Spec:       aimv1alpha1.AIMArtifactSpec{SourceURI: "hf://org/model"},
+	tests := []struct {
+		name   string
+		filter *aimv1alpha1.AIMDownloadFilter
+	}{
+		{name: "default filter", filter: nil},
+		{name: "declared filter", filter: &aimv1alpha1.AIMDownloadFilter{
+			Include: []string{"*.safetensors", "tokenizer/*"},
+			Exclude: []string{"*.bin"},
+		}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mc := &aimv1alpha1.AIMArtifact{
+				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+				Spec:       aimv1alpha1.AIMArtifactSpec{SourceURI: "hf://org/model", DownloadFilter: tt.filter},
+			}
 
-	checkJob := buildCheckSizeJob(mc, nil, false)
-	downloadJob := buildDownloadJob(mc, nil, 1000, false)
+			checkJob := buildCheckSizeJob(mc, nil, false)
+			downloadJob := buildDownloadJob(mc, nil, 1000, false)
 
-	checkEnv := envToMap(checkJob.Spec.Template.Spec.Containers[0].Env)
-	downloadEnv := envToMap(downloadJob.Spec.Template.Spec.Containers[0].Env)
+			checkEnv := envToMap(checkJob.Spec.Template.Spec.Containers[0].Env)
+			downloadEnv := envToMap(downloadJob.Spec.Template.Spec.Containers[0].Env)
 
-	for _, key := range []string{"AIM_HF_INCLUDE", "AIM_HF_EXCLUDE"} {
-		if checkEnv[key] != downloadEnv[key] {
-			t.Errorf("env %s differs: check-size=%q download=%q", key, checkEnv[key], downloadEnv[key])
-		}
+			for _, key := range []string{"AIM_HF_INCLUDE", "AIM_HF_EXCLUDE"} {
+				if checkEnv[key] != downloadEnv[key] {
+					t.Errorf("env %s differs: check-size=%q download=%q", key, checkEnv[key], downloadEnv[key])
+				}
+			}
+			if tt.filter != nil && downloadEnv["AIM_HF_INCLUDE"] == "" {
+				t.Error("declared include patterns did not reach the jobs")
+			}
+		})
 	}
 }
 

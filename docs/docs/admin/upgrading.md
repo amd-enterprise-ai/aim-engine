@@ -141,6 +141,43 @@ kubectl delete pod -n <namespace> \
   -l aim.eai.amd.com/service=<service-name>
 ```
 
+### Download filters declared by AIM images
+
+AIM images can declare the files their model needs with `download_filter` in their profile YAML, and discovered profiles carry it onto their model source as `downloadFilter`. Upgrading the operator does not change profiles discovered from images that make no declaration.
+
+A profile's model source changes when the operator first reads a declaration for it. Usually that is the discovery of an image or image version that declares one. If the cluster discovered such an image under an earlier release, the declaration is applied by the first reconcile of its `AIMModel` or `AIMClusterModel` after the upgrade, because profiles are rebuilt from the stored discovery results.
+
+When a model source gains a filter, the filter becomes part of its artifact's identity, so the profile cache creates a new `AIMArtifact` under a new name and downloads the model again. An existing artifact with `downloadFilter: {}` in its own spec holds the whole repository and keeps serving the source, so no second download happens.
+
+Artifacts downloaded through a runtime config filter are not reused this way, even when that filter was `downloadFilter: {}`, the documented workaround for repositories with required subdirectories. Such an artifact has no filter in its spec: the runtime config filter is applied at download time and not recorded, and it may have changed since. The cache cannot tell what the artifact holds, so a source that gains a declaration downloads again, even if the artifact already holds every file. For large models plan for the transfer time and for storage for a second copy, and reclaim the old artifact afterwards as described below.
+
+Otherwise the cache keeps serving the artifact it already lists in `status.artifacts` while the new one downloads, as long as that artifact is still `Ready`. The cache and its services stay `Ready`, and the cache's `ArtifactsReplacing` condition names both artifacts and reports the replacement's status, or its error if it fails or stalls. The namespace needs storage for both copies until the old one is deleted. The served artifact is never evicted to make room: under an artifact storage quota without enough space, the replacement is blocked with `StorageQuotaExceeded` until you free space or raise the quota. When the new artifact is `Ready`, the cache switches `status.artifacts` to it, sets `ArtifactsReplacing` to `False` with reason `ArtifactsReplaced`, and emits an event naming the old and new artifacts. Services then roll over to the new artifact's volume. See [Replacing an artifact](../concepts/caching.md#replacing-an-artifact).
+
+The old artifact and its PVC stay behind after the switch. A shared artifact has no owner, and a dedicated artifact is owned by its cache and deleted only with it. Profile cache cleanup removes only artifacts that are not `Ready`, and only while the cache itself is being deleted. Deleting the old artifact before the switch takes the cache out of service until the new download finishes. To reclaim the storage:
+
+1. Wait until the switch has happened: the cache's `status.artifacts` names the new artifact and no longer lists the old one. `status.artifacts` is the check to rely on. `ArtifactsReplacing` turns `False` with reason `ArtifactsReplaced` after a switch, but stays `True` while another model source of the same profile is still being replaced:
+
+   ```bash
+   kubectl get aimprofilecache -n <namespace> <profile-cache-name> \
+     -o jsonpath='{.status.artifacts}' | jq
+   kubectl get aimprofilecache -n <namespace> <profile-cache-name> \
+     -o jsonpath='{.status.conditions[?(@.type=="ArtifactsReplacing")]}' | jq
+   ```
+
+2. Confirm that no other cache still lists the old artifact. Shared artifacts serve every cache with a matching source, including v1alpha1 template caches, which do not read image declarations, and a profile cache that has not switched yet still serves the old one. This should print nothing:
+
+   ```bash
+   kubectl get aimprofilecache,aimtemplatecache -n <namespace> -o json | \
+     jq -r '.items[] | .metadata.name as $cache
+       | (.status.artifacts // {})[] | select(.name == "<old-artifact-name>") | $cache'
+   ```
+
+3. Delete the old artifact:
+
+   ```bash
+   kubectl delete aimartifact -n <namespace> <old-artifact-name>
+   ```
+
 ## Migration window
 
 The bridge keeps supported predecessor objects reconciling while native

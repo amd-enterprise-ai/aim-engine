@@ -130,7 +130,7 @@ Versions describe the selected sources, before overrides. Use `all` to include v
 | Field | Merge semantics |
 |---|---|
 | `aimId`, `modelId`, `profileId` | Replace source identity fields. An explicit `modelId` wins over derivation from `modelSources`. |
-| `modelSources` | Replaces source `modelSources` entirely. The first source's `modelId` supplies the derived profile's `spec.modelId` when no explicit `modelId` override is set. |
+| `modelSources` | Replaces source `modelSources` entirely. The first source's `modelId` supplies the derived profile's `spec.modelId` when no explicit `modelId` override is set. Each replacing source keeps only the `downloadFilter` it declares; the source profile's filter is not inherited, because the replacement can point at a different repository. See [Download filters on replaced sources](#download-filters-on-replaced-sources). |
 | `image` | Replaces the runtime image; takes precedence over top-level `spec.image`. |
 | `acceleratorModel` | Replaces source `acceleratorModel`. |
 | `acceleratorVendor` | Replaces source `acceleratorVendor`. |
@@ -162,6 +162,22 @@ With neither `spec.image` nor `spec.overrides.image` set, the derived image depe
 An explicit image override selects the deployment image; `overrides.image` takes precedence over top-level `spec.image`, preserving existing behavior.
 
 Derived profiles inherit the source profile's `status.baseImage` so subsequent derivations or overlays can rebase consistently.
+
+### Download filters on replaced sources
+
+A derivation that does not set `overrides.modelSources` keeps the source profile's model sources, including each source's `downloadFilter`.
+
+A derivation that sets `overrides.modelSources` replaces the whole list, and each replacing source uses only the `downloadFilter` it declares. The source profile's filter is not carried over, because the replacement can point at a repository with a different layout. A replacing source without a filter falls back to the runtime config filter, then to the default for its scheme: `hf://` sources skip every file in a nested directory, and `s3://` sources download the whole prefix.
+
+Set the filter on the replacing source when its repository needs nested files. For example, a fine-tune of a Diffusers model such as Wan2.2 keeps the base model's nested layout, and without a filter it downloads only the top-level files:
+
+```yaml
+overrides:
+  modelSources:
+    - modelId: acme/wan2.2-finetune
+      sourceUri: hf://acme/wan2.2-finetune
+      downloadFilter: {}
+```
 
 ### Profile YAML contract inheritance
 

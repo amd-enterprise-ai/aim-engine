@@ -739,6 +739,7 @@ When no filter is configured (neither on the artifact nor in the runtime config)
 
 _Appears in:_
 - [AIMArtifactSpec](#aimartifactspec)
+- [AIMModelSource](#aimmodelsource)
 - [AIMStorageConfig](#aimstorageconfig)
 
 | Field | Description | Default | Validation |
@@ -1026,6 +1027,7 @@ _Appears in:_
 | `sourceUri` _string_ | SourceURI is the location from which the model should be downloaded. Supported schemes:<br />- hf://org/model - Hugging Face Hub model<br />- s3://bucket/key - S3-compatible storage |  | Pattern: `^(hf\|s3)://[^ \t\r\n]+$` |
 | `size` _[Quantity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#quantity-resource-api)_ | Size is the expected storage space required for this model artifact. Used for PVC sizing and capacity planning during cache creation. Optional - if not specified, the download job will discover the size automatically. Can be set explicitly to pre-allocate storage or override auto-discovery. |  | Optional: \{\} |
 | `precision` _[AIMPrecision](#aimprecision)_ | Precision describes the runtime precision this source is compatible with. Used to match model sources to profiles during custom weight onboarding. |  | Enum: [fp4 fp8 fp16 fp32 fp64 bf16 int4 int8] <br />Optional: \{\} |
+| `downloadFilter` _[AIMDownloadFilter](#aimdownloadfilter)_ | DownloadFilter declares which files of this source to download, overriding the runtime config filter and the hf:// subdirectory-exclude default. An empty object downloads every file. |  | Optional: \{\} |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies per-source credential overrides. These variables are used for authentication when downloading this specific source. Takes precedence over base-level env for the same variable name. |  | Optional: \{\} |
 
 
