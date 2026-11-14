@@ -24,12 +24,14 @@ package aimprofilecache
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -167,6 +169,11 @@ type ProfileCacheObservation struct {
 	// replacement hashes to the same name, so recreating one before the delete completes
 	// would patch the dying object instead.
 	TerminatingArtifactNames []string
+
+	// AdapterDiskUpgrades lists resolved artifacts (also in BestArtifacts) that lack
+	// the adapter disk this cache requires. PlanResources adds the disk to each in
+	// place, so the cache keeps advertising the artifact and its model PVC meanwhile.
+	AdapterDiskUpgrades []aimv1alpha1.AIMArtifact
 }
 
 // GetComponentHealth overrides the embedded FetchResult's method to include artifact match health.
@@ -241,8 +248,12 @@ func (r *ProfileCacheReconciler) ComposeState(
 			logger.V(1).Info("ComposeState: model source matched",
 				"modelID", model.ModelID,
 				"bestArtifact", match.best.Name,
-				"bestStatus", match.best.Status.Status)
+				"bestStatus", match.best.Status.Status,
+				"needsAdapterDisk", match.needsAdapterDisk)
 			obs.BestArtifacts[model.ModelID] = match.best
+			if match.needsAdapterDisk {
+				obs.AdapterDiskUpgrades = append(obs.AdapterDiskUpgrades, match.best)
+			}
 		case len(match.terminatingNames) > 0:
 			logger.V(1).Info("ComposeState: model source served only by terminating artifacts",
 				"modelID", model.ModelID,
@@ -263,14 +274,20 @@ type artifactMatch struct {
 	best  aimv1alpha1.AIMArtifact
 	found bool
 
+	// needsAdapterDisk is set when best is only awaiting the adapter disk this
+	// cache requires; see artifactAwaitingAdapterDisk.
+	needsAdapterDisk bool
+
 	// terminatingNames holds artifacts that serve the model source and would be
 	// adoptable were they not being deleted.
 	terminatingNames []string
 }
 
 // matchArtifactForSource picks the artifact this cache should resolve modelSource to:
-// the adoptable candidate with the best status. A terminating candidate is reported
-// separately rather than adopted or treated as missing - see TerminatingArtifactNames.
+// the candidate with the best status among those adoptable as-is or only awaiting
+// their adapter disk, preferring one that already has the disk when statuses tie. A
+// terminating candidate is reported separately rather than adopted or treated as
+// missing - see TerminatingArtifactNames.
 func matchArtifactForSource(
 	profileCache *aimv1alpha2.AIMProfileCache,
 	artifacts []aimv1alpha1.AIMArtifact,
@@ -279,8 +296,12 @@ func matchArtifactForSource(
 	var match artifactMatch
 
 	for _, cached := range artifacts {
+		needsAdapterDisk := false
 		if !ArtifactAdoptableBy(profileCache, &cached) {
-			continue
+			if !artifactAwaitingAdapterDisk(profileCache, &cached) {
+				continue
+			}
+			needsAdapterDisk = true
 		}
 
 		if cached.Spec.SourceURI != modelSource.SourceURI {
@@ -307,13 +328,50 @@ func matchArtifactForSource(
 			continue
 		}
 
-		if !match.found || constants.CompareAIMStatus(match.best.Status.Status, cached.Status.Status) < 0 {
+		// Best status wins; on a tie, an artifact that already has the adapter disk
+		// beats one that would need it added.
+		cmp := 1
+		if match.found {
+			cmp = constants.CompareAIMStatus(cached.Status.Status, match.best.Status.Status)
+		}
+		better := cmp > 0 || (cmp == 0 && match.needsAdapterDisk && !needsAdapterDisk)
+		if better {
 			match.found = true
 			match.best = cached
+			match.needsAdapterDisk = needsAdapterDisk
 		}
 	}
 
 	return match
+}
+
+// artifactAwaitingAdapterDisk reports whether artifact is a model artifact that
+// profileCache could adopt but for the adapter disk the cache requires - typically
+// one downloaded before a LoRA service turned requiresAdapterDisk on. Such an
+// artifact gets the disk added in place instead of being replaced, so nothing is
+// downloaded again and services mounting its model PVC are not disturbed.
+func artifactAwaitingAdapterDisk(profileCache *aimv1alpha2.AIMProfileCache, artifact *aimv1alpha1.AIMArtifact) bool {
+	if !profileCache.Spec.RequiresAdapterDisk || artifact.Spec.AdapterDisk != nil {
+		return false
+	}
+	if artifact.Spec.Type != "" && artifact.Spec.Type != aimv1alpha1.ArtifactTypeModel {
+		return false
+	}
+	return artifactCompatibleWith(profileCache, artifact)
+}
+
+// buildAdapterDiskPatch returns a partial AIMArtifact that adds an adapter disk
+// and carries no other field, so the dedicated field manager applying it owns
+// only spec.adapterDisk. Size and class are left empty for the AIMArtifact
+// reconciler to resolve from AIMRuntimeConfig.Storage.
+func buildAdapterDiskPatch(namespace, name string) *unstructured.Unstructured {
+	patch := &unstructured.Unstructured{Object: map[string]any{
+		"spec": map[string]any{"adapterDisk": map[string]any{}},
+	}}
+	patch.SetGroupVersionKind(aimv1alpha1.GroupVersion.WithKind("AIMArtifact"))
+	patch.SetNamespace(namespace)
+	patch.SetName(name)
+	return patch
 }
 
 func (r *ProfileCacheReconciler) PlanResources(
@@ -364,6 +422,20 @@ func (r *ProfileCacheReconciler) PlanResources(
 		} else {
 			result.ApplyWithoutOwnerRef(artifact)
 		}
+	}
+
+	for i := range obs.AdapterDiskUpgrades {
+		artifact := &obs.AdapterDiskUpgrades[i]
+		result.ApplyFields(
+			buildAdapterDiskPatch(artifact.Namespace, artifact.Name),
+			constants.FieldManagerSuffixAdapterDisk,
+			&controllerutils.FieldApplyEvent{
+				Target: artifact,
+				Reason: constants.ReasonAdapterDiskRequested,
+				Message: fmt.Sprintf("AIMProfileCache %s requires an adapter disk; added spec.adapterDisk in place",
+					pc.Name),
+			},
+		)
 	}
 
 	return result
@@ -489,10 +561,31 @@ func generateArtifactName(pc *aimv1alpha2.AIMProfileCache, modelSource aimv1alph
 // cannot, because the model sources live on the (separately fetched) profile.
 //
 // Deliberately ignores deletionTimestamp. The artifact watch filters events through
-// this predicate, so rejecting a terminating artifact here would drop the very wakeups
+// ArtifactResolvableBy, which builds on this predicate, so rejecting a terminating
+// artifact here would drop the very wakeups
 // that tell a cache to stop advertising it. That rejection is matchArtifactForSource's
 // job instead.
 func ArtifactAdoptableBy(profileCache *aimv1alpha2.AIMProfileCache, artifact *aimv1alpha1.AIMArtifact) bool {
+	// LoRA-serving caches can use only a disk-bearing artifact as is; a diskless
+	// match would wedge the service. matchArtifactForSource still resolves such an
+	// artifact and adds the disk in place (see artifactAwaitingAdapterDisk).
+	if profileCache.Spec.RequiresAdapterDisk && artifact.Spec.AdapterDisk == nil {
+		return false
+	}
+	return artifactCompatibleWith(profileCache, artifact)
+}
+
+// ArtifactResolvableBy reports whether matchArtifactForSource may resolve
+// profileCache to artifact: adoptable as is, or only awaiting the adapter disk the
+// cache would add in place. Like ArtifactAdoptableBy it ignores SourceURI and
+// deletionTimestamp, so the artifact watch can filter on it.
+func ArtifactResolvableBy(profileCache *aimv1alpha2.AIMProfileCache, artifact *aimv1alpha1.AIMArtifact) bool {
+	return ArtifactAdoptableBy(profileCache, artifact) || artifactAwaitingAdapterDisk(profileCache, artifact)
+}
+
+// artifactCompatibleWith applies ArtifactAdoptableBy's mode and storage-class
+// rules, without its adapter-disk requirement.
+func artifactCompatibleWith(profileCache *aimv1alpha2.AIMProfileCache, artifact *aimv1alpha1.AIMArtifact) bool {
 	// Enforce mode isolation:
 	// - Shared profile caches can use only shared artifacts (no owner refs)
 	// - Dedicated profile caches can use only artifacts owned by this profile cache
@@ -505,13 +598,6 @@ func ArtifactAdoptableBy(profileCache *aimv1alpha2.AIMProfileCache, artifact *ai
 		if !hasOwnerReferenceUID(artifact.GetOwnerReferences(), profileCache.UID) {
 			return false
 		}
-	}
-
-	// LoRA-serving caches must only adopt a disk-bearing artifact; a diskless match
-	// would wedge the service. Falling through to MissingCaches makes PlanResources
-	// create one with a disk.
-	if profileCache.Spec.RequiresAdapterDisk && artifact.Spec.AdapterDisk == nil {
-		return false
 	}
 
 	return profileCache.Spec.StorageClassName == "" ||

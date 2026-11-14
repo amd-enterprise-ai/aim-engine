@@ -109,11 +109,10 @@ Replaces v1alpha1's `CacheReady`. Tracks the `AIMProfileCache` lifecycle.
 
 | Status | Reason | Description |
 |---|---|---|
-| `True` | `CacheReady` | All cache artifacts are downloaded and verified |
-| `False` | `CacheCreating` | Creating the profile cache |
-| `False` | `CacheNotReady` | Cache exists but download is incomplete |
-| `False` | `CacheFailed` | Cache download failed |
-| `False` | `CacheLost` | Previously-ready cache is no longer available |
+| `True` | `ProfileCacheReady` | All cache artifacts are downloaded and verified |
+| `False` | `ProfileCacheNotFound` | The profile cache has not been created yet |
+| `False` | `ProfileCacheNotReady` | The profile cache exists but is not `Ready`; the message carries the cache's own `Ready` condition message |
+| `False` | `FetchError` | AIM Engine could not read the profile cache |
 
 ### ProfileRuntimeReady
 
@@ -121,9 +120,9 @@ Tracks the namespaced profile `ServingRuntime` and its same-name ConfigMap befor
 
 | Status | Reason | Description |
 |---|---|---|
-| `True` | `ProfileRuntimeReady` | Both projection siblings match the current profile and cache content hash |
+| `True` | `ProfileRuntimeReady` | Both projection siblings match the current profile and cache content hash, or both exist while the controller of the Shared `AIMProfileCache` behind them has not yet observed its latest spec (the message names the cache; the siblings are refreshed once it has) |
 | `False` | `ProfileRuntimeMaterializing` | One or both projection siblings do not exist yet |
-| `False` | `ProfileRuntimeConverging` | Both siblings exist, but one or both have not converged to the expected content hash |
+| `False` | `ProfileRuntimeConverging` | Both siblings exist, but one or both have not converged to the expected content hash, or the siblings do not exist yet and the Shared `AIMProfileCache` behind the projection has not yet observed its latest spec (the message names it) |
 | `False` | `FetchError` | AIM Engine could not read one of the projection siblings |
 
 `ProfileRuntimeConverging` can be transient because the two resources are updated independently. If it persists, check for unsupported out-of-band changes to generated `aim-*` resources. See [Consistency and rollout guarantees](../guides/bring-your-own-kserve.md#consistency-and-rollout-guarantees).

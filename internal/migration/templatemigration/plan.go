@@ -1481,7 +1481,7 @@ func (p *planner) planTargetCache(state *unitState) {
 		Imputation{Field: "targetCache.spec.env", Source: "AIMProfile and AIMService caching environments", Rule: "merge with service values taking precedence"},
 		Imputation{Field: "targetCache.spec.runtimeConfigName", Source: "AIMService runtime configuration reference", Rule: "copied exactly"},
 		Imputation{Field: "targetCache.spec.mode", Source: "AIMService effective caching mode", Rule: "map Dedicated or Shared exactly"},
-		Imputation{Field: "targetCache.spec.requiresAdapterDisk", Source: "AIMService adapter mode and references", Rule: "enable when adapters require a disk"},
+		Imputation{Field: "targetCache.spec.requiresAdapterDisk", Source: "AIMService controller", Rule: "left unset; an adapter-enabled AIMService turns it on once its base model artifact resolves"},
 	)
 	existing := &aimv1alpha2.AIMProfileCache{}
 	err = p.reader.Get(p.context, client.ObjectKey{Namespace: desired.Namespace, Name: desired.Name}, existing)
@@ -1514,7 +1514,7 @@ func (p *planner) planTargetCache(state *unitState) {
 			return
 		}
 		identity = p.observe(state, existing, aimv1alpha2.GroupVersion.String(), identity.Kind, identity.Role, true)
-		if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
+		if !profileCacheSpecServes(existing.Spec, desired.Spec) {
 			addManual(state.unit, "TargetCacheConflict", "the existing target AIMProfileCache has a conflicting spec")
 			return
 		}
@@ -1672,13 +1672,12 @@ func buildControllerCompatibleProfileCacheFromSpec(
 			},
 		},
 		Spec: aimv1alpha2.AIMProfileCacheSpec{
-			ProfileName:         targetProfile.Name,
-			ProfileScope:        scope,
-			StorageClassName:    storageClassName,
-			Env:                 cacheEnv,
-			RuntimeConfigRef:    serviceSpec.RuntimeConfigRef,
-			Mode:                mode,
-			RequiresAdapterDisk: serviceSpec.AdaptersEnabled(),
+			ProfileName:      targetProfile.Name,
+			ProfileScope:     scope,
+			StorageClassName: storageClassName,
+			Env:              cacheEnv,
+			RuntimeConfigRef: serviceSpec.RuntimeConfigRef,
+			Mode:             mode,
 		},
 	}, nil
 }

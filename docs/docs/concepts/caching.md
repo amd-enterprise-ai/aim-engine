@@ -70,13 +70,13 @@ When an `AIMService` reaches the cache step in its reconcile pipeline:
 
 1. **Resolve profile.** The service has already produced `status.resolvedProfile`. The cache controller reads `spec.modelSources` from that profile.
 2. **Lookup or create cache.**
-    - `Shared` mode: list shared `AIMProfileCache` objects in the namespace by profile name + scope. Reuse if one exists; otherwise create a new one with `mode: Shared` and no owner.
+    - `Shared` mode: list shared `AIMProfileCache` objects in the namespace by profile name + scope. Reuse if one exists; otherwise create a new one with `mode: Shared` and no owner. A cache whose controller has not yet processed its latest spec change is still reused rather than replaced with another cache. If the service serves LoRA adapters, it turns on `spec.requiresAdapterDisk` once the cache has resolved its base model artifact, whether the service created the cache or reused it. The cache then adds an adapter disk to the artifact it already uses without downloading the model again. Once set, the flag cannot be turned off. See [LoRA adapters](../guides/lora-adapters.md#storage-and-compatibility-contract).
     - `Dedicated` mode: create a new `AIMProfileCache` owned by the service, with `mode: Dedicated`.
 3. **Lookup or create artifacts.** For each `modelSources[]` entry, the cache builds an `AIMArtifact` keyed on the source URI (and env / storage class). In shared mode the artifact controller reuses existing shared artifacts; in dedicated mode it always creates its own.
 4. **Wait for `Ready`.** The cache's `ArtifactsReady` condition flips `True` when every constituent artifact is `Ready`.
 5. **Mount.** The service mounts the underlying PVCs into the `InferenceService` pod spec.
 
-The service's `ProfileCacheReady` condition mirrors the cache's `ArtifactsReady` until everything's downloaded.
+The service's `ProfileCacheReady` condition follows the cache's overall `Ready` status until everything's downloaded. A Shared cache's controller can briefly lag a spec change, for example when an adapter-enabled service turns on `spec.requiresAdapterDisk`. Services on the cache keep following its published status meanwhile, so a running service stays `Ready`. The profile `ServingRuntime` is not rebuilt from the lagging status: it is refreshed, and pending InferenceService changes are applied, once the cache's controller has observed the change. If the cache has the `aim.eai.amd.com/reconciliation-paused` annotation, those updates wait until it is removed.
 
 ## Profile-level caching
 
@@ -307,14 +307,19 @@ Set `AIM_KEEP_METADATA_ON_FAILURE` to preserve the metadata cache on failure for
 
 ## Troubleshooting
 
-### Service stuck at `ProfileCacheReady=False / CachesNotReady`
+### Service stuck at `ProfileCacheReady=False / ProfileCacheNotReady`
 
-One or more artifacts are still downloading or have failed. Drill down:
+One or more artifacts are still downloading or have failed. The condition message carries the cache's `Ready` condition message, and the cache's `ArtifactsReady` condition names the worst artifact state (for example `CachesNotReady`). A Shared cache may have been created by another service, and its artifacts by another cache, so find them through status rather than labels:
 
 ```bash
-kubectl get aimprofilecache -l aim.eai.amd.com/service.name=<service-name> -n <namespace>
-kubectl get aimartifact -l aim.eai.amd.com/profile-cache.name=<cache-name> -n <namespace>
-kubectl get aimartifact <name> -o jsonpath='{.status.download}' | jq
+# Profile cache: status.cache is set once the cache has been Ready; otherwise
+# match spec.profileName against the service's status.resolvedProfile.name.
+kubectl get aimservice <service-name> -n <namespace> -o jsonpath='{.status.cache.profileCacheRef.name}'
+kubectl get aimprofilecache -n <namespace> \
+  -o custom-columns=NAME:.metadata.name,PROFILE:.spec.profileName,SCOPE:.spec.profileScope
+# Artifacts the cache resolved
+kubectl get aimprofilecache <cache-name> -n <namespace> -o jsonpath='{.status.artifacts}' | jq
+kubectl get aimartifact <name> -n <namespace> -o jsonpath='{.status.download}' | jq
 ```
 
 Common causes:

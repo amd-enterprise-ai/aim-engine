@@ -31,6 +31,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -176,11 +177,9 @@ func TestS3ArtifactIdentityIncludesRuntimeConfig(t *testing.T) {
 	}
 }
 
-// TestComposeState_RequiresAdapterDiskSkipsDisklessArtifact verifies that a
-// cache which must serve adapters does not adopt an otherwise-matching artifact
-// that lacks an adapter disk — it falls through to MissingCaches so PlanResources
-// creates a disk-bearing one.
-func TestComposeState_RequiresAdapterDiskSkipsDisklessArtifact(t *testing.T) {
+// TestPlanResources_RequiresAdapterDiskCreatesArtifactWithDisk verifies that a
+// cache which must serve adapters creates its missing artifact with an adapter disk.
+func TestPlanResources_RequiresAdapterDiskCreatesArtifactWithDisk(t *testing.T) {
 	r := &ProfileCacheReconciler{}
 	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")
 	pc.Spec.RequiresAdapterDisk = true
@@ -188,39 +187,175 @@ func TestComposeState_RequiresAdapterDiskSkipsDisklessArtifact(t *testing.T) {
 		{ModelID: "org/model-a", SourceURI: "hf://org/model-a"},
 	})
 
-	disklessArtifact := makeArtifact("artifact-a", "hf://org/model-a", "org/model-a", constants.AIMStatusReady, "")
+	fetch := ProfileCacheFetchResult{
+		profileCache: pc,
+		profile:      controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: profile},
+		artifacts: controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]{
+			Value: &aimv1alpha1.AIMArtifactList{},
+		},
+	}
+
+	ctx := controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: pc}
+	obs := r.ComposeState(context.Background(), ctx, fetch)
+	plan := r.PlanResources(context.Background(), ctx, obs)
+
+	planned := plan.GetToApplyWithoutOwnerRef()
+	if len(planned) != 1 {
+		t.Fatalf("expected one created artifact, got %d", len(planned))
+	}
+	created, ok := planned[0].(*aimv1alpha1.AIMArtifact)
+	if !ok {
+		t.Fatalf("expected an AIMArtifact, got %T", planned[0])
+	}
+	if created.Spec.AdapterDisk == nil {
+		t.Error("expected created artifact to carry an adapterDisk")
+	}
+}
+
+// TestPlanResources_RequiresAdapterDiskUpgradesDisklessArtifactInPlace covers a cache that gains
+// requiresAdapterDisk after resolving a diskless artifact - here one whose name is
+// not the cache's generated name, as when it was adopted from elsewhere. The cache
+// must keep resolving that artifact (status.artifacts and ArtifactsReady unchanged,
+// so services mounting its model PVC are not disturbed) and add the disk to it in
+// place, owning nothing but spec.adapterDisk, rather than create a second artifact.
+func TestPlanResources_RequiresAdapterDiskUpgradesDisklessArtifactInPlace(t *testing.T) {
+	r := &ProfileCacheReconciler{}
+	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")
+	pc.Spec.RequiresAdapterDisk = true
+	source := aimv1alpha1.AIMModelSource{ModelID: "org/model-a", SourceURI: "hf://org/model-a"}
+	profile := makeProfile("my-profile", []aimv1alpha1.AIMModelSource{source})
+
+	existing := makeArtifact("adopted-artifact", source.SourceURI, source.ModelID, constants.AIMStatusReady, "")
+	existing.Status.PersistentVolumeClaim = "adopted-artifact-cache"
 
 	fetch := ProfileCacheFetchResult{
 		profileCache: pc,
 		profile:      controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: profile},
 		artifacts: controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]{
-			Value: &aimv1alpha1.AIMArtifactList{Items: []aimv1alpha1.AIMArtifact{disklessArtifact}},
+			Value: &aimv1alpha1.AIMArtifactList{Items: []aimv1alpha1.AIMArtifact{existing}},
 		},
 	}
+	ctx := controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: pc}
+	obs := r.ComposeState(context.Background(), ctx, fetch)
 
-	obs := r.ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: pc}, fetch)
-	if len(obs.BestArtifacts) != 0 {
-		t.Errorf("expected diskless artifact to be skipped, got %d best artifacts", len(obs.BestArtifacts))
+	if len(obs.MissingCaches) != 0 {
+		t.Fatalf("MissingCaches = %v, want none", obs.MissingCaches)
 	}
-	if len(obs.MissingCaches) != 1 {
-		t.Fatalf("expected 1 missing cache, got %d", len(obs.MissingCaches))
+	if got := obs.BestArtifacts[source.ModelID].Name; got != existing.Name {
+		t.Fatalf("resolved artifact = %q, want %q", got, existing.Name)
+	}
+	if len(obs.AdapterDiskUpgrades) != 1 || obs.AdapterDiskUpgrades[0].Name != existing.Name {
+		t.Fatalf("AdapterDiskUpgrades = %d artifact(s), want [%s]", len(obs.AdapterDiskUpgrades), existing.Name)
 	}
 
-	// PlanResources must stamp an adapter disk onto the created artifact.
-	plan := r.PlanResources(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: pc}, obs)
-	var created *aimv1alpha1.AIMArtifact
-	planned := append(plan.GetToApply(), plan.GetToApplyWithoutOwnerRef()...)
-	for _, obj := range planned {
-		if a, ok := obj.(*aimv1alpha1.AIMArtifact); ok {
-			created = a
-			break
-		}
+	status := &aimv1alpha2.AIMProfileCacheStatus{}
+	cm := controllerutils.NewConditionManager(nil)
+	r.DecorateStatus(status, cm, obs)
+	if got := status.Artifacts[existing.Name].PersistentVolumeClaim; got != existing.Status.PersistentVolumeClaim {
+		t.Errorf("status.artifacts PVC = %q, want %q", got, existing.Status.PersistentVolumeClaim)
 	}
-	if created == nil {
-		t.Fatal("expected a created AIMArtifact in the plan")
+	if cond := cm.Get(artifactsReadyConditionType); cond == nil || cond.Status != metav1.ConditionTrue {
+		t.Errorf("%s = %+v, want True", artifactsReadyConditionType, cond)
 	}
-	if created.Spec.AdapterDisk == nil {
-		t.Error("expected created artifact to carry an adapterDisk")
+
+	plan := r.PlanResources(context.Background(), ctx, obs)
+	if n := len(plan.GetToApply()) + len(plan.GetToApplyWithoutOwnerRef()); n != 0 {
+		t.Fatalf("planned %d full artifact applies, want none", n)
+	}
+	fields := plan.GetToApplyFields()
+	if len(fields) != 1 {
+		t.Fatalf("planned %d field applies, want 1", len(fields))
+	}
+	if fields[0].FieldManagerSuffix != constants.FieldManagerSuffixAdapterDisk {
+		t.Errorf("field manager suffix = %q, want %q", fields[0].FieldManagerSuffix, constants.FieldManagerSuffixAdapterDisk)
+	}
+	patch, ok := fields[0].Object.(*unstructured.Unstructured)
+	if !ok {
+		t.Fatalf("field apply object = %T, want *unstructured.Unstructured", fields[0].Object)
+	}
+	if patch.GetName() != existing.Name || patch.GetKind() != "AIMArtifact" {
+		t.Errorf("field apply targets %s %q, want AIMArtifact %q", patch.GetKind(), patch.GetName(), existing.Name)
+	}
+	spec, _, _ := unstructured.NestedMap(patch.Object, "spec")
+	if _, hasDisk := spec["adapterDisk"]; !hasDisk || len(spec) != 1 {
+		t.Errorf("field apply spec = %v, want only adapterDisk", spec)
+	}
+	if ev := fields[0].Event; ev == nil || ev.Target.GetName() != existing.Name ||
+		ev.Reason != constants.ReasonAdapterDiskRequested {
+		t.Errorf("field apply event = %+v, want %s on artifact %q", ev, constants.ReasonAdapterDiskRequested, existing.Name)
+	}
+}
+
+// TestComposeState_RequiresAdapterDiskRanksByStatusFirst verifies how a cache that
+// requires an adapter disk picks between a diskless and a disk-bearing artifact:
+// the better status wins, so a Ready cache never falls back to a downloading or
+// failed artifact, and on a tie the one that already has the disk wins.
+func TestComposeState_RequiresAdapterDiskRanksByStatusFirst(t *testing.T) {
+	tests := []struct {
+		name           string
+		disklessStatus constants.AIMStatus
+		withDiskStatus constants.AIMStatus
+		want           string
+		wantUpgrade    bool
+	}{
+		{"tie prefers disk", constants.AIMStatusReady, constants.AIMStatusReady, "with-disk", false},
+		{"ready diskless beats progressing disk", constants.AIMStatusReady, constants.AIMStatusProgressing, "diskless", true},
+		{"ready diskless beats failed disk", constants.AIMStatusReady, constants.AIMStatusFailed, "diskless", true},
+		{"ready disk beats progressing diskless", constants.AIMStatusProgressing, constants.AIMStatusReady, "with-disk", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &ProfileCacheReconciler{}
+			pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")
+			pc.Spec.RequiresAdapterDisk = true
+			profile := makeProfile("my-profile", []aimv1alpha1.AIMModelSource{
+				{ModelID: "org/model-a", SourceURI: "hf://org/model-a"},
+			})
+
+			diskless := makeArtifact("diskless", "hf://org/model-a", "org/model-a", tt.disklessStatus, "")
+			withDisk := makeArtifact("with-disk", "hf://org/model-a", "org/model-a", tt.withDiskStatus, "")
+			withDisk.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
+
+			// Both orders, so the result does not depend on list order.
+			for _, items := range [][]aimv1alpha1.AIMArtifact{{diskless, withDisk}, {withDisk, diskless}} {
+				fetch := ProfileCacheFetchResult{
+					profileCache: pc,
+					profile:      controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: profile},
+					artifacts: controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]{
+						Value: &aimv1alpha1.AIMArtifactList{Items: items},
+					},
+				}
+				obs := r.ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: pc}, fetch)
+				if got := obs.BestArtifacts["org/model-a"].Name; got != tt.want {
+					t.Fatalf("resolved artifact = %q, want %q", got, tt.want)
+				}
+				if got := len(obs.AdapterDiskUpgrades) == 1; got != tt.wantUpgrade {
+					t.Errorf("adapter disk upgrade planned = %v, want %v", got, tt.wantUpgrade)
+				}
+			}
+		})
+	}
+}
+
+// TestArtifactResolvableBy verifies the artifact watch filter accepts a diskless
+// artifact a disk-requiring cache would upgrade in place, while still enforcing
+// mode isolation.
+func TestArtifactResolvableBy(t *testing.T) {
+	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")
+	pc.Spec.RequiresAdapterDisk = true
+
+	diskless := makeArtifact("diskless", "hf://org/model-a", "org/model-a", constants.AIMStatusReady, "")
+	if ArtifactAdoptableBy(pc, &diskless) {
+		t.Error("ArtifactAdoptableBy accepted a diskless artifact for a disk-requiring cache")
+	}
+	if !ArtifactResolvableBy(pc, &diskless) {
+		t.Error("ArtifactResolvableBy rejected a diskless artifact the cache would upgrade in place")
+	}
+
+	owned := diskless.DeepCopy()
+	owned.OwnerReferences = []metav1.OwnerReference{{UID: "someone-else"}}
+	if ArtifactResolvableBy(pc, owned) {
+		t.Error("ArtifactResolvableBy accepted an owned artifact for a Shared cache")
 	}
 }
 

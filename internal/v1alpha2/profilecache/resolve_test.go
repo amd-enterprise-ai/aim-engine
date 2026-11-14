@@ -317,7 +317,7 @@ func TestSelectBestShared_DeterministicAcrossReadyCandidates(t *testing.T) {
 	}
 }
 
-func TestSelectBestShared_IgnoresStaleStatus(t *testing.T) {
+func TestSelectBestShared_PrefersCurrentStatus(t *testing.T) {
 	t.Parallel()
 
 	const profile = "qwen3-32b-mi300x"
@@ -335,33 +335,36 @@ func TestSelectBestShared_IgnoresStaleStatus(t *testing.T) {
 	if got == nil || got.Name != current.Name {
 		t.Fatalf("SelectBestShared() = %v, want current cache %q", got, current.Name)
 	}
-
-	if got := SelectBestShared([]aimv1alpha2.AIMProfileCache{*stale}, profile, scope); got != nil {
-		t.Fatalf("SelectBestShared() = %q, want nil when only stale status exists", got.Name)
-	}
 }
 
-func TestSelectBestShared_IgnoresMissingObservedGeneration(t *testing.T) {
+// TestSelectBestShared_FallsBackToStaleCache pins that a matching cache whose
+// status has not caught up (spec just changed, or never observed) is still
+// returned when no current one exists, so callers wait for it instead of
+// planning a replacement on top of it.
+func TestSelectBestShared_FallsBackToStaleCache(t *testing.T) {
 	t.Parallel()
 
 	const profile = "qwen3-32b-mi300x"
-	unobserved := cache(
-		"unobserved-ready",
-		profile,
-		aimv1alpha1.AIMResolutionScopeNamespace,
-		aimv1alpha2.ProfileCacheModeShared,
-		constants.AIMStatusReady,
-	)
-	unobserved.Generation = 1
+	scope := aimv1alpha1.AIMResolutionScopeNamespace
+	shared := aimv1alpha2.ProfileCacheModeShared
+
+	specChanged := cache("b-spec-changed", profile, scope, shared, constants.AIMStatusReady)
+	specChanged.Generation = 2
+	unobserved := cache("a-unobserved", profile, scope, shared, "")
 	unobserved.Status.ObservedGeneration = 0
 
-	got := SelectBestShared(
-		[]aimv1alpha2.AIMProfileCache{*unobserved},
-		profile,
-		aimv1alpha1.AIMResolutionScopeNamespace,
-	)
-	if got != nil {
-		t.Fatalf("SelectBestShared() = %q, want nil while cache status catches up", got.Name)
+	got := SelectBestShared([]aimv1alpha2.AIMProfileCache{*specChanged, *unobserved}, profile, scope)
+	if got == nil || got.Name != unobserved.Name {
+		t.Fatalf("SelectBestShared() = %v, want stale cache %q chosen by name", got, unobserved.Name)
+	}
+	if cacheStatusCurrent(got) {
+		t.Fatal("cacheStatusCurrent() = true for a cache whose status has not observed its generation")
+	}
+
+	other := cache("other-profile", "other", scope, shared, constants.AIMStatusReady)
+	other.Generation = 2
+	if got := SelectBestShared([]aimv1alpha2.AIMProfileCache{*other}, profile, scope); got != nil {
+		t.Fatalf("SelectBestShared() = %q, want nil when no cache matches the profile", got.Name)
 	}
 }
 

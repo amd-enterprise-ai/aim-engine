@@ -178,10 +178,14 @@ func cacheStatusCurrent(cache *aimv1alpha2.AIMProfileCache) bool {
 	return cache.Status.ObservedGeneration == cache.Generation
 }
 
-// SelectBestShared returns the healthiest Shared cache matching the profile and
-// scope whose status describes its current spec generation. Equal-health
-// candidates are ordered by name before selection so every projection producer
-// and consumer chooses the same cache independently of API list order.
+// SelectBestShared returns the Shared cache matching the profile and scope that
+// a service should use. Caches whose status describes their current spec
+// generation are ranked by health. When every match is stale (just created, or
+// its spec just changed), the first by name is returned anyway: the cache exists
+// and will converge, and reporting it as absent would make the caller plan a
+// replacement on top of it. Its status may then still describe the previous
+// generation. Equal-health candidates are ordered by name so every caller
+// chooses the same cache independently of API list order.
 func SelectBestShared(
 	caches []aimv1alpha2.AIMProfileCache,
 	profileName string,
@@ -191,7 +195,8 @@ func SelectBestShared(
 		return nil
 	}
 
-	matching := make([]aimv1alpha2.AIMProfileCache, 0, len(caches))
+	current := make([]aimv1alpha2.AIMProfileCache, 0, len(caches))
+	var stale *aimv1alpha2.AIMProfileCache
 	for i := range caches {
 		cache := caches[i]
 		// Only a profile-owned (Shared) cache belongs on the shared runtime. A
@@ -201,14 +206,20 @@ func SelectBestShared(
 			continue
 		}
 		if !cacheStatusCurrent(&cache) {
+			if stale == nil || cache.Name < stale.Name {
+				stale = &cache
+			}
 			continue
 		}
-		matching = append(matching, cache)
+		current = append(current, cache)
 	}
-	sort.Slice(matching, func(i, j int) bool {
-		return matching[i].Name < matching[j].Name
+	if len(current) == 0 {
+		return stale
+	}
+	sort.Slice(current, func(i, j int) bool {
+		return current[i].Name < current[j].Name
 	})
-	return utils.SelectBestPtr(matching, func(cache *aimv1alpha2.AIMProfileCache) constants.AIMStatus {
+	return utils.SelectBestPtr(current, func(cache *aimv1alpha2.AIMProfileCache) constants.AIMStatus {
 		return cache.Status.GetAIMStatus()
 	})
 }
