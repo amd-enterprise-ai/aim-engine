@@ -236,6 +236,7 @@ See [Model Caching](caching.md) for the full hierarchy (AIMProfileCache → AIMA
 | `imagePullSecrets` | Service-level secrets, merged with the profile's. |
 | `serviceAccountName` | Pod service account for the inference workload. |
 | `priorityClassName` | Pod priority class. |
+| `tolerations` | Pod tolerations for the inference workload. Replaces the runtime config's list as a whole; `[]` removes it. See [Tolerations for inference pods](runtime-config.md#tolerations-for-inference-pods). |
 
 For example, a one-GPU service can override CPU and memory while inheriting the
 profile's accelerator request and limit:
