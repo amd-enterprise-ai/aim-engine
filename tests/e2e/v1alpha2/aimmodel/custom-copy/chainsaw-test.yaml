@@ -72,8 +72,10 @@ spec:
                 manualSelectionOnly: true
                 # The derived image keeps the name and release tag of
                 # source-profile.yaml's base-image annotation (`aim-base:0.1.10`)
-                # and takes the registry and org from the source image.
-                image: docker.io/amdenterpriseai/aim-base:0.1.10
+                # and takes the registry and org from the source image, which
+                # the mirrored-registry lane rewrites, so only the suffix is
+                # fixed here.
+                (ends_with(image, '/aim-base:0.1.10')): true
                 modelSources:
                   - modelId: custom-org/custom-copy-model
                     sourceUri: s3://models/custom-copy-model

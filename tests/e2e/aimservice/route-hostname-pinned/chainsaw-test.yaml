@@ -70,6 +70,11 @@ spec:
               fi
               echo "Found AIMProfileCache=$PC_NAME AIMArtifact=$ART_NAME"
 
+              # AIMProfileCache.status.artifacts[*].uid is a required field, so
+              # mirror the real AIMArtifact's UID into the frozen cache status.
+              ART_UID=$(kubectl get aimartifact "$ART_NAME" -n "$NAMESPACE" \
+                -o jsonpath='{.metadata.uid}')
+
               kubectl annotate aimprofilecache "$PC_NAME" -n "$NAMESPACE" \
                 aim.eai.amd.com/reconciliation-paused=true --overwrite
               kubectl annotate aimartifact "$ART_NAME" -n "$NAMESPACE" \
@@ -124,6 +129,7 @@ spec:
                     "artifacts": {
                       "'"$ART_NAME"'": {
                         "name": "'"$ART_NAME"'",
+                        "uid": "'"$ART_UID"'",
                         "model": "Qwen/Qwen3-0.6B",
                         "status": "Ready",
                         "persistentVolumeClaim": "'"$ART_NAME"'-pvc",
