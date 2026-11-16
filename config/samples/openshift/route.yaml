@@ -1,0 +1,18 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: qwen3-32b-chat
+  namespace: aim-models
+  labels:
+    app.kubernetes.io/name: aim-engine
+    app.kubernetes.io/component: inference
+spec:
+  # Replace this with the generated KServe predictor Service name.
+  to:
+    kind: Service
+    name: replace-me-predictor-service
+  port:
+    targetPort: 80
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

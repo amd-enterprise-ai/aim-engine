@@ -1,0 +1,8 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+  namespace: aim-models
+spec:
+  storage:
+    defaultStorageClassName: replace-me-rwx-storage-class
