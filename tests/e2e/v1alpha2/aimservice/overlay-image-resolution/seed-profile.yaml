@@ -6,7 +6,7 @@
 #
 #   - weights-untouched override (partitioning-only) KEEPS spec.image.
 #   - weights-replaced override (modelSources)        RESOLVES to aim-base,
-#     using the test's explicit RuntimeConfig mapping.
+#     deployed from the test RuntimeConfig's baseImageRegistry.
 #
 # Frozen via the reconciliation-paused annotation so the real reconciler
 # doesn't overwrite the hand-patched status (applied with apply-with-status.sh).
@@ -41,8 +41,8 @@ status:
   matchingNodes: 1
   deployable: true
   # AIM_BASE_IMAGE_REF the inspector extracted from the optimized image.
-  # The weights-replaced derivation maps this through RuntimeConfig to
-  # registry.example.com/aim-base:0.11.
+  # The weights-replaced derivation deploys it from the RuntimeConfig's
+  # baseImageRegistry as registry.example.com/runtimes/aim-base:0.11.
   baseImage: docker.io/amdenterpriseai/aim-base:0.11
   conditions:
     - type: HardwareAvailable

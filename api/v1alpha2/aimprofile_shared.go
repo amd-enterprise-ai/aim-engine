@@ -237,8 +237,9 @@ type AIMProfileSpecCommon struct {
 	// service overlay replaces this deployable profile's modelSources. Image
 	// discovery populates it from AIM_BASE_IMAGE_REF. User-authored profiles
 	// should set it explicitly when they are intended to seed weight-replacing
-	// copies. RuntimeConfig repository mappings may redirect the reference, but
-	// its tag or digest is otherwise preserved exactly.
+	// copies. The copy deploys this image from the RuntimeConfig's
+	// baseImageRegistry, or from the source image's registry and org when that
+	// is unset; a pre-release tag becomes its MAJOR.MINOR rolling tag.
 	//
 	// Base profiles may omit this field because their Image already names the
 	// runtime. Deployable profiles may also omit it when they will never seed a
@@ -374,9 +375,8 @@ type AIMProfileStatus struct {
 
 	// BaseImage is the canonical runtime lineage: spec.baseImageRef when set,
 	// otherwise the AIM_BASE_IMAGE_REF that AIMModel discovery extracted from
-	// the source image. Derivation flows that replace model sources use this
-	// reference exactly, subject only to RuntimeConfig repository-prefix
-	// mappings and the built-in compatibility fallbacks. Empty when neither is
+	// the source image, as recorded. Derivations that replace model sources
+	// deploy it as described on spec.baseImageRef. Empty when neither is
 	// known; weight-replacing derivations from deployable profiles then defer
 	// rather than guessing a runtime image.
 	// +optional

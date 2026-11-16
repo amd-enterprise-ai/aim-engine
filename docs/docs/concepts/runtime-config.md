@@ -2,7 +2,7 @@
 
 Runtime configurations provide storage defaults, routing parameters,
 scale-from-zero activation queries, environment variables, additional CA
-trust, image repository mappings, and label-propagation rules that apply to AIM
+trust, the aim-base registry, and label-propagation rules that apply to AIM
 workloads. They're optional — workloads run without them — but most production
 deployments set at least a cluster-scoped `default`.
 
@@ -85,30 +85,18 @@ the result. A named RuntimeConfig selected by an `AIMService` does not retarget
 a shared cache already owned by an `AIMProfile`; use `default` for policy that
 must apply to both.
 
-## Image repository mappings
+## aim-base registry for derived images
 
-`spec.imageRegistry.mappings` explicitly redirects image repository prefixes.
-Some released AIM model images record a producer-private `AIM_BASE_IMAGE_REF`
-even though the same runtime is published publicly under
-`docker.io/amdenterpriseai`. AIM Engine therefore has two built-in
-compatibility fallbacks. They are not stored in any RuntimeConfig and apply
-whenever no configured mapping matches:
+When a derivation replaces a model's weights (a fine-tuned model, a profile set
+with `overrides.modelSources`, or an `AIMService` with
+`profileOverrides.modelSources`), the derived profile deploys the clean aim-base
+runtime recorded in the source image's `AIM_BASE_IMAGE_REF` instead of the
+model-optimized image. AIM Engine keeps the image name and tag from that
+reference and takes the registry and org from the source model image, so a
+mirror that hosts both the model images and aim-base needs no configuration.
 
-| Recorded prefix | Fallback destination |
-|---|---|
-| `docker.io/silogenai` | `docker.io/amdenterpriseai` |
-| `ghcr.io/silogen` | `docker.io/amdenterpriseai` |
-
-For example, the first fallback resolves
-`docker.io/silogenai/aim-base:2026.11.0` to
-`docker.io/amdenterpriseai/aim-base:2026.11.0`. The canonical
-`spec.baseImageRef` remains unchanged; only the deployment image is remapped.
-Tags and digests are preserved exactly.
-
-Private and air-gapped installations should configure mappings for these
-producer prefixes that point at their internal mirror. Also add a
-`docker.io/amdenterpriseai` mapping for images whose producer metadata already
-records the public repository:
+Set `spec.baseImageRegistry` when aim-base lives somewhere other than the model
+images. The value is a registry and org, without a tag:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -116,48 +104,24 @@ kind: AIMClusterRuntimeConfig
 metadata:
   name: default
 spec:
-  imageRegistry:
-    mappings:
-      - from: docker.io/silogenai
-        to: registry.example.com/amdenterpriseai
-      - from: ghcr.io/silogen
-        to: registry.example.com/amdenterpriseai
-      - from: docker.io/amdenterpriseai
-        to: registry.example.com/amdenterpriseai
+  baseImageRegistry: registry.example.com/amdenterpriseai
 ```
 
-Resolution applies one mapping only; mappings are not chained through an
-intermediate repository.
+| `AIM_BASE_IMAGE_REF` | Source model image | `baseImageRegistry` | Deployed image |
+|---|---|---|---|
+| `build.example.com/aim/aim-base:0.13.1` | `docker.io/amdenterpriseai/aim-qwen-qwen3-32b:0.13.0` | unset | `docker.io/amdenterpriseai/aim-base:0.13.1` |
+| `build.example.com/aim/aim-base:0.13.1` | `registry.example.com/mirror/aim-qwen-qwen3-32b:0.13.0` | unset | `registry.example.com/mirror/aim-base:0.13.1` |
+| `build.example.com/aim/aim-base:0.13.1` | `registry.example.com/models/aim-qwen-qwen3-32b:0.13.0` | `registry.example.com/runtimes` | `registry.example.com/runtimes/aim-base:0.13.1` |
+| `build.example.com/aim/aim-base:2026.11.0-rc11` | `docker.io/amdenterpriseai/aim-gemma4:2026.11.0-rc1` | unset | `docker.io/amdenterpriseai/aim-base:2026.11` |
 
-Mappings use repository-segment boundaries, and the longest matching `from`
-prefix wins. Namespace mappings replace cluster mappings with the same `from`
-value while preserving unrelated cluster mappings. Any matching configured
-mapping takes precedence over the operator compatibility fallbacks, even when
-the configured prefix is broader. To keep a recorded reference unchanged, for
-example when your cluster can pull that repository directly, configure an exact
-self-mapping in the RuntimeConfig used by that derivation:
+Release tags and digests are kept exactly. A pre-release tag such as
+`2026.11.0-rc11` is replaced by its `MAJOR.MINOR` rolling tag, because model
+builds record pre-release aim-base tags that are not published.
+`spec.baseImageRef` and `status.baseImage` keep the recorded reference either
+way, so the substitution stays visible.
 
-```yaml
-spec:
-  imageRegistry:
-    mappings:
-      - from: docker.io/silogenai
-        to: docker.io/silogenai
-```
-
-This explicitly opts that prefix out of the operator compatibility fallback.
-Use the equivalent self-mapping for `ghcr.io/silogen` if needed. If neither a
-configured nor compatibility mapping matches, AIM Engine uses the image
-reference exactly as recorded; it does not infer a mirror, probe registries, or
-fall back between registries.
-
-Matching is literal. AIM Engine does not treat `amdenterpriseai/aim-base`,
-`docker.io/amdenterpriseai/aim-base`, and
-`index.docker.io/amdenterpriseai/aim-base` as aliases. Set `from` to the
-repository prefix exactly as it appears in `AIM_BASE_IMAGE_REF` or
-`AIMProfile.spec.baseImageRef`.
-
-The RuntimeConfig supplying mappings depends on the derivation owner:
+The RuntimeConfig that supplies `baseImageRegistry` depends on the derivation
+owner:
 
 | Path | RuntimeConfig used |
 |---|---|
@@ -165,18 +129,15 @@ The RuntimeConfig supplying mappings depends on the derivation owner:
 | v1alpha2 `AIMService.spec.profileOverrides` | The RuntimeConfig selected by that service |
 | v1alpha1 fine-tuned `AIMModel` / `AIMClusterModel` template copies | The RuntimeConfig selected by that model |
 
-Explicit derivation image overrides remain authoritative and are not remapped.
-The two public compatibility fallbacks apply regardless of which RuntimeConfig
-a service or model selects. Other mappings placed only on `default` do not
-apply to a named configuration. Private and air-gapped installations should
-repeat their explicit mirror mapping on each selected named configuration; that
-configured policy wins over the public fallback.
+A namespace `baseImageRegistry` replaces the cluster value. A named
+configuration does not inherit `default`, so set `baseImageRegistry` on each
+named configuration that needs it; without it, the source model image's
+registry is used. Explicit derivation image overrides are used as given.
 
 If an image does not contain `AIM_BASE_IMAGE_REF`, derivation reports a
 controlled resolution error and retains existing managed profiles rather than
-deriving a runtime from the source image's registry or truncating its tag.
-Hand-authored deployable profiles can supply the same lineage explicitly with
-`spec.baseImageRef`.
+guessing a runtime image. Hand-authored deployable profiles can supply the same
+lineage explicitly with `spec.baseImageRef`.
 
 ## Additional CA trust
 
@@ -205,9 +166,7 @@ limitations.
 `spec.model.profileGeneration.fallbacks` defines generic serving runtimes for
 v1alpha2 models declared with `spec.modelId`. The Helm chart installs a
 chart-managed `AIMClusterRuntimeConfig/default` with the NVIDIA vLLM fallback
-shown below, alongside the [image compatibility mappings](#image-repository-mappings),
-so NVIDIA model-ID onboarding and derived AIM runtimes work after a default
-install.
+shown below, so NVIDIA model-ID onboarding works after a default install.
 Set `clusterRuntimeConfig.enable=false` when the cluster already has a
 platform-managed config named `default`, or override
 `clusterRuntimeConfig.spec.model.profileGeneration.fallbacks` to enforce a

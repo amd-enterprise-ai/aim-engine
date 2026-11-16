@@ -3,7 +3,4 @@ kind: AIMRuntimeConfig
 metadata:
   name: default
 spec:
-  imageRegistry:
-    mappings:
-      - from: docker.io/amdenterpriseai
-        to: registry.example.com
+  baseImageRegistry: registry.example.com/runtimes

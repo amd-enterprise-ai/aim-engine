@@ -236,9 +236,10 @@ The `default` RuntimeConfig applies when a service, cache, or artifact does not
 name a different RuntimeConfig. A namespace `AIMRuntimeConfig` overrides an
 `AIMClusterRuntimeConfig` with the same name.
 
-When model images and their AIM runtime images live in different registries,
-configure an explicit repository mapping instead of relying on the model
-image's registry:
+Fine-tuned models and other derivations that replace a model's weights deploy
+aim-base from the same registry and org as the model image, so mirroring the
+model images and aim-base side by side needs no configuration. When aim-base
+lives in a different registry, set `baseImageRegistry`:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -247,33 +248,14 @@ metadata:
   name: default
   namespace: ml-team
 spec:
-  imageRegistry:
-    mappings:
-      - from: docker.io/silogenai
-        to: registry.internal.example/amdenterpriseai
-      - from: ghcr.io/silogen
-        to: registry.internal.example/amdenterpriseai
-      - from: docker.io/amdenterpriseai
-        to: registry.internal.example/amdenterpriseai
+  baseImageRegistry: registry.internal.example/amdenterpriseai
 ```
 
-This changes only matching derived base-image references. Explicit image
-overrides are left unchanged, and references with no matching mapping retain
-their original registry, repository, tag, and digest. See
-[Image repository mappings](../concepts/runtime-config.md#image-repository-mappings)
-for merge and missing-reference behavior.
-
-Without a matching configured mapping, the operator's built-in fallbacks map
-`docker.io/silogenai` and `ghcr.io/silogen` to the public
-`docker.io/amdenterpriseai` repository. Any matching configured mapping, such
-as the ones above, takes precedence, so air-gapped clusters send released-image
-references directly to their mirror. Mappings are single-pass and literal: a
-`from: docker.io/silogenai` entry does not match the short reference
-`silogenai/aim-base:0.11.2`, and a mapping to `docker.io/amdenterpriseai` is not
-then remapped a second time. Use the prefix exactly as the image producer
-recorded it. Services and legacy fine-tuned models that select a named
-RuntimeConfig use mappings from that selected configuration, not mappings
-present only on `default`.
+Explicit image overrides are left unchanged. Services and legacy fine-tuned
+models that select a named RuntimeConfig read `baseImageRegistry` from that
+configuration, not from `default`. See
+[aim-base registry for derived images](../concepts/runtime-config.md#aim-base-registry-for-derived-images)
+for tag handling and which RuntimeConfig each derivation uses.
 
 When `AIMProfile.spec.caching.enabled` creates a profile-owned shared cache,
 that cache resolves the `default` RuntimeConfig. Setting

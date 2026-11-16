@@ -107,20 +107,18 @@ kubectl wait --for=condition=Established \
   crd/aimclusterruntimeconfigs.aim.eai.amd.com
 ```
 
-### 3. Configure lineage and registry mappings
+### 3. Configure lineage and the aim-base registry
 
 After updating the CRDs but before upgrading the operator:
 
 1. Set `spec.baseImageRef` on affected hand-authored deployable profiles.
-2. Review the producer references recorded by released AIM images. The
-   operator maps `docker.io/silogenai` and `ghcr.io/silogen` to
-   `docker.io/amdenterpriseai` as built-in fallbacks, regardless of the
-   selected RuntimeConfig. No chart value or RuntimeConfig change is needed for
-   public installations.
-3. Private and air-gapped installations must configure their mirror explicitly.
-   Repeat that policy on named RuntimeConfigs selected by services or legacy
-   fine-tuned models; a matching configured mapping wins over the built-in
-   fallback, while other mappings on `default` are not inherited by name.
+2. Derived images keep taking aim-base's registry and org from the model image,
+   so public installations and mirrors that host both the model images and
+   aim-base need no RuntimeConfig change.
+3. If aim-base lives in a different registry from the model images, set
+   `baseImageRegistry` on `default` and on each named RuntimeConfig selected by
+   services or legacy fine-tuned models; named configurations do not inherit it
+   from `default`.
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -128,24 +126,12 @@ kind: AIMClusterRuntimeConfig
 metadata:
   name: default
 spec:
-  imageRegistry:
-    mappings:
-      - from: docker.io/silogenai
-        to: registry.example.com/amdenterpriseai
-      - from: ghcr.io/silogen
-        to: registry.example.com/amdenterpriseai
-      - from: docker.io/amdenterpriseai
-        to: registry.example.com/amdenterpriseai
+  baseImageRegistry: registry.example.com/amdenterpriseai
 ```
 
-Matching is literal, so use the `from` prefix exactly as recorded in
-`AIM_BASE_IMAGE_REF`. Confirm that the exact resulting tag or digest exists in
-the destination registry. Mapping is single-pass, so
-`silogenai -> amdenterpriseai -> internal` does not chain; map each producer
-prefix directly to the mirror. AIM Engine does not fall back to a rolling tag.
-To keep a recorded reference unchanged, configure an exact self-mapping such as
-`from: docker.io/silogenai` and `to: docker.io/silogenai` in the RuntimeConfig
-used by the derivation.
+Derived images now use the exact release tag that each model image records,
+so confirm that tag exists in your registry. Pre-release tags, such as
+`2026.11.0-rc11`, still resolve to their `MAJOR.MINOR` rolling tag.
 
 Existing derived profiles are updated in place when the upgraded controller
 reconciles exact producer lineage. For example, a previously synthesized

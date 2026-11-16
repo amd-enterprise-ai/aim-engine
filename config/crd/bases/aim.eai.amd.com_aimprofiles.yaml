@@ -915,7 +915,8 @@ spec:
                 description: |-
                   BaseImage is the canonical runtime lineage: spec.baseImageRef when set,
                   otherwise the AIM_BASE_IMAGE_REF that AIMModel discovery extracted from
-                  the source image.
+                  the source image, as recorded. Derivations that replace model sources
+                  deploy it as described on spec.
                 type: string
               conditions:
                 description: Conditions represent the latest observations of profile

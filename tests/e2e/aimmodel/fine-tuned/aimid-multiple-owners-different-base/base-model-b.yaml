@@ -6,9 +6,11 @@
 #
 # Owner B deliberately uses a Docker Hub spec.image (no registry prefix means
 # docker.io/amdenterpriseai/...) while keeping baseImageRef on
-# ghcr.io/silogen/... . The resolver must use that baseImageRef as canonical
-# input to RuntimeConfig mapping; source-image placement does not imply a
-# runtime-image mirror.
+# ghcr.io/silogen/... . The resolver must then produce a deployment-image-ref
+# that takes the registry and org from spec.image and the image name and tag
+# from baseImageRef, i.e. `amdenterpriseai/aim-multi-cpu-base:0.11`. This
+# proves resolution works across different registry hosts, not just different
+# repository paths under the same host.
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMModel
 metadata:

@@ -70,8 +70,9 @@ spec:
                 profileId: cpu-latency
                 primary: true
                 manualSelectionOnly: true
-                # The derived image preserves source-profile.yaml's exact
-                # base-image annotation, including its producer-owned tag.
+                # The derived image keeps the name and release tag of
+                # source-profile.yaml's base-image annotation (`aim-base:0.1.10`)
+                # and takes the registry and org from the source image.
                 image: docker.io/amdenterpriseai/aim-base:0.1.10
                 modelSources:
                   - modelId: custom-org/custom-copy-model

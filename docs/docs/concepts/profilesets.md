@@ -155,16 +155,16 @@ With neither `spec.image` nor `spec.overrides.image` set, the derived image depe
 
 | Source profile | Override replaces weights? | Resulting image |
 |---|---|---|
-| Deployable (`role=deployable`, a model-optimized image) | **Yes** (`modelSources` set) | Resolves back to the source's `status.baseImage` (`AIM_BASE_IMAGE_REF`) with its tag or digest unchanged. Only the repository prefix can change, through a matching `imageRegistry.mappings` entry in the merged `default` RuntimeConfig or the built-in compatibility fallbacks (see [Image repository mappings](runtime-config.md#image-repository-mappings)). The new weights load onto the clean AIM runtime selected by the image producer. |
+| Deployable (`role=deployable`, a model-optimized image) | **Yes** (`modelSources` set) | Resolves back to the source's `status.baseImage` (`AIM_BASE_IMAGE_REF`), deployed from the merged `default` RuntimeConfig's `baseImageRegistry`, or from the source image's registry and org when that is unset. Release tags and digests are kept; a pre-release tag becomes its `MAJOR.MINOR` rolling tag (see [aim-base registry for derived images](runtime-config.md#aim-base-registry-for-derived-images)). The new weights load onto the clean AIM runtime selected by the image producer. |
 | Deployable | **No** (partitioning-only / env-only / engineArgs-only override) | Keeps the optimized source image. |
 | Base (`role=base`, an aim-base image used for [Custom Models](../guides/custom-models.md)) | — | Keeps the source image unchanged. A base profile already *is* the runtime image; weights come from `overrides.modelSources`. |
 
 An explicit image override selects the deployment image; `overrides.image` takes precedence over top-level `spec.image`, preserving existing behavior.
 
 For a deployable source, a weight-replacing derivation retains the producer's
-canonical `baseImageRef` as lineage while applying the selected RuntimeConfig
-mapping only to the deployment image. Subsequent copies therefore apply their
-own selected RuntimeConfig policy without mapping an already-mapped reference.
+canonical `baseImageRef` as lineage; only the deployment image takes the
+resolved registry and tag. Subsequent copies therefore resolve the recorded
+reference against their own RuntimeConfig rather than an already-resolved one.
 For a base-role source, the source image itself becomes the lineage. An
 explicit image override establishes the selected image as lineage when it
 replaces a base-role runtime or accompanies replaced weights.
@@ -176,7 +176,7 @@ runtime instead of descending to that runtime image's own upstream base.
 
 If a deployable source does not expose `AIM_BASE_IMAGE_REF`, profile derivation
 reports a controlled error and retains existing managed profiles instead of
-guessing a runtime image from the source registry or tag.
+guessing a runtime image from the source image's tag.
 
 For a hand-authored deployable source, declare that lineage in the profile
 itself:
