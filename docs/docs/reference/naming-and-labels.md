@@ -26,7 +26,7 @@ Derived resource names are **not** predictable from the parent name alone. Alway
 |---|---|---|---|
 | `AIMProfileSet` (child of model) | `AIMModel.spec.profiles` | `[modelName, "profiles"]` | model UID + derivation spec |
 | `AIMClusterProfileSet` (child of cluster model) | `AIMClusterModel.spec.profiles` | `[modelName, "profiles"]` | cluster model UID + derivation spec |
-| Derived `AIMProfile` | `AIMProfileSet` | `[profileSetName, accelOrAlias]` | logical source identity + effective configuration and overrides |
+| Derived `AIMProfile` | `AIMProfileSet` | `[profileSetName, derived profileId (or source name)]` | logical source identity + effective configuration and overrides |
 | Overlay `AIMProfile` | `AIMService.spec.profileOverrides` | `[seedName, serviceName, "overlay"]` | service UID + overrides |
 | `AIMProfileCache` | `AIMService` (when caching enabled) | `[profileName]` | namespace |
 | `AIMArtifact` | `AIMProfileCache` | `[sourceURI]` | source URI + env + storage |

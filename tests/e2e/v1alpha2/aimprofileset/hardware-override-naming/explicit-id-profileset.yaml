@@ -1,0 +1,12 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfileSet
+metadata:
+  name: hw-override-explicit-id
+spec:
+  selector:
+    aimId: acme/hw-override
+    profileId: vllm-mi250x-fp16-tp1-latency
+  versionPolicy: all
+  overrides:
+    acceleratorModel: MI350P
+    profileId: my-custom-profile

@@ -472,6 +472,67 @@ func TestBuildDesiredNamespaceProfiles_MarksCopiesWithProfileSource(t *testing.T
 	}
 }
 
+func TestBuildDesiredProfiles_NameFollowsOverriddenHardware(t *testing.T) {
+	t.Parallel()
+
+	spec := aimv1alpha1.AIMProfileSetSpec{
+		VersionPolicy: aimv1alpha1.ProfileVersionPolicyAll,
+		Overrides:     &aimv1alpha1.ProfileOverrides{AcceleratorModel: "MI350P"},
+	}
+	source := aimprofile.ProfileCopyCandidate{
+		Name:         "source",
+		YAMLContract: profileyaml.DefaultContract(),
+		Spec: aimv1alpha2.AIMProfileSpecCommon{
+			AimId:            "qwen/Qwen3-0.6B",
+			ModelId:          "qwen/Qwen3-0.6B",
+			ProfileId:        "vllm-mi250x-fp16-tp1-latency",
+			Engine:           "vllm",
+			AcceleratorModel: "MI250X",
+			AcceleratorCount: 1,
+			Precision:        aimv1alpha2.AIMPrecision("fp16"),
+			Metric:           aimv1alpha2.AIMMetric("latency"),
+		},
+	}
+	const setName = "qwen-profiles"
+	const wantProfileID = "vllm-mi350p-fp16-tp1-latency"
+	wantName, err := utils.GenerateDerivedName(
+		[]string{setName, wantProfileID},
+		utils.WithHashSource(setName, legacyNamingIdentity(source)),
+	)
+	if err != nil {
+		t.Fatalf("GenerateDerivedName() error = %v", err)
+	}
+
+	nsDesired, err := buildDesiredNamespaceProfiles(&aimv1alpha2.AIMProfileSet{
+		ObjectMeta: metav1.ObjectMeta{Name: setName, Namespace: "team-a", UID: "set-uid"},
+		Spec:       spec,
+	}, []aimprofile.ProfileCopyCandidate{source})
+	if err != nil || len(nsDesired) != 1 {
+		t.Fatalf("buildDesiredNamespaceProfiles() = %d profiles, error = %v", len(nsDesired), err)
+	}
+	clusterDesired, err := buildDesiredClusterProfiles(&aimv1alpha2.AIMClusterProfileSet{
+		ObjectMeta: metav1.ObjectMeta{Name: setName, UID: "cluster-set-uid"},
+		Spec:       spec,
+	}, []aimprofile.ProfileCopyCandidate{source})
+	if err != nil || len(clusterDesired) != 1 {
+		t.Fatalf("buildDesiredClusterProfiles() = %d profiles, error = %v", len(clusterDesired), err)
+	}
+
+	nsProfile := nsDesired[0].Object.(*aimv1alpha2.AIMProfile)
+	clusterProfile := clusterDesired[0].Object.(*aimv1alpha2.AIMClusterProfile)
+	for scope, got := range map[string]struct{ name, profileID string }{
+		"namespace": {nsProfile.Name, nsProfile.Spec.ProfileId},
+		"cluster":   {clusterProfile.Name, clusterProfile.Spec.ProfileId},
+	} {
+		if got.profileID != wantProfileID {
+			t.Errorf("%s spec.profileId = %q, want %q", scope, got.profileID, wantProfileID)
+		}
+		if got.name != wantName {
+			t.Errorf("%s profile name = %q, want %q", scope, got.name, wantName)
+		}
+	}
+}
+
 func TestBuildDesiredProfiles_OutputPolicyMarksCopiesCopyable(t *testing.T) {
 	t.Parallel()
 
@@ -878,7 +939,7 @@ func TestLoadNamespaceCandidates_BaseRoleMatchesNothingInIteration1(t *testing.T
 //
 // A derived AIMProfile's name is
 //
-//	GenerateDerivedName([setName, profileId],
+//	GenerateDerivedName([setName, derived profileId],
 //	    WithHashSource(setName, legacyNamingIdentity(source)))
 //
 // so the hash suffix is a pure function of legacyNamingIdentity's field list.
@@ -911,7 +972,7 @@ func TestDerivedProfileName_Stable(t *testing.T) {
 		Status: aimv1alpha2.AIMProfileStatus{Version: "0.2.0"},
 	}
 
-	name, err := derivedProfileName("stable-set", source)
+	name, err := derivedProfileName("stable-set", source, source.Spec.ProfileId)
 	if err != nil {
 		t.Fatalf("GenerateDerivedName() error = %v", err)
 	}
@@ -923,5 +984,16 @@ func TestDerivedProfileName_Stable(t *testing.T) {
 			"GenerateDerivedName). Every derived AIMProfile is now renamed; update "+
 			"this golden value and audit e2e fixtures / consumers that match on "+
 			"derived names.", name, want)
+	}
+
+	// A regenerated profileId changes only the readable part; the hash stays
+	// keyed on the source.
+	name, err = derivedProfileName("stable-set", source, "vllm-mi350p-fp16-tp1-latency")
+	if err != nil {
+		t.Fatalf("GenerateDerivedName() error = %v", err)
+	}
+	const wantRegenerated = "stable-set-vllm-mi350p-fp16-tp1-latency-966da3c3"
+	if name != wantRegenerated {
+		t.Fatalf("derived profile name = %q, want %q", name, wantRegenerated)
 	}
 }

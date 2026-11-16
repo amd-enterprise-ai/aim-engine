@@ -216,6 +216,17 @@ func ProfileFilename(spec *aimv1alpha2.AIMProfileSpecCommon) (string, error) {
 		return filename, nil
 	}
 
+	filename := GeneratedProfileID(spec) + ".yaml"
+	if problems := validation.IsConfigMapKey(filename); len(problems) > 0 {
+		return "", fmt.Errorf("generated profile filename %q is invalid: %s", filename, strings.Join(problems, "; "))
+	}
+	return filename, nil
+}
+
+// GeneratedProfileID returns the AIM-convention profile identifier
+// {engine}-{accelerator}-{precision}-tp{count}-{metric}[-{variant}] built from
+// the spec's naming fields, ignoring spec.profileId.
+func GeneratedProfileID(spec *aimv1alpha2.AIMProfileSpecCommon) string {
 	engine := strings.ToLower(spec.Engine)
 	if engine == "" {
 		// Preserve the historical filename for hand-authored profiles that
@@ -237,11 +248,7 @@ func ProfileFilename(spec *aimv1alpha2.AIMProfileSpecCommon) (string, error) {
 	if spec.Variant != "" {
 		stem += "-" + spec.Variant
 	}
-	filename := stem + ".yaml"
-	if problems := validation.IsConfigMapKey(filename); len(problems) > 0 {
-		return "", fmt.Errorf("generated profile filename %q is invalid: %s", filename, strings.Join(problems, "; "))
-	}
-	return filename, nil
+	return stem
 }
 
 // BuildProfileConfigMap creates a ConfigMap containing the pre-assembled profile

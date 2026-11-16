@@ -1,0 +1,59 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimprofileset-hardware-override-naming
+spec:
+  description: |
+    Verifies that a hardware override renames a derived profile whose source
+    profileId follows the AIM naming convention: the derived spec.    profileId
+    (the projected profile filename) and the readable part of the resource name
+    carry the overridden accelerator instead of the source's. An explicit
+    overrides.profileId still wins over the regenerated identifier.
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Create the copyable source AIMProfile
+      try:
+        - apply:
+            file: source-profile.yaml
+
+    - name: Derive with an accelerator override
+      try:
+        - apply:
+            file: profileset.yaml
+        # Match the copy by its owning profile-set-name annotation instead of
+        # the hashed derived name; the readable part of the name is asserted
+        # with expressions so the hash suffix stays unpinned.
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                annotations:
+                  aim.eai.amd.com/profile-source: copy
+                  aim.eai.amd.com/profile-set-name: hw-override-profiles
+                (contains(name, 'vllm-mi350p-fp16-tp1-latency')): true
+                (contains(name, 'mi250x')): false
+              spec:
+                profileId: vllm-mi350p-fp16-tp1-latency
+                acceleratorModel: MI350P
+
+    - name: Derive with an explicit profileId override
+      try:
+        - apply:
+            file: explicit-id-profileset.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                annotations:
+                  aim.eai.amd.com/profile-source: copy
+                  aim.eai.amd.com/profile-set-name: hw-override-explicit-id
+                (contains(name, 'my-custom-profile')): true
+                (contains(name, 'mi250x')): false
+              spec:
+                profileId: my-custom-profile
+                acceleratorModel: MI350P

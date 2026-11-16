@@ -171,11 +171,11 @@ func TestCatalogNamingPreservesLegacySourceRepresentation(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				want, err := derivedProfileName(set.Name, legacy)
+				want, err := derivedProfileName(set.Name, legacy, legacy.Spec.ProfileId)
 				if err != nil {
 					t.Fatal(err)
 				}
-				got, err := derivedProfileName(set.Name, candidates[0].ProfileCopyCandidate)
+				got, err := derivedProfileName(set.Name, candidates[0].ProfileCopyCandidate, candidates[0].Spec.ProfileId)
 				if err != nil || got != want {
 					t.Fatalf("namespace=%q explicit=%v emptyType=%v: name=%s want=%s err=%v", namespace, explicit, emptyType, got, want, err)
 				}
@@ -184,7 +184,7 @@ func TestCatalogNamingPreservesLegacySourceRepresentation(t *testing.T) {
 				}
 				recreated := candidates[0].ProfileCopyCandidate
 				recreated.SourceID = "new-incarnation/new-catalog-revision"
-				if again, err := derivedProfileName(set.Name, recreated); err != nil || again != got {
+				if again, err := derivedProfileName(set.Name, recreated, recreated.Spec.ProfileId); err != nil || again != got {
 					t.Fatal("source recreation renamed derived output")
 				}
 			}
@@ -294,7 +294,7 @@ func TestCatalogNamingSurvivesOptedInDerivationChains(t *testing.T) {
 				if source.LegacyCatalogNaming {
 					legacy.Spec.AcceleratorVendor = ""
 				}
-				want, err := derivedProfileName(setName, legacy)
+				want, err := derivedProfileName(setName, legacy, legacy.Spec.ProfileId)
 				if err != nil {
 					t.Fatal(err)
 				}

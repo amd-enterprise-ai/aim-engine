@@ -180,7 +180,7 @@ spec:
 |---|---|
 | `aimId` | Model architecture identifier (e.g. `qwen/qwen3-32b`). Primary matching axis for selection. **Immutable** once set. |
 | `modelId` | Specific model variant or weights identifier (e.g. `qwen/qwen3-32b-fp8`). Determines cache path. |
-| `profileId` | On-disk profile identifier from the AIM image (e.g. `vllm_omni-mi300x-fp16-tp4-latency-usp4`). Set during discovery and retained as the projected profile filename; not required for hand-authored profiles. |
+| `profileId` | On-disk profile identifier from the AIM image (e.g. `vllm_omni-mi300x-fp16-tp4-latency-usp4`). Set during discovery and retained as the projected profile filename; not required for hand-authored profiles. Derived profiles regenerate a generated-form ID when overrides change the hardware (see [Identity stamping](profilesets.md#identity-stamping)). |
 | `engine` | Inference engine (`vllm`, `vllm_omni`, ...). Projected onto the inference container as the framework-owned `AIM_ENGINE` variable. |
 | `variant` | Optional runtime recipe suffix for profiles that otherwise share the same engine/hardware/precision/count/metric tuple (for example `usp4`). Discovery preserves `metadata.variant` from the image. It is identity metadata, not currently a selector or ranking axis. |
 | `metric` | Optimization target: `latency` or `throughput`. |

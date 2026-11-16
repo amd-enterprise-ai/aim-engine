@@ -40,7 +40,9 @@ Engine configuration is split across two profile fields:
 For profiles discovered from an AIM image, `spec.profileId` is authoritative:
 the projected ConfigMap key and `AIM_PROFILE_ID` retain that exact filename
 stem. This preserves names such as
-`vllm_omni-mi300x-fp16-tp4-latency-usp4`.
+`vllm_omni-mi300x-fp16-tp4-latency-usp4`. Derived profiles and service overlays
+that override the accelerator model or count regenerate a `profileId` that is in
+the generated form below, so the filename names the derived hardware.
 
 For a hand-authored profile without `spec.profileId`, AIM Engine generates:
 

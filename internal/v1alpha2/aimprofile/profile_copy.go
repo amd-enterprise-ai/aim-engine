@@ -36,6 +36,7 @@ import (
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/serving"
 )
 
 // ProfileCopyCandidate is a resource-neutral profile source used by derivation hosts such as AIMModel.
@@ -325,8 +326,8 @@ func ApplyProfileCopyOverrides(
 
 	// Identity overrides — applied FIRST so the subsequent modelSources
 	// auto-derivation can only fill in modelId when the user didn't
-	// explicitly override it. AimId/ProfileId have no auto-derivation
-	// fallback; their values are only set when explicitly overridden.
+	// explicitly override it. AimId has no auto-derivation fallback;
+	// ProfileId may be regenerated below from the overridden hardware.
 	if overrides.AimId != "" {
 		result.AimId = overrides.AimId
 	}
@@ -361,6 +362,12 @@ func ApplyProfileCopyOverrides(
 	}
 	if overrides.AcceleratorPartitioningMode != "" {
 		result.AcceleratorPartitioningMode = overrides.AcceleratorPartitioningMode
+	}
+	// A source profileId that follows the AIM naming convention encodes
+	// hardware the overrides may have replaced, so regenerate it from the
+	// derived spec. Custom source IDs and overrides.profileId are kept verbatim.
+	if overrides.ProfileId == "" && source.ProfileId != "" && source.ProfileId == serving.GeneratedProfileID(&source) {
+		result.ProfileId = serving.GeneratedProfileID(&result)
 	}
 
 	result.ContainerEnv = MergeContainerEnv(result.ContainerEnv, overrides.ContainerEnv)
