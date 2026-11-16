@@ -9,11 +9,15 @@ versions, AIMService dispatch, retained model outputs, and manual recovery.
 
 ### 1. Inventory derived runtime image lineage
 
-Current releases use the exact `AIM_BASE_IMAGE_REF` recorded by an image
-producer. They no longer truncate the tag to `MAJOR.MINOR` or move the
-reference implicitly to the source model image's registry. Before upgrading,
-inventory deployable profiles that can seed weight-replacing derivations but
-do not yet expose runtime lineage:
+Current releases deploy the `AIM_BASE_IMAGE_REF` recorded by an image producer
+with its release tag kept exactly, instead of truncating it to `MAJOR.MINOR`;
+only pre-release tags still resolve to their `MAJOR.MINOR` rolling tag. The
+registry and org come from `baseImageRegistry`, or from the source model image
+when that is unset. Images that don't record `AIM_BASE_IMAGE_REF` (official
+images before `0.9.0`) can no longer seed weight-replacing derivations without
+an explicit `overrides.image`. Before upgrading, inventory deployable profiles
+that can seed weight-replacing derivations but do not yet expose runtime
+lineage:
 
 ```bash
 kubectl get aimprofile -A -o json | jq -r '

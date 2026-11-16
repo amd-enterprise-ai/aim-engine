@@ -39,6 +39,8 @@ The source definitions are available after discovery even when the original hard
     -o jsonpath='{.status.discoveredProfiles}'
   ```
 
+- An official model image at version `0.9.0` or later. Replacing the weights requires the image to record its clean runtime in `AIM_BASE_IMAGE_REF`. `0.8.4` and earlier don't record one, so the derivation fails rather than guessing one (see [Troubleshooting](#derivation-fails-with-has-no-aim_base_image_ref)). `0.8.5` records a runtime tag that isn't published, so it isn't supported either. To fine-tune an older image anyway, set `overrides.image` to the runtime image you choose.
+
 - The `aimId` value the official model uses (this is your match key). Read it from the model:
 
   ```bash
@@ -245,6 +247,10 @@ spec:
 For a source model using the compatibility `profileCopy` shape, set `spec.profileCopy.outputPolicy.copyable: true` instead. This is preferred over manually annotating generated profiles because it records the producer's intent and survives reconciliation.
 
 Disabling copyability later removes the source from downstream selection and causes dependent derived profiles to be pruned. Confirm that no running services depend on those profiles before changing the producer policy.
+
+### Derivation fails with "has no AIM_BASE_IMAGE_REF"
+
+The derivation is `Degraded`, with a message that the source image `has no AIM_BASE_IMAGE_REF or spec.baseImageRef; refusing to guess a runtime image`. A selected source profile's image doesn't record `AIM_BASE_IMAGE_REF`, so AIM Engine can't tell which clean runtime your weights should load onto, and it doesn't guess one. This is expected for official images older than `0.9.0`. Select a newer source version, or set `overrides.image` to the runtime image you want. While any selected source is unresolved, the derivation keeps its existing profiles and doesn't create, update, or prune any.
 
 ### AIMService stuck in `Pending` with `ProfileNotFound`
 

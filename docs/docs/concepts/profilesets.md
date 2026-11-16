@@ -191,6 +191,12 @@ spec:
       sourceUri: hf://company/model
 ```
 
+`spec.baseImageRef` supplies the aim-base image name and tag. The registry and
+org come from the RuntimeConfig's `baseImageRegistry`, or from `spec.image`
+when that is unset, so a `baseImageRef` in another registry is deployed from
+the model image's registry. Set `baseImageRegistry`, or an explicit
+`overrides.image` on the derivation, when the two registries differ.
+
 `spec.baseImageRef` is required only when the deployable profile will seed a
 copy that replaces `modelSources`. A base-role profile already names its
 runtime in `spec.image`, and a configuration-only copy keeps the source image.
