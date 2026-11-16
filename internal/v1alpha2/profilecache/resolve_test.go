@@ -25,6 +25,7 @@ package profilecache
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -187,8 +188,10 @@ func TestFindReadyShared_ReturnsErrorWhenCacheReadinessIsUnknown(t *testing.T) {
 				constants.AIMStatusDegraded,
 			)
 			unknown.Status.Conditions = []metav1.Condition{{
-				Type:   conditionType,
-				Status: metav1.ConditionFalse,
+				Type:    conditionType,
+				Status:  metav1.ConditionFalse,
+				Reason:  controllerutils.ReasonDependenciesNotReachable,
+				Message: "Cannot reach dependencies",
 			}}
 
 			got, err := FindReadyShared(
@@ -200,6 +203,9 @@ func TestFindReadyShared_ReturnsErrorWhenCacheReadinessIsUnknown(t *testing.T) {
 			)
 			if err == nil {
 				t.Fatal("FindReadyShared() error = nil, want unknown-readiness error")
+			}
+			if want := conditionType + "=False: Cannot reach dependencies"; !strings.Contains(err.Error(), want) {
+				t.Errorf("FindReadyShared() error = %q, want it to carry %q", err, want)
 			}
 			if got != nil {
 				t.Fatalf("FindReadyShared() = %q, want nil on unknown readiness", got.Name)
@@ -238,6 +244,45 @@ func TestFindReadyShared_ReturnsErrorWhenReadyStatusIsStale(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatalf("FindReadyShared() = %q, want nil for stale Ready status", got.Name)
+	}
+	if staleErr.Paused {
+		t.Error("StatusStaleError.Paused = true for a cache without the pause annotation")
+	}
+}
+
+// A paused cache is never reconciled, so its status stays stale until the
+// annotation is removed; callers name that cause instead of waiting silently.
+func TestFindReadyShared_StaleErrorReportsPausedCache(t *testing.T) {
+	t.Parallel()
+
+	const profile = "qwen3-32b-mi300x"
+	paused := cache(
+		profile+"-cache",
+		profile,
+		aimv1alpha1.AIMResolutionScopeNamespace,
+		aimv1alpha2.ProfileCacheModeShared,
+		constants.AIMStatusReady,
+	)
+	paused.Annotations = map[string]string{constants.AnnotationReconciliationPaused: "true"}
+	paused.Generation = 2
+	paused.Status.ObservedGeneration = 1
+
+	_, err := FindReadyShared(
+		context.Background(),
+		newClient(t, paused),
+		testNamespace,
+		profile,
+		aimv1alpha1.AIMResolutionScopeNamespace,
+	)
+	var staleErr *StatusStaleError
+	if !errors.As(err, &staleErr) {
+		t.Fatalf("FindReadyShared() error = %T %v, want *StatusStaleError", err, err)
+	}
+	if !staleErr.Paused {
+		t.Fatal("StatusStaleError.Paused = false for a paused cache")
+	}
+	if want := "is paused by the " + constants.AnnotationReconciliationPaused + " annotation"; !strings.Contains(staleErr.PendingReason(), want) {
+		t.Errorf("PendingReason() = %q, want it to contain %q", staleErr.PendingReason(), want)
 	}
 }
 

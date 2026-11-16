@@ -32,6 +32,7 @@ import (
 	"sort"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -45,21 +46,40 @@ import (
 // caught up to the current spec generation. Callers should preserve their last
 // known-good projection and retry rather than treating this convergence state
 // as an infrastructure failure or as proof that no cache exists.
+//
+// The AIMProfileCache controller publishes observedGeneration on every reconcile,
+// including failed ones, so a lasting lag means the cache is not being reconciled
+// at all, typically because it carries the reconciliation-paused annotation.
 type StatusStaleError struct {
 	Namespace          string
 	Name               string
 	Generation         int64
 	ObservedGeneration int64
+	Paused             bool
 }
 
 func (e *StatusStaleError) Error() string {
-	return fmt.Sprintf(
+	msg := fmt.Sprintf(
 		"AIMProfileCache %s/%s status has not observed metadata generation %d (observedGeneration=%d)",
 		e.Namespace,
 		e.Name,
 		e.Generation,
 		e.ObservedGeneration,
 	)
+	if e.Paused {
+		msg += "; reconciliation is paused"
+	}
+	return msg
+}
+
+// PendingReason says, for a user-facing message, why the cache's status does not
+// yet describe its latest spec.
+func (e *StatusStaleError) PendingReason() string {
+	if e.Paused {
+		return fmt.Sprintf("reconciliation of Shared AIMProfileCache %s is paused by the %s annotation",
+			e.Name, constants.AnnotationReconciliationPaused)
+	}
+	return fmt.Sprintf("Shared AIMProfileCache %s has not yet processed its latest spec", e.Name)
 }
 
 // FindReadyShared returns a Ready, profile-owned (Shared) AIMProfileCache in
@@ -130,10 +150,13 @@ func FindReadyShared(
 		return ready, nil
 	}
 	if unknown != nil {
+		cond := activeErrorCondition(unknown)
 		return nil, fmt.Errorf(
-			"AIMProfileCache %s/%s readiness is unknown because reconciliation has an active error condition",
+			"AIMProfileCache %s/%s readiness is unknown because reconciliation has an active error condition: %s=False: %s",
 			unknown.Namespace,
 			unknown.Name,
+			cond.Type,
+			cond.Message,
 		)
 	}
 	if stale != nil {
@@ -142,6 +165,7 @@ func FindReadyShared(
 			Name:               stale.Name,
 			Generation:         stale.Generation,
 			ObservedGeneration: stale.Status.ObservedGeneration,
+			Paused:             controllerutils.IsReconciliationPaused(stale),
 		}
 	}
 	return nil, nil
@@ -162,16 +186,23 @@ func matchesShared(
 }
 
 func cacheReadinessUnknown(cache *aimv1alpha2.AIMProfileCache) bool {
+	return activeErrorCondition(cache) != nil
+}
+
+// activeErrorCondition returns the first error condition that is False on the
+// cache, or nil when none is.
+func activeErrorCondition(cache *aimv1alpha2.AIMProfileCache) *metav1.Condition {
 	for _, conditionType := range []string{
 		controllerutils.ConditionTypeDependenciesReachable,
 		controllerutils.ConditionTypeAuthValid,
 		controllerutils.ConditionTypeConfigValid,
 	} {
-		if meta.IsStatusConditionFalse(cache.Status.Conditions, conditionType) {
-			return true
+		if cond := meta.FindStatusCondition(cache.Status.Conditions, conditionType); cond != nil &&
+			cond.Status == metav1.ConditionFalse {
+			return cond
 		}
 	}
-	return false
+	return nil
 }
 
 func cacheStatusCurrent(cache *aimv1alpha2.AIMProfileCache) bool {

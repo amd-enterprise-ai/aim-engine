@@ -380,16 +380,31 @@ kubectl get pvc <adapter-pvc-name> -n <namespace>
   `DependenciesReachable=False` on the service; otherwise check the
   [operator logs](../admin/troubleshooting.md#operator-logs) for the service.
 - `generation` is ahead of `observedGeneration`: the `AIMProfileCache` controller
-  has not processed the request yet. Other services on the cache are not
-  affected. Check that the cache does not carry the
-  `aim.eai.amd.com/reconciliation-paused` annotation, and check the operator
-  logs for the cache.
+  has not processed the request yet. The controller records the new generation on
+  every reconcile, including failed ones, so a lag that does not clear means the
+  cache is not being reconciled. The usual cause is the
+  `aim.eai.amd.com/reconciliation-paused` annotation, set on the cache by an
+  administrator or external tooling; the service's `AdaptersReady` message says
+  so. Other services on the cache keep their current InferenceService while the
+  cache is behind.
 - The artifact has no `spec.adapterDisk`: the `AIMProfileCache` controller could
-  not add it. Check the cache's `DependenciesReachable` condition and its events.
+  not add it. The service's `AdaptersReady` message includes the cache's
+  `DependenciesReachable` message; check the cache's events for details.
+  While that condition is `False`, the cache's readiness counts as unknown, and
+  how that shows depends on the profile's scope:
+  - With a namespaced `AIMProfile`, the profile reports
+    `ProfileCacheLookupFailed`, and the services on that profile hold their
+    changes and keep their current InferenceService until the cache recovers.
+  - With an `AIMClusterProfile`, each service using the cache reports
+    `ProfileRuntimeReady=False` with reason `FetchError`, and the message
+    carries the cache's condition. The InferenceService is left as it is.
+
   When present, `{}` means the disk uses the default size and storage class.
 - The artifact has `spec.adapterDisk` but no `status.adapterPersistentVolumeClaim`:
-  the adapter disk PVC could not be created. Check the artifact's events and
-  that the resolved storage class supports `ReadWriteMany`.
+  the adapter disk PVC could not be created. If the artifact reports
+  `DependenciesReachable=False`, the service's `AdaptersReady` message includes
+  it. Check the artifact's events and that the resolved storage class supports
+  `ReadWriteMany`.
 
 Once the adapter disk PVC exists, the service moves on to
 `AdapterSubtreeProvisioning`. If it stays there, check the PVC: a PVC stuck in

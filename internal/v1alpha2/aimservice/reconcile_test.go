@@ -25,6 +25,7 @@ package aimservice
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,6 +51,7 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimadapter"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	v1alpha1service "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservice"
@@ -1052,11 +1054,31 @@ func TestProfileRuntimeHealth_StaleSharedCache(t *testing.T) {
 	tests := []struct {
 		name             string
 		projectionExists bool
+		paused           bool
 		wantState        constants.AIMStatus
 		wantReason       string
+		wantMessage      string
 	}{
-		{name: "existing projection keeps serving", projectionExists: true, wantState: constants.AIMStatusReady, wantReason: "ProfileRuntimeReady"},
-		{name: "missing projection waits", wantState: constants.AIMStatusProgressing, wantReason: reasonProfileRuntimeConverging},
+		{
+			name: "existing projection keeps serving", projectionExists: true,
+			wantState: constants.AIMStatusReady, wantReason: "ProfileRuntimeReady",
+			wantMessage: "Shared AIMProfileCache shared-cache has not yet processed its latest spec",
+		},
+		{
+			name:      "missing projection waits",
+			wantState: constants.AIMStatusProgressing, wantReason: reasonProfileRuntimeConverging,
+			wantMessage: "Shared AIMProfileCache shared-cache has not yet processed its latest spec",
+		},
+		{
+			name: "existing projection on a paused cache", projectionExists: true, paused: true,
+			wantState: constants.AIMStatusReady, wantReason: "ProfileRuntimeReady",
+			wantMessage: "reconciliation of Shared AIMProfileCache shared-cache is paused by the " + constants.AnnotationReconciliationPaused,
+		},
+		{
+			name: "missing projection on a paused cache", paused: true,
+			wantState: constants.AIMStatusProgressing, wantReason: reasonProfileRuntimeConverging,
+			wantMessage: "reconciliation of Shared AIMProfileCache shared-cache is paused by the " + constants.AnnotationReconciliationPaused,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1074,7 +1096,9 @@ func TestProfileRuntimeHealth_StaleSharedCache(t *testing.T) {
 						Error: apierrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, runtimeName),
 					},
 					runtimeProfileCache: controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{
-						Error: &profilecache.StatusStaleError{Namespace: "ns", Name: "shared-cache", Generation: 2, ObservedGeneration: 1},
+						Error: &profilecache.StatusStaleError{
+							Namespace: "ns", Name: "shared-cache", Generation: 2, ObservedGeneration: 1, Paused: tt.paused,
+						},
 					},
 				},
 			}
@@ -1091,6 +1115,9 @@ func TestProfileRuntimeHealth_StaleSharedCache(t *testing.T) {
 			if health.State != tt.wantState || health.Reason != tt.wantReason {
 				t.Fatalf("health = %s/%s, want %s/%s", health.State, health.Reason, tt.wantState, tt.wantReason)
 			}
+			if !strings.Contains(health.Message, tt.wantMessage) {
+				t.Errorf("health message = %q, want it to contain %q", health.Message, tt.wantMessage)
+			}
 			if len(health.Errors) != 0 {
 				t.Fatalf("health errors = %v, want none", health.Errors)
 			}
@@ -1101,6 +1128,65 @@ func TestProfileRuntimeHealth_StaleSharedCache(t *testing.T) {
 			}
 			if len(plan.GetToApplyWithoutOwnerRef()) != 0 {
 				t.Fatal("the projection must not be rebuilt from a stale Shared cache status")
+			}
+		})
+	}
+}
+
+func TestProfileRuntimeHealth_FetchErrorCarriesCacheError(t *testing.T) {
+	t.Parallel()
+
+	runtimeName := serving.RuntimeName(testClusterProfileName)
+	cacheErr := errors.New("AIMProfileCache ns/shared-cache readiness is unknown because reconciliation has an active error condition: DependenciesReachable=False: admission denied")
+	runtimeErr := apierrors.NewForbidden(schema.GroupResource{Group: "serving.kserve.io", Resource: "servingruntimes"}, runtimeName, errors.New("RBAC denied"))
+	tests := []struct {
+		name         string
+		runtimeErr   error
+		wantMessages []string
+	}{
+		{
+			name:         "cache readiness unknown",
+			wantMessages: []string{"DependenciesReachable=False: admission denied"},
+		},
+		{
+			name:       "cache readiness unknown and ServingRuntime unreadable",
+			runtimeErr: runtimeErr,
+			wantMessages: []string{
+				"DependenciesReachable=False: admission denied; fetch projected profile ServingRuntime: ",
+				"RBAC denied",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			obs := ServiceObservation{
+				resolvedProfileSpec:   sampleProfileSpec(),
+				resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady},
+				hasModelSources:       true,
+				profileCacheReady:     true,
+				ServiceFetchResult: ServiceFetchResult{
+					profileRuntime: controllerutils.FetchResult[*kservev1alpha1.ServingRuntime]{
+						Value: &kservev1alpha1.ServingRuntime{ObjectMeta: metav1.ObjectMeta{Name: runtimeName}},
+					},
+					profileRuntimeConfigMap: controllerutils.FetchResult[*corev1.ConfigMap]{
+						Value: &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: runtimeName}},
+					},
+					runtimeProfileCache: controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: cacheErr},
+				},
+			}
+			if tt.runtimeErr != nil {
+				obs.profileRuntime = controllerutils.FetchResult[*kservev1alpha1.ServingRuntime]{Error: tt.runtimeErr}
+			}
+
+			health := obs.getProfileRuntimeHealth()
+			if health.State != constants.AIMStatusFailed || health.Reason != reasonFetchError {
+				t.Fatalf("health = %s/%s, want %s/%s", health.State, health.Reason, constants.AIMStatusFailed, reasonFetchError)
+			}
+			for _, want := range tt.wantMessages {
+				if !strings.Contains(health.Message, want) {
+					t.Errorf("health message = %q, want it to contain %q", health.Message, want)
+				}
 			}
 		})
 	}
@@ -3482,4 +3568,127 @@ func legacyConfigMapDeleteCount(
 		count++
 	}
 	return count
+}
+
+// TestAdaptersHealth_ParentLacksDiskNamesBlocker covers a LoRA service waiting for
+// the adapter disk: the AdaptersReady message carries the error that keeps the
+// disk from appearing, from the AIMProfileCache adding it or the base model
+// artifact creating its PVC, so it is visible without inspecting either.
+func TestAdaptersHealth_ParentLacksDiskNamesBlocker(t *testing.T) {
+	t.Parallel()
+
+	failing := func(message string) []metav1.Condition {
+		return []metav1.Condition{{
+			Type:    controllerutils.ConditionTypeDependenciesReachable,
+			Status:  metav1.ConditionFalse,
+			Reason:  controllerutils.ReasonDependenciesNotReachable,
+			Message: message,
+		}}
+	}
+	pausedMessage := "Base model artifact has no resolvable adapter disk yet; reconciliation of AIMProfileCache shared-cache is paused by the " +
+		constants.AnnotationReconciliationPaused + " annotation"
+	tests := []struct {
+		name        string
+		cache       func(*aimv1alpha2.AIMProfileCache)
+		artifact    func(*aimv1alpha1.AIMArtifact)
+		diskExists  bool
+		wantReason  string
+		wantMessage string
+	}{
+		{name: "nothing failing", wantMessage: "Base model artifact has no resolvable adapter disk yet"},
+		{
+			name: "cache cannot add the disk",
+			cache: func(pc *aimv1alpha2.AIMProfileCache) {
+				pc.Status.Conditions = failing("Failed to apply resources: denied")
+			},
+			wantMessage: "Base model artifact has no resolvable adapter disk yet; AIMProfileCache shared-cache: Failed to apply resources: denied",
+		},
+		{
+			name: "cache paused",
+			cache: func(pc *aimv1alpha2.AIMProfileCache) {
+				pc.Annotations = map[string]string{constants.AnnotationReconciliationPaused: "true"}
+			},
+			wantMessage: pausedMessage,
+		},
+		{
+			name: "pause wins over a failing condition",
+			cache: func(pc *aimv1alpha2.AIMProfileCache) {
+				pc.Annotations = map[string]string{constants.AnnotationReconciliationPaused: "true"}
+				pc.Status.Conditions = failing("Failed to apply resources: denied")
+			},
+			wantMessage: pausedMessage,
+		},
+		{
+			name: "cache wins over the artifact",
+			cache: func(pc *aimv1alpha2.AIMProfileCache) {
+				pc.Status.Conditions = failing("Failed to apply resources: denied")
+			},
+			artifact: func(a *aimv1alpha1.AIMArtifact) {
+				a.Status.Conditions = failing("Failed to apply resources: quota exceeded")
+			},
+			wantMessage: "Base model artifact has no resolvable adapter disk yet; AIMProfileCache shared-cache: Failed to apply resources: denied",
+		},
+		{
+			name: "no blocker once the disk exists",
+			cache: func(pc *aimv1alpha2.AIMProfileCache) {
+				pc.Status.Conditions = failing("Failed to apply resources: denied")
+			},
+			diskExists:  true,
+			wantReason:  aimadapter.ReasonSubtreeProvisioning,
+			wantMessage: "Provisioning the service adapter subtree",
+		},
+		{
+			name: "artifact cannot create the PVC",
+			artifact: func(a *aimv1alpha1.AIMArtifact) {
+				a.Status.Conditions = failing("Failed to apply resources: quota exceeded")
+			},
+			wantMessage: "Base model artifact has no resolvable adapter disk yet; AIMArtifact base: Failed to apply resources: quota exceeded",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			pc := &aimv1alpha2.AIMProfileCache{ObjectMeta: metav1.ObjectMeta{Name: "shared-cache", Namespace: "ns"}}
+			if tt.cache != nil {
+				tt.cache(pc)
+			}
+			artifact := &aimv1alpha1.AIMArtifact{ObjectMeta: metav1.ObjectMeta{Name: "base", Namespace: "ns"}}
+			if tt.artifact != nil {
+				tt.artifact(artifact)
+			}
+			obs := ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					service: &aimv1alpha1.AIMService{
+						ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+						Spec:       aimv1alpha1.AIMServiceSpec{AdapterMode: aimv1alpha1.AdapterModeDynamic},
+					},
+					profileCache: controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Value: pc},
+				},
+				resolvedProfileSpec:   sampleProfileSpec(),
+				resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady, Deployable: true},
+			}
+			obs.adapterDeps.ParentArtifact = &controllerutils.FetchResult[*aimv1alpha1.AIMArtifact]{Value: artifact}
+			if tt.diskExists {
+				obs.adapterState.AdapterDiskPVC = "base-adapters"
+				obs.adapterState.AdapterDiskPVCUID = "base-adapters-uid"
+			}
+			wantReason := tt.wantReason
+			if wantReason == "" {
+				wantReason = aimadapter.ReasonParentLacksDisk
+			}
+
+			var adapters *controllerutils.ComponentHealth
+			for _, h := range obs.GetComponentHealth(context.Background(), nil) {
+				if h.Component == "Adapters" {
+					adapters = &h
+				}
+			}
+			if adapters == nil {
+				t.Fatal("no Adapters component health")
+			}
+			if adapters.Reason != wantReason || adapters.Message != tt.wantMessage {
+				t.Errorf("Adapters = %s %q, want %s %q", adapters.Reason, adapters.Message, wantReason, tt.wantMessage)
+			}
+		})
+	}
 }

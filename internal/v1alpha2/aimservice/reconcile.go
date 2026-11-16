@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -36,6 +37,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -329,7 +331,13 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	}
 
 	if aimadapter.IsActive(obs.service) {
-		health = append(health, aimadapter.Health(obs.adapterState, len(obs.service.Spec.Adapters)))
+		adapters := aimadapter.Health(obs.adapterState, len(obs.service.Spec.Adapters))
+		if adapters.Reason == aimadapter.ReasonParentLacksDisk {
+			if blocker := obs.adapterDiskBlocker(); blocker != "" {
+				adapters.Message += "; " + blocker
+			}
+		}
+		health = append(health, adapters)
 	}
 
 	return health
@@ -409,6 +417,31 @@ func (obs ServiceObservation) getProfileCacheHealth() controllerutils.ComponentH
 	return health
 }
 
+// adapterDiskBlocker names what keeps the adapter disk from appearing on the base
+// model artifact when that is reported by the AIMProfileCache adding it or by the
+// artifact creating its PVC, and returns "" otherwise. Either controller records
+// a failed apply as DependenciesReachable=False, and the cache does not reconcile
+// at all while paused.
+func (obs ServiceObservation) adapterDiskBlocker() string {
+	if pc := obs.profileCache.Value; obs.profileCache.OK() && pc != nil {
+		if controllerutils.IsReconciliationPaused(pc) {
+			return fmt.Sprintf("reconciliation of AIMProfileCache %s is paused by the %s annotation",
+				pc.Name, constants.AnnotationReconciliationPaused)
+		}
+		if cond := meta.FindStatusCondition(pc.Status.Conditions, controllerutils.ConditionTypeDependenciesReachable); cond != nil &&
+			cond.Status == metav1.ConditionFalse {
+			return fmt.Sprintf("AIMProfileCache %s: %s", pc.Name, cond.Message)
+		}
+	}
+	if parent := obs.adapterDeps.ParentArtifact; parent != nil && parent.OK() && parent.Value != nil {
+		if cond := meta.FindStatusCondition(parent.Value.Status.Conditions, controllerutils.ConditionTypeDependenciesReachable); cond != nil &&
+			cond.Status == metav1.ConditionFalse {
+			return fmt.Sprintf("AIMArtifact %s: %s", parent.Value.Name, cond.Message)
+		}
+	}
+	return ""
+}
+
 func (obs ServiceObservation) getProfileRuntimeHealth() controllerutils.ComponentHealth {
 	if !obs.profileRuntimeFetched() ||
 		obs.resolvedProfileSpec == nil ||
@@ -449,9 +482,13 @@ func (obs ServiceObservation) getProfileRuntimeHealth() controllerutils.Componen
 		}
 	}
 	if len(health.Errors) > 0 {
+		details := make([]string, 0, len(health.Errors))
+		for _, err := range health.Errors {
+			details = append(details, err.Error())
+		}
 		health.State = constants.AIMStatusFailed
 		health.Reason = reasonFetchError
-		health.Message = "Failed to resolve projected profile runtime dependencies"
+		health.Message = "Failed to resolve projected profile runtime dependencies: " + strings.Join(details, "; ")
 		return health
 	}
 	// A Shared AIMProfileCache whose controller has not yet observed its latest
@@ -463,15 +500,15 @@ func (obs ServiceObservation) getProfileRuntimeHealth() controllerutils.Componen
 			health.State = constants.AIMStatusReady
 			health.Reason = "ProfileRuntimeReady"
 			health.Message = fmt.Sprintf(
-				"Profile ServingRuntime and ConfigMap are ready; updates wait for Shared AIMProfileCache %s to observe its latest spec",
-				staleCacheStatus.Name)
+				"Profile ServingRuntime and ConfigMap are ready; updates are held because %s",
+				staleCacheStatus.PendingReason())
 			return health
 		}
 		health.State = constants.AIMStatusProgressing
 		health.Reason = reasonProfileRuntimeConverging
 		health.Message = fmt.Sprintf(
-			"Waiting for Shared AIMProfileCache %s to observe its latest spec before materializing the profile ServingRuntime and ConfigMap",
-			staleCacheStatus.Name)
+			"Waiting to materialize the profile ServingRuntime and ConfigMap because %s",
+			staleCacheStatus.PendingReason())
 		return health
 	}
 

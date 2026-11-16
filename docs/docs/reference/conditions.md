@@ -120,10 +120,10 @@ Tracks the namespaced profile `ServingRuntime` and its same-name ConfigMap befor
 
 | Status | Reason | Description |
 |---|---|---|
-| `True` | `ProfileRuntimeReady` | Both projection siblings match the current profile and cache content hash, or both exist while the controller of the Shared `AIMProfileCache` behind them has not yet observed its latest spec (the message names the cache; the siblings are refreshed once it has) |
+| `True` | `ProfileRuntimeReady` | Both projection siblings match the current profile and cache content hash, or both exist while the controller of the Shared `AIMProfileCache` behind them has not yet processed its latest spec (the message names the cache and says whether its reconciliation is paused; the siblings are refreshed once it has caught up) |
 | `False` | `ProfileRuntimeMaterializing` | One or both projection siblings do not exist yet |
-| `False` | `ProfileRuntimeConverging` | Both siblings exist, but one or both have not converged to the expected content hash, or the siblings do not exist yet and the Shared `AIMProfileCache` behind the projection has not yet observed its latest spec (the message names it) |
-| `False` | `FetchError` | AIM Engine could not read one of the projection siblings |
+| `False` | `ProfileRuntimeConverging` | Both siblings exist, but one or both have not converged to the expected content hash, or the siblings do not exist yet and the Shared `AIMProfileCache` behind the projection has not yet processed its latest spec (the message names it and says whether its reconciliation is paused) |
+| `False` | `FetchError` | AIM Engine could not read one of the projection siblings, or the Shared `AIMProfileCache` behind the projection reports `DependenciesReachable`, `AuthValid`, or `ConfigValid` as `False`, so its readiness is unknown (the message carries that condition's message). Existing projection siblings and the InferenceService are left as they are. For a namespaced `AIMProfile`, the profile reports `ProfileCacheLookupFailed` instead, and the service waits on the profile rather than reporting this reason |
 
 `ProfileRuntimeConverging` can be transient because the two resources are updated independently. If it persists, check for unsupported out-of-band changes to generated `aim-*` resources. See [Consistency and rollout guarantees](../guides/bring-your-own-kserve.md#consistency-and-rollout-guarantees).
 
