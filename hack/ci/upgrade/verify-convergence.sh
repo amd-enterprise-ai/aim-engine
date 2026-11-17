@@ -59,7 +59,7 @@ verify_identity() {
             echo "actual:   $(base64 --decode <<<"${actual_owners}")" >&2
             return 1
         fi
-        if [[ "${resource}" == "persistentvolumeclaims" ]] &&
+        if [[ "${resource}" == "persistentvolumeclaims" || "${resource}" == "aimartifacts" ]] &&
             base64 --decode <<<"${expected_owners}" | jq -e 'any(.[]; .kind == "AIMArtifact")' >/dev/null &&
             ! jq -e '[.metadata.ownerReferences[]? | select(.kind == "AIMArtifact").apiVersion] | all(. == "aim.eai.amd.com/v1alpha2")' >/dev/null <<<"${json}"; then
             echo "${resource}/${name} artifact owner reference is not aim.eai.amd.com/v1alpha2" >&2

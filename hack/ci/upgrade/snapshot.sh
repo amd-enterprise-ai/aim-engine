@@ -94,5 +94,8 @@ for pvc in $(kubectl get pvc -n "${namespace}" -o jsonpath='{.items[*].metadata.
     record_named persistentvolumeclaims "${namespace}" "${pvc}"
 done
 
+# Adapter owned by upgrade-model-artifact. Its UID must not change.
+record_named aimartifacts "${namespace}" upgrade-adapter-artifact
+
 echo "Baseline object identity snapshot:"
 cat "${output}"

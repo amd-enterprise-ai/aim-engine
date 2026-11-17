@@ -678,9 +678,9 @@ jobs:
           normalize() { sed -E "s#aim\.eai\.amd\.com/v1alpha1 (${kept}) #aim.eai.amd.com/v1alpha2 \1 #g" "$1"; }
           diff -u <(normalize "${UPGRADE_REPORT_DIR}/identities-before-upgrade.tsv") \
             <(normalize "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv")
-          if grep $'^PersistentVolumeClaim\t' "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv" \
+          if grep -E $'^(PersistentVolumeClaim|AIMArtifact)\t' "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv" \
               | grep -q 'aim.eai.amd.com/v1alpha1 AIMArtifact '; then
-            echo "artifact-owned PVC still names its artifact at v1alpha1" >&2
+            echo "artifact owner reference still names v1alpha1" >&2
             exit 1
           fi
 
