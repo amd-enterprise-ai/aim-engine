@@ -182,3 +182,13 @@ spec:
       value: "true"
     - name: AIM_DEBUG_SIMULATE_HF_DURATION
       value: "1"
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: upgrade-adapter-artifact
+spec:
+  type: adapter
+  parentArtifact: upgrade-model-artifact
+  modelId: upgrade-example/adapter
+  sourceUri: hf://upgrade-example/adapter

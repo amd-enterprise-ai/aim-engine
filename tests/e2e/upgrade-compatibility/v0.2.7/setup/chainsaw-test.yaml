@@ -10,7 +10,8 @@ spec:
     clean up: Shared and Dedicated services on the template pipeline, an image
     model that emits templates and discovers a CPU profile, a model source
     whose discovered cluster model emits cluster templates, and a model artifact
-    with an adapter disk. A third, Shared template service is moved later with
+    with an adapter disk and an adapter linked to it.
+    A third, Shared template service is moved later with
     v0.2.7's aim-template-migration. A spec.model.custom service, which the
     guide replaces with an AIMProfile of another model, and a ConfigMap with a
     v1alpha1 owner reference to it.
@@ -255,7 +256,7 @@ spec:
                     blockOwnerDeletion: true
               EOF
 
-    - name: Wait for the model artifact and its PVCs
+    - name: Wait for the model artifact, its PVCs, and its adapter
       try:
         - assert:
             resource:
@@ -279,4 +280,16 @@ spec:
                           | select(.kind == "AIMArtifact" and .name == "upgrade-model-artifact")
                           | .apiVersion]
                     ] == [["aim.eai.amd.com/v1alpha1"], ["aim.eai.amd.com/v1alpha1"]]
+                  ' >/dev/null
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              uid=$(kubectl get aimartifact upgrade-model-artifact -n "$NAMESPACE" -o jsonpath='{.metadata.uid}')
+              kubectl get aimartifact upgrade-adapter-artifact -n "$NAMESPACE" -o json \
+                | jq -e --arg uid "$uid" '
+                    [.metadata.ownerReferences[]? | select(.uid == $uid) | .apiVersion]
+                    == ["aim.eai.amd.com/v1alpha1"]
                   ' >/dev/null
