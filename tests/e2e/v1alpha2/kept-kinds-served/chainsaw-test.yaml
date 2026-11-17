@@ -1,0 +1,329 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMArtifact, AIMRuntimeConfig, AIMClusterRuntimeConfig and AIMClusterModelSource
+# are served at v1alpha1 and v1alpha2 with one schema. v1alpha1 is storage.
+# An object created at either version reads back at the other with the same
+# spec and status, and the existing controllers reconcile a v1alpha2 create.
+#
+# The runtime config controllers do not write status. Reconciliation of those
+# two kinds is the ArtifactCacheDeprecated warning they emit when
+# spec.artifactCache is set. The artifact is a logical adapter, so it becomes
+# Ready without a download. The model source declares one model and does not
+# query a registry.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: kept-kinds-served
+spec:
+  timeouts:
+    assert: 120s
+    cleanup: 180s
+  steps:
+    - name: Create each kind at v1alpha2
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMArtifact
+              metadata:
+                name: served-kept-artifact
+              spec:
+                type: adapter
+                sourceUri: hf://served-kinds/kept-adapter
+                modelId: served-kinds/kept-adapter
+                compatibleWith:
+                  - served-kinds/kept-base
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMRuntimeConfig
+              metadata:
+                name: served-kept-runtime-config
+              spec:
+                artifactCache:
+                  enabled: false
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterRuntimeConfig
+              metadata:
+                name: served-kept-cluster-runtime-config
+              spec:
+                artifactCache:
+                  enabled: false
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterModelSource
+              metadata:
+                name: served-kept-model-source
+              spec:
+                models:
+                  - modelId: served-kinds/kept-model
+
+    - name: v1alpha2 creates are reconciled
+      try:
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMArtifact
+              metadata:
+                name: served-kept-artifact
+              status:
+                status: Ready
+                observedGeneration: 1
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterModelSource
+              metadata:
+                name: served-kept-model-source
+              status:
+                status: Ready
+                observedGeneration: 1
+                discoveredModels: 1
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              wait_for_event() {
+                name="$1"
+                for _ in $(seq 1 30); do
+                  found=$(kubectl get events -A --field-selector "involvedObject.name=${name},reason=ArtifactCacheDeprecated" -o name)
+                  if [ -n "$found" ]; then
+                    return 0
+                  fi
+                  sleep 2
+                done
+                echo "ERROR: ${name} was not reconciled (no ArtifactCacheDeprecated event)"
+                kubectl get events -A --field-selector "involvedObject.name=${name}" || true
+                return 1
+              }
+              wait_for_event served-kept-runtime-config
+              wait_for_event served-kept-cluster-runtime-config
+
+    - name: Create each kind at v1alpha1
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: served-kept-artifact-v1
+              spec:
+                type: adapter
+                sourceUri: hf://served-kinds/kept-adapter-v1
+                modelId: served-kinds/kept-adapter-v1
+                compatibleWith:
+                  - served-kinds/kept-base
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMRuntimeConfig
+              metadata:
+                name: served-kept-runtime-config-v1
+              spec:
+                artifactCache:
+                  enabled: false
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterRuntimeConfig
+              metadata:
+                name: served-kept-cluster-runtime-config-v1
+              spec:
+                artifactCache:
+                  enabled: false
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModelSource
+              metadata:
+                name: served-kept-model-source-v1
+              spec:
+                models:
+                  - modelId: served-kinds/kept-model-v1
+
+    - name: v1alpha1 creates are reconciled
+      try:
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: served-kept-artifact-v1
+              status:
+                status: Ready
+                observedGeneration: 1
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModelSource
+              metadata:
+                name: served-kept-model-source-v1
+              status:
+                status: Ready
+                observedGeneration: 1
+                discoveredModels: 1
+
+    - name: Each object reads back at the other version
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              compare() {
+                kind="$1"
+                name="$2"
+                shift 2
+                alpha1=$(kubectl get "${kind}.v1alpha1.aim.eai.amd.com" "$name" "$@" -o json)
+                alpha2=$(kubectl get "${kind}.v1alpha2.aim.eai.amd.com" "$name" "$@" -o json)
+                spec1=$(printf '%s' "$alpha1" | jq -cS '.spec')
+                spec2=$(printf '%s' "$alpha2" | jq -cS '.spec')
+                status1=$(printf '%s' "$alpha1" | jq -cS '.status')
+                status2=$(printf '%s' "$alpha2" | jq -cS '.status')
+                if [ "$spec1" != "$spec2" ] || [ "$status1" != "$status2" ]; then
+                  echo "ERROR: ${kind}/${name} differs across versions"
+                  echo "v1alpha1 spec=${spec1}"
+                  echo "v1alpha2 spec=${spec2}"
+                  echo "v1alpha1 status=${status1}"
+                  echo "v1alpha2 status=${status2}"
+                  exit 1
+                fi
+              }
+              compare aimartifacts served-kept-artifact -n "$NAMESPACE"
+              compare aimartifacts served-kept-artifact-v1 -n "$NAMESPACE"
+              compare aimruntimeconfigs served-kept-runtime-config -n "$NAMESPACE"
+              compare aimruntimeconfigs served-kept-runtime-config-v1 -n "$NAMESPACE"
+              compare aimclusterruntimeconfigs served-kept-cluster-runtime-config
+              compare aimclusterruntimeconfigs served-kept-cluster-runtime-config-v1
+              compare aimclustermodelsources served-kept-model-source
+              compare aimclustermodelsources served-kept-model-source-v1
+
+    - name: Update and list at both versions
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              kubectl label "aimartifact.v1alpha1.aim.eai.amd.com" -n "$NAMESPACE" served-kept-artifact example.com/from=v1alpha1
+              got=$(kubectl get "aimartifact.v1alpha2.aim.eai.amd.com" -n "$NAMESPACE" served-kept-artifact -o jsonpath='{.metadata.labels.example\.com/from}')
+              [ "$got" = v1alpha1 ]
+              kubectl label "aimruntimeconfig.v1alpha2.aim.eai.amd.com" -n "$NAMESPACE" served-kept-runtime-config-v1 example.com/from=v1alpha2
+              got=$(kubectl get "aimruntimeconfig.v1alpha1.aim.eai.amd.com" -n "$NAMESPACE" served-kept-runtime-config-v1 -o jsonpath='{.metadata.labels.example\.com/from}')
+              [ "$got" = v1alpha2 ]
+              kubectl label "aimclusterruntimeconfig.v1alpha1.aim.eai.amd.com" served-kept-cluster-runtime-config example.com/from=v1alpha1
+              got=$(kubectl get "aimclusterruntimeconfig.v1alpha2.aim.eai.amd.com" served-kept-cluster-runtime-config -o jsonpath='{.metadata.labels.example\.com/from}')
+              [ "$got" = v1alpha1 ]
+              kubectl label "aimclustermodelsource.v1alpha2.aim.eai.amd.com" served-kept-model-source-v1 example.com/from=v1alpha2
+              got=$(kubectl get "aimclustermodelsource.v1alpha1.aim.eai.amd.com" served-kept-model-source-v1 -o jsonpath='{.metadata.labels.example\.com/from}')
+              [ "$got" = v1alpha2 ]
+
+              list_has() {
+                resource="$1"
+                name="$2"
+                shift 2
+                kubectl get "$resource" "$@" -o name | grep -qx "$name"
+              }
+              list_has aimartifacts.v1alpha1.aim.eai.amd.com aimartifact.aim.eai.amd.com/served-kept-artifact -n "$NAMESPACE"
+              list_has aimartifacts.v1alpha2.aim.eai.amd.com aimartifact.aim.eai.amd.com/served-kept-artifact-v1 -n "$NAMESPACE"
+              list_has aimruntimeconfigs.v1alpha1.aim.eai.amd.com aimruntimeconfig.aim.eai.amd.com/served-kept-runtime-config -n "$NAMESPACE"
+              list_has aimruntimeconfigs.v1alpha2.aim.eai.amd.com aimruntimeconfig.aim.eai.amd.com/served-kept-runtime-config-v1 -n "$NAMESPACE"
+              list_has aimclusterruntimeconfigs.v1alpha1.aim.eai.amd.com aimclusterruntimeconfig.aim.eai.amd.com/served-kept-cluster-runtime-config
+              list_has aimclusterruntimeconfigs.v1alpha2.aim.eai.amd.com aimclusterruntimeconfig.aim.eai.amd.com/served-kept-cluster-runtime-config-v1
+              list_has aimclustermodelsources.v1alpha1.aim.eai.amd.com aimclustermodelsource.aim.eai.amd.com/served-kept-model-source
+              list_has aimclustermodelsources.v1alpha2.aim.eai.amd.com aimclustermodelsource.aim.eai.amd.com/served-kept-model-source-v1
+
+    - name: Print columns, short names and categories match
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              header() {
+                kubectl get "$@" | awk 'NR == 1 { print }'
+              }
+              compare_headers() {
+                short="$1"
+                shift
+                left=$(header "${short}.v1alpha1.aim.eai.amd.com" "$@")
+                right=$(header "${short}.v1alpha2.aim.eai.amd.com" "$@")
+                if [ "$left" != "$right" ]; then
+                  echo "ERROR: ${short} columns differ"
+                  echo "v1alpha1: $left"
+                  echo "v1alpha2: $right"
+                  exit 1
+                fi
+              }
+              compare_headers aimart -n "$NAMESPACE"
+              compare_headers aimrc -n "$NAMESPACE"
+              compare_headers aimclrc
+              compare_headers aimclsrc
+
+              # Short names and categories live on the CRD, so both versions share them.
+              # The header check above already used the short name at each version.
+              for resource in aimartifacts aimruntimeconfigs aimclusterruntimeconfigs aimclustermodelsources; do
+                categories=$(kubectl get crd "${resource}.aim.eai.amd.com" -o jsonpath='{range .spec.names.categories[*]}{@}{" "}{end}')
+                if [ "$categories" != "aim all " ]; then
+                  echo "ERROR: ${resource} categories are '${categories}', want 'aim all '"
+                  exit 1
+                fi
+              done
+
+    - name: Reject changing an artifact type at v1alpha2
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              if err=$(kubectl patch "aimartifact.v1alpha2.aim.eai.amd.com" -n "$NAMESPACE" served-kept-artifact \
+                --type merge -p '{"spec":{"type":"model"}}' 2>&1); then
+                echo "ERROR: changing spec.type was accepted"
+                exit 1
+              fi
+              if ! printf '%s' "$err" | grep -q "spec.type is immutable"; then
+                echo "ERROR: spec.type change was rejected for a different reason:"
+                printf '%s\n' "$err"
+                exit 1
+              fi
+
+    - name: Model source filter rules apply at v1alpha2
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterModelSource
+              metadata:
+                name: served-kept-source-both
+              spec:
+                filters:
+                  - image: example/model:1
+                images:
+                  - example/model:1
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterModelSource
+              metadata:
+                name: served-kept-source-empty
+              spec: {}

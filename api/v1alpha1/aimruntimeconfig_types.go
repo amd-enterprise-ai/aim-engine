@@ -29,6 +29,7 @@ import (
 // AIMRuntimeConfig is the Schema for namespace-scoped AIM runtime configurations.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:storageversion
 // +kubebuilder:resource:shortName=aimrc,categories=aim;all
 type AIMRuntimeConfig struct {
 	metav1.TypeMeta   `json:",inline"`

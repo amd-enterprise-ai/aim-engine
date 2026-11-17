@@ -9,12 +9,18 @@
 Package v1alpha2 contains API Schema definitions for the aim v1alpha2 API group.
 
 ### Resource Types
+- [AIMArtifact](#aimartifact)
+- [AIMArtifactList](#aimartifactlist)
 - [AIMClusterModel](#aimclustermodel)
 - [AIMClusterModelList](#aimclustermodellist)
+- [AIMClusterModelSource](#aimclustermodelsource)
+- [AIMClusterModelSourceList](#aimclustermodelsourcelist)
 - [AIMClusterProfile](#aimclusterprofile)
 - [AIMClusterProfileList](#aimclusterprofilelist)
 - [AIMClusterProfileSet](#aimclusterprofileset)
 - [AIMClusterProfileSetList](#aimclusterprofilesetlist)
+- [AIMClusterRuntimeConfig](#aimclusterruntimeconfig)
+- [AIMClusterRuntimeConfigList](#aimclusterruntimeconfiglist)
 - [AIMModel](#aimmodel)
 - [AIMModelList](#aimmodellist)
 - [AIMProfile](#aimprofile)
@@ -23,9 +29,49 @@ Package v1alpha2 contains API Schema definitions for the aim v1alpha2 API group.
 - [AIMProfileList](#aimprofilelist)
 - [AIMProfileSet](#aimprofileset)
 - [AIMProfileSetList](#aimprofilesetlist)
+- [AIMRuntimeConfig](#aimruntimeconfig)
+- [AIMRuntimeConfigList](#aimruntimeconfiglist)
 - [AIMService](#aimservice)
 - [AIMServiceList](#aimservicelist)
 
+
+
+#### AIMArtifact
+
+
+
+AIMArtifact is the Schema for the artifacts API
+
+
+
+_Appears in:_
+- [AIMArtifactList](#aimartifactlist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMArtifact` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMArtifactSpec](#aimartifactspec)_ |  |  |  |
+| `status` _[AIMArtifactStatus](#aimartifactstatus)_ |  |  |  |
+
+
+#### AIMArtifactList
+
+
+
+AIMArtifactList contains a list of AIMArtifact
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMArtifactList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMArtifact](#aimartifact) array_ |  |  |  |
 
 
 #### AIMClusterModel
@@ -64,6 +110,44 @@ AIMClusterModelList contains a list of AIMClusterModel.
 | `kind` _string_ | `AIMClusterModelList` | | |
 | `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `items` _[AIMClusterModel](#aimclustermodel) array_ |  |  |  |
+
+
+#### AIMClusterModelSource
+
+
+
+AIMClusterModelSource automatically discovers and syncs AI model images from container registries.
+
+
+
+_Appears in:_
+- [AIMClusterModelSourceList](#aimclustermodelsourcelist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMClusterModelSource` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMClusterModelSourceSpec](#aimclustermodelsourcespec)_ |  |  |  |
+| `status` _[AIMClusterModelSourceStatus](#aimclustermodelsourcestatus)_ |  |  |  |
+
+
+#### AIMClusterModelSourceList
+
+
+
+AIMClusterModelSourceList contains a list of AIMClusterModelSource.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMClusterModelSourceList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMClusterModelSource](#aimclustermodelsource) array_ |  |  |  |
 
 
 #### AIMClusterProfile
@@ -183,6 +267,48 @@ _Appears in:_
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#localobjectreference-v1-core) array_ | ImagePullSecrets lists secrets for pulling container images. |  | Optional: \{\} |
 | `serviceAccountName` _string_ | ServiceAccountName specifies the service account for workloads. |  | Optional: \{\} |
 | `features` _string array_ | Features lists optional capabilities the profile's image honours, e.g. "adapters" for LoRA serving. A service declaring spec.adapters is rejected (ConfigValid=False) unless its resolved profile lists "adapters" here. |  | Optional: \{\} |
+
+
+#### AIMClusterRuntimeConfig
+
+
+
+AIMClusterRuntimeConfig is a cluster-scoped runtime configuration for AIM services, models, and templates.
+
+Cluster-scoped runtime configs provide platform-wide defaults that apply to all namespaces, making them ideal for organization-level policies such as storage classes, discovery behavior, model creation scope, and routing configuration.
+
+When both cluster and namespace runtime configs exist with the same name, the configs are merged, and the namespace-scoped AIMRuntimeConfig takes precedence for any field that is set in both.
+
+
+
+_Appears in:_
+- [AIMClusterRuntimeConfigList](#aimclusterruntimeconfiglist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMClusterRuntimeConfig` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMClusterRuntimeConfigSpec](#aimclusterruntimeconfigspec)_ |  |  |  |
+| `status` _[AIMRuntimeConfigStatus](#aimruntimeconfigstatus)_ |  |  |  |
+
+
+#### AIMClusterRuntimeConfigList
+
+
+
+AIMClusterRuntimeConfigList contains a list of AIMClusterRuntimeConfig.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMClusterRuntimeConfigList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMClusterRuntimeConfig](#aimclusterruntimeconfig) array_ |  |  |  |
 
 
 
@@ -545,6 +671,44 @@ _Appears in:_
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#condition-v1-meta) array_ | Conditions represent the latest observations of profile state. |  |  |
 
 
+
+
+#### AIMRuntimeConfig
+
+
+
+AIMRuntimeConfig is the Schema for namespace-scoped AIM runtime configurations.
+
+
+
+_Appears in:_
+- [AIMRuntimeConfigList](#aimruntimeconfiglist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMRuntimeConfig` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[AIMRuntimeConfigSpec](#aimruntimeconfigspec)_ |  |  |  |
+| `status` _[AIMRuntimeConfigStatus](#aimruntimeconfigstatus)_ |  |  |  |
+
+
+#### AIMRuntimeConfigList
+
+
+
+AIMRuntimeConfigList contains a list of AIMRuntimeConfig.
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `aim.eai.amd.com/v1alpha2` | | |
+| `kind` _string_ | `AIMRuntimeConfigList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[AIMRuntimeConfig](#aimruntimeconfig) array_ |  |  |  |
 
 
 #### AIMService
