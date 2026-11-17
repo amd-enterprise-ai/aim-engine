@@ -244,8 +244,6 @@ jobs:
             # with gatewayProvider/management and reject the legacy key.
             baseline_values+=(--set scaleFromZero.gatewayMetricsCollector.enable=false)
           fi
-          # The chart default AIMClusterRuntimeConfig stays enabled. The identity
-          # snapshot fails if that object's UID changes across the upgrade.
           helm install aim-engine "${BASELINE_DIR}/dist/chart" \
             --namespace aim-system \
             --create-namespace \
@@ -592,8 +590,6 @@ jobs:
               --set manager.image.repository="${CANDIDATE_IMAGE_REPOSITORY}" \
               --set manager.image.tag="${CANDIDATE_IMAGE_TAG}"
           else
-            # The chart default AIMClusterRuntimeConfig stays enabled, matching
-            # the baseline install, so Helm updates that object in place.
             helm upgrade aim-engine dist/chart \
               --namespace aim-system \
               --wait \
@@ -611,17 +607,11 @@ jobs:
       - name: Check the release manifest names AIMClusterRuntimeConfig at v1alpha2
         run: |
           set -euo pipefail
-          manifest="$(mktemp)"
-          helm get manifest aim-engine --namespace aim-system > "${manifest}"
-          version="$(yq eval --no-doc 'select(.kind == "AIMClusterRuntimeConfig") | .apiVersion' "${manifest}" | awk 'NF { print; exit }')"
-          count="$(yq eval --no-doc 'select(.kind == "AIMClusterRuntimeConfig") | .kind' "${manifest}" | awk 'NF { count++ } END { print count + 0 }')"
-          if [[ "${count}" != "1" || "${version}" != "aim.eai.amd.com/v1alpha2" ]]; then
-            echo "release manifest has ${count} AIMClusterRuntimeConfig object(s) at '${version:-<missing>}', want one at aim.eai.amd.com/v1alpha2" >&2
-            exit 1
-          fi
-          v1alpha1="$(yq eval --no-doc 'select(.apiVersion == "aim.eai.amd.com/v1alpha1") | .kind' "${manifest}" | awk 'NF { count++ } END { print count + 0 }')"
-          if [[ "${v1alpha1}" != "0" ]]; then
-            echo "release manifest contains ${v1alpha1} aim.eai.amd.com/v1alpha1 object(s)" >&2
+          manifest="$(helm get manifest aim-engine --namespace aim-system)"
+          runtime_config_versions="$(yq ea '[select(.kind == "AIMClusterRuntimeConfig") | .apiVersion] | join(" ")' <<<"${manifest}")"
+          v1alpha1_objects="$(yq ea '[select(.apiVersion == "aim.eai.amd.com/v1alpha1")] | length' <<<"${manifest}")"
+          if [[ "${runtime_config_versions}" != "aim.eai.amd.com/v1alpha2" || "${v1alpha1_objects}" != "0" ]]; then
+            echo "release manifest has AIMClusterRuntimeConfig at '${runtime_config_versions}' and ${v1alpha1_objects} v1alpha1 AIM object(s); want one at v1alpha2 and none at v1alpha1" >&2
             exit 1
           fi
 
