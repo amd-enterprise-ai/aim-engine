@@ -5,7 +5,7 @@ AIM Engine supports static replica scaling and KEDA-based autoscaling with OpenT
 :::{admonition} v1alpha2
 :class: note
 
-Examples on this page use `aim.eai.amd.com/v1alpha2`. The `spec.replicas`, `spec.minReplicas`, `spec.maxReplicas`, and `spec.autoScaling` fields are identical across versions — only the resolution shape differs (`spec.profile` and `spec.model` instead of `spec.template`). For the legacy template-shaped service, see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+Examples on this page use `aim.eai.amd.com/v1alpha2`. The `spec.replicas`, `spec.minReplicas`, `spec.maxReplicas`, and `spec.autoScaling` fields are identical across versions — only the resolution shape differs (`spec.profile` and `spec.model` instead of `spec.template`).
 :::
 ## Static Scaling
 
@@ -16,28 +16,12 @@ apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: qwen-chat
-  annotations:
-    # Migration window: spec.model.image alone routes to the legacy
-    # template pipeline by default. The annotation opts in to the
-    # v1alpha2 profile pipeline, which auto-creates a dedicated AIMModel
-    # for this image. See admin/upgrading.md#migration-window.
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
   replicas: 3
 ```
 
-:::{admonition} Migration window
-:class: note
-
-Until v1alpha1 is removed, the
-`aim.eai.amd.com/reconciler-pipeline: profile` annotation is required on
-model-only services using either `spec.model.image` or `spec.model.name`.
-To skip the annotation, reference an existing AIMProfile with
-`spec.profile.name`, or include a `spec.profile.selector`. See
-[Migration window](../admin/upgrading.md#migration-window).
-:::
 ## Autoscaling with KEDA
 
 For demand-based scaling, use `minReplicas` and `maxReplicas` instead of `replicas`. AIM Engine stamps the InferenceService with `autoscalerClass=external` and creates a controller-owned KEDA `ScaledObject` that manages scaling. At least one scaling trigger is required: a custom metric (`autoScaling.metrics`) or scale-from-zero (`minReplicas: 0`, which supplies a gateway activation trigger). Configuring `minReplicas`/`maxReplicas` with `minReplicas >= 1` and no metric is rejected with `ConfigValid=False` (reason `AutoscalingRequiresMetrics`).
@@ -67,8 +51,6 @@ apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: qwen-chat
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
@@ -122,8 +104,6 @@ apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: qwen-chat
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
@@ -210,8 +190,6 @@ apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: qwen-chat
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5

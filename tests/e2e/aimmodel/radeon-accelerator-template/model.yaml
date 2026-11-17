@@ -1,8 +1,0 @@
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMModel
-metadata:
-  name: test-model-radeon-accelerator
-spec:
-  image: silogenai/aim-radeon-qwen-qwen3-vl-8b-instruct:0.12.0-rc11
-  imagePullSecrets:
-    - name: dockerhub-regcred

@@ -686,7 +686,7 @@ func TestPlanResources_CreatesArtifactsForMissing(t *testing.T) {
 // TestPlanResources_PropagatesEnvAndRuntimeConfigRef verifies the cache's
 // download-auth env and runtime config reference are stamped onto the
 // AIMArtifact it creates, so the credential and the named runtime config both
-// reach the download Job (matching the v1alpha1 template-cache behavior).
+// reach the download Job.
 func TestPlanResources_PropagatesEnvAndRuntimeConfigRef(t *testing.T) {
 	r := &ProfileCacheReconciler{}
 	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeCluster, aimv1alpha2.ProfileCacheModeShared, "")

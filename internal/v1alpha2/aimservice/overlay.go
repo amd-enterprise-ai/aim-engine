@@ -90,7 +90,7 @@ func hasProfileOverrides(o *aimv1alpha1.AIMServiceProfileOverrides) bool {
 // Keeping it shared is important: if ComposeState can plan an overlay that
 // FetchRemoteState never observes, the overlay remains perpetually "not ready"
 // and the service never advances to its profile cache or InferenceService.
-func needsServiceOverlay(service *aimv1alpha1.AIMService) bool {
+func needsServiceOverlay(service *aimv1alpha2.AIMService) bool {
 	return hasProfileOverrides(service.Spec.ProfileOverrides)
 }
 
@@ -121,8 +121,8 @@ func asProfileOverrides(o *aimv1alpha1.AIMServiceProfileOverrides) *aimv1alpha1.
 // overlay is namespace-scoped and owner-referenced by the AIMService so it
 // is garbage-collected on service deletion.
 //
-// Naming follows the same shape as v1alpha1's GenerateTemplateCacheName for
-// dedicated caches: a readable prefix derived from the seed plus a hash that
+// Naming follows the same shape as GenerateProfileCacheName for dedicated
+// caches: a readable prefix derived from the seed plus a hash that
 // includes the service UID. This guarantees uniqueness across delete-and-
 // recreate of the same service name (the new instance gets a fresh overlay
 // and won't accidentally inherit a stale one from the previous incarnation),
@@ -132,7 +132,7 @@ func asProfileOverrides(o *aimv1alpha1.AIMServiceProfileOverrides) *aimv1alpha1.
 // and the derived AIMProfileSpecCommon that downstream code (cache, ConfigMap,
 // KServe builder) should treat as authoritative.
 func buildServiceOverlayProfile(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	obs ServiceObservation,
 ) (*aimv1alpha2.AIMProfile, aimv1alpha2.AIMProfileSpecCommon, error) {
 	if obs.resolvedProfileSpec == nil {

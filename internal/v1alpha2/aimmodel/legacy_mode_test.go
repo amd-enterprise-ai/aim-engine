@@ -132,59 +132,6 @@ func TestEnsureBaseImageBridge_NilStatusIsNoOp(t *testing.T) {
 // gate to its documented v1alpha1-only signals. Adding new entries here
 // without thinking through the dual-pipeline interaction would silently
 // route pure v1alpha2 specs through the OCI inspection path.
-func TestHasLegacyInputs_DocumentedSignalsTrigger(t *testing.T) {
-	cases := map[string]aimv1alpha1.AIMModelSpec{
-		"image":                  {Image: "ghcr.io/x/y:tag"},
-		"customTemplates":        {CustomTemplates: []aimv1alpha1.AIMCustomTemplate{{Name: "t"}}},
-		"modelSources":           {ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "m", SourceURI: "hf://m"}}},
-		"aimId":                  {AimId: "aim/one"},
-		"imageMetadata":          {ImageMetadata: &aimv1alpha1.ImageMetadata{}},
-		"discovery":              {Discovery: &aimv1alpha1.AIMModelDiscoveryConfig{}},
-		"defaultServiceTemplate": {DefaultServiceTemplate: "tmpl"},
-		"custom":                 {Custom: &aimv1alpha1.AIMCustomModelSpec{}},
-	}
-	for name, spec := range cases {
-		t.Run(name, func(t *testing.T) {
-			if !hasLegacyInputs(spec) {
-				t.Fatalf("expected hasLegacyInputs to be true when %s is set", name)
-			}
-		})
-	}
-}
-
-// TestHasLegacyInputs_RuntimeConfigNameDoesNotTrigger guards against the
-// fix where the embedded RuntimeConfigRef.Name field (i.e.
-// spec.runtimeConfigName) used to trigger the legacy pipeline gate. The
-// field is supported by both v1alpha1 and v1alpha2 and on its own says
-// nothing about whether the legacy pipeline has real work to do.
-func TestHasLegacyInputs_RuntimeConfigNameDoesNotTrigger(t *testing.T) {
-	spec := aimv1alpha1.AIMModelSpec{
-		Profiles: &aimv1alpha1.AIMModelProfilesSpec{
-			DerivedFrom: &aimv1alpha1.AIMModelProfilesDerivedFrom{
-				Selector: aimv1alpha1.ProfileSelector{AimId: "aim/one"},
-			},
-		},
-		RuntimeConfigRef: aimv1alpha1.RuntimeConfigRef{Name: "my-runtime-config"},
-	}
-	if hasLegacyInputs(spec) {
-		t.Fatalf("pure v1alpha2 spec with runtimeConfigName must not trigger the legacy pipeline; got hasLegacyInputs = true")
-	}
-}
-
-// TestHasLegacyInputs_PureProfileCopyDoesNotTrigger keeps the documented
-// "profileCopy-only" pure-v1alpha2 case skipping the legacy pipeline so
-// it does not surface spurious ImageMetadataReady=False conditions.
-func TestHasLegacyInputs_PureProfileCopyDoesNotTrigger(t *testing.T) {
-	spec := aimv1alpha1.AIMModelSpec{
-		ProfileCopy: &aimv1alpha1.AIMProfileSetSpec{
-			Selector: aimv1alpha1.ProfileSelector{AimId: "aim/one"},
-		},
-	}
-	if hasLegacyInputs(spec) {
-		t.Fatalf("pure profileCopy spec must not trigger the legacy pipeline; got hasLegacyInputs = true")
-	}
-}
-
 func TestProfilesSpecToProfileSet_PropagatesOutputPolicy(t *testing.T) {
 	t.Parallel()
 

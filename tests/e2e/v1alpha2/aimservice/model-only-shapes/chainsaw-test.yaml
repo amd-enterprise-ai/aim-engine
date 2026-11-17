@@ -1,0 +1,120 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# A service that names only a model, by spec.model.name or spec.model.image,
+# is served through profiles without any annotation and gets no template-era
+# status.
+#
+# The spec.model.name service resolves the optimized profile its AIMModel
+# derives from a seed and reaches Running. The spec.model.image service gets
+# its own AIMModel for the image. On kind nodes aim-dummy only publishes an
+# unoptimized CPU profile, which the default minimumType=optimized floor
+# excludes, so the service reports the floor and resolves the profile once its
+# selector lowers it. That profile's model source has no size, so its artifact
+# checks the size on Hugging Face before the simulated download; the image
+# service is therefore asserted up to its profile cache, not Running.
+#
+# No accelerator is involved and the cache download is simulated, so this runs
+# in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-model-only-shapes
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the model that derives an optimized profile
+      try:
+        - apply:
+            file: seed-profile.yaml
+        - apply:
+            file: model.yaml
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: model-only-shapes
+              status:
+                managedProfiles:
+                  total: 1
+                  ready: 1
+
+    - name: Create a service by model name and a service by image
+      try:
+        - apply:
+            file: services.yaml
+
+    - name: The service by model name runs through profiles
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: by-model-name
+              status:
+                status: Running
+                (conditions[?type == 'ProfileReady']):
+                  - status: "True"
+                    reason: ProfileResolved
+                (resolvedProfile.name != ''): true
+                (conditions[?type == 'ModelReady' || type == 'TemplateReady' || type == 'CacheReady' || type == 'MigrationRequired'] | length(@)): 0
+                (resolvedTemplate == null): true
+                (reconcilerPipeline == null): true
+
+    - name: The service by image gets its own AIMModel and resolves through profiles
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/origin: auto-generated
+                (ownerReferences[?kind == 'AIMService' && name == 'by-model-image']):
+                  - controller: true
+              spec:
+                image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: by-model-image
+              status:
+                (conditions[?type == 'ProfileReady']):
+                  - status: "False"
+                    reason: ProfileNotFound
+                    (contains(message, 'minimumType=optimized floor')): true
+                (conditions[?type == 'ModelReady' || type == 'TemplateReady' || type == 'CacheReady' || type == 'MigrationRequired'] | length(@)): 0
+                (resolvedTemplate == null): true
+                (reconcilerPipeline == null): true
+
+    - name: Lowering the tier floor lets the service by image resolve a profile
+      try:
+        - patch:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: by-model-image
+              spec:
+                profile:
+                  selector:
+                    minimumType: any
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: by-model-image
+              status:
+                (conditions[?type == 'ProfileReady']):
+                  - status: "True"
+                    reason: ProfileResolved
+                (resolvedProfile.name != ''): true
+                (conditions[?type == 'ProfileCacheReady'] | length(@)): 1

@@ -26,8 +26,7 @@ import "fmt"
 
 // Adapter staging mechanics (validation, staging Jobs, read-only subtree mount,
 // status mirroring, component health) live in the pipeline-agnostic
-// internal/aimadapter package and are shared with the v1alpha1 template
-// pipeline. The profile pipeline only contributes the base-model resolution:
+// internal/aimadapter package. The profile pipeline only contributes the base-model resolution:
 // it resolves the parent model artifact through the AIMProfileCache's resolved
 // artifacts, keyed on the resolved profile's model id.
 

@@ -60,8 +60,8 @@ kubectl get aimclustermodel -o json | jq -r '
 ```
 
 The upgraded controller re-inspects these cached images. If reinspection fails,
-the cached metadata and existing templates remain usable: normal model serving
-does not become unready, and the non-gating `RuntimeImageLineage=False` condition
+the cached metadata remains usable: normal model serving does not become
+unready, and the non-gating `RuntimeImageLineage=False` condition
 reports `BaseImageRefInspectionFailed`. Fix registry connectivity or the
 model's `imagePullSecrets`; a later reconcile can retry the migration.
 If changing only Secret data does not enqueue the model in your installation,
@@ -88,8 +88,8 @@ derive it by truncating the model image's tag or substituting its registry.
 If inspection succeeds but the image genuinely lacks `AIM_BASE_IMAGE_REF`, the
 condition reports `BaseImageRefMissing` and the controller records the current
 metadata contract so it does not repeatedly inspect that image. In either case,
-only new fine-tuned copies that replace weights and require the unresolved
-runtime lineage are deferred.
+only new weight-replacing profile copies that need the unresolved runtime
+lineage are deferred.
 
 ### 2. Update CRDs first
 
@@ -100,6 +100,9 @@ helm upgrade aim-engine-crds oci://docker.io/amdenterpriseai/aim-engine-crds-cha
   --version <new-version> \
   --namespace aim-system
 ```
+
+This deletes the template CRDs. See
+[Remove the template CRDs](#remove-the-template-crds) first.
 
 Wait for the CRDs to become established:
 
@@ -121,8 +124,7 @@ After updating the CRDs but before upgrading the operator:
    aim-base need no RuntimeConfig change.
 3. If aim-base lives in a different registry from the model images, set
    `baseImageRegistry` on `default` and on each named RuntimeConfig selected by
-   services or legacy fine-tuned models; named configurations do not inherit it
-   from `default`.
+   services; named configurations do not inherit it from `default`.
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -365,10 +367,10 @@ The old artifact and its PVC stay behind after the switch. A shared artifact has
      -o jsonpath='{.status.conditions[?(@.type=="ArtifactsReplacing")]}' | jq
    ```
 
-2. Confirm that no other cache still lists the old artifact. Shared artifacts serve every cache with a matching source, including v1alpha1 template caches, which do not read image declarations, and a profile cache that has not switched yet still serves the old one. This should print nothing:
+2. Confirm that no other cache still lists the old artifact. Shared artifacts serve every cache with a matching source, and a profile cache that has not switched yet still serves the old one. This should print nothing:
 
    ```bash
-   kubectl get aimprofilecache,aimtemplatecache -n <namespace> -o json | \
+   kubectl get aimprofilecache -n <namespace> -o json | \
      jq -r '.items[] | .metadata.name as $cache
        | (.status.artifacts // {})[] | select(.name == "<old-artifact-name>") | $cache'
    ```
@@ -414,6 +416,8 @@ the upgrade preflight passes:
    repositories and scripts.
 7. Rerun the preflight until it passes. Then upgrade the CRDs before the
    operator, as in [Upgrade Procedure](#upgrade-procedure).
+8. [Remove the template CRDs](#remove-the-template-crds) if you install with
+   kubectl.
 
 ### Minimum version
 
@@ -538,12 +542,12 @@ The profile pipeline can't serve these service shapes, so the annotation alone
 doesn't move them:
 
 - `spec.model.custom`: create an AIMModel for the custom weights, as in
-  [Custom models](../legacy/migrating.md#custom-models), and change the service
+  [Custom Models](../guides/custom-models.md), and change the service
   to reference it with `spec.model.name`. Then move the service as above, and
   delete the AIMModel that was generated for its inline custom input. That
   model has the `aim.eai.amd.com/legacy-auto-custom-spec` annotation.
 - `spec.template` without `spec.model` or `spec.profile`: create an AIMProfile
-  that matches the template, as in [Migrating to v1alpha2](../legacy/migrating.md),
+  that matches the template, as in [Update v1alpha1 manifests](#update-v1alpha1-manifests),
   and set `spec.profile.name` on the service.
 
 ### Replace models without a native path
@@ -552,8 +556,8 @@ After the upgrade, AIMModels and AIMClusterModels serve only through the
 AIMProfiles they discover or generate. These models produce none:
 
 - `spec.custom`, `spec.customTemplates` or `spec.modelSources`: create a
-  v1alpha2 AIMModel as in [Custom models](../legacy/migrating.md#custom-models)
-  or [Fine-tunes](../legacy/migrating.md#fine-tunes), move the services that
+  v1alpha2 AIMModel as in [Custom Models](../guides/custom-models.md)
+  or [Fine-Tuned Models](../guides/fine-tuned-models.md), move the services that
   use the old model to it, then delete the old model.
 - `spec.aimId` on an image model: unless the model is a fine-tune, remove the
   field. Discovery reads the AIM ID from the image:
@@ -616,6 +620,15 @@ reconciles the service.
 If a GitOps tool manages template objects, remove them from the repository
 first, or the tool recreates them.
 
+After the upgrade `discovery.createServiceTemplates` has no effect. The models
+report it in a `TemplateFieldsIgnored` condition, which doesn't affect
+readiness, until you remove it:
+
+```bash
+kubectl patch aimmodel <model> -n <namespace> --type json \
+  -p '[{"op":"remove","path":"/spec/discovery/createServiceTemplates"}]'
+```
+
 ### Remove stale v1alpha1 owner references
 
 After the upgrade, the API server no longer serves the v1alpha1 AIMService,
@@ -635,10 +648,74 @@ AIMClusterRuntimeConfig and AIMClusterModelSource are fine.
 AIMService, AIMModel and AIMClusterModel stop serving
 `aim.eai.amd.com/v1alpha1` in this release. Existing objects stay readable as
 v1alpha2, but applying a v1alpha1 manifest for these kinds fails. Check GitOps
-repositories, Helm charts and scripts, and change those manifests to v1alpha2,
-as in [Migrating to v1alpha2](../legacy/migrating.md), before you upgrade.
+repositories, Helm charts and scripts, and change those manifests to v1alpha2
+before you upgrade. Replace template objects in those manifests too:
+
+| v1alpha1 | v1alpha2 |
+|---|---|
+| `AIMServiceTemplate.spec` | `AIMProfile.spec`, one profile per template profile |
+| `AIMClusterServiceTemplate.spec` | `AIMClusterProfile.spec` |
+| `AIMTemplateCache` | `AIMProfileCache`, created from `AIMProfile.spec.caching` |
+| `AIMService.spec.template` | `AIMService.spec.profile` |
+| `AIMService.spec.overrides` | `AIMService.spec.profileOverrides`, see [Profile overlays](../concepts/services.md#profile-overlays) |
+| `AIMModel.spec.custom` | `AIMModel.spec.image` (base) and `AIMModel.spec.profiles`, see [Custom Models](../guides/custom-models.md) |
+| `AIMModel.spec.customTemplates` | `AIMProfileSet` |
+| `AIMModel.spec.profileCopy` | `AIMModel.spec.profiles`, see [Fine-Tuned Models](../guides/fine-tuned-models.md) |
+| `AIMModel.spec.modelSources` | `AIMProfile.spec.modelSources` |
+
 AIMArtifact, AIMRuntimeConfig, AIMClusterRuntimeConfig and
 AIMClusterModelSource stay at v1alpha1.
+
+### Remove the template CRDs
+
+This release's CRDs don't include `aimservicetemplates.aim.eai.amd.com`,
+`aimclusterservicetemplates.aim.eai.amd.com` and
+`aimtemplatecaches.aim.eai.amd.com`. Deleting a CRD deletes every object of
+its kind, and the new operator doesn't remove the finalizers of template
+objects. So delete the template objects before the upgrade, as in
+[Delete template objects](#delete-template-objects); the preflight's
+`template-objects` check enforces this.
+
+**Helm**: upgrading the CRDs chart deletes the template CRDs. When the
+preflight passes, no template objects are left, so nothing else is needed.
+
+If you can't delete every template object before the upgrade, keep the
+template CRDs and remove them by hand after it:
+
+1. Before the upgrade, annotate the template CRDs. Helm doesn't delete a
+   resource whose live object has this annotation:
+
+   ```bash
+   kubectl annotate crd aimservicetemplates.aim.eai.amd.com \
+     aimclusterservicetemplates.aim.eai.amd.com aimtemplatecaches.aim.eai.amd.com \
+     helm.sh/resource-policy=keep
+   ```
+
+2. Upgrade the CRDs and the operator.
+3. Remove the template objects and CRDs as for a kubectl install.
+
+**kubectl**: `kubectl apply` doesn't delete CRDs, so the template CRDs stay
+after the upgrade. Strip the finalizers from any template objects that are
+left, delete the objects while their CRDs still exist, so garbage collection
+deletes what they own, then delete the CRDs:
+
+```bash
+for resource in aimtemplatecaches aimservicetemplates aimclusterservicetemplates; do
+  kubectl get "${resource}.aim.eai.amd.com" --all-namespaces \
+    -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.namespace}{"\n"}{end}' \
+    | while read -r name namespace; do
+        kubectl patch "${resource}.aim.eai.amd.com" "${name}" --namespace "${namespace}" \
+          --type merge -p '{"metadata":{"finalizers":null}}'
+      done
+  kubectl delete "${resource}.aim.eai.amd.com" --all --all-namespaces
+done
+kubectl delete crd aimtemplatecaches.aim.eai.amd.com \
+  aimservicetemplates.aim.eai.amd.com aimclusterservicetemplates.aim.eai.amd.com
+```
+
+Without its finalizer, a template cache deleted this way leaves behind the
+AIMArtifacts it hadn't finished downloading. Delete them by hand if no
+AIMProfileCache uses them.
 
 ### Rollback limits
 

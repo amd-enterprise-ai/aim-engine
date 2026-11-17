@@ -100,43 +100,17 @@ Profiles may be filtered out because:
 - The required accelerator is not present in the cluster.
 - `spec.profile.selector` over-narrowed and matched zero profiles.
 
-For `spec.model.image` with the `aim.eai.amd.com/reconciler-pipeline: profile` annotation, the resolver auto-creates a dedicated `AIMModel`; check that the auto-model itself has `deployable > 0`:
+For `spec.model.image`, the resolver auto-creates a dedicated `AIMModel`; check that the auto-model itself has `deployable > 0`:
 
 ```bash
 kubectl get aimmodel -n <namespace> -l aim.eai.amd.com/origin=auto-generated
 ```
 
-### Template Selection Fails (v1alpha1, legacy pipeline)
-
-**"No templates found":**
-
-```bash
-# List templates for the model
-kubectl get aimservicetemplates -n <namespace>
-kubectl get aimclusterservicetemplates
-
-# Check template status
-kubectl get aimservicetemplates -o custom-columns=NAME:.metadata.name,STATUS:.status.status
-```
-
-Templates may be excluded because:
-
-- Status is not `Ready` (still discovering or failed)
-- Status is `NotAvailable` (required GPU not in cluster)
-- Profile is `unoptimized` and `allowUnoptimized` is not set
-
-**"Ambiguous selection":**
-
-Multiple templates scored equally. Resolve by specifying `template.name` explicitly.
-
 ### Cache or Artifact Failures
 
 ```bash
-# Check profile cache (v1alpha2)
+# Check profile cache
 kubectl get aimprofilecache -n <namespace>
-
-# Or template cache (v1alpha1)
-kubectl get aimtemplatecache -n <namespace>
 
 # Check artifacts
 kubectl get aimartifact -n <namespace>

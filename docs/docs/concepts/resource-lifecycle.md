@@ -48,7 +48,7 @@ Key behaviours:
 - **Standalone derived outputs** belong to their profile set. Source provenance does not add them to the source model's managed-profile counts or readiness.
 - **Auto-created models**:
     - v1alpha1 `spec.model.image` path: no owner reference; the model persists for reuse by other services.
-    - v1alpha2 `spec.model.image` path (requires the `aim.eai.amd.com/reconciler-pipeline: profile` annotation): owner-referenced by the originating service and garbage-collected with it. Named `<service>-auto-<6charHash(image)>`. See [Services → By image](services.md#by-image).
+    - v1alpha2 `spec.model.image` path: owner-referenced by the originating service and garbage-collected with it. Named `<service>-auto-<6charHash(image)>`. See [Services → By image](services.md#by-image).
 
 ### Profile source lifecycle
 
@@ -71,22 +71,6 @@ Runtime projection deliberately favors continuity over immediate cleanup:
 - When shared-cache readiness is unknown because of a transient API, authentication, or reconciliation error, AIM Engine preserves the last-known cache mount and retries instead of treating the cache as absent.
 
 See [Bring Your Own KServe](../guides/bring-your-own-kserve.md) for the complete consumer workflow and [Conditions](../reference/conditions.md) for the authoritative health signals.
-
-### v1alpha1 graph (legacy)
-
-```
-AIMServiceTemplate
-    └── AIMTemplateCache  (owned by template, Shared mode)
-            └── AIMArtifact  (owned by cache only in Dedicated mode)
-                    └── PVC + Download Job  (owned by artifact)
-
-AIMService (template path)
-    ├── AIMTemplateCache  (owned by service only in Dedicated mode)
-    ├── InferenceService  (owned by service)
-    └── HTTPRoute  (owned by service)
-```
-
-The same Shared/Dedicated split applies to legacy `AIMTemplateCache` as to `AIMProfileCache`. See [Service Templates (v1alpha1)](../legacy/service-templates.md).
 
 ## Status transitions
 
@@ -143,19 +127,11 @@ AIM Engine uses finalizers to handle cleanup that can't be expressed through own
 
 When an AIMService is deleted, the finalizer removes any non-Ready caches the service created (by label). Ready caches are preserved so subsequent services can reuse them.
 
-This applies to both v1alpha2 `AIMProfileCache` and v1alpha1 `AIMTemplateCache` — the finalizer enumerates caches by service-name label, regardless of cache kind.
-
 ### AIMProfileCache finalizer
 
 **Finalizer:** `aim.eai.amd.com/artifactcleanup`
 
 When a profile cache is deleted, the finalizer removes any non-Ready artifacts it created (by label). Ready shared artifacts persist so they can be reused by other caches.
-
-### AIMTemplateCache finalizer (legacy)
-
-**Finalizer:** `aim.eai.amd.com/artifactcleanup`
-
-Identical behaviour to the profile-cache finalizer. Cleans up non-Ready artifacts when the template cache is deleted.
 
 ### Namespace deletion
 
@@ -176,7 +152,6 @@ CRD schemas include [CEL validation rules](https://kubernetes.io/docs/tasks/exte
 | `AIMService` | `spec.model`, `spec.profile.name`, `spec.template`, `spec.caching` |
 | `AIMProfile` / `AIMClusterProfile` | `spec.aimId`, `spec.modelId`, `spec.acceleratorModel`, `spec.acceleratorType`, `spec.acceleratorCount`, `spec.precision`, `spec.metric`, `spec.engine` |
 | `AIMArtifact` | `spec.sourceUri` |
-| `AIMServiceTemplate` (legacy) | `spec.modelName`, `spec.metric`, `spec.precision`, `spec.hardware` |
 
 #### Structural rules (v1alpha2)
 
@@ -205,14 +180,13 @@ CRD schemas include [CEL validation rules](https://kubernetes.io/docs/tasks/exte
 |---|---|
 | `AIMService` | Exactly one of `model.name`, `model.image`, or `model.custom` must be specified |
 | `AIMService` (custom) | At least one model source required |
-| `AIMServiceTemplate` | At least one of `hardware.gpu` or `hardware.cpu` must be specified |
 | `hardware.gpu` | `model` and `minVram` are mutually exclusive |
 
 ### Reconciliation validation (eventual)
 
 Domain logic validation runs during reconciliation and surfaces as condition updates:
 
-- Reference resolution (model not found, profile not found, template not found)
+- Reference resolution (model not found, profile not found)
 - Selector evaluation (no matching profiles, ambiguous candidates)
 - Image URI validation
 - Path template resolution
@@ -242,10 +216,6 @@ Created when an `AIMModel` / `AIMClusterModel` needs to inspect a container imag
 | **Labels** | `aim.eai.amd.com/model`, `app.kubernetes.io/component: discovery` |
 
 For cluster-scoped models, discovery jobs run in the operator namespace (typically `aim-system`).
-
-### Discovery jobs (v1alpha1, legacy)
-
-Same shape as above but parented to an `AIMServiceTemplate` instead of an `AIMModel`. Labels use `aim.eai.amd.com/template` and the name pattern is `discover-{template}-{hash}`.
 
 ### Check-size jobs
 

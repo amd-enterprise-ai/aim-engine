@@ -244,7 +244,7 @@ func newWatchTestClient(t *testing.T, scheme *runtime.Scheme, objs ...client.Obj
 		}).
 		WithIndex(&aimv1alpha2.AIMService{}, ServiceResourceNodeMatchIndex, func(obj client.Object) []string {
 			svc, ok := obj.(*aimv1alpha2.AIMService)
-			if !ok || svc.Spec.Resources == nil || !usesProfilePipeline(svc) {
+			if !ok || svc.Spec.Resources == nil {
 				return nil
 			}
 			return []string{serviceResourceNodeMatchIndexValue}
@@ -343,14 +343,8 @@ func TestFindServicesForResourceNodeChange(t *testing.T) {
 			Resources: resources,
 		},
 	}
-	forcedProfileService := &aimv1alpha2.AIMService{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "forced-profile",
-			Namespace: "beta",
-			Annotations: map[string]string{
-				constants.AnnotationReconcilerPipeline: constants.ReconcilerPipelineProfile,
-			},
-		},
+	modelService := &aimv1alpha2.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: "model", Namespace: "beta"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model:     &aimv1alpha1.AIMServiceModel{Name: ptr.To("model")},
 			Resources: resources,
@@ -362,51 +356,8 @@ func TestFindServicesForResourceNodeChange(t *testing.T) {
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: "p"},
 		},
 	}
-	templateService := &aimv1alpha2.AIMService{
-		ObjectMeta: metav1.ObjectMeta{Name: "template", Namespace: "alpha"},
-		Spec: aimv1alpha1.AIMServiceSpec{
-			Template:  &aimv1alpha1.AIMServiceTemplateConfig{Name: "template"},
-			Resources: resources,
-		},
-	}
-	forcedTemplateService := &aimv1alpha2.AIMService{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "forced-template",
-			Namespace: "alpha",
-			Annotations: map[string]string{
-				constants.AnnotationReconcilerPipeline: constants.ReconcilerPipelineTemplate,
-			},
-		},
-		Spec: aimv1alpha1.AIMServiceSpec{
-			Model:     &aimv1alpha1.AIMServiceModel{Name: ptr.To("model")},
-			Profile:   &aimv1alpha1.AIMServiceProfileConfig{Name: "p"},
-			Resources: resources,
-		},
-	}
-	grandfatheredProfileService := &aimv1alpha2.AIMService{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "grandfathered-profile",
-			Namespace: "alpha",
-			Annotations: map[string]string{
-				constants.AnnotationReconcilerPipeline: "historical",
-			},
-		},
-		Spec: aimv1alpha1.AIMServiceSpec{
-			Profile:   &aimv1alpha1.AIMServiceProfileConfig{Name: "p"},
-			Resources: resources,
-		},
-	}
 
-	c := newWatchTestClient(
-		t,
-		scheme,
-		profileService,
-		forcedProfileService,
-		noOverride,
-		templateService,
-		forcedTemplateService,
-		grandfatheredProfileService,
-	)
+	c := newWatchTestClient(t, scheme, profileService, modelService, noOverride)
 	requests := findServicesForResourceNodeChange(c)(
 		context.Background(),
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node"}},
@@ -418,14 +369,13 @@ func TestFindServicesForResourceNodeChange(t *testing.T) {
 	}
 	for _, want := range []types.NamespacedName{
 		{Name: "profile", Namespace: "alpha"},
-		{Name: "forced-profile", Namespace: "beta"},
-		{Name: "grandfathered-profile", Namespace: "alpha"},
+		{Name: "model", Namespace: "beta"},
 	} {
 		if _, exists := got[want]; !exists {
 			t.Errorf("missing Node-event enqueue for %s", want)
 		}
 	}
-	if len(got) != 3 {
+	if len(got) != 2 {
 		t.Fatalf("Node event enqueued unexpected services: %#v", got)
 	}
 }
@@ -449,13 +399,7 @@ func TestFindServicesForProfile_FansOutByNameModelAndAimId(t *testing.T) {
 		},
 	}
 	byModelShortcut := &aimv1alpha2.AIMService{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "svc-by-model",
-			Namespace: "ns",
-			Annotations: map[string]string{
-				constants.AnnotationReconcilerPipeline: constants.ReconcilerPipelineProfile,
-			},
-		},
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-by-model", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Name: ptr.To("source-model")},
 		},
@@ -567,13 +511,7 @@ func TestFindServicesForModel_FansOutByShortcutAndSelector(t *testing.T) {
 	scheme := newWatchTestScheme(t)
 
 	byShortcut := &aimv1alpha2.AIMService{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "svc-shortcut",
-			Namespace: "ns",
-			Annotations: map[string]string{
-				constants.AnnotationReconcilerPipeline: constants.ReconcilerPipelineProfile,
-			},
-		},
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-shortcut", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Name: ptr.To("my-model")},
 		},
@@ -594,13 +532,7 @@ func TestFindServicesForModel_FansOutByShortcutAndSelector(t *testing.T) {
 			Model: &aimv1alpha1.AIMServiceModel{Name: ptr.To("other-model")},
 		},
 	}
-	inactiveTemplate := &aimv1alpha2.AIMService{
-		ObjectMeta: metav1.ObjectMeta{Name: "svc-template", Namespace: "ns"},
-		Spec: aimv1alpha1.AIMServiceSpec{
-			Model: &aimv1alpha1.AIMServiceModel{Name: ptr.To("my-model")},
-		},
-	}
-	c := newWatchTestClient(t, scheme, byShortcut, byExplicit, unrelated, inactiveTemplate)
+	c := newWatchTestClient(t, scheme, byShortcut, byExplicit, unrelated)
 
 	model := &aimv1alpha2.AIMModel{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-model", Namespace: "ns"},
@@ -619,9 +551,6 @@ func TestFindServicesForModel_FansOutByShortcutAndSelector(t *testing.T) {
 	}
 	if _, ok := got["svc-unrelated"]; ok {
 		t.Errorf("unrelated service must not be enqueued")
-	}
-	if _, ok := got["svc-template"]; ok {
-		t.Errorf("profile watch must not enqueue a template-pipeline service")
 	}
 }
 
@@ -862,8 +791,7 @@ func TestFindServicesForClusterProfile_FansOutByResolvedProfile(t *testing.T) {
 }
 
 // TestFindServicesForRuntimeConfig_BothScopes checks that a runtime config
-// event reaches the profile-pipeline services that name the config or name
-// none: within the config's namespace for AIMRuntimeConfig, and across all
+// event reaches the services that name the config or name none: within the config's namespace for AIMRuntimeConfig, and across all
 // namespaces for AIMClusterRuntimeConfig.
 func TestFindServicesForRuntimeConfig_BothScopes(t *testing.T) {
 	scheme := newWatchTestScheme(t)
@@ -876,19 +804,11 @@ func TestFindServicesForRuntimeConfig_BothScopes(t *testing.T) {
 			},
 		}
 	}
-	templateService := &aimv1alpha2.AIMService{
-		ObjectMeta: metav1.ObjectMeta{Name: "template", Namespace: "alpha"},
-		Spec: aimv1alpha1.AIMServiceSpec{
-			Model:            &aimv1alpha1.AIMServiceModel{Name: ptr.To("model")},
-			RuntimeConfigRef: aimv1alpha1.RuntimeConfigRef{Name: "rc"},
-		},
-	}
 	c := newWatchTestClient(t, scheme,
 		profileService("names-it", "alpha", "rc"),
 		profileService("names-none", "alpha", ""),
 		profileService("names-other", "alpha", "other"),
 		profileService("other-namespace", "beta", "rc"),
-		templateService,
 	)
 
 	t.Run("namespace config stays in its namespace", func(t *testing.T) {

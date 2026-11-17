@@ -721,7 +721,7 @@ func TestSetOwnerReferenceConvergesBridgeGVKWithoutChangingDeletionSemantics(t *
 		{name: "service preserves true", kind: "AIMService", wantVersion: "v1alpha2", existing: true, controller: &trueValue, blockOwnerDeletion: &trueValue},
 		{name: "model preserves nil", kind: "AIMModel", wantVersion: "v1alpha2", existing: true},
 		{name: "cluster model preserves false", kind: "AIMClusterModel", wantVersion: "v1alpha2", existing: true, controller: &falseValue, blockOwnerDeletion: &falseValue},
-		{name: "legacy-only owner remains v1alpha1", kind: "AIMTemplateCache", wantVersion: "v1alpha1"},
+		{name: "v1alpha1-only owner remains v1alpha1", kind: "AIMArtifact", wantVersion: "v1alpha1"},
 	}
 
 	for _, tt := range tests {

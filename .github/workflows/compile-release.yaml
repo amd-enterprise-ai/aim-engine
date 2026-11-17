@@ -145,9 +145,6 @@ jobs:
       - name: Verify generated CRD and RBAC are current
         run: git diff --exit-code -- config/crd/bases config/rbac/role.yaml
 
-      - name: Verify minimal v1alpha1 bridge contract
-        run: make test-bridge-contract
-
       - name: Verify least-privilege operator RBAC
         run: make test-rbac-contract
 
@@ -701,7 +698,7 @@ jobs:
           echo "=== Operator Logs (full) ==="
           kubectl logs -n aim-system -l control-plane=controller-manager --tail=200 || true
           echo "=== All AIM resources ==="
-          kubectl get aimservice,aimmodel,aimtemplatecache,aimartifact -A || true
+          kubectl get aimservice,aimmodel,aimprofilecache,aimartifact -A || true
           echo "=== Pods across all namespaces ==="
           kubectl get pods -A || true
           echo "=== Non-running pods ==="

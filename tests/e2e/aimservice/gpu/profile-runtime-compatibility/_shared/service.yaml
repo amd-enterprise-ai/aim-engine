@@ -2,8 +2,6 @@ apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: runtime-compatibility
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   runtimeConfigName: profile-runtime-compatibility
   model:

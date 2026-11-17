@@ -30,7 +30,7 @@ import (
 )
 
 // templateOwnedConditionTypes are the AIMService conditions that only the
-// AIMServiceTemplate pipeline sets.
+// AIMServiceTemplate pipeline set.
 var templateOwnedConditionTypes = []string{
 	"ModelReady",
 	"TemplateReady",
@@ -39,14 +39,16 @@ var templateOwnedConditionTypes = []string{
 }
 
 // clearTemplateEraStatus removes the status that only the AIMServiceTemplate
-// pipeline writes. It must run before the profile status is decorated: a
-// template-era resolvedModel names an AIMModel, while the profile pipeline
-// records the resolved AIMProfile's model ID there, so it is cleared together
-// with the rest of the template-era state and set again from the profile.
+// pipeline and the pipeline selection before it wrote. It must run before the
+// profile status is decorated: a template-era resolvedModel names an AIMModel,
+// while the profile pipeline records the resolved AIMProfile's model ID there,
+// so it is cleared together with the rest of the template-era state and set
+// again from the profile.
 func clearTemplateEraStatus(status *aimv1alpha1.AIMServiceStatus, cm *controllerutils.ConditionManager) {
 	if cm == nil {
 		return
 	}
+	status.ReconcilerPipeline = ""
 	hasTemplateCache := status.Cache != nil && status.Cache.TemplateCacheRef != nil
 	hasTemplateEraStatus := hasTemplateCache || status.ResolvedTemplate != nil
 	for _, conditionType := range templateOwnedConditionTypes {

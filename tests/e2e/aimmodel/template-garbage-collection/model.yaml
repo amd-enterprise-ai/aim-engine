@@ -1,7 +1,0 @@
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMModel
-metadata:
-  name: test-gc-model
-spec:
-  # Use real image to extract metadata with recommendedDeployments
-  image: docker.io/amdenterpriseai/aim-dummy:0.2.0

@@ -1,11 +1,11 @@
-# Two profile-pipeline services on the same AIMProfile. Only the first sets a
-# template-era field. spec.template and spec.overrides are rejected on new
-# v1alpha2 objects, so spec.model.custom is the only template-era field a
-# v1alpha2 fixture can set.
+# Two services on the same AIMProfile. Only the first sets a template-era
+# field. v1alpha2 rejects spec.template, spec.overrides and spec.model.custom
+# on new objects, so the first service is created through v1alpha1 to stand in
+# for a service stored before those rules existed.
 #
 # caching.env switches the AIMProfileCache's download Job into simulation mode
 # so the Shared cache reaches Ready without a real download.
-apiVersion: aim.eai.amd.com/v1alpha2
+apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMService
 metadata:
   name: with-custom-model

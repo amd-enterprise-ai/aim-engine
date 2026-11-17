@@ -329,8 +329,7 @@ func runtimeProjectionNeedsContract(
 // AIMProfileCache when the profile opts into caching via spec.caching.enabled.
 // The cache is named after the profile, owner-ref'd by the profile, and lives
 // in the same namespace, so it is garbage-collected when the profile is
-// deleted. This mirrors v1alpha1's AIMServiceTemplate -> AIMTemplateCache
-// path (see internal/v1alpha1/aimservicetemplate/cache.go::BuildTemplateCache).
+// deleted.
 //
 // AIMService-driven caches (set via service.Spec.Caching.Mode) coexist with
 // Profile-owned caches: the two paths produce caches under different names

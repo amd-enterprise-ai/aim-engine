@@ -47,7 +47,7 @@ NVIDIA_DEVICE_PLUGIN_VERSION ?= 0.19.3
 
 # --- ttl.sh ephemeral-registry fallback for external GPU clusters ------------
 # AIMModel discovery reads a model image's OCI labels *inside the operator* via
-# go-containerregistry remote.Get (see internal/v1alpha1/aimmodel/inspector.go).
+# go-containerregistry remote.Get (see internal/imagemetadata/inspector.go).
 # `kind load` only satisfies kubelet pod pulls, NOT that in-operator registry
 # read, so discovery against a not-yet-public ref (e.g. the new
 # docker.io/amdenterpriseai mirror before it's published) fails with
@@ -59,7 +59,7 @@ NVIDIA_DEVICE_PLUGIN_VERSION ?= 0.19.3
 # expanded (=) so the find/hash only runs when a ttl target is invoked.
 #
 # The TAG is preserved per fixture: the operator derives
-# AIMProfile/AIMServiceTemplate .status.version from the image tag (see image
+# AIMProfile .status.version from the image tag (see image
 # discovery), and some fixtures assert version == their tag (e.g. 0.2.0).
 # Fixtures may reference multiple tags (e.g. 0.2.0 and 0.2.1) because aim-dummy
 # is backwards- but not always forward-compatible: tests written against an
@@ -170,10 +170,6 @@ ENVTEST_K8S_VERSION ?= 1.34.1
 .PHONY: envtest
 envtest: ## Download the envtest control plane if needed and print its path (the KUBEBUILDER_ASSETS value).
 	@setup-envtest use $(ENVTEST_K8S_VERSION) -p path
-
-.PHONY: test-bridge-contract
-test-bridge-contract: ## Verify the minimal v1alpha1 bridge contract.
-	go test ./internal/bridgecontract -run '^TestBridgeContract$$' -count=1
 
 .PHONY: test-rbac-contract
 test-rbac-contract: ## Verify the generated operator ClusterRole stays least-privilege.

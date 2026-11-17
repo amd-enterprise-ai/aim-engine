@@ -1,0 +1,36 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimmodel-missing-image-pull-secret
+spec:
+  description: |
+    An image-backed AIMModel whose imagePullSecrets names a Secret that does
+    not exist fails image inspection with SecretNotFound and surfaces it as
+    ConfigValid=False/ReferenceNotFound. The missing reference stops the
+    discovery Job from being applied, so the model stays Failed.
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create the model with a missing imagePullSecret
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert the model is Failed on the missing Secret
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: missing-image-pull-secret
+              status:
+                status: Failed
+                (conditions[?type == 'ImageMetadataReady']):
+                  - status: "False"
+                    reason: SecretNotFound
+                (conditions[?type == 'ConfigValid']):
+                  - status: "False"
+                    reason: ReferenceNotFound
+                (conditions[?type == 'Ready']):
+                  - status: "False"

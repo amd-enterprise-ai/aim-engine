@@ -30,7 +30,6 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
-	legacyaimmodel "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimmodel"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 )
 
@@ -40,11 +39,12 @@ func CatalogSourceGroup(kind, namespace, name, uid string) string {
 	return fmt.Sprintf("%s/%s/%s/%s", kind, namespace, name, uid)
 }
 
-// PublishesCatalog must agree with native discovery eligibility. Legacy custom
-// and derivation models keep using their existing resource-backed profiles.
+// PublishesCatalog must agree with native discovery eligibility. Models with
+// spec.modelSources and derivation models keep using their existing
+// resource-backed profiles.
 func PublishesCatalog(spec *aimv1alpha1.AIMModelSpec) bool {
 	return spec != nil && spec.Image != "" && spec.Profiles == nil && derivationSpec(spec) == nil &&
-		!legacyaimmodel.IsCustomModel(spec) && shouldRunNativeDiscovery(spec)
+		len(spec.ModelSources) == 0 && shouldRunNativeDiscovery(spec)
 }
 
 // CatalogProfileSpec supplies the same defaults to logical definitions and

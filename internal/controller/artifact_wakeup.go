@@ -35,12 +35,11 @@ import (
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
-// artifactWakeupState captures every artifact field a cache reads. Both the v1alpha1
-// template cache and the v1alpha2 profile cache read the same set: ArtifactAdoptableBy
-// inspects the owner references and spec, ComposeState keys off the aggregate status,
-// and DecorateStatus republishes the PVC name plus the artifact's Ready condition. Spec
-// fields are covered by generation. Progress accounting, size fields and the remaining
-// conditions never reach either cache status.
+// artifactWakeupState captures every artifact field a profile cache reads:
+// ArtifactAdoptableBy inspects the owner references and spec, ComposeState keys off
+// the aggregate status, and DecorateStatus republishes the PVC name plus the
+// artifact's Ready condition. Spec fields are covered by generation. Progress
+// accounting, size fields and the remaining conditions never reach the cache status.
 //
 // A field a cache reads but that is missing here becomes a wakeup the cache never gets,
 // so extend this struct alongside anything new the reconcilers consume.

@@ -417,7 +417,7 @@ Model sources create `AIMClusterModel` resources with auto-generated names based
 
 Registry-discovered models are written through v1alpha1 with `spec.image` set. Because v1alpha1 and v1alpha2 share the stored v1alpha2 object, they immediately enter the **official flow**: the model controller runs in-cluster image discovery and materialises one `AIMClusterProfile` per supported (accelerator, precision, metric) combination. The complete discovered definitions remain available to profile-set selectors, including hardware-unsupported entries. See [AIM Models — Flow 1](models.md#flow-1-official-aim-model) for the lifecycle.
 
-During the v1alpha1 → v1alpha2 migration window the same model **also runs the legacy OCI-discovery path** in parallel, emitting one `AIMClusterServiceTemplate` per `RecommendedDeployment` from the image's metadata so v1alpha1-shaped services still resolve. The two output sets (profiles and templates) coexist and describe the same image — pick the one that matches the consumer pipeline. To suppress the legacy template emission on a per-model basis, set `spec.discovery.createServiceTemplates: false`. See [Migration window](../admin/upgrading.md#migration-window) for the dispatch story.
+The model also reads the image's OCI labels into `status.imageMetadata`, records the image tag as `status.version` (the `VERSION` column) and sets `status.sourceType: Image`. Profiles matching the image's recommended deployments are marked `spec.primary`. Created models produce profiles only; they create no `AIMClusterServiceTemplate`.
 
 A generic AIM base image publishes base definitions for `selector.role: base`. Hardware-supported entries become base profile resources, reflected in `status.managedProfiles.base`; the catalog remains selectable when that count is zero. See [Base-image models](models.md#base-image-models).
 
@@ -489,4 +489,3 @@ All selectors failed. Common causes:
 - [Profiles](profiles.md) — What gets produced by discovery of a source-created model
 - [Model Catalog](../guides/model-catalog.md) — Browse and apply discovered models
 - [Runtime Configuration](runtime-config.md) — Authentication and downloader defaults
-- [Service Templates (v1alpha1)](../legacy/service-templates.md) — The legacy template path that source-created models also emit during the deprecation window

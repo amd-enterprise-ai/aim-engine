@@ -52,14 +52,11 @@ rules:
   - aimclustermodelsources
   - aimclusterprofiles
   - aimclusterprofilesets
-  - aimclusterservicetemplates
   - aimmodels
   - aimprofilecaches
   - aimprofiles
   - aimprofilesets
   - aimservices
-  - aimservicetemplates
-  - aimtemplatecaches
   verbs:
   - create
   - delete
@@ -76,14 +73,11 @@ rules:
   - aimclustermodelsources/finalizers
   - aimclusterprofiles/finalizers
   - aimclusterprofilesets/finalizers
-  - aimclusterservicetemplates/finalizers
   - aimmodels/finalizers
   - aimprofilecaches/finalizers
   - aimprofiles/finalizers
   - aimprofilesets/finalizers
   - aimservices/finalizers
-  - aimservicetemplates/finalizers
-  - aimtemplatecaches/finalizers
   verbs:
   - update
 - apiGroups:
@@ -94,14 +88,11 @@ rules:
   - aimclustermodelsources/status
   - aimclusterprofiles/status
   - aimclusterprofilesets/status
-  - aimclusterservicetemplates/status
   - aimmodels/status
   - aimprofilecaches/status
   - aimprofiles/status
   - aimprofilesets/status
   - aimservices/status
-  - aimservicetemplates/status
-  - aimtemplatecaches/status
   verbs:
   - get
   - patch

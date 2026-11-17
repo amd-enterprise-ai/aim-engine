@@ -57,7 +57,7 @@ AIM Engine uses KServe in Standard mode (without Knative) to support KEDA-based 
 
 ### Local Model Cache
 
-AIM Engine manages model caching independently via `AIMArtifact` and `AIMProfileCache` (v1alpha2) / `AIMTemplateCache` (v1alpha1) resources. KServe's built-in local model feature must be disabled to avoid conflicts.
+AIM Engine manages model caching independently via `AIMArtifact` and `AIMProfileCache` resources. KServe's built-in local model feature must be disabled to avoid conflicts.
 
 This is already configured in the values snippet above via `kserve.localmodel.enabled: false` (and in the repository's local dependency Helmfile).
 

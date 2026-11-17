@@ -276,16 +276,15 @@ Key e2e test areas:
 
 | Directory | What it tests |
 |-----------|--------------|
-| `tests/e2e/aimmodel/fine-tuned/` | aimId-based template matching for fine-tuned models |
-| `tests/e2e/aimmodel/custom-models/` | Custom models with explicit hardware and modelSources |
-| `tests/e2e/aimservicetemplate/` | Template discovery, inline sources, GPU availability |
+| `tests/e2e/v1alpha2/aimmodel/` | Image, modelId and derivation models: discovery, image metadata, generated profiles |
+| `tests/e2e/v1alpha2/aimclustermodel/` | The same for cluster-scoped models |
 | `tests/e2e/aimservice/` | Full service lifecycle including frozen models and GPU tests |
 | `tests/e2e/aimartifact/` | Model artifact downloads, quotas, and protocols |
 
 Run a specific test area:
 
 ```bash
-make test-chainsaw CHAINSAW_ARGS="--test-dir tests/e2e/aimmodel/fine-tuned"
+make test-chainsaw CHAINSAW_ARGS="--test-dir tests/e2e/v1alpha2/aimmodel"
 ```
 
 ## Continuous Integration

@@ -54,7 +54,6 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	v1alpha1service "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservice"
-	v1alpha1utils "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/serving"
 )
@@ -76,13 +75,13 @@ func TestDecorateStatus_RetiresTemplateMigrationSignal(t *testing.T) {
 	cm := controllerutils.NewConditionManager([]metav1.Condition{{
 		Type:   controllerutils.ConditionTypeMigrationRequired,
 		Status: metav1.ConditionTrue,
-		Reason: controllerutils.ReasonTemplateAPIDeprecated,
+		Reason: "TemplateAPIDeprecated",
 	}})
 	(&ProfileServiceReconciler{}).DecorateStatus(
 		&aimv1alpha1.AIMServiceStatus{},
 		cm,
 		ServiceObservation{ServiceFetchResult: ServiceFetchResult{
-			service: &aimv1alpha1.AIMService{Spec: aimv1alpha1.AIMServiceSpec{
+			service: &aimv1alpha2.AIMService{Spec: aimv1alpha1.AIMServiceSpec{
 				Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
 			}},
 		}},
@@ -189,12 +188,12 @@ func TestGenerateProfileCacheName_NoTruncationCollision(t *testing.T) {
 
 func TestComposeState_NoProfile(t *testing.T) {
 	r := &ProfileServiceReconciler{}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 	}
 	fetch := ServiceFetchResult{service: service}
 	obs := r.ComposeState(context.Background(),
-		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service},
 		fetch,
 	)
 
@@ -211,7 +210,7 @@ func TestComposeState_NoProfile(t *testing.T) {
 
 func TestComposeState_NamespaceProfileResolved(t *testing.T) {
 	r := &ProfileServiceReconciler{}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 	}
 	profile := &aimv1alpha2.AIMProfile{
@@ -226,7 +225,7 @@ func TestComposeState_NamespaceProfileResolved(t *testing.T) {
 		profile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: profile},
 	}
 	obs := r.ComposeState(context.Background(),
-		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service},
 		fetch,
 	)
 
@@ -248,7 +247,7 @@ func TestComposeState_NamespaceProfileResolved(t *testing.T) {
 // wedging the service permanently rather than transiently.
 func TestComposeState_OverlayValidatesAgainstDesiredNotObserved(t *testing.T) {
 	r := &ProfileServiceReconciler{}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			ProfileOverrides: &aimv1alpha1.AIMServiceProfileOverrides{
@@ -287,7 +286,7 @@ func TestComposeState_OverlayValidatesAgainstDesiredNotObserved(t *testing.T) {
 		overlayProfile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: staleOverlay},
 	}
 	obs := r.ComposeState(context.Background(),
-		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service},
 		fetch,
 	)
 
@@ -310,7 +309,7 @@ func TestComposeState_OverlayValidatesAgainstDesiredNotObserved(t *testing.T) {
 
 func TestComposeState_OverlayStatusRequiresCurrentGeneration(t *testing.T) {
 	r := &ProfileServiceReconciler{}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			ProfileOverrides: &aimv1alpha1.AIMServiceProfileOverrides{
@@ -339,7 +338,7 @@ func TestComposeState_OverlayStatusRequiresCurrentGeneration(t *testing.T) {
 	compose := func() ServiceObservation {
 		return r.ComposeState(
 			context.Background(),
-			controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+			controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service},
 			ServiceFetchResult{
 				service:        service,
 				profile:        controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: profile},
@@ -363,7 +362,7 @@ func TestComposeState_OverlayStatusRequiresCurrentGeneration(t *testing.T) {
 func TestComposeState_AdapterCapabilityUsesEffectiveProfile(t *testing.T) {
 	t.Run("feature-silent profile is rejected", func(t *testing.T) {
 		r := &ProfileServiceReconciler{}
-		service := &aimv1alpha1.AIMService{
+		service := &aimv1alpha2.AIMService{
 			ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 			Spec: aimv1alpha1.AIMServiceSpec{
 				Profile:     &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -380,7 +379,7 @@ func TestComposeState_AdapterCapabilityUsesEffectiveProfile(t *testing.T) {
 
 		obs := r.ComposeState(
 			context.Background(),
-			controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+			controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service},
 			ServiceFetchResult{
 				service: service,
 				profile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: profile},
@@ -397,7 +396,7 @@ func TestComposeState_AdapterCapabilityUsesEffectiveProfile(t *testing.T) {
 
 	t.Run("explicit feature override is accepted", func(t *testing.T) {
 		r := &ProfileServiceReconciler{}
-		service := &aimv1alpha1.AIMService{
+		service := &aimv1alpha2.AIMService{
 			ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 			Spec: aimv1alpha1.AIMServiceSpec{
 				Profile:     &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -417,7 +416,7 @@ func TestComposeState_AdapterCapabilityUsesEffectiveProfile(t *testing.T) {
 
 		obs := r.ComposeState(
 			context.Background(),
-			controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+			controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service},
 			ServiceFetchResult{
 				service: service,
 				profile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: profile},
@@ -438,7 +437,7 @@ func TestComposeState_AdapterCapabilityUsesEffectiveProfile(t *testing.T) {
 
 func TestComposeState_ClusterProfileFallback(t *testing.T) {
 	r := &ProfileServiceReconciler{}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 	}
 	clusterProfile := &aimv1alpha2.AIMClusterProfile{
@@ -453,7 +452,7 @@ func TestComposeState_ClusterProfileFallback(t *testing.T) {
 		clusterProfile: controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]{Value: clusterProfile},
 	}
 	obs := r.ComposeState(context.Background(),
-		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service},
 		fetch,
 	)
 	if obs.profileScope != aimv1alpha1.AIMResolutionScopeCluster {
@@ -465,7 +464,7 @@ func TestComposeState_ClusterProfileFallback(t *testing.T) {
 }
 
 func TestPlanResources_MaterializesProfileRuntimeBeforeInferenceService(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testServiceName,
 			Namespace: "ns",
@@ -499,7 +498,7 @@ func TestPlanResources_MaterializesProfileRuntimeBeforeInferenceService(t *testi
 		}, name)
 	}
 	reconciler := &ProfileServiceReconciler{}
-	reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service}
+	reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service}
 
 	first := reconciler.ComposeState(
 		context.Background(),
@@ -573,14 +572,13 @@ func TestPlanResources_MaterializesProfileRuntimeBeforeInferenceService(t *testi
 }
 
 func TestPlanResources_MigrationHandoffPreservesLegacyInferenceServiceAtPinnedGeneration(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       testServiceName,
 			Namespace:  "ns",
 			UID:        "service-uid",
 			Generation: 7,
 			Annotations: map[string]string{
-				constants.AnnotationReconcilerPipeline:                          constants.ReconcilerPipelineProfile,
 				constants.AnnotationMigrationPreserveInferenceServiceGeneration: "7",
 				constants.AnnotationMigrationPreserveInferenceServiceUID:        "legacy-isvc-uid",
 			},
@@ -606,7 +604,10 @@ func TestPlanResources_MigrationHandoffPreservesLegacyInferenceServiceAtPinnedGe
 	if err != nil {
 		t.Fatalf("generate InferenceService name: %v", err)
 	}
-	legacyConfigMapName := v1alpha1utils.ServiceCustomProfileConfigMapName(service.Name)
+	legacyConfigMapName, err := legacyProfileConfigMapName(service.Name)
+	if err != nil {
+		t.Fatalf("legacy profile ConfigMap name: %v", err)
+	}
 	legacyISVC := currentReadyInferenceService(service.Namespace, legacyConfigMapName)
 	legacyISVC.Name = isvcName
 	legacyISVC.UID = "legacy-isvc-uid"
@@ -637,7 +638,7 @@ func TestPlanResources_MigrationHandoffPreservesLegacyInferenceServiceAtPinnedGe
 		}, name)
 	}
 	reconciler := &ProfileServiceReconciler{}
-	reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service}
+	reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service}
 	first := reconciler.ComposeState(
 		context.Background(),
 		reconcileCtx,
@@ -685,23 +686,23 @@ func TestPlanResources_MigrationHandoffPreservesLegacyInferenceServiceAtPinnedGe
 func TestPlanResources_ActiveMigrationPinFailsClosed(t *testing.T) {
 	tests := []struct {
 		name string
-		edit func(*aimv1alpha1.AIMService, *controllerutils.FetchResult[*servingv1beta1.InferenceService])
+		edit func(*aimv1alpha2.AIMService, *controllerutils.FetchResult[*servingv1beta1.InferenceService])
 	}{
 		{
 			name: "missing UID pin",
-			edit: func(service *aimv1alpha1.AIMService, _ *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
+			edit: func(service *aimv1alpha2.AIMService, _ *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
 				delete(service.Annotations, constants.AnnotationMigrationPreserveInferenceServiceUID)
 			},
 		},
 		{
 			name: "wrong UID pin",
-			edit: func(service *aimv1alpha1.AIMService, _ *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
+			edit: func(service *aimv1alpha2.AIMService, _ *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
 				service.Annotations[constants.AnnotationMigrationPreserveInferenceServiceUID] = "other-isvc-uid"
 			},
 		},
 		{
 			name: "missing InferenceService",
-			edit: func(_ *aimv1alpha1.AIMService, inferenceService *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
+			edit: func(_ *aimv1alpha2.AIMService, inferenceService *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
 				inferenceService.Value = nil
 				inferenceService.Error = apierrors.NewNotFound(
 					schema.GroupResource{Group: "serving.kserve.io", Resource: "inferenceservices"},
@@ -711,20 +712,20 @@ func TestPlanResources_ActiveMigrationPinFailsClosed(t *testing.T) {
 		},
 		{
 			name: "terminating InferenceService",
-			edit: func(_ *aimv1alpha1.AIMService, inferenceService *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
+			edit: func(_ *aimv1alpha2.AIMService, inferenceService *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
 				deletionTimestamp := metav1.Now()
 				inferenceService.Value.DeletionTimestamp = &deletionTimestamp
 			},
 		},
 		{
 			name: "missing template label",
-			edit: func(_ *aimv1alpha1.AIMService, inferenceService *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
+			edit: func(_ *aimv1alpha2.AIMService, inferenceService *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
 				delete(inferenceService.Value.Labels, constants.LabelTemplate)
 			},
 		},
 		{
 			name: "profile label present",
-			edit: func(_ *aimv1alpha1.AIMService, inferenceService *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
+			edit: func(_ *aimv1alpha2.AIMService, inferenceService *controllerutils.FetchResult[*servingv1beta1.InferenceService]) {
 				inferenceService.Value.Labels[constants.LabelProfile] = testClusterProfileName
 			},
 		},
@@ -732,7 +733,7 @@ func TestPlanResources_ActiveMigrationPinFailsClosed(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			service := &aimv1alpha1.AIMService{
+			service := &aimv1alpha2.AIMService{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:       testServiceName,
 					Namespace:  "ns",
@@ -771,7 +772,7 @@ func TestPlanResources_ActiveMigrationPinFailsClosed(t *testing.T) {
 			test.edit(service, &inferenceService)
 
 			reconciler := &ProfileServiceReconciler{}
-			reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service}
+			reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service}
 			obs := reconciler.ComposeState(context.Background(), reconcileCtx, ServiceFetchResult{
 				service:          service,
 				clusterProfile:   controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]{Value: clusterProfile},
@@ -794,7 +795,7 @@ func TestPlanResources_ActiveMigrationPinFailsClosed(t *testing.T) {
 
 func assertInitialProfileRuntimePlan(
 	t *testing.T,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	clusterProfile *aimv1alpha2.AIMClusterProfile,
 	plan *controllerutils.PlanResult,
 ) (*kservev1alpha1.ServingRuntime, *corev1.ConfigMap) {
@@ -859,8 +860,8 @@ func assertSharedProjectionMetadata(
 func assertStaleProfileRuntimePlan(
 	t *testing.T,
 	reconciler *ProfileServiceReconciler,
-	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha1.AIMService],
-	service *aimv1alpha1.AIMService,
+	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha2.AIMService],
+	service *aimv1alpha2.AIMService,
 	stale ServiceObservation,
 ) {
 	t.Helper()
@@ -899,7 +900,7 @@ func assertStaleProfileRuntimePlan(
 func assertStaleProfileRuntimeOwnerUID(
 	t *testing.T,
 	reconciler *ProfileServiceReconciler,
-	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha1.AIMService],
+	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha2.AIMService],
 	first ServiceObservation,
 	runtime *kservev1alpha1.ServingRuntime,
 	configMap *corev1.ConfigMap,
@@ -935,8 +936,8 @@ func assertStaleProfileRuntimeOwnerUID(
 func assertStaleProfileRuntimeObservedContent(
 	t *testing.T,
 	reconciler *ProfileServiceReconciler,
-	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha1.AIMService],
-	service *aimv1alpha1.AIMService,
+	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha2.AIMService],
+	service *aimv1alpha2.AIMService,
 	first ServiceObservation,
 	runtime *kservev1alpha1.ServingRuntime,
 	configMap *corev1.ConfigMap,
@@ -1041,7 +1042,7 @@ func TestProfileRuntimeHealth_UnexpectedErrorWinsOverMissingSibling(t *testing.T
 
 func TestPipelineRun_MaterializesProfileRuntimeBeforeInferenceService(t *testing.T) {
 	ctx := context.Background()
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testServiceName,
 			Namespace: "ns",
@@ -1295,7 +1296,7 @@ func TestPipelineRun_RuntimeConfigEnvReachesInferenceService(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			service := &aimv1alpha1.AIMService{
+			service := &aimv1alpha2.AIMService{
 				ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
 				Spec: aimv1alpha1.AIMServiceSpec{
 					Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testClusterProfileName},
@@ -1406,7 +1407,7 @@ func TestRuntimeConfigEnv_KeepsServingRuntimeEntryKServeCannotReplace(t *testing
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := &aimv1alpha1.AIMService{
+			service := &aimv1alpha2.AIMService{
 				ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 			}
 			service.Spec.Env = tt.serviceEnv
@@ -1428,7 +1429,7 @@ func TestRuntimeConfigEnv_KeepsServingRuntimeEntryKServeCannotReplace(t *testing
 // downloads the model weights again.
 func TestRuntimeConfigEnvDoesNotChangeOverlayOrCache(t *testing.T) {
 	build := func(env []corev1.EnvVar) (*aimv1alpha2.AIMProfile, *aimv1alpha2.AIMProfileCache) {
-		service := &aimv1alpha1.AIMService{
+		service := &aimv1alpha2.AIMService{
 			ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
 			Spec: aimv1alpha1.AIMServiceSpec{
 				Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -1469,7 +1470,7 @@ func TestRuntimeConfigEnvDoesNotChangeOverlayOrCache(t *testing.T) {
 }
 
 type profileRuntimeTestPipeline = controllerutils.Pipeline[
-	*aimv1alpha1.AIMService,
+	*aimv1alpha2.AIMService,
 	*aimv1alpha1.AIMServiceStatus,
 	ServiceFetchResult,
 	ServiceObservation,
@@ -1477,7 +1478,7 @@ type profileRuntimeTestPipeline = controllerutils.Pipeline[
 
 func newProfileRuntimePipelineFixture(
 	t *testing.T,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	clusterProfile *aimv1alpha2.AIMClusterProfile,
 ) (client.Client, *profileRuntimeTestPipeline) {
 	t.Helper()
@@ -1498,7 +1499,7 @@ func newProfileRuntimePipelineFixture(
 
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&aimv1alpha1.AIMService{}).
+		WithStatusSubresource(&aimv1alpha2.AIMService{}).
 		WithObjects(service, clusterProfile).
 		Build()
 	recorder := record.NewFakeRecorder(20)
@@ -1518,7 +1519,7 @@ func runProfileServicePipelineCycle(
 	t *testing.T,
 	ctx context.Context,
 	pipeline *profileRuntimeTestPipeline,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 ) time.Duration {
 	t.Helper()
 	result, err := pipeline.Run(ctx, service)
@@ -1533,9 +1534,9 @@ func getProfileServiceForTest(
 	ctx context.Context,
 	c client.Client,
 	key client.ObjectKey,
-) *aimv1alpha1.AIMService {
+) *aimv1alpha2.AIMService {
 	t.Helper()
-	return getObjectForTest(t, ctx, c, key, &aimv1alpha1.AIMService{})
+	return getObjectForTest(t, ctx, c, key, &aimv1alpha2.AIMService{})
 }
 
 func getObjectForTest[T client.Object](
@@ -1572,7 +1573,7 @@ func assertInferenceServiceRuntime(
 // framework env). The ServingRuntime carries all of that; the service only
 // references it.
 func TestBuildInferenceServiceFromProfile_ReferencesRuntime(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -1656,7 +1657,7 @@ func TestBuildInferenceServiceFromProfile_ReferencesRuntime(t *testing.T) {
 func TestBuildInferenceServiceFromProfile_ServiceAccountPrecedence(t *testing.T) {
 	profileSpec := sampleProfileSpec()
 	profileSpec.ServiceAccountName = "profile-sa"
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 	}
 	obs := ServiceObservation{
@@ -1680,7 +1681,7 @@ func TestBuildInferenceServiceFromProfile_ServiceAccountPrecedence(t *testing.T)
 
 func TestBuildInferenceServiceFromProfile_Tolerations(t *testing.T) {
 	gpuTaint := corev1.Toleration{Key: "amd.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 	}
 	obs := ServiceObservation{
@@ -1708,7 +1709,7 @@ func TestBuildInferenceServiceFromProfile_SecurityContexts(t *testing.T) {
 	configPod := &corev1.PodSecurityContext{RunAsNonRoot: ptr.To(true), SupplementalGroups: []int64{44, 110}}
 	configContainer := &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false)}
 	serviceContainer := &corev1.SecurityContext{}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 	}
 	obs := ServiceObservation{
@@ -1747,7 +1748,7 @@ func TestBuildInferenceServiceFromProfile_SecurityContexts(t *testing.T) {
 // existing InferenceService follows the currently resolved profile rather than
 // indefinitely serving through a stale projection.
 func TestBuildInferenceServiceFromProfile_ConvergesRuntimeReference(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -1790,7 +1791,7 @@ func TestBuildInferenceServiceFromProfile_ConvergesRuntimeReference(t *testing.T
 // BOTH scopes: a cluster profile is the cross-scope case, and a namespace
 // profile needs it under Reduced mode (no eager per-profile ServingRuntime).
 func TestBuildInferenceServiceFromProfile_StampsRuntimeProfile(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testClusterProfileName},
@@ -1831,7 +1832,7 @@ func TestBuildInferenceServiceFromProfile_ServiceResourceOverrideOnModel(t *test
 	override := &corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Gi")},
 	}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile:   &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -1876,7 +1877,7 @@ func TestBuildInferenceServiceFromProfile_ServiceResourceOverrideOnModel(t *test
 }
 
 func TestPlanResources_serviceOverrideRescuesProfileReadiness(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -1928,7 +1929,7 @@ func TestPlanResources_serviceOverrideRescuesProfileReadiness(t *testing.T) {
 	reconciler := &ProfileServiceReconciler{}
 	obs := reconciler.ComposeState(
 		context.Background(),
-		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service},
 		ServiceFetchResult{
 			service:            service,
 			profile:            controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: profile},
@@ -1941,7 +1942,7 @@ func TestPlanResources_serviceOverrideRescuesProfileReadiness(t *testing.T) {
 
 	plan := reconciler.PlanResources(
 		context.Background(),
-		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service},
 		obs,
 	)
 
@@ -1965,7 +1966,7 @@ func TestPlanResources_serviceOverrideRescuesProfileReadiness(t *testing.T) {
 }
 
 func TestBuildInferenceServiceFromProfile_NilSpecReturnsNil(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 	}
 	obs := ServiceObservation{
@@ -2016,7 +2017,7 @@ func TestResolvedModelIdFromProfile(t *testing.T) {
 // controller-owned model-id annotation is stamped from the resolved profile
 // rather than any user-supplied value.
 func TestBuildInferenceServiceFromProfile_AnnotationPropagation(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testServiceName,
 			Namespace: "ns",
@@ -2102,7 +2103,7 @@ func TestGetConfigHealth_SurfacesInvalidSpec(t *testing.T) {
 }
 
 func TestGetComponentHealth_IncludesConfigAndRouteEntries(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 	}
 	obs := ServiceObservation{
@@ -2128,7 +2129,7 @@ func TestGetComponentHealth_IncludesConfigAndRouteEntries(t *testing.T) {
 // pipeline surfaces the invalid scale-from-zero-without-routing combination as
 // a ConfigValid-driving InvalidSpec error, even before a profile resolves.
 func TestGetComponentHealth_ScaleToZeroRequiresRouting(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec:       aimv1alpha1.AIMServiceSpec{MinReplicas: ptr.To(int32(0))},
 	}
@@ -2164,7 +2165,7 @@ func TestGetComponentHealth_ScaleToZeroRequiresRouting(t *testing.T) {
 // no routing hostnames) as a ConfigValid-driving InvalidSpec error on the
 // HTTPRoute component, sharing the v1alpha1 helper.
 func TestGetComponentHealth_MultiListenerRequiresHostname(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 	}
 	service.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
@@ -2215,7 +2216,7 @@ func TestGetComponentHealth_MultiListenerRequiresHostname(t *testing.T) {
 // users. Only the gating Profile (and RuntimeConfig if observed) component
 // should be reported.
 func TestGetComponentHealth_ProfileNotFound_SuppressesDownstream(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 	}
 	notFound := apierrors.NewNotFound(schema.GroupResource{}, "missing-isvc")
@@ -2253,7 +2254,7 @@ func TestGetComponentHealth_ProfileNotFound_SuppressesDownstream(t *testing.T) {
 // aimId or modelSources. The planner skips downstream creation and the user
 // must fix the profile before anything can progress.
 func TestGetComponentHealth_BaseProfile_SuppressesDownstream(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 	}
 	baseProfileSpec := &aimv1alpha2.AIMProfileSpecCommon{
@@ -2306,7 +2307,7 @@ func TestGetComponentHealth_BaseProfile_SuppressesDownstream(t *testing.T) {
 // even if it's still progressing — downstream conditions remain visible
 // so users can watch cache / ISVC progress.
 func TestGetComponentHealth_ResolvedProfile_KeepsDownstream(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 	}
 	notFound := apierrors.NewNotFound(schema.GroupResource{}, "missing-isvc")
@@ -2340,7 +2341,7 @@ func TestGetComponentHealth_ResolvedProfile_KeepsDownstream(t *testing.T) {
 // the InferenceServicePods and HPA components as Ready/ScaledToZero rather than
 // stalling at "no pods"/"waiting" forever.
 func TestGetComponentHealth_ScaleToZeroIdleReportsReady(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			MinReplicas: ptr.To(int32(0)),
@@ -2482,7 +2483,7 @@ func TestGetInferenceServiceHealth_PredictorPodCreationFailed(t *testing.T) {
 }
 
 func TestPlanProfileCache_SkipsWhenExisting(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -2508,7 +2509,7 @@ func buildTestISVC(t *testing.T, spec aimv1alpha1.AIMServiceSpec) *servingv1beta
 	t.Helper()
 	spec.Profile = &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA}
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec:       spec,
 	}
@@ -2591,7 +2592,7 @@ func TestBuildInferenceServiceFromProfile_Replicas_AutoScalingHandsOffToExternal
 // ServingRuntime mounts it instead, so overlaying it would duplicate the
 // ServingRuntime's volume.
 func TestBuildInferenceServiceFromProfile_SharedCacheNotOverlaid(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -2629,7 +2630,7 @@ func TestBuildInferenceServiceFromProfile_SharedCacheNotOverlaid(t *testing.T) {
 // model volume mount, and the framework redirect environment (overriding
 // same-named entries from the ServingRuntime container).
 func TestBuildInferenceServiceFromProfile_DedicatedCacheOverlaid(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -2684,7 +2685,7 @@ func TestComposeProfileRuntimeProjection_DedicatedServiceUsesSharedProjectionCac
 			Deployable: true,
 		},
 	}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -2746,7 +2747,7 @@ func TestComposeProfileRuntimeProjection_DedicatedServiceUsesSharedProjectionCac
 }
 
 func TestBuildInferenceServiceFromProfile_DedicatedCacheOverridesDirectVLLMModelReference(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Caching: &aimv1alpha1.AIMServiceCachingConfig{Mode: aimv1alpha1.CachingModeDedicated},
@@ -2819,7 +2820,7 @@ func envMap(vars []corev1.EnvVar) map[string]string {
 }
 
 func TestPlanProfileCache_CreatesSharedCache(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -2870,7 +2871,7 @@ func TestPlanProfileCache_ServiceCachingEnvReachesCache(t *testing.T) {
 			},
 		},
 	}
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -2906,7 +2907,7 @@ func TestPlanProfileCache_ServiceCachingEnvReachesCache(t *testing.T) {
 // precedence: when both the namespace profile and the service set caching.env,
 // the service value wins on conflicting names.
 func TestPlanProfileCache_ServiceCachingEnvOverridesProfile(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -2957,7 +2958,7 @@ func TestPlanProfileCache_ServiceCachingEnvOverridesProfile(t *testing.T) {
 // field, and a cluster seed has none either.
 func TestPlanProfileCache_OverlayUsesSeedProfileCachingEnv(t *testing.T) {
 	seedSpec := profileSpecWithModelSources()
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -3010,7 +3011,7 @@ func TestPlanProfileCache_OverlayUsesSeedProfileCachingEnv(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			obs := (&ProfileServiceReconciler{}).ComposeState(
 				context.Background(),
-				controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{},
+				controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{},
 				tt.fetch,
 			)
 			if obs.configErr != nil {
@@ -3039,7 +3040,7 @@ func TestPlanProfileCache_OverlayUsesSeedProfileCachingEnv(t *testing.T) {
 // AIMRuntimeConfig's env can feed the download Job (instead of always the
 // default-named config).
 func TestPlanProfileCache_PropagatesRuntimeConfigRef(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile:          &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -3071,7 +3072,7 @@ func TestPlanProfileCache_PropagatesRuntimeConfigRef(t *testing.T) {
 func TestPlanResources_ScaleToZeroEmitsScaledObject(t *testing.T) {
 	t.Setenv(constants.EnvAIMGatewayActivationScope, constants.GatewayActivationScopeHTTPRoute)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile:     &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA},
@@ -3119,7 +3120,7 @@ func TestPlanResources_ScaleToZeroEmitsScaledObject(t *testing.T) {
 	}
 
 	pr := r.PlanResources(context.Background(),
-		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service},
 		obs,
 	)
 
@@ -3137,7 +3138,7 @@ func TestPlanResources_ScaleToZeroEmitsScaledObject(t *testing.T) {
 
 func TestPlanResourcesSchedulesActivationMetricGraceDeadline(t *testing.T) {
 	t.Setenv(constants.EnvAIMGatewayActivationScope, constants.GatewayActivationScopeHTTPRoute)
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			MinReplicas: ptr.To(int32(0)),
@@ -3177,7 +3178,7 @@ func TestPlanResourcesSchedulesActivationMetricGraceDeadline(t *testing.T) {
 
 	plan := (&ProfileServiceReconciler{}).PlanResources(
 		context.Background(),
-		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service},
 		obs,
 	)
 	const gracePeriod = 3 * time.Minute
@@ -3187,7 +3188,7 @@ func TestPlanResourcesSchedulesActivationMetricGraceDeadline(t *testing.T) {
 }
 
 func TestResolveEffectiveResourcesFromProfile(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 	}
 	profileSpec := sampleProfileSpec()
@@ -3244,7 +3245,7 @@ func TestResolveEffectiveResourcesFromProfile(t *testing.T) {
 // service-level Resources override takes precedence over the profile's
 // computed resources (matching resolveResourcesFromProfile's precedence).
 func TestResolveEffectiveResourcesFromProfile_ServiceOverrideWins(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Resources: &corev1.ResourceRequirements{
@@ -3343,7 +3344,7 @@ func TestMergeResourceRequirements_oneSidedOverrideKeepsValidPair(t *testing.T) 
 }
 
 func TestPlanProfileCache_DedicatedHonorsServiceCachingMode(t *testing.T) {
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testServiceName,
 			Namespace: "ns",
@@ -3486,11 +3487,11 @@ func TestPlanResources_LegacyProfileConfigMapCleanupSafetyGuards(t *testing.T) {
 	}
 }
 
-func legacyProfileConfigMapCleanupFixture(t *testing.T) (*aimv1alpha1.AIMService, *corev1.ConfigMap) {
+func legacyProfileConfigMapCleanupFixture(t *testing.T) (*aimv1alpha2.AIMService, *corev1.ConfigMap) {
 	t.Helper()
 
 	const serviceUID = "svc-uid-legacy-1"
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: serviceUID},
 	}
 	legacyName, err := legacyProfileConfigMapName(service.Name)
@@ -3551,7 +3552,7 @@ func currentReadyInferenceService(namespace string, configMapNames ...string) *s
 }
 
 func planLegacyProfileConfigMapCleanupForTest(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	configMap *corev1.ConfigMap,
 	inferenceService controllerutils.FetchResult[*servingv1beta1.InferenceService],
 ) controllerutils.PlanResult {
@@ -3565,7 +3566,7 @@ func planLegacyProfileConfigMapCleanupForTest(
 	}
 	return reconciler.PlanResources(
 		context.Background(),
-		controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: service},
+		controllerutils.ReconcileContext[*aimv1alpha2.AIMService]{Object: service},
 		obs,
 	)
 }

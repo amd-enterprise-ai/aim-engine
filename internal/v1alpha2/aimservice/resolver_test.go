@@ -177,7 +177,7 @@ func TestResolveByName_NamespaceWins(t *testing.T) {
 	profile := resolverProfileBuilder("my-profile", "ns", "aim/one", "fp8", nil)
 	c := newResolverClient(t, scheme, profile)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: "my-profile"},
@@ -213,7 +213,7 @@ func TestResolveByName_ClusterFallback(t *testing.T) {
 	}
 	c := newResolverClient(t, scheme, cluster)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: "global-profile"},
@@ -235,7 +235,7 @@ func TestResolveByName_NotFound(t *testing.T) {
 	scheme := newResolverTestScheme(t)
 	c := newResolverClient(t, scheme)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: "missing"},
@@ -270,7 +270,7 @@ func TestResolveBySelector_NamespaceListErrorIsInfra(t *testing.T) {
 		}).
 		Build()
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -312,7 +312,7 @@ func TestResolveBySelector_ClusterListErrorIsInfra(t *testing.T) {
 		}).
 		Build()
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -352,7 +352,7 @@ func TestResolveByModel_DesugarsToModelRefLabel(t *testing.T) {
 		deployableProvenanceLabels("some-other-model"))
 	c := newResolverClient(t, scheme, matching, otherModel)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Name: ptr.To("my-model")},
@@ -383,7 +383,7 @@ func TestResolveByModelAndSelector_PrecisionNarrowing(t *testing.T) {
 		deployableProvenanceLabels("my-model"))
 	c := newResolverClient(t, scheme, fp8, bf16)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Name: ptr.To("my-model")},
@@ -416,7 +416,7 @@ func TestResolveByGlobalSelector_AimIdNarrowing(t *testing.T) {
 		map[string]string{constants.LabelKeyProfileRole: constants.LabelValueProfileRoleDeployable})
 	c := newResolverClient(t, scheme, target, other)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -446,7 +446,7 @@ func TestResolveBySelector_BaseProfilesExcluded(t *testing.T) {
 		map[string]string{constants.LabelKeyProfileRole: constants.LabelValueProfileRoleDeployable})
 	c := newResolverClient(t, scheme, baseProfile, deployable)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -474,7 +474,7 @@ func TestResolveBySelector_OverlaysFromOtherServicesSkipped(t *testing.T) {
 		map[string]string{constants.LabelKeyProfileRole: constants.LabelValueProfileRoleDeployable})
 	c := newResolverClient(t, scheme, overlay, regular)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-service", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -504,7 +504,7 @@ func TestResolveBySelector_AmbiguousEmitsEvent(t *testing.T) {
 	cli := newResolverClient(t, scheme, a, b, c)
 	recorder := record.NewFakeRecorder(10)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -548,7 +548,7 @@ func TestResolveBySelector_AmbiguousEventNamesActualWinner(t *testing.T) {
 	cli := newResolverClient(t, scheme, notReady, ready)
 	recorder := record.NewFakeRecorder(10)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -598,7 +598,7 @@ func TestResolveBySelector_CleanTiebreakDoesNotEmitAmbiguous(t *testing.T) {
 	cli := newResolverClient(t, scheme, latency, throughput)
 	recorder := record.NewFakeRecorder(10)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -638,7 +638,7 @@ func TestResolveBySelector_NamespaceWinsOverCluster(t *testing.T) {
 	}
 	c := newResolverClient(t, scheme, nsProfile, clusterProfile)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -708,7 +708,7 @@ func TestResolveByImage_NoMatchSignalsAutoCreate(t *testing.T) {
 	c := newResolverClient(t, scheme)
 
 	image := testImageRef
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Image: ptr.To(image)},
@@ -752,7 +752,7 @@ func TestResolveByImage_SingleMatchDesugarsToModelRef(t *testing.T) {
 		deployableProvenanceLabels("my-model"))
 	c := newResolverClient(t, scheme, model, matching)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Image: ptr.To(image)},
@@ -792,7 +792,7 @@ func TestResolveByImage_ClusterMatchDesugars(t *testing.T) {
 	}
 	c := newResolverClient(t, scheme, clusterModel, clusterProfile)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Image: ptr.To(image)},
@@ -830,7 +830,7 @@ func TestResolveByImage_NamespaceWinsOverCluster(t *testing.T) {
 		deployableProvenanceLabels("ns-model"))
 	c := newResolverClient(t, scheme, nsModel, clusterModel, nsProfile)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Image: ptr.To(image)},
@@ -866,7 +866,7 @@ func TestResolveByImage_MultipleMatchesAmbiguous(t *testing.T) {
 	}
 	c := newResolverClient(t, scheme, a, b)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Image: ptr.To(image)},
@@ -909,7 +909,7 @@ func TestResolveByImage_WithSelectorOverlayNarrows(t *testing.T) {
 		deployableProvenanceLabels("my-model"))
 	c := newResolverClient(t, scheme, model, fp8, bf16)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Image: ptr.To(image)},
@@ -946,7 +946,7 @@ func TestResolveByImage_ImageOnlyServiceWithoutMatch_OriginalServiceUnchanged(t 
 		deployableProvenanceLabels("my-model"))
 	c := newResolverClient(t, scheme, model, matching)
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Image: ptr.To(image)},
@@ -1004,9 +1004,7 @@ func TestGenerateAutoModelName_DifferentInputsDifferentNames(t *testing.T) {
 
 // TestBuildAutoCreatedAIMModel_ShapeAndProvenance covers the structural
 // invariants the v1alpha2 model controller relies on:
-//   - apiVersion=v1alpha2 (otherwise the model controller would emit
-//     AIMServiceTemplates instead of AIMProfiles and the resolver would
-//     never find a match).
+//   - apiVersion=v1alpha2.
 //   - origin=auto-generated label so `kubectl get aimmodel -l 'origin!=
 //     auto-generated'` hides it.
 //   - the AnnotationAutoModelSource annotation surfaces the provenance.
@@ -1016,7 +1014,7 @@ func TestGenerateAutoModelName_DifferentInputsDifferentNames(t *testing.T) {
 //     are populated.
 func TestBuildAutoCreatedAIMModel_ShapeAndProvenance(t *testing.T) {
 	image := testImageRef
-	svc := &aimv1alpha1.AIMService{
+	svc := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "chat", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			ImagePullSecrets: []corev1.LocalObjectReference{
@@ -1384,8 +1382,8 @@ func resolverProfileBuilderWithUID(name, precision string,
 // across call sites.
 func serviceWithBinding(selector *aimv1alpha1.ProfileSelector,
 	boundName string,
-) *aimv1alpha1.AIMService {
-	return &aimv1alpha1.AIMService{
+) *aimv1alpha2.AIMService {
+	return &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: stickyTestServiceName, Namespace: stickyTestNamespace},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Selector: selector},
@@ -1539,7 +1537,7 @@ func TestStickyBinding_NoEventOnFirstBinding(t *testing.T) {
 	c := newResolverClient(t, scheme, only)
 
 	recorder := record.NewFakeRecorder(10)
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -1660,7 +1658,7 @@ func TestStickyBinding_ClusterScopedBoundProfile(t *testing.T) {
 	c := newResolverClient(t, scheme, boundCluster, contenderCluster)
 
 	recorder := record.NewFakeRecorder(10)
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: stickyTestServiceName, Namespace: stickyTestNamespace},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -1696,7 +1694,7 @@ func TestResolveBySelector_AnyAutoSelectionPolicySelectedAfterOptimizedPassIsEmp
 	fallback.Spec.Type = aimv1alpha1.AIMProfileTypeUnoptimized
 	fallback.Spec.AutoSelectionPolicy = aimv1alpha1.AIMProfileAutoSelectionPolicyAny
 	c := newResolverClient(t, scheme, fallback)
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -1734,7 +1732,7 @@ func TestResolveBySelector_ClusterAnyAutoSelectionPolicySelected(t *testing.T) {
 		Status: seed.Status,
 	}
 	c := newResolverClient(t, scheme, fallback)
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -1761,7 +1759,7 @@ func TestResolveBySelector_OptimizedPolicyLowerTierRemainsExcluded(t *testing.T)
 	lowerTier := resolverProfileBuilder("amd-preview", "ns", "aim/amd", "fp16", labels)
 	lowerTier.Spec.Type = aimv1alpha1.AIMProfileTypePreview
 	c := newResolverClient(t, scheme, lowerTier)
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -1798,7 +1796,7 @@ func TestResolveBySelector_OptimizedClusterProfileBeatsNamespaceAnyPolicy(t *tes
 		Status: clusterSeed.Status,
 	}
 	c := newResolverClient(t, scheme, nsFallback, clusterOptimized)
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -1826,7 +1824,7 @@ func TestResolveBySelector_ExplicitMinimumTypeBlocksAnyAutoSelectionPolicy(t *te
 	fallback.Spec.Type = aimv1alpha1.AIMProfileTypeUnoptimized
 	fallback.Spec.AutoSelectionPolicy = aimv1alpha1.AIMProfileAutoSelectionPolicyAny
 	c := newResolverClient(t, scheme, fallback)
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
@@ -1872,7 +1870,7 @@ func TestStickyBinding_KeepsAnyAutoSelectionProfileWithImplicitFloor(t *testing.
 func TestComposeServiceSelector_ExplicitModelStillDefaultsOptimized(t *testing.T) {
 	t.Parallel()
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Name: ptr.To("qwen")},
 		},
@@ -1889,7 +1887,7 @@ func TestComposeServiceSelector_ExplicitModelStillDefaultsOptimized(t *testing.T
 func TestComposeServiceSelector_GlobalSelectionStillDefaultsOptimized(t *testing.T) {
 	t.Parallel()
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{
 				Selector: &aimv1alpha1.ProfileSelector{AimId: "Qwen/Qwen3.5-0.8B"},
@@ -1905,7 +1903,7 @@ func TestComposeServiceSelector_GlobalSelectionStillDefaultsOptimized(t *testing
 func TestComposeServiceSelector_ExplicitMinimumTypeWins(t *testing.T) {
 	t.Parallel()
 
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Model: &aimv1alpha1.AIMServiceModel{Name: ptr.To("qwen")},
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{

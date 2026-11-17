@@ -108,7 +108,6 @@ type ArtifactFetchResult struct {
 	clusterConfig      *controllerutils.FetchResult[*aimv1alpha1.AIMClusterRuntimeConfig]
 	namespaceArtifacts *controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]
 	clusterArtifacts   *controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]
-	templateCaches     *controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCacheList]
 	profileCaches      *controllerutils.FetchResult[*aimv1alpha2.AIMProfileCacheList]
 }
 
@@ -361,15 +360,13 @@ func (r *ArtifactReconciler) FetchRemoteState(
 			result.clusterArtifacts = &clArtifacts
 		}
 
-		// Fetch template and profile caches to identify in-use artifacts (whose PVCs
-		// may be mounted). When cluster quota is active, eviction can span namespaces,
+		// Fetch profile caches to identify in-use artifacts (whose PVCs may be
+		// mounted). When cluster quota is active, eviction can span namespaces,
 		// so we need caches from all namespaces to protect in-use artifacts everywhere.
 		var cacheListOpts []client.ListOption
 		if result.clusterArtifacts == nil {
 			cacheListOpts = append(cacheListOpts, client.InNamespace(mc.Namespace))
 		}
-		tcFetch := controllerutils.FetchListDirect(ctx, ar, &aimv1alpha1.AIMTemplateCacheList{}, cacheListOpts...)
-		result.templateCaches = &tcFetch
 		pcFetch := controllerutils.FetchListDirect(ctx, ar, &aimv1alpha2.AIMProfileCacheList{}, cacheListOpts...)
 		result.profileCaches = &pcFetch
 	}
@@ -511,15 +508,8 @@ func (result ArtifactFetchResult) DownloadJobSucceeded() bool {
 }
 
 // inUseArtifactUIDs returns the UIDs of artifacts listed by the fetched
-// AIMTemplateCaches and AIMProfileCaches, or the error if either list failed.
+// AIMProfileCaches, or the error if the list failed.
 func (result ArtifactFetchResult) inUseArtifactUIDs() (map[types.UID]bool, error) {
-	var templateCaches []aimv1alpha1.AIMTemplateCache
-	if result.templateCaches != nil {
-		if result.templateCaches.HasError() {
-			return nil, result.templateCaches.Error
-		}
-		templateCaches = result.templateCaches.Value.Items
-	}
 	var profileCaches []aimv1alpha2.AIMProfileCache
 	if result.profileCaches != nil {
 		if result.profileCaches.HasError() {
@@ -527,7 +517,7 @@ func (result ArtifactFetchResult) inUseArtifactUIDs() (map[types.UID]bool, error
 		}
 		profileCaches = result.profileCaches.Value.Items
 	}
-	return BuildInUseArtifactUIDs(templateCaches, profileCaches), nil
+	return BuildInUseArtifactUIDs(profileCaches), nil
 }
 
 // Observe (thin wrapper for now, may be removed later)

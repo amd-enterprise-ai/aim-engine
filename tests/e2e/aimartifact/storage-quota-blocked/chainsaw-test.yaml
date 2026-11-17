@@ -51,7 +51,7 @@ spec:
       description: >
         The artifact should be blocked from creating its PVC.
         StorageQuotaExceeded=True and Ready=False with the quota reason,
-        so the root cause propagates up through AIMTemplateCache to AIMService.
+        so the root cause propagates up through AIMProfileCache to AIMService.
       try:
         - script:
             timeout: 60s

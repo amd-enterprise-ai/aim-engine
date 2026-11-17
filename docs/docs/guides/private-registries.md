@@ -83,8 +83,6 @@ kind: AIMService
 metadata:
   name: qwen-chat
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: qwen-qwen3-32b
@@ -256,9 +254,9 @@ spec:
   baseImageRegistry: registry.internal.example/amdenterpriseai
 ```
 
-Explicit image overrides are left unchanged. Services and legacy fine-tuned
-models that select a named RuntimeConfig read `baseImageRegistry` from that
-configuration, not from `default`. See
+Explicit image overrides are left unchanged. Services that select a named
+RuntimeConfig read `baseImageRegistry` from that configuration, not from
+`default`. See
 [aim-base registry for derived images](../concepts/runtime-config.md#aim-base-registry-for-derived-images)
 for tag handling and which RuntimeConfig each derivation uses.
 

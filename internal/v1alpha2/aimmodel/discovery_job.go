@@ -55,9 +55,9 @@ const (
 	// every AIMModel / AIMClusterModel because it feeds into the discovery spec hash.
 	DiscoveryCommandVersion = "v1"
 
-	// DiscoveryKindLabelKey distinguishes v1alpha2 AIMModel-scoped discovery Jobs
-	// from v1alpha1 AIMServiceTemplate ones while both still count against the same
-	// global 10-Job budget (they share app.kubernetes.io/name=aim-discovery).
+	// DiscoveryKindLabelKey records which model kind created a discovery Job. All
+	// discovery Jobs count against the same global 10-Job budget (they share
+	// app.kubernetes.io/name=aim-discovery).
 	DiscoveryKindLabelKey = constants.AimLabelDomain + "/discovery-kind"
 
 	// DiscoveryKindAIMModel marks Jobs owned by v1alpha2 AIMModel resources.
@@ -165,9 +165,8 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 					ServiceAccountName: spec.ServiceAccount,
 					Tolerations:        spec.Tolerations,
 					// AIM images run as root by default. The script only reads
-					// the profile files, so it runs as the same non-root UID as
-					// the AIMServiceTemplate discovery Job, which reads the same
-					// files from the same images.
+					// the profile files, which other users can read, so it runs
+					// as a non-root UID.
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot:   ptr.To(true),
 						RunAsUser:      ptr.To(int64(65532)),

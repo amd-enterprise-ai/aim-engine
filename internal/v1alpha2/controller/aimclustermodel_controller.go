@@ -84,7 +84,6 @@ type AIMClusterModelReconciler struct {
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterprofiles,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimruntimeconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterruntimeconfigs,verbs=get;list;watch
-// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterservicetemplates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
@@ -156,11 +155,7 @@ func (r *AIMClusterModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
 
 	r.Recorder = mgr.GetEventRecorderFor("aim-" + clusterModelControllerName + "-controller")
-	r.reconciler = &aimmodel.ClusterModelReconciler{
-		Client:    mgr.GetClient(),
-		Clientset: r.Clientset,
-		Scheme:    r.Scheme,
-	}
+	r.reconciler = &aimmodel.ClusterModelReconciler{Clientset: r.Clientset}
 	r.pipeline = controllerutils.Pipeline[
 		*aimv1alpha2.AIMClusterModel,
 		*aimv1alpha1.AIMModelStatus,
@@ -180,15 +175,6 @@ func (r *AIMClusterModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		ForceApply: true,
 	}
 
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMClusterServiceTemplate{}, aimv1alpha1.ServiceTemplateModelNameIndexKey, func(obj client.Object) []string {
-		template, ok := obj.(*aimv1alpha1.AIMClusterServiceTemplate)
-		if !ok {
-			return nil
-		}
-		return []string{template.Spec.ModelName}
-	}); err != nil {
-		return err
-	}
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha2.AIMClusterModel{}, aimv1alpha1.ClusterModelImageIndexKey, func(obj client.Object) []string {
 		model, ok := obj.(*aimv1alpha2.AIMClusterModel)
 		if !ok || model.Spec.Image == "" {
@@ -215,18 +201,6 @@ func (r *AIMClusterModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
-	// Index AIMClusterModel by aimId for reverse lookup when official cluster
-	// templates change.
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha2.AIMClusterModel{}, aimv1alpha1.ClusterModelAimIdIndexKey, func(obj client.Object) []string {
-		model, ok := obj.(*aimv1alpha2.AIMClusterModel)
-		if !ok || model.Spec.AimId == "" {
-			return nil
-		}
-		return []string{model.Spec.AimId}
-	}); err != nil {
-		return err
-	}
-
 	childHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
 		return directClusterModelRequest(obj)
 	})
@@ -234,14 +208,7 @@ func (r *AIMClusterModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha2.AIMClusterModel{}).
 		Owns(&batchv1.Job{}).
-		Owns(&aimv1alpha1.AIMClusterServiceTemplate{}).
 		Owns(&aimv1alpha2.AIMClusterProfileSet{}).
-		// Watch cluster-scoped templates for aimId-based matching: when a new
-		// official template appears, fine-tuned cluster models need to reconcile.
-		Watches(
-			&aimv1alpha1.AIMClusterServiceTemplate{},
-			handler.EnqueueRequestsFromMapFunc(r.findClusterModelsForClusterServiceTemplate),
-		).
 		Watches(
 			&aimv1alpha1.AIMClusterRuntimeConfig{},
 			handler.EnqueueRequestsFromMapFunc(r.findClusterModelsForClusterRuntimeConfig),
@@ -291,31 +258,6 @@ func directClusterModelRequest(obj client.Object) []reconcile.Request {
 func hasDirectClusterModelOwnerAnnotations(obj client.Object) bool {
 	annotations := obj.GetAnnotations()
 	return annotations[aimmodel.AnnotationModelName()] != ""
-}
-
-// findClusterModelsForClusterServiceTemplate returns reconcile requests for
-// all AIMClusterModels whose aimId matches the cluster template's aimId.
-// Triggers re-matching when official templates are created/updated/deleted.
-func (r *AIMClusterModelReconciler) findClusterModelsForClusterServiceTemplate(ctx context.Context, obj client.Object) []reconcile.Request {
-	template, ok := obj.(*aimv1alpha1.AIMClusterServiceTemplate)
-	if !ok || template.Spec.AimId == "" {
-		return nil
-	}
-
-	var models aimv1alpha2.AIMClusterModelList
-	if err := r.List(ctx, &models,
-		client.MatchingFields{aimv1alpha1.ClusterModelAimIdIndexKey: template.Spec.AimId},
-	); err != nil {
-		log.FromContext(ctx).Error(err, "failed to list AIMClusterModels for template aimId",
-			"aimId", template.Spec.AimId)
-		return nil
-	}
-
-	requests := make([]reconcile.Request, len(models.Items))
-	for i, model := range models.Items {
-		requests[i] = reconcile.Request{NamespacedName: types.NamespacedName{Name: model.Name}}
-	}
-	return requests
 }
 
 func (r *AIMClusterModelReconciler) findClusterModelsForClusterRuntimeConfig(ctx context.Context, obj client.Object) []reconcile.Request {

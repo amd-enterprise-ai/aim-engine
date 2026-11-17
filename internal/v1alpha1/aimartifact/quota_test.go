@@ -140,17 +140,6 @@ func makeProfileCacheListing(namespace, artifactName string, artifactUID types.U
 	}
 }
 
-func makeTemplateCacheListing(namespace, artifactName string, artifactUID types.UID) *aimv1alpha1.AIMTemplateCache {
-	return &aimv1alpha1.AIMTemplateCache{
-		ObjectMeta: metav1.ObjectMeta{Name: "template-cache", Namespace: namespace},
-		Status: aimv1alpha1.AIMTemplateCacheStatus{
-			Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
-				artifactName: {UID: string(artifactUID), Name: artifactName},
-			},
-		},
-	}
-}
-
 // --- effectiveAllocatedBytes ---
 
 func TestEffectiveAllocatedBytes(t *testing.T) {
@@ -402,9 +391,9 @@ func TestFindEvictable_EvictionProtectedWithDefaultPriority(t *testing.T) {
 }
 
 func TestBuildInUseArtifactUIDs(t *testing.T) {
-	templateCaches := []aimv1alpha1.AIMTemplateCache{
+	caches := []aimv1alpha2.AIMProfileCache{
 		{
-			Status: aimv1alpha1.AIMTemplateCacheStatus{
+			Status: aimv1alpha2.AIMProfileCacheStatus{
 				Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
 					"art-a": {UID: "uid-a", Name: "art-a"},
 					"art-b": {UID: "uid-b", Name: "art-b"},
@@ -412,7 +401,7 @@ func TestBuildInUseArtifactUIDs(t *testing.T) {
 			},
 		},
 		{
-			Status: aimv1alpha1.AIMTemplateCacheStatus{
+			Status: aimv1alpha2.AIMProfileCacheStatus{
 				Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
 					"art-a": {UID: "uid-a", Name: "art-a"},
 					"art-c": {UID: "uid-c", Name: "art-c"},
@@ -421,22 +410,11 @@ func TestBuildInUseArtifactUIDs(t *testing.T) {
 		},
 	}
 
-	profileCaches := []aimv1alpha2.AIMProfileCache{
-		{
-			Status: aimv1alpha2.AIMProfileCacheStatus{
-				Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
-					"art-c": {UID: "uid-c", Name: "art-c"},
-					"art-d": {UID: "uid-d", Name: "art-d"},
-				},
-			},
-		},
+	inUse := BuildInUseArtifactUIDs(caches)
+	if len(inUse) != 3 {
+		t.Fatalf("expected 3 in-use UIDs, got %d", len(inUse))
 	}
-
-	inUse := BuildInUseArtifactUIDs(templateCaches, profileCaches)
-	if len(inUse) != 4 {
-		t.Fatalf("expected 4 in-use UIDs, got %d", len(inUse))
-	}
-	for _, uid := range []types.UID{"uid-a", "uid-b", "uid-c", "uid-d"} {
+	for _, uid := range []types.UID{"uid-a", "uid-b", "uid-c"} {
 		if !inUse[uid] {
 			t.Errorf("expected %s to be in use", uid)
 		}
@@ -473,9 +451,6 @@ func TestComposeState_ArtifactServedByProfileCacheIsNotEvicted(t *testing.T) {
 			namespace: &controllerutils.FetchResult[*corev1.Namespace]{Value: ns},
 			namespaceArtifacts: &controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]{
 				Value: &aimv1alpha1.AIMArtifactList{Items: []aimv1alpha1.AIMArtifact{served, replacement}},
-			},
-			templateCaches: &controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCacheList]{
-				Value: &aimv1alpha1.AIMTemplateCacheList{},
 			},
 			profileCaches: &controllerutils.FetchResult[*aimv1alpha2.AIMProfileCacheList]{
 				Value: &aimv1alpha2.AIMProfileCacheList{Items: profileCaches},
@@ -836,13 +811,6 @@ func TestPlanResources_EvictionProtectsInUseArtifacts(t *testing.T) {
 			wantReason:         aimv1alpha1.ArtifactReasonEvicting,
 		},
 		{
-			name:               "namespace quota skips artifact listed by AIMTemplateCache",
-			priority0Namespace: "team-a",
-			cache:              makeTemplateCacheListing("team-a", "priority-0", "uid-priority-0"),
-			wantEvicted:        []string{"priority-1"},
-			wantReason:         aimv1alpha1.ArtifactReasonEvicting,
-		},
-		{
 			name:               "cluster quota evicts unlisted artifact in another namespace",
 			clusterQuota:       true,
 			priority0Namespace: "team-b",
@@ -861,12 +829,6 @@ func TestPlanResources_EvictionProtectsInUseArtifacts(t *testing.T) {
 			name:               "namespace quota evicts nothing when listing AIMProfileCaches fails",
 			priority0Namespace: "team-a",
 			failList:           &aimv1alpha2.AIMProfileCacheList{},
-			wantReason:         aimv1alpha1.ArtifactReasonNamespaceQuotaExceeded,
-		},
-		{
-			name:               "namespace quota evicts nothing when listing AIMTemplateCaches fails",
-			priority0Namespace: "team-a",
-			failList:           &aimv1alpha1.AIMTemplateCacheList{},
 			wantReason:         aimv1alpha1.ArtifactReasonNamespaceQuotaExceeded,
 		},
 		{

@@ -55,9 +55,6 @@ jobs:
       - name: Verify generated CRD and RBAC are current
         run: git diff --exit-code -- config/crd/bases config/rbac/role.yaml
 
-      - name: Verify minimal v1alpha1 bridge contract
-        run: make test-bridge-contract
-
       - name: Verify least-privilege operator RBAC
         run: make test-rbac-contract
 

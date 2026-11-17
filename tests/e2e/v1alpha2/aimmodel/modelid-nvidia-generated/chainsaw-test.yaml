@@ -95,8 +95,6 @@ spec:
               kind: AIMService
               metadata:
                 name: nvidia-generated-service
-                annotations:
-                  aim.eai.amd.com/reconciler-pipeline: profile
               spec:
                 model:
                   name: nvidia-generated-model

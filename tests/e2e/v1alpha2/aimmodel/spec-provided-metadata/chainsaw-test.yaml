@@ -1,0 +1,40 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimmodel-spec-provided-metadata
+spec:
+  description: |
+    Air-gapped mode: an AIMModel that carries spec.imageMetadata uses it as
+    status.imageMetadata instead of inspecting the registry. The image
+    reference points at a registry that does not resolve, so ImageMetadataReady
+    is only True if no registry inspection was attempted. Discovery for this
+    image cannot succeed and is not asserted.
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create the model with spec-provided metadata
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert status carries the spec-provided metadata
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: spec-provided-metadata
+              status:
+                sourceType: Image
+                version: v1
+                imageMetadata:
+                  model:
+                    canonicalName: spec-provided-model
+                    recommendedDeployments:
+                      - gpuModel: MI300X
+                        gpuCount: 1
+                        metric: throughput
+                        precision: fp16
+                (conditions[?type == 'ImageMetadataReady']):
+                  - status: "True"

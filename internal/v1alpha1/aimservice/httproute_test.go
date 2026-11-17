@@ -186,7 +186,7 @@ func TestIsRoutingEnabled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isRoutingEnabled(tt.service, tt.runtimeConfig)
+			result := isRoutingEnabled(v1alpha2View(tt.service), tt.runtimeConfig)
 
 			if result != tt.expected {
 				t.Errorf("expected %v, got %v", tt.expected, result)
@@ -268,7 +268,7 @@ func TestResolveGatewayRef(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := resolveGatewayRef(tt.service, tt.runtimeConfig)
+			result := resolveGatewayRef(v1alpha2View(tt.service), tt.runtimeConfig)
 
 			if tt.expectNil {
 				if result != nil {
@@ -356,7 +356,7 @@ func TestResolveRequestTimeout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := resolveRequestTimeout(tt.service, tt.runtimeConfig)
+			result := resolveRequestTimeout(v1alpha2View(tt.service), tt.runtimeConfig)
 
 			if tt.expectNil {
 				if result != nil {
@@ -465,7 +465,7 @@ func TestMergeRouteAnnotations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := mergeRouteAnnotations(tt.service, tt.runtimeConfig)
+			result := mergeRouteAnnotations(v1alpha2View(tt.service), tt.runtimeConfig)
 
 			for key, expectedValue := range tt.expectedContains {
 				if result[key] != expectedValue {
@@ -491,64 +491,47 @@ func TestPlanHTTPRoute(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		obs         ServiceObservation
-		expectRoute bool
+		name          string
+		service       *aimv1alpha1.AIMService
+		runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon
+		expectRoute   bool
 	}{
 		{
-			name: "routing disabled - no route",
-			obs: ServiceObservation{
-				ServiceFetchResult: ServiceFetchResult{
-					service: NewService("svc").Build(),
-				},
-			},
+			name:        "routing disabled - no route",
+			service:     NewService("svc").Build(),
 			expectRoute: false,
 		},
 		{
 			name: "routing enabled but no gateway - no route",
-			obs: ServiceObservation{
-				ServiceFetchResult: ServiceFetchResult{
-					service: func() *aimv1alpha1.AIMService {
-						svc := NewService("svc").Build()
-						svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
-							Enabled: ptr.To(true),
-						}
-						return svc
-					}(),
-				},
-			},
+			service: func() *aimv1alpha1.AIMService {
+				svc := NewService("svc").Build()
+				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
+					Enabled: ptr.To(true),
+				}
+				return svc
+			}(),
 			expectRoute: false,
 		},
 		{
 			name: "routing enabled with gateway - creates route",
-			obs: ServiceObservation{
-				ServiceFetchResult: ServiceFetchResult{
-					service: func() *aimv1alpha1.AIMService {
-						svc := NewService("svc").Build()
-						svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
-							Enabled:    ptr.To(true),
-							GatewayRef: gatewayRef,
-						}
-						return svc
-					}(),
-				},
-			},
+			service: func() *aimv1alpha1.AIMService {
+				svc := NewService("svc").Build()
+				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
+					Enabled:    ptr.To(true),
+					GatewayRef: gatewayRef,
+				}
+				return svc
+			}(),
 			expectRoute: true,
 		},
 		{
-			name: "routing from runtime config with gateway - creates route",
-			obs: ServiceObservation{
-				ServiceFetchResult: ServiceFetchResult{
-					service: NewService("svc").Build(),
-					mergedRuntimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{
-						Value: &aimv1alpha1.AIMRuntimeConfigCommon{
-							AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
-								Routing: &aimv1alpha1.AIMRuntimeRoutingConfig{
-									Enabled:    ptr.To(true),
-									GatewayRef: gatewayRef,
-								},
-							},
-						},
+			name:    "routing from runtime config with gateway - creates route",
+			service: NewService("svc").Build(),
+			runtimeConfig: &aimv1alpha1.AIMRuntimeConfigCommon{
+				AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+					Routing: &aimv1alpha1.AIMRuntimeRoutingConfig{
+						Enabled:    ptr.To(true),
+						GatewayRef: gatewayRef,
 					},
 				},
 			},
@@ -558,7 +541,7 @@ func TestPlanHTTPRoute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := planHTTPRoute(context.Background(), tt.obs.service, tt.obs)
+			result := PlanHTTPRoute(context.Background(), v1alpha2View(tt.service), tt.runtimeConfig, nil)
 
 			if tt.expectRoute {
 				if result == nil {
@@ -603,7 +586,7 @@ func TestPlanHTTPRoute_BlocksRuntimeLoRAMutations(t *testing.T) {
 		},
 	}
 
-	route := buildHTTPRoute(service, gatewayRef, runtimeConfig, nil)
+	route := buildHTTPRoute(v1alpha2View(service), gatewayRef, runtimeConfig, nil)
 	if len(route.Spec.Rules) != len(blockedExternalPaths)+1 {
 		t.Fatalf("expected %d rules, got %d", len(blockedExternalPaths)+1, len(route.Spec.Rules))
 	}
@@ -661,7 +644,7 @@ func TestPlanHTTPRoute_BlocksRuntimeLoRAMutationsAtRootPrefix(t *testing.T) {
 		},
 	}
 
-	route := buildHTTPRoute(service, gatewayRef, runtimeConfig, nil)
+	route := buildHTTPRoute(v1alpha2View(service), gatewayRef, runtimeConfig, nil)
 	for i, blockedPath := range blockedExternalPaths {
 		match := route.Spec.Rules[i].Matches[0].Path
 		if match == nil || match.Value == nil || *match.Value != blockedPath {
@@ -681,13 +664,7 @@ func TestPlanHTTPRoute_Labels(t *testing.T) {
 		GatewayRef: gatewayRef,
 	}
 
-	obs := ServiceObservation{
-		ServiceFetchResult: ServiceFetchResult{
-			service: service,
-		},
-	}
-
-	result := planHTTPRoute(context.Background(), service, obs)
+	result := PlanHTTPRoute(context.Background(), v1alpha2View(service), nil, nil)
 	if result == nil {
 		t.Fatal("expected HTTPRoute, got nil")
 	}
@@ -715,13 +692,7 @@ func TestPlanHTTPRoute_OwnerReference(t *testing.T) {
 		GatewayRef: gatewayRef,
 	}
 
-	obs := ServiceObservation{
-		ServiceFetchResult: ServiceFetchResult{
-			service: service,
-		},
-	}
-
-	result := planHTTPRoute(context.Background(), service, obs)
+	result := PlanHTTPRoute(context.Background(), v1alpha2View(service), nil, nil)
 	if result == nil {
 		t.Fatal("expected HTTPRoute, got nil")
 	}
@@ -816,7 +787,7 @@ func TestResolveHostnames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveHostnames(tt.service, tt.runtimeConfig)
+			got := resolveHostnames(v1alpha2View(tt.service), tt.runtimeConfig)
 			if len(got) != len(tt.want) {
 				t.Fatalf("expected %v, got %v", tt.want, got)
 			}
@@ -888,7 +859,7 @@ func TestPlanHTTPRoute_Hostnames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := PlanHTTPRoute(context.Background(), tt.service, nil, tt.gateway)
+			result := PlanHTTPRoute(context.Background(), v1alpha2View(tt.service), nil, tt.gateway)
 
 			if !tt.expectRoute {
 				if result != nil {
@@ -970,7 +941,7 @@ func TestRoutingHostnameComponentHealth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			health := RoutingHostnameComponentHealth(tt.service, nil, tt.gateway)
+			health := RoutingHostnameComponentHealth(v1alpha2View(tt.service), nil, tt.gateway)
 
 			if tt.wantFailed {
 				if health.Component != ComponentRouteConfig {

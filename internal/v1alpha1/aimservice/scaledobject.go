@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
@@ -121,7 +122,7 @@ func kedaOTelScalerAddress() string {
 // Returns nil for the legacy fixed-replica path.
 func planScaledObject(
 	ctx context.Context,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	effectiveResources *corev1.ResourceRequirements,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) client.Object {
@@ -221,7 +222,7 @@ func planScaledObject(
 // defaulting, consumed by both the ISVC path (configureReplicasAndAutoscaling)
 // and the ScaledObject path (planScaledObject). When only minReplicas is set,
 // max defaults to min but never below 1 so a scale-to-zero service can recover.
-func resolveReplicaBounds(service *aimv1alpha1.AIMService) (minReplicas, maxReplicas int32) {
+func resolveReplicaBounds(service *aimv1alpha2.AIMService) (minReplicas, maxReplicas int32) {
 	if service.Spec.MinReplicas != nil {
 		minReplicas = *service.Spec.MinReplicas
 	} else {
@@ -248,7 +249,7 @@ func resolveReplicaBounds(service *aimv1alpha1.AIMService) (minReplicas, maxRepl
 //  3. defaultCooldownPeriodScaleToZero -- fallback when memory is unknown.
 //
 // Outside scale-to-zero both are left nil so KEDA's platform defaults apply.
-func resolvePollingAndCooldown(service *aimv1alpha1.AIMService, scaleToZero bool, effectiveResources *corev1.ResourceRequirements) (pollingInterval, cooldownPeriod *int32) {
+func resolvePollingAndCooldown(service *aimv1alpha2.AIMService, scaleToZero bool, effectiveResources *corev1.ResourceRequirements) (pollingInterval, cooldownPeriod *int32) {
 	if as := service.Spec.AutoScaling; as != nil {
 		if as.PollingInterval != nil {
 			pollingInterval = as.PollingInterval
@@ -279,7 +280,7 @@ func resolvePollingAndCooldown(service *aimv1alpha1.AIMService, scaleToZero bool
 // window. Falls back to the flat default when memory cannot be determined.
 // Operators with measured cold-start times should override via
 // spec.autoScaling.cooldownPeriod.
-func computePredictorCooldown(service *aimv1alpha1.AIMService, effectiveResources *corev1.ResourceRequirements) int32 {
+func computePredictorCooldown(service *aimv1alpha2.AIMService, effectiveResources *corev1.ResourceRequirements) int32 {
 	memGiB := predictorMemoryGiB(service, effectiveResources)
 	if memGiB == 0 {
 		return defaultCooldownPeriodScaleToZero
@@ -303,7 +304,7 @@ func computePredictorCooldown(service *aimv1alpha1.AIMService, effectiveResource
 // the kubelet's admission-time guarantee -- AIM templates typically set
 // requests low (for scheduling) and limits at the actual cold-start
 // footprint (for KV cache + page cache headroom).
-func predictorMemoryGiB(service *aimv1alpha1.AIMService, effectiveResources *corev1.ResourceRequirements) int32 {
+func predictorMemoryGiB(service *aimv1alpha2.AIMService, effectiveResources *corev1.ResourceRequirements) int32 {
 	if g := memoryGiBFromRequirements(effectiveResources); g > 0 {
 		return g
 	}
@@ -339,7 +340,7 @@ func quantityToGiB(q resource.Quantity) int32 {
 }
 
 // collectUserMetrics returns the user-declared autoscaling metrics, if any.
-func collectUserMetrics(service *aimv1alpha1.AIMService) []aimv1alpha1.AIMServiceMetricsSpec {
+func collectUserMetrics(service *aimv1alpha2.AIMService) []aimv1alpha1.AIMServiceMetricsSpec {
 	if service.Spec.AutoScaling == nil {
 		return nil
 	}
@@ -349,7 +350,7 @@ func collectUserMetrics(service *aimv1alpha1.AIMService) []aimv1alpha1.AIMServic
 // resolvedUserMetricTriggerCount reports how many user-declared metrics produce
 // KEDA triggers. Activation status uses this to distinguish the reconciled HPA
 // shape from a stale user-only HPA during scale-to-zero configuration changes.
-func resolvedUserMetricTriggerCount(service *aimv1alpha1.AIMService, predictorName string) int {
+func resolvedUserMetricTriggerCount(service *aimv1alpha2.AIMService, predictorName string) int {
 	count := 0
 	for _, metric := range collectUserMetrics(service) {
 		if buildUserMetricTrigger(metric, service.Namespace, predictorName) != nil {
@@ -364,7 +365,7 @@ func resolvedUserMetricTriggerCount(service *aimv1alpha1.AIMService, predictorNa
 // query can be built. Provider selection remains encapsulated in
 // gatewayActivationMetricQuery.
 func resolveScaleToZeroActivationMetric(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) (query string, required bool, err error) {
 	if !isScaleToZero(service) {
@@ -429,7 +430,7 @@ func gatewayActivationScope() string {
 // gatewayActivationMetricQuery resolves a service override, then a merged
 // RuntimeConfig default, before falling back to the provider-derived query.
 func gatewayActivationMetricQuery(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	predictorName string,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) (string, error) {
@@ -470,7 +471,7 @@ func gatewayActivationMetricQuery(
 }
 
 func activationMetricQueryTemplate(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) string {
 	if service.Spec.ScaleFromZero != nil &&
@@ -484,7 +485,7 @@ func activationMetricQueryTemplate(
 }
 
 func renderActivationMetricQueryTemplate(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	predictorName string,
 	queryTemplate string,
 ) (string, error) {

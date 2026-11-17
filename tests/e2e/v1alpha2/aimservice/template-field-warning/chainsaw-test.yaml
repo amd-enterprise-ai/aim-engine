@@ -5,9 +5,8 @@
 #
 # A service that sets spec.model.custom next to spec.profile gets a
 # TemplateFieldsIgnored condition naming the field and a Warning event, and
-# still reaches Running. A service without template-era fields and a
-# service on the AIMServiceTemplate pipeline get no warning. Removing the field
-# clears the warning.
+# still reaches Running. A service without template-era fields gets no
+# warning. Removing the field clears the warning.
 #
 # No accelerator is involved and the cache download is simulated, so this runs
 # in the kind lane without a `requires` gate.
@@ -36,7 +35,7 @@ spec:
               status:
                 status: Ready
 
-    - name: Both profile-pipeline services reach Running
+    - name: Both services reach Running
       try:
         - apply:
             file: services.yaml
@@ -95,30 +94,6 @@ spec:
               involvedObject:
                 kind: AIMService
                 name: without-template-fields
-
-    - name: A template-pipeline service with spec.model.custom is not warned
-      try:
-        - apply:
-            file: template-pipeline-service.yaml
-        - assert:
-            timeout: 60s
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha2
-              kind: AIMService
-              metadata:
-                name: template-pipeline
-              status:
-                reconcilerPipeline: template
-                (conditions[?type == 'MigrationRequired']):
-                  - status: "True"
-        - assert:
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha2
-              kind: AIMService
-              metadata:
-                name: template-pipeline
-              status:
-                (length(conditions[?type == 'TemplateFieldsIgnored'])): 0
 
     - name: Removing spec.model.custom clears the warning
       try:

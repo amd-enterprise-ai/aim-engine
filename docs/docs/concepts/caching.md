@@ -5,13 +5,13 @@ AIM Engine pre-downloads model artifacts to persistent volumes so inference serv
 :::{admonition} v1alpha2
 :class: note
 
-This page documents the `AIMProfileCache` flow used by v1alpha2 services. For the v1alpha1 `AIMTemplateCache` shape, see [Service Templates (v1alpha1)](../legacy/service-templates.md). Both flows coexist in the same cluster.
+This page documents the `AIMProfileCache` flow used by v1alpha2 services.
 :::
 
 :::{admonition} Deprecated embedded S3 cache
 :class: warning
 
-`AIMRuntimeConfig.spec.artifactCache` is retained temporarily so existing manifests remain valid, but it no longer has any effect. The former behavior that rewrote `hf://` sources to an internal S3 cache has been removed. Use direct `s3://` model sources with `spec.artifact.s3` connection settings instead. The `AIMProfileCache` and `AIMTemplateCache` flows documented here are separate and remain supported.
+`AIMRuntimeConfig.spec.artifactCache` is retained temporarily so existing manifests remain valid, but it no longer has any effect. The former behavior that rewrote `hf://` sources to an internal S3 cache has been removed. Use direct `s3://` model sources with `spec.artifact.s3` connection settings instead. The `AIMProfileCache` flow documented here is separate and remains supported.
 :::
 
 ## Resources
@@ -363,6 +363,5 @@ The profile the cache references has been deleted. If the service is also gone, 
 - [Profiles](profiles.md) — Self-contained runtime configurations (v1alpha2)
 - [Services](services.md) — How `AIMService` triggers caching
 - [Deploying Services](../guides/deploying-services.md) — Service-level caching configuration
-- [Service Templates (v1alpha1)](../legacy/service-templates.md) — Legacy `AIMTemplateCache` flow
 - [Runtime Configuration](runtime-config.md) — Cluster-wide downloader defaults
 - [Storage Configuration](../admin/storage-configuration.md) — Storage classes, quotas, PVC sizing

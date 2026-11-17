@@ -56,7 +56,7 @@ import (
 func fetchInferenceService(
 	ctx context.Context,
 	c client.Client,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 ) controllerutils.FetchResult[*servingv1beta1.InferenceService] {
 	isvcName, err := v1alpha1svc.GenerateInferenceServiceName(service.Name, service.Namespace)
 	if err != nil {
@@ -78,7 +78,7 @@ func fetchInferenceService(
 func fetchLegacyProfileConfigMap(
 	ctx context.Context,
 	c client.Client,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 ) controllerutils.FetchResult[*corev1.ConfigMap] {
 	name, err := legacyProfileConfigMapName(service.Name)
 	if err != nil {
@@ -106,7 +106,7 @@ func fetchLegacyProfileConfigMap(
 // overrides, the runtime config and service env, and a service-owned
 // (Dedicated) cache.
 func buildInferenceServiceFromProfile(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	obs ServiceObservation,
 ) *servingv1beta1.InferenceService {
 	profileSpec := obs.resolvedProfileSpec
@@ -173,9 +173,8 @@ func buildInferenceServiceFromProfile(
 		},
 	}
 
-	// Wire replicas, KEDA autoscaling, and autoscaler annotations. Shared with
-	// the v1alpha1 template pipeline so both paths produce the same HPA shape
-	// and semantics for Spec.Replicas / MinReplicas / MaxReplicas / AutoScaling.
+	// Wire replicas, KEDA autoscaling, and autoscaler annotations for
+	// Spec.Replicas / MinReplicas / MaxReplicas / AutoScaling.
 	v1alpha1svc.ConfigureReplicasAndAutoscaling(isvc, service)
 
 	// A service-owned (Dedicated) cache is overlaid onto the referenced runtime;
@@ -212,7 +211,7 @@ func buildInferenceServiceFromProfile(
 // Without a desired ServingRuntime nothing is added: the InferenceService is
 // planned only after it is current.
 func runtimeConfigEnv(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	profileSpec *aimv1alpha2.AIMProfileSpecCommon,
 	servingRuntime *kservev1alpha1.ServingRuntime,
@@ -323,7 +322,7 @@ func addRuntimeTrustOverlay(
 // buildInferenceServiceLabels builds the correlator labels stamped on the
 // overlay ISVC so it can be traced back to its service and profile.
 func buildInferenceServiceLabels(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	obs ServiceObservation,
 	profileSpec *aimv1alpha2.AIMProfileSpecCommon,
 ) map[string]string {
@@ -357,7 +356,7 @@ func buildInferenceServiceLabels(
 // service's namespace from this annotation. The native managed-CSR flow still
 // needs no annotation.
 func buildInferenceServiceAnnotations(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	obs ServiceObservation,
 	profileSpec *aimv1alpha2.AIMProfileSpecCommon,
 ) map[string]string {
@@ -404,7 +403,7 @@ func upsertEnvVars(base, overrides []corev1.EnvVar) []corev1.EnvVar {
 // duplicate the runtime's volume and is skipped.
 func addServiceOwnedCacheOverlay(
 	isvc *servingv1beta1.InferenceService,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	obs ServiceObservation,
 ) {
 	if service.Spec.GetCachingMode() != aimv1alpha1.CachingModeDedicated {
@@ -482,7 +481,7 @@ func buildFrameworkEnvVars(profileSpec *aimv1alpha2.AIMProfileSpecCommon, profil
 // ResourceRequirements, or nil until the profile has produced status.
 // PlanScaledObject uses this to derive a memory-aware cooldown.
 func resolveEffectiveResourcesFromProfile(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	profileSpec *aimv1alpha2.AIMProfileSpecCommon,
 	profileStatus *aimv1alpha2.AIMProfileStatus,
 ) *corev1.ResourceRequirements {
@@ -509,7 +508,7 @@ func resolvedModelId(profileSpec *aimv1alpha2.AIMProfileSpecCommon) string {
 }
 
 func resolveResourcesFromProfile(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	profileSpec *aimv1alpha2.AIMProfileSpecCommon,
 	profileStatus *aimv1alpha2.AIMProfileStatus,
 ) corev1.ResourceRequirements {
@@ -529,7 +528,7 @@ func resolveResourcesFromProfile(
 // effectiveResourcesForService resolves profile defaults directly when status
 // has not populated resources yet, then applies the service's per-key overlay.
 func effectiveResourcesForService(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	profileSpec *aimv1alpha2.AIMProfileSpecCommon,
 	profileStatus *aimv1alpha2.AIMProfileStatus,
 ) *corev1.ResourceRequirements {

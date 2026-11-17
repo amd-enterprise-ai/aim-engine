@@ -41,9 +41,6 @@ import (
 // AIMArtifact layer regardless of how their respective caches are owned.
 // Service-driven caches, when present, use mode=Dedicated to opt into a
 // per-service artifact lifecycle.
-//
-// Mirrors v1alpha1's BuildTemplateCache shape so the two pipelines reason
-// the same way about cache lifecycle.
 func buildProfileOwnedCache(profile *aimv1alpha2.AIMProfile) *aimv1alpha2.AIMProfileCache {
 	var cacheEnv []corev1.EnvVar
 	if profile.Spec.Caching != nil {

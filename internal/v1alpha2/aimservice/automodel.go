@@ -98,9 +98,7 @@ func GenerateAutoModelName(serviceName, image string) (string, error) {
 //
 //   - apiVersion: aim.eai.amd.com/v1alpha2 so it goes through v1alpha2
 //     image discovery (which emits AIMProfile, the resource the v1alpha2
-//     service resolver needs). A v1alpha1-shaped object would emit
-//     AIMServiceTemplates instead and the profile resolver would never
-//     find a match.
+//     service resolver needs).
 //   - spec.image only (v1alpha2 CEL forbids spec.profiles, spec.aimId,
 //     spec.discovery, spec.defaultServiceTemplate, spec.runtimeConfigName,
 //     spec.env, spec.imageMetadata, spec.modelSources, spec.custom,
@@ -119,7 +117,7 @@ func GenerateAutoModelName(serviceName, image string) (string, error) {
 // so we get the dedicated-per-service GC semantics for free. The Apply()
 // caller in PlanResources must use Apply (not ApplyWithoutOwnerRef) to
 // preserve this contract.
-func buildAutoCreatedAIMModel(service *aimv1alpha1.AIMService, image string) (*aimv1alpha2.AIMModel, error) {
+func buildAutoCreatedAIMModel(service *aimv1alpha2.AIMService, image string) (*aimv1alpha2.AIMModel, error) {
 	name, err := GenerateAutoModelName(service.Name, image)
 	if err != nil {
 		return nil, fmt.Errorf("generate auto-model name: %w", err)

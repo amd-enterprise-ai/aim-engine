@@ -5,7 +5,7 @@ Model caching pre-downloads model artifacts to shared persistent volumes, reduci
 :::{admonition} v1alpha2
 :class: note
 
-Examples on this page use `aim.eai.amd.com/v1alpha2`. Caching is keyed by the **resolved profile** (via `AIMProfileCache`) instead of the v1alpha1 template (`AIMTemplateCache`). The `spec.caching.mode` field and its semantics are unchanged across versions. For the legacy template-based cache, see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+Examples on this page use `aim.eai.amd.com/v1alpha2`. Caching is keyed by the **resolved profile** (via `AIMProfileCache`) instead of the v1alpha1 template (`AIMTemplateCache`). The `spec.caching.mode` field and its semantics are unchanged across versions.
 :::
 ## Caching Modes
 
@@ -21,8 +21,6 @@ apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: qwen-chat
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: qwen-qwen3-32b
@@ -105,14 +103,7 @@ An AIM image can declare the filter its model needs in its profile YAML
 (`download_filter`, see
 [Projected profile YAML compatibility](../concepts/profiles.md#projected-profile-yaml-compatibility)).
 Discovered profiles carry that declaration onto their model source, so no
-configuration is needed for those images. Only v1alpha2 profile discovery reads
-the declaration: v1alpha1 `AIMServiceTemplate` discovery records each model's
-name, source, and size, so a template discovered from the same image gets no
-filter and needs the runtime config filter below. v1alpha1 services also run the
-image's own profile, which keeps the declaration, and aim-runtime does not
-recognize a cache AIM Engine downloaded: at startup it downloads the declared
-files into the cache volume itself, which needs network access from the serving
-pod.
+configuration is needed for those images.
 
 A declared filter takes precedence over the runtime config's
 `storage.downloadFilter`, including a namespace or cluster `default` set to
@@ -192,8 +183,6 @@ kubectl get aimartifact -n <namespace>
 # Check artifact download progress
 kubectl get aimartifact <name> -n <namespace> -o jsonpath='{.status}' | jq
 ```
-
-For services still managed by the v1alpha1 template pipeline, list caches with `kubectl get aimtemplatecache -n <namespace>` instead.
 
 ## Next Steps
 

@@ -2,8 +2,6 @@ apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService
 metadata:
   name: gpu-happy-path-dedicated
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   runtimeConfigName: gpu-happy-path-dedicated
   model:

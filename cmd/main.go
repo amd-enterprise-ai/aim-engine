@@ -342,30 +342,6 @@ func setupControllers(mgr ctrl.Manager, runtimeProjectionMode aimv1alpha2.Runtim
 		return fmt.Errorf("AIMArtifact: %w", err)
 	}
 
-	if err := (&v1alpha1controller.AIMTemplateCacheReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("AIMTemplateCache: %w", err)
-	}
-
-	if err := (&v1alpha1controller.AIMServiceTemplateReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("AIMServiceTemplate: %w", err)
-	}
-
-	if err := (&v1alpha1controller.AIMClusterServiceTemplateReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Clientset: clientset,
-	}).SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("AIMClusterServiceTemplate: %w", err)
-	}
-
 	if err := (&sharedcontroller.AIMServiceReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),

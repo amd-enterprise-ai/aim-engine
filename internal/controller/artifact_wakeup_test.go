@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
@@ -146,8 +147,8 @@ func TestArtifactWakeupPredicate(t *testing.T) {
 			name: "adopted by a cache",
 			mutate: func(a *aimv1alpha1.AIMArtifact) {
 				a.OwnerReferences = []metav1.OwnerReference{{
-					APIVersion: aimv1alpha1.GroupVersion.String(),
-					Kind:       "AIMTemplateCache",
+					APIVersion: aimv1alpha2.GroupVersion.String(),
+					Kind:       "AIMProfileCache",
 					Name:       "cache-dedicated",
 					UID:        "cache-dedicated-uid",
 				}}

@@ -103,16 +103,6 @@ func CopyPullSecrets(in []corev1.LocalObjectReference) []corev1.LocalObjectRefer
 	return out
 }
 
-// CopyEnvVars returns a deep copy of the provided environment variables slice.
-func CopyEnvVars(in []corev1.EnvVar) []corev1.EnvVar {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]corev1.EnvVar, len(in))
-	copy(out, in)
-	return out
-}
-
 // HasOwnerReference checks if the given UID exists in the owner references list.
 func HasOwnerReference(refs []metav1.OwnerReference, uid types.UID) bool {
 	for _, ref := range refs {

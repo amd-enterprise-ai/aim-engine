@@ -1,6 +1,0 @@
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMClusterModel
-metadata:
-  name: ft-cluster-base-model
-spec:
-  image: docker.io/amdenterpriseai/aim-dummy:0.2.0

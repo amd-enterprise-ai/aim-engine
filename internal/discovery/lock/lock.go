@@ -25,8 +25,8 @@
 //
 // A single Lease (aim-discovery-lock in the operator namespace) serializes the
 // "count active discovery jobs + create new one" operation across all controller
-// replicas and across all discovery producers (v1alpha1 AIMServiceTemplate,
-// v1alpha2 AIMModel/AIMClusterModel). CountActiveDiscoveryJobs filters by the
+// replicas and across all discovery producers (AIMModel and AIMClusterModel).
+// CountActiveDiscoveryJobs filters by the
 // shared discovery labels so the cap applies globally — the underlying
 // constraint is registry bandwidth, which is cluster-wide.
 package lock
@@ -256,9 +256,8 @@ func (l *DiscoveryLock) isExpired(lease *coordinationv1.Lease) bool {
 }
 
 // CountActiveDiscoveryJobs counts the number of active (non-complete) discovery Jobs
-// across all namespaces. The filter matches every discovery Job the operator creates
-// (both v1alpha1 templates and v1alpha2 models), so the returned count is the
-// global cluster-wide budget consumption.
+// across all namespaces. The filter matches every discovery Job the operator creates,
+// so the returned count is the global cluster-wide budget consumption.
 func CountActiveDiscoveryJobs(ctx context.Context, c client.Client) (int, error) {
 	var jobList batchv1.JobList
 	if err := c.List(ctx, &jobList, client.MatchingLabels{

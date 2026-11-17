@@ -52,7 +52,7 @@ spec:
       value: aim
 ```
 
-A value for the same name in the AIMService `spec.env`, the AIMProfile `containerEnv` or the `AIMServiceTemplate` `env` wins over the runtime config value; see [Inference container env](../concepts/runtime-config.md#inference-container-env). To set the variables for one service only, use its `spec.env`. Unlike `spec.profileOverrides.containerEnv`, it doesn't create an overlay profile, so the model weights don't download again.
+A value for the same name in the AIMService `spec.env` or the AIMProfile `containerEnv` wins over the runtime config value; see [Inference container env](../concepts/runtime-config.md#inference-container-env). To set the variables for one service only, use its `spec.env`. Unlike `spec.profileOverrides.containerEnv`, it doesn't create an overlay profile, so the model weights don't download again.
 
 ## AITER Kernels
 

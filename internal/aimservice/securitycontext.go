@@ -26,13 +26,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 )
 
 // InferenceSecurityContexts returns the Pod and container security contexts
 // of a service's inference pods. Each one is the service's own value when it
 // sets one, even an empty one, and otherwise the merged runtime config's.
 func InferenceSecurityContexts(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) (*corev1.PodSecurityContext, *corev1.SecurityContext) {
 	pod, container := service.Spec.PodSecurityContext, service.Spec.SecurityContext

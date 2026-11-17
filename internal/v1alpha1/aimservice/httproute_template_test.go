@@ -41,7 +41,7 @@ func TestResolveServiceRoutePath_ServiceOverride(t *testing.T) {
 		PathTemplate: ptr.To("/{.metadata.namespace}/{.metadata.labels['aim.silogen.ai/workload-id']}/"),
 	}
 
-	path, err := ResolveServiceRoutePath(svc, nil)
+	path, err := ResolveServiceRoutePath(v1alpha2View(svc), nil)
 	if err != nil {
 		t.Fatalf("ResolveServiceRoutePath failed: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestResolveServiceRoutePath_RuntimeConfigFallback(t *testing.T) {
 		},
 	}
 
-	path, err := ResolveServiceRoutePath(svc, runtimeCfg)
+	path, err := ResolveServiceRoutePath(v1alpha2View(svc), runtimeCfg)
 	if err != nil {
 		t.Fatalf("ResolveServiceRoutePath failed: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestResolveServiceRoutePath_Annotation(t *testing.T) {
 		PathTemplate: ptr.To("/{.metadata.annotations['route.suffix']}"),
 	}
 
-	path, err := ResolveServiceRoutePath(svc, nil)
+	path, err := ResolveServiceRoutePath(v1alpha2View(svc), nil)
 	if err != nil {
 		t.Fatalf("ResolveServiceRoutePath failed: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestResolveServiceRoutePath_DefaultFallback(t *testing.T) {
 	svc := newRouteTestService()
 	// No runtime overrides - should use default path
 
-	path, err := ResolveServiceRoutePath(svc, nil)
+	path, err := ResolveServiceRoutePath(v1alpha2View(svc), nil)
 	if err != nil {
 		t.Fatalf("ResolveServiceRoutePath failed: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestResolveServiceRoutePath_MissingLabel(t *testing.T) {
 		PathTemplate: ptr.To("/{.metadata.labels['missing']}"),
 	}
 
-	_, err := ResolveServiceRoutePath(svc, nil)
+	_, err := ResolveServiceRoutePath(v1alpha2View(svc), nil)
 	if err == nil {
 		t.Fatalf("expected error when label is missing")
 	}
@@ -132,7 +132,7 @@ func TestResolveServiceRoutePath_PathTooLong(t *testing.T) {
 		PathTemplate: ptr.To("/{.metadata.labels['segment-a']}/{.metadata.labels['segment-b']}/{.metadata.labels['segment-c']}/{.metadata.labels['segment-d']}"),
 	}
 
-	_, err := ResolveServiceRoutePath(svc, nil)
+	_, err := ResolveServiceRoutePath(v1alpha2View(svc), nil)
 	if err == nil {
 		t.Fatalf("expected error for oversized path")
 	}
@@ -148,7 +148,7 @@ func TestResolveServiceRoutePath_InvalidExpression(t *testing.T) {
 		PathTemplate: ptr.To("/{.metadata[}"),
 	}
 
-	_, err := ResolveServiceRoutePath(svc, nil)
+	_, err := ResolveServiceRoutePath(v1alpha2View(svc), nil)
 	if err == nil {
 		t.Fatalf("expected error for invalid jsonpath")
 	}
