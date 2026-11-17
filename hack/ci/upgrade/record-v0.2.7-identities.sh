@@ -10,7 +10,6 @@
 set -euo pipefail
 
 namespace="${UPGRADE_NAMESPACE:-aim-upgrade-compatibility}"
-
 output="${1:?usage: record-v0.2.7-identities.sh OUTPUT_FILE}"
 
 identities() {
