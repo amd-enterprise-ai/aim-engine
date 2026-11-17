@@ -125,6 +125,13 @@ func (result ProfileCacheFetchResult) GetComponentHealth() []controllerutils.Com
 	return health
 }
 
+// profileUnavailable reports whether the profile could not be read for a reason other
+// than not existing, which leaves the cache's model sources unknown.
+func (result ProfileCacheFetchResult) profileUnavailable() bool {
+	return (result.profile.Error != nil && !result.profile.IsNotFound()) ||
+		(result.clusterProfile.Error != nil && !result.clusterProfile.IsNotFound())
+}
+
 func getProfileHealth(status *aimv1alpha2.AIMProfileStatus) controllerutils.ComponentHealth {
 	for _, cond := range status.GetConditions() {
 		if cond.Type == controllerutils.ConditionTypeReady {
@@ -284,10 +291,9 @@ type artifactMatch struct {
 }
 
 // matchArtifactForSource picks the artifact this cache should resolve modelSource to:
-// the candidate with the best status among those adoptable as-is or only awaiting
-// their adapter disk, preferring one that already has the disk when statuses tie. A
-// terminating candidate is reported separately rather than adopted or treated as
-// missing - see TerminatingArtifactNames.
+// the candidate betterArtifact ranks highest among those adoptable as-is or only
+// awaiting their adapter disk. A terminating candidate is reported separately rather
+// than adopted or treated as missing - see TerminatingArtifactNames.
 func matchArtifactForSource(
 	profileCache *aimv1alpha2.AIMProfileCache,
 	artifacts []aimv1alpha1.AIMArtifact,
@@ -328,14 +334,7 @@ func matchArtifactForSource(
 			continue
 		}
 
-		// Best status wins; on a tie, an artifact that already has the adapter disk
-		// beats one that would need it added.
-		cmp := 1
-		if match.found {
-			cmp = constants.CompareAIMStatus(cached.Status.Status, match.best.Status.Status)
-		}
-		better := cmp > 0 || (cmp == 0 && match.needsAdapterDisk && !needsAdapterDisk)
-		if better {
+		if !match.found || betterArtifact(profileCache, &cached, needsAdapterDisk, &match.best, match.needsAdapterDisk) {
 			match.found = true
 			match.best = cached
 			match.needsAdapterDisk = needsAdapterDisk
@@ -343,6 +342,39 @@ func matchArtifactForSource(
 	}
 
 	return match
+}
+
+// betterArtifact reports whether candidate should replace best. Best status wins. On
+// a tie, the artifact this cache already publishes in status.artifacts stays: the
+// KServe ServingRuntime projected for the profile and the InferenceServices mount its
+// PVC, so switching rolls every predictor on the profile. When neither is published,
+// one that already has the adapter disk beats one that would need it added, and
+// finally the name decides, so the choice never depends on list order.
+func betterArtifact(
+	profileCache *aimv1alpha2.AIMProfileCache,
+	candidate *aimv1alpha1.AIMArtifact, candidateNeedsDisk bool,
+	best *aimv1alpha1.AIMArtifact, bestNeedsDisk bool,
+) bool {
+	if cmp := constants.CompareAIMStatus(candidate.Status.Status, best.Status.Status); cmp != 0 {
+		return cmp > 0
+	}
+	candidatePublished := artifactPublishedBy(profileCache, candidate)
+	if bestPublished := artifactPublishedBy(profileCache, best); candidatePublished != bestPublished {
+		return candidatePublished
+	}
+	if candidateNeedsDisk != bestNeedsDisk {
+		return !candidateNeedsDisk
+	}
+	return candidate.Name < best.Name
+}
+
+// artifactPublishedBy reports whether profileCache's status.artifacts lists artifact.
+// The UID check keeps an artifact recreated under the same name from counting as
+// published. Candidates are already filtered by sourceUri, so the listed model is not
+// compared.
+func artifactPublishedBy(profileCache *aimv1alpha2.AIMProfileCache, artifact *aimv1alpha1.AIMArtifact) bool {
+	resolved, ok := profileCache.Status.Artifacts[artifact.Name]
+	return ok && resolved.UID == string(artifact.UID)
 }
 
 // artifactAwaitingAdapterDisk reports whether artifact is a model artifact that
@@ -450,9 +482,10 @@ func (r *ProfileCacheReconciler) DecorateStatus(
 	if obs.profileCache != nil {
 		status.ObservedGeneration = obs.profileCache.Generation
 	}
-	if !obs.artifacts.OK() {
-		// Keep the last known artifact/PVC projection while the list is
-		// unavailable. Fetch health records the dependency failure.
+	if !obs.artifacts.OK() || obs.profileUnavailable() {
+		// Keep the last known artifact/PVC projection while the list or the profile is
+		// unavailable. Fetch health records the dependency failure. Clearing it would
+		// also lose the published artifact that ranking keeps on a tie.
 		return
 	}
 

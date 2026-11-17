@@ -49,7 +49,8 @@ The cache and its artifacts persist independently of any single service. When a 
 The deduplication boundary is per-namespace:
 
 - The cache controller finds an existing shared `AIMProfileCache` for the same profile and reuses it (no new cache resource).
-- If a new cache is created, the artifact controller finds existing shared `AIMArtifact`s for the same `sourceUri` (+ storage class + downloader env) and reuses them.
+- If a new cache is created, the `AIMProfileCache` controller reuses existing shared `AIMArtifact`s with the same `sourceUri` (and the same storage class, when the cache sets one; for `s3://` sources, also the same runtime config). Downloader env is not compared.
+- When more than one artifact matches a model source, the one with the best status wins. On a tie, the cache keeps the artifact it already lists in `status.artifacts`, so its services keep mounting the same PVC. If neither is listed, an artifact that already has the adapter disk the cache requires wins, then the alphabetically first name. The cache does not switch artifacts just to gain an adapter disk.
 
 Result: multiple services that share a profile fan in onto a single set of `AIMArtifact`s, one download per artifact per namespace.
 

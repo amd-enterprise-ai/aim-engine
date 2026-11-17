@@ -287,9 +287,10 @@ func TestPlanResources_RequiresAdapterDiskUpgradesDisklessArtifactInPlace(t *tes
 }
 
 // TestComposeState_RequiresAdapterDiskRanksByStatusFirst verifies how a cache that
-// requires an adapter disk picks between a diskless and a disk-bearing artifact:
-// the better status wins, so a Ready cache never falls back to a downloading or
-// failed artifact, and on a tie the one that already has the disk wins.
+// requires an adapter disk and publishes neither artifact picks between a diskless
+// and a disk-bearing one: the better status wins, so a Ready cache never falls back
+// to a downloading or failed artifact, and on a tie the one that already has the
+// disk wins.
 func TestComposeState_RequiresAdapterDiskRanksByStatusFirst(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -334,6 +335,163 @@ func TestComposeState_RequiresAdapterDiskRanksByStatusFirst(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestComposeState_KeepsPublishedArtifact verifies that a cache keeps the artifact
+// it already publishes in status.artifacts when another candidate ties on status.
+// The KServe ServingRuntime projected for the profile and the InferenceServices mount
+// the published artifact's PVC, so switching would roll every predictor on the profile.
+func TestComposeState_KeepsPublishedArtifact(t *testing.T) {
+	const modelID = "org/model-a"
+	artifact := func(name string, status constants.AIMStatus, hasDisk bool) aimv1alpha1.AIMArtifact {
+		a := makeArtifact(name, "hf://org/model-a", modelID, status, "")
+		a.Status.PersistentVolumeClaim = name + "-cache"
+		if hasDisk {
+			a.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
+		}
+		return a
+	}
+	tests := []struct {
+		name                string
+		requiresAdapterDisk bool
+		artA, artB          aimv1alpha1.AIMArtifact
+		// published is the artifact name status.artifacts lists, with publishedUID
+		// as its UID; an empty publishedUID means the artifact's own UID.
+		published    string
+		publishedUID types.UID
+		want         string
+		wantUpgrade  bool
+	}{
+		{
+			name:                "requiresAdapterDisk: published diskless artifact gets the disk in place",
+			requiresAdapterDisk: true,
+			artA:                artifact("art-a", constants.AIMStatusReady, false),
+			artB:                artifact("art-b", constants.AIMStatusReady, true),
+			published:           "art-a",
+			want:                "art-a",
+			wantUpgrade:         true,
+		},
+		{
+			name:                "requiresAdapterDisk: published artifact with a disk stays",
+			requiresAdapterDisk: true,
+			artA:                artifact("art-a", constants.AIMStatusReady, false),
+			artB:                artifact("art-b", constants.AIMStatusReady, true),
+			published:           "art-b",
+			want:                "art-b",
+		},
+		{
+			name:      "published artifact stays on a tie",
+			artA:      artifact("art-a", constants.AIMStatusReady, false),
+			artB:      artifact("art-b", constants.AIMStatusReady, false),
+			published: "art-b",
+			want:      "art-b",
+		},
+		{
+			name: "nothing published: alphabetically first name wins",
+			artA: artifact("art-a", constants.AIMStatusReady, false),
+			artB: artifact("art-b", constants.AIMStatusReady, false),
+			want: "art-a",
+		},
+		{
+			name:      "failed published artifact loses to a ready one",
+			artA:      artifact("art-a", constants.AIMStatusFailed, false),
+			artB:      artifact("art-b", constants.AIMStatusReady, false),
+			published: "art-a",
+			want:      "art-b",
+		},
+		{
+			name:         "published name with another UID does not count",
+			artA:         artifact("art-a", constants.AIMStatusReady, false),
+			artB:         artifact("art-b", constants.AIMStatusReady, false),
+			published:    "art-b",
+			publishedUID: "recreated-uid",
+			want:         "art-a",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &ProfileCacheReconciler{}
+			pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")
+			pc.Spec.RequiresAdapterDisk = tt.requiresAdapterDisk
+			if tt.published != "" {
+				uid := tt.publishedUID
+				if uid == "" {
+					uid = types.UID("artifact-uid-" + tt.published)
+				}
+				pc.Status.Artifacts = map[string]aimv1alpha1.AIMResolvedArtifact{
+					tt.published: {
+						Name:                  tt.published,
+						UID:                   string(uid),
+						Model:                 modelID,
+						Status:                constants.AIMStatusReady,
+						PersistentVolumeClaim: tt.published + "-cache",
+					},
+				}
+			}
+			profile := makeProfile("my-profile", []aimv1alpha1.AIMModelSource{
+				{ModelID: modelID, SourceURI: "hf://org/model-a"},
+			})
+
+			// Both orders, so the result does not depend on list order.
+			for _, items := range [][]aimv1alpha1.AIMArtifact{{tt.artA, tt.artB}, {tt.artB, tt.artA}} {
+				order := items[0].Name + "," + items[1].Name
+				fetch := ProfileCacheFetchResult{
+					profileCache: pc,
+					profile:      controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{Value: profile},
+					artifacts: controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]{
+						Value: &aimv1alpha1.AIMArtifactList{Items: items},
+					},
+				}
+				obs := r.ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: pc}, fetch)
+				if got := obs.BestArtifacts[modelID].Name; got != tt.want {
+					t.Fatalf("order %s: resolved artifact = %q, want %q", order, got, tt.want)
+				}
+				gotUpgrade := len(obs.AdapterDiskUpgrades) == 1 && obs.AdapterDiskUpgrades[0].Name == tt.want
+				if gotUpgrade != tt.wantUpgrade {
+					t.Errorf("order %s: adapter disk upgrade of %s planned = %v, want %v", order, tt.want, gotUpgrade, tt.wantUpgrade)
+				}
+
+				status := pc.Status.DeepCopy()
+				r.DecorateStatus(status, controllerutils.NewConditionManager(nil), obs)
+				published, ok := status.Artifacts[tt.want]
+				if !ok || len(status.Artifacts) != 1 ||
+					published.UID != "artifact-uid-"+tt.want || published.PersistentVolumeClaim != tt.want+"-cache" {
+					t.Errorf("order %s: status.artifacts = %+v, want only %s with its UID and PVC", order, status.Artifacts, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// TestProfileFetchErrorPreservesPublishedArtifacts verifies that a profile that cannot
+// be read leaves status.artifacts as it is. Clearing it would lose the published
+// artifact that ranking keeps on a tie, so the next reconcile could switch PVCs.
+func TestProfileFetchErrorPreservesPublishedArtifacts(t *testing.T) {
+	r := &ProfileCacheReconciler{}
+	pc := makeProfileCache("pc1", "my-profile", aimv1alpha1.AIMResolutionScopeNamespace, aimv1alpha2.ProfileCacheModeShared, "")
+	published := makeArtifact("art-b", "hf://org/model-a", "org/model-a", constants.AIMStatusReady, "")
+	pc.Status.Artifacts = map[string]aimv1alpha1.AIMResolvedArtifact{
+		"art-b": {Name: "art-b", UID: string(published.UID), Model: "org/model-a", Status: constants.AIMStatusReady, PersistentVolumeClaim: "art-b-cache"},
+	}
+	fetch := ProfileCacheFetchResult{
+		profileCache: pc,
+		profile: controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{
+			Error: errors.New("transient profile read failure"),
+		},
+		artifacts: controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]{
+			Value: &aimv1alpha1.AIMArtifactList{Items: []aimv1alpha1.AIMArtifact{
+				makeArtifact("art-a", "hf://org/model-a", "org/model-a", constants.AIMStatusReady, ""),
+				published,
+			}},
+		},
+	}
+	obs := r.ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache]{Object: pc}, fetch)
+
+	status := pc.Status.DeepCopy()
+	r.DecorateStatus(status, controllerutils.NewConditionManager(nil), obs)
+	if got := status.Artifacts["art-b"].PersistentVolumeClaim; len(status.Artifacts) != 1 || got != "art-b-cache" {
+		t.Fatalf("status.artifacts = %+v, want art-b with PVC art-b-cache preserved", status.Artifacts)
 	}
 }
 

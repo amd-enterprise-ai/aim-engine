@@ -211,7 +211,11 @@ Before a service can serve adapters:
    `ReadWriteMany` and 50Gi unless `spec.storage.adapterDiskSize` is set on the
    runtime config, so budget for it on any cache an adapter-enabled service may
    share. While the disk exists, the artifact also runs a short
-   [reaper Job](#reclaim) every 15 minutes.
+   [reaper Job](#reclaim) every 15 minutes. If another matching base model
+   artifact already has an adapter disk, the cache still adds one to the
+   artifact it uses, so running services are not moved. To reclaim the unused
+   disk, delete that other artifact once no `AIMProfileCache` or
+   `AIMTemplateCache` lists it in `status.artifacts`.
 
    Once set, the flag cannot be turned off, because other adapter-enabled
    services may depend on the disk: the API rejects setting it to `false` or
