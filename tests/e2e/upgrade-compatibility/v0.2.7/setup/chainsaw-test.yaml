@@ -8,11 +8,12 @@ spec:
   description: |
     Creates the v0.2.7 corpus that the upgrade guide's migration-window steps
     clean up: Shared and Dedicated services on the template pipeline, an image
-    model that emits templates and discovers a CPU profile, and a model source
-    whose discovered cluster model emits cluster templates. A third, Shared
-    template service is moved later with v0.2.7's aim-template-migration. A
-    spec.model.custom service, which the guide replaces with an AIMProfile of
-    another model, and a ConfigMap with a v1alpha1 owner reference to it.
+    model that emits templates and discovers a CPU profile, a model source
+    whose discovered cluster model emits cluster templates, and a model artifact
+    with an adapter disk. A third, Shared template service is moved later with
+    v0.2.7's aim-template-migration. A spec.model.custom service, which the
+    guide replaces with an AIMProfile of another model, and a ConfigMap with a
+    v1alpha1 owner reference to it.
   timeouts:
     assert: 420s
     cleanup: 180s
@@ -253,3 +254,29 @@ spec:
                     uid: ${uid}
                     blockOwnerDeletion: true
               EOF
+
+    - name: Wait for the model artifact and its PVCs
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: upgrade-model-artifact
+              status:
+                status: Ready
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              kubectl get pvc -n "$NAMESPACE" -l aim.eai.amd.com/cache.name=upgrade-model-artifact -o json \
+                | jq -e '
+                    [
+                      .items[]
+                      | [.metadata.ownerReferences[]?
+                          | select(.kind == "AIMArtifact" and .name == "upgrade-model-artifact")
+                          | .apiVersion]
+                    ] == [["aim.eai.amd.com/v1alpha1"], ["aim.eai.amd.com/v1alpha1"]]
+                  ' >/dev/null

@@ -371,6 +371,19 @@ func (r *ArtifactReconciler) FetchRemoteState(
 		result.profileCaches = &pcFetch
 	}
 
+	// These PVCs are not re-applied, so a v1alpha1 owner reference is patched
+	// here from the objects this fetch already loaded.
+	if result.cachePvc.OK() {
+		if err := controllerutils.RewriteV1alpha1OwnerReference(ctx, c, result.cachePvc.Value, mc.GetUID()); err != nil {
+			result.cachePvc.Error = err
+		}
+	}
+	if result.adapterPvc != nil && result.adapterPvc.OK() {
+		if err := controllerutils.RewriteV1alpha1OwnerReference(ctx, c, result.adapterPvc.Value, mc.GetUID()); err != nil {
+			result.adapterPvc.Error = err
+		}
+	}
+
 	return result
 }
 

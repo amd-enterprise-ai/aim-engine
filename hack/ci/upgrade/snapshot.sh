@@ -89,5 +89,34 @@ record_selected aimclusterprofilesets - \
 record_selected aimclusterprofiles - \
     'aim.eai.amd.com/source-model=upgrade-cluster-model,aim.eai.amd.com/profile-origin=derived'
 
+# Cache PVCs from the simulated profile caches, plus the model artifact's cache
+# PVC and adapter-disk PVC. Their UIDs must survive the upgrade.
+artifact_pvcs="$(kubectl get pvc -n "${namespace}" -l aim.eai.amd.com/cache.name=upgrade-model-artifact -o json)"
+artifact_pvc_count="$(jq '.items | length' <<<"${artifact_pvcs}")"
+if [[ "${artifact_pvc_count}" != "2" ]]; then
+    echo "expected cache and adapter-disk PVCs for upgrade-model-artifact, found ${artifact_pvc_count}" >&2
+    exit 1
+fi
+pvc_json="$(kubectl get pvc -n "${namespace}" -o json)"
+pvc_count="$(jq '.items | length' <<<"${pvc_json}")"
+if [[ "${pvc_count}" == "0" ]]; then
+    echo "expected cache PVCs in ${namespace}, found none" >&2
+    exit 1
+fi
+jq -r --arg resource persistentvolumeclaims --arg namespace "${namespace}" '
+    .items[] |
+    [
+        $resource,
+        $namespace,
+        .metadata.name,
+        .metadata.uid,
+        (
+            [.metadata.ownerReferences[]? | {apiVersion, kind, name, uid, controller}]
+            | sort_by(.apiVersion, .kind, .name, .uid)
+            | @base64
+        )
+    ] | @tsv
+' <<<"${pvc_json}" >> "${output}"
+
 echo "Baseline object identity snapshot:"
 cat "${output}"
