@@ -1,6 +1,6 @@
 # KServe Configuration
 
-AIM Engine requires KServe v0.16.1 or later with specific configuration. Use the values file below when installing KServe.
+AIM Engine requires KServe v0.16.1 or later with specific configuration. CI tests against KServe v0.20.0. Use the values file below when installing KServe.
 
 ## Required Values
 
@@ -30,13 +30,15 @@ kserve:
 helm install kserve-crd oci://ghcr.io/kserve/charts/kserve-crd \
   --namespace kserve-system \
   --create-namespace \
-  --version v0.16.1
+  --version v0.20.0
 
-helm install kserve oci://ghcr.io/kserve/charts/kserve \
+helm install kserve oci://ghcr.io/kserve/charts/kserve-resources \
   --namespace kserve-system \
-  --version v0.16.1 \
+  --version v0.20.0 \
   --values kserve-values.yaml
 ```
+
+KServe v0.17 renamed the controller chart from `kserve` to `kserve-resources`. The values above apply to both.
 
 ## Why These Values Matter
 

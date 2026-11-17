@@ -84,17 +84,19 @@ releases:
   - name: kserve-crd
     namespace: kserve-system
     chart: oci://ghcr.io/kserve/charts/kserve-crd
-    version: v0.16.0
+    version: v0.20.0
     createNamespace: true
     wait: true
     timeout: 600
     needs:
       - keda/kedify-otel
 
+  # KServe ships the InferenceService controller as kserve-resources since v0.17;
+  # the release keeps its historical name.
   - name: kserve
     namespace: kserve-system
-    chart: oci://ghcr.io/kserve/charts/kserve
-    version: v0.16.0
+    chart: oci://ghcr.io/kserve/charts/kserve-resources
+    version: v0.20.0
     createNamespace: false
     wait: true
     waitForJobs: true
@@ -114,7 +116,7 @@ releases:
             enabled: false
           # Remove default resource limits/requests for inference services
           # Let workloads set their own resources as needed
-          # See: helm show values oci://ghcr.io/kserve/charts/kserve
+          # See: helm show values oci://ghcr.io/kserve/charts/kserve-resources
           inferenceservice:
             resources:
               limits:
