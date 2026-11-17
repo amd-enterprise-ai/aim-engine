@@ -706,30 +706,39 @@ func TestPropagateLabelsFoResult(t *testing.T) {
 	}
 }
 
-func TestSetOwnerReferenceConvergesBridgeGVKWithoutChangingDeletionSemantics(t *testing.T) {
+func TestSetOwnerReference_CanonicalizesOwnerGVK(t *testing.T) {
 	trueValue := true
 	falseValue := false
 	tests := []struct {
 		name               string
+		group              string
+		version            string
 		kind               string
-		wantVersion        string
+		wantAPIVersion     string
 		existing           bool
 		controller         *bool
 		blockOwnerDeletion *bool
 	}{
-		{name: "new bridge reference uses production version", kind: "AIMService", wantVersion: "v1alpha2"},
-		{name: "service preserves true", kind: "AIMService", wantVersion: "v1alpha2", existing: true, controller: &trueValue, blockOwnerDeletion: &trueValue},
-		{name: "model preserves nil", kind: "AIMModel", wantVersion: "v1alpha2", existing: true},
-		{name: "cluster model preserves false", kind: "AIMClusterModel", wantVersion: "v1alpha2", existing: true, controller: &falseValue, blockOwnerDeletion: &falseValue},
-		{name: "v1alpha1-only owner remains v1alpha1", kind: "AIMArtifact", wantVersion: "v1alpha1"},
+		{name: "AIMService", group: "aim.eai.amd.com", version: "v1alpha1", kind: "AIMService", wantAPIVersion: "aim.eai.amd.com/v1alpha2"},
+		{name: "AIMModel", group: "aim.eai.amd.com", version: "v1alpha1", kind: "AIMModel", wantAPIVersion: "aim.eai.amd.com/v1alpha2"},
+		{name: "AIMClusterModel", group: "aim.eai.amd.com", version: "v1alpha1", kind: "AIMClusterModel", wantAPIVersion: "aim.eai.amd.com/v1alpha2"},
+		{name: "AIMArtifact", group: "aim.eai.amd.com", version: "v1alpha1", kind: "AIMArtifact", wantAPIVersion: "aim.eai.amd.com/v1alpha2"},
+		{name: "AIMRuntimeConfig", group: "aim.eai.amd.com", version: "v1alpha1", kind: "AIMRuntimeConfig", wantAPIVersion: "aim.eai.amd.com/v1alpha2"},
+		{name: "AIMClusterRuntimeConfig", group: "aim.eai.amd.com", version: "v1alpha1", kind: "AIMClusterRuntimeConfig", wantAPIVersion: "aim.eai.amd.com/v1alpha2"},
+		{name: "AIMClusterModelSource", group: "aim.eai.amd.com", version: "v1alpha1", kind: "AIMClusterModelSource", wantAPIVersion: "aim.eai.amd.com/v1alpha2"},
+		{name: "existing service keeps controller and blockOwnerDeletion", group: "aim.eai.amd.com", version: "v1alpha1", kind: "AIMService", wantAPIVersion: "aim.eai.amd.com/v1alpha2", existing: true, controller: &trueValue, blockOwnerDeletion: &trueValue},
+		{name: "existing model keeps nil flags", group: "aim.eai.amd.com", version: "v1alpha1", kind: "AIMModel", wantAPIVersion: "aim.eai.amd.com/v1alpha2", existing: true},
+		{name: "existing cluster model keeps false flags", group: "aim.eai.amd.com", version: "v1alpha1", kind: "AIMClusterModel", wantAPIVersion: "aim.eai.amd.com/v1alpha2", existing: true, controller: &falseValue, blockOwnerDeletion: &falseValue},
+		{name: "AIMProfile stays v1alpha1", group: "aim.eai.amd.com", version: "v1alpha1", kind: "AIMProfile", wantAPIVersion: "aim.eai.amd.com/v1alpha1"},
+		{name: "non-AIM kind is unchanged", group: "example.com", version: "v1alpha1", kind: "Widget", wantAPIVersion: "example.com/v1alpha1"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			owner := &unstructured.Unstructured{}
 			owner.SetGroupVersionKind(schema.GroupVersionKind{
-				Group:   "aim.eai.amd.com",
-				Version: "v1alpha1",
+				Group:   tt.group,
+				Version: tt.version,
 				Kind:    tt.kind,
 			})
 			owner.SetName("owner")
@@ -743,7 +752,7 @@ func TestSetOwnerReferenceConvergesBridgeGVKWithoutChangingDeletionSemantics(t *
 			}
 			if tt.existing {
 				child.OwnerReferences = []metav1.OwnerReference{{
-					APIVersion:         "aim.eai.amd.com/v1alpha1",
+					APIVersion:         tt.group + "/" + tt.version,
 					Kind:               tt.kind,
 					Name:               owner.GetName(),
 					UID:                owner.GetUID(),
@@ -761,11 +770,11 @@ func TestSetOwnerReferenceConvergesBridgeGVKWithoutChangingDeletionSemantics(t *
 				t.Fatalf("owner references = %d, want 1", len(refs))
 			}
 			ref := refs[0]
-			if ref.APIVersion != "aim.eai.amd.com/"+tt.wantVersion ||
+			if ref.APIVersion != tt.wantAPIVersion ||
 				ref.Kind != tt.kind ||
 				ref.Name != owner.GetName() ||
 				ref.UID != owner.GetUID() {
-				t.Errorf("owner reference = %#v, want converged %s identity", ref, tt.kind)
+				t.Errorf("owner reference = %#v, want %s %s", ref, tt.wantAPIVersion, tt.kind)
 			}
 			switch {
 			case !tt.existing && (ref.Controller == nil || !*ref.Controller):

@@ -332,14 +332,17 @@ func setOwnerReference(owner, obj client.Object, _ *runtime.Scheme) error {
 	return nil
 }
 
-// canonicalOwnerGVK names AIMService, AIMModel and AIMClusterModel owners at
-// v1alpha2, the only version the API server serves for those kinds.
+// canonicalOwnerGVK rewrites a v1alpha1 owner reference to v1alpha2 for
+// AIMService, AIMModel, AIMClusterModel, AIMArtifact, AIMRuntimeConfig,
+// AIMClusterRuntimeConfig and AIMClusterModelSource. Other kinds and groups
+// are left unchanged.
 func canonicalOwnerGVK(ownerGVK schema.GroupVersionKind) schema.GroupVersionKind {
 	if ownerGVK.Group != "aim.eai.amd.com" || ownerGVK.Version != "v1alpha1" {
 		return ownerGVK
 	}
 	switch ownerGVK.Kind {
-	case "AIMService", "AIMModel", "AIMClusterModel":
+	case "AIMService", "AIMModel", "AIMClusterModel",
+		"AIMArtifact", "AIMRuntimeConfig", "AIMClusterRuntimeConfig", "AIMClusterModelSource":
 		ownerGVK.Version = "v1alpha2"
 	}
 	return ownerGVK
