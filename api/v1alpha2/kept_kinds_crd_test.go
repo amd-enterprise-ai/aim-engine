@@ -65,9 +65,6 @@ func TestKeptKindCRDVersionsMatch(t *testing.T) {
 			if len(storage) != 1 || storage[0] != "v1alpha1" {
 				t.Errorf("storage versions = %v, want [v1alpha1]", storage)
 			}
-			if v1alpha2.Storage {
-				t.Error("v1alpha2 is a storage version")
-			}
 
 			requireSame(t, "schema", v1alpha1.Schema, v1alpha2.Schema)
 			requireSame(t, "subresources", v1alpha1.Subresources, v1alpha2.Subresources)
