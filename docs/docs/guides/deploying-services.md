@@ -372,7 +372,7 @@ status:
       reason: ProfileResolved
     - type: ProfileCacheReady
       status: "True"
-      reason: CacheReady
+      reason: ProfileCacheReady
     - type: InferenceServiceReady
       status: "True"
       reason: RuntimeReady

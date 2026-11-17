@@ -646,3 +646,14 @@ const (
 	// PredictorServiceSuffix is the suffix added to InferenceService names for predictor services
 	PredictorServiceSuffix = "-predictor"
 )
+
+// FieldManagerSuffixAdapterDisk names the dedicated Server-Side Apply field
+// manager (see PlanResult.ApplyFields) that turns on adapter-disk fields on
+// shared objects: AIMProfileCache spec.requiresAdapterDisk and AIMArtifact
+// spec.adapterDisk.
+const FieldManagerSuffixAdapterDisk = "adapter-disk"
+
+// ReasonAdapterDiskRequested is the Normal event reason recorded on an
+// AIMProfileCache when an AIMService turns on spec.requiresAdapterDisk, and on
+// an AIMArtifact when an AIMProfileCache adds spec.adapterDisk to it.
+const ReasonAdapterDiskRequested = "AdapterDiskRequested"

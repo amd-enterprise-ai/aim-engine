@@ -336,7 +336,7 @@ func (r *AIMProfileCacheReconciler) findProfileCachesForArtifact(ctx context.Con
 	}
 
 	for i := range candidates.Items {
-		if aimprofilecache.ArtifactAdoptableBy(&candidates.Items[i], artifact) {
+		if aimprofilecache.ArtifactResolvableBy(&candidates.Items[i], artifact) {
 			cacheKeys[client.ObjectKeyFromObject(&candidates.Items[i])] = struct{}{}
 		}
 	}

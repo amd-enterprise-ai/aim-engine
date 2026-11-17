@@ -87,7 +87,7 @@ kubectl get aimservice qwen-chat -o jsonpath='{.status.conditions}' | jq
 The key conditions to watch:
 
 - `ProfileReady` → `ProfileResolved`
-- `ProfileCacheReady` → `CacheReady`
+- `ProfileCacheReady` → `ProfileCacheReady`
 - `InferenceServiceReady` → `RuntimeReady`
 - `Ready` → `AllComponentsReady`
 

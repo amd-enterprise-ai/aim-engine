@@ -110,6 +110,10 @@ type PlanResult struct {
 	// are garbage collected with the owner.
 	toApplyWithForce []client.Object
 
+	// toApplyFields are partial objects applied without owner references under a
+	// field manager of their own. See ApplyFields.
+	toApplyFields []FieldApply
+
 	// toDelete are objects to delete
 	toDelete []client.Object
 
@@ -126,6 +130,22 @@ type PlanResult struct {
 	// after the specified duration. Use this when the reconciler cannot proceed
 	// (e.g., blocked by a rate limit) but should retry later.
 	RequeueAfter time.Duration
+}
+
+// FieldApply is a partial object queued by PlanResult.ApplyFields.
+type FieldApply struct {
+	Object             client.Object
+	FieldManagerSuffix string
+	Event              *FieldApplyEvent
+}
+
+// FieldApplyEvent is a Normal event recorded on Target once its FieldApply
+// succeeds. Target is the observed object, not the partial one, so the event
+// carries the UID that `kubectl describe` matches events by.
+type FieldApplyEvent struct {
+	Target  client.Object
+	Reason  string
+	Message string
 }
 
 // Create adds an owned object using atomic create-only semantics.
@@ -153,6 +173,29 @@ func (pr *PlanResult) ApplyWithoutOwnerRef(obj client.Object) {
 // and stops on the first apply error.
 func (pr *PlanResult) ApplyWithForce(obj client.Object) {
 	pr.toApplyWithForce = append(pr.toApplyWithForce, obj)
+}
+
+// ApplyFields sets individual fields on an object another controller (or another
+// planning path of this one) also manages. obj is force-applied via Server-Side
+// Apply under the field manager "<controller field manager>-<fieldManagerSuffix>",
+// without an owner reference, label propagation or controller labels.
+//
+// obj must carry only its identity and the fields being set - typically an
+// unstructured object, or a typed one whose remaining fields are all omitempty.
+// Every field it carries becomes owned by that dedicated manager, so the fields
+// survive a later apply by the main field manager that omits them, and the
+// main manager never becomes a co-owner of the rest of the object. Force is safe
+// because the dedicated manager owns nothing but these fields.
+//
+// The target must already exist: an apply against a missing object attempts to
+// create it from the partial fields. event, when non-nil, is recorded after the
+// apply succeeds.
+func (pr *PlanResult) ApplyFields(obj client.Object, fieldManagerSuffix string, event *FieldApplyEvent) {
+	pr.toApplyFields = append(pr.toApplyFields, FieldApply{
+		Object:             obj,
+		FieldManagerSuffix: fieldManagerSuffix,
+		Event:              event,
+	})
 }
 
 // Delete adds an object to be deleted
@@ -211,6 +254,11 @@ func (pr *PlanResult) GetToApplyWithForce() []client.Object {
 	return pr.toApplyWithForce
 }
 
+// GetToApplyFields returns the partial objects queued by ApplyFields (for testing)
+func (pr *PlanResult) GetToApplyFields() []FieldApply {
+	return pr.toApplyFields
+}
+
 // GetToDelete returns the objects to be deleted (for testing)
 func (pr *PlanResult) GetToDelete() []client.Object {
 	return pr.toDelete
@@ -236,6 +284,7 @@ func (pr *PlanResult) Merge(other PlanResult) {
 	pr.toApply = append(pr.toApply, other.toApply...)
 	pr.toApplyWithoutOwnerRef = append(pr.toApplyWithoutOwnerRef, other.toApplyWithoutOwnerRef...)
 	pr.toApplyWithForce = append(pr.toApplyWithForce, other.toApplyWithForce...)
+	pr.toApplyFields = append(pr.toApplyFields, other.toApplyFields...)
 	pr.toDelete = append(pr.toDelete, other.toDelete...)
 	for obj, labels := range other.labelExclusions {
 		for label := range labels {
@@ -503,6 +552,14 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) (ctrl.Result, e
 			)
 			if applyErr != nil {
 				applyErr = fmt.Errorf("failed to force-apply owned resources: %w", applyErr)
+			}
+		}
+
+		// Apply partial objects under their dedicated field managers
+		if applyErr == nil && len(planResult.toApplyFields) > 0 {
+			applyErr = ApplyFieldsState(ctx, p.Client, p.Recorder, p.GetFullName(), p.Scheme, planResult.toApplyFields)
+			if applyErr != nil {
+				applyErr = fmt.Errorf("failed to apply fields: %w", applyErr)
 			}
 		}
 	}

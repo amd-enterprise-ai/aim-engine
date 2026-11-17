@@ -1693,8 +1693,21 @@ func TestApply_SharedCommitRejectsRecreatedLivePVCBeforeCutover(t *testing.T) {
 }
 
 func TestApply_SharedCommitReusesPinnedReadyProfileCache(t *testing.T) {
+	t.Run("plain cache", func(t *testing.T) {
+		assertSharedCommitReusesPinnedReadyProfileCache(t, false)
+	})
+	// An adapter-enabled AIMService may have turned the flag on for the Shared
+	// cache before the plain service migrates; it cannot be turned off.
+	t.Run("cache with requiresAdapterDisk", func(t *testing.T) {
+		assertSharedCommitReusesPinnedReadyProfileCache(t, true)
+	})
+}
+
+func assertSharedCommitReusesPinnedReadyProfileCache(t *testing.T, requiresAdapterDisk bool) {
+	t.Helper()
 	fixture := newSharedApplyFixture(t, nil)
 	profile, cache, runtimeObject, runtimeConfigMap := fixture.makeReadyReusableTargets(t)
+	cache.Spec.RequiresAdapterDisk = requiresAdapterDisk
 	cache.Status.Artifacts = map[string]aimv1alpha1.AIMResolvedArtifact{
 		fixture.artifact.Spec.ModelID: {
 			UID:                   string(fixture.artifact.UID),
@@ -1746,6 +1759,22 @@ func TestApply_SharedCommitReusesPinnedReadyProfileCache(t *testing.T) {
 		current.Annotations[aimv1alpha1.ArtifactEvictionProtectedAnnotation] !=
 			aimv1alpha1.ArtifactEvictionProtectedValue {
 		t.Fatalf("reused-cache adoption changed artifact identity/ownership: %#v", current)
+	}
+}
+
+// A Shared artifact that a LoRA service gave an adapter disk still serves a
+// target cache that does not need one.
+func TestApply_SharedArtifactWithAdapterDiskServesPlainTarget(t *testing.T) {
+	fixture := newSharedApplyFixture(t, nil)
+	fixture.artifact.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
+	fixture.artifact.Status.AdapterPersistentVolumeClaim = "adapter-pvc"
+	refreshFixturePin(t, fixture, fixture.artifact, "source-artifact")
+
+	kubernetesClient := newApplyFakeClient(t, fixture.objects...)
+	if _, err := Apply(context.Background(), kubernetesClient, ApplyOptions{
+		PlanPath: writeApplyPlan(t, fixture.document),
+	}); err != nil {
+		t.Fatalf("Apply() error = %v, want nil", err)
 	}
 }
 
@@ -1821,15 +1850,6 @@ func TestApply_SharedSemanticMismatchMatrixFailsBeforeWrites(t *testing.T) {
 				refreshFixturePin(t, f, f.artifact, "source-artifact")
 			},
 			want: "download images",
-		},
-		{
-			name: "adapter disk",
-			mutate: func(f *applyFixture) {
-				f.artifact.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
-				f.artifact.Status.AdapterPersistentVolumeClaim = "adapter-pvc"
-				refreshFixturePin(t, f, f.artifact, "source-artifact")
-			},
-			want: "adapter-disk",
 		},
 		{
 			name: "scope",
@@ -3495,5 +3515,39 @@ func recordedObjectKind(object client.Object) string {
 		return "AIMService"
 	default:
 		return ""
+	}
+}
+
+func TestProfileCacheSpecServes(t *testing.T) {
+	base := aimv1alpha2.AIMProfileCacheSpec{ProfileName: "profile", Mode: aimv1alpha2.ProfileCacheModeShared}
+	with := func(mutate func(*aimv1alpha2.AIMProfileCacheSpec)) aimv1alpha2.AIMProfileCacheSpec {
+		spec := base
+		mutate(&spec)
+		return spec
+	}
+	withAdapterDisk := with(func(s *aimv1alpha2.AIMProfileCacheSpec) { s.RequiresAdapterDisk = true })
+
+	tests := []struct {
+		name     string
+		existing aimv1alpha2.AIMProfileCacheSpec
+		desired  aimv1alpha2.AIMProfileCacheSpec
+		want     bool
+	}{
+		{name: "identical", existing: base, desired: base, want: true},
+		{name: "only existing requires adapter disk", existing: withAdapterDisk, desired: base, want: true},
+		{name: "only desired requires adapter disk", existing: base, desired: withAdapterDisk, want: false},
+		{
+			name:     "other field differs",
+			existing: withAdapterDisk,
+			desired:  with(func(s *aimv1alpha2.AIMProfileCacheSpec) { s.ProfileName = "other" }),
+			want:     false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := profileCacheSpecServes(tt.existing, tt.desired); got != tt.want {
+				t.Fatalf("profileCacheSpecServes() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

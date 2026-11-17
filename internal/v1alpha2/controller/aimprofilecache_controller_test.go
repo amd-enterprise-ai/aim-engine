@@ -24,16 +24,20 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -151,6 +155,93 @@ func TestProfileCacheReconcileWritesObservedGenerationWhenAddingFinalizer(t *tes
 			got.Status.ObservedGeneration,
 			got.Generation,
 		)
+	}
+}
+
+// A cache whose adapter-disk patch on its artifact keeps being rejected has still
+// processed its latest spec: it publishes observedGeneration for it, keeps its
+// resolved artifact Ready, and reports the rejection in DependenciesReachable.
+// Services rely on this to surface the error rather than wait for the cache.
+func TestProfileCacheReconcile_RejectedAdapterDiskPatchStillObservesGeneration(t *testing.T) {
+	scheme := runtimeProjectionScheme(t)
+	source := aimv1alpha1.AIMModelSource{ModelID: "org/model-a", SourceURI: "hf://org/model-a"}
+	profile := &aimv1alpha2.AIMProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "lora-profile", Namespace: testNamespace},
+		Spec: aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: aimv1alpha2.AIMProfileSpecCommon{
+			AimId: "org/model-a", Image: "example.com/aim:latest", ModelSources: []aimv1alpha1.AIMModelSource{source},
+		}},
+	}
+	pc := makeSharedProfileCache("cache-lora")
+	pc.Spec.ProfileName = profile.Name
+	pc.Spec.RequiresAdapterDisk = true
+	pc.Generation = 2
+	pc.Finalizers = []string{finalizerProfileCacheArtifactCleanup}
+	pc.Status.ObservedGeneration = 1
+	artifact := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "artifact-a", Namespace: testNamespace, UID: "artifact-a-uid"},
+		Spec:       aimv1alpha1.AIMArtifactSpec{SourceURI: source.SourceURI, ModelID: source.ModelID},
+		Status: aimv1alpha1.AIMArtifactStatus{
+			Status:                constants.AIMStatusReady,
+			PersistentVolumeClaim: "artifact-a-cache",
+		},
+	}
+
+	rejected := errors.New("admission webhook denied adding spec.adapterDisk")
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&aimv1alpha2.AIMProfileCache{}).
+		WithObjects(profile, pc, artifact).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				if obj.GetObjectKind().GroupVersionKind().Kind == "AIMArtifact" {
+					return rejected
+				}
+				return cl.Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+	domainReconciler := &aimprofilecache.ProfileCacheReconciler{Scheme: scheme}
+	recorder := record.NewFakeRecorder(20)
+	r := &AIMProfileCacheReconciler{
+		Client:     c,
+		Scheme:     scheme,
+		Recorder:   recorder,
+		reconciler: domainReconciler,
+		pipeline: controllerutils.Pipeline[
+			*aimv1alpha2.AIMProfileCache,
+			*aimv1alpha2.AIMProfileCacheStatus,
+			aimprofilecache.ProfileCacheFetchResult,
+			aimprofilecache.ProfileCacheObservation,
+		]{
+			Client:         c,
+			StatusClient:   c.Status(),
+			Recorder:       recorder,
+			ControllerName: profileCacheName,
+			Reconciler:     domainReconciler,
+			Scheme:         scheme,
+		},
+	}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(pc)}); !errors.Is(err, rejected) {
+		t.Fatalf("Reconcile() error = %v, want the rejected adapter-disk patch", err)
+	}
+
+	var got aimv1alpha2.AIMProfileCache
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(pc), &got); err != nil {
+		t.Fatalf("get reconciled AIMProfileCache: %v", err)
+	}
+	if got.Status.ObservedGeneration != got.Generation {
+		t.Errorf("observedGeneration = %d, want %d", got.Status.ObservedGeneration, got.Generation)
+	}
+	if got.Status.Status != constants.AIMStatusReady {
+		t.Errorf("status = %q, want %q", got.Status.Status, constants.AIMStatusReady)
+	}
+	if resolved := got.Status.Artifacts[artifact.Name]; resolved.PersistentVolumeClaim != artifact.Status.PersistentVolumeClaim {
+		t.Errorf("status.artifacts[%s] = %+v, want PVC %s", artifact.Name, resolved, artifact.Status.PersistentVolumeClaim)
+	}
+	cond := meta.FindStatusCondition(got.Status.Conditions, controllerutils.ConditionTypeDependenciesReachable)
+	if cond == nil || cond.Status != metav1.ConditionFalse || !strings.Contains(cond.Message, rejected.Error()) {
+		t.Errorf("%s = %+v, want False carrying %q", controllerutils.ConditionTypeDependenciesReachable, cond, rejected)
 	}
 }
 
@@ -324,9 +415,10 @@ func TestFindProfileCachesForArtifact_SkipsStorageClassMismatch(t *testing.T) {
 		[]string{testNamespace + "/" + matching.Name, testNamespace + "/" + unset.Name})
 }
 
-// A cache that needs an adapter disk cannot adopt a diskless artifact, so it must not be
-// woken for one - PlanResources would only re-plan a disk-bearing artifact of its own.
-func TestFindProfileCachesForArtifact_SkipsDisklessArtifactForAdapterCache(t *testing.T) {
+// A cache that needs an adapter disk adds one in place to a diskless model artifact it
+// can otherwise use, so it is woken for one; a diskless adapter artifact is never a
+// candidate.
+func TestFindProfileCachesForArtifact_AdapterCacheWakesForDisklessModelArtifact(t *testing.T) {
 	adapterCache := makeSharedProfileCache("cache-lora")
 	adapterCache.Spec.RequiresAdapterDisk = true
 	plainCache := makeSharedProfileCache("cache-plain")
@@ -336,6 +428,14 @@ func TestFindProfileCachesForArtifact_SkipsDisklessArtifactForAdapterCache(t *te
 	r := newProfileCacheTestReconciler(t, adapterCache, plainCache, diskless)
 
 	assertRequestKeys(t, r.findProfileCachesForArtifact(context.Background(), diskless),
+		[]string{testNamespace + "/" + adapterCache.Name, testNamespace + "/" + plainCache.Name})
+
+	adapterArtifact := makeWatchedArtifact("artifact-adapter")
+	adapterArtifact.Spec.Type = aimv1alpha1.ArtifactTypeAdapter
+
+	r = newProfileCacheTestReconciler(t, adapterCache, plainCache, adapterArtifact)
+
+	assertRequestKeys(t, r.findProfileCachesForArtifact(context.Background(), adapterArtifact),
 		[]string{testNamespace + "/" + plainCache.Name})
 
 	withDisk := makeWatchedArtifact("artifact-with-disk")

@@ -25,6 +25,7 @@ package aimservice
 import (
 	"context"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -276,6 +277,17 @@ func newWatchTestClient(t *testing.T, scheme *runtime.Scheme, objs ...client.Obj
 				return nil
 			}
 			return artifact.Spec.CompatibleWith
+		}).
+		WithIndex(&aimv1alpha2.AIMProfileCache{}, aimv1alpha2.ProfileCacheArtifactNameIndexKey, func(obj client.Object) []string {
+			cache, ok := obj.(*aimv1alpha2.AIMProfileCache)
+			if !ok {
+				return nil
+			}
+			names := make([]string, 0, len(cache.Status.Artifacts))
+			for _, artifact := range cache.Status.Artifacts {
+				names = append(names, artifact.Name)
+			}
+			return names
 		}).
 		Build()
 }
@@ -705,6 +717,60 @@ func TestFindServicesForAdapterArtifact_FansOutByExactAndLogicalCompatibility(t 
 	}
 }
 
+// TestFindServicesForAdapterArtifact_ReachesDynamicServiceViaProfileCache covers
+// a dynamic service with no declared adapters: it references no adapter
+// artifact, so the base artifact gaining its adapter disk must reach it through
+// the profile cache that resolved the artifact.
+func TestFindServicesForAdapterArtifact_ReachesDynamicServiceViaProfileCache(t *testing.T) {
+	scheme := newWatchTestScheme(t)
+
+	cacheFor := func(name, profile, artifactName string) *aimv1alpha2.AIMProfileCache {
+		return &aimv1alpha2.AIMProfileCache{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns"},
+			Spec: aimv1alpha2.AIMProfileCacheSpec{
+				ProfileName:  profile,
+				ProfileScope: aimv1alpha1.AIMResolutionScopeNamespace,
+				Mode:         aimv1alpha2.ProfileCacheModeShared,
+			},
+			Status: aimv1alpha2.AIMProfileCacheStatus{
+				Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
+					artifactName: {Name: artifactName, Model: "org/base"},
+				},
+			},
+		}
+	}
+	dynamicService := imageShapeService("svc-dynamic", "ns", "p", aimv1alpha1.AIMResolutionScopeNamespace)
+	dynamicService.Spec.AdapterMode = aimv1alpha1.AdapterModeDynamic
+
+	c := newWatchTestClient(t, scheme,
+		cacheFor("p-cache", "p", "base-artifact"),
+		cacheFor("other-cache", "other", "other-artifact"),
+		dynamicService,
+		// Shares the cache but serves no adapters, so the adapter disk is not its concern.
+		imageShapeService("svc-plain", "ns", "p", aimv1alpha1.AIMResolutionScopeNamespace),
+		imageShapeService("svc-other", "ns", "other", aimv1alpha1.AIMResolutionScopeNamespace),
+	)
+
+	model := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "base-artifact", Namespace: "ns"},
+		Spec: aimv1alpha1.AIMArtifactSpec{
+			Type:        aimv1alpha1.ArtifactTypeModel,
+			ModelID:     "org/base",
+			AdapterDisk: &aimv1alpha1.AIMAdapterDisk{},
+		},
+	}
+
+	t.Run("artifact with adapter disk reaches the cache's services", func(t *testing.T) {
+		assertRequests(t, findServicesForAdapterArtifact(c)(context.Background(), model), "ns/svc-dynamic")
+	})
+
+	t.Run("artifact without adapter disk does not fan out through caches", func(t *testing.T) {
+		diskless := model.DeepCopy()
+		diskless.Spec.AdapterDisk = nil
+		assertRequests(t, findServicesForAdapterArtifact(c)(context.Background(), diskless))
+	})
+}
+
 // TestAdapterArtifactRelevantChangePredicate_RankChange covers the gap that let
 // a mutable spec.rank edit go unnoticed: rank feeds the resolved
 // AIM_ADAPTER_MAX_RANK for static services, so a change must enqueue consumers
@@ -744,6 +810,111 @@ func TestAdapterArtifactRelevantChangePredicate_RankChange(t *testing.T) {
 			t.Error("an equal rank must not fire the predicate")
 		}
 	})
+}
+
+func dependenciesReachable(status metav1.ConditionStatus, message string, transition time.Time) []metav1.Condition {
+	return []metav1.Condition{{
+		Type:               "DependenciesReachable",
+		Status:             status,
+		Reason:             "InfrastructureError",
+		Message:            message,
+		LastTransitionTime: metav1.NewTime(transition),
+	}}
+}
+
+// The service's AdaptersReady message names a failed adapter disk PVC on the
+// base model artifact, so a change of that condition must enqueue the service.
+func TestAdapterArtifactRelevantChangePredicate_DependenciesReachable(t *testing.T) {
+	pred := adapterArtifactRelevantChangePredicate()
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	oldA := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "base", Namespace: "ns"},
+		Spec:       aimv1alpha1.AIMArtifactSpec{Type: aimv1alpha1.ArtifactTypeModel},
+		Status: aimv1alpha1.AIMArtifactStatus{
+			Conditions: dependenciesReachable(metav1.ConditionTrue, "All dependencies are reachable", start),
+		},
+	}
+
+	tests := []struct {
+		name  string
+		conds []metav1.Condition
+		want  bool
+	}{
+		{name: "turns False", conds: dependenciesReachable(metav1.ConditionFalse, "quota exceeded", start), want: true},
+		{name: "message changes", conds: dependenciesReachable(metav1.ConditionTrue, "reachable again", start), want: true},
+		{name: "condition removed", conds: nil, want: true},
+		{
+			name:  "only lastTransitionTime changes",
+			conds: dependenciesReachable(metav1.ConditionTrue, "All dependencies are reachable", start.Add(time.Minute)),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			newA := oldA.DeepCopy()
+			newA.Status.Conditions = tt.conds
+			if got := pred.Update(event.UpdateEvent{ObjectOld: oldA, ObjectNew: newA}); got != tt.want {
+				t.Errorf("Update() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Service messages report a paused Shared AIMProfileCache and the cache's
+// failing DependenciesReachable condition, neither of which moves the cache's
+// status, observedGeneration or artifacts.
+func TestProfileCacheRelevantChangePredicate(t *testing.T) {
+	pred := profileCacheRelevantChangePredicate()
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	oldCache := &aimv1alpha2.AIMProfileCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "shared-cache", Namespace: "ns", Generation: 2},
+		Status: aimv1alpha2.AIMProfileCacheStatus{
+			Status:             constants.AIMStatusReady,
+			ObservedGeneration: 2,
+			Conditions:         dependenciesReachable(metav1.ConditionTrue, "All dependencies are reachable", start),
+		},
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*aimv1alpha2.AIMProfileCache)
+		want   bool
+	}{
+		{
+			name: "paused",
+			mutate: func(c *aimv1alpha2.AIMProfileCache) {
+				c.Annotations = map[string]string{constants.AnnotationReconciliationPaused: "true"}
+			},
+			want: true,
+		},
+		{
+			name: "DependenciesReachable turns False",
+			mutate: func(c *aimv1alpha2.AIMProfileCache) {
+				c.Status.Conditions = dependenciesReachable(metav1.ConditionFalse, "admission denied", start)
+			},
+			want: true,
+		},
+		{
+			name: "only lastTransitionTime changes",
+			mutate: func(c *aimv1alpha2.AIMProfileCache) {
+				c.Status.Conditions = dependenciesReachable(metav1.ConditionTrue, "All dependencies are reachable", start.Add(time.Minute))
+			},
+		},
+		{
+			name: "unrelated annotation",
+			mutate: func(c *aimv1alpha2.AIMProfileCache) {
+				c.Annotations = map[string]string{"example.com/note": "x"}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			newCache := oldCache.DeepCopy()
+			tt.mutate(newCache)
+			if got := pred.Update(event.UpdateEvent{ObjectOld: oldCache, ObjectNew: newCache}); got != tt.want {
+				t.Errorf("Update() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
 
 // imageShapeService builds a service that resolves its model by image:

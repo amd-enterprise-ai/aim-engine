@@ -32,6 +32,7 @@ import (
 	"sort"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -45,21 +46,40 @@ import (
 // caught up to the current spec generation. Callers should preserve their last
 // known-good projection and retry rather than treating this convergence state
 // as an infrastructure failure or as proof that no cache exists.
+//
+// The AIMProfileCache controller publishes observedGeneration on every reconcile,
+// including failed ones, so a lasting lag means the cache is not being reconciled
+// at all, typically because it carries the reconciliation-paused annotation.
 type StatusStaleError struct {
 	Namespace          string
 	Name               string
 	Generation         int64
 	ObservedGeneration int64
+	Paused             bool
 }
 
 func (e *StatusStaleError) Error() string {
-	return fmt.Sprintf(
+	msg := fmt.Sprintf(
 		"AIMProfileCache %s/%s status has not observed metadata generation %d (observedGeneration=%d)",
 		e.Namespace,
 		e.Name,
 		e.Generation,
 		e.ObservedGeneration,
 	)
+	if e.Paused {
+		msg += "; reconciliation is paused"
+	}
+	return msg
+}
+
+// PendingReason says, for a user-facing message, why the cache's status does not
+// yet describe its latest spec.
+func (e *StatusStaleError) PendingReason() string {
+	if e.Paused {
+		return fmt.Sprintf("reconciliation of Shared AIMProfileCache %s is paused by the %s annotation",
+			e.Name, constants.AnnotationReconciliationPaused)
+	}
+	return fmt.Sprintf("Shared AIMProfileCache %s has not yet processed its latest spec", e.Name)
 }
 
 // FindReadyShared returns a Ready, profile-owned (Shared) AIMProfileCache in
@@ -130,10 +150,13 @@ func FindReadyShared(
 		return ready, nil
 	}
 	if unknown != nil {
+		cond := activeErrorCondition(unknown)
 		return nil, fmt.Errorf(
-			"AIMProfileCache %s/%s readiness is unknown because reconciliation has an active error condition",
+			"AIMProfileCache %s/%s readiness is unknown because reconciliation has an active error condition: %s=False: %s",
 			unknown.Namespace,
 			unknown.Name,
+			cond.Type,
+			cond.Message,
 		)
 	}
 	if stale != nil {
@@ -142,6 +165,7 @@ func FindReadyShared(
 			Name:               stale.Name,
 			Generation:         stale.Generation,
 			ObservedGeneration: stale.Status.ObservedGeneration,
+			Paused:             controllerutils.IsReconciliationPaused(stale),
 		}
 	}
 	return nil, nil
@@ -162,26 +186,37 @@ func matchesShared(
 }
 
 func cacheReadinessUnknown(cache *aimv1alpha2.AIMProfileCache) bool {
+	return activeErrorCondition(cache) != nil
+}
+
+// activeErrorCondition returns the first error condition that is False on the
+// cache, or nil when none is.
+func activeErrorCondition(cache *aimv1alpha2.AIMProfileCache) *metav1.Condition {
 	for _, conditionType := range []string{
 		controllerutils.ConditionTypeDependenciesReachable,
 		controllerutils.ConditionTypeAuthValid,
 		controllerutils.ConditionTypeConfigValid,
 	} {
-		if meta.IsStatusConditionFalse(cache.Status.Conditions, conditionType) {
-			return true
+		if cond := meta.FindStatusCondition(cache.Status.Conditions, conditionType); cond != nil &&
+			cond.Status == metav1.ConditionFalse {
+			return cond
 		}
 	}
-	return false
+	return nil
 }
 
 func cacheStatusCurrent(cache *aimv1alpha2.AIMProfileCache) bool {
 	return cache.Status.ObservedGeneration == cache.Generation
 }
 
-// SelectBestShared returns the healthiest Shared cache matching the profile and
-// scope whose status describes its current spec generation. Equal-health
-// candidates are ordered by name before selection so every projection producer
-// and consumer chooses the same cache independently of API list order.
+// SelectBestShared returns the Shared cache matching the profile and scope that
+// a service should use. Caches whose status describes their current spec
+// generation are ranked by health. When every match is stale (just created, or
+// its spec just changed), the first by name is returned anyway: the cache exists
+// and will converge, and reporting it as absent would make the caller plan a
+// replacement on top of it. Its status may then still describe the previous
+// generation. Equal-health candidates are ordered by name so every caller
+// chooses the same cache independently of API list order.
 func SelectBestShared(
 	caches []aimv1alpha2.AIMProfileCache,
 	profileName string,
@@ -191,7 +226,8 @@ func SelectBestShared(
 		return nil
 	}
 
-	matching := make([]aimv1alpha2.AIMProfileCache, 0, len(caches))
+	current := make([]aimv1alpha2.AIMProfileCache, 0, len(caches))
+	var stale *aimv1alpha2.AIMProfileCache
 	for i := range caches {
 		cache := caches[i]
 		// Only a profile-owned (Shared) cache belongs on the shared runtime. A
@@ -201,14 +237,20 @@ func SelectBestShared(
 			continue
 		}
 		if !cacheStatusCurrent(&cache) {
+			if stale == nil || cache.Name < stale.Name {
+				stale = &cache
+			}
 			continue
 		}
-		matching = append(matching, cache)
+		current = append(current, cache)
 	}
-	sort.Slice(matching, func(i, j int) bool {
-		return matching[i].Name < matching[j].Name
+	if len(current) == 0 {
+		return stale
+	}
+	sort.Slice(current, func(i, j int) bool {
+		return current[i].Name < current[j].Name
 	})
-	return utils.SelectBestPtr(matching, func(cache *aimv1alpha2.AIMProfileCache) constants.AIMStatus {
+	return utils.SelectBestPtr(current, func(cache *aimv1alpha2.AIMProfileCache) constants.AIMStatus {
 		return cache.Status.GetAIMStatus()
 	})
 }
