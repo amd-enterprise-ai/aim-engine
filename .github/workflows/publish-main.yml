@@ -12,6 +12,7 @@ on:
       - 'images/artifact-downloader/**'
       - 'images/aim-dummy/**'
       - 'hack/verify-helm-gateway-providers.sh'
+      - 'hack/verify-helm-runtime-config.sh'
       - 'Makefile'
       - 'Dockerfile'
       - '.github/workflows/publish-main.yml'
@@ -144,6 +145,9 @@ jobs:
 
       - name: Validate gateway provider render matrix
         run: ./hack/verify-helm-gateway-providers.sh ./dist/chart
+
+      - name: Validate default AIMClusterRuntimeConfig version
+        run: ./hack/verify-helm-runtime-config.sh ./dist/chart
 
       - name: Lint Helm chart
         run: helm lint ./dist/chart
