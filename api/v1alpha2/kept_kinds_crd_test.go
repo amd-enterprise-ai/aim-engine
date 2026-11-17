@@ -77,11 +77,7 @@ func TestKeptKindCRDVersionsMatch(t *testing.T) {
 				t.Errorf("v1alpha1 deprecated=%v warning=%q, want true %q", v1alpha1.Deprecated, warning, kind.warning)
 			}
 			if v1alpha2.Deprecated || v1alpha2.DeprecationWarning != nil {
-				got := ""
-				if v1alpha2.DeprecationWarning != nil {
-					got = *v1alpha2.DeprecationWarning
-				}
-				t.Errorf("v1alpha2 deprecated=%v warning=%q, want false and empty", v1alpha2.Deprecated, got)
+				t.Error("v1alpha2 is deprecated, want it not deprecated")
 			}
 
 			requireSame(t, "schema", v1alpha1.Schema, v1alpha2.Schema)
