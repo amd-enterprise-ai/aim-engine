@@ -81,6 +81,7 @@ type DiscoveryJobSpec struct {
 	Env              []corev1.EnvVar
 	ImagePullSecrets []corev1.LocalObjectReference
 	ServiceAccount   string
+	Tolerations      []corev1.Toleration
 	TemplateSpec     aimv1alpha1.AIMServiceTemplateSpecCommon
 	// OwnerRef sets the owner reference on the discovery Job for garbage collection.
 	// When the template is deleted, the discovery Job will be automatically cleaned up.
@@ -273,6 +274,7 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 					RestartPolicy:      corev1.RestartPolicyNever,
 					ImagePullSecrets:   spec.ImagePullSecrets,
 					ServiceAccountName: spec.ServiceAccount,
+					Tolerations:        spec.Tolerations,
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot:   &runAsNonRoot,
 						RunAsUser:      &runAsUser,

@@ -166,9 +166,10 @@ type AIMServiceRuntimeConfig struct {
 	// +optional
 	ScaleFromZero *AIMScaleFromZeroConfig `json:"scaleFromZero,omitempty"`
 
-	// Tolerations are added to inference pods so they can run on tainted nodes.
-	// An AIMService's list replaces the runtime config's, a namespace runtime
-	// config's replaces the cluster's, and an empty list removes the inherited one.
+	// Tolerations for inference pods. Runtime config lists also apply to the
+	// model download and discovery Jobs. An AIMService's list replaces the
+	// runtime config's, a namespace config's replaces the cluster's, and an
+	// empty list removes the inherited one.
 	// +optional
 	// +listType=atomic
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`

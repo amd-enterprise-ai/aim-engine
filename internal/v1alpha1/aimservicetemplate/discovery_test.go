@@ -1432,3 +1432,19 @@ func TestShouldCheckClusterTemplateDiscoveryJob_IdentityRediscoveryOverride(t *t
 		t.Fatalf("NotAvailable cluster template should never be checked")
 	}
 }
+
+func TestBuildDiscoveryJob_Tolerations(t *testing.T) {
+	gpu := corev1.Toleration{Key: "amd.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	job := BuildDiscoveryJob(DiscoveryJobSpec{
+		TemplateName: "my-template",
+		Namespace:    "default",
+		ModelID:      "test-model",
+		Image:        "ghcr.io/test/image:latest",
+		Tolerations:  []corev1.Toleration{gpu},
+	})
+
+	got := job.Spec.Template.Spec.Tolerations
+	if len(got) != 1 || got[0] != gpu {
+		t.Errorf("discovery Job tolerations = %v, want [%v]", got, gpu)
+	}
+}

@@ -1694,3 +1694,36 @@ func TestDecorateStatusMirrorsObservations(t *testing.T) {
 		t.Errorf("adapter b lastError = %q, want %s", status.Adapters[1].LastError, ReasonNotFound)
 	}
 }
+
+func TestAdapterJobsUseInferenceTolerations(t *testing.T) {
+	runtimeToleration := corev1.Toleration{Key: "amd.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	serviceToleration := corev1.Toleration{Key: "dedicated", Operator: corev1.TolerationOpEqual, Value: "inference", Effect: corev1.TaintEffectNoSchedule}
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{}
+	config.Tolerations = []corev1.Toleration{runtimeToleration}
+	ad := Observation{
+		Name: "lora-a", AdapterPath: "lora-a", ModelID: "org/adapter",
+		BaseModelID: "org/base", SourceURI: "hf://org/lora-a",
+	}
+
+	tests := []struct {
+		name               string
+		serviceTolerations []corev1.Toleration
+		want               corev1.Toleration
+	}{
+		{name: "runtime config", want: runtimeToleration},
+		{name: "service list replaces runtime config", serviceTolerations: []corev1.Toleration{serviceToleration}, want: serviceToleration},
+	}
+	for _, tt := range tests {
+		svc := serviceWithAdapters("lora-a")
+		svc.Spec.Tolerations = tt.serviceTolerations
+		for name, job := range map[string]*batchv1.Job{
+			"staging":      BuildStagingJob(svc, adapterArtifact("lora-a", "base"), testAdapterPVC, testAdapterPVCUID, ad, config),
+			"subtree-sync": BuildSubtreeSyncJob(svc, modelParent(testAdapterPVC), testAdapterPVC, testAdapterPVCUID, config),
+		} {
+			got := job.Spec.Template.Spec.Tolerations
+			if len(got) != 1 || got[0] != tt.want {
+				t.Errorf("%s: %s Job tolerations = %v, want [%v]", tt.name, name, got, tt.want)
+			}
+		}
+	}
+}

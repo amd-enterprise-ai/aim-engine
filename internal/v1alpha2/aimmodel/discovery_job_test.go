@@ -24,6 +24,7 @@ package aimmodel
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"strings"
@@ -33,6 +34,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -368,5 +370,29 @@ func TestIsDiscoveryJob_Conditions(t *testing.T) {
 	}
 	if got := GetDiscoveryJobFailureReason(failed); got != "too many retries" {
 		t.Fatalf("failure reason = %q, want %q", got, "too many retries")
+	}
+}
+
+func TestDecideDiscovery_NewJobGetsTolerations(t *testing.T) {
+	t.Parallel()
+
+	gpu := corev1.Toleration{Key: "amd.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	in := DiscoveryInputs{
+		Kind:        DiscoveryKindAIMModel,
+		ModelName:   "model",
+		ModelUID:    "uid",
+		Namespace:   "team",
+		Image:       "registry/model:1.0",
+		OwnerRef:    metav1.OwnerReference{Kind: "AIMModel", Name: "model", UID: "uid"},
+		Tolerations: []corev1.Toleration{gpu},
+	}
+
+	decision := DecideDiscovery(context.Background(), fake.NewClientBuilder().Build(), in, DiscoveryFetch{})
+	if decision.DesiredJob == nil {
+		t.Fatalf("no discovery Job planned: %s: %s", decision.Reason, decision.Message)
+	}
+	got := decision.DesiredJob.Spec.Template.Spec.Tolerations
+	if len(got) != 1 || got[0] != gpu {
+		t.Errorf("discovery Job tolerations = %v, want [%v]", got, gpu)
 	}
 }

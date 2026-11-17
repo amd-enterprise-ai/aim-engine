@@ -433,9 +433,9 @@ with the query's expected names and labels and must emit delta values rather
 than cumulative counter totals, because the activation trigger uses a fixed
 `operationOverTime=avg`.
 
-## Tolerations for inference pods
+## Tolerations
 
-`spec.tolerations` adds tolerations to the pods of AIMService inference workloads, so they can be scheduled onto tainted nodes, such as GPU nodes reserved for inference:
+`spec.tolerations` adds tolerations to the pods of AIMService inference workloads and to the Jobs that prepare a model, so they can be scheduled onto tainted nodes, such as GPU nodes reserved for inference:
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha1
@@ -456,6 +456,10 @@ AIMService.spec.tolerations  >  namespace AIMRuntimeConfig  >  cluster AIMCluste
 ```
 
 An empty list (`tolerations: []`) removes the inherited tolerations: on an AIMService it removes the runtime config's for that service, and on a namespace AIMRuntimeConfig it removes the cluster config's for that namespace. Clusters that enable the `ExtendedResourceToleration` admission plugin already give pods requesting `amd.com/gpu` or `nvidia.com/gpu` a toleration for a taint with that key, whatever this field says.
+
+The size check, download and discovery Jobs use the runtime config's list. One of these Jobs can serve several services, so an AIMService's list does not apply to them. The adapter staging Jobs use the same list as the service's inference pods, because they write to the adapter disk that the inference pods mount. If no node without the taint can run these Jobs, for example when all nodes are GPU nodes or the cache uses node-local storage, the model starts only when the runtime config tolerates the taint.
+
+A Job keeps the tolerations that it was created with. After you change the list, delete a `Pending` Job, and AIM Engine creates it again with the new list.
 
 ## Environment variable overrides
 

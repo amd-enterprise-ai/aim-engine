@@ -217,9 +217,8 @@ func (r *ModelReconciler) FetchRemoteState(
 		legacyFetch := r.legacy().FetchRemoteState(ctx, c, controllerutils.ReconcileContext[*aimv1alpha1.AIMModel]{Object: result.legacyModel})
 		result.legacyFetch = &legacyFetch
 	}
-	if model.Spec.ModelID != "" {
-		result.runtimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, model.Spec.Name, model.Namespace)
-	}
+	// Profile generation and the discovery Job tolerations use the runtime config.
+	result.runtimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, model.Spec.Name, model.Namespace)
 	// Skip native v1alpha2 discovery for custom and fine-tuned models. They
 	// either bring their own model artifacts via spec.modelSources +
 	// customTemplates, or copy templates from a base by aimId. Their image is
@@ -242,6 +241,7 @@ func (r *ModelReconciler) FetchRemoteState(
 			Image:            model.Spec.Image,
 			ImagePullSecrets: model.Spec.ImagePullSecrets,
 			ServiceAccount:   model.Spec.ServiceAccountName,
+			Tolerations:      aimruntimeconfig.Tolerations(result.runtimeConfig.Value),
 			OwnerRef:         ownerReferenceForModel(model),
 			CurrentState:     model.Status.Discovery,
 			Clientset:        r.Clientset,

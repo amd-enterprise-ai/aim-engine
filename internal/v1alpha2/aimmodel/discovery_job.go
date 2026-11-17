@@ -109,6 +109,7 @@ type DiscoveryJobSpec struct {
 	Image            string
 	ImagePullSecrets []corev1.LocalObjectReference
 	ServiceAccount   string
+	Tolerations      []corev1.Toleration
 	SpecHash         string
 	OwnerRef         metav1.OwnerReference
 	// Kind is one of DiscoveryKindAIMModel or DiscoveryKindAIMClusterModel; surfaced
@@ -163,6 +164,7 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 					RestartPolicy:      corev1.RestartPolicyNever,
 					ImagePullSecrets:   spec.ImagePullSecrets,
 					ServiceAccountName: spec.ServiceAccount,
+					Tolerations:        spec.Tolerations,
 					Containers: []corev1.Container{
 						{
 							Name:    discoveryContainerName,
