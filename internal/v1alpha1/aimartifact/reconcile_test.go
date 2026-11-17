@@ -24,9 +24,11 @@ package aimartifact
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 
@@ -36,7 +38,12 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestFoldStalledFilesystemHealth(t *testing.T) {
@@ -370,4 +377,159 @@ func TestPlanResourcesDoesNotReplaceExistingDownloadJobWhenTrustChanges(t *testi
 	if len(plan.GetToDelete()) != 0 {
 		t.Fatalf("trust snapshot replaced existing download Job: %#v", plan.GetToDelete())
 	}
+}
+
+func TestFetchRemoteStateRewritesArtifactPVCOwnerReferences(t *testing.T) {
+	artifact := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "weights", Namespace: "models", UID: types.UID("artifact-uid")},
+		Spec: aimv1alpha1.AIMArtifactSpec{
+			Type:        aimv1alpha1.ArtifactTypeModel,
+			SourceURI:   "hf://org/weights",
+			Size:        resource.MustParse("10Mi"),
+			AdapterDisk: &aimv1alpha1.AIMAdapterDisk{Size: resource.MustParse("1Gi")},
+		},
+	}
+	storageClass := "nfs"
+	pvcSpec := corev1.PersistentVolumeClaimSpec{
+		AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
+		Resources: corev1.VolumeResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Mi")},
+		},
+		StorageClassName: &storageClass,
+	}
+	labels := map[string]string{"keep": "label"}
+	annotations := map[string]string{"keep": "annotation"}
+	owner := metav1.OwnerReference{
+		APIVersion:         "aim.eai.amd.com/v1alpha1",
+		Kind:               "AIMArtifact",
+		Name:               artifact.Name,
+		UID:                artifact.UID,
+		Controller:         ptr.To(true),
+		BlockOwnerDeletion: ptr.To(true),
+	}
+	other := metav1.OwnerReference{
+		APIVersion:         "example.com/v1",
+		Kind:               "Widget",
+		Name:               "other",
+		UID:                types.UID("other-uid"),
+		Controller:         ptr.To(false),
+		BlockOwnerDeletion: ptr.To(false),
+	}
+	newPVC := func(name string) *corev1.PersistentVolumeClaim {
+		return &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            name,
+				Namespace:       artifact.Namespace,
+				ResourceVersion: "1",
+				Labels:          labels,
+				Annotations:     annotations,
+				OwnerReferences: []metav1.OwnerReference{owner, other},
+			},
+			Spec: pvcSpec,
+		}
+	}
+	cachePVC := newPVC(GenerateCachePvcName(artifact))
+	adapterPVC := newPVC(GenerateAdapterPvcName(artifact))
+	downloadJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            getDownloadJobName(artifact),
+			Namespace:       artifact.Namespace,
+			ResourceVersion: "1",
+			OwnerReferences: []metav1.OwnerReference{owner},
+		},
+	}
+	reaperJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            generateAdapterReaperJobName(artifact),
+			Namespace:       artifact.Namespace,
+			ResourceVersion: "1",
+			OwnerReferences: []metav1.OwnerReference{owner},
+		},
+	}
+	roleBinding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "aim-engine-artifact-status-updater",
+			Namespace:       artifact.Namespace,
+			ResourceVersion: "1",
+			OwnerReferences: []metav1.OwnerReference{owner},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		corev1.AddToScheme, batchv1.AddToScheme, rbacv1.AddToScheme,
+		aimv1alpha1.AddToScheme, aimv1alpha2.AddToScheme,
+	} {
+		if err := add(scheme); err != nil {
+			t.Fatalf("add to scheme: %v", err)
+		}
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		cachePVC, adapterPVC, downloadJob, reaperJob, roleBinding,
+	).Build()
+	reconciler := &ArtifactReconciler{}
+	ctx := context.Background()
+	reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha1.AIMArtifact]{Object: artifact}
+
+	fetch := reconciler.FetchRemoteState(ctx, c, reconcileCtx)
+	if fetch.cachePvc.Error != nil || (fetch.adapterPvc != nil && fetch.adapterPvc.Error != nil) {
+		t.Fatalf("rewrite failed: cache %v adapter %v", fetch.cachePvc.Error, fetch.adapterPvc.Error)
+	}
+
+	wantArtifactOwner := owner
+	wantArtifactOwner.APIVersion = "aim.eai.amd.com/v1alpha2"
+	assertPVC := func(name string) {
+		t.Helper()
+		got := &corev1.PersistentVolumeClaim{}
+		if err := c.Get(ctx, client.ObjectKey{Namespace: artifact.Namespace, Name: name}, got); err != nil {
+			t.Fatalf("get pvc %s: %v", name, err)
+		}
+		if !reflect.DeepEqual(got.OwnerReferences, []metav1.OwnerReference{wantArtifactOwner, other}) {
+			t.Errorf("%s owner references = %#v", name, got.OwnerReferences)
+		}
+		if !reflect.DeepEqual(got.Spec, pvcSpec) || !reflect.DeepEqual(got.Labels, labels) || !reflect.DeepEqual(got.Annotations, annotations) {
+			t.Errorf("%s spec, labels, or annotations changed", name)
+		}
+	}
+	assertPVC(cachePVC.Name)
+	assertPVC(adapterPVC.Name)
+
+	assertUntouched := func(obj client.Object) {
+		t.Helper()
+		got := obj.DeepCopyObject().(client.Object)
+		if err := c.Get(ctx, client.ObjectKeyFromObject(obj), got); err != nil {
+			t.Fatalf("get %s: %v", obj.GetName(), err)
+		}
+		if got.GetResourceVersion() != "1" {
+			t.Errorf("%s resourceVersion = %s, want 1", obj.GetName(), got.GetResourceVersion())
+		}
+		refs := got.GetOwnerReferences()
+		if len(refs) != 1 || refs[0].APIVersion != "aim.eai.amd.com/v1alpha1" || refs[0].UID != artifact.UID {
+			t.Errorf("%s owner references = %#v", obj.GetName(), refs)
+		}
+	}
+	assertUntouched(downloadJob)
+	assertUntouched(reaperJob)
+	assertUntouched(roleBinding)
+
+	cacheVersion := resourceVersionOf(t, ctx, c, cachePVC)
+	adapterVersion := resourceVersionOf(t, ctx, c, adapterPVC)
+	if err := reconciler.FetchRemoteState(ctx, c, reconcileCtx).cachePvc.Error; err != nil {
+		t.Fatalf("second fetch: %v", err)
+	}
+	if got := resourceVersionOf(t, ctx, c, cachePVC); got != cacheVersion {
+		t.Errorf("second fetch changed cache PVC resourceVersion from %s to %s", cacheVersion, got)
+	}
+	if got := resourceVersionOf(t, ctx, c, adapterPVC); got != adapterVersion {
+		t.Errorf("second fetch changed adapter PVC resourceVersion from %s to %s", adapterVersion, got)
+	}
+}
+
+func resourceVersionOf(t *testing.T, ctx context.Context, c client.Client, obj client.Object) string {
+	t.Helper()
+	got := obj.DeepCopyObject().(client.Object)
+	if err := c.Get(ctx, client.ObjectKeyFromObject(obj), got); err != nil {
+		t.Fatalf("get %s: %v", obj.GetName(), err)
+	}
+	return got.GetResourceVersion()
 }

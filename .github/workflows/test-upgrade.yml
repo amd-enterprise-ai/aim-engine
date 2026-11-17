@@ -673,7 +673,8 @@ jobs:
         run: |
           set -euo pipefail
           hack/ci/upgrade/record-v0.2.7-identities.sh "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv"
-          diff -u "${UPGRADE_REPORT_DIR}/identities-before-upgrade.tsv" \
+          hack/ci/upgrade/record-v0.2.7-identities.sh --diff \
+            "${UPGRADE_REPORT_DIR}/identities-before-upgrade.tsv" \
             "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv"
 
       - name: Garbage collection follows the rewritten owner reference

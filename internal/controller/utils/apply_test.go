@@ -23,16 +23,21 @@
 package controllerutils
 
 import (
+	"context"
+	"reflect"
 	"testing"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
@@ -797,4 +802,201 @@ func TestSetOwnerReference_CanonicalizesOwnerGVK(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRewriteV1alpha1OwnerReference(t *testing.T) {
+	const resourceVersion = "7"
+	ownerUID := types.UID("artifact-uid")
+	otherUID := types.UID("other-uid")
+	trueValue := true
+	falseValue := false
+
+	otherRef := metav1.OwnerReference{
+		APIVersion:         "example.com/v1",
+		Kind:               "Widget",
+		Name:               "other",
+		UID:                otherUID,
+		Controller:         &falseValue,
+		BlockOwnerDeletion: &trueValue,
+	}
+	artifactRef := func(apiVersion string, uid types.UID, controller, block *bool) metav1.OwnerReference {
+		return metav1.OwnerReference{
+			APIVersion:         apiVersion,
+			Kind:               "AIMArtifact",
+			Name:               "weights",
+			UID:                uid,
+			Controller:         controller,
+			BlockOwnerDeletion: block,
+		}
+	}
+
+	spec := corev1.PersistentVolumeClaimSpec{
+		AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+		Resources: corev1.VolumeResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Mi")},
+		},
+		StorageClassName: ptrString("nfs"),
+	}
+	labels := map[string]string{"keep": "label"}
+	annotations := map[string]string{"keep": "annotation"}
+
+	tests := []struct {
+		name      string
+		refs      []metav1.OwnerReference
+		wantRefs  []metav1.OwnerReference
+		wantPatch bool
+	}{
+		{
+			name: "v1alpha1 reference is rewritten and flags stay true",
+			refs: []metav1.OwnerReference{
+				artifactRef("aim.eai.amd.com/v1alpha1", ownerUID, &trueValue, &trueValue),
+				otherRef,
+			},
+			wantRefs: []metav1.OwnerReference{
+				artifactRef("aim.eai.amd.com/v1alpha2", ownerUID, &trueValue, &trueValue),
+				otherRef,
+			},
+			wantPatch: true,
+		},
+		{
+			name: "false flags are kept",
+			refs: []metav1.OwnerReference{
+				artifactRef("aim.eai.amd.com/v1alpha1", ownerUID, &falseValue, &falseValue),
+				otherRef,
+			},
+			wantRefs: []metav1.OwnerReference{
+				artifactRef("aim.eai.amd.com/v1alpha2", ownerUID, &falseValue, &falseValue),
+				otherRef,
+			},
+			wantPatch: true,
+		},
+		{
+			name: "nil flags are kept",
+			refs: []metav1.OwnerReference{
+				artifactRef("aim.eai.amd.com/v1alpha1", ownerUID, nil, nil),
+				otherRef,
+			},
+			wantRefs: []metav1.OwnerReference{
+				artifactRef("aim.eai.amd.com/v1alpha2", ownerUID, nil, nil),
+				otherRef,
+			},
+			wantPatch: true,
+		},
+		{
+			name: "already v1alpha2 is a no-op",
+			refs: []metav1.OwnerReference{
+				artifactRef("aim.eai.amd.com/v1alpha2", ownerUID, &trueValue, &trueValue),
+				otherRef,
+			},
+			wantRefs: []metav1.OwnerReference{
+				artifactRef("aim.eai.amd.com/v1alpha2", ownerUID, &trueValue, &trueValue),
+				otherRef,
+			},
+		},
+		{
+			name: "reference for a different UID is untouched",
+			refs: []metav1.OwnerReference{
+				artifactRef("aim.eai.amd.com/v1alpha1", otherUID, &trueValue, &trueValue),
+				otherRef,
+			},
+			wantRefs: []metav1.OwnerReference{
+				artifactRef("aim.eai.amd.com/v1alpha1", otherUID, &trueValue, &trueValue),
+				otherRef,
+			},
+		},
+		{
+			name: "non-rewritable kind is untouched",
+			refs: []metav1.OwnerReference{
+				{
+					APIVersion:         "aim.eai.amd.com/v1alpha1",
+					Kind:               "AIMProfile",
+					Name:               "weights",
+					UID:                ownerUID,
+					Controller:         &trueValue,
+					BlockOwnerDeletion: &falseValue,
+				},
+				otherRef,
+			},
+			wantRefs: []metav1.OwnerReference{
+				{
+					APIVersion:         "aim.eai.amd.com/v1alpha1",
+					Kind:               "AIMProfile",
+					Name:               "weights",
+					UID:                ownerUID,
+					Controller:         &trueValue,
+					BlockOwnerDeletion: &falseValue,
+				},
+				otherRef,
+			},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add corev1 to scheme: %v", err)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pvc := &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            "weights-cache",
+					Namespace:       "models",
+					ResourceVersion: resourceVersion,
+					Labels:          labels,
+					Annotations:     annotations,
+					OwnerReferences: tt.refs,
+				},
+				Spec: spec,
+			}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pvc).Build()
+			stored := &corev1.PersistentVolumeClaim{}
+			if err := c.Get(context.Background(), client.ObjectKeyFromObject(pvc), stored); err != nil {
+				t.Fatalf("get pvc: %v", err)
+			}
+
+			if err := RewriteV1alpha1OwnerReference(context.Background(), c, stored, ownerUID); err != nil {
+				t.Fatalf("rewrite owner reference: %v", err)
+			}
+
+			got := &corev1.PersistentVolumeClaim{}
+			if err := c.Get(context.Background(), client.ObjectKeyFromObject(pvc), got); err != nil {
+				t.Fatalf("get stored pvc: %v", err)
+			}
+			if !reflect.DeepEqual(got.OwnerReferences, tt.wantRefs) {
+				t.Errorf("owner references = %#v, want %#v", got.OwnerReferences, tt.wantRefs)
+			}
+			if !reflect.DeepEqual(got.Spec, spec) {
+				t.Errorf("spec = %#v, want %#v", got.Spec, spec)
+			}
+			if !reflect.DeepEqual(got.Labels, labels) || !reflect.DeepEqual(got.Annotations, annotations) {
+				t.Errorf("labels = %v annotations = %v", got.Labels, got.Annotations)
+			}
+			if tt.wantPatch {
+				if got.ResourceVersion == resourceVersion {
+					t.Fatalf("resourceVersion = %s, want a patch to change it", got.ResourceVersion)
+				}
+				again := &corev1.PersistentVolumeClaim{}
+				if err := c.Get(context.Background(), client.ObjectKeyFromObject(pvc), again); err != nil {
+					t.Fatalf("get pvc before second rewrite: %v", err)
+				}
+				rewrittenVersion := again.ResourceVersion
+				if err := RewriteV1alpha1OwnerReference(context.Background(), c, again, ownerUID); err != nil {
+					t.Fatalf("second rewrite: %v", err)
+				}
+				if err := c.Get(context.Background(), client.ObjectKeyFromObject(pvc), got); err != nil {
+					t.Fatalf("get pvc after second rewrite: %v", err)
+				}
+				if got.ResourceVersion != rewrittenVersion {
+					t.Errorf("second rewrite changed resourceVersion from %s to %s", rewrittenVersion, got.ResourceVersion)
+				}
+			} else if got.ResourceVersion != resourceVersion {
+				t.Errorf("resourceVersion = %s, want %s with no patch", got.ResourceVersion, resourceVersion)
+			}
+		})
+	}
+}
+
+func ptrString(value string) *string {
+	return &value
 }

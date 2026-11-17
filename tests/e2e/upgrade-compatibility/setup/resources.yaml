@@ -120,3 +120,21 @@ spec:
         value: "true"
       - name: AIM_DEBUG_SIMULATE_HF_DURATION
         value: "1"
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: upgrade-model-artifact
+  labels:
+    app.kubernetes.io/part-of: aim-engine-upgrade-compatibility
+spec:
+  type: model
+  sourceUri: hf://upgrade-example/adapter-disk
+  size: 10Mi
+  adapterDisk:
+    size: 1Gi
+  env:
+    - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+      value: "true"
+    - name: AIM_DEBUG_SIMULATE_HF_DURATION
+      value: "1"
