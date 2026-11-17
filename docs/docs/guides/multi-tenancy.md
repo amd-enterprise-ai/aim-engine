@@ -2,11 +2,6 @@
 
 AIM Engine supports multi-tenant deployments through a combination of cluster-scoped and namespace-scoped resources.
 
-:::{admonition} v1alpha2
-:class: note
-
-`AIMRuntimeConfig` / `AIMClusterRuntimeConfig` remain `aim.eai.amd.com/v1alpha1` resources.
-:::
 ## Resource Scoping
 
 | Resource | Cluster-Scoped | Namespace-Scoped |
@@ -37,7 +32,7 @@ A typical multi-tenant setup:
 ### Example: Namespace Configuration
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMRuntimeConfig
 metadata:
   name: default
@@ -71,7 +66,7 @@ AIM Engine can propagate labels from `AIMService` resources to managed child res
 Enable via runtime configuration:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default

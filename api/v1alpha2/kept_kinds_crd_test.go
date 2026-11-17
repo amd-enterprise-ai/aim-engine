@@ -37,15 +37,19 @@ import (
 // webhook. v1alpha1 is the only storage version, and the API server returns
 // those stored objects at v1alpha2 unchanged. That stays valid only while the
 // two versions have the same schema, subresources and print columns.
+// v1alpha1 is deprecated with a warning that names v1alpha2; v1alpha2 is not.
 func TestKeptKindCRDVersionsMatch(t *testing.T) {
-	for _, resource := range []string{
-		"aimartifacts",
-		"aimruntimeconfigs",
-		"aimclusterruntimeconfigs",
-		"aimclustermodelsources",
+	for _, kind := range []struct {
+		resource string
+		warning  string
+	}{
+		{"aimartifacts", "AIMArtifact v1alpha1 is deprecated; use aim.eai.amd.com/v1alpha2"},
+		{"aimruntimeconfigs", "AIMRuntimeConfig v1alpha1 is deprecated; use aim.eai.amd.com/v1alpha2"},
+		{"aimclusterruntimeconfigs", "AIMClusterRuntimeConfig v1alpha1 is deprecated; use aim.eai.amd.com/v1alpha2"},
+		{"aimclustermodelsources", "AIMClusterModelSource v1alpha1 is deprecated; use aim.eai.amd.com/v1alpha2"},
 	} {
-		t.Run(resource, func(t *testing.T) {
-			crd := readCRD(t, resource)
+		t.Run(kind.resource, func(t *testing.T) {
+			crd := readCRD(t, kind.resource)
 			strategy := apiextensionsv1.NoneConverter
 			if crd.Spec.Conversion != nil {
 				strategy = crd.Spec.Conversion.Strategy
@@ -64,6 +68,20 @@ func TestKeptKindCRDVersionsMatch(t *testing.T) {
 			}
 			if len(storage) != 1 || storage[0] != "v1alpha1" {
 				t.Errorf("storage versions = %v, want [v1alpha1]", storage)
+			}
+			warning := ""
+			if v1alpha1.DeprecationWarning != nil {
+				warning = *v1alpha1.DeprecationWarning
+			}
+			if !v1alpha1.Deprecated || warning != kind.warning {
+				t.Errorf("v1alpha1 deprecated=%v warning=%q, want true %q", v1alpha1.Deprecated, warning, kind.warning)
+			}
+			if v1alpha2.Deprecated || v1alpha2.DeprecationWarning != nil {
+				got := ""
+				if v1alpha2.DeprecationWarning != nil {
+					got = *v1alpha2.DeprecationWarning
+				}
+				t.Errorf("v1alpha2 deprecated=%v warning=%q, want false and empty", v1alpha2.Deprecated, got)
 			}
 
 			requireSame(t, "schema", v1alpha1.Schema, v1alpha2.Schema)

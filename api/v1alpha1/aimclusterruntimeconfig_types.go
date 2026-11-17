@@ -37,6 +37,7 @@ import (
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:storageversion
+// +kubebuilder:deprecatedversion:warning="AIMClusterRuntimeConfig v1alpha1 is deprecated; use aim.eai.amd.com/v1alpha2"
 // +kubebuilder:resource:scope=Cluster,shortName=aimclrc,categories=aim;all
 type AIMClusterRuntimeConfig struct {
 	metav1.TypeMeta   `json:",inline"`
