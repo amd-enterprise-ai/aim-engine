@@ -20,38 +20,20 @@ get_json() {
     fi
 }
 
-# owners_allowed reports whether actual owner references match the baseline
-# except for one change: a v1alpha1 reference to AIMArtifact, AIMRuntimeConfig,
-# AIMClusterRuntimeConfig, or AIMClusterModelSource may name v1alpha2. Any other
-# difference fails. Drop this allowance in the release that deletes those
-# v1alpha1 entries.
-owners_allowed() {
-    local expected="$1"
-    local actual="$2"
-
-    jq -e -n --arg expected "${expected}" --arg actual "${actual}" '
-        def kept: ["AIMArtifact", "AIMRuntimeConfig", "AIMClusterRuntimeConfig", "AIMClusterModelSource"];
-        def rows: @base64d | fromjson | sort_by(.kind, .name, .uid);
-        def allowed:
-            . as $pair
-            | (kept | index($pair[0].kind)) as $kept_kind
-            | $pair[0].kind == $pair[1].kind and
-              $pair[0].name == $pair[1].name and
-              $pair[0].uid == $pair[1].uid and
-              $pair[0].controller == $pair[1].controller and
-              (
-                $pair[0].apiVersion == $pair[1].apiVersion or
-                (
-                  $kept_kind != null and
-                  $pair[0].apiVersion == "aim.eai.amd.com/v1alpha1" and
-                  $pair[1].apiVersion == "aim.eai.amd.com/v1alpha2"
-                )
-              );
-        ($expected | rows) as $before
-        | ($actual | rows) as $after
-        | ($before | length) == ($after | length) and
-            ([range(0; $before | length) | [$before[.], $after[.]]] | all(allowed))
-    ' >/dev/null
+# Removed in the release that deletes the v1alpha1 entries.
+normalize_owners() {
+    printf '%s' "$1" | jq -sRr '
+        @base64d | fromjson
+        | map(
+            if .apiVersion == "aim.eai.amd.com/v1alpha1" and
+               (.kind | IN("AIMArtifact", "AIMRuntimeConfig", "AIMClusterRuntimeConfig", "AIMClusterModelSource"))
+            then .apiVersion = "aim.eai.amd.com/v1alpha2"
+            else .
+            end
+          )
+        | sort_by(.apiVersion, .kind, .name, .uid)
+        | tojson
+    '
 }
 
 verify_identity() {
@@ -71,22 +53,18 @@ verify_identity() {
             | sort_by(.apiVersion, .kind, .name, .uid)
             | @base64
         ' <<<"${json}")"
-        if ! owners_allowed "${expected_owners}" "${actual_owners}"; then
+        if [[ "$(normalize_owners "${expected_owners}")" != "$(normalize_owners "${actual_owners}")" ]]; then
             echo "${resource}/${name} owner references changed during upgrade" >&2
             echo "expected: $(base64 --decode <<<"${expected_owners}")" >&2
             echo "actual:   $(base64 --decode <<<"${actual_owners}")" >&2
             return 1
         fi
         if [[ "${resource}" == "persistentvolumeclaims" ]] &&
-            base64 --decode <<<"${expected_owners}" | jq -e 'any(.[]; .kind == "AIMArtifact")' >/dev/null; then
-            jq -e '
-                [.metadata.ownerReferences[]? | select(.kind == "AIMArtifact") | .apiVersion]
-                | length > 0 and all(. == "aim.eai.amd.com/v1alpha2")
-            ' <<<"${json}" >/dev/null || {
-                echo "${resource}/${name} artifact owner reference is not aim.eai.amd.com/v1alpha2" >&2
-                jq '.metadata.ownerReferences' <<<"${json}" >&2
-                return 1
-            }
+            base64 --decode <<<"${expected_owners}" | jq -e 'any(.[]; .kind == "AIMArtifact")' >/dev/null &&
+            ! jq -e '[.metadata.ownerReferences[]? | select(.kind == "AIMArtifact").apiVersion] | all(. == "aim.eai.amd.com/v1alpha2")' >/dev/null <<<"${json}"; then
+            echo "${resource}/${name} artifact owner reference is not aim.eai.amd.com/v1alpha2" >&2
+            jq '.metadata.ownerReferences' <<<"${json}" >&2
+            return 1
         fi
     done < "${snapshot}"
 }

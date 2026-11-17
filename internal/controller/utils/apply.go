@@ -358,10 +358,6 @@ func canonicalOwnerGVK(ownerGVK schema.GroupVersionKind) schema.GroupVersionKind
 //
 // Remove this in the release that deletes the v1alpha1 entries.
 func RewriteV1alpha1OwnerReference(ctx context.Context, c client.Client, child client.Object, ownerUID types.UID) error {
-	if child == nil {
-		return fmt.Errorf("rewrite v1alpha1 owner reference: child is nil")
-	}
-
 	current := child.GetOwnerReferences()
 	rewritten := append([]metav1.OwnerReference(nil), current...)
 	changed := false
