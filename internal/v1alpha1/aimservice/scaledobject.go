@@ -127,10 +127,7 @@ func planScaledObject(
 ) client.Object {
 	logger := log.FromContext(ctx).WithName("planScaledObject")
 
-	hasAutoscaling := service.Spec.AutoScaling != nil ||
-		service.Spec.MinReplicas != nil ||
-		service.Spec.MaxReplicas != nil
-	if !hasAutoscaling {
+	if !HasAutoscaling(service) {
 		return nil
 	}
 
@@ -142,10 +139,36 @@ func planScaledObject(
 			"service", service.Name, "namespace", service.Namespace)
 		return nil
 	}
-	predictorName := isvcName + constants.PredictorServiceSuffix
+	return planScaledObjectForDeployment(ctx, service, effectiveResources, runtimeConfig, isvcName+constants.PredictorServiceSuffix)
+}
+
+// HasAutoscaling reports whether the AIMService asks for autoscaling.
+func HasAutoscaling(service *aimv1alpha1.AIMService) bool {
+	return service.Spec.AutoScaling != nil ||
+		service.Spec.MinReplicas != nil ||
+		service.Spec.MaxReplicas != nil
+}
+
+// planScaledObjectForDeployment is planScaledObject for an explicit serving
+// Deployment. The ScaledObject is named after it, scales it, and scopes bare
+// user metric queries to it.
+func planScaledObjectForDeployment(
+	ctx context.Context,
+	service *aimv1alpha1.AIMService,
+	effectiveResources *corev1.ResourceRequirements,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	predictorName string,
+) client.Object {
+	logger := log.FromContext(ctx).WithName("planScaledObject")
+	if !HasAutoscaling(service) {
+		return nil
+	}
+
 	minReplicas, maxReplicas := resolveReplicaBounds(service)
 	scaleToZero := minReplicas == 0
-	activationQuery, activationRequired, activationErr := resolveScaleToZeroActivationMetric(service, runtimeConfig)
+	activationQuery, activationRequired, activationErr := resolveScaleToZeroActivationMetricForDeployment(
+		service, runtimeConfig, predictorName,
+	)
 	if activationRequired && activationErr != nil {
 		logger.Error(activationErr,
 			"cannot build gateway activation metric query; skipping ScaledObject",
@@ -359,26 +382,39 @@ func resolvedUserMetricTriggerCount(service *aimv1alpha1.AIMService, predictorNa
 	return count
 }
 
-// resolveScaleToZeroActivationMetric is the single source of truth for whether
-// a zero-to-one activation metric is required and whether its provider-neutral
-// query can be built. Provider selection remains encapsulated in
-// gatewayActivationMetricQuery.
-func resolveScaleToZeroActivationMetric(
+// validateScaleToZeroActivationMetric is the single source of truth for whether
+// a zero-to-one activation metric is required for the InferenceService
+// predictor and whether its provider-neutral query can be built. Provider
+// selection remains encapsulated in gatewayActivationMetricQuery.
+func validateScaleToZeroActivationMetric(
 	service *aimv1alpha1.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+) (required bool, err error) {
+	if !isScaleToZero(service) {
+		return false, nil
+	}
+	isvcName, err := GenerateInferenceServiceName(service.Name, service.Namespace)
+	if err != nil {
+		return true, err
+	}
+	_, required, err = resolveScaleToZeroActivationMetricForDeployment(
+		service, runtimeConfig, isvcName+constants.PredictorServiceSuffix,
+	)
+	return required, err
+}
+
+// resolveScaleToZeroActivationMetricForDeployment resolves the activation
+// query for an explicit serving Deployment, which the legacy kgateway scope
+// and the ${predictorDeployment} template placeholder refer to.
+func resolveScaleToZeroActivationMetricForDeployment(
+	service *aimv1alpha1.AIMService,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	deploymentName string,
 ) (query string, required bool, err error) {
 	if !isScaleToZero(service) {
 		return "", false, nil
 	}
-	isvcName, err := GenerateInferenceServiceName(service.Name, service.Namespace)
-	if err != nil {
-		return "", true, err
-	}
-	query, err = gatewayActivationMetricQuery(
-		service,
-		isvcName+constants.PredictorServiceSuffix,
-		runtimeConfig,
-	)
+	query, err = gatewayActivationMetricQuery(service, deploymentName, runtimeConfig)
 	return query, true, err
 }
 

@@ -423,6 +423,13 @@ const (
 	// triggers share a single scaler instance.
 	DefaultKEDAOTelScalerAddress = "keda-otel-scaler.keda.svc:4318"
 
+	// DefaultKEDAOTelReceiverEndpoint is the OTLP endpoint of the
+	// keda-otel-add-on the per-service OpenTelemetry collector sidecar exports
+	// pod metrics to. Matches the KServe inferenceservice-config
+	// `opentelemetryCollector.metricReceiverEndpoint` and the
+	// AIMServicePodMetric.serverAddress default.
+	DefaultKEDAOTelReceiverEndpoint = "keda-otel-scaler.keda.svc:4317"
+
 	// DefaultCooldownSecondsPerGiMemory is the seconds-per-GiB multiplier
 	// in the cooldown heuristic
 	//

@@ -209,7 +209,7 @@ metadata:
   name: kserve-smollm2-135m
   namespace: ml-team
 spec:
-  modelDownloadImage: kserve/storage-initializer:v0.16.0
+  modelDownloadImage: kserve/storage-initializer:v0.20.0
   env:
     - name: HF_HUB_DISABLE_XET
       value: "1"

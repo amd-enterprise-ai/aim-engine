@@ -184,16 +184,10 @@ func addRuntimeTrustOverlay(
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	caConfigMap *corev1.ConfigMap,
 ) {
-	if runtimeConfig == nil ||
-		runtimeConfig.AdditionalCABundleRef == nil ||
-		caConfigMap == nil ||
-		isvc.Spec.Predictor.Model == nil {
+	if isvc.Spec.Predictor.Model == nil {
 		return
 	}
-	projection := trust.BuildProjection(trust.Options{
-		AdditionalCABundleRef: runtimeConfig.AdditionalCABundleRef,
-		Image:                 aimartifact.ResolveDownloadImage(nil, runtimeConfig),
-	})
+	projection := runtimeTrustProjection(runtimeConfig, caConfigMap)
 	if projection == nil {
 		return
 	}
@@ -202,6 +196,21 @@ func addRuntimeTrustOverlay(
 	predictor.Volumes = append(predictor.Volumes, projection.Volumes...)
 	predictor.Model.VolumeMounts = append(predictor.Model.VolumeMounts, projection.VolumeMounts...)
 	predictor.Model.Env = trust.UpsertEnv(predictor.Model.Env, projection.Env)
+}
+
+// runtimeTrustProjection returns the additional-CA trust projection for the
+// serving pod, or nil when no CA bundle is configured or available.
+func runtimeTrustProjection(
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	caConfigMap *corev1.ConfigMap,
+) *trust.Projection {
+	if runtimeConfig == nil || runtimeConfig.AdditionalCABundleRef == nil || caConfigMap == nil {
+		return nil
+	}
+	return trust.BuildProjection(trust.Options{
+		AdditionalCABundleRef: runtimeConfig.AdditionalCABundleRef,
+		Image:                 aimartifact.ResolveDownloadImage(nil, runtimeConfig),
+	})
 }
 
 // buildInferenceServiceLabels builds the correlator labels stamped on the
@@ -291,24 +300,44 @@ func addServiceOwnedCacheOverlay(
 	service *aimv1alpha1.AIMService,
 	obs ServiceObservation,
 ) {
-	if service.Spec.GetCachingMode() != aimv1alpha1.CachingModeDedicated {
-		return
-	}
-	if !obs.profileCacheReady || obs.profileCache.Value == nil {
-		return
-	}
 	model := isvc.Spec.Predictor.Model
 	if model == nil {
 		return
 	}
+	env, volumes, mounts := serviceOwnedCacheOverlay(service, obs)
+	if env == nil {
+		return
+	}
+	model.Env = upsertEnvVars(model.Env, env)
+	isvc.Spec.Predictor.Volumes = append(isvc.Spec.Predictor.Volumes, volumes...)
+	model.VolumeMounts = append(model.VolumeMounts, mounts...)
+}
 
-	model.Env = upsertEnvVars(model.Env, buildFrameworkEnvVars(obs.resolvedProfileSpec, obs.profileYAMLName))
-	model.Env = upsertEnvVars(model.Env, serving.BuildDirectVLLMCacheEnv(obs.resolvedProfileSpec, obs.profileCache.Value))
+// serviceOwnedCacheOverlay returns the env, volumes, and mounts that point
+// model loading at a ready service-owned (Dedicated) cache. All are nil when
+// the service does not own a ready cache.
+func serviceOwnedCacheOverlay(
+	service *aimv1alpha1.AIMService,
+	obs ServiceObservation,
+) ([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount) {
+	if service.Spec.GetCachingMode() != aimv1alpha1.CachingModeDedicated {
+		return nil, nil, nil
+	}
+	if !obs.profileCacheReady || obs.profileCache.Value == nil {
+		return nil, nil, nil
+	}
 
+	env := upsertEnvVars(
+		buildFrameworkEnvVars(obs.resolvedProfileSpec, obs.profileYAMLName),
+		serving.BuildDirectVLLMCacheEnv(obs.resolvedProfileSpec, obs.profileCache.Value),
+	)
+
+	var volumes []corev1.Volume
+	var mounts []corev1.VolumeMount
 	for _, resolved := range sortedReadyArtifacts(obs.profileCache.Value) {
 		volumeName := strings.ReplaceAll(utils.MakeRFC1123Compliant(resolved.Name), ".", "-")
 
-		isvc.Spec.Predictor.Volumes = append(isvc.Spec.Predictor.Volumes, corev1.Volume{
+		volumes = append(volumes, corev1.Volume{
 			Name: volumeName,
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
@@ -326,11 +355,12 @@ func addServiceOwnedCacheOverlay(
 			mountPath = filepath.Join(constants.AIMCacheBasePath, safeModelName)
 		}
 
-		model.VolumeMounts = append(model.VolumeMounts, corev1.VolumeMount{
+		mounts = append(mounts, corev1.VolumeMount{
 			Name:      volumeName,
 			MountPath: mountPath,
 		})
 	}
+	return env, volumes, mounts
 }
 
 // sortedReadyArtifacts returns the cache's ready, PVC-backed artifacts in name

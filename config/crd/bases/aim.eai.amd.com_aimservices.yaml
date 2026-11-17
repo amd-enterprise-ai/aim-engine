@@ -655,6 +655,40 @@ spec:
                   type: object
                   x-kubernetes-map-type: atomic
                 type: array
+              llmInferenceService:
+                description: |-
+                  LLMInferenceService configures the KServe LLMInferenceService that serves
+                  the service. Only valid with spec.servingAPI=LLMInferenceService.
+                properties:
+                  baseRefs:
+                    description: |-
+                      BaseRefs lists additional KServe LLMInferenceServiceConfigs to merge into
+                      the LLMInferenceService after the resolved profile's projected config.
+                    items:
+                      description: |-
+                        AIMLLMInferenceServiceConfigReference names a KServe
+                        LLMInferenceServiceConfig.
+                      properties:
+                        name:
+                          description: |-
+                            Name of the LLMInferenceServiceConfig. The aim- prefix is reserved for
+                            configs AIM Engine projects from profiles.
+                          maxLength: 253
+                          minLength: 1
+                          type: string
+                          x-kubernetes-validations:
+                          - message: baseRefs names must not use the reserved aim-
+                              prefix
+                            rule: '!self.startsWith(''aim-'')'
+                      required:
+                      - name
+                      type: object
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                type: object
               maxReplicas:
                 description: |-
                   MaxReplicas specifies the maximum number of replicas for autoscaling.
@@ -1933,6 +1967,20 @@ spec:
                   This service account is used by the deployed inference pods.
                   If empty, the default service account for the namespace is used.
                 type: string
+              servingAPI:
+                default: Auto
+                description: |-
+                  ServingAPI selects the KServe API that serves this service. Auto (the
+                  default) currently resolves to InferenceService. The resolved API is
+                  recorded in status.
+                enum:
+                - Auto
+                - InferenceService
+                - LLMInferenceService
+                type: string
+                x-kubernetes-validations:
+                - message: spec.servingAPI is immutable after creation
+                  rule: self == oldSelf
               storage:
                 description: |-
                   Storage configures storage defaults for this service's PVCs and caches.
@@ -2414,6 +2462,19 @@ spec:
                 - maxReplicas
                 - minReplicas
                 type: object
+              servingAPI:
+                allOf:
+                - enum:
+                  - Auto
+                  - InferenceService
+                  - LLMInferenceService
+                - enum:
+                  - InferenceService
+                  - LLMInferenceService
+                description: |-
+                  ServingAPI is the KServe API this service resolved to. It is recorded
+                  on first resolution and kept for the service's lifetime.
+                type: string
               status:
                 default: Pending
                 description: |-
@@ -2447,6 +2508,15 @@ spec:
           rule: self.spec.adapterMode == 'dynamic' || (has(self.spec.adapters) ==
             has(oldSelf.spec.adapters) && (!has(self.spec.adapters) || self.spec.adapters
             == oldSelf.spec.adapters))
+        - message: spec.servingAPI=LLMInferenceService is not supported on v1alpha1;
+            use aim.eai.amd.com/v1alpha2
+          optionalOldSelf: true
+          rule: '!has(self.spec.servingAPI) || self.spec.servingAPI != ''LLMInferenceService''
+            || (oldSelf.hasValue() && has(oldSelf.value().spec.servingAPI) && oldSelf.value().spec.servingAPI
+            == ''LLMInferenceService'')'
+        - message: spec.llmInferenceService is not supported on v1alpha1; use aim.eai.amd.com/v1alpha2
+          optionalOldSelf: true
+          rule: '!has(self.spec.llmInferenceService) || (oldSelf.hasValue() && has(oldSelf.value().spec.llmInferenceService))'
     served: true
     storage: false
     subresources:
@@ -2463,6 +2533,10 @@ spec:
       type: string
     - jsonPath: .status.runtime.replicas
       name: Replicas
+      type: string
+    - jsonPath: .status.servingAPI
+      name: Serving-API
+      priority: 1
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -3079,6 +3153,40 @@ spec:
                   type: object
                   x-kubernetes-map-type: atomic
                 type: array
+              llmInferenceService:
+                description: |-
+                  LLMInferenceService configures the KServe LLMInferenceService that serves
+                  the service. Only valid with spec.servingAPI=LLMInferenceService.
+                properties:
+                  baseRefs:
+                    description: |-
+                      BaseRefs lists additional KServe LLMInferenceServiceConfigs to merge into
+                      the LLMInferenceService after the resolved profile's projected config.
+                    items:
+                      description: |-
+                        AIMLLMInferenceServiceConfigReference names a KServe
+                        LLMInferenceServiceConfig.
+                      properties:
+                        name:
+                          description: |-
+                            Name of the LLMInferenceServiceConfig. The aim- prefix is reserved for
+                            configs AIM Engine projects from profiles.
+                          maxLength: 253
+                          minLength: 1
+                          type: string
+                          x-kubernetes-validations:
+                          - message: baseRefs names must not use the reserved aim-
+                              prefix
+                            rule: '!self.startsWith(''aim-'')'
+                      required:
+                      - name
+                      type: object
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                type: object
               maxReplicas:
                 description: |-
                   MaxReplicas specifies the maximum number of replicas for autoscaling.
@@ -4357,6 +4465,20 @@ spec:
                   This service account is used by the deployed inference pods.
                   If empty, the default service account for the namespace is used.
                 type: string
+              servingAPI:
+                default: Auto
+                description: |-
+                  ServingAPI selects the KServe API that serves this service. Auto (the
+                  default) currently resolves to InferenceService. The resolved API is
+                  recorded in status.
+                enum:
+                - Auto
+                - InferenceService
+                - LLMInferenceService
+                type: string
+                x-kubernetes-validations:
+                - message: spec.servingAPI is immutable after creation
+                  rule: self == oldSelf
               storage:
                 description: |-
                   Storage configures storage defaults for this service's PVCs and caches.
@@ -4838,6 +4960,19 @@ spec:
                 - maxReplicas
                 - minReplicas
                 type: object
+              servingAPI:
+                allOf:
+                - enum:
+                  - Auto
+                  - InferenceService
+                  - LLMInferenceService
+                - enum:
+                  - InferenceService
+                  - LLMInferenceService
+                description: |-
+                  ServingAPI is the KServe API this service resolved to. It is recorded
+                  on first resolution and kept for the service's lifetime.
+                type: string
               status:
                 default: Pending
                 description: |-
@@ -4886,6 +5021,12 @@ spec:
           rule: self.spec.adapterMode == 'dynamic' || (has(self.spec.adapters) ==
             has(oldSelf.spec.adapters) && (!has(self.spec.adapters) || self.spec.adapters
             == oldSelf.spec.adapters))
+        - message: spec.servingAPI=LLMInferenceService requires spec.profile
+          rule: '!has(self.spec.servingAPI) || self.spec.servingAPI != ''LLMInferenceService''
+            || has(self.spec.profile)'
+        - message: spec.llmInferenceService requires spec.servingAPI=LLMInferenceService
+          rule: '!has(self.spec.llmInferenceService) || (has(self.spec.servingAPI)
+            && self.spec.servingAPI == ''LLMInferenceService'')'
     served: true
     storage: true
     subresources:

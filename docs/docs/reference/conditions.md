@@ -140,6 +140,26 @@ Tracks the namespaced profile `ServingRuntime` and its same-name ConfigMap befor
 
 Tracks whether the predictor pods are running and ready.
 
+### LLMInferenceServiceReady
+
+Replaces `InferenceServiceReady` when `status.servingAPI` is `LLMInferenceService`. `LLMInferenceServicePodsReady` replaces `InferenceServicePodsReady` the same way.
+
+| Status | Reason | Description |
+|---|---|---|
+| `True` | `RuntimeReady` | KServe `LLMInferenceService` is ready |
+| `False` | `CreatingRuntime` | Creating the LLMInferenceService |
+| `False` | `LLMInferenceServiceNotReady` | KServe reports the LLMInferenceService not ready; the message carries KServe's reason |
+
+### LLMInferenceServiceBaseRefsReady
+
+Set only when `spec.llmInferenceService.baseRefs` is non-empty.
+
+| Status | Reason | Description |
+|---|---|---|
+| `True` | `LLMInferenceServiceConfigsResolved` | Every referenced config exists and sets no field AIM Engine owns |
+| `False` | `LLMInferenceServiceConfigNotFound` | A referenced config exists in neither the service namespace nor KServe's system namespace |
+| `False` | `LLMInferenceServiceConfigConflict` | A referenced config sets `spec.router`, `spec.replicas`, `spec.scaling`, `spec.prefill`, `spec.worker`, or `spec.model.lora` |
+
 ### HTTPRouteReady
 
 Set only when `spec.routing.enabled: true`.

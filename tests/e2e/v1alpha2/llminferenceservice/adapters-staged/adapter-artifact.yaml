@@ -1,0 +1,20 @@
+# Logical adapter artifact compatible with the base model's canonical modelId.
+# It is not owned by or lifecycle-bound to the concrete base AIMArtifact.
+# AIM_DEBUG_SIMULATE_PROMOTE makes the staging Job write dummy adapter bytes and
+# exercise the rename(2) promote without any real download (kind-friendly).
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: llmisvc-adapters-lora
+spec:
+  type: adapter
+  compatibleWith:
+    - test-org/base-weights
+  modelId: test-org/lora
+  sourceUri: hf://test-org/lora
+  rank: 16
+  env:
+    - name: AIM_DEBUG_SIMULATE_PROMOTE
+      value: "true"
+    - name: AIM_DEBUG_DOWNLOAD_DURATION
+      value: "2"
