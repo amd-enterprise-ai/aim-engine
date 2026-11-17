@@ -25,11 +25,21 @@ package aimmodel
 import (
 	"errors"
 
-	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
-const currentImageMetadataVersion int32 = 1
+// metadataFormatError indicates the image metadata is malformed and cannot be processed.
+type metadataFormatError struct {
+	Reason  string
+	Message string
+}
+
+func (e *metadataFormatError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return "image metadata malformed"
+}
 
 // isTransientMetadataError checks if a metadata error is transient (recoverable with retry)
 // vs permanent (image not found, invalid format).
@@ -66,22 +76,4 @@ func isTransientMetadataError(err error) bool {
 
 	// Unknown errors are assumed transient (network issues, timeouts, etc.)
 	return true
-}
-
-// ==============
-// UTILS
-// ==============
-
-// shouldExtractMetadata checks if metadata extraction should be attempted.
-// Cached metadata produced before AIM_BASE_IMAGE_REF extraction is inspected
-// once. A legacy cache that already contains the reference needs no registry
-// request; DecorateStatus upgrades its version marker in place.
-func shouldExtractMetadata(status *aimv1alpha1.AIMModelStatus) bool {
-	if status == nil || status.ImageMetadata == nil {
-		return true
-	}
-	if status.ImageMetadataVersion >= currentImageMetadataVersion {
-		return false
-	}
-	return status.ImageMetadata.BaseImageRef == ""
 }

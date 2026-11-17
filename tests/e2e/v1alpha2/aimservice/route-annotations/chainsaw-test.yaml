@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Routing annotations from the runtime config and from the service are merged
+# onto the HTTPRoute, and the service wins when both set the same key.
+#
+# No accelerator is involved and the cache download is simulated, so this runs
+# in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-route-annotations
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the runtime config, profile and service
+      try:
+        - apply:
+            file: runtime-config.yaml
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+
+    - name: The HTTPRoute carries both annotation sets, service first
+      try:
+        - assert:
+            resource:
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: route-annotations
+                annotations:
+                  runtime-key: runtime-value
+                  service-key: service-value
+                  shared-key: from-service
+        - error:
+            timeout: 5s
+            resource:
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                annotations:
+                  shared-key: from-runtime

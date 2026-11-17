@@ -1,0 +1,14 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: trigger
+spec:
+  sourceUri: hf://test-org/trigger
+  size: 1Mi
+  env:
+    - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+      value: "true"
+    - name: AIM_DEBUG_SIMULATE_HF_DURATION
+      value: "1"
+    - name: EXPECTED_SIZE_BYTES
+      value: "1048576"

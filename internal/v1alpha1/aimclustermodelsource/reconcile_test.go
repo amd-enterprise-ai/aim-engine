@@ -51,9 +51,9 @@ func TestClusterModelSourceFetch_GetComponentHealth_AllSuccess(t *testing.T) {
 		source: &aimv1alpha1.AIMClusterModelSource{
 			ObjectMeta: metav1.ObjectMeta{Name: testSourceName},
 		},
-		existingModels: controllerutils.FetchResult[*aimv1alpha1.AIMClusterModelList]{
-			Value: &aimv1alpha1.AIMClusterModelList{
-				Items: []aimv1alpha1.AIMClusterModel{
+		existingModels: controllerutils.FetchResult[*aimv1alpha2.AIMClusterModelList]{
+			Value: &aimv1alpha2.AIMClusterModelList{
+				Items: []aimv1alpha2.AIMClusterModel{
 					{ObjectMeta: metav1.ObjectMeta{Name: "model-1"}},
 					{ObjectMeta: metav1.ObjectMeta{Name: "model-2"}},
 				},
@@ -98,8 +98,8 @@ func TestClusterModelSourceFetch_GetComponentHealth_SomeFiltersFailed(t *testing
 		source: &aimv1alpha1.AIMClusterModelSource{
 			ObjectMeta: metav1.ObjectMeta{Name: testSourceName},
 		},
-		existingModels: controllerutils.FetchResult[*aimv1alpha1.AIMClusterModelList]{
-			Value: &aimv1alpha1.AIMClusterModelList{},
+		existingModels: controllerutils.FetchResult[*aimv1alpha2.AIMClusterModelList]{
+			Value: &aimv1alpha2.AIMClusterModelList{},
 		},
 		filterResults: []FilterResult{
 			{
@@ -131,8 +131,8 @@ func TestClusterModelSourceFetch_GetComponentHealth_AllFiltersFailed(t *testing.
 		source: &aimv1alpha1.AIMClusterModelSource{
 			ObjectMeta: metav1.ObjectMeta{Name: testSourceName},
 		},
-		existingModels: controllerutils.FetchResult[*aimv1alpha1.AIMClusterModelList]{
-			Value: &aimv1alpha1.AIMClusterModelList{},
+		existingModels: controllerutils.FetchResult[*aimv1alpha2.AIMClusterModelList]{
+			Value: &aimv1alpha2.AIMClusterModelList{},
 		},
 		filterResults: []FilterResult{
 			{
@@ -162,8 +162,8 @@ func TestClusterModelSourceFetch_GetComponentHealth_NoFilters(t *testing.T) {
 		source: &aimv1alpha1.AIMClusterModelSource{
 			ObjectMeta: metav1.ObjectMeta{Name: testSourceName},
 		},
-		existingModels: controllerutils.FetchResult[*aimv1alpha1.AIMClusterModelList]{
-			Value: &aimv1alpha1.AIMClusterModelList{},
+		existingModels: controllerutils.FetchResult[*aimv1alpha2.AIMClusterModelList]{
+			Value: &aimv1alpha2.AIMClusterModelList{},
 		},
 		filterResults: []FilterResult{},
 	}
@@ -197,9 +197,9 @@ func TestComposeState_Basic(t *testing.T) {
 
 	fetch := ClusterModelSourceFetch{
 		source: source,
-		existingModels: controllerutils.FetchResult[*aimv1alpha1.AIMClusterModelList]{
-			Value: &aimv1alpha1.AIMClusterModelList{
-				Items: []aimv1alpha1.AIMClusterModel{
+		existingModels: controllerutils.FetchResult[*aimv1alpha2.AIMClusterModelList]{
+			Value: &aimv1alpha2.AIMClusterModelList{
+				Items: []aimv1alpha2.AIMClusterModel{
 					{
 						ObjectMeta: metav1.ObjectMeta{Name: "existing-1"},
 						Spec:       aimv1alpha1.AIMModelSpec{Image: "ghcr.io/org/model-1:1.0.0"},
@@ -258,9 +258,9 @@ func TestComposeState_MaxModelsLimit(t *testing.T) {
 
 	fetch := ClusterModelSourceFetch{
 		source: source,
-		existingModels: controllerutils.FetchResult[*aimv1alpha1.AIMClusterModelList]{
-			Value: &aimv1alpha1.AIMClusterModelList{
-				Items: []aimv1alpha1.AIMClusterModel{
+		existingModels: controllerutils.FetchResult[*aimv1alpha2.AIMClusterModelList]{
+			Value: &aimv1alpha2.AIMClusterModelList{
+				Items: []aimv1alpha2.AIMClusterModel{
 					{
 						ObjectMeta: metav1.ObjectMeta{Name: "existing-1"},
 						Spec:       aimv1alpha1.AIMModelSpec{Image: "ghcr.io/org/model-1:1.0.0"},
@@ -311,8 +311,8 @@ func TestComposeState_FilterErrors(t *testing.T) {
 
 	fetch := ClusterModelSourceFetch{
 		source: source,
-		existingModels: controllerutils.FetchResult[*aimv1alpha1.AIMClusterModelList]{
-			Value: &aimv1alpha1.AIMClusterModelList{},
+		existingModels: controllerutils.FetchResult[*aimv1alpha2.AIMClusterModelList]{
+			Value: &aimv1alpha2.AIMClusterModelList{},
 		},
 		filterResults: []FilterResult{
 			{
@@ -382,7 +382,7 @@ func TestPlanResources_CreatesNewModels(t *testing.T) {
 
 	// Check models have correct labels (owner references are set during apply phase, not plan)
 	for i, obj := range toApply {
-		model, ok := obj.(*aimv1alpha1.AIMClusterModel)
+		model, ok := obj.(*aimv1alpha2.AIMClusterModel)
 		if !ok {
 			t.Errorf("apply[%d] is not an AIMClusterModel", i)
 			continue
@@ -552,8 +552,8 @@ func TestClusterModelSource_DeclaredModelCreatesV1Alpha2ClusterModel(t *testing.
 	reconciler := &ClusterModelSourceReconciler{}
 	fetch := ClusterModelSourceFetch{
 		source: source,
-		existingModels: controllerutils.FetchResult[*aimv1alpha1.AIMClusterModelList]{
-			Value: &aimv1alpha1.AIMClusterModelList{},
+		existingModels: controllerutils.FetchResult[*aimv1alpha2.AIMClusterModelList]{
+			Value: &aimv1alpha2.AIMClusterModelList{},
 		},
 	}
 	obs := reconciler.ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha1.AIMClusterModelSource]{Object: source}, fetch)
@@ -585,15 +585,15 @@ func TestClusterModelSource_DeclaredModelRespectsIndependentModel(t *testing.T) 
 			}},
 		},
 	}
-	existing := aimv1alpha1.AIMClusterModel{
+	existing := aimv1alpha2.AIMClusterModel{
 		ObjectMeta: metav1.ObjectMeta{Name: "independent"},
 		Spec:       aimv1alpha1.AIMModelSpec{ModelID: "Qwen/Qwen3.5-0.8B"},
 	}
 	reconciler := &ClusterModelSourceReconciler{}
 	fetch := ClusterModelSourceFetch{
 		source: source,
-		existingModels: controllerutils.FetchResult[*aimv1alpha1.AIMClusterModelList]{
-			Value: &aimv1alpha1.AIMClusterModelList{Items: []aimv1alpha1.AIMClusterModel{existing}},
+		existingModels: controllerutils.FetchResult[*aimv1alpha2.AIMClusterModelList]{
+			Value: &aimv1alpha2.AIMClusterModelList{Items: []aimv1alpha2.AIMClusterModel{existing}},
 		},
 	}
 	obs := reconciler.ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha1.AIMClusterModelSource]{Object: source}, fetch)
@@ -615,7 +615,7 @@ func TestClusterModelSource_DeclaredModelUpdatesOwnedModel(t *testing.T) {
 			}},
 		},
 	}
-	existing := aimv1alpha1.AIMClusterModel{
+	existing := aimv1alpha2.AIMClusterModel{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "owned",
 			Labels: map[string]string{
@@ -628,8 +628,8 @@ func TestClusterModelSource_DeclaredModelUpdatesOwnedModel(t *testing.T) {
 	reconciler := &ClusterModelSourceReconciler{}
 	fetch := ClusterModelSourceFetch{
 		source: source,
-		existingModels: controllerutils.FetchResult[*aimv1alpha1.AIMClusterModelList]{
-			Value: &aimv1alpha1.AIMClusterModelList{Items: []aimv1alpha1.AIMClusterModel{existing}},
+		existingModels: controllerutils.FetchResult[*aimv1alpha2.AIMClusterModelList]{
+			Value: &aimv1alpha2.AIMClusterModelList{Items: []aimv1alpha2.AIMClusterModel{existing}},
 		},
 	}
 	obs := reconciler.ComposeState(context.Background(), controllerutils.ReconcileContext[*aimv1alpha1.AIMClusterModelSource]{Object: source}, fetch)
@@ -646,9 +646,7 @@ func TestClusterModelSource_DeclaredModelUpdatesOwnedModel(t *testing.T) {
 	}
 }
 
-// Image discovery keeps writing v1alpha1 — only modelId declarations need the
-// v1alpha2 client, so the split must not leak into the discovery path.
-func TestClusterModelSource_DiscoveredImageStaysV1Alpha1(t *testing.T) {
+func TestClusterModelSource_DiscoveredImageCreatesV1Alpha2ClusterModel(t *testing.T) {
 	t.Parallel()
 
 	source := &aimv1alpha1.AIMClusterModelSource{
@@ -660,8 +658,8 @@ func TestClusterModelSource_DiscoveredImageStaysV1Alpha1(t *testing.T) {
 	reconciler := &ClusterModelSourceReconciler{}
 	fetch := ClusterModelSourceFetch{
 		source: source,
-		existingModels: controllerutils.FetchResult[*aimv1alpha1.AIMClusterModelList]{
-			Value: &aimv1alpha1.AIMClusterModelList{},
+		existingModels: controllerutils.FetchResult[*aimv1alpha2.AIMClusterModelList]{
+			Value: &aimv1alpha2.AIMClusterModelList{},
 		},
 		filterResults: []FilterResult{{
 			Images: []RegistryImage{{
@@ -676,7 +674,7 @@ func TestClusterModelSource_DiscoveredImageStaysV1Alpha1(t *testing.T) {
 	if len(plan.GetToApply()) != 1 {
 		t.Fatalf("len(toApply) = %d, want 1", len(plan.GetToApply()))
 	}
-	if _, ok := plan.GetToApply()[0].(*aimv1alpha1.AIMClusterModel); !ok {
-		t.Fatalf("applied object = %T, want v1alpha1 AIMClusterModel", plan.GetToApply()[0])
+	if _, ok := plan.GetToApply()[0].(*aimv1alpha2.AIMClusterModel); !ok {
+		t.Fatalf("applied object = %T, want v1alpha2 AIMClusterModel", plan.GetToApply()[0])
 	}
 }

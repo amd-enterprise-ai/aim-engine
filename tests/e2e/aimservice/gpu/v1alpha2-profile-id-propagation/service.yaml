@@ -1,0 +1,23 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: gpu-profile-id-propagation
+spec:
+  runtimeConfigName: gpu-profile-id-propagation
+  model:
+    image: amdenterpriseai/aim-meta-llama-llama-3-2-1b-instruct:0.8.5
+  profile:
+    selector:
+      metric: latency
+      precision: fp16
+      acceleratorModel: MI300X
+      minimumType: unoptimized
+  replicas: 1
+  caching:
+    mode: Dedicated
+    env:
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: huggingface-creds
+            key: token

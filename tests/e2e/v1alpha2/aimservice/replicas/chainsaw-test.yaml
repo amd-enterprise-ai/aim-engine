@@ -1,0 +1,56 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# A service with a fixed replicas count runs exactly that many replicas, with
+# autoscaling turned off, and reports the count in its status.
+#
+# No accelerator is involved and the cache download is simulated, so this runs
+# in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-replicas
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the profile and a service with 3 replicas
+      try:
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+
+    - name: The InferenceService has 3 replicas and no autoscaler
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: replicas
+                annotations:
+                  serving.kserve.io/autoscalerClass: none
+              spec:
+                predictor:
+                  minReplicas: 3
+
+    - name: The service reaches Running and reports 3 replicas
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: replicas
+              status:
+                status: Running
+                runtime:
+                  currentReplicas: 3
+                  desiredReplicas: 3
+                  minReplicas: 3
+                  maxReplicas: 3
+                  replicas: "3"

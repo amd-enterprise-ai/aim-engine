@@ -55,13 +55,30 @@ func TestEnsureBaseImageBridge(t *testing.T) {
 			wantImageMetaRef: "ghcr.io/amdenterpriseai/aim-base:0.11",
 		},
 		{
-			name: "v1alpha2 status.baseImage propagates into imageMetadata",
+			name: "v1alpha2 status.baseImage propagates into existing imageMetadata",
+			spec: aimv1alpha1.AIMModelSpec{},
+			status: aimv1alpha1.AIMModelStatus{
+				BaseImage:     "ghcr.io/amdenterpriseai/aim-base:0.11",
+				ImageMetadata: &aimv1alpha1.ImageMetadata{Model: &aimv1alpha1.ModelMetadata{}},
+			},
+			wantBaseImage:    "ghcr.io/amdenterpriseai/aim-base:0.11",
+			wantImageMetaRef: "ghcr.io/amdenterpriseai/aim-base:0.11",
+		},
+		{
+			name: "v1alpha2 status.baseImage alone does not create imageMetadata",
 			spec: aimv1alpha1.AIMModelSpec{},
 			status: aimv1alpha1.AIMModelStatus{
 				BaseImage: "ghcr.io/amdenterpriseai/aim-base:0.11",
 			},
-			wantBaseImage:    "ghcr.io/amdenterpriseai/aim-base:0.11",
-			wantImageMetaRef: "ghcr.io/amdenterpriseai/aim-base:0.11",
+			wantBaseImage: "ghcr.io/amdenterpriseai/aim-base:0.11",
+		},
+		{
+			name: "spec.imageMetadata.baseImageRef populates baseImage without creating imageMetadata",
+			spec: aimv1alpha1.AIMModelSpec{
+				ImageMetadata: &aimv1alpha1.ImageMetadata{BaseImageRef: "ghcr.io/amdenterpriseai/aim-base:0.11"},
+			},
+			status:        aimv1alpha1.AIMModelStatus{},
+			wantBaseImage: "ghcr.io/amdenterpriseai/aim-base:0.11",
 		},
 		{
 			name: "existing imageMetadata.baseImageRef is preserved when baseImage is empty",

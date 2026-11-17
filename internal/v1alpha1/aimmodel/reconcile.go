@@ -24,7 +24,6 @@ package aimmodel
 
 import (
 	"context"
-	"fmt"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -35,6 +34,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/imagemetadata"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 )
 
@@ -99,7 +99,7 @@ func (r *ClusterModelReconciler) FetchRemoteState(
 	result.mergedRuntimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, runtimeConfigRef.Name, clusterModel.Namespace)
 
 	// Image metadata
-	result.imageMetadata = fetchImageMetadata(ctx, r.Clientset, clusterModel.Spec, &clusterModel.Status, constants.GetOperatorNamespace())
+	result.imageMetadata = imagemetadata.Fetch(ctx, r.Clientset, clusterModel.Spec, &clusterModel.Status, constants.GetOperatorNamespace())
 
 	// Cluster service templates
 	templates := &aimv1alpha1.AIMClusterServiceTemplateList{}
@@ -115,32 +115,6 @@ func (r *ClusterModelReconciler) FetchRemoteState(
 	return result
 }
 
-// ImageMetadata exposes the OCI image metadata so cross-version consumers
-// — notably the v1alpha2 AIMClusterModel reconciler — can read the
-// RecommendedDeployments label inside the same reconcile pass that produced
-// the catalog, without waiting for the next reconcile's status snapshot.
-//
-// Returns the freshly-fetched value when available, and falls back to the
-// previously-cached value in `status.imageMetadata` when the fetch was
-// skipped because the cache was still warm (see fetchImageMetadata Case 4).
-// That fallback is the common case during steady-state reconciliation: the
-// initial fetch populates status, every subsequent reconcile's
-// FetchResult.Value is nil-by-design, and consumers that don't look at
-// status would silently see no recommendedDeployments.
-//
-// Returns nil only when the fetch failed AND status has nothing cached
-// (initial-state-without-success), in which case downstream RD-dependent
-// logic safely no-ops.
-func (result ClusterModelFetchResult) ImageMetadata() *aimv1alpha1.ImageMetadata {
-	if result.imageMetadata.Value != nil {
-		return result.imageMetadata.Value
-	}
-	if result.model != nil {
-		return result.model.Status.ImageMetadata
-	}
-	return nil
-}
-
 func (result ClusterModelFetchResult) GetComponentHealth() []controllerutils.ComponentHealth {
 	// RuntimeConfig is optional for models - they can operate without one
 	runtimeConfigHealth := result.mergedRuntimeConfig.ToUpstreamComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth)
@@ -154,8 +128,8 @@ func (result ClusterModelFetchResult) GetComponentHealth() []controllerutils.Com
 
 	health := []controllerutils.ComponentHealth{runtimeConfigHealth}
 
-	imageMetadataHealth := metadataResultForHealth(result.imageMetadata, &result.model.Status).
-		ToUpstreamComponentHealth("ImageMetadata", inspectImageMetadataHealth)
+	imageMetadataHealth := imagemetadata.ResultForHealth(result.imageMetadata, &result.model.Status).
+		ToUpstreamComponentHealth("ImageMetadata", imagemetadata.GetHealth)
 	health = append(health, imageMetadataHealth)
 
 	health = append(health, clusterServiceTemplateHealth)
@@ -184,27 +158,13 @@ type ModelFetchResult struct {
 	aimIdClusterTemplates controllerutils.FetchResult[*aimv1alpha1.AIMClusterServiceTemplateList]
 }
 
-// ImageMetadata exposes the OCI image metadata. See
-// ClusterModelFetchResult.ImageMetadata for the rationale and the
-// fetched-then-cached fallback semantics; this namespace-scoped twin is
-// consumed by the v1alpha2 AIMModel reconciler and behaves identically.
-func (result ModelFetchResult) ImageMetadata() *aimv1alpha1.ImageMetadata {
-	if result.imageMetadata.Value != nil {
-		return result.imageMetadata.Value
-	}
-	if result.model != nil {
-		return result.model.Status.ImageMetadata
-	}
-	return nil
-}
-
 func (result ModelFetchResult) GetComponentHealth() []controllerutils.ComponentHealth {
 	// RuntimeConfig is optional for models - they can operate without one
 	runtimeConfigHealth := result.mergedRuntimeConfig.ToComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth)
 	health := []controllerutils.ComponentHealth{runtimeConfigHealth}
 
-	imageMetadataHealth := metadataResultForHealth(result.imageMetadata, &result.model.Status).
-		ToComponentHealth("ImageMetadata", inspectImageMetadataHealth)
+	imageMetadataHealth := imagemetadata.ResultForHealth(result.imageMetadata, &result.model.Status).
+		ToComponentHealth("ImageMetadata", imagemetadata.GetHealth)
 	health = append(health, imageMetadataHealth)
 
 	serviceTemplateHealth := result.serviceTemplates.ToComponentHealth("ServiceTemplates", func(list *aimv1alpha1.AIMServiceTemplateList) controllerutils.ComponentHealth {
@@ -239,7 +199,7 @@ func (r *ModelReconciler) FetchRemoteState(
 	result.mergedRuntimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, runtimeConfigRef.Name, model.Namespace)
 
 	// Image metadata
-	result.imageMetadata = fetchImageMetadata(ctx, r.Clientset, model.Spec, &model.Status, model.Namespace)
+	result.imageMetadata = imagemetadata.Fetch(ctx, r.Clientset, model.Spec, &model.Status, model.Namespace)
 
 	// Service templates
 	templates := &aimv1alpha1.AIMServiceTemplateList{}
@@ -273,38 +233,6 @@ func inspectServiceTemplateStatuses(expectsTemplates *bool, templates []aimv1alp
 // =========
 // SHARED
 // =========
-
-// inspectImageMetadataHealth returns the component health for a fetched image metadata result.
-// If the image contains model metadata (canonicalName), reports "ImageMetadataFound".
-// Otherwise the image was accessible but had no model metadata — reports "ImageFound".
-func inspectImageMetadataHealth(metadata *aimv1alpha1.ImageMetadata) controllerutils.ComponentHealth {
-	if metadata != nil && metadata.Model != nil && metadata.Model.CanonicalName != "" {
-		return controllerutils.ComponentHealth{
-			State:  constants.AIMStatusReady,
-			Reason: "ImageMetadataFound",
-		}
-	}
-	return controllerutils.ComponentHealth{
-		State:  constants.AIMStatusReady,
-		Reason: "ImageFound",
-	}
-}
-
-// metadataResultForHealth keeps a best-effort legacy metadata migration from
-// gating a model that already has usable cached metadata. Initial extraction
-// errors still pass through unchanged.
-func metadataResultForHealth(
-	result controllerutils.FetchResult[*aimv1alpha1.ImageMetadata],
-	status *aimv1alpha1.AIMModelStatus,
-) controllerutils.FetchResult[*aimv1alpha1.ImageMetadata] {
-	if result.HasError() && status != nil && status.ImageMetadata != nil &&
-		status.ImageMetadataVersion < currentImageMetadataVersion {
-		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{
-			Value: status.ImageMetadata,
-		}
-	}
-	return result
-}
 
 // aggregateTemplateStatuses aggregates template statuses into a single ComponentState.
 // expectsTemplates indicates whether templates are expected (nil = unknown/still fetching).
@@ -398,64 +326,6 @@ func aggregateTemplateStatuses(expectsTemplates *bool, statuses []constants.AIMS
 	}
 }
 
-// fetchImageMetadata determines how to obtain image metadata for a model.
-// It handles these cases:
-//  1. Extraction explicitly disabled - skip fetch entirely
-//  2. Spec-provided metadata (air-gapped environments) - returns the spec value directly
-//  3. Fine-tuned model - templates come from the base model via aimId, skip fetch
-//  4. Already cached in status - returns empty result (no fetch needed)
-//  5. Needs remote fetch - calls inspectImage to fetch from registry
-//
-// For custom models (with modelSources) but NOT fine-tuned, the fetched metadata
-// is used only for image validation — templates are still built from
-// customTemplates in PlanResources.
-func fetchImageMetadata(
-	ctx context.Context,
-	clientset kubernetes.Interface,
-	spec aimv1alpha1.AIMModelSpec,
-	status *aimv1alpha1.AIMModelStatus,
-	secretNamespace string,
-) controllerutils.FetchResult[*aimv1alpha1.ImageMetadata] {
-	// Case 1: Extraction explicitly disabled - skip fetch entirely
-	if !spec.Discovery.IsExtractMetadataEnabled() {
-		log.FromContext(ctx).V(1).Info("metadata extraction disabled in spec")
-		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{}
-	}
-
-	// Case 2: Use spec-provided metadata (air-gapped environments)
-	if spec.ImageMetadata != nil {
-		log.FromContext(ctx).V(1).Info("using spec-provided imageMetadata")
-		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{
-			Value: spec.ImageMetadata,
-		}
-	}
-
-	// Case 3: Fine-tuned models inherit their AIMServiceTemplates from the
-	// matched base model via aimId, so there's no recommendedDeployments to
-	// extract from this image — skip the fetch entirely.
-	if spec.IsFineTunedModel() {
-		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{}
-	}
-
-	// Case 4: Already cached in status - no fetch needed
-	if !shouldExtractMetadata(status) {
-		return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{}
-	}
-
-	// Case 5: Fetch from registry
-	metadata, err := inspectImage(
-		ctx,
-		spec.Image,
-		spec.ImagePullSecrets,
-		clientset,
-		secretNamespace,
-	)
-	return controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{
-		Value: metadata,
-		Error: err,
-	}
-}
-
 // ============================================================================
 // OBSERVATION
 // ============================================================================
@@ -481,12 +351,6 @@ func (r *ClusterModelReconciler) ComposeState(
 type ModelObservation struct {
 	ModelFetchResult
 }
-
-const (
-	conditionTypeRuntimeImageLineage   = "RuntimeImageLineage"
-	reasonBaseImageRefMissing          = "BaseImageRefMissing"
-	reasonBaseImageRefInspectionFailed = "BaseImageRefInspectionFailed"
-)
 
 func (r *ModelReconciler) ComposeState(
 	_ context.Context,
@@ -695,16 +559,7 @@ func decorateModelStatus(
 		status.SourceType = aimv1alpha1.AIMModelSourceTypeImage
 	}
 
-	if imageMetadataResult.OK() && imageMetadataResult.Value != nil {
-		status.ImageMetadata = imageMetadataResult.Value
-		status.ImageMetadataVersion = currentImageMetadataVersion
-	} else if status.ImageMetadata != nil && status.ImageMetadata.BaseImageRef != "" {
-		// Metadata cached by an older controller already contains the field
-		// introduced by the current extraction contract. Mark it current without
-		// performing an unnecessary registry request.
-		status.ImageMetadataVersion = currentImageMetadataVersion
-	}
-	decorateRuntimeImageLineageCondition(cm, spec, status, imageMetadataResult)
+	imagemetadata.DecorateStatus(status, cm, spec, imageMetadataResult)
 
 	// Surface an effective image version on status (denormalised for the
 	// kubectl printcolumn). Tag-derived: see AIMModelStatus.Version
@@ -712,55 +567,4 @@ func decorateModelStatus(
 	// spec.image leave this empty, matching how AIMProfile.Status.Version
 	// behaves for derived profiles.
 	status.Version = aimimage.ExtractTag(spec.Image)
-}
-
-// decorateRuntimeImageLineageCondition exposes missing producer lineage without
-// making the source model itself unready. The condition name deliberately does
-// not end in "Ready", so the generic status rollup treats it as an informational
-// capability condition. Only consumers that replace model weights need it.
-func decorateRuntimeImageLineageCondition(
-	cm *controllerutils.ConditionManager,
-	spec *aimv1alpha1.AIMModelSpec,
-	status *aimv1alpha1.AIMModelStatus,
-	imageMetadataResult controllerutils.FetchResult[*aimv1alpha1.ImageMetadata],
-) {
-	if cm == nil || spec == nil || spec.IsFineTunedModel() || spec.Image == "" {
-		return
-	}
-	metadata := spec.GetEffectiveImageMetadata(status)
-	if metadata != nil && metadata.BaseImageRef != "" {
-		cm.Delete(conditionTypeRuntimeImageLineage)
-		return
-	}
-	if imageMetadataResult.HasError() && status.ImageMetadata != nil {
-		cm.MarkFalse(
-			conditionTypeRuntimeImageLineage,
-			reasonBaseImageRefInspectionFailed,
-			fmt.Sprintf(
-				"Could not re-inspect image %q for AIM_BASE_IMAGE_REF: %v; normal model serving continues from cached metadata, but fine-tuned template copies that replace weights require registry access or complete spec.imageMetadata containing baseImageRef",
-				spec.Image,
-				imageMetadataResult.Error,
-			),
-			controllerutils.AsInfo(),
-		)
-		return
-	}
-	extractionComplete := spec.ImageMetadata != nil ||
-		status.ImageMetadataVersion >= currentImageMetadataVersion ||
-		!spec.Discovery.IsExtractMetadataEnabled()
-	if !extractionComplete {
-		// A legacy cache is still being migrated, or the registry inspection
-		// failed and its normal component condition already explains why.
-		cm.Delete(conditionTypeRuntimeImageLineage)
-		return
-	}
-	cm.MarkFalse(
-		conditionTypeRuntimeImageLineage,
-		reasonBaseImageRefMissing,
-		fmt.Sprintf(
-			"Image %q does not declare AIM_BASE_IMAGE_REF; normal model serving is unaffected, but fine-tuned template copies that replace weights require complete spec.imageMetadata containing baseImageRef",
-			spec.Image,
-		),
-		controllerutils.AsInfo(),
-	)
 }

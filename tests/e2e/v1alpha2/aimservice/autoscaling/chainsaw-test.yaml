@@ -1,0 +1,74 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# A service with minReplicas/maxReplicas and a custom metric is autoscaled by a
+# KEDA ScaledObject that AIM Engine authors, and its status reports the bounds.
+#
+# aim-dummy 0.2.1 serves the vllm:num_requests_running metric the ScaledObject
+# queries. No accelerator is involved and the cache download is simulated, so
+# this runs in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-autoscaling
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the profile and an autoscaled service
+      try:
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+
+    - name: The InferenceService leaves autoscaling to AIM Engine
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: autoscaling
+                annotations:
+                  serving.kserve.io/autoscalerClass: external
+                  prometheus.kserve.io/port: "8000"
+              spec:
+                predictor:
+                  minReplicas: 1
+                  maxReplicas: 3
+
+    - name: AIM Engine authors the KEDA ScaledObject
+      try:
+        - assert:
+            resource:
+              apiVersion: keda.sh/v1alpha1
+              kind: ScaledObject
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: autoscaling
+                  app.kubernetes.io/component: autoscaling
+                  app.kubernetes.io/managed-by: aim-engine
+              spec:
+                minReplicaCount: 1
+                maxReplicaCount: 3
+
+    - name: The service reaches Running and reports the replica bounds
+      try:
+        - assert:
+            # KEDA and the HPA reconcile after the predictor is ready, and
+            # status.runtime mirrors the live HPA.
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: autoscaling
+              status:
+                status: Running
+                runtime:
+                  minReplicas: 1
+                  maxReplicas: 3

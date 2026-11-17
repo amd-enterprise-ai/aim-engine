@@ -148,6 +148,9 @@ jobs:
       - name: Verify minimal v1alpha1 bridge contract
         run: make test-bridge-contract
 
+      - name: Verify least-privilege operator RBAC
+        run: make test-rbac-contract
+
       - name: Log in to DockerHub
         uses: docker/login-action@v3
         with:
@@ -346,6 +349,7 @@ jobs:
             config/prereqs/scale-from-zero/envoy-gateway-route-metrics.yaml
             config/prereqs/scale-from-zero/envoy-gateway-metrics-collector.yaml
             config/prereqs/scale-from-zero/kgateway-metrics-collector.yaml
+            hack/upgrade-preflight.sh
           token: '${{ secrets.GITHUB_TOKEN }}'
           draft: true
           prerelease: false

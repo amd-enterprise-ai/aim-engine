@@ -22,7 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-package aimmodel
+package imagemetadata
 
 import (
 	"context"
@@ -271,19 +271,6 @@ func extractEnvValue(env []string, name string) string {
 		}
 	}
 	return ""
-}
-
-// metadataFormatError indicates the image metadata is malformed and cannot be processed.
-type metadataFormatError struct {
-	Reason  string
-	Message string
-}
-
-func (e *metadataFormatError) Error() string {
-	if e.Message != "" {
-		return e.Message
-	}
-	return "image metadata malformed"
 }
 
 // getAMDLabel retrieves a label value, checking both new and legacy prefixes.

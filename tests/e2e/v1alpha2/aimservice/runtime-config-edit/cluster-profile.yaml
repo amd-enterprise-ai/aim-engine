@@ -1,0 +1,23 @@
+# Backing cluster profile for both services. No accelerator fields, so it
+# reaches Ready in any cluster. The aim-dummy image serves health checks on the
+# projected runtime's port, so the services reach Running in kind and nothing
+# else keeps re-reconciling them once they settle.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterProfile
+metadata:
+  name: test-runtime-config-edit
+spec:
+  # Unique to this test so selector resolution cannot collide with profiles
+  # created concurrently by another cluster-scoped test.
+  aimId: test/runtime-config-edit
+  modelId: Qwen/Qwen3-0.6B
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  modelSources:
+    - modelId: Qwen/Qwen3-0.6B
+      sourceUri: hf://Qwen/Qwen3-0.6B
+      # The download is simulated, so the PVC only needs to provision.
+      size: 1Gi

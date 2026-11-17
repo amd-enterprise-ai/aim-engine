@@ -1,9 +1,9 @@
 # Upgrading
 
-This guide covers upgrading AIM Engine to a new version and operating in the
-v1alpha1 → v1alpha2 bridge window. The [Bridge window](#migration-window) section
-is the canonical operator reference for installation order, served and storage
-versions, AIMService dispatch, retained model outputs, and manual recovery.
+This guide covers upgrading AIM Engine to a new version. If the cluster still
+has template objects or AIMServices on the template pipeline, follow
+[Migration window](#migration-window) on your current release before you
+upgrade.
 
 ## Upgrade Procedure
 
@@ -288,6 +288,10 @@ An operator that predates `spec.caching.env` reads download settings only from t
 :::{note}
 Rolling back the operator does not roll back CRD changes. New CRD fields are additive and backward compatible. If a CRD change is not backward compatible, this will be noted in the release notes.
 :::
+
+Rolling back past the removal of the template serving path has limits; see
+[Rollback limits](#rollback-limits).
+
 ## Version Compatibility
 
 AIM Engine follows semantic versioning. Within a major version:
@@ -390,146 +394,263 @@ Keep the `anyuid` grant for the predictor. If your models set `spec.serviceAccou
 
 ## Migration window
 
-The bridge keeps supported predecessor objects reconciling while native
-v1alpha2 resources use the production controllers. It is compatibility
-software, not a migration executor or proof that a workload serves inference.
+This release removes the template serving path: the template pipeline for
+`AIMService`, the `AIMServiceTemplate`, `AIMClusterServiceTemplate` and
+`AIMTemplateCache` kinds, and template output from `AIMModel` and
+`AIMClusterModel`. It also stops serving `aim.eai.amd.com/v1alpha1` for
+`AIMService`, `AIMModel` and `AIMClusterModel`. Prepare the cluster on its
+current release, while the template path still works, and upgrade only when
+the upgrade preflight passes:
 
-### Install CRDs before the operator
+1. Check that the cluster runs the [minimum version](#minimum-version).
+2. [Run the upgrade preflight](#run-the-upgrade-preflight) to see what is left
+   to do.
+3. [Move template services](#move-template-services) to the profile pipeline.
+4. Replace any [unservable services](#replace-unservable-services) and
+   [models without a native path](#replace-models-without-a-native-path) the
+   preflight lists.
+5. [Delete template objects](#delete-template-objects).
+6. [Update v1alpha1 manifests](#update-v1alpha1-manifests) in GitOps
+   repositories and scripts.
+7. Rerun the preflight until it passes. Then upgrade the CRDs before the
+   operator, as in [Upgrade Procedure](#upgrade-procedure).
 
-Use the CRD and operator charts from the same bridge release:
+### Minimum version
 
-1. Upgrade `aim-engine-crds`.
-2. Wait for the AIM CRDs to report `Established`.
-3. Upgrade `aim-engine`.
-4. Check operator events and the affected AIM resources before changing any
-   desired state.
+Upgrade from v0.2.7 or later. If the cluster runs an older release, upgrade to
+the latest 0.2.x release first and let it reconcile your resources. v0.2.7 is
+the first release that records `status.reconcilerPipeline` on every AIMService
+and rewrites v1alpha1 owner references to v1alpha2. The steps below rely on
+both.
 
-Do not install the operator before its CRDs, remove v1alpha1 endpoints, or
-rewrite stored objects as part of bridge installation. The operator has no
-permission to mutate CRD definitions or `status.storedVersions`.
+The preflight reads the operator version from the image tag of the `manager`
+container in the `aim-engine-controller-manager` Deployment, in any namespace.
+It also checks that every AIMService has `status.reconcilerPipeline`. If the
+image reference has no version tag, for example when it is pinned by digest
+only, or the Deployment has a different name, the preflight can't read the
+version. It then prints a `MANUAL [minimum-version]` line instead of failing:
+confirm by hand that the operator runs v0.2.7 or later. The
+`status.reconcilerPipeline` check still blocks in that case.
 
-### Served and storage behavior
+### Run the upgrade preflight
 
-Exactly three CRDs overlap:
+The preflight script ships with each release. Download it from the release you
+upgrade to, and run it with the kubectl context of the cluster:
 
-- `AIMService`, `AIMModel`, and `AIMClusterModel` serve both `v1alpha1` and
-  `v1alpha2`; only `v1alpha2` is storage.
-- `AIMArtifact`, `AIMClusterModelSource`, `AIMRuntimeConfig`,
-  `AIMClusterRuntimeConfig`, `AIMServiceTemplate`,
-  `AIMClusterServiceTemplate`, and `AIMTemplateCache` remain served and stored
-  only as `v1alpha1`.
-- `AIMProfile`, `AIMClusterProfile`, `AIMProfileSet`,
-  `AIMClusterProfileSet`, and `AIMProfileCache` remain v1alpha2-only.
+```bash
+curl -fsSLO https://github.com/amd-enterprise-ai/aim-engine/releases/download/<release-tag>/upgrade-preflight.sh
+bash upgrade-preflight.sh
+```
 
-The overlapping CRDs use conversion strategy `None`: there is no conversion
-webhook or semantic field translation. The API server persists writes through
-the storage version and serves the shared wire fields through the requested
-served endpoint. Applying a v1alpha1 manifest does not create a second object.
+It needs `kubectl`, with permission to get and list the resources below in all
+namespaces, and `jq` 1.6 or later. It only reads from the cluster. It exits
+with 0 when every blocking check passes, 1 when any fails, and 2 when a
+required tool is missing. Each `FAIL` line names the check, the object and the
+section of this guide that fixes it:
 
-### AIMService pipeline selection
+| Check | Fails when | Section |
+|---|---|---|
+| `minimum-version` | The operator is older than v0.2.7, or an AIMService has no `status.reconcilerPipeline` | [Minimum version](#minimum-version) |
+| `template-pipeline-services` | An AIMService is not on the profile pipeline | [Move template services](#move-template-services) |
+| `unservable-services` | An AIMService uses `spec.model.custom`, or `spec.template` without `spec.model` or `spec.profile` | [Replace unservable services](#replace-unservable-services) |
+| `models-without-native-path` | An AIMModel or AIMClusterModel uses `spec.custom`, `spec.customTemplates` or `spec.modelSources`; is an image model with `spec.aimId` or `spec.discovery.extractMetadata: false`; or was generated for an inline custom service | [Replace models without a native path](#replace-models-without-a-native-path) |
+| `template-objects` | An AIMServiceTemplate, AIMClusterServiceTemplate or AIMTemplateCache exists | [Delete template objects](#delete-template-objects) |
+| `template-finalizers` | An AIMService or AIMTemplateCache has a template cleanup finalizer | [Delete template objects](#delete-template-objects) |
+| `stale-owner-references` | An InferenceService, HTTPRoute, ScaledObject, PVC, Job, ConfigMap, AIMArtifact, AIMProfile or AIMProfileCache is owned by a v1alpha1 AIMService, AIMModel, AIMClusterModel or template object | [Remove stale v1alpha1 owner references](#remove-stale-v1alpha1-owner-references) |
 
-One v1alpha2-rooted controller dispatches each `AIMService`:
+`INFO` lines list Dedicated template caches with their sizes (see
+[Cache outcomes](#cache-outcomes)). `MANUAL` lines name what the script can't
+check and you confirm by hand: the operator version when it can't be read (see
+[Minimum version](#minimum-version)), and v1alpha1 manifests outside the
+cluster (see [Update v1alpha1 manifests](#update-v1alpha1-manifests)). They
+don't block.
 
-- `spec.profile` selects the profile pipeline.
-- `spec.template`, `spec.model.name`, `spec.model.image`, and
-  `spec.model.custom` select the template pipeline by default.
-- `aim.eai.amd.com/reconciler-pipeline: profile` explicitly selects the
-  profile pipeline. Use it only with a profile-supported shape such as
-  `spec.profile`, `spec.model.name`, or `spec.model.image`.
-- `aim.eai.amd.com/reconciler-pipeline: template` explicitly selects the
-  template pipeline only when `spec.model` is present.
+### Move template services
 
-An empty or unknown marker, or `template` without `spec.model`, is malformed.
-The controller does not fail or repair the object solely for that marker. It
-falls back to the rules above and emits an `InvalidReconcilerPipeline` Warning
-event describing the ignored value. `status.reconcilerPipeline` records the
-active path.
+v0.2.7 selects the pipeline of each AIMService from its spec:
 
-The supported grandfathered service shapes are template-backed services using
-model name, image, or inline custom input, including existing template
-selection and legacy overrides. Retained legacy model inputs include image
-metadata/recommended deployments, model sources, custom templates, custom
-hardware, and fine-tuned template matching. Existing legacy-only `AIMModel`
-fields may continue through the shared storage object; v1alpha2 AIMModel
-admission prevents new objects from introducing those fields. Custom or
-ambiguous shapes are not automatically converted to profiles.
+- `spec.profile`, or the annotation
+  `aim.eai.amd.com/reconciler-pipeline: profile`, selects the profile pipeline.
+- Otherwise `spec.model.name`, `spec.model.image`, `spec.model.custom` and
+  `spec.template` select the template pipeline.
+- `status.reconcilerPipeline` records the active pipeline.
 
-### AIMModel outputs and readiness
+Move each service the `template-pipeline-services` check lists by adding the
+annotation:
 
-The v1alpha2 `AIMModel` and `AIMClusterModel` controllers are the only
-production roots for both served versions. They retain two bounded output
-paths:
+```bash
+kubectl annotate aimservice <service> -n <namespace> aim.eai.amd.com/reconciler-pipeline=profile
+```
 
-- legacy inputs can continue producing `AIMServiceTemplate` or
-  `AIMClusterServiceTemplate`;
-- native image discovery, model-ID generation, or profile derivation can
-  produce `AIMProfile`, `AIMClusterProfile`, or a profile set; and
-- a grandfathered image-backed object can retain both template and profile
-  outputs when both paths apply.
+The profile pipeline ranks the AIMProfiles of the service's model by status,
+primary flag, type and version. With `spec.model.image`, it first uses or
+creates an AIMModel for the image. By default it only auto-selects `optimized`
+profiles. If the service sets `spec.template.allowUnoptimized: true`, allow
+unoptimized profiles too:
 
-Output children keep their normal scope and controller owner. Cross-version
-owner references converge to the v1alpha2 owner identity without changing an
-existing `controller` or `blockOwnerDeletion` value.
+```bash
+kubectl patch aimservice <service> -n <namespace> --type merge \
+  -p '{"spec":{"profile":{"selector":{"minimumType":"unoptimized"}}}}'
+```
 
-Readiness remains path-aware: when one applicable serving path is healthy, a
-failure reported only by the inactive compatibility path is non-blocking. A
-failure in the active path remains visible and blocking. This bridge rule does
-not qualify model serving or replace cluster observation.
+The selected profile can differ from the template the service ran, for
+example in GPU count or precision. To run one specific profile, set
+`spec.profile.name` instead.
 
-### Inline auto-custom compatibility
+Then wait until the service serves from its profile cache. If a large download
+outlasts the timeout, run the command again:
 
-A supported v1alpha1 `AIMService.spec.model.custom` can create or reuse a
-v1alpha2-valid compatibility `AIMModel`, but reuse is limited to reconciliation
-of the same live source `AIMService` UID. Distinct `AIMService` objects with
-identical inline custom inputs intentionally receive distinct compatibility
-models; cross-service sharing is unsupported because each model has one
-UID-bound controller owner. The persisted model stores the exact predecessor
-custom input in the internal
-`aim.eai.amd.com/legacy-auto-custom-spec` annotation and anchors it to the live
-source service with labels and a UID-bound controller owner reference.
+```bash
+kubectl wait aimservice/<service> -n <namespace> --for=condition=ProfileCacheReady --timeout=15m
+kubectl wait aimservice/<service> -n <namespace> --for=jsonpath='{.status.status}'=Running --timeout=15m
+```
 
-Before generating a legacy template, the model controller strictly decodes the
-annotation, verifies the stored v1alpha2 fields and source provenance, and
-hydrates predecessor-only fields on an in-memory copy. It does not write those
-legacy fields back to the stored model.
+The old InferenceService keeps serving until the profile cache is Ready. The
+operator then rewrites the same InferenceService in place, and KServe rolls
+new predictor pods.
 
-Malformed, contradictory, ownerless, or orphaned compatibility state produces
-`LegacyAutoCustomSpecReady=False` with reason
-`InvalidLegacyAutoCustomSpec`, emits a Warning event, and plans no template or
-profile child mutation. The ordinary controllers do not adopt or reconstruct
-such a model from labels.
+To move a service back to the template pipeline, remove `spec.profile` if you
+added it, and the annotation:
 
-For manual recovery:
+```bash
+kubectl patch aimservice <service> -n <namespace> --type json -p '[{"op":"remove","path":"/spec/profile"}]'
+kubectl annotate aimservice <service> -n <namespace> aim.eai.amd.com/reconciler-pipeline-
+```
 
-1. Export the `AIMService`, compatibility `AIMModel`, conditions, and events
-   before changing anything.
-2. Compare the model annotation, labels, owner UID, and v1alpha2-safe fields
-   with the authoritative source service. Do not synthesize the opaque
-   annotation or owner reference from labels alone.
-3. If the original service is still live and its exact inline custom input is
-   authoritative, an administrator may remove the invalid auto-generated
-   compatibility model and let that service reconcile a replacement. This can
-   recreate children or cached data; it is not an artifact-preserving repair.
-4. If the source service is gone, the UID differs, or intent is ambiguous,
-   leave automatic repair disabled. Remove an unneeded orphan only after
-   confirming no workload depends on it; otherwise record it for manual
-   migration handling.
+This works until you delete the template objects.
 
-### Migration boundary
+### Cache outcomes
 
-The bridge performs no storage rewrite, Plan/Apply operation, legacy cleanup,
-artifact handoff, rollback, API-removal decision, GPU qualification, or
-inference request. Migration execution is governed by
-[ADR-0002](https://github.com/amd-enterprise-ai/aim-engine/blob/main/ADR-0002-bounded-plan-apply-template-migration.md)
-and begins only after the bridge is installed and legacy serving has been
-checked by an administrator. The controlled, non-production operating steps
-and unresolved safety limitations are documented in
-[Bounded v1alpha1 template migration](template-migration.md).
+Moving a service creates an AIMProfileCache for it. What happens to the cached
+weights depends on the mode of its template cache:
 
-The local bridge contract is a static contract over API markers, generated
-CRDs, controller roots, ownership semantics, RBAC, and release ordering. A
-passing contract does not prove migration, artifact preservation, GPU serving,
-or inference.
+- **Shared**: the profile cache adopts the existing AIMArtifact, so nothing is
+  downloaded again. This needs the same model source URI, caching environment
+  and storage class as the template cache.
+- **Dedicated**: the template cache owns its artifact, so the profile cache
+  downloads the weights again. Both copies use storage until you delete the
+  template cache. The preflight's `dedicated-template-caches` lines list these
+  artifacts and their sizes, so you can plan the extra space.
+
+### Replace unservable services
+
+The profile pipeline can't serve these service shapes, so the annotation alone
+doesn't move them:
+
+- `spec.model.custom`: create an AIMModel for the custom weights, as in
+  [Custom models](../legacy/migrating.md#custom-models), and change the service
+  to reference it with `spec.model.name`. Then move the service as above, and
+  delete the AIMModel that was generated for its inline custom input. That
+  model has the `aim.eai.amd.com/legacy-auto-custom-spec` annotation.
+- `spec.template` without `spec.model` or `spec.profile`: create an AIMProfile
+  that matches the template, as in [Migrating to v1alpha2](../legacy/migrating.md),
+  and set `spec.profile.name` on the service.
+
+### Replace models without a native path
+
+After the upgrade, AIMModels and AIMClusterModels serve only through the
+AIMProfiles they discover or generate. These models produce none:
+
+- `spec.custom`, `spec.customTemplates` or `spec.modelSources`: create a
+  v1alpha2 AIMModel as in [Custom models](../legacy/migrating.md#custom-models)
+  or [Fine-tunes](../legacy/migrating.md#fine-tunes), move the services that
+  use the old model to it, then delete the old model.
+- `spec.aimId` on an image model: unless the model is a fine-tune, remove the
+  field. Discovery reads the AIM ID from the image:
+
+  ```bash
+  kubectl patch aimmodel <model> -n <namespace> --type json -p '[{"op":"remove","path":"/spec/aimId"}]'
+  ```
+
+- `spec.discovery.extractMetadata: false` on an image model: allow discovery,
+  which runs the image in a Job and reads its labels from the registry:
+
+  ```bash
+  kubectl patch aimmodel <model> -n <namespace> --type merge -p '{"spec":{"discovery":{"extractMetadata":true}}}'
+  ```
+
+- The `aim.eai.amd.com/legacy-auto-custom-spec` annotation: the model was
+  generated for a service with `spec.model.custom`. Replace that service as in
+  [Replace unservable services](#replace-unservable-services), then delete the
+  model.
+
+For an AIMClusterModel, use `aimclustermodel` and leave out `-n`.
+
+### Delete template objects
+
+First, stop image models from creating templates. Set
+`discovery.createServiceTemplates: false` on every AIMModel and AIMClusterModel
+with `spec.image`. That includes the models an AIMClusterModelSource
+discovered, because the source doesn't update models it has already created:
+
+```bash
+kubectl get aimmodels --all-namespaces -o json \
+  | jq -r '.items[] | select(.spec.image) | "\(.metadata.namespace) \(.metadata.name)"' \
+  | while read -r namespace name; do
+      kubectl patch aimmodel "${name}" -n "${namespace}" --type merge \
+        -p '{"spec":{"discovery":{"createServiceTemplates":false}}}'
+    done
+kubectl get aimclustermodels -o json \
+  | jq -r '.items[] | select(.spec.image) | .metadata.name' \
+  | while read -r name; do
+      kubectl patch aimclustermodel "${name}" --type merge \
+        -p '{"spec":{"discovery":{"createServiceTemplates":false}}}'
+    done
+```
+
+Then, once every service runs on the profile pipeline, delete the template
+objects while the current operator still runs. Its finalizers then clean up,
+and garbage collection deletes the objects the templates own:
+
+```bash
+kubectl delete aimtemplatecaches --all --all-namespaces
+kubectl delete aimservicetemplates --all --all-namespaces
+kubectl delete aimclusterservicetemplates --all
+```
+
+`kubectl delete` waits for the finalizers. If a template cache stays in
+`Terminating`, check the operator log. v0.2.7 removes the legacy
+`aim.eai.amd.com/template-cache-cleanup` finalizer from an AIMService when it
+reconciles the service.
+
+If a GitOps tool manages template objects, remove them from the repository
+first, or the tool recreates them.
+
+### Remove stale v1alpha1 owner references
+
+After the upgrade, the API server no longer serves the v1alpha1 AIMService,
+AIMModel and AIMClusterModel, or the template kinds. Garbage collection can't
+resolve owner references to them, so the objects they own would leak.
+
+Objects owned by template objects, such as Dedicated template-cache artifacts
+and template discovery Jobs, go away when you delete the template objects.
+Garbage collection can take a minute, so rerun the preflight. v0.2.7 rewrites
+v1alpha1 owner references to AIMService, AIMModel and AIMClusterModel when it
+next reconciles the owner. If a reference stays, check the owner's status and
+the operator log. References to the v1alpha1 AIMArtifact, AIMRuntimeConfig,
+AIMClusterRuntimeConfig and AIMClusterModelSource are fine.
+
+### Update v1alpha1 manifests
+
+AIMService, AIMModel and AIMClusterModel stop serving
+`aim.eai.amd.com/v1alpha1` in this release. Existing objects stay readable as
+v1alpha2, but applying a v1alpha1 manifest for these kinds fails. Check GitOps
+repositories, Helm charts and scripts, and change those manifests to v1alpha2,
+as in [Migrating to v1alpha2](../legacy/migrating.md), before you upgrade.
+AIMArtifact, AIMRuntimeConfig, AIMClusterRuntimeConfig and
+AIMClusterModelSource stay at v1alpha1.
+
+### Rollback limits
+
+Until you delete the template objects, you can move each service back to the
+template pipeline, as in [Move template services](#move-template-services).
+After that, moving back needs new template objects.
+
+After the upgrade, rolling the CRDs and operator back to v0.2.7 restores the
+template pipeline and v1alpha1 serving. It doesn't restore the template
+objects or the Dedicated weights you deleted before the upgrade: recreate the
+templates from your own manifests if you need them, and expect Dedicated
+caches to download again.
 
 ## Next Steps
 

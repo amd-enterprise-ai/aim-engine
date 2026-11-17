@@ -1,0 +1,46 @@
+# Two profile-pipeline services on the same AIMProfile. Only the first sets a
+# template-era field. spec.template and spec.overrides are rejected on new
+# v1alpha2 objects, so spec.model.custom is the only template-era field a
+# v1alpha2 fixture can set.
+#
+# caching.env switches the AIMProfileCache's download Job into simulation mode
+# so the Shared cache reaches Ready without a real download.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: with-custom-model
+spec:
+  profile:
+    name: template-field-warning
+  model:
+    custom:
+      baseImage: docker.io/amdenterpriseai/aim-dummy:0.2.0
+      modelSources:
+        - modelId: Qwen/Qwen3-0.6B
+          sourceUri: hf://Qwen/Qwen3-0.6B
+          size: 1Gi
+      hardware:
+        cpu:
+          requests: "1"
+  replicas: 1
+  caching:
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "2"
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: without-template-fields
+spec:
+  profile:
+    name: template-field-warning
+  replicas: 1
+  caching:
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "2"

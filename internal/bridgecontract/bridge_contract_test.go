@@ -37,7 +37,6 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -309,7 +308,7 @@ func TestBridgeContract(t *testing.T) {
 func helper() {
 	(&v1alpha2controller.AIMModelReconciler{}).SetupWithManager(mgr)
 }
-func main() {
+func setupControllers() {
 	if false {
 		if err := (&v1alpha2controller.AIMModelReconciler{}).SetupWithManager(mgr); err != nil {}
 	}
@@ -482,163 +481,6 @@ func (r *Reconciler) SetupWithManager(mgr Manager) error {
 				)
 			}
 		})
-	})
-
-	t.Run("least privilege RBAC", func(t *testing.T) {
-		role := readYAML[rbacv1.ClusterRole](t, filepath.Join(root, "config", "rbac", "role.yaml"))
-		if role.Name != "manager-role" || len(role.Rules) == 0 {
-			t.Fatalf("operator ClusterRole = %q with %d rules, want non-empty manager-role", role.Name, len(role.Rules))
-		}
-		for _, rule := range role.Rules {
-			if containsAny(rule.APIGroups, "*") ||
-				containsAny(rule.Resources, "*") ||
-				containsAny(rule.Verbs, "*") {
-				t.Errorf("operator RBAC contains wildcard permission: %#v", rule)
-			}
-			if containsAny(rule.APIGroups, "*", apiextensionsv1.GroupName) &&
-				containsAny(rule.Resources, "*", "customresourcedefinitions", "customresourcedefinitions/status") &&
-				containsAny(rule.Verbs, "*", "create", "delete", "deletecollection", "patch", "update") {
-				t.Errorf("operator RBAC can mutate CRDs: %#v", rule)
-			}
-			if containsAny(rule.APIGroups, "*", aimv1alpha1.GroupVersion.Group) &&
-				containsAny(rule.Resources, "*", "aimruntimeconfigs", "aimclusterruntimeconfigs") &&
-				containsAny(rule.Verbs, "*", "create", "delete", "deletecollection", "patch", "update") {
-				t.Errorf("operator RBAC grants write access to read-only runtime configuration: %#v", rule)
-			}
-		}
-
-		mutableAIMResources := []string{
-			"aimartifacts", "aimclustermodels", "aimclustermodelsources",
-			"aimclusterprofiles", "aimclusterprofilesets", "aimclusterservicetemplates",
-			"aimmodels", "aimprofilecaches", "aimprofiles", "aimprofilesets",
-			"aimservices", "aimservicetemplates", "aimtemplatecaches",
-		}
-		for _, resource := range mutableAIMResources {
-			assertRBACAllows(
-				t,
-				role,
-				aimv1alpha1.GroupVersion.Group,
-				resource,
-				"create",
-				"delete",
-				"get",
-				"list",
-				"patch",
-				"update",
-				"watch",
-			)
-			assertRBACAllows(
-				t,
-				role,
-				aimv1alpha1.GroupVersion.Group,
-				resource+"/status",
-				"get",
-				"patch",
-				"update",
-			)
-			assertRBACAllows(
-				t,
-				role,
-				aimv1alpha1.GroupVersion.Group,
-				resource+"/finalizers",
-				"update",
-			)
-		}
-		for _, resource := range []string{"aimruntimeconfigs", "aimclusterruntimeconfigs"} {
-			assertRBACAllows(
-				t,
-				role,
-				aimv1alpha1.GroupVersion.Group,
-				resource,
-				"get",
-				"list",
-				"watch",
-			)
-		}
-		for _, resource := range []string{"configmaps", "persistentvolumeclaims"} {
-			assertRBACAllows(
-				t,
-				role,
-				"",
-				resource,
-				"create",
-				"delete",
-				"get",
-				"list",
-				"patch",
-				"update",
-				"watch",
-			)
-		}
-		assertRBACAllows(t, role, "", "events", "create", "get", "list", "patch", "watch")
-		for _, resource := range []string{"namespaces", "nodes", "pods", "secrets"} {
-			assertRBACAllows(t, role, "", resource, "get", "list", "watch")
-		}
-		assertRBACAllows(t, role, "", "pods/log", "get")
-		assertRBACAllows(t, role, "autoscaling", "horizontalpodautoscalers", "get", "list", "watch")
-		for _, resource := range []string{"jobs"} {
-			assertRBACAllows(
-				t,
-				role,
-				"batch",
-				resource,
-				"create",
-				"delete",
-				"get",
-				"list",
-				"patch",
-				"update",
-				"watch",
-			)
-		}
-		assertRBACAllows(
-			t,
-			role,
-			"coordination.k8s.io",
-			"leases",
-			"create",
-			"delete",
-			"get",
-			"list",
-			"patch",
-			"update",
-			"watch",
-		)
-		assertRBACAllows(t, role, "gateway.networking.k8s.io", "gateways", "get", "list", "watch")
-		for apiGroup, resources := range map[string][]string{
-			"gateway.networking.k8s.io": {"httproutes"},
-			"keda.sh":                   {"scaledobjects"},
-			"serving.kserve.io":         {"clusterservingruntimes", "inferenceservices", "servingruntimes"},
-		} {
-			for _, resource := range resources {
-				assertRBACAllows(
-					t,
-					role,
-					apiGroup,
-					resource,
-					"create",
-					"delete",
-					"get",
-					"list",
-					"patch",
-					"update",
-					"watch",
-				)
-			}
-		}
-		assertRBACAllows(
-			t,
-			role,
-			"rbac.authorization.k8s.io",
-			"rolebindings",
-			"create",
-			"get",
-			"list",
-			"patch",
-			"update",
-			"watch",
-		)
-		assertRBACAllows(t, role, "storage.k8s.io", "storageclasses", "get", "list", "watch")
 	})
 
 	t.Run("release ordering and excluded tooling", func(t *testing.T) {
@@ -924,15 +766,6 @@ func v1Alpha2Version() []crdVersion {
 	return []crdVersion{{name: "v1alpha2", served: true, storage: true}}
 }
 
-func containsAny(values []string, candidates ...string) bool {
-	for _, candidate := range candidates {
-		if slices.Contains(values, candidate) {
-			return true
-		}
-	}
-	return false
-}
-
 func typeMarkers(t *testing.T, path, typeName string) []string {
 	t.Helper()
 	file := parseGoFile(t, path, parser.ParseComments)
@@ -1021,7 +854,7 @@ func managerControllerRegistrations(t *testing.T, path string) map[goType]int {
 	registrations := make(map[goType]int)
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Name.Name != "main" || function.Body == nil {
+		if !ok || function.Name.Name != "setupControllers" || function.Body == nil {
 			continue
 		}
 		for _, statement := range function.Body.List {
@@ -1200,30 +1033,6 @@ func assertBoolPointer(t *testing.T, field string, actual, expected *bool) {
 		t.Errorf("%s = %t, want nil", field, *actual)
 	case expected != nil && (actual == nil || *actual != *expected):
 		t.Errorf("%s = %v, want %t", field, actual, *expected)
-	}
-}
-
-func assertRBACAllows(
-	t *testing.T,
-	role rbacv1.ClusterRole,
-	apiGroup string,
-	resource string,
-	verbs ...string,
-) {
-	t.Helper()
-	for _, verb := range verbs {
-		allowed := false
-		for _, rule := range role.Rules {
-			if containsAny(rule.APIGroups, apiGroup, "*") &&
-				containsAny(rule.Resources, resource, "*") &&
-				containsAny(rule.Verbs, verb, "*") {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			t.Errorf("operator RBAC does not allow %s %s/%s", verb, apiGroup, resource)
-		}
 	}
 }
 

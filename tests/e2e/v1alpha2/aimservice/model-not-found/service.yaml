@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: model-not-found
+  annotations:
+    aim.eai.amd.com/reconciler-pipeline: profile
+spec:
+  model:
+    name: nonexistent-model
+  replicas: 1

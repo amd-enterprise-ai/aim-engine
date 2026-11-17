@@ -25,7 +25,6 @@ SOFTWARE.
 package aimmodel
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -275,116 +274,6 @@ func TestModelFetchResult_GetComponentHealth(t *testing.T) {
 
 	if len(health) != 3 {
 		t.Fatalf("expected 3 component health entries, got %d", len(health))
-	}
-}
-
-// ============================================================================
-// ImageMetadata() GETTER FALLBACK TESTS
-// ============================================================================
-//
-// fetchImageMetadata returns an empty FetchResult on steady-state reconciles
-// when status already carries cached metadata (Case 4). Consumers of the
-// .ImageMetadata() getter (notably the v1alpha2 reconcilers that derive
-// `Spec.Primary` from the OCI recommendedDeployments label) MUST still get
-// the cached value, otherwise the RD-fallback silently no-ops on every
-// reconcile after the initial fetch. These tests pin the fallback behavior.
-
-func TestModelFetchResult_ImageMetadata_FreshFetchPreferred(t *testing.T) {
-	fresh := &aimv1alpha1.ImageMetadata{Model: &aimv1alpha1.ModelMetadata{CanonicalName: "fresh"}}
-	cached := &aimv1alpha1.ImageMetadata{Model: &aimv1alpha1.ModelMetadata{CanonicalName: "cached"}}
-	result := ModelFetchResult{
-		model: &aimv1alpha1.AIMModel{
-			Status: aimv1alpha1.AIMModelStatus{ImageMetadata: cached},
-		},
-		imageMetadata: controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{Value: fresh},
-	}
-	if got := result.ImageMetadata(); got != fresh {
-		t.Errorf("expected fresh metadata when both fresh and cached are present, got %+v", got)
-	}
-}
-
-func TestModelFetchResult_ImageMetadata_FallsBackToStatusCache(t *testing.T) {
-	cached := &aimv1alpha1.ImageMetadata{Model: &aimv1alpha1.ModelMetadata{CanonicalName: "cached"}}
-	result := ModelFetchResult{
-		model: &aimv1alpha1.AIMModel{
-			Status: aimv1alpha1.AIMModelStatus{ImageMetadata: cached},
-		},
-	}
-	if got := result.ImageMetadata(); got != cached {
-		t.Errorf("expected fallback to status.imageMetadata when fetch was skipped, got %+v", got)
-	}
-}
-
-func TestModelFetchResult_ImageMetadata_NilWhenAbsentEverywhere(t *testing.T) {
-	result := ModelFetchResult{
-		model: &aimv1alpha1.AIMModel{},
-	}
-	if got := result.ImageMetadata(); got != nil {
-		t.Errorf("expected nil when neither fresh nor cached metadata is present, got %+v", got)
-	}
-}
-
-func TestClusterModelFetchResult_ImageMetadata_FallsBackToStatusCache(t *testing.T) {
-	cached := &aimv1alpha1.ImageMetadata{Model: &aimv1alpha1.ModelMetadata{CanonicalName: "cluster-cached"}}
-	result := ClusterModelFetchResult{
-		model: &aimv1alpha1.AIMClusterModel{
-			Status: aimv1alpha1.AIMModelStatus{ImageMetadata: cached},
-		},
-	}
-	if got := result.ImageMetadata(); got != cached {
-		t.Errorf("expected cluster fallback to status.imageMetadata, got %+v", got)
-	}
-}
-
-// ============================================================================
-// FETCH IMAGE METADATA TESTS
-// ============================================================================
-
-func TestFetchImageMetadata_SpecProvided(t *testing.T) {
-	// When spec.ImageMetadata is set, it should be returned directly (air-gapped mode)
-	specMetadata := &aimv1alpha1.ImageMetadata{
-		Model: &aimv1alpha1.ModelMetadata{
-			CanonicalName: "spec-provided-model",
-		},
-	}
-	spec := aimv1alpha1.AIMModelSpec{
-		Image:         "test:latest",
-		ImageMetadata: specMetadata,
-	}
-	status := &aimv1alpha1.AIMModelStatus{}
-
-	result := fetchImageMetadata(context.Background(), nil, spec, status, "default")
-
-	if result.HasError() {
-		t.Errorf("expected no error, got %v", result.Error)
-	}
-	if result.Value != specMetadata {
-		t.Error("expected spec-provided metadata to be returned")
-	}
-}
-
-func TestFetchImageMetadata_AlreadyCached(t *testing.T) {
-	// When status already has metadata, no fetch should occur
-	spec := aimv1alpha1.AIMModelSpec{
-		Image: "test:latest",
-	}
-	status := &aimv1alpha1.AIMModelStatus{
-		ImageMetadata: &aimv1alpha1.ImageMetadata{
-			Model: &aimv1alpha1.ModelMetadata{
-				CanonicalName: "cached-model",
-			},
-		},
-		ImageMetadataVersion: currentImageMetadataVersion,
-	}
-
-	result := fetchImageMetadata(context.Background(), nil, spec, status, "default")
-
-	// Should return empty result (no fetch needed)
-	if result.HasError() {
-		t.Errorf("expected no error, got %v", result.Error)
-	}
-	if result.Value != nil {
-		t.Error("expected nil value when already cached (no fetch needed)")
 	}
 }
 

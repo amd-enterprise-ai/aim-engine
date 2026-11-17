@@ -257,6 +257,7 @@ func TestPrepareStatusForPipeline_profileToTemplate(t *testing.T) {
 			{Type: "ProfileConfigReady", Status: metav1.ConditionTrue},
 			{Type: "ProfileCacheReady", Status: metav1.ConditionTrue},
 			{Type: "ProfileRuntimeReady", Status: metav1.ConditionTrue},
+			{Type: "TemplateFieldsIgnored", Status: metav1.ConditionTrue},
 			{Type: "TemplateReady", Status: metav1.ConditionTrue},
 			{Type: "HTTPRouteReady", Status: metav1.ConditionTrue},
 			{Type: "Ready", Status: metav1.ConditionFalse},
@@ -285,6 +286,7 @@ func TestPrepareStatusForPipeline_profileToTemplate(t *testing.T) {
 		"ProfileConfigReady",
 		"ProfileCacheReady",
 		"ProfileRuntimeReady",
+		"TemplateFieldsIgnored",
 	)
 	assertConditionsAbsent(t, status.Conditions, "Ready", "ConfigValid", "AuthValid", "DependenciesReachable")
 	assertConditionsPresent(t, status.Conditions, "TemplateReady", "HTTPRouteReady")

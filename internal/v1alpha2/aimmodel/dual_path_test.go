@@ -236,6 +236,30 @@ func TestApplyModelServingPathPolicy(t *testing.T) {
 				{Component: componentProfiles, State: constants.AIMStatusNotAvailable},
 			},
 		},
+		{
+			name:           "failed image inspection cannot block complete native path without legacy",
+			spec:           aimv1alpha1.AIMModelSpec{Image: "registry.example/native:1.0"},
+			legacyObserved: false,
+			health: []controllerutils.ComponentHealth{
+				{Component: componentRuntimeConfig, State: constants.AIMStatusReady},
+				{Component: componentImageMetadata, State: constants.AIMStatusFailed},
+				{Component: componentDiscovery, State: constants.AIMStatusReady},
+				{Component: componentNodeInventory, State: constants.AIMStatusReady},
+				{Component: componentProfiles, State: constants.AIMStatusReady},
+			},
+			wantNonBlocking: []string{componentRuntimeConfig, componentImageMetadata},
+		},
+		{
+			name:           "failed image inspection blocks incomplete native path without legacy",
+			spec:           aimv1alpha1.AIMModelSpec{Image: "registry.example/native:1.0"},
+			legacyObserved: false,
+			health: []controllerutils.ComponentHealth{
+				{Component: componentRuntimeConfig, State: constants.AIMStatusReady},
+				{Component: componentImageMetadata, State: constants.AIMStatusFailed},
+				{Component: componentDiscovery, State: constants.AIMStatusProgressing},
+				{Component: componentNodeInventory, State: constants.AIMStatusReady},
+			},
+		},
 	}
 
 	for _, templateComponent := range []string{componentServiceTemplates, componentClusterServiceTemplates} {
@@ -351,6 +375,25 @@ func TestRetireRemovedModelPathState(t *testing.T) {
 				}
 				if status.ProfileSetRef == nil {
 					t.Fatal("active profile-set status was retired")
+				}
+			})
+
+			t.Run("native image model keeps image state and retires templates", func(t *testing.T) {
+				spec := aimv1alpha1.AIMModelSpec{Image: "registry.example/native:1.0"}
+				status := staleMixedModelStatus()
+				cm := controllerutils.NewConditionManager(staleMixedModelConditions(templateComponent))
+				health := []controllerutils.ComponentHealth{
+					{Component: componentRuntimeConfig, State: constants.AIMStatusReady},
+					{Component: componentImageMetadata, State: constants.AIMStatusReady},
+				}
+
+				retireRemovedModelPathState(&status, cm, &spec, false, templateComponent, health)
+
+				requireConditionPresent(t, cm.Conditions(), componentRuntimeConfig+controllerutils.ComponentConditionSuffix)
+				requireConditionPresent(t, cm.Conditions(), componentImageMetadata+controllerutils.ComponentConditionSuffix)
+				requireConditionAbsent(t, cm.Conditions(), templateComponent+controllerutils.ComponentConditionSuffix)
+				if status.SourceType == "" || status.ImageMetadata == nil || status.Version == "" {
+					t.Fatalf("native image status was retired: %#v", status)
 				}
 			})
 		})

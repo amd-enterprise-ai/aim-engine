@@ -1,0 +1,12 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: gpu-profile-id-propagation
+spec:
+  routing:
+    enabled: true
+    gatewayRef:
+      name: kserve-ingress-gateway
+      namespace: envoy-gateway-system
+    pathTemplate: "/integration/v1alpha2-gpu-profile-id/{.metadata.namespace}/{.metadata.name}"
+    requestTimeout: "180s"

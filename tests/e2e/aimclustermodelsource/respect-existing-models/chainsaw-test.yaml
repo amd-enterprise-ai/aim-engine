@@ -53,7 +53,7 @@ spec:
         - error:
             timeout: 15s
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMClusterModel
               metadata:
                 labels:
@@ -63,7 +63,7 @@ spec:
       try:
         - assert:
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMClusterModel
               metadata:
                 name: (join('-', ['test-respect-preexisting', $namespace]))
@@ -74,7 +74,7 @@ spec:
       try:
         - delete:
             ref:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMClusterModel
               name: (join('-', ['test-respect-preexisting', $namespace]))
 
@@ -90,7 +90,7 @@ spec:
         - assert:
             timeout: 90s
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMClusterModel
               metadata:
                 labels:
