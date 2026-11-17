@@ -551,3 +551,24 @@ func assertSliceEqual(t *testing.T, name string, got, want []string) {
 		}
 	}
 }
+
+func TestJobsGetRuntimeConfigTolerations(t *testing.T) {
+	mc := &aimv1alpha1.AIMArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec:       aimv1alpha1.AIMArtifactSpec{SourceURI: "hf://org/model"},
+	}
+	gpu := corev1.Toleration{Key: "amd.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{}
+	config.Tolerations = []corev1.Toleration{gpu}
+
+	for name, job := range map[string]*batchv1.Job{
+		"check-size": buildCheckSizeJob(mc, config, false),
+		"download":   buildDownloadJob(mc, config, 1000, false),
+		"reaper":     buildAdapterReaperJob(mc, "adapter-pvc", nil, config),
+	} {
+		got := job.Spec.Template.Spec.Tolerations
+		if len(got) != 1 || got[0] != gpu {
+			t.Errorf("%s Job tolerations = %v, want [%v]", name, got, gpu)
+		}
+	}
+}
