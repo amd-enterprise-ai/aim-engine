@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **`spec.caching.env` in runtime configs.** `AIMRuntimeConfig` and `AIMClusterRuntimeConfig` have a new `spec.caching.env` for download Jobs. The namespace runtime config wins over the cluster runtime config by name, and the `AIMArtifact` `spec.env` wins over both.
+- **v1alpha2 for AIMArtifact, AIMRuntimeConfig, AIMClusterRuntimeConfig and AIMClusterModelSource.** These four kinds are served at v1alpha2 as well as v1alpha1. v1alpha1 remains the storage version, so existing objects stay stored as v1alpha1 and can be read and written at either version.
 - Hand-authored `AIMProfile` and `AIMClusterProfile` resources can declare `spec.baseImageRef`, the supported clean-runtime lineage used when ProfileSets or service overlays replace model weights.
 - **Tolerations for inference pods.** Set `spec.tolerations` in an `AIMRuntimeConfig`, `AIMClusterRuntimeConfig` or `AIMService` to let inference pods onto tainted nodes. An AIMService's list replaces the runtime config's, a namespace runtime config's replaces the cluster's, and an empty list removes the inherited one.
 - **Tolerations for the Jobs that prepare a model.** The size check, download and discovery Jobs get the runtime config's `spec.tolerations`, and the adapter staging Jobs get the same tolerations as the inference pods. A model can now start when every node that can run these Jobs has a taint.
