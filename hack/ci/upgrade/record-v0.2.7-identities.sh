@@ -2,9 +2,10 @@
 #
 # Records the UID and owner references of the v0.2.7 lane's services, their
 # InferenceServices, profile caches and artifacts, its models, the profiles its
-# models produce with their primary flag, and the predictor pods of the service
-# moved by aim-template-migration. The lane records them after that move and
-# before and after the upgrade, and diffs the files.
+# models produce with their primary flag, the predictor pods of the service
+# moved by aim-template-migration, and the chart-managed AIMClusterRuntimeConfig.
+# The lane records them after that move and before and after the upgrade, and
+# diffs the files.
 
 set -euo pipefail
 
@@ -31,11 +32,16 @@ mkdir -p "$(dirname "${output}")"
   done
   kubectl get pods -n "${namespace}" \
     -l aim.eai.amd.com/service=upgrade-migrated-service,app.kubernetes.io/component=inference -o json | identities
-  for resource in aimclustermodelsources aimclustermodels; do
+  for resource in aimclustermodelsources aimclustermodels aimclusterruntimeconfigs; do
     kubectl get "${resource}" -o json | identities
   done
   kubectl get aimprofiles -n "${namespace}" -l aim.eai.amd.com/source-model -o json | primaries
   kubectl get aimclusterprofiles -l aim.eai.amd.com/source-model -o json | primaries
 } | sort > "${output}"
+
+if ! grep -q $'^AIMClusterRuntimeConfig\t-\tdefault\t' "${output}"; then
+  echo "chart AIMClusterRuntimeConfig/default is missing from ${output}" >&2
+  exit 1
+fi
 
 cat "${output}"
