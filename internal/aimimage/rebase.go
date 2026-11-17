@@ -31,100 +31,76 @@ import (
 	"strings"
 )
 
-// majorMinorTagRegex matches semver-shaped image tags so we can extract
-// MAJOR.MINOR consistently across the canonical forms aim-* images use:
-//
-//	0.11           (short — `blang/semver.ParseTolerant` accepts this)
-//	0.11.0         (full)
-//	v0.11.0        (v-prefixed)
-//	0.11.0-rc1     (full + prerelease — `ParseTolerant` accepts this)
-//	0.11-rc21      (short + prerelease — `ParseTolerant` REJECTS this with
-//	                "Short version cannot contain PreRelease/Build meta data";
-//	                aim-base build pipelines stamp this exact form so we
-//	                cannot afford to lose it)
-//	0.11.0+build.1 (build metadata)
-//
-// Tags that don't match (e.g. `latest`, `sha-abc123`, empty) yield no
-// match and callers leave the original tag in place.
-var majorMinorTagRegex = regexp.MustCompile(`^v?(\d+)\.(\d+)(?:\.\d+)?(?:[-+].*)?$`)
+// preReleaseTagRegex matches version tags with a pre-release suffix, such as
+// `2026.11.0-rc11`, `0.11-rc21`, or `2026.15.0-pr1656-rc2`, and captures
+// MAJOR and MINOR. Build metadata (`0.11.0+build.1`) is not a pre-release.
+var preReleaseTagRegex = regexp.MustCompile(`^v?(\d+)\.(\d+)(?:\.\d+)?-[0-9A-Za-z.-]+$`)
 
-// RebaseRegistry rewrites baseImageRef so its registry+org prefix matches
-// sourceImage while preserving baseImageRef's image name and tag. This lets a
-// fine-tuned deployment pull aim-base from the same registry/org as the source
-// base model — so mirroring the base model to a private registry automatically
-// covers the aim-base deployment too.
+// ResolveBaseImage returns the image a weight-replacing derivation deploys
+// for the recorded aim-base reference baseImageRef.
+//
+// The image name, tag, and digest come from baseImageRef. The registry and
+// org come from registry when it is set, and otherwise from sourceImage, the
+// model image the derivation starts from, so a mirror that hosts both the
+// model images and aim-base needs no configuration. A pre-release tag is
+// replaced by its MAJOR.MINOR rolling tag, because pre-release aim-base tags
+// recorded by model builds are not published; release tags and digests are
+// kept exactly.
 //
 // Examples:
 //
-//	RebaseRegistry("registry.example.com/mirror/qwen3:0.11",
-//	               "docker.io/amdenterpriseai/aim-base:0.11")
-//	  → "registry.example.com/mirror/aim-base:0.11"
-//	RebaseRegistry("docker.io/amdenterpriseai/qwen3:0.11",
-//	               "registry.example.com/mirror/aim-base:0.11")
-//	  → "docker.io/amdenterpriseai/aim-base:0.11"
-//
-// When sourceImage lacks a "/" (no registry+org to graft on) or is empty,
-// baseImageRef is returned unchanged.
-func RebaseRegistry(sourceImage, baseImageRef string) string {
-	srcSlash := strings.LastIndex(sourceImage, "/")
-	if srcSlash <= 0 {
-		return baseImageRef
-	}
-	prefix := sourceImage[:srcSlash]
-
-	baseSlash := strings.LastIndex(baseImageRef, "/")
-	if baseSlash < 0 {
-		return prefix + "/" + baseImageRef
-	}
-	return prefix + baseImageRef[baseSlash:]
-}
-
-// LegacyBaseImageFromSource synthesizes an aim-base reference for AIMModels
-// whose status.imageMetadata was populated before AIM_BASE_IMAGE_REF
-// extraction existed. It returns `aim-base:MAJOR.MINOR` derived from the
-// source image's tag, or "" when the tag isn't parseable as semver. The
-// result has no registry+org prefix on purpose — RebaseRegistry grafts that
-// on from the source image so the fallback inherits the same mirror the base
-// model already uses.
-//
-// Truncating to MAJOR.MINOR matches how the aim-base image is actually
-// published (e.g. `aim-base:0.11`, not `aim-base:0.11.0`).
-func LegacyBaseImageFromSource(sourceImage string) string {
-	colon := tagColonIndex(sourceImage)
-	if colon < 0 {
+//	ResolveBaseImage("docker.io/silogenai/aim-base:0.13.1",
+//	                 "registry.example.com/mirror/aim-qwen3:0.13.0", "")
+//	  → "registry.example.com/mirror/aim-base:0.13.1"
+//	ResolveBaseImage("docker.io/silogenai/aim-base:2026.11.0-rc11",
+//	                 "docker.io/amdenterpriseai/aim-gemma4:2026.11.0-rc1",
+//	                 "registry.example.com/aim")
+//	  → "registry.example.com/aim/aim-base:2026.11"
+func ResolveBaseImage(baseImageRef, sourceImage, registry string) string {
+	if baseImageRef == "" {
 		return ""
 	}
-	mm, ok := extractMajorMinor(sourceImage[colon+1:])
-	if !ok {
-		return ""
+	ref := rollPreReleaseTag(baseImageRef)
+	prefix := registry
+	if prefix == "" {
+		prefix = repositoryPrefix(sourceImage)
 	}
-	return "aim-base:" + mm
+	if prefix == "" {
+		return ref
+	}
+	return prefix + "/" + ref[strings.LastIndex(ref, "/")+1:]
 }
 
-// NormalizeBaseImageTag rewrites baseImageRef's tag to MAJOR.MINOR when the
-// tag parses as semver. This collapses release-candidate / patch tags
-// (e.g. `aim-base:0.11-rc21`, `aim-base:0.11.2`) onto the stable MAJOR.MINOR
-// tag aim-base actually publishes (e.g. `aim-base:0.11`).
-//
-// Applied to AIM_BASE_IMAGE_REF values extracted from the source image's OCI
-// config: build pipelines often stamp the in-progress release tag
-// (`0.11-rc21`), but the deployable aim-base image is always tagged with its
-// MAJOR.MINOR rolling tag. Truncating here makes downstream rebases produce
-// a tag that actually resolves in the registry.
-//
-// When baseImageRef has no tag, the tag isn't semver-parseable, or only the
-// registry port (`registry.local:5000/image`) looks like a tag, baseImageRef
-// is returned unchanged.
-func NormalizeBaseImageTag(baseImageRef string) string {
-	colon := tagColonIndex(baseImageRef)
+// repositoryPrefix returns the registry and org of imageRef, everything
+// before the last path segment, or "" when imageRef has no path.
+func repositoryPrefix(imageRef string) string {
+	name := imageRef
+	if at := strings.IndexByte(name, '@'); at >= 0 {
+		name = name[:at]
+	}
+	slash := strings.LastIndex(name, "/")
+	if slash <= 0 {
+		return ""
+	}
+	return name[:slash]
+}
+
+// rollPreReleaseTag replaces a pre-release tag on imageRef with its
+// MAJOR.MINOR rolling tag. Digest references and other tags are returned
+// unchanged.
+func rollPreReleaseTag(imageRef string) string {
+	if strings.Contains(imageRef, "@") {
+		return imageRef
+	}
+	colon := tagColonIndex(imageRef)
 	if colon < 0 {
-		return baseImageRef
+		return imageRef
 	}
-	mm, ok := extractMajorMinor(baseImageRef[colon+1:])
-	if !ok {
-		return baseImageRef
+	m := preReleaseTagRegex.FindStringSubmatch(imageRef[colon+1:])
+	if m == nil {
+		return imageRef
 	}
-	return baseImageRef[:colon] + ":" + mm
+	return imageRef[:colon] + ":" + m[1] + "." + m[2]
 }
 
 // ExtractTag returns the tag substring of imageRef, or "" when imageRef
@@ -140,9 +116,7 @@ func NormalizeBaseImageTag(baseImageRef string) string {
 //	"registry.local:5000/image"       → ""  (registry port, not a tag)
 //
 // Use this as the "image version" source-of-truth for printcolumns and
-// status denormalisation. The companion `NormalizeBaseImageTag` above
-// truncates a SemVer-ish tag to MAJOR.MINOR; use that for rebase paths
-// that must match a stable rolling tag.
+// status denormalisation.
 func ExtractTag(imageRef string) string {
 	if strings.Contains(imageRef, "@sha256:") {
 		return ""
@@ -167,16 +141,4 @@ func tagColonIndex(imageRef string) int {
 		return -1
 	}
 	return colon
-}
-
-// extractMajorMinor parses tag against majorMinorTagRegex and returns the
-// MAJOR.MINOR substring (e.g. `0.11`) along with ok=true on match. Tags
-// that don't look like a semver release tag yield ok=false and callers
-// fall back to leaving the original tag alone.
-func extractMajorMinor(tag string) (string, bool) {
-	m := majorMinorTagRegex.FindStringSubmatch(tag)
-	if m == nil {
-		return "", false
-	}
-	return m[1] + "." + m[2], true
 }

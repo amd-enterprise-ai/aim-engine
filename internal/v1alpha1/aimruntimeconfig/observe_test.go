@@ -168,6 +168,52 @@ func TestFetchRuntimeConfig_MergeNamespaceOverridesCluster(t *testing.T) {
 	}
 }
 
+// Named runtime configs do not inherit the default cluster config, so a
+// service that selects one deploys aim-base from the model image's registry
+// unless the named config sets baseImageRegistry itself.
+func TestFetchRuntimeConfig_NamedDoesNotInheritDefaultBaseImageRegistry(t *testing.T) {
+	defaultClusterConfig := &aimv1alpha1.AIMClusterRuntimeConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: DefaultRuntimeConfigName},
+		Spec: aimv1alpha1.AIMClusterRuntimeConfigSpec{
+			AIMRuntimeConfigCommon: aimv1alpha1.AIMRuntimeConfigCommon{
+				BaseImageRegistry: "registry.example.com/amdenterpriseai",
+			},
+		},
+	}
+	namedNamespaceConfig := &aimv1alpha1.AIMRuntimeConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "routing", Namespace: "test-ns"},
+		Spec: aimv1alpha1.AIMRuntimeConfigSpec{
+			AIMRuntimeConfigCommon: aimv1alpha1.AIMRuntimeConfigCommon{
+				AIMServiceRuntimeConfig: aimv1alpha1.AIMServiceRuntimeConfig{
+					Routing: &aimv1alpha1.AIMRuntimeRoutingConfig{
+						Enabled: ptr.To(true),
+					},
+				},
+			},
+		},
+	}
+
+	result := FetchMergedRuntimeConfig(
+		context.Background(),
+		newFakeClient(defaultClusterConfig, namedNamespaceConfig),
+		"routing",
+		"test-ns",
+	)
+
+	if result.HasError() {
+		t.Fatalf("unexpected error: %v", result.Error)
+	}
+	if result.Value == nil {
+		t.Fatal("expected merged config")
+	}
+	if result.Value.Routing == nil || result.Value.Routing.Enabled == nil || !*result.Value.Routing.Enabled {
+		t.Fatal("expected routing from named namespace config")
+	}
+	if got := BaseImageRegistry(result.Value); got != "" {
+		t.Fatalf("BaseImageRegistry = %q, want unset; the default cluster config must not leak into a named config", got)
+	}
+}
+
 func TestMergeRuntimeConfigs(t *testing.T) {
 	tests := []struct {
 		name     string

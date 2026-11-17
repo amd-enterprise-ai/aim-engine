@@ -58,11 +58,10 @@ const (
 	// AnnotationBaseImage is the internal wire format the AIMModel reconciler
 	// uses to communicate the AIM_BASE_IMAGE_REF extracted from the source
 	// image to the AIMProfile reconciler at materialisation time. The
-	// AIMProfile reconciler launders the value into AIMProfileStatus.BaseImage
-	// during DecorateStatus; downstream readers (AIMService overlay,
-	// AIMProfileSet candidate listing) prefer status and only fall back to
-	// the annotation for objects whose status hasn't yet been decorated
-	// (e.g., immediately after creation).
+	// AIMProfile reconciler records the value in AIMProfileStatus.BaseImage
+	// during DecorateStatus. This annotation remains authoritative when
+	// producers correct lineage; downstream readers must not prefer stale
+	// status while that correction is being reconciled.
 	AnnotationBaseImage = constants.AimLabelDomain + "/base-image"
 
 	ProfileSourceImage     = "image"
@@ -70,21 +69,24 @@ const (
 	ProfileSourceGenerated = "generated"
 )
 
-// BaseImageFromProfile returns the base image to record on the profile's
-// status. It prefers an existing status value (rare, but covers the case
-// where a previous reconcile already populated it) and falls back to the
-// AIMModel-stamped wire annotation.
+// BaseImageFromProfile returns the current producer-owned base image.
+// The typed spec field is the supported input for user-authored profiles. A
+// present legacy producer annotation remains authoritative over status,
+// including an explicitly empty value. Status is a compatibility fallback.
 func BaseImageFromProfile(profile client.Object, currentStatusBaseImage string) string {
-	if currentStatusBaseImage != "" {
-		return currentStatusBaseImage
+	if profile != nil {
+		if typed, ok := profile.(interface {
+			GetProfileSpecCommon() aimv1alpha2.AIMProfileSpecCommon
+		}); ok {
+			if baseImage := typed.GetProfileSpecCommon().BaseImageRef; baseImage != "" {
+				return baseImage
+			}
+		}
+		if baseImage, present := profile.GetAnnotations()[AnnotationBaseImage]; present {
+			return baseImage
+		}
 	}
-	if profile == nil {
-		return ""
-	}
-	if anns := profile.GetAnnotations(); anns != nil {
-		return anns[AnnotationBaseImage]
-	}
-	return ""
+	return currentStatusBaseImage
 }
 
 func MarkProfileSource(annotations map[string]string, source string) map[string]string {

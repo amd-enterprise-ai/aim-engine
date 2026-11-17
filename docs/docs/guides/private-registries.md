@@ -236,6 +236,27 @@ The `default` RuntimeConfig applies when a service, cache, or artifact does not
 name a different RuntimeConfig. A namespace `AIMRuntimeConfig` overrides an
 `AIMClusterRuntimeConfig` with the same name.
 
+Fine-tuned models and other derivations that replace a model's weights deploy
+aim-base from the same registry and org as the model image, so mirroring the
+model images and aim-base side by side needs no configuration. When aim-base
+lives in a different registry, set `baseImageRegistry`:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+  namespace: ml-team
+spec:
+  baseImageRegistry: registry.internal.example/amdenterpriseai
+```
+
+Explicit image overrides are left unchanged. Services and legacy fine-tuned
+models that select a named RuntimeConfig read `baseImageRegistry` from that
+configuration, not from `default`. See
+[aim-base registry for derived images](../concepts/runtime-config.md#aim-base-registry-for-derived-images)
+for tag handling and which RuntimeConfig each derivation uses.
+
 When `AIMProfile.spec.caching.enabled` creates a profile-owned shared cache,
 that cache resolves the `default` RuntimeConfig. Setting
 `AIMService.spec.runtimeConfigName` to another name does not retarget the

@@ -24,6 +24,10 @@ spec:
 status:
   status: Ready
   version: 1.0.0
+  # AIM_BASE_IMAGE_REF the producer recorded for the optimized seed image.
+  # Replacing modelSources must resolve the overlay onto this clean runtime
+  # instead of guessing from spec.image.
+  baseImage: registry.example.com/aim-base:1.0.0
   hardwareSummary: CPU
   matchingNodes: 1
   conditions:

@@ -24,145 +24,124 @@ package aimimage
 
 import "testing"
 
-func TestRebaseRegistry(t *testing.T) {
-	cases := []struct {
-		name         string
-		source       string
-		baseImageRef string
-		want         string
-	}{
-		{
-			name:         "graft prefix with registry+org",
-			source:       "registry.example.com/mirror/qwen3:0.11",
-			baseImageRef: "docker.io/amdenterpriseai/aim-base:0.11",
-			want:         "registry.example.com/mirror/aim-base:0.11",
-		},
-		{
-			name:         "switch registry+org again",
-			source:       "docker.io/amdenterpriseai/qwen3:0.11",
-			baseImageRef: "registry.example.com/mirror/aim-base:0.11",
-			want:         "docker.io/amdenterpriseai/aim-base:0.11",
-		},
-		{
-			name:         "base ref without slash gets prefix grafted",
-			source:       "ghcr.io/amdenterpriseai/qwen3:0.11",
-			baseImageRef: "aim-base:0.11",
-			want:         "ghcr.io/amdenterpriseai/aim-base:0.11",
-		},
-		{
-			name:         "source without slash returns base unchanged",
-			source:       "qwen3:0.11",
-			baseImageRef: "ghcr.io/amdenterpriseai/aim-base:0.11",
-			want:         "ghcr.io/amdenterpriseai/aim-base:0.11",
-		},
-		{
-			name:         "empty source returns base unchanged",
-			source:       "",
-			baseImageRef: "ghcr.io/amdenterpriseai/aim-base:0.11",
-			want:         "ghcr.io/amdenterpriseai/aim-base:0.11",
-		},
-		{
-			name:         "same registry is a no-op",
-			source:       "ghcr.io/amdenterpriseai/qwen3:0.11",
-			baseImageRef: "ghcr.io/amdenterpriseai/aim-base:0.11",
-			want:         "ghcr.io/amdenterpriseai/aim-base:0.11",
-		},
-		{
-			name:         "registry port in source is preserved",
-			source:       "localhost:5000/myorg/qwen3:0.11",
-			baseImageRef: "ghcr.io/amdenterpriseai/aim-base:0.11",
-			want:         "localhost:5000/myorg/aim-base:0.11",
-		},
-		{
-			name:         "multi-segment source path keeps everything before last slash",
-			source:       "registry.example.com/team/models/qwen3:0.11",
-			baseImageRef: "ghcr.io/amdenterpriseai/aim-base:0.11",
-			want:         "registry.example.com/team/models/aim-base:0.11",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := RebaseRegistry(tc.source, tc.baseImageRef)
-			if got != tc.want {
-				t.Fatalf("RebaseRegistry(%q, %q) = %q, want %q", tc.source, tc.baseImageRef, got, tc.want)
-			}
-		})
-	}
-}
+func TestResolveBaseImage(t *testing.T) {
+	t.Parallel()
 
-func TestNormalizeBaseImageTag(t *testing.T) {
-	cases := []struct {
-		name         string
-		baseImageRef string
-		want         string
+	tests := []struct {
+		name        string
+		ref         string
+		sourceImage string
+		registry    string
+		want        string
 	}{
 		{
-			name:         "release-candidate tag truncates to major.minor",
-			baseImageRef: "ghcr.io/amdenterpriseai/aim-base:0.11-rc21",
-			want:         "ghcr.io/amdenterpriseai/aim-base:0.11",
+			name:        "takes the registry and org from the source image",
+			ref:         "docker.io/silogenai/aim-base:0.13.1",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen-qwen3-32b:0.13.0",
+			want:        "docker.io/amdenterpriseai/aim-base:0.13.1",
 		},
 		{
-			name:         "full semver tag truncates to major.minor",
-			baseImageRef: "ghcr.io/amdenterpriseai/aim-base:0.11.2",
-			want:         "ghcr.io/amdenterpriseai/aim-base:0.11",
+			name:        "follows a mirrored source image",
+			ref:         "docker.io/silogenai/aim-base:0.13.1",
+			sourceImage: "registry.example.com/mirror/aim-qwen-qwen3-32b:0.13.0",
+			want:        "registry.example.com/mirror/aim-base:0.13.1",
 		},
 		{
-			name:         "major.minor tag is preserved",
-			baseImageRef: "ghcr.io/amdenterpriseai/aim-base:0.11",
-			want:         "ghcr.io/amdenterpriseai/aim-base:0.11",
+			name:        "configured registry wins over the source image",
+			ref:         "docker.io/silogenai/aim-base:0.13.1",
+			sourceImage: "registry.example.com/models/aim-qwen-qwen3-32b:0.13.0",
+			registry:    "registry.example.com/runtimes",
+			want:        "registry.example.com/runtimes/aim-base:0.13.1",
 		},
 		{
-			name:         "v-prefixed semver tolerated",
-			baseImageRef: "ghcr.io/amdenterpriseai/aim-base:v0.11.2",
-			want:         "ghcr.io/amdenterpriseai/aim-base:0.11",
+			name:        "registry with a port",
+			ref:         "docker.io/silogenai/aim-base:0.13.1",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen-qwen3-32b:0.13.0",
+			registry:    "registry.example:5000/amd",
+			want:        "registry.example:5000/amd/aim-base:0.13.1",
 		},
 		{
-			name:         "prerelease with full semver truncates",
-			baseImageRef: "ghcr.io/amdenterpriseai/aim-base:0.11.0-rc1",
-			want:         "ghcr.io/amdenterpriseai/aim-base:0.11",
+			name:        "source image with a registry port",
+			ref:         "docker.io/silogenai/aim-base:0.13.1",
+			sourceImage: "registry.example:5000/amd/aim-qwen-qwen3-32b:0.13.0",
+			want:        "registry.example:5000/amd/aim-base:0.13.1",
 		},
 		{
-			name:         "non-semver tag left unchanged",
-			baseImageRef: "ghcr.io/amdenterpriseai/aim-base:latest",
-			want:         "ghcr.io/amdenterpriseai/aim-base:latest",
+			name:        "source image pinned by digest",
+			ref:         "docker.io/silogenai/aim-base:0.13.1",
+			sourceImage: "registry.example.com/mirror/aim-qwen-qwen3-32b@sha256:abcd",
+			want:        "registry.example.com/mirror/aim-base:0.13.1",
 		},
 		{
-			name:         "no tag left unchanged",
-			baseImageRef: "ghcr.io/amdenterpriseai/aim-base",
-			want:         "ghcr.io/amdenterpriseai/aim-base",
+			name:        "source image without a registry keeps the recorded prefix",
+			ref:         "docker.io/silogenai/aim-base:0.13.1",
+			sourceImage: "aim-qwen-qwen3-32b:0.13.0",
+			want:        "docker.io/silogenai/aim-base:0.13.1",
 		},
 		{
-			name:         "trailing colon left unchanged",
-			baseImageRef: "ghcr.io/amdenterpriseai/aim-base:",
-			want:         "ghcr.io/amdenterpriseai/aim-base:",
+			name: "no source image keeps the recorded prefix",
+			ref:  "docker.io/silogenai/aim-base:0.13.1",
+			want: "docker.io/silogenai/aim-base:0.13.1",
 		},
 		{
-			name:         "registry port without tag left unchanged",
-			baseImageRef: "registry.local:5000/aim-base",
-			want:         "registry.local:5000/aim-base",
+			name:        "recorded reference without a registry gets one",
+			ref:         "aim-base:0.13.1",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen-qwen3-32b:0.13.0",
+			want:        "docker.io/amdenterpriseai/aim-base:0.13.1",
 		},
 		{
-			name:         "registry port with semver tag normalised",
-			baseImageRef: "registry.local:5000/aim-base:0.11-rc21",
-			want:         "registry.local:5000/aim-base:0.11",
+			name:        "digest is kept exactly",
+			ref:         "docker.io/silogenai/aim-base@sha256:abcd",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen-qwen3-32b:0.13.0",
+			want:        "docker.io/amdenterpriseai/aim-base@sha256:abcd",
 		},
 		{
-			name:         "untagged single-segment ref left unchanged",
-			baseImageRef: "aim-base",
-			want:         "aim-base",
+			name:        "full release tag is kept exactly",
+			ref:         "docker.io/silogenai/aim-base:2026.11.0",
+			sourceImage: "docker.io/amdenterpriseai/aim-gemma4:2026.11.0",
+			want:        "docker.io/amdenterpriseai/aim-base:2026.11.0",
 		},
 		{
-			name:         "tagged single-segment ref normalised",
-			baseImageRef: "aim-base:0.11-rc21",
-			want:         "aim-base:0.11",
+			name:        "pre-release tag rolls to MAJOR.MINOR",
+			ref:         "docker.io/silogenai/aim-base:2026.11.0-rc11",
+			sourceImage: "docker.io/amdenterpriseai/aim-gemma4:2026.11.0-rc1",
+			want:        "docker.io/amdenterpriseai/aim-base:2026.11",
 		},
-		{name: "empty ref returns empty", baseImageRef: "", want: ""},
+		{
+			name:        "multi-part pre-release tag rolls to MAJOR.MINOR",
+			ref:         "docker.io/silogenai/aim-base:2026.15.0-pr1656-rc2",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen3:2026.15.0-rc1",
+			want:        "docker.io/amdenterpriseai/aim-base:2026.15",
+		},
+		{
+			name:        "short pre-release tag rolls to MAJOR.MINOR",
+			ref:         "docker.io/silogenai/aim-base:0.11-rc21",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen3:0.11.0",
+			want:        "docker.io/amdenterpriseai/aim-base:0.11",
+		},
+		{
+			name:        "build metadata is kept exactly",
+			ref:         "docker.io/silogenai/aim-base:0.11.0+build.1",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen3:0.11.0",
+			want:        "docker.io/amdenterpriseai/aim-base:0.11.0+build.1",
+		},
+		{
+			name:        "non-version tag is kept exactly",
+			ref:         "docker.io/silogenai/aim-base:nightly-2026-05-27",
+			sourceImage: "docker.io/amdenterpriseai/aim-qwen3:0.11.0",
+			want:        "docker.io/amdenterpriseai/aim-base:nightly-2026-05-27",
+		},
+		{
+			name: "empty reference stays empty",
+			want: "",
+		},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := NormalizeBaseImageTag(tc.baseImageRef)
-			if got != tc.want {
-				t.Fatalf("NormalizeBaseImageTag(%q) = %q, want %q", tc.baseImageRef, got, tc.want)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ResolveBaseImage(tt.ref, tt.sourceImage, tt.registry); got != tt.want {
+				t.Fatalf("ResolveBaseImage(%q, %q, %q) = %q, want %q", tt.ref, tt.sourceImage, tt.registry, got, tt.want)
 			}
 		})
 	}
@@ -183,11 +162,7 @@ func TestExtractTag(t *testing.T) {
 		{name: "empty input", imageRef: "", want: ""},
 		{name: "single-segment tagged", imageRef: "aim-base:0.11", want: "0.11"},
 		// Pre-release / build-metadata suffixes are preserved verbatim.
-		// ExtractTag is a pure slice and does NOT normalise the tag.
-		// Compare with NormalizeBaseImageTag (above) which intentionally
-		// truncates `:0.11.0-rc21` → `:0.11` for aim-base rebases — that
-		// truncation is a separate concern for base-image resolution and
-		// must NOT leak into the user-visible Version column.
+		// ExtractTag is a pure slice and does not interpret the tag.
 		{name: "rc suffix preserved", imageRef: "ghcr.io/amdenterpriseai/aim-base:0.11-rc21", want: "0.11-rc21"},
 		{name: "full semver with rc preserved", imageRef: "ghcr.io/amdenterpriseai/aim-base:0.11.0-rc1", want: "0.11.0-rc1"},
 		{name: "semver with build metadata preserved", imageRef: "ghcr.io/amdenterpriseai/aim-base:0.11.0+build123", want: "0.11.0+build123"},
@@ -200,34 +175,6 @@ func TestExtractTag(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := ExtractTag(tc.imageRef); got != tc.want {
 				t.Fatalf("ExtractTag(%q) = %q, want %q", tc.imageRef, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestLegacyBaseImageFromSource(t *testing.T) {
-	cases := []struct {
-		name   string
-		source string
-		want   string
-	}{
-		{name: "semver tag truncates to major.minor", source: "ghcr.io/amdenterpriseai/qwen3:0.11.2", want: "aim-base:0.11"},
-		{name: "two-segment semver kept as-is", source: "ghcr.io/amdenterpriseai/qwen3:0.11", want: "aim-base:0.11"},
-		{name: "v-prefixed semver is tolerated", source: "ghcr.io/amdenterpriseai/qwen3:v0.11.0", want: "aim-base:0.11"},
-		{name: "semver with prerelease suffix is accepted", source: "ghcr.io/amdenterpriseai/qwen3:0.11.0-rc1", want: "aim-base:0.11"},
-		{name: "short prerelease suffix is accepted", source: "ghcr.io/amdenterpriseai/qwen3:0.11-rc21", want: "aim-base:0.11"},
-		{name: "registry with port keeps tag parsing correct", source: "localhost:5000/myorg/qwen3:0.11.0", want: "aim-base:0.11"},
-		{name: "non-semver tag yields empty", source: "ghcr.io/amdenterpriseai/qwen3:latest", want: ""},
-		{name: "no tag yields empty", source: "ghcr.io/amdenterpriseai/qwen3", want: ""},
-		{name: "trailing colon yields empty", source: "ghcr.io/amdenterpriseai/qwen3:", want: ""},
-		{name: "registry port without tag is ignored", source: "registry.local:5000/image", want: ""},
-		{name: "empty source returns empty", source: "", want: ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := LegacyBaseImageFromSource(tc.source)
-			if got != tc.want {
-				t.Fatalf("LegacyBaseImageFromSource(%q) = %q, want %q", tc.source, got, tc.want)
 			}
 		})
 	}

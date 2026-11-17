@@ -2,9 +2,9 @@
 
 Runtime configurations provide storage defaults, routing parameters,
 scale-from-zero activation queries, environment variables, additional CA
-trust, and label-propagation rules that apply to AIM workloads. They're
-optional — workloads run without them — but most production deployments set at
-least a cluster-scoped `default`.
+trust, the aim-base registry, and label-propagation rules that apply to AIM
+workloads. They're optional — workloads run without them — but most production
+deployments set at least a cluster-scoped `default`.
 
 ## Resources
 
@@ -84,6 +84,60 @@ Each consuming resource independently resolves its RuntimeConfig and publishes
 the result. A named RuntimeConfig selected by an `AIMService` does not retarget
 a shared cache already owned by an `AIMProfile`; use `default` for policy that
 must apply to both.
+
+## aim-base registry for derived images
+
+When a derivation replaces a model's weights (a fine-tuned model, a profile set
+with `overrides.modelSources`, or an `AIMService` with
+`profileOverrides.modelSources`), the derived profile deploys the clean aim-base
+runtime recorded in the source image's `AIM_BASE_IMAGE_REF` instead of the
+model-optimized image. AIM Engine keeps the image name and tag from that
+reference and takes the registry and org from the source model image, so a
+mirror that hosts both the model images and aim-base needs no configuration.
+
+Set `spec.baseImageRegistry` when aim-base lives somewhere other than the model
+images. The value is a registry and org, without a tag:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: default
+spec:
+  baseImageRegistry: registry.example.com/amdenterpriseai
+```
+
+| `AIM_BASE_IMAGE_REF` | Source model image | `baseImageRegistry` | Deployed image |
+|---|---|---|---|
+| `build.example.com/aim/aim-base:0.13.1` | `docker.io/amdenterpriseai/aim-qwen-qwen3-32b:0.13.0` | unset | `docker.io/amdenterpriseai/aim-base:0.13.1` |
+| `build.example.com/aim/aim-base:0.13.1` | `registry.example.com/mirror/aim-qwen-qwen3-32b:0.13.0` | unset | `registry.example.com/mirror/aim-base:0.13.1` |
+| `build.example.com/aim/aim-base:0.13.1` | `registry.example.com/models/aim-qwen-qwen3-32b:0.13.0` | `registry.example.com/runtimes` | `registry.example.com/runtimes/aim-base:0.13.1` |
+| `build.example.com/aim/aim-base:2026.11.0-rc11` | `docker.io/amdenterpriseai/aim-gemma4:2026.11.0-rc1` | unset | `docker.io/amdenterpriseai/aim-base:2026.11` |
+
+Release tags and digests are kept exactly. A pre-release tag such as
+`2026.11.0-rc11` is replaced by its `MAJOR.MINOR` rolling tag, because model
+builds record pre-release aim-base tags that are not published.
+`spec.baseImageRef` and `status.baseImage` keep the recorded reference either
+way, so the substitution stays visible.
+
+The RuntimeConfig that supplies `baseImageRegistry` depends on the derivation
+owner:
+
+| Path | RuntimeConfig used |
+|---|---|
+| `AIMProfileSet`, `AIMClusterProfileSet`, and v1alpha2 `AIMModel.spec.profiles.derivedFrom` | Merged `default` configuration for the applicable scope |
+| v1alpha2 `AIMService.spec.profileOverrides` | The RuntimeConfig selected by that service |
+| v1alpha1 fine-tuned `AIMModel` / `AIMClusterModel` template copies | The RuntimeConfig selected by that model |
+
+A namespace `baseImageRegistry` replaces the cluster value. A named
+configuration does not inherit `default`, so set `baseImageRegistry` on each
+named configuration that needs it; without it, the source model image's
+registry is used. Explicit derivation image overrides are used as given.
+
+If an image does not contain `AIM_BASE_IMAGE_REF`, derivation reports a
+controlled resolution error and retains existing managed profiles rather than
+guessing a runtime image. Hand-authored deployable profiles can supply the same
+lineage explicitly with `spec.baseImageRef`.
 
 ## Additional CA trust
 

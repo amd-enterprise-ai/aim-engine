@@ -95,10 +95,10 @@ spec:
                 modelId: test/ft-multi-fp8
                 modelName: ft-multi-finetuned
 
-    - name: Assert a fine-tuned copy is created with the aim-cpu-base annotation rebased to the Docker Hub registry
+    - name: Assert a fine-tuned copy is created with the aim-cpu-base annotation in the Docker Hub registry
       # Owner B has spec.image=amdenterpriseai/aim-multi-llama-cpu:0.1.10 and
       # baseImageRef=ghcr.io/silogen/aim-multi-cpu-base:0.11 — the resolver
-      # must rebase to amdenterpriseai/aim-multi-cpu-base:0.11.
+      # must take the registry from spec.image: amdenterpriseai/aim-multi-cpu-base:0.11.
       try:
         - assert:
             timeout: 60s
