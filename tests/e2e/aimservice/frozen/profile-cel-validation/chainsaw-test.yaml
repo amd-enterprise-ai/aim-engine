@@ -15,9 +15,10 @@
 #
 # And validates the ratcheting behaviour of the v1alpha2-only field guards
 # (optionalOldSelf): a stored object that still carries the legacy
-# spec.template must remain updatable through the v1alpha2 endpoint (e.g.
-# finalizer removal so GC can complete), while introducing spec.template via
-# the v1alpha2 endpoint stays rejected.
+# spec.template or spec.model.custom must remain updatable through the
+# v1alpha2 endpoint (e.g. finalizer removal so GC can complete), while
+# introducing either field via the v1alpha2 endpoint stays rejected. The
+# legacy objects are created through v1alpha1, which has no such guards.
 #
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
@@ -366,5 +367,81 @@ spec:
               if kubectl patch aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" \
                   test-ratchet-clean --type merge -p '{"spec":{"template":{"name":"x"}}}' 2>/dev/null; then
                 echo "ERROR: introducing spec.template via v1alpha2 was accepted"
+                exit 1
+              fi
+
+    - name: Reject v1alpha2 service supplying model.custom on create
+      try:
+        - apply:
+            expect:
+              - check:
+                  ($error != null): true
+                  (contains($error, 'create an AIMModel and reference it with spec.model.name')): true
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-cel-v1a2-model-custom
+              spec:
+                model:
+                  custom:
+                    baseImage: registry.example.com/test-image:1.0.0
+                    modelSources:
+                      - modelId: org/model
+                        sourceUri: hf://org/model
+                        size: 1Gi
+                    hardware:
+                      cpu:
+                        requests: "1"
+
+    - name: Ratchet - legacy custom-model service is updatable via v1alpha2
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: test-ratchet-legacy-custom
+                finalizers:
+                  - chainsaw.test/ratchet-probe
+              spec:
+                model:
+                  custom:
+                    baseImage: registry.example.com/test-image:1.0.0
+                    modelSources:
+                      - modelId: org/model
+                        sourceUri: hf://org/model
+                        size: 1Gi
+                    hardware:
+                      cpu:
+                        requests: "1"
+        - script:
+            content: |
+              set -eu
+              kubectl patch aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" \
+                test-ratchet-legacy-custom --type merge -p '{"metadata":{"finalizers":[]}}'
+
+    - name: Ratchet - introducing model.custom via v1alpha2 update is still rejected
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: test-ratchet-clean-custom
+              spec:
+                profile:
+                  name: some-profile
+        - script:
+            content: |
+              set -u
+              if out="$(kubectl patch aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" \
+                  test-ratchet-clean-custom --type merge \
+                  -p '{"spec":{"model":{"custom":{"baseImage":"registry.example.com/test-image:1.0.0","modelSources":[{"modelId":"org/model","sourceUri":"hf://org/model","size":"1Gi"}],"hardware":{"cpu":{"requests":"1"}}}}}}' 2>&1)"; then
+                echo "ERROR: introducing spec.model.custom via v1alpha2 was accepted"
+                exit 1
+              fi
+              if ! printf '%s' "$out" | grep -q 'create an AIMModel and reference it with spec.model.name'; then
+                echo "ERROR: unexpected rejection: $out"
                 exit 1
               fi

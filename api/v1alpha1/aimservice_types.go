@@ -31,15 +31,6 @@ import (
 )
 
 const (
-	// AIMServiceTemplateIndexKey is the field index key used by controller-runtime for
-	// indexing AIMService resources by their template reference (.spec.template.name).
-	// This enables efficient lookups of services that reference a specific template.
-	AIMServiceTemplateIndexKey = ".spec.templateRef"
-
-	// AIMServiceResolvedTemplateIndexKey is the field index key for resolved template name
-	// Indexes by .status.resolvedTemplate.name for finding services using a specific template
-	AIMServiceResolvedTemplateIndexKey = ".status.resolvedTemplate.name"
-
 	// AIMServiceProfileIndexKey is the field index key for indexing AIMService resources
 	// by their profile reference (.spec.profile.name).
 	AIMServiceProfileIndexKey = ".spec.profileRef"

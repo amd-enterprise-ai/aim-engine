@@ -5,7 +5,7 @@
 :::{admonition} v1alpha2
 :class: note
 
-All examples on this page use `aim.eai.amd.com/v1alpha2`. For the deprecated v1alpha1 shape (`spec.template`), see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+All examples on this page use `aim.eai.amd.com/v1alpha2`.
 :::
 ## Quick start
 
@@ -17,8 +17,6 @@ kind: AIMService
 metadata:
   name: qwen-chat
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: qwen-qwen3-32b
@@ -93,11 +91,6 @@ spec:
     name: qwen-qwen3-32b
 ```
 
-During the v1alpha1 → v1alpha2 migration window, a complete model-only
-`AIMService` must also set
-`aim.eai.amd.com/reconciler-pipeline: profile`. A service that includes
-`spec.profile.*` selects the profile pipeline by spec shape.
-
 The candidate pool is every deployable profile produced by `AIMModel/qwen-qwen3-32b` (or `AIMClusterModel` of the same name). Ranking picks the best.
 
 ### Model + selector
@@ -136,22 +129,15 @@ kind: AIMService
 metadata:
   name: qwen-chat
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
 ```
 
-The shortest path when you only have a container image. With the annotation, the v1alpha2 profile pipeline reuses an existing `AIMModel`/`AIMClusterModel` for that image if one is present, or creates a dedicated, service-owned `AIMModel` if not. Discovery runs against the model and the service then resolves to one of its profiles.
+The shortest path when you only have a container image. The controller reuses an existing `AIMModel`/`AIMClusterModel` for that image if one is present, or creates a dedicated, service-owned `AIMModel` if not. Discovery runs against the model and the service then resolves to one of its profiles.
 
-If you plan to share the image across many services, apply a long-lived `AIMModel`/`AIMClusterModel` once and reference it via `spec.model.name` instead — the same profiles back every service and the cache works in `Shared` mode without extra owner chains.
+If you plan to share the image across many services, apply a long-lived `AIMModel`/`AIMClusterModel` once and reference it via `spec.model.name` instead — the same profiles back every service and the cache works in `Shared` mode without extra owner chains. See [Services → By image](../concepts/services.md#by-image) for the auto-created `AIMModel` naming convention, labels and garbage collection.
 
-:::{admonition} Migration window
-:class: warning
-
-Without `aim.eai.amd.com/reconciler-pipeline: profile`, `spec.model.image` is reconciled by the **legacy v1alpha1 template pipeline**. The annotation will be removed (and the profile pipeline made the default) when v1alpha1 is dropped. See [Migration window](../admin/upgrading.md#migration-window) for the full mechanics, including the auto-created `AIMModel` naming convention, labels, and GC behaviour.
-:::
 ## Profile overlays
 
 To tweak a published profile for one service — typically to point it at fine-tune weights or override engine args — use `spec.profileOverrides`:

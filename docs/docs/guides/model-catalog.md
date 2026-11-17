@@ -5,7 +5,7 @@ AIM Engine maintains a catalog of available models as `AIMModel` and `AIMCluster
 :::{admonition} v1alpha2
 :class: note
 
-All examples use `aim.eai.amd.com/v1alpha2`. For the deprecated v1alpha1 `AIMModel` shape with `spec.custom` / `spec.modelSources`, see [Legacy AIMModel](../legacy/aimmodel-v1alpha1.md).
+All examples use `aim.eai.amd.com/v1alpha2`.
 :::
 ## Browsing models
 

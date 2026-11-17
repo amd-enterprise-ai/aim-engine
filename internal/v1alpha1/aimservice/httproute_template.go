@@ -33,6 +33,7 @@ import (
 	"k8s.io/client-go/util/jsonpath"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
@@ -53,7 +54,7 @@ var (
 // The precedence order is:
 // 1. Service.Spec.Routing.PathTemplate (highest priority)
 // 2. RuntimeConfig.Routing.PathTemplate (base layer)
-func ResolveServiceRoutePath(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) (string, error) {
+func ResolveServiceRoutePath(service *aimv1alpha2.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) (string, error) {
 	template := ""
 
 	// Check for service override first (highest priority)
@@ -77,7 +78,7 @@ func ResolveServiceRoutePath(service *aimv1alpha1.AIMService, runtimeConfig *aim
 }
 
 // DefaultRoutePath returns the default HTTP route prefix.
-func DefaultRoutePath(service *aimv1alpha1.AIMService) string {
+func DefaultRoutePath(service *aimv1alpha2.AIMService) string {
 	path, err := normalizeRoutePath(fmt.Sprintf("/%s/%s", service.Namespace, string(service.UID)))
 	if err != nil {
 		return "/"
@@ -90,7 +91,7 @@ func DefaultRoutePath(service *aimv1alpha1.AIMService) string {
 // 1. Service.Spec.Routing.RequestTimeout (highest priority)
 // 2. RuntimeConfig.Routing.RequestTimeout (base layer)
 // Returns nil if no timeout is configured at any level.
-func ResolveServiceRouteTimeout(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) *string {
+func ResolveServiceRouteTimeout(service *aimv1alpha2.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) *string {
 	// Highest priority: AIMService.Spec.Routing.RequestTimeout
 	if service.Spec.Routing != nil && service.Spec.Routing.RequestTimeout != nil {
 		timeout := service.Spec.Routing.RequestTimeout.Duration.String()
@@ -107,7 +108,7 @@ func ResolveServiceRouteTimeout(service *aimv1alpha1.AIMService, runtimeConfig *
 	return nil
 }
 
-func renderRouteTemplate(template string, service *aimv1alpha1.AIMService) (string, error) {
+func renderRouteTemplate(template string, service *aimv1alpha2.AIMService) (string, error) {
 	matches := routeTemplatePattern.FindAllStringSubmatchIndex(template, -1)
 	if len(matches) == 0 {
 		return template, nil
@@ -140,7 +141,7 @@ func evaluateJSONPath(expr string, obj interface{}) (string, error) {
 		return "", fmt.Errorf("jsonpath expression is empty")
 	}
 
-	if service, ok := obj.(*aimv1alpha1.AIMService); ok {
+	if service, ok := obj.(*aimv1alpha2.AIMService); ok {
 		if match := labelAccessPattern.FindStringSubmatch(expr); len(match) == 2 {
 			value, ok := service.Labels[match[1]]
 			if !ok {

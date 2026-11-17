@@ -29,13 +29,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 )
 
 func TestInferenceTolerations(t *testing.T) {
 	gpuTaint := corev1.Toleration{Key: "amd.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
 	poolTaint := corev1.Toleration{Key: "pool", Operator: corev1.TolerationOpEqual, Value: "inference", Effect: corev1.TaintEffectNoSchedule}
-	withTolerations := func(tolerations []corev1.Toleration) *aimv1alpha1.AIMService {
-		service := &aimv1alpha1.AIMService{}
+	withTolerations := func(tolerations []corev1.Toleration) *aimv1alpha2.AIMService {
+		service := &aimv1alpha2.AIMService{}
 		service.Spec.Tolerations = tolerations
 		return service
 	}
@@ -44,7 +45,7 @@ func TestInferenceTolerations(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		service       *aimv1alpha1.AIMService
+		service       *aimv1alpha2.AIMService
 		runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon
 		want          []corev1.Toleration
 	}{

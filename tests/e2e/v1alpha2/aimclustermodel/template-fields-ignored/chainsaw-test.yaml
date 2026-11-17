@@ -1,0 +1,51 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimclustermodel-template-fields-ignored
+spec:
+  description: |
+    An AIMClusterModel that sets spec fields which only configured the
+    AIMClusterServiceTemplates it used to create gets a TemplateFieldsIgnored
+    condition naming exactly those fields and still reaches Ready. Removing the
+    fields clears the warning. Extraction is disabled so no discovery Job runs.
+  timeouts:
+    assert: 90s
+  steps:
+    - name: The model reaches Ready with the warning
+      try:
+        - apply:
+            file: model.yaml
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterModel
+              metadata:
+                name: template-fields-ignored
+              status:
+                status: Ready
+                (length(conditions[?type == 'MigrationRequired'])): 0
+                (conditions[?type == 'TemplateFieldsIgnored']):
+                  - status: "True"
+                    reason: TemplateFieldsSet
+                    message: "These fields have no effect on profile-based serving and can be removed: spec.discovery.createServiceTemplates, spec.defaultServiceTemplate, spec.env, spec.resources"
+
+    - name: Removing the fields clears the warning
+      try:
+        - script:
+            content: |
+              kubectl patch aimclustermodels.v1alpha2.aim.eai.amd.com template-fields-ignored \
+                --type=json -p '[
+                  {"op": "remove", "path": "/spec/discovery/createServiceTemplates"},
+                  {"op": "remove", "path": "/spec/defaultServiceTemplate"},
+                  {"op": "remove", "path": "/spec/env"},
+                  {"op": "remove", "path": "/spec/resources"}
+                ]'
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterModel
+              metadata:
+                name: template-fields-ignored
+              status:
+                status: Ready
+                (length(conditions[?type == 'TemplateFieldsIgnored'])): 0

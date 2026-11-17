@@ -61,13 +61,18 @@ Overall readiness — the aggregate of all other conditions and component health
 | `False` | `ComponentsNotReady` | One or more components are not ready |
 | `False` | `Progressing` | Waiting for components to become ready |
 
-## Migration condition
+## Template-era fields condition
 
-### MigrationRequired
+### TemplateFieldsIgnored
 
-`MigrationRequired=True` with reason `TemplateAPIDeprecated` identifies a live resource that still uses the deprecated template API or produces template outputs. It appears on template-pipeline `AIMService` objects, legacy-shaped `AIMModel` / `AIMClusterModel` objects (including deprecated `profileCopy` and flat `derivedFrom` shapes, plus image models that still emit templates), `AIMServiceTemplate`, `AIMClusterServiceTemplate`, and `AIMTemplateCache`. Follow the [bounded template migration runbook](../admin/template-migration.md) before removing the v1alpha1 template APIs.
+`TemplateFieldsIgnored=True` with reason `TemplateFieldsSet` lists spec fields that only configured templates and have no effect on profile-based serving. A `Warning` event is emitted when the condition appears. It does not participate in the `Ready` rollup and is removed once the fields are removed.
 
-This condition is informational and does not participate in the `Ready` rollup. It is removed when an overlapping service uses the profile pipeline or a model uses only native profile inputs and no longer emits templates. `AIMArtifact`, `AIMRuntimeConfig`, `AIMClusterRuntimeConfig`, and `AIMClusterModelSource` do not report it because native profile pipelines still use those APIs or their outputs.
+| Resource | Reported fields |
+|---|---|
+| `AIMService` | `spec.template`, `spec.overrides`, `spec.model.custom` |
+| `AIMModel` / `AIMClusterModel` | `spec.discovery.createServiceTemplates` (when `false`), `spec.defaultServiceTemplate`, `spec.custom`, `spec.customTemplates`, `spec.env`, `spec.resources` |
+
+See [Template-era fields](../concepts/models.md#template-era-fields) for the model equivalents.
 
 ## AIMService conditions (v1alpha2)
 
@@ -78,7 +83,7 @@ This condition is informational and does not participate in the `Ready` rollup. 
 | Status | Reason | Description |
 |---|---|---|
 | `True` | `ProfileResolved` | Profile found and is deployable |
-| `False` | `ProfileNotFound` | No matching `AIMProfile` / `AIMClusterProfile`. For the image shape (`spec.model.image` + reconciler-pipeline annotation), this also covers the transient "auto-creating AIMModel; waiting for discovery" window — the message text disambiguates. |
+| `False` | `ProfileNotFound` | No matching `AIMProfile` / `AIMClusterProfile`. For the image shape (`spec.model.image`), this also covers the transient "auto-creating AIMModel; waiting for discovery" window — the message text disambiguates. |
 | `False` | `ProfileNotReady` | Profile exists but its own `Ready` condition is false |
 | `False` | `BaseProfile` | `spec.profile.name` resolved to a base profile (not deployable) |
 | `False` | `ProfileSelectorAmbiguous` | Selector returned multiple equally-scored candidates |
@@ -340,26 +345,9 @@ Appears when an artifact the cache serves no longer matches its model source, ty
 | `False` | `RetryBackoff` | Waiting before retrying a failed download |
 | `False` | `Failed` | Terminal failure |
 
-## v1alpha1 conditions
-
-Legacy v1alpha1 controllers (template-based AIMService, AIMServiceTemplate, AIMTemplateCache) still emit their own condition catalog during the deprecation window. See [Legacy Conditions](../legacy/conditions-v1alpha1.md) for the full reference.
-
-### v1alpha1 AIMService (template path)
-
-When an AIMService uses `spec.template` (v1alpha1) the controller emits `TemplateReady` and `CacheReady` instead of `ProfileReady` and `ProfileCacheReady`:
-
-| Condition | Reasons |
-|---|---|
-| `TemplateReady` | `Resolved`, `TemplateNotFound`, `TemplateNotReady`, `TemplateSelectionAmbiguous` |
-| `CacheReady` | `CacheReady`, `CacheCreating`, `CacheNotReady`, `CacheFailed`, `CacheLost` |
-
-### v1alpha1 AIMModel (template-emitting path)
-
-When an AIMModel still emits `AIMServiceTemplate` resources, its `Ready` rollup uses the v1alpha1 reason catalog (`AllTemplatesReady`, `SomeTemplatesReady`, etc.). See the legacy reference for the full list.
-
 ## Condition polarity
 
-Readiness and health conditions follow positive polarity — `status: True` means healthy. `MigrationRequired` is the explicit non-health exception: `True` means administrator action is still required, and it never gates readiness. When building dashboards or alerting:
+Readiness and health conditions follow positive polarity — `status: True` means healthy. `TemplateFieldsIgnored` is the explicit non-health exception: `True` means fields can be removed, and it never gates readiness. When building dashboards or alerting:
 
 - **Green** — condition `status: True`
 - **Yellow** — condition `status: False` with reason containing `Progressing`, `Creating`, `Awaiting`, `Started`

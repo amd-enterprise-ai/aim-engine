@@ -23,11 +23,10 @@
 package constants
 
 // Label key naming conventions:
-//   - Dots (.) separate category from attribute: gpu.model, template.metric
+//   - Dots (.) separate category from attribute: cache.type, model.source
 //   - Hyphens (-) separate words within a name: artifact, auto-generated
 //
-// Example: aim.eai.amd.com/gpu.model=MI300X
-//          aim.eai.amd.com/cache.type=artifact
+// Example: aim.eai.amd.com/cache.type=artifact
 
 const (
 	// ==========================================================================
@@ -35,12 +34,8 @@ const (
 	// ==========================================================================
 
 	// LabelKeyModel identifies the owning AIM(Cluster)Model name.
-	// Used on: AIM(Cluster)ServiceTemplate, AIMService, discovery Jobs
+	// Used on: AIMService, discovery Jobs
 	LabelKeyModel = AimLabelDomain + "/model"
-
-	// LabelKeyTemplate identifies the owning AIM(Cluster)ServiceTemplate name.
-	// Used on: AIMService, inference Pods
-	LabelKeyTemplate = AimLabelDomain + "/template"
 
 	// LabelKeyService identifies the owning AIMService name.
 	// Used on: inference Pods, PVCs
@@ -64,26 +59,6 @@ const (
 	// LabelKeyCustomModel indicates this is a custom model with inline model sources.
 	// Value: "true"
 	LabelKeyCustomModel = AimLabelDomain + "/custom-model"
-
-	// LabelKeyTemplateAlias is the user-provided short-hand alias for a custom template.
-	// Used to find templates by their alias before model prefix and hash are added.
-	LabelKeyTemplateAlias = AimLabelDomain + "/template.alias"
-
-	// ==========================================================================
-	// Template configuration labels - queryable metadata for templates
-	// ==========================================================================
-
-	// LabelKeyGPUModel is the GPU model for this template (e.g., MI300X, MI325X).
-	LabelKeyGPUModel = AimLabelDomain + "/gpu.model"
-
-	// LabelKeyGPUCount is the number of GPUs for this template.
-	LabelKeyGPUCount = AimLabelDomain + "/gpu.count"
-
-	// LabelKeyTemplateMetric is the optimization metric (latency, throughput).
-	LabelKeyTemplateMetric = AimLabelDomain + "/template.metric"
-
-	// LabelKeyTemplatePrecision is the precision (fp8, fp16, bf16).
-	LabelKeyTemplatePrecision = AimLabelDomain + "/template.precision"
 
 	// ==========================================================================
 	// Cache labels - for model and template caches
@@ -142,9 +117,6 @@ const (
 
 	// LabelValueCacheTypeModel indicates a artifact.
 	LabelValueCacheTypeModel = "artifact"
-
-	// LabelValueCacheTypeTemplate indicates a template cache.
-	LabelValueCacheTypeTemplate = "template-cache"
 
 	LabelValueCacheTypeTemplateCache = "template-cache"
 

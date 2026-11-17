@@ -5,7 +5,7 @@ AIM Engine uses the Kubernetes [Gateway API](https://gateway-api.sigs.k8s.io/) t
 :::{admonition} v1alpha2
 :class: note
 
-Routing fields (`spec.routing.*`) are identical across versions. Examples on this page use `aim.eai.amd.com/v1alpha2`. For the legacy template-shaped service, see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+Routing fields (`spec.routing.*`) are identical across versions. Examples on this page use `aim.eai.amd.com/v1alpha2`.
 :::
 ## Enabling Routing
 
@@ -19,8 +19,6 @@ kind: AIMService
 metadata:
   name: qwen-chat
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: qwen-qwen3-32b

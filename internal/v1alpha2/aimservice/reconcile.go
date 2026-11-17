@@ -66,9 +66,8 @@ const (
 )
 
 // ProfileServiceReconciler implements the domain logic for profile-based
-// AIMService reconciliation. It uses the v1alpha1 Go types because v1alpha1
-// is the storage version; the profile-specific spec fields live on
-// aimv1alpha1.AIMService while the referenced profile is defined in v1alpha2.
+// AIMService reconciliation. It works on the v1alpha2 AIMService, whose spec
+// and status are the shared v1alpha1 AIMServiceSpec and AIMServiceStatus types.
 type ProfileServiceReconciler struct {
 	Scheme    *runtime.Scheme
 	Recorder  record.EventRecorder
@@ -85,7 +84,7 @@ func (r *ProfileServiceReconciler) GetApplyOptions(obs ServiceObservation) contr
 // ServiceFetchResult holds all resources fetched for a profile-based
 // AIMService reconcile.
 type ServiceFetchResult struct {
-	service *aimv1alpha1.AIMService
+	service *aimv1alpha2.AIMService
 
 	profile        controllerutils.FetchResult[*aimv1alpha2.AIMProfile]
 	clusterProfile controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]
@@ -213,8 +212,7 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	}
 
 	// Scale-from-zero requires routing; surface the invalid combination as
-	// ConfigValid=False. Shared with the v1alpha1 pipeline so the validation is
-	// identical regardless of which pipeline owns the service.
+	// ConfigValid=False.
 	if cfg := v1alpha1service.ScaleToZeroRoutingComponentHealth(obs.service, obs.mergedRuntimeConfig.Value); cfg.Component != "" {
 		health = append(health, cfg)
 	}
@@ -228,15 +226,13 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	// Routing on a multi-listener gateway requires a hostname pin; otherwise
 	// the route attaches to every listener and can bypass authentication.
 	// Surface as ConfigValid=False even before a profile resolves (the route
-	// is also not created). Shared with the v1alpha1 pipeline.
+	// is also not created).
 	if cfg := v1alpha1service.RoutingHostnameComponentHealth(obs.service, obs.mergedRuntimeConfig.Value, obs.gateway); cfg.Component != "" {
 		health = append(health, cfg)
 	}
 
-	// Autoscaling configured but no trigger resolves -> ConfigValid=False.
-	// Shared with the v1alpha1 pipeline so the invariant (external autoscaler
-	// class implies a ScaledObject) holds regardless of which pipeline owns the
-	// service.
+	// Autoscaling configured but no trigger resolves -> ConfigValid=False, so
+	// the invariant (external autoscaler class implies a ScaledObject) holds.
 	if cfg := v1alpha1service.AutoscalingTriggerComponentHealth(obs.service); cfg.Component != "" {
 		health = append(health, cfg)
 	}
@@ -302,9 +298,9 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 		health = append(health, obs.getInferenceServiceHealth())
 	}
 
-	// Predictor pod health (downstream). Shared with the v1alpha1 pipeline so a
-	// healthily-idled scale-to-zero service reports Ready (ScaledToZero) instead
-	// of stalling at "no pods" forever.
+	// Predictor pod health (downstream). A healthily-idled scale-to-zero
+	// service reports Ready (ScaledToZero) instead of stalling at "no pods"
+	// forever.
 	if podsHealth, ok := v1alpha1service.InferenceServicePodsComponentHealth(
 		ctx, clientset, obs.service, obs.hpa, obs.inferenceServicePods,
 	); ok {
@@ -587,7 +583,7 @@ func (obs ServiceObservation) getInferenceServiceHealth() controllerutils.Compon
 func (r *ProfileServiceReconciler) FetchRemoteState(
 	ctx context.Context,
 	c client.Client,
-	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha1.AIMService],
+	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha2.AIMService],
 ) ServiceFetchResult {
 	service := reconcileCtx.Object
 	logger := log.FromContext(ctx).WithValues(
@@ -695,7 +691,7 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 	// Fetch the merged AIMRuntimeConfig. It supplies routing (HTTPRoute) and
 	// label-propagation settings. FetchMergedRuntimeConfig falls back to the
 	// default cluster-scoped AIMClusterRuntimeConfig when the ref is empty.
-	runtimeConfigRef := service.GetRuntimeConfigRef()
+	runtimeConfigRef := service.Spec.RuntimeConfigRef
 	result.mergedRuntimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, runtimeConfigRef.Name, service.Namespace)
 	bundleReader := client.Reader(c)
 	if r.APIReader != nil {
@@ -741,7 +737,7 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 // one place guarantees a single source of truth per reconcile cycle.
 func (r *ProfileServiceReconciler) ComposeState(
 	ctx context.Context,
-	_ controllerutils.ReconcileContext[*aimv1alpha1.AIMService],
+	_ controllerutils.ReconcileContext[*aimv1alpha2.AIMService],
 	fetch ServiceFetchResult,
 ) ServiceObservation {
 	obs := ServiceObservation{ServiceFetchResult: fetch}
@@ -1114,7 +1110,7 @@ func planProfileRuntimeMaterialization(
 // pipeline.
 func (r *ProfileServiceReconciler) PlanResources(
 	ctx context.Context,
-	_ controllerutils.ReconcileContext[*aimv1alpha1.AIMService],
+	_ controllerutils.ReconcileContext[*aimv1alpha2.AIMService],
 	obs ServiceObservation,
 ) controllerutils.PlanResult {
 	logger := log.FromContext(ctx).WithName("plan").WithValues("pipeline", "profile")
@@ -1141,9 +1137,8 @@ func (r *ProfileServiceReconciler) PlanResources(
 	// references the legacy service-owned profile ConfigMap.
 	planLegacyProfileConfigMapCleanup(&planResult, obs, logger)
 
-	// v1alpha2 quick-start: a service authored with spec.model.image and
-	// dispatched onto the profile pipeline via the reconciler-pipeline
-	// annotation has no AIMModel yet. Plant the seed (dedicated, owned
+	// v1alpha2 quick-start: a service authored with spec.model.image may
+	// have no AIMModel yet. Plant the seed (dedicated, owned
 	// by this service) so the v1alpha2 model controller runs discovery
 	// and the next reconcile resolves via the standard model-ref path.
 	// Skip everything else this pass — there is nothing to apply until
@@ -1300,9 +1295,6 @@ func (r *ProfileServiceReconciler) PlanResources(
 	}
 
 	// 3. Plan the HTTPRoute if routing is enabled on the merged AIMRuntimeConfig.
-	// The builder and naming scheme are shared with the v1alpha1
-	// pipeline so routing behaves identically regardless of which pipeline
-	// owns the service.
 	if route := v1alpha1service.PlanHTTPRoute(ctx, service, obs.mergedRuntimeConfig.Value, obs.gateway.Value); route != nil {
 		planResult.Apply(route)
 	}
@@ -1319,21 +1311,21 @@ func (r *ProfileServiceReconciler) PlanResources(
 }
 
 func shouldPreserveMigratedInferenceService(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	obs ServiceObservation,
 ) bool {
 	return migrationPreservationPinActive(service) &&
 		validateActiveMigrationPreservation(service, obs.inferenceService) == nil
 }
 
-func migrationPreservationPinActive(service *aimv1alpha1.AIMService) bool {
+func migrationPreservationPinActive(service *aimv1alpha2.AIMService) bool {
 	return service != nil &&
 		service.Annotations[constants.AnnotationMigrationPreserveInferenceServiceGeneration] ==
 			strconv.FormatInt(service.Generation, 10)
 }
 
 func validateActiveMigrationPreservation(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	inferenceService controllerutils.FetchResult[*servingv1beta1.InferenceService],
 ) error {
 	expectedUID := service.Annotations[constants.AnnotationMigrationPreserveInferenceServiceUID]
@@ -1419,7 +1411,7 @@ func planLegacyProfileConfigMapCleanup(plan *controllerutils.PlanResult, obs Ser
 // delete-and-recreate of a same-named service can never adopt a stale orphan.
 // A missing service UID (never the case for a live object) short-circuits to
 // false so an empty-vs-empty UID comparison cannot yield a false positive.
-func serviceOwnsConfigMap(configMap *corev1.ConfigMap, service *aimv1alpha1.AIMService) bool {
+func serviceOwnsConfigMap(configMap *corev1.ConfigMap, service *aimv1alpha2.AIMService) bool {
 	if service.UID == "" {
 		return false
 	}
@@ -1518,13 +1510,11 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 //
 // Shared mode: list AIMProfileCaches in the namespace whose
 // spec.profileName matches the resolved profile and spec.mode is Shared, and
-// pick the healthiest. This is the v1alpha1 pattern (see
-// internal/v1alpha1/aimservice/caching.go::searchTemplateCaches) and is what
-// guarantees that a profile-driven cache and a service-driven cache cannot
-// coexist for the same profile in the same namespace — one cache owns the
-// downstream artifact, eliminating the watch-handler ambiguity that exists
-// when two caches both create artifacts under the deterministic-by-weights
-// name scheme.
+// pick the healthiest. This is what guarantees that a profile-driven cache and
+// a service-driven cache cannot coexist for the same profile in the same
+// namespace — one cache owns the downstream artifact, eliminating the
+// watch-handler ambiguity that exists when two caches both create artifacts
+// under the deterministic-by-weights name scheme.
 //
 // Dedicated mode: deterministic lookup by the per-service name. Dedicated is
 // explicit per-service ownership, so we never reuse a Shared cache here.
@@ -1537,7 +1527,7 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 func fetchProfileCache(
 	ctx context.Context,
 	c client.Client,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	profileName string,
 	profileScope aimv1alpha1.AIMResolutionScope,
 ) controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache] {
@@ -1567,10 +1557,9 @@ func fetchProfileCache(
 	}
 
 	// Shared: search the namespace for any cache that already references this
-	// profile in Shared mode and prefer the healthiest. Mirrors v1alpha1's
-	// AIMTemplateCache resolution. ProfileScope must also match so we don't
-	// reuse a cache that was created for a different scope's same-named
-	// profile.
+	// profile in Shared mode and prefer the healthiest. ProfileScope must also
+	// match so we don't reuse a cache that was created for a different scope's
+	// same-named profile.
 	cacheList := controllerutils.FetchList(ctx, c, &aimv1alpha2.AIMProfileCacheList{}, client.InNamespace(service.Namespace))
 	if cacheList.Error != nil {
 		return controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Error: cacheList.Error}
@@ -1592,14 +1581,11 @@ func fetchProfileCache(
 
 // planProfileCache builds the desired AIMProfileCache for the resolved profile
 // when the profile actually carries model sources. Caching mode is honored
-// here so the v1alpha2 chain (AIMService → AIMProfile → AIMProfileCache →
-// AIMArtifact) mirrors v1alpha1's (AIMService → AIMServiceTemplate →
-// AIMTemplateCache → AIMArtifact) Shared/Dedicated semantics. The caller is
-// responsible for routing the result through Apply vs ApplyWithoutOwnerRef
-// based on the same mode (see PlanResources) so Shared caches persist
-// independently of any one service.
+// here, and the caller is responsible for routing the result through Apply vs
+// ApplyWithoutOwnerRef based on the same mode (see PlanResources) so Shared
+// caches persist independently of any one service.
 func planProfileCache(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	obs ServiceObservation,
 ) *aimv1alpha2.AIMProfileCache {
 	if obs.profileCache.Value != nil {
@@ -1663,7 +1649,7 @@ func planProfileCache(
 			StorageClassName: storageClassName,
 			Mode:             profileCacheModeFor(cachingMode),
 			Env:              cacheEnv,
-			RuntimeConfigRef: service.GetRuntimeConfigRef(),
+			RuntimeConfigRef: service.Spec.RuntimeConfigRef,
 			// Adapters need the base artifact to carry a shared RWX adapter disk.
 			RequiresAdapterDisk: service.Spec.AdaptersEnabled(),
 		},
@@ -1681,8 +1667,7 @@ func profileCacheModeFor(cachingMode aimv1alpha1.AIMCachingMode) aimv1alpha2.AIM
 }
 
 // GenerateProfileCacheName creates a deterministic name for an AIMProfileCache.
-// The naming scheme mirrors v1alpha1's GenerateTemplateCacheName so the two
-// pipelines share their Shared/Dedicated identity model:
+// The name encodes the Shared/Dedicated identity model:
 //
 //   - Shared (default): name is derived from (profileName) hashed against
 //     (namespace+"|"+profileScope, profileName). Two services in the same

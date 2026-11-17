@@ -32,9 +32,6 @@ const (
 
 	// ClusterModelRuntimeConfigIndexKey is the field index key for AIMClusterModel.Spec.Name (runtimeConfigName)
 	ClusterModelRuntimeConfigIndexKey = ".spec.runtimeConfigName"
-
-	// ClusterModelAimIdIndexKey is the field index key for AIMClusterModel.Spec.AimId.
-	ClusterModelAimIdIndexKey = ".spec.aimId"
 )
 
 // AIMClusterModel is a cluster-scoped model catalog entry for AIM container images.

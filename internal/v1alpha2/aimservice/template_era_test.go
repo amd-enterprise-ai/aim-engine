@@ -56,13 +56,13 @@ func (w *countingStatusWriter) Update(
 // with profile status in its single status write.
 func TestPipelineRun_ClearsTemplateEraStatusInOneStatusWrite(t *testing.T) {
 	ctx := context.Background()
-	service := &aimv1alpha1.AIMService{
+	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "service-uid"},
 		Spec: aimv1alpha1.AIMServiceSpec{
 			Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: testClusterProfileName},
 		},
 		Status: aimv1alpha1.AIMServiceStatus{
-			ReconcilerPipeline: constants.ReconcilerPipelineTemplate,
+			ReconcilerPipeline: "template",
 			Status:             constants.AIMStatusRunning,
 			Conditions: []metav1.Condition{
 				{Type: "ModelReady", Status: metav1.ConditionTrue, Reason: aimv1alpha1.AIMServiceReasonModelResolved},
@@ -71,7 +71,7 @@ func TestPipelineRun_ClearsTemplateEraStatusInOneStatusWrite(t *testing.T) {
 				{
 					Type:   controllerutils.ConditionTypeMigrationRequired,
 					Status: metav1.ConditionTrue,
-					Reason: controllerutils.ReasonTemplateAPIDeprecated,
+					Reason: "TemplateAPIDeprecated",
 				},
 			},
 			ResolvedModel:    &aimv1alpha1.AIMResolvedReference{Name: "template-era-model", UID: "model-uid"},
@@ -117,8 +117,8 @@ func TestPipelineRun_ClearsTemplateEraStatusInOneStatusWrite(t *testing.T) {
 		profileReady.Status != metav1.ConditionTrue {
 		t.Fatalf("ProfileReady = %#v, want True", profileReady)
 	}
-	if status.ReconcilerPipeline != constants.ReconcilerPipelineTemplate {
-		t.Fatalf("reconcilerPipeline = %q, want it left to the pipeline-selection step", status.ReconcilerPipeline)
+	if status.ReconcilerPipeline != "" {
+		t.Fatalf("reconcilerPipeline = %q, want it cleared", status.ReconcilerPipeline)
 	}
 }
 
@@ -173,7 +173,7 @@ func TestDecorateStatus_TemplateFieldsIgnoredNamesSetFields(t *testing.T) {
 				&aimv1alpha1.AIMServiceStatus{},
 				cm,
 				ServiceObservation{ServiceFetchResult: ServiceFetchResult{
-					service: &aimv1alpha1.AIMService{Spec: test.spec},
+					service: &aimv1alpha2.AIMService{Spec: test.spec},
 				}},
 			)
 

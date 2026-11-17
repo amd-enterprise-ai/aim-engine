@@ -5,7 +5,7 @@
 :::{admonition} v1alpha2
 :class: note
 
-This page documents the `aim.eai.amd.com/v1alpha2` API. For the v1alpha1 `spec.template` shape see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+This page documents the `aim.eai.amd.com/v1alpha2` API.
 :::
 ## Lifecycle
 
@@ -30,10 +30,10 @@ A v1alpha2 `AIMService` reaches a deployable `AIMProfile` through one of five sh
 | Shape | Spec | Use case |
 |---|---|---|
 | [**By name**](#by-name) | `spec.profile.name` | You know exactly which profile to deploy |
-| [**By model**](#by-model) | `spec.model.name` + migration annotation | You know the model; let the controller pick the best deployable profile |
+| [**By model**](#by-model) | `spec.model.name` | You know the model; let the controller pick the best deployable profile |
 | [**Model + selector**](#model--selector) | `spec.model.name` + `spec.profile.selector` | Narrow a model's profile pool by precision / accelerator / engine |
 | [**Global selector**](#global-selector) | `spec.profile.selector` (no `spec.model`) | Reach profiles via labels — `aimId` or `modelRef` required |
-| [**By image**](#by-image) | `spec.model.image` + `aim.eai.amd.com/reconciler-pipeline: profile` annotation | One-shot deploy straight from a container image; the controller looks up or auto-creates an `AIMModel` for that image |
+| [**By image**](#by-image) | `spec.model.image` | One-shot deploy straight from a container image; the controller looks up or auto-creates an `AIMModel` for that image |
 
 In all shapes except explicit profile name, the controller applies the shared deterministic [profile ranking](../guides/deploying-services.md#ranking) and resolves to a single profile. The resolved profile is recorded in `status.resolvedProfile` (name, scope, kind, uid).
 
@@ -65,10 +65,6 @@ spec:
 ```
 
 `spec.model.name` is shorthand for `spec.profile.selector.modelRef.name` plus the implicit `role=Deployable` filter. The candidate pool is every deployable profile owned by that AIMModel (or AIMClusterModel of the same name). Ranking selects the best.
-
-During the v1alpha1 → v1alpha2 migration window, a model-only shape must also
-set `aim.eai.amd.com/reconciler-pipeline: profile`. Adding any
-`spec.profile.*` selector selects the profile pipeline by spec shape.
 
 ### Model + selector
 
@@ -104,7 +100,7 @@ The CRD requires at least one of `selector.aimId` or `selector.modelRef.name` so
 
 ### By image
 
-For one-shot deploys when you only have an AIM container image. Requires the migration-window annotation to opt into the v1alpha2 profile pipeline (the legacy v1alpha1 template pipeline is the default for image-only services until v1alpha1 is removed — see [Migration window](../admin/upgrading.md#migration-window)).
+For one-shot deploys when you only have an AIM container image.
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
@@ -112,8 +108,6 @@ kind: AIMService
 metadata:
   name: qwen-chat
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
@@ -356,8 +350,6 @@ kind: AIMService
 metadata:
   name: qwen-chat
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: qwen-qwen3-32b

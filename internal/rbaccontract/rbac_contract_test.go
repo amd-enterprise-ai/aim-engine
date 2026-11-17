@@ -81,9 +81,9 @@ func TestRBACContract(t *testing.T) {
 	t.Run("operator role allows what the controllers need", func(t *testing.T) {
 		mutableAIMResources := []string{
 			"aimartifacts", "aimclustermodels", "aimclustermodelsources",
-			"aimclusterprofiles", "aimclusterprofilesets", "aimclusterservicetemplates",
+			"aimclusterprofiles", "aimclusterprofilesets",
 			"aimmodels", "aimprofilecaches", "aimprofiles", "aimprofilesets",
-			"aimservices", "aimservicetemplates", "aimtemplatecaches",
+			"aimservices",
 		}
 		for _, resource := range mutableAIMResources {
 			assertRBACAllows(t, role, aimv1alpha1.GroupVersion.Group, resource, "create", "delete", "get", "list", "patch", "update", "watch")

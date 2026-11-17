@@ -76,8 +76,6 @@ Only one reference is present — namespace or cluster, never both. When the two
 | `AIMProfile` | Indirectly: profile-owned caching creates a cache that resolves `default` | n/a |
 | `AIMClusterProfile` | No | n/a |
 | `AIMProfileCache` | Yes (downloader env, storage defaults) | n/a |
-| `AIMServiceTemplate` / `AIMClusterServiceTemplate` | n/a | Yes (legacy) |
-| `AIMTemplateCache` | n/a | Yes (legacy) |
 | `AIMArtifact` | Yes (downloader env) | Yes |
 
 Each consuming resource independently resolves its RuntimeConfig and publishes
@@ -127,7 +125,6 @@ owner:
 |---|---|
 | `AIMProfileSet`, `AIMClusterProfileSet`, and v1alpha2 `AIMModel.spec.profiles.derivedFrom` | Merged `default` configuration for the applicable scope |
 | v1alpha2 `AIMService.spec.profileOverrides` | The RuntimeConfig selected by that service |
-| v1alpha1 fine-tuned `AIMModel` / `AIMClusterModel` template copies | The RuntimeConfig selected by that model |
 
 A namespace `baseImageRegistry` replaces the cluster value. A named
 configuration does not inherit `default`, so set `baseImageRegistry` on each
@@ -381,8 +378,6 @@ metadata:
   namespace: ml-team
   labels:
     project: conversational-ai
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: qwen-qwen3-32b
@@ -538,10 +533,8 @@ When enabled, labels matching the `match` patterns are automatically copied:
 - **AIMService** → `InferenceService`, `HTTPRoute`, PVCs, auto-created `AIMModel` (v1alpha1 image path), `AIMProfileCache`
 - **AIMProfileCache** → `AIMArtifact` resources
 - **AIMArtifact** → PVCs, download `Job`s
-- **AIMModel** / **AIMClusterModel** → auto-created `AIMServiceTemplate` (v1alpha1), `AIMProfile` (v1alpha2 discovery), child `AIMProfileSet` (v1alpha2 derivation)
+- **AIMModel** / **AIMClusterModel** → `AIMProfile` (v1alpha2 discovery), child `AIMProfileSet` (v1alpha2 derivation)
 - **AIMProfileSet** → derived `AIMProfile`s
-- **AIMServiceTemplate** → `AIMTemplateCache` (legacy)
-- **AIMTemplateCache** → `AIMArtifact` (legacy)
 - **AIMClusterModelSource** → auto-discovered `AIMClusterModel`s
 
 ### Pattern matching
@@ -587,8 +580,6 @@ metadata:
     org.example/cost-center: "eng-ml"
     org.example/department: "engineering"
     org.example/project: "chatbot-v2"
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: qwen-qwen3-32b
@@ -634,7 +625,6 @@ The AIM controllers determine the operator namespace from the `AIM_SYSTEM_NAMESP
 - [Models](models.md) — How models use runtime configs for discovery
 - [Profiles](profiles.md) — Self-contained runtime configurations (v1alpha2)
 - [Services](services.md) — How services consume runtime config
-- [Service Templates (v1alpha1)](../legacy/service-templates.md) — Legacy template-driven path
 - [Deploying Services](../guides/deploying-services.md) — Practical service configuration
 - [Model Caching](caching.md) — Download protocol strategy and cache architecture
 - [Storage Configuration](../admin/storage-configuration.md) — Storage classes, PVCs, quotas

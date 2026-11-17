@@ -1,0 +1,25 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: with-template-fields
+spec:
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.2
+  discovery:
+    extractMetadata: false
+    createServiceTemplates: false
+  defaultServiceTemplate: legacy-default
+  env:
+    - name: VLLM_LOGGING_LEVEL
+      value: DEBUG
+  resources:
+    requests:
+      memory: 1Gi
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: without-template-fields
+spec:
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.2
+  discovery:
+    extractMetadata: false

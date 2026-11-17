@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: spec-provided-metadata
+spec:
+  # Inspecting this registry would fail, so a populated status proves the
+  # metadata came from the spec.
+  image: this-registry-does-not-exist-12345.invalid/fake-model:v1
+  imageMetadata:
+    model:
+      canonicalName: spec-provided-model
+      recommendedDeployments:
+        - gpuModel: MI300X
+          gpuCount: 1
+          metric: throughput
+          precision: fp16

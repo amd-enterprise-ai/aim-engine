@@ -73,6 +73,54 @@ spec:
       - name: AIM_DEBUG_SIMULATE_HF_DURATION
         value: "1"
 ---
+# The lane moves upgrade-migrated-service with v0.2.7's aim-template-migration.
+# Its own template and model source keep that tool's plan for it independent of
+# the services the guide moves.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: upgrade-migrated-template
+spec:
+  modelName: upgrade-image-model
+  aimId: example/upgrade-migrated-model
+  modelId: example/upgrade-migrated-model
+  metric: latency
+  precision: fp16
+  type: unoptimized
+  hardware:
+    gpu:
+      requests: 0
+  customProfile:
+    engineArgs:
+      dtype: float16
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+  modelSources:
+    - modelId: example/upgrade-migrated-model
+      sourceUri: hf://example/upgrade-migrated-model
+      size: 1Mi
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: upgrade-migrated-service
+spec:
+  replicas: 1
+  model:
+    name: upgrade-image-model
+  template:
+    name: upgrade-migrated-template
+    allowUnoptimized: true
+  caching:
+    mode: Shared
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "1"
+---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModelSource
 metadata:

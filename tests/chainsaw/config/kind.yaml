@@ -33,7 +33,7 @@ spec:
           kubectl get pods -n "$NAMESPACE" -o yaml > "$OUT/pods.yaml" 2>&1
           kubectl describe pods -n "$NAMESPACE" > "$OUT/describe-pods.txt" 2>&1
           kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp > "$OUT/events.txt" 2>&1
-          kubectl get aimartifact,aimservice,aimmodel,aimtemplatecache -n "$NAMESPACE" -o yaml > "$OUT/aim-resources.yaml" 2>&1
+          kubectl get aimartifact,aimservice,aimmodel,aimprofilecache -n "$NAMESPACE" -o yaml > "$OUT/aim-resources.yaml" 2>&1
           for p in $(kubectl get pods -n "$NAMESPACE" -o name 2>/dev/null); do
             n="${p#pod/}"
             kubectl logs -n "$NAMESPACE" "$p" --all-containers=true --prefix --tail=-1 > "$OUT/logs-${n}.txt" 2>&1

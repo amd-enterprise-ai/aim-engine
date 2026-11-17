@@ -35,6 +35,7 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
@@ -70,9 +71,8 @@ func FetchPredictorPods(
 // activation metric never gates readiness). podCount is the number of observed
 // predictor pods and isvcReady reflects the InferenceService Ready condition;
 // callers can derive both via FetchPredictorPods and InferenceServiceReady.
-// Shared between the template and profile pipelines.
 func HPAComponentHealth(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	hpa controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler],
 	podCount int,
 	isvcReady bool,
@@ -86,11 +86,9 @@ func HPAComponentHealth(
 // spec, and currentMetrics, or removes it when activation does not apply.
 // Reporting only: the condition type omits the component "Ready" suffix so it
 // never participates in the Ready rollup and never changes scaling behaviour.
-// Shared between the template and profile pipelines so both report the
-// activation signal identically across gateway providers.
 func SetActivationMetricCondition(
 	cm *controllerutils.ConditionManager,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	hpa controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler],
 	podCount int,
@@ -103,7 +101,7 @@ func SetActivationMetricCondition(
 // by both AIMService pipelines so the Unknown-to-False deadline is enforced
 // even when no watched resource changes.
 func ActivationMetricRequeueAfter(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	hpa controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler],
 	podCount int,
@@ -115,12 +113,11 @@ func ActivationMetricRequeueAfter(
 // InferenceServicePodsComponentHealth returns the InferenceServicePods
 // component health, treating an empty pod list under scale-to-zero as Ready
 // (ScaledToZero) rather than a failure. ok is false when there is nothing to
-// report (pods were never fetched). Shared between the template and profile
-// pipelines.
+// report (pods were never fetched).
 func InferenceServicePodsComponentHealth(
 	ctx context.Context,
 	clientset kubernetes.Interface,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	hpa controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler],
 	pods *controllerutils.FetchResult[*corev1.PodList],
 ) (controllerutils.ComponentHealth, bool) {
@@ -138,8 +135,7 @@ func InferenceServiceComponentHealth(
 }
 
 // InferenceServiceReady reports whether the fetched InferenceService has
-// Ready=True. Exported so the profile pipeline can contextualize HPA health
-// identically to the template pipeline.
+// Ready=True. Exported so the profile pipeline can contextualize HPA health.
 func InferenceServiceReady(
 	isvc controllerutils.FetchResult[*servingv1beta1.InferenceService],
 ) bool {
@@ -152,7 +148,7 @@ func InferenceServiceReady(
 func FetchHTTPRoute(
 	ctx context.Context,
 	c client.Client,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) controllerutils.FetchResult[*gatewayapiv1.HTTPRoute] {
 	return fetchHTTPRoute(ctx, c, service, runtimeConfig)
@@ -164,16 +160,14 @@ func FetchHTTPRoute(
 func FetchGateway(
 	ctx context.Context,
 	c client.Client,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) controllerutils.FetchResult[*gatewayapiv1.Gateway] {
 	return fetchGateway(ctx, c, service, runtimeConfig)
 }
 
 // ComputeRuntimeStatus derives replica counts and the formatted Replicas
-// string for an AIMService from its HPA (if present) or spec defaults. The
-// v1alpha2 profile pipeline reuses this so the Replicas printcolumn behaves
-// consistently across both pipelines.
+// string for an AIMService from its HPA (if present) or spec defaults.
 //
 // MinReplicas override (scale-to-zero):
 // Kubernetes' HPA v2 API validates `spec.minReplicas >= 1` unless the
@@ -191,7 +185,7 @@ func FetchGateway(
 // graduates and KEDA stops pinning HPA min to 1, both values will
 // agree and this override becomes a no-op.
 func ComputeRuntimeStatus(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	hpa controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler],
 ) *aimv1alpha1.AIMServiceRuntimeStatus {
 	status := &aimv1alpha1.AIMServiceRuntimeStatus{}
@@ -255,24 +249,21 @@ func ComputeRuntimeStatus(
 
 // ConfigureReplicasAndAutoscaling writes the replica count, autoscaling
 // annotations, and KEDA metrics onto the InferenceService based on the
-// AIMService spec. Exported so the v1alpha2 profile-based pipeline can share
-// the exact same replica/autoscaling semantics as the v1alpha1 template
-// pipeline (Replicas → fixed, MinReplicas/MaxReplicas/AutoScaling → KEDA
+// AIMService spec (Replicas → fixed, MinReplicas/MaxReplicas/AutoScaling → KEDA
 // autoscaling, unset → single replica).
 func ConfigureReplicasAndAutoscaling(
 	isvc *servingv1beta1.InferenceService,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 ) {
 	configureReplicasAndAutoscaling(isvc, service)
 }
 
 // PlanScaledObject returns the controller-owned KEDA ScaledObject for the
 // predictor Deployment when autoscaling is requested. Exported for the
-// v1alpha2 profile pipeline so both pipelines share the same trigger shape
-// and memory-aware cooldown.
+// v1alpha2 profile pipeline.
 func PlanScaledObject(
 	ctx context.Context,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	effectiveResources *corev1.ResourceRequirements,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) client.Object {
@@ -281,10 +272,9 @@ func PlanScaledObject(
 
 // HTTPRouteComponentHealth translates an HTTPRoute fetch result into a
 // ComponentHealth entry, taking the routing toggle and gateway configuration
-// into account. Shared between the template and profile pipelines so routing
-// health is reported identically.
+// into account.
 func HTTPRouteComponentHealth(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	httpRoute controllerutils.FetchResult[*gatewayapiv1.HTTPRoute],
 ) controllerutils.ComponentHealth {
@@ -330,7 +320,7 @@ func HTTPRouteComponentHealth(
 
 // ComponentRouteConfig is the ComponentHealth name (and condition-type stem,
 // RouteConfigReady) for the routing host-pinning prerequisite check. Exported
-// so both pipelines and their tests reference one source of truth.
+// so the profile pipeline and its tests reference one source of truth.
 const ComponentRouteConfig = "RouteConfig"
 
 // ReasonRouteHostnameRequired is the failure reason surfaced when routing is
@@ -349,9 +339,8 @@ const ReasonRouteHostnameRequired = "RouteHostnameRequired"
 // The guard only fires when the gateway was successfully fetched (so the
 // listener count is known); a single-listener gateway, a configured hostname,
 // or an unfetched gateway returns an empty (non-blocking) health entry.
-// Shared between the template and profile pipelines.
 func RoutingHostnameComponentHealth(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	gateway controllerutils.FetchResult[*gatewayapiv1.Gateway],
 ) controllerutils.ComponentHealth {
@@ -386,14 +375,14 @@ func RoutingHostnameComponentHealth(
 
 // ComponentScaleToZeroConfig is the ComponentHealth name (and condition-type
 // stem, ScaleToZeroConfigReady) for the scale-from-zero routing-prerequisite
-// check. Exported so both pipelines and their tests reference one source of
-// truth.
+// check. Exported so the profile pipeline and its tests reference one source
+// of truth.
 const ComponentScaleToZeroConfig = "ScaleToZeroConfig"
 
 // ComponentAutoscalingConfig is the ComponentHealth name (and condition-type
 // stem, AutoscalingConfigReady) for the autoscaling-trigger prerequisite
-// check. Exported so both pipelines and their tests reference one source of
-// truth.
+// check. Exported so the profile pipeline and its tests reference one source
+// of truth.
 const ComponentAutoscalingConfig = "AutoscalingConfig"
 
 // AutoscalingTriggerComponentHealth enforces the invariant that whenever the
@@ -409,11 +398,9 @@ const ComponentAutoscalingConfig = "AutoscalingConfig"
 // of silently mis-scaling.
 //
 // Returns a zero ComponentHealth (Component == "") when the configuration is
-// valid. Shared between the template (v1alpha1) and profile (v1alpha2)
-// pipelines so the validation is identical regardless of which pipeline owns
-// the service.
+// valid.
 func AutoscalingTriggerComponentHealth(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 ) controllerutils.ComponentHealth {
 	hasAutoscaling := service.Spec.AutoScaling != nil ||
 		service.Spec.MinReplicas != nil ||
@@ -456,11 +443,9 @@ func AutoscalingTriggerComponentHealth(
 // forever.
 //
 // Returns a zero ComponentHealth (Component == "") when the configuration is
-// valid, so callers can skip appending it. Shared between the template
-// (v1alpha1) and profile (v1alpha2) pipelines so the validation is identical
-// regardless of which pipeline owns the service.
+// valid, so callers can skip appending it.
 func ScaleToZeroRoutingComponentHealth(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) controllerutils.ComponentHealth {
 	if !isScaleToZero(service) || isRoutingEnabled(service, runtimeConfig) {
@@ -495,7 +480,7 @@ func ScaleToZeroRoutingComponentHealth(
 // apply, when routing validation should take precedence, or when the query is
 // valid.
 func ScaleToZeroActivationMetricComponentHealth(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) controllerutils.ComponentHealth {
 	if !isScaleToZero(service) || !isRoutingEnabled(service, runtimeConfig) {

@@ -57,7 +57,7 @@ Model storage requirements vary significantly:
 | Medium (30-70B params) | 60-140 GiB | Qwen3 32B, DeepSeek R1 70B |
 | Large (100B+ params) | 200+ GiB | Mixtral 8x22B |
 
-These are per-model estimates. A profile cache PVC (v1alpha2 `AIMProfileCache`, or v1alpha1 `AIMTemplateCache`) holds all model sources for the resolved profile / template.
+These are per-model estimates. A profile cache PVC (`AIMProfileCache`) holds all model sources for the resolved profile.
 
 ## Monitoring Storage
 
@@ -109,7 +109,7 @@ When quota is exceeded and evictable artifacts exist, AIM Engine automatically d
 
 1. The artifact has a `retentionPriority` (set explicitly or via `defaultRetentionPriority` in runtime config)
 2. The artifact is `Shared` and `Ready`
-3. The artifact is not in use by any `AIMProfileCache` (v1alpha2) or `AIMTemplateCache` (v1alpha1)
+3. The artifact is not in use by any `AIMProfileCache`
 4. The artifact is not annotated with `aim.eai.amd.com/eviction-protected: "true"`
 
 Lower `retentionPriority` values are evicted first. Among equal priorities, the oldest artifact is evicted first.
@@ -154,20 +154,17 @@ kubectl get aimartifact blocked-model -n ml-team -o yaml
 #     message: "Namespace quota exceeded: 90Gi used + 20Gi needed > 100Gi limit"
 ```
 
-This condition propagates up through `AIMProfileCache` / `AIMTemplateCache` and `AIMService`, so `kubectl get aimservice` shows the quota reason when a service is waiting for a blocked artifact.
+This condition propagates up through `AIMProfileCache` and `AIMService`, so `kubectl get aimservice` shows the quota reason when a service is waiting for a blocked artifact.
 
 ## Cleanup
 
-Profile cache PVCs are owned by `AIMProfileCache` resources (v1alpha2), which are in turn owned by the resolved `AIMProfile`. When a profile is deleted, its caches and PVCs are cleaned up automatically. For services that still use the v1alpha1 template pipeline, the equivalent owner is `AIMTemplateCache` (owned by the template).
+Profile cache PVCs are owned by `AIMProfileCache` resources (v1alpha2), which are in turn owned by the resolved `AIMProfile`. When a profile is deleted, its caches and PVCs are cleaned up automatically.
 
 To manually reclaim storage:
 
 ```bash
-# v1alpha2: delete a profile cache (also deletes its PVCs and artifacts)
+# Delete a profile cache (also deletes its PVCs and artifacts)
 kubectl delete aimprofilecache <name> -n <namespace>
-
-# v1alpha1: delete a template cache
-kubectl delete aimtemplatecache <name> -n <namespace>
 ```
 
 ## Next Steps

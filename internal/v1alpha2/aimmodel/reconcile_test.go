@@ -30,7 +30,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
@@ -42,38 +41,6 @@ import (
 )
 
 var errListNodesFailed = errors.New("list nodes failed")
-
-func TestHasLegacyFields_DetectsLegacyCompatibilityFields(t *testing.T) {
-	t.Parallel()
-
-	spec := aimv1alpha1.AIMModelSpec{
-		Image:                  "quay.io/amd/aim-qwen:0.10.0",
-		RuntimeConfigRef:       aimv1alpha1.RuntimeConfigRef{Name: "fast"},
-		DefaultServiceTemplate: "default-template",
-		Discovery:              &aimv1alpha1.AIMModelDiscoveryConfig{ExtractMetadata: ptr.To(true)},
-		ModelSources: []aimv1alpha1.AIMModelSource{{
-			ModelID:   "org/model",
-			SourceURI: "hf://org/model",
-		}},
-		ImageMetadata: &aimv1alpha1.ImageMetadata{
-			Model: &aimv1alpha1.ModelMetadata{CanonicalName: "org/model"},
-		},
-	}
-
-	if !spec.HasLegacyFields() {
-		t.Fatalf("HasLegacyFields() = false, want true for spec with legacy fields populated")
-	}
-
-	nativeSpec := aimv1alpha1.AIMModelSpec{
-		Image: "quay.io/amd/aim-qwen:0.10.0",
-		ProfileCopy: &aimv1alpha1.AIMProfileSetSpec{
-			Selector: aimv1alpha1.ProfileSelector{AimId: "qwen/qwen3-32b"},
-		},
-	}
-	if nativeSpec.HasLegacyFields() {
-		t.Fatalf("HasLegacyFields() = true, want false for image+profileCopy spec")
-	}
-}
 
 func TestBuildDesiredProfileSet_UsesDiscoveryCacheForImageBackedCopy(t *testing.T) {
 	t.Parallel()
@@ -1039,5 +1006,17 @@ func TestSummarizeManagedProfiles_CountsDeployableEntries(t *testing.T) {
 	}
 	if summary.Base != 0 {
 		t.Fatalf("summary.Base = %d, want 0 for deployable-only desired set", summary.Base)
+	}
+}
+
+func generatedProfileRuntimeConfig() *aimv1alpha1.AIMRuntimeConfigCommon {
+	return &aimv1alpha1.AIMRuntimeConfigCommon{
+		Model: &aimv1alpha1.AIMModelConfig{
+			ProfileGeneration: &aimv1alpha1.AIMProfileGenerationConfig{
+				Fallbacks: []aimv1alpha1.AIMProfileGenerationFallback{
+					testNVIDIAFallback("nvidia-vllm", 0),
+				},
+			},
+		},
 	}
 }

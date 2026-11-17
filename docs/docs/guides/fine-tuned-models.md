@@ -155,14 +155,12 @@ kind: AIMService
 metadata:
   name: llama-finetune-service
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: llama-3-8b-finetune-acme
 ```
 
-`spec.model.name` resolves to the deployable profiles produced by the fine-tune AIMModel and applies the shared deterministic profile ranking. The annotation selects the profile pipeline during the v1alpha1 → v1alpha2 migration window. Add `spec.profile.selector` to narrow further (for example, force `precision: fp8`), and see [Deploying Services](deploying-services.md#ranking) for the complete ranking order.
+`spec.model.name` resolves to the deployable profiles produced by the fine-tune AIMModel and applies the shared deterministic profile ranking. Add `spec.profile.selector` to narrow further (for example, force `precision: fp8`), and see [Deploying Services](deploying-services.md#ranking) for the complete ranking order.
 
 ## Common patterns
 

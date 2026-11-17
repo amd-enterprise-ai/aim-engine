@@ -143,14 +143,12 @@ kind: AIMService
 metadata:
   name: acme-custom-transformer-service
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: acme-custom-transformer
 ```
 
-The AIMService resolver treats `spec.model.name` as a shortcut for "every deployable profile produced by this model" and applies the shared deterministic profile ranking. The annotation selects the profile pipeline during the v1alpha1 → v1alpha2 migration window. See [Deploying Services](deploying-services.md) for the ranking order and other resolution shapes (by-profile-name, by-selector, with profile overlay).
+The AIMService resolver treats `spec.model.name` as a shortcut for "every deployable profile produced by this model" and applies the shared deterministic profile ranking. See [Deploying Services](deploying-services.md) for the ranking order and other resolution shapes (by-profile-name, by-selector, with profile overlay).
 
 ## Identity stamping
 

@@ -53,9 +53,9 @@ const (
 	// every AIMModel / AIMClusterModel because it feeds into the discovery spec hash.
 	DiscoveryCommandVersion = "v1"
 
-	// DiscoveryKindLabelKey distinguishes v1alpha2 AIMModel-scoped discovery Jobs
-	// from v1alpha1 AIMServiceTemplate ones while both still count against the same
-	// global 10-Job budget (they share app.kubernetes.io/name=aim-discovery).
+	// DiscoveryKindLabelKey records which model kind created a discovery Job. All
+	// discovery Jobs count against the same global 10-Job budget (they share
+	// app.kubernetes.io/name=aim-discovery).
 	DiscoveryKindLabelKey = constants.AimLabelDomain + "/discovery-kind"
 
 	// DiscoveryKindAIMModel marks Jobs owned by v1alpha2 AIMModel resources.

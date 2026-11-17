@@ -90,8 +90,6 @@ type AIMModelReconciler struct {
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimprofiles,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimruntimeconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterruntimeconfigs,verbs=get;list;watch
-// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimservicetemplates,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterservicetemplates,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
@@ -192,11 +190,7 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.Background()
 
 	r.Recorder = mgr.GetEventRecorderFor("aim-" + modelControllerName + "-controller")
-	r.reconciler = &aimmodel.ModelReconciler{
-		Client:    mgr.GetClient(),
-		Clientset: r.Clientset,
-		Scheme:    r.Scheme,
-	}
+	r.reconciler = &aimmodel.ModelReconciler{Clientset: r.Clientset}
 	r.pipeline = controllerutils.Pipeline[
 		*aimv1alpha2.AIMModel,
 		*aimv1alpha1.AIMModelStatus,
@@ -215,40 +209,6 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		ForceApply: true,
 	}
 
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMServiceTemplate{}, aimv1alpha1.ServiceTemplateModelNameIndexKey, func(obj client.Object) []string {
-		template, ok := obj.(*aimv1alpha1.AIMServiceTemplate)
-		if !ok {
-			return nil
-		}
-		return []string{template.Spec.ModelName}
-	}); err != nil {
-		return err
-	}
-	// Index AIMServiceTemplate / AIMClusterServiceTemplate by aimId so the
-	// legacy fine-tuned matching path (driven from this v1alpha2 controller's
-	// reconciler via the legacy package) can resolve template candidates by
-	// aimId across both scopes. Without these indexes the
-	// `client.MatchingFields{ServiceTemplateAimIdIndexKey: ...}` lookups in
-	// FetchRemoteState silently return empty, fine-tuned models match nothing,
-	// and no namespace-scoped fine-tuned template copies get applied.
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMServiceTemplate{}, aimv1alpha1.ServiceTemplateAimIdIndexKey, func(obj client.Object) []string {
-		template, ok := obj.(*aimv1alpha1.AIMServiceTemplate)
-		if !ok || template.Spec.AimId == "" {
-			return nil
-		}
-		return []string{template.Spec.AimId}
-	}); err != nil {
-		return err
-	}
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha1.AIMClusterServiceTemplate{}, aimv1alpha1.ServiceTemplateAimIdIndexKey, func(obj client.Object) []string {
-		template, ok := obj.(*aimv1alpha1.AIMClusterServiceTemplate)
-		if !ok || template.Spec.AimId == "" {
-			return nil
-		}
-		return []string{template.Spec.AimId}
-	}); err != nil {
-		return err
-	}
 	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha2.AIMModel{}, aimv1alpha1.ModelImageIndexKey, func(obj client.Object) []string {
 		model, ok := obj.(*aimv1alpha2.AIMModel)
 		if !ok || model.Spec.Image == "" {
@@ -284,18 +244,6 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 
-	// Index AIMModel by aimId for reverse lookup so fine-tuned consumers
-	// re-reconcile when a source AIMServiceTemplate's aimId is late-bound.
-	if err := mgr.GetFieldIndexer().IndexField(ctx, &aimv1alpha2.AIMModel{}, aimv1alpha1.ModelAimIdIndexKey, func(obj client.Object) []string {
-		model, ok := obj.(*aimv1alpha2.AIMModel)
-		if !ok || model.Spec.AimId == "" {
-			return nil
-		}
-		return []string{model.Spec.AimId}
-	}); err != nil {
-		return err
-	}
-
 	childHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
 		return directModelRequest(obj)
 	})
@@ -304,23 +252,7 @@ func (r *AIMModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&aimv1alpha2.AIMModel{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&batchv1.Job{}).
-		Owns(&aimv1alpha1.AIMServiceTemplate{}).
 		Owns(&aimv1alpha2.AIMProfileSet{}).
-		// Watch namespace-scoped ServiceTemplates and enqueue:
-		//   - the owning AIMModel (so externally-created templates are observed)
-		//   - any fine-tuned AIMModels whose spec.aimId matches the template's
-		//     spec.aimId (so fine-tuned consumers re-reconcile when a source
-		//     template's aimId is late-bound by its discovery job).
-		Watches(
-			&aimv1alpha1.AIMServiceTemplate{},
-			handler.EnqueueRequestsFromMapFunc(r.findModelsForServiceTemplate),
-		).
-		// Watch cluster-scoped templates for aimId-based matching: when a new
-		// official template appears, fine-tuned models need to reconcile.
-		Watches(
-			&aimv1alpha1.AIMClusterServiceTemplate{},
-			handler.EnqueueRequestsFromMapFunc(r.findModelsForClusterServiceTemplate),
-		).
 		Watches(
 			&aimv1alpha1.AIMRuntimeConfig{},
 			handler.EnqueueRequestsFromMapFunc(r.findModelsForRuntimeConfig),
@@ -384,88 +316,6 @@ func directModelRequest(obj client.Object) []reconcile.Request {
 func hasDirectModelOwnerAnnotations(obj client.Object) bool {
 	annotations := obj.GetAnnotations()
 	return annotations[aimmodel.AnnotationModelName()] != "" && annotations[aimmodel.AnnotationModelNamespace()] != ""
-}
-
-// findModelsForServiceTemplate returns reconcile requests for AIMModels
-// affected by the given AIMServiceTemplate event. It enqueues:
-//
-//  1. The owning AIMModel referenced by template.spec.modelName (in the same
-//     namespace). This covers externally-created templates that aren't owned
-//     via OwnerReferences.
-//  2. All fine-tuned AIMModels (across namespaces) whose spec.aimId matches
-//     template.spec.aimId. Fine-tuned models resolve their deployment image
-//     by reading the matched template's owner — once a namespace-scoped
-//     source template late-binds its aimId via discovery, the consumers must
-//     re-reconcile to pick up the new match.
-//
-// Duplicates are deduped by controller-runtime's workqueue.
-func (r *AIMModelReconciler) findModelsForServiceTemplate(ctx context.Context, obj client.Object) []reconcile.Request {
-	template, ok := obj.(*aimv1alpha1.AIMServiceTemplate)
-	if !ok {
-		return nil
-	}
-
-	var requests []reconcile.Request
-
-	if template.Spec.ModelName != "" {
-		requests = append(requests, reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Name:      template.Spec.ModelName,
-				Namespace: template.Namespace,
-			},
-		})
-	}
-
-	if template.Spec.AimId != "" {
-		var models aimv1alpha2.AIMModelList
-		if err := r.List(ctx, &models,
-			client.MatchingFields{aimv1alpha1.ModelAimIdIndexKey: template.Spec.AimId},
-		); err != nil {
-			log.FromContext(ctx).Error(err, "failed to list AIMModels for ServiceTemplate aimId",
-				"aimId", template.Spec.AimId)
-		} else {
-			for _, model := range models.Items {
-				requests = append(requests, reconcile.Request{
-					NamespacedName: types.NamespacedName{
-						Name:      model.Name,
-						Namespace: model.Namespace,
-					},
-				})
-			}
-		}
-	}
-
-	return requests
-}
-
-// findModelsForClusterServiceTemplate returns reconcile requests for all
-// AIMModels whose aimId matches the cluster template's aimId. Triggers
-// re-matching when official templates are created/updated/deleted.
-func (r *AIMModelReconciler) findModelsForClusterServiceTemplate(ctx context.Context, obj client.Object) []reconcile.Request {
-	template, ok := obj.(*aimv1alpha1.AIMClusterServiceTemplate)
-	if !ok || template.Spec.AimId == "" {
-		return nil
-	}
-
-	var models aimv1alpha2.AIMModelList
-	if err := r.List(ctx, &models,
-		client.MatchingFields{aimv1alpha1.ModelAimIdIndexKey: template.Spec.AimId},
-	); err != nil {
-		log.FromContext(ctx).Error(err, "failed to list AIMModels for ClusterServiceTemplate aimId",
-			"aimId", template.Spec.AimId)
-		return nil
-	}
-
-	requests := make([]reconcile.Request, len(models.Items))
-	for i, model := range models.Items {
-		requests[i] = reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Name:      model.Name,
-				Namespace: model.Namespace,
-			},
-		}
-	}
-	return requests
 }
 
 func (r *AIMModelReconciler) findModelsForRuntimeConfig(ctx context.Context, obj client.Object) []reconcile.Request {

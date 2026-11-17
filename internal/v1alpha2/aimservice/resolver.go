@@ -139,7 +139,7 @@ func resolveProfileCandidates(
 	ctx context.Context,
 	c client.Client,
 	recorder record.EventRecorder,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 ) (
 	controllerutils.FetchResult[*aimv1alpha2.AIMProfile],
 	controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile],
@@ -169,7 +169,7 @@ func resolveProfileCandidates(
 // resolutionShapeFor maps an AIMService spec to its resolution shape.
 // Shape detection runs ahead of any cluster I/O so the caller can short-
 // circuit on `resolutionShapeNone` without burning a List.
-func resolutionShapeFor(service *aimv1alpha1.AIMService) profileResolutionShape {
+func resolutionShapeFor(service *aimv1alpha2.AIMService) profileResolutionShape {
 	if service == nil {
 		return resolutionShapeNone
 	}
@@ -203,12 +203,11 @@ func resolutionShapeFor(service *aimv1alpha1.AIMService) profileResolutionShape 
 // the AIMService spec carries a model shortcut. Callers that only care
 // about the name shape can use serviceModelName.
 //
-// The image shape is what makes the v1alpha2 quick-start docs work: a
-// service authored with `spec.model.image` is dispatched onto the profile
-// pipeline via the `aim.eai.amd.com/reconciler-pipeline: profile`
-// annotation, the resolver looks up an AIMModel by spec.image, and falls
-// through to the model-selector path once a match exists.
-func serviceModelAnchor(service *aimv1alpha1.AIMService) (name, image string) {
+// The image shape is what makes the v1alpha2 quick-start docs work: for a
+// service authored with `spec.model.image`, the resolver looks up an
+// AIMModel by spec.image, and falls through to the model-selector path once
+// a match exists.
+func serviceModelAnchor(service *aimv1alpha2.AIMService) (name, image string) {
 	if service == nil || service.Spec.Model == nil {
 		return "", ""
 	}
@@ -226,7 +225,7 @@ func serviceModelAnchor(service *aimv1alpha1.AIMService) (name, image string) {
 // watch fan-out only care about the named-anchor case (the image anchor
 // is desugared via auto-created AIMModels before reaching the selector
 // composition step).
-func serviceModelName(service *aimv1alpha1.AIMService) string {
+func serviceModelName(service *aimv1alpha2.AIMService) string {
 	name, _ := serviceModelAnchor(service)
 	return name
 }
@@ -237,7 +236,7 @@ func serviceModelName(service *aimv1alpha1.AIMService) string {
 func resolveByName(
 	ctx context.Context,
 	c client.Client,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 ) (
 	controllerutils.FetchResult[*aimv1alpha2.AIMProfile],
 	controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile],
@@ -298,7 +297,7 @@ func resolveByImage(
 	ctx context.Context,
 	c client.Client,
 	recorder record.EventRecorder,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	res profileResolution,
 ) (
 	controllerutils.FetchResult[*aimv1alpha2.AIMProfile],
@@ -463,7 +462,7 @@ func resolveBySelector(
 	ctx context.Context,
 	c client.Client,
 	recorder record.EventRecorder,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	res profileResolution,
 ) (
 	controllerutils.FetchResult[*aimv1alpha2.AIMProfile],
@@ -701,7 +700,7 @@ func countFloorExcluded(
 //   - spec.model.name desugars to selector.modelRef.name when the user did
 //     not explicitly author a modelRef. Scope defaults to Auto so the
 //     resolver tries namespace then cluster, just like AIMProfileSet.
-func composeServiceSelector(service *aimv1alpha1.AIMService) aimv1alpha1.ProfileSelector {
+func composeServiceSelector(service *aimv1alpha2.AIMService) aimv1alpha1.ProfileSelector {
 	var selector aimv1alpha1.ProfileSelector
 	if service.Spec.Profile != nil && service.Spec.Profile.Selector != nil {
 		selector = *service.Spec.Profile.Selector.DeepCopy()
@@ -730,7 +729,7 @@ func composeServiceSelector(service *aimv1alpha1.AIMService) aimv1alpha1.Profile
 // serviceHasExplicitMinimumType distinguishes an authored selection contract
 // from the resolver's implicit optimized default. Fallback-policy profiles may
 // bypass only the implicit floor; an explicit floor is always authoritative.
-func serviceHasExplicitMinimumType(service *aimv1alpha1.AIMService) bool {
+func serviceHasExplicitMinimumType(service *aimv1alpha2.AIMService) bool {
 	return service != nil &&
 		service.Spec.Profile != nil &&
 		service.Spec.Profile.Selector != nil &&
@@ -968,7 +967,7 @@ func clusterCandidatesTiedWith(winner *aimv1alpha2.AIMClusterProfile, profiles [
 // are about to use, even when status priority promotes a candidate
 // above the alphabetically-first one. Safe on a nil recorder (covers
 // tests that don't wire one in).
-func maybeEmitAmbiguous(recorder record.EventRecorder, service *aimv1alpha1.AIMService, logger logr.Logger, winner string, candidates []candidateRef) {
+func maybeEmitAmbiguous(recorder record.EventRecorder, service *aimv1alpha2.AIMService, logger logr.Logger, winner string, candidates []candidateRef) {
 	names := make([]string, len(candidates))
 	for i, c := range candidates {
 		names[i] = c.name
@@ -1017,7 +1016,7 @@ type stickyBindingDecision struct {
 func evaluateStickyBinding(
 	ctx context.Context,
 	c client.Client,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	selector aimv1alpha1.ProfileSelector,
 	allowAnyAutoSelection bool,
 ) (*aimv1alpha2.AIMProfile, *aimv1alpha2.AIMClusterProfile, stickyBindingDecision) {
@@ -1151,7 +1150,7 @@ func boundClusterStillMatches(
 //     glitch on the sticky-fetch path)
 func maybeEmitRebound(
 	recorder record.EventRecorder,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	logger logr.Logger,
 	sticky stickyBindingDecision,
 	winnerName string,

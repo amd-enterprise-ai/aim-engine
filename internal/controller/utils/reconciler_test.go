@@ -38,7 +38,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
@@ -434,46 +433,6 @@ func TestPipeline_processStateEngine_NonBlockingFailureRemainsVisible(t *testing
 	}
 	if !decision.ShouldApply || decision.ShouldRequeue || decision.RequeueError != nil {
 		t.Fatalf("decision = %+v, want apply without requeue", decision)
-	}
-}
-
-func TestTemplateMigrationRequiredConditionDoesNotGateAIMServiceReadiness(t *testing.T) {
-	const wantMessage = "This resource depends on deprecated template APIs; inventory affected or dependent AIMServices and review the bounded template migration runbook before API removal"
-
-	cm := NewConditionManager(nil)
-	SetTemplateMigrationRequired(cm, true)
-
-	migration := cm.Get(ConditionTypeMigrationRequired)
-	if migration == nil ||
-		migration.Status != metav1.ConditionTrue ||
-		migration.Reason != ReasonTemplateAPIDeprecated ||
-		migration.Message != wantMessage {
-		t.Fatalf("MigrationRequired = %#v, want True/%s with message %q", migration, ReasonTemplateAPIDeprecated, wantMessage)
-	}
-	if strings.HasSuffix(ConditionTypeMigrationRequired, ComponentConditionSuffix) {
-		t.Fatalf("%q must not be a readiness component", ConditionTypeMigrationRequired)
-	}
-
-	health := []ComponentHealth{{
-		Component: "InferenceService",
-		State:     constants.AIMStatusReady,
-		Reason:    "RuntimeReady",
-	}}
-	setComponentConditions(cm, health, false)
-	serviceStatus := &aimv1alpha1.AIMServiceStatus{}
-	serviceStatus.SetStatus(string(deriveStatusAndSetReadyCondition(cm, errorCategories{}, health)))
-
-	if serviceStatus.Status != constants.AIMStatusRunning {
-		t.Fatalf("AIMService status = %q, want %q", serviceStatus.Status, constants.AIMStatusRunning)
-	}
-	ready := cm.Get(ConditionTypeReady)
-	if ready == nil || ready.Status != metav1.ConditionTrue {
-		t.Fatalf("Ready = %#v, want True", ready)
-	}
-
-	SetTemplateMigrationRequired(cm, false)
-	if stale := cm.Get(ConditionTypeMigrationRequired); stale != nil {
-		t.Fatalf("MigrationRequired was not retired: %#v", stale)
 	}
 }
 

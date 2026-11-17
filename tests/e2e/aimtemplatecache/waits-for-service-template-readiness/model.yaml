@@ -1,7 +1,0 @@
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMModel
-metadata:
-  name: template-cache-waits-for-template-readiness
-spec:
-  # Use a fake image that cannot be pulled - this ensures discovery fails
-  image: docker.io/amdenterpriseai/fake-image-that-does-not-exist:v999.999.999

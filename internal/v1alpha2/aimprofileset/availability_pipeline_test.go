@@ -170,13 +170,13 @@ func TestFineTunedCatalogAvailabilityPipeline(t *testing.T) {
 				m := &aimv1alpha2.AIMClusterModel{ObjectMeta: modelMeta, Spec: modelSpec}
 				model, modelStatus = m, &m.Status
 				reconcileModel = func() controllerutils.PlanResult {
-					return runAvailabilityStatus(t, c, m, &aimmodel.ClusterModelReconciler{Client: c, Scheme: c.Scheme()})
+					return runAvailabilityStatus(t, c, m, &aimmodel.ClusterModelReconciler{})
 				}
 			} else {
 				m := &aimv1alpha2.AIMModel{ObjectMeta: modelMeta, Spec: modelSpec}
 				model, modelStatus = m, &m.Status
 				reconcileModel = func() controllerutils.PlanResult {
-					return runAvailabilityStatus(t, c, m, &aimmodel.ModelReconciler{Client: c, Scheme: c.Scheme()})
+					return runAvailabilityStatus(t, c, m, &aimmodel.ModelReconciler{})
 				}
 			}
 			if err := c.Create(context.Background(), model); err != nil {

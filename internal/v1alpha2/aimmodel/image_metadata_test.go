@@ -30,6 +30,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -38,7 +39,6 @@ import (
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
-	"github.com/amd-enterprise-ai/aim-engine/internal/imagemetadata"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
@@ -71,7 +71,7 @@ func TestImageModelWithoutLegacyFetch_SetsStatusAndPrimaryProfile(t *testing.T) 
 		model := &aimv1alpha2.AIMModel{
 			ObjectMeta: metav1.ObjectMeta{Name: "qwen", Namespace: "team-a", UID: "model-uid"},
 			Spec:       aimv1alpha1.AIMModelSpec{Image: testImageModelImage},
-			Status:     aimv1alpha1.AIMModelStatus{Conditions: staleMixedModelConditions(componentServiceTemplates)},
+			Status:     aimv1alpha1.AIMModelStatus{Conditions: staleModelConditions()},
 		}
 		reconciler := &ModelReconciler{}
 		for _, reconcile := range imageModelReconciles() {
@@ -89,7 +89,7 @@ func TestImageModelWithoutLegacyFetch_SetsStatusAndPrimaryProfile(t *testing.T) 
 			reconciler.DecorateStatus(&model.Status, cm, obs)
 			model.Status.Conditions = cm.Conditions()
 
-			requireImageModelOutputs(t, reconcile.name, model.Status, obs.componentHealth, obs.DesiredProfiles, componentServiceTemplates)
+			requireImageModelOutputs(t, reconcile.name, model.Status, obs.componentHealth, obs.DesiredProfiles)
 		}
 	})
 
@@ -98,7 +98,7 @@ func TestImageModelWithoutLegacyFetch_SetsStatusAndPrimaryProfile(t *testing.T) 
 		model := &aimv1alpha2.AIMClusterModel{
 			ObjectMeta: metav1.ObjectMeta{Name: "qwen", UID: "model-uid"},
 			Spec:       aimv1alpha1.AIMModelSpec{Image: testImageModelImage},
-			Status:     aimv1alpha1.AIMModelStatus{Conditions: staleMixedModelConditions(componentClusterServiceTemplates)},
+			Status:     aimv1alpha1.AIMModelStatus{Conditions: staleModelConditions()},
 		}
 		reconciler := &ClusterModelReconciler{}
 		for _, reconcile := range imageModelReconciles() {
@@ -116,7 +116,7 @@ func TestImageModelWithoutLegacyFetch_SetsStatusAndPrimaryProfile(t *testing.T) 
 			reconciler.DecorateStatus(&model.Status, cm, obs)
 			model.Status.Conditions = cm.Conditions()
 
-			requireImageModelOutputs(t, reconcile.name, model.Status, obs.componentHealth, obs.DesiredProfiles, componentClusterServiceTemplates)
+			requireImageModelOutputs(t, reconcile.name, model.Status, obs.componentHealth, obs.DesiredProfiles)
 		}
 	})
 }
@@ -136,9 +136,9 @@ func TestImageModelFetch_ExtractMetadataDisabledSkipsInspection(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "no-inspect", Namespace: "team-a", UID: "model-uid"},
 			Spec:       spec,
 		}
-		reconciler := &ModelReconciler{Client: imageModelFakeClient(t), Scheme: dualPathScheme(t)}
+		reconciler := &ModelReconciler{}
 		rc := controllerutils.ReconcileContext[*aimv1alpha2.AIMModel]{Object: model}
-		obs := reconciler.ComposeState(context.Background(), rc, reconciler.FetchRemoteState(context.Background(), reconciler.Client, rc))
+		obs := reconciler.ComposeState(context.Background(), rc, reconciler.FetchRemoteState(context.Background(), imageModelFakeClient(t), rc))
 		reconciler.DecorateStatus(&model.Status, controllerutils.NewConditionManager(nil), obs)
 
 		requireUninspectedImageModel(t, model.Status, obs.componentHealth)
@@ -150,9 +150,9 @@ func TestImageModelFetch_ExtractMetadataDisabledSkipsInspection(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "no-inspect", UID: "model-uid"},
 			Spec:       spec,
 		}
-		reconciler := &ClusterModelReconciler{Client: imageModelFakeClient(t), Scheme: dualPathScheme(t)}
+		reconciler := &ClusterModelReconciler{}
 		rc := controllerutils.ReconcileContext[*aimv1alpha2.AIMClusterModel]{Object: model}
-		obs := reconciler.ComposeState(context.Background(), rc, reconciler.FetchRemoteState(context.Background(), reconciler.Client, rc))
+		obs := reconciler.ComposeState(context.Background(), rc, reconciler.FetchRemoteState(context.Background(), imageModelFakeClient(t), rc))
 		reconciler.DecorateStatus(&model.Status, controllerutils.NewConditionManager(nil), obs)
 
 		requireUninspectedImageModel(t, model.Status, obs.componentHealth)
@@ -183,10 +183,9 @@ func TestImageModelWithoutLegacyFetch_UsesNativeRuntimeConfig(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "qwen", Namespace: "team-a", UID: "model-uid"},
 			Spec:       spec,
 		}
-		reconciler := &ModelReconciler{Client: imageModelFakeClient(t, runtimeConfig.DeepCopy()), Scheme: dualPathScheme(t)}
+		reconciler := &ModelReconciler{}
 		rc := controllerutils.ReconcileContext[*aimv1alpha2.AIMModel]{Object: model}
-		fetch := reconciler.FetchRemoteState(context.Background(), reconciler.Client, rc)
-		fetch.legacyFetch = nil
+		fetch := reconciler.FetchRemoteState(context.Background(), imageModelFakeClient(t, runtimeConfig.DeepCopy()), rc)
 		obs := reconciler.ComposeState(context.Background(), rc, fetch)
 
 		requireNativeRuntimeConfig(t, obs.componentHealth, reconciler.GetApplyOptions(obs), want)
@@ -198,77 +197,177 @@ func TestImageModelWithoutLegacyFetch_UsesNativeRuntimeConfig(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "qwen", UID: "model-uid"},
 			Spec:       spec,
 		}
-		reconciler := &ClusterModelReconciler{Client: imageModelFakeClient(t, runtimeConfig.DeepCopy()), Scheme: dualPathScheme(t)}
+		reconciler := &ClusterModelReconciler{}
 		rc := controllerutils.ReconcileContext[*aimv1alpha2.AIMClusterModel]{Object: model}
-		fetch := reconciler.FetchRemoteState(context.Background(), reconciler.Client, rc)
-		fetch.legacyFetch = nil
+		fetch := reconciler.FetchRemoteState(context.Background(), imageModelFakeClient(t, runtimeConfig.DeepCopy()), rc)
 		obs := reconciler.ComposeState(context.Background(), rc, fetch)
 
 		requireNativeRuntimeConfig(t, obs.componentHealth, reconciler.GetApplyOptions(obs), want)
 	})
 }
 
-// While legacy mode still runs, both paths write the image status fields.
-// Repeated reconciles must converge on the native-only status.
-func TestImageModelStatus_LegacyAndNativeWritersAgree(t *testing.T) {
+func TestApplyModelServingPathPolicy(t *testing.T) {
 	t.Parallel()
 
-	t.Run("AIMModel", func(t *testing.T) {
-		t.Parallel()
-		reconcileModel := func(withLegacy bool) []aimv1alpha1.AIMModelStatus {
-			model := &aimv1alpha2.AIMModel{
-				ObjectMeta: metav1.ObjectMeta{Name: "qwen", Namespace: "team-a", UID: "model-uid"},
-				Spec:       legacyServingSpec(),
+	imageSpec := aimv1alpha1.AIMModelSpec{Image: "registry.example/native:1.0"}
+	tests := []struct {
+		name            string
+		spec            aimv1alpha1.AIMModelSpec
+		health          []controllerutils.ComponentHealth
+		wantNonBlocking []string
+	}{
+		{
+			name: "unresolved runtime config cannot block complete profiles",
+			spec: imageSpec,
+			health: []controllerutils.ComponentHealth{
+				{Component: componentRuntimeConfig, State: constants.AIMStatusFailed},
+				{Component: componentImageMetadata, State: constants.AIMStatusProgressing},
+				{Component: componentDiscovery, State: constants.AIMStatusReady},
+				{Component: componentNodeInventory, State: constants.AIMStatusReady},
+				{Component: componentProfiles, State: constants.AIMStatusReady},
+			},
+			wantNonBlocking: []string{componentRuntimeConfig, componentImageMetadata},
+		},
+		{
+			name: "failed image inspection cannot block complete profiles",
+			spec: imageSpec,
+			health: []controllerutils.ComponentHealth{
+				{Component: componentRuntimeConfig, State: constants.AIMStatusReady},
+				{Component: componentImageMetadata, State: constants.AIMStatusFailed},
+				{Component: componentDiscovery, State: constants.AIMStatusReady},
+				{Component: componentNodeInventory, State: constants.AIMStatusReady},
+				{Component: componentProfiles, State: constants.AIMStatusReady},
+			},
+			wantNonBlocking: []string{componentRuntimeConfig, componentImageMetadata},
+		},
+		{
+			name: "failed image inspection blocks incomplete profiles",
+			spec: imageSpec,
+			health: []controllerutils.ComponentHealth{
+				{Component: componentRuntimeConfig, State: constants.AIMStatusReady},
+				{Component: componentImageMetadata, State: constants.AIMStatusFailed},
+				{Component: componentDiscovery, State: constants.AIMStatusProgressing},
+				{Component: componentNodeInventory, State: constants.AIMStatusReady},
+			},
+		},
+		{
+			name: "image model without discovery keeps image components blocking",
+			spec: aimv1alpha1.AIMModelSpec{
+				Image:     "registry.example/native:1.0",
+				Discovery: &aimv1alpha1.AIMModelDiscoveryConfig{ExtractMetadata: ptr.To(false)},
+			},
+			health: []controllerutils.ComponentHealth{
+				{Component: componentRuntimeConfig, State: constants.AIMStatusFailed},
+				{Component: componentImageMetadata, State: constants.AIMStatusReady},
+			},
+		},
+		{
+			name: "generated profile failure remains blocking",
+			spec: aimv1alpha1.AIMModelSpec{ModelID: "Qwen/Qwen3.5-0.8B"},
+			health: []controllerutils.ComponentHealth{
+				{Component: componentProfiles, State: constants.AIMStatusNotAvailable},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			health := append([]controllerutils.ComponentHealth(nil), tt.health...)
+			applyModelServingPathPolicy(&tt.spec, health)
+
+			want := make(map[string]bool, len(tt.wantNonBlocking))
+			for _, component := range tt.wantNonBlocking {
+				want[component] = true
 			}
-			var statuses []aimv1alpha1.AIMModelStatus
-			for range 3 {
-				reconciler, fetch := &ModelReconciler{}, ModelFetchResult{model: model}
-				if withLegacy {
-					reconciler, fetch = namespaceLegacyFixture(t, model)
+			for i := range health {
+				if health[i].NonBlocking != want[health[i].Component] {
+					t.Errorf("component %q NonBlocking = %v, want %v", health[i].Component, health[i].NonBlocking, want[health[i].Component])
 				}
-				fetch.imageMetadata = imagemetadata.Fetch(context.Background(), nil, model.Spec, &model.Status, model.Namespace)
-				obs := reconciler.ComposeState(
-					context.Background(),
-					controllerutils.ReconcileContext[*aimv1alpha2.AIMModel]{Object: model},
-					fetch,
-				)
-				cm := controllerutils.NewConditionManager(model.Status.Conditions)
-				reconciler.DecorateStatus(&model.Status, cm, obs)
-				model.Status.Conditions = cm.Conditions()
-				statuses = append(statuses, *model.Status.DeepCopy())
 			}
-			return statuses
+		})
+	}
+}
+
+func TestRetireRemovedModelPathState(t *testing.T) {
+	t.Parallel()
+
+	t.Run("image model without discovery retires discovery state", func(t *testing.T) {
+		t.Parallel()
+		spec := aimv1alpha1.AIMModelSpec{
+			Image:     "registry.example/native:1.0",
+			Discovery: &aimv1alpha1.AIMModelDiscoveryConfig{ExtractMetadata: ptr.To(false)},
 		}
-		requireStatusesAgree(t, reconcileModel(true), reconcileModel(false))
+		status := staleModelStatus()
+		cm := controllerutils.NewConditionManager(staleModelConditions())
+		health := []controllerutils.ComponentHealth{
+			{Component: componentRuntimeConfig, State: constants.AIMStatusReady},
+			{Component: componentImageMetadata, State: constants.AIMStatusReady},
+		}
+
+		retireRemovedModelPathState(&status, cm, &spec, health)
+
+		for _, component := range []string{componentDiscovery, componentNodeInventory, componentProfiles, componentProfileSet} {
+			requireConditionAbsent(t, cm.Conditions(), component+controllerutils.ComponentConditionSuffix)
+		}
+		requireConditionPresent(t, cm.Conditions(), componentImageMetadata+controllerutils.ComponentConditionSuffix)
+		if status.Discovery != nil ||
+			status.DiscoveryCacheRef != nil ||
+			status.DiscoveredProfiles.Total != 0 ||
+			status.ProfileSetRef != nil ||
+			status.ManagedProfiles.Total != 0 ||
+			status.ProfileGeneration != nil {
+			t.Fatalf("discovery status was not retired: %#v", status)
+		}
 	})
 
-	t.Run("AIMClusterModel", func(t *testing.T) {
+	t.Run("derivation model retires image state but preserves active failure", func(t *testing.T) {
 		t.Parallel()
-		reconcileModel := func(withLegacy bool) []aimv1alpha1.AIMModelStatus {
-			model := &aimv1alpha2.AIMClusterModel{
-				ObjectMeta: metav1.ObjectMeta{Name: "qwen", UID: "model-uid"},
-				Spec:       legacyServingSpec(),
-			}
-			var statuses []aimv1alpha1.AIMModelStatus
-			for range 3 {
-				reconciler, fetch := &ClusterModelReconciler{}, ClusterModelFetchResult{model: model}
-				if withLegacy {
-					reconciler, fetch = clusterLegacyFixture(t, model)
-				}
-				fetch.imageMetadata = imagemetadata.Fetch(context.Background(), nil, model.Spec, &model.Status, constants.GetOperatorNamespace())
-				obs := reconciler.ComposeState(
-					context.Background(),
-					controllerutils.ReconcileContext[*aimv1alpha2.AIMClusterModel]{Object: model},
-					fetch,
-				)
-				cm := controllerutils.NewConditionManager(model.Status.Conditions)
-				reconciler.DecorateStatus(&model.Status, cm, obs)
-				model.Status.Conditions = cm.Conditions()
-				statuses = append(statuses, *model.Status.DeepCopy())
-			}
-			return statuses
+		spec := aimv1alpha1.AIMModelSpec{
+			Profiles: &aimv1alpha1.AIMModelProfilesSpec{
+				DerivedFrom: &aimv1alpha1.AIMModelProfilesDerivedFrom{
+					Selector: aimv1alpha1.ProfileSelector{Role: aimv1alpha1.ProfileSelectorRoleBase},
+				},
+			},
 		}
-		requireStatusesAgree(t, reconcileModel(true), reconcileModel(false))
+		status := staleModelStatus()
+		cm := controllerutils.NewConditionManager(staleModelConditions())
+		health := []controllerutils.ComponentHealth{{
+			Component: componentProfileSet,
+			State:     constants.AIMStatusNotAvailable,
+			Reason:    "ManagedProfilesNotAvailable",
+		}}
+
+		retireRemovedModelPathState(&status, cm, &spec, health)
+
+		requireConditionAbsent(t, cm.Conditions(), componentRuntimeConfig+controllerutils.ComponentConditionSuffix)
+		requireConditionAbsent(t, cm.Conditions(), componentImageMetadata+controllerutils.ComponentConditionSuffix)
+		requireConditionPresent(t, cm.Conditions(), componentProfileSet+controllerutils.ComponentConditionSuffix)
+		if status.SourceType != "" || status.ImageMetadata != nil || status.Version != "" {
+			t.Fatalf("image status was not retired: %#v", status)
+		}
+		if status.ProfileSetRef == nil {
+			t.Fatal("active profile-set status was retired")
+		}
+	})
+
+	t.Run("image model keeps image state", func(t *testing.T) {
+		t.Parallel()
+		spec := aimv1alpha1.AIMModelSpec{Image: "registry.example/native:1.0"}
+		status := staleModelStatus()
+		cm := controllerutils.NewConditionManager(staleModelConditions())
+		health := []controllerutils.ComponentHealth{
+			{Component: componentRuntimeConfig, State: constants.AIMStatusReady},
+			{Component: componentImageMetadata, State: constants.AIMStatusReady},
+		}
+
+		retireRemovedModelPathState(&status, cm, &spec, health)
+
+		requireConditionPresent(t, cm.Conditions(), componentRuntimeConfig+controllerutils.ComponentConditionSuffix)
+		requireConditionPresent(t, cm.Conditions(), componentImageMetadata+controllerutils.ComponentConditionSuffix)
+		if status.SourceType == "" || status.ImageMetadata == nil || status.Version == "" {
+			t.Fatalf("image status was retired: %#v", status)
+		}
 	})
 }
 
@@ -278,7 +377,6 @@ func requireImageModelOutputs(
 	status aimv1alpha1.AIMModelStatus,
 	health []controllerutils.ComponentHealth,
 	desired []desiredProfile,
-	templateComponent string,
 ) {
 	t.Helper()
 	if status.SourceType != aimv1alpha1.AIMModelSourceTypeImage {
@@ -306,7 +404,9 @@ func requireImageModelOutputs(
 		}
 		requireConditionPresent(t, status.Conditions, component+controllerutils.ComponentConditionSuffix)
 	}
-	requireConditionAbsent(t, status.Conditions, templateComponent+controllerutils.ComponentConditionSuffix)
+	for _, conditionType := range templateEraModelConditions {
+		requireConditionAbsent(t, status.Conditions, conditionType)
+	}
 
 	primary := map[string]bool{}
 	for _, d := range desired {
@@ -355,26 +455,83 @@ func requireNativeRuntimeConfig(
 	}
 }
 
-func requireStatusesAgree(t *testing.T, dual, native []aimv1alpha1.AIMModelStatus) {
+func requireConditionAbsent(t *testing.T, conditions []metav1.Condition, conditionType string) {
 	t.Helper()
-	withoutTransitionTimes := func(status aimv1alpha1.AIMModelStatus) aimv1alpha1.AIMModelStatus {
-		status = *status.DeepCopy()
-		for i := range status.Conditions {
-			status.Conditions[i].LastTransitionTime = metav1.Time{}
-		}
-		return status
-	}
-	for i := range dual {
-		if !reflect.DeepEqual(dual[i], dual[0]) {
-			t.Errorf("dual-path status changed on reconcile %d:\n got %#v\nwant %#v", i+1, dual[i], dual[0])
-		}
-		if !reflect.DeepEqual(withoutTransitionTimes(dual[i]), withoutTransitionTimes(native[i])) {
-			t.Errorf("reconcile %d: dual-path status differs from native-only:\n dual %#v\n native %#v", i+1, dual[i], native[i])
+	for i := range conditions {
+		if conditions[i].Type == conditionType {
+			t.Fatalf("condition %q was retained: %#v", conditionType, conditions[i])
 		}
 	}
-	if dual[0].ImageMetadata == nil || dual[0].Version != "1.0" || dual[0].SourceType != aimv1alpha1.AIMModelSourceTypeImage {
-		t.Errorf("image status fields not set: %#v", dual[0])
+}
+
+func requireConditionPresent(t *testing.T, conditions []metav1.Condition, conditionType string) {
+	t.Helper()
+	for i := range conditions {
+		if conditions[i].Type == conditionType {
+			return
+		}
 	}
+	t.Fatalf("condition %q was removed from %#v", conditionType, conditions)
+}
+
+// templateEraModelConditions are the conditions models carried while they
+// still created AIMServiceTemplates.
+var templateEraModelConditions = []string{
+	"MigrationRequired",
+	"ServiceTemplatesReady",
+	"ClusterServiceTemplatesReady",
+	"LegacyAutoCustomSpecReady",
+}
+
+// staleModelConditions holds a failed condition for every model component
+// plus the template-era conditions.
+func staleModelConditions() []metav1.Condition {
+	conditionTypes := append([]string(nil), templateEraModelConditions...)
+	for _, component := range []string{
+		componentRuntimeConfig,
+		componentImageMetadata,
+		componentDiscovery,
+		componentNodeInventory,
+		componentProfiles,
+		componentProfileSet,
+	} {
+		conditionTypes = append(conditionTypes, component+controllerutils.ComponentConditionSuffix)
+	}
+	conditions := make([]metav1.Condition, 0, len(conditionTypes))
+	for _, conditionType := range conditionTypes {
+		conditions = append(conditions, metav1.Condition{
+			Type:   conditionType,
+			Status: metav1.ConditionFalse,
+			Reason: "StaleFailure",
+		})
+	}
+	return conditions
+}
+
+func staleModelStatus() aimv1alpha1.AIMModelStatus {
+	return aimv1alpha1.AIMModelStatus{
+		SourceType:         aimv1alpha1.AIMModelSourceTypeImage,
+		ImageMetadata:      &aimv1alpha1.ImageMetadata{},
+		Version:            "1.0",
+		ProfileGeneration:  &aimv1alpha1.AIMModelProfileGenerationStatus{},
+		Discovery:          &aimv1alpha1.ModelDiscoveryState{Attempts: 2},
+		DiscoveryCacheRef:  &aimv1alpha1.DiscoveryCacheReference{Name: "stale-catalog"},
+		DiscoveredProfiles: aimv1alpha1.DiscoveredProfileCounts{Total: 2},
+		ProfileSetRef:      &aimv1alpha1.ProfileSetReference{Name: "active-or-stale-set"},
+		ManagedProfiles:    aimv1alpha1.ManagedProfileCounts{Total: 2},
+	}
+}
+
+func modelTestScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := aimv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add v1alpha1 scheme: %v", err)
+	}
+	if err := aimv1alpha2.AddToScheme(scheme); err != nil {
+		t.Fatalf("add v1alpha2 scheme: %v", err)
+	}
+	return scheme
 }
 
 func recommendedImageMetadata() *aimv1alpha1.ImageMetadata {
@@ -433,10 +590,9 @@ func imageModelFakeClient(t *testing.T, objects ...client.Object) client.Client 
 	t.Helper()
 	noIndexValues := func(client.Object) []string { return nil }
 	return fake.NewClientBuilder().
-		WithScheme(dualPathScheme(t)).
+		WithScheme(modelTestScheme(t)).
 		WithObjects(objects...).
-		WithIndex(&aimv1alpha1.AIMServiceTemplate{}, aimv1alpha1.ServiceTemplateModelNameIndexKey, noIndexValues).
-		WithIndex(&aimv1alpha1.AIMClusterServiceTemplate{}, aimv1alpha1.ServiceTemplateModelNameIndexKey, noIndexValues).
+		WithStatusSubresource(&aimv1alpha2.AIMModel{}, &aimv1alpha2.AIMClusterModel{}).
 		WithIndex(&aimv1alpha2.AIMProfile{}, ManagedModelUIDIndexKey, noIndexValues).
 		WithIndex(&aimv1alpha2.AIMClusterProfile{}, ManagedModelUIDIndexKey, noIndexValues).
 		Build()

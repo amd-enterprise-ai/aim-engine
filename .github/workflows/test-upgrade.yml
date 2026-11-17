@@ -41,13 +41,6 @@ jobs:
             scenario: generic
             setup_dir: tests/e2e/upgrade-compatibility/setup
             verify_dir: tests/e2e/upgrade-compatibility/verify
-          - name: v1alpha1-bridge-v0.2.6
-            slug: bridge-v026
-            repository: amd-enterprise-ai/aim-engine
-            ref: 3f6558ebb3921d2f8954446cfeb8be64c4410202
-            scenario: v1alpha1-bridge
-            setup_dir: tests/e2e/upgrade-compatibility/bridge/setup
-            verify_dir: tests/e2e/upgrade-compatibility/bridge/verify
           - name: v0.2.7
             slug: v027
             repository: amd-enterprise-ai/aim-engine
@@ -71,7 +64,6 @@ jobs:
       CANDIDATE_IMAGE_TAG: ${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.slug }}
       CANDIDATE_OPERATOR_IMAGE: aim-engine-upgrade-candidate:${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.slug }}
       ARTIFACT_DOWNLOADER_IMAGE: aim-artifact-downloader-upgrade:${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.slug }}
-      AIM_DUMMY_IMAGE: docker.io/amdenterpriseai/aim-dummy:0.2.0
       UPGRADE_REPORT_DIR: .tmp/upgrade-reports/${{ matrix.slug }}
     steps:
       - name: Clone the candidate code
@@ -177,16 +169,6 @@ jobs:
           cache-from: type=gha,scope=upgrade-artifact-downloader-${{ matrix.slug }}
           cache-to: type=gha,scope=upgrade-artifact-downloader-${{ matrix.slug }},mode=max
 
-      - name: Build bridge aim-dummy image
-        if: matrix.scenario == 'v1alpha1-bridge'
-        uses: docker/build-push-action@v6
-        with:
-          context: images/aim-dummy
-          load: true
-          tags: ${{ env.AIM_DUMMY_IMAGE }}
-          cache-from: type=gha,scope=upgrade-aim-dummy
-          cache-to: type=gha,scope=upgrade-aim-dummy,mode=max
-
       - name: Build baseline operator image
         uses: docker/build-push-action@v6
         with:
@@ -217,10 +199,6 @@ jobs:
           kind load docker-image "${ARTIFACT_DOWNLOADER_IMAGE}" --name "${KIND_CLUSTER}"
           kind load docker-image "${BASELINE_OPERATOR_IMAGE}" --name "${KIND_CLUSTER}"
           kind load docker-image "${CANDIDATE_OPERATOR_IMAGE}" --name "${KIND_CLUSTER}"
-
-      - name: Load bridge aim-dummy image into Kind
-        if: matrix.scenario == 'v1alpha1-bridge'
-        run: kind load docker-image "${AIM_DUMMY_IMAGE}" --name "${KIND_CLUSTER}"
 
       - name: Generate baseline CRDs and chart
         working-directory: ${{ env.BASELINE_DIR }}
@@ -269,10 +247,6 @@ jobs:
       - name: Create upgrade test namespace
         run: kubectl create namespace "${UPGRADE_NAMESPACE}"
 
-      - name: Create inline-custom bridge namespace
-        if: matrix.scenario == 'v1alpha1-bridge'
-        run: kubectl create namespace aim-upgrade-inline-custom
-
       - name: Create baseline resource corpus
         run: |
           mkdir -p "${UPGRADE_REPORT_DIR}/setup"
@@ -289,10 +263,6 @@ jobs:
       - name: Snapshot generic baseline object identities
         if: matrix.scenario == 'generic'
         run: hack/ci/upgrade/snapshot.sh "${UPGRADE_REPORT_DIR}/baseline-objects.tsv"
-
-      - name: Snapshot bridge baseline identities
-        if: matrix.scenario == 'v1alpha1-bridge'
-        run: hack/ci/upgrade/snapshot-bridge.sh "${UPGRADE_REPORT_DIR}/baseline"
 
       - name: Preflight blocks the v0.2.7 corpus
         if: matrix.scenario == 'v0.2.7'
@@ -357,6 +327,28 @@ jobs:
           fi
           echo "The Shared profile cache adopted ${shared_artifact} (${shared_artifact_uid}) without a download"
 
+      - name: Move a service with v0.2.7's aim-template-migration
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          set -euo pipefail
+          # The v0.2.7 release doesn't publish the tool, so build it from the baseline checkout.
+          go build -C "${BASELINE_DIR}" -o "${RUNNER_TEMP}/aim-template-migration" ./cmd/aim-template-migration
+          plan_dir="${UPGRADE_REPORT_DIR}/migration-plan"
+          # The services moved above are on the profile pipeline already, so the
+          # plan leaves them manual and moves only upgrade-migrated-service.
+          "${RUNNER_TEMP}/aim-template-migration" plan --namespace "${UPGRADE_NAMESPACE}" \
+            --runtime-projection-mode Both --output-dir "${plan_dir}"
+          # Apply waits until the service runs on the profile pipeline with the same
+          # InferenceService, unchanged and Ready.
+          "${RUNNER_TEMP}/aim-template-migration" apply --plan "${plan_dir}/plan.json" --commit
+          outcome="$(jq -r --arg unit "${UPGRADE_NAMESPACE}/upgrade-migrated-service" \
+            '.units[] | select(.unitId == $unit) | .outcome' "${plan_dir}/apply-result.json")"
+          if [[ "${outcome}" != succeeded ]]; then
+            echo "aim-template-migration did not move upgrade-migrated-service (outcome: ${outcome:-none})" >&2
+            exit 1
+          fi
+          hack/ci/upgrade/record-v0.2.7-identities.sh "${UPGRADE_REPORT_DIR}/identities-after-migration.tsv"
+
       - name: Delete the v0.2.7 template objects
         if: matrix.scenario == 'v0.2.7'
         run: |
@@ -397,7 +389,12 @@ jobs:
 
       - name: Record v0.2.7 identities before the upgrade
         if: matrix.scenario == 'v0.2.7'
-        run: hack/ci/upgrade/record-v0.2.7-identities.sh "${UPGRADE_REPORT_DIR}/identities-before-upgrade.tsv"
+        run: |
+          set -euo pipefail
+          hack/ci/upgrade/record-v0.2.7-identities.sh "${UPGRADE_REPORT_DIR}/identities-before-upgrade.tsv"
+          # Deleting the template objects must not roll the migrated service's pods.
+          diff -u <(grep '^Pod' "${UPGRADE_REPORT_DIR}/identities-after-migration.tsv") \
+            <(grep '^Pod' "${UPGRADE_REPORT_DIR}/identities-before-upgrade.tsv")
 
       - name: Upgrade CRDs
         run: |
@@ -425,6 +422,23 @@ jobs:
       - name: Wait for candidate operator
         run: kubectl rollout status deployment/aim-engine-controller-manager -n aim-system --timeout=180s
 
+      - name: Remove the template CRDs
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          set -euo pipefail
+          # The kubectl commands of docs/docs/admin/upgrading.md#remove-the-template-crds.
+          for resource in aimtemplatecaches aimservicetemplates aimclusterservicetemplates; do
+            kubectl get "${resource}.aim.eai.amd.com" --all-namespaces \
+              -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.namespace}{"\n"}{end}' \
+              | while read -r name namespace; do
+                  kubectl patch "${resource}.aim.eai.amd.com" "${name}" --namespace "${namespace}" \
+                    --type merge -p '{"metadata":{"finalizers":null}}'
+                done
+            kubectl delete "${resource}.aim.eai.amd.com" --all --all-namespaces
+          done
+          kubectl delete crd aimtemplatecaches.aim.eai.amd.com \
+            aimservicetemplates.aim.eai.amd.com aimclusterservicetemplates.aim.eai.amd.com
+
       - name: Verify upgraded resources with Chainsaw
         run: |
           mkdir -p "${UPGRADE_REPORT_DIR}/verify"
@@ -450,23 +464,6 @@ jobs:
           diff -u "${UPGRADE_REPORT_DIR}/identities-before-upgrade.tsv" \
             "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv"
 
-      - name: Verify bridge upgrade convergence
-        if: matrix.scenario == 'v1alpha1-bridge'
-        run: |
-          hack/ci/upgrade/verify-bridge-upgrade.sh \
-            "${UPGRADE_REPORT_DIR}/baseline" \
-            "${UPGRADE_REPORT_DIR}/after-upgrade"
-
-      - name: Plan, dry-run, and commit Shared bridge migration
-        if: matrix.scenario == 'v1alpha1-bridge'
-        run: |
-          go build -o "${RUNNER_TEMP}/aim-template-migration" ./cmd/aim-template-migration
-          MIGRATION_BINARY="${RUNNER_TEMP}/aim-template-migration" \
-            hack/ci/upgrade/run-bridge-migration.sh \
-              "${UPGRADE_REPORT_DIR}" \
-              "${UPGRADE_REPORT_DIR}/baseline" \
-              "${UPGRADE_REPORT_DIR}/after-upgrade"
-
       - name: Capture upgrade diagnostics
         if: always()
         run: |
@@ -477,12 +474,6 @@ jobs:
           kubectl get aimclusterprofiles,aimclustermodels,aimclusterprofilesets -o yaml > "${UPGRADE_REPORT_DIR}/diagnostics/cluster-resources.yaml" 2>&1 || true
           kubectl get servingruntimes,clusterservingruntimes,configmaps -A -o yaml > "${UPGRADE_REPORT_DIR}/diagnostics/runtime-projections.yaml" 2>&1 || true
           kubectl get events -A --sort-by=.lastTimestamp > "${UPGRADE_REPORT_DIR}/diagnostics/events.txt" 2>&1 || true
-
-      - name: Capture bridge diagnostics
-        if: always() && matrix.scenario == 'v1alpha1-bridge'
-        run: |
-          kubectl get aimservices,aimmodels,aimservicetemplates,aimtemplatecaches,aimartifacts,aimprofiles,aimprofilecaches,inferenceservices,pvc,pods \
-            -A -o yaml > "${UPGRADE_REPORT_DIR}/diagnostics/bridge-resources.yaml" 2>&1 || true
 
       - name: Capture v0.2.7 diagnostics
         if: always() && matrix.scenario == 'v0.2.7'

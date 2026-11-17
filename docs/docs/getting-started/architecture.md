@@ -26,7 +26,7 @@ An `AIMService` resolves one of those profiles, and the Service controller creat
 
 ## CRDs and their roles
 
-v1alpha2 is the current API. v1alpha1 resources remain supported during the deprecation window — see [Legacy v1alpha1](../legacy/index.md).
+v1alpha2 is the current API.
 
 | CRD | Scope | Role |
 |---|---|---|
@@ -63,7 +63,7 @@ When you apply an `AIMService`, the controller reaches a single `AIMProfile` thr
   <img alt="AIMService resolution shapes converging on a single resolved AIMProfile, then an optional overlay before deployment." src="../assets/diagrams/service-resolution.svg">
 </picture>
 
-The image shape requires the `aim.eai.amd.com/reconciler-pipeline: profile` annotation during the migration window — see [Migration window](../admin/upgrading.md#migration-window). See [Services](../concepts/services.md#resolution-shapes) for the canonical resolution table and mechanics.
+See [Services](../concepts/services.md#resolution-shapes) for the canonical resolution table and mechanics.
 
 ## Cluster vs namespace scope
 

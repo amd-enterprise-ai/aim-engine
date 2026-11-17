@@ -15,7 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tolerations for the Jobs that prepare a model.** The size check, download and discovery Jobs get the runtime config's `spec.tolerations`, and the adapter staging Jobs get the same tolerations as the inference pods. A model can now start when every node that can run these Jobs has a taint.
 
 ### Changed
+- **Every AIMService is served through profiles.** Services with `spec.model.name` or `spec.model.image` no longer need the `aim.eai.amd.com/reconciler-pipeline: profile` annotation, and the operator ignores it. A new AIMService CRD validation rule rejects `spec.model.custom` on new v1alpha2 objects and on updates that add it: create an AIMModel and reference it with `spec.model.name` instead.
+- **AIMModel and AIMClusterModel produce profiles only.** Image models no longer create AIMServiceTemplates or AIMClusterServiceTemplates, and models no longer report `MigrationRequired`. Fields that only configured templates (`spec.discovery.createServiceTemplates`, `spec.defaultServiceTemplate`, `spec.custom`, `spec.customTemplates`, `spec.env`, `spec.resources`) are reported in a `TemplateFieldsIgnored` warning; templates a model created earlier stay until the model is deleted.
 - Weight-replacing profile derivations now use the producer's exact `AIM_BASE_IMAGE_REF` or `spec.baseImageRef`. Tags and digests are no longer truncated or synthesized. The operator uses the private producer prefixes found in released images (`docker.io/silogenai` and `ghcr.io/silogen`) as public `docker.io/amdenterpriseai` compatibility fallbacks even when a resource selects a named RuntimeConfig; matching configured mappings remain authoritative for private and air-gapped mirrors. The fallbacks are built into the operator; the Helm chart does not add mappings to its default cluster RuntimeConfig.
+
+### Removed
+- **`aim-template-migration`.** The tool and its runbook are removed. Services it already moved to the profile pipeline keep running through the upgrade without a restart. Move the remaining template services as described in `docs/docs/admin/upgrading.md#migration-window`.
+- **`AIMServiceTemplate`, `AIMClusterServiceTemplate` and `AIMTemplateCache`.** The kinds and their CRDs are removed. Remove the CRDs with Helm or kubectl as described in `docs/docs/admin/upgrading.md#remove-the-template-crds`.
 
 ### Fixed
 - Cached v1alpha1 image metadata from older operators is re-inspected to recover `AIM_BASE_IMAGE_REF`. Reinspection failures retain cached metadata and normal readiness while reporting a non-gating diagnostic that can recover on a later reconcile; images that genuinely omit the field are recorded without repeated registry polling.

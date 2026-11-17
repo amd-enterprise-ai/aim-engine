@@ -186,7 +186,7 @@ description: "Working on frozen model support"
 
 tests:
   - tests/e2e/aimservice/frozen
-  - tests/e2e/aimmodel/auto-templates
+  - tests/e2e/v1alpha2/aimmodel
 ```
 
 2. Run via Make or Tilt:

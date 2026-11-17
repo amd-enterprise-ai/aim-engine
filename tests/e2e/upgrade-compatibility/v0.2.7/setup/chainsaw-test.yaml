@@ -9,7 +9,8 @@ spec:
     Creates the v0.2.7 corpus that the upgrade guide's migration-window steps
     clean up: Shared and Dedicated services on the template pipeline, an image
     model that emits templates and discovers a CPU profile, and a model source
-    whose discovered cluster model emits cluster templates.
+    whose discovered cluster model emits cluster templates. A third, Shared
+    template service is moved later with v0.2.7's aim-template-migration.
   timeouts:
     assert: 420s
     cleanup: 180s
@@ -35,6 +36,14 @@ spec:
               kind: AIMServiceTemplate
               metadata:
                 name: upgrade-cpu-template
+              status:
+                status: Ready
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMServiceTemplate
+              metadata:
+                name: upgrade-migrated-template
               status:
                 status: Ready
         - assert:
@@ -87,6 +96,15 @@ spec:
                 reconcilerPipeline: template
         - assert:
             resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-migrated-service
+              status:
+                status: Running
+                reconcilerPipeline: template
+        - assert:
+            resource:
               apiVersion: aim.eai.amd.com/v1alpha1
               kind: AIMTemplateCache
               metadata:
@@ -109,6 +127,17 @@ spec:
                 status: Ready
         - assert:
             resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-migrated-service
+              spec:
+                mode: Shared
+              status:
+                status: Ready
+        - assert:
+            resource:
               apiVersion: serving.kserve.io/v1beta1
               kind: InferenceService
               metadata:
@@ -124,6 +153,16 @@ spec:
               metadata:
                 labels:
                   aim.eai.amd.com/service: upgrade-dedicated-service
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-migrated-service
               status:
                 (conditions[?type == 'Ready']):
                   - status: "True"

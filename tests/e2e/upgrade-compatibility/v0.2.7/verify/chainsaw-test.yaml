@@ -7,7 +7,10 @@ metadata:
 spec:
   description: |
     After the upgrade from v0.2.7, the services the guide moved keep serving
-    from their profile caches, and the image and discovered models stay Ready.
+    from their profile caches, the service aim-template-migration moved keeps
+    its InferenceService and pods, none of the moved services keeps
+    template-era status, the image and discovered models stay Ready with
+    their image status and Version column, and the template CRDs are gone.
   timeouts:
     assert: 300s
   steps:
@@ -54,7 +57,78 @@ spec:
                 (conditions[?type == 'Ready']):
                   - status: "True"
 
-    - name: Image and discovered models stay Ready
+    - name: The migrated service keeps serving from its pinned InferenceService
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-migrated-service
+              spec:
+                profile:
+                  name: upgrade-migrated-template
+              status:
+                status: Running
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-migrated-service
+                  aim.eai.amd.com/template: upgrade-migrated-template
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+        # The lane's identity diff compares these pods with the ones recorded
+        # before the upgrade; this assert keeps it from passing on no pods.
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-migrated-service
+                  app.kubernetes.io/component: inference
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: Moved services carry no template-era status
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-shared-service
+              status:
+                (conditions[?type == 'ModelReady' || type == 'TemplateReady' || type == 'CacheReady' || type == 'MigrationRequired'] | length(@)): 0
+                (resolvedTemplate == null): true
+                (reconcilerPipeline == null): true
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-dedicated-service
+              status:
+                (conditions[?type == 'ModelReady' || type == 'TemplateReady' || type == 'CacheReady' || type == 'MigrationRequired'] | length(@)): 0
+                (resolvedTemplate == null): true
+                (reconcilerPipeline == null): true
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-migrated-service
+              status:
+                (conditions[?type == 'ModelReady' || type == 'TemplateReady' || type == 'CacheReady' || type == 'MigrationRequired'] | length(@)): 0
+                (resolvedTemplate == null): true
+                (reconcilerPipeline == null): true
+
+    - name: Image and discovered models stay Ready and keep their image status
       try:
         - assert:
             resource:
@@ -64,6 +138,18 @@ spec:
                 name: upgrade-image-model
               status:
                 status: Ready
+                sourceType: Image
+                version: "0.2.0"
+                imageMetadata:
+                  model:
+                    canonicalName: HuggingFaceTB/SmolLM2-135M
+                    (length(recommendedDeployments) > `0`): true
+                (conditions[?type == 'MigrationRequired'] | length(@)): 0
+                # The guide's cleanup set createServiceTemplates=false, which
+                # profile-based serving no longer reads.
+                (conditions[?type == 'TemplateFieldsIgnored']):
+                  - status: "True"
+                    message: "These fields have no effect on profile-based serving and can be removed: spec.discovery.createServiceTemplates"
         - assert:
             resource:
               apiVersion: aim.eai.amd.com/v1alpha2
@@ -73,3 +159,52 @@ spec:
                   aim.eai.amd.com/model-source: upgrade-model-source
               status:
                 status: Ready
+                sourceType: Image
+                version: "0.2.2"
+                imageMetadata:
+                  model:
+                    canonicalName: HuggingFaceTB/SmolLM2-135M
+                    (length(recommendedDeployments) > `0`): true
+                (conditions[?type == 'MigrationRequired'] | length(@)): 0
+
+    - name: The Version column shows the image tag
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              version_column() {
+                awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "VERSION") col = i }
+                  NR == 2 { print (col ? $col : "") }'
+              }
+              got=$(kubectl get aimmodels.v1alpha2.aim.eai.amd.com upgrade-image-model -n "$NAMESPACE" | version_column)
+              [ "$got" = "0.2.0" ] || { echo "ERROR: AIMModel Version column is '$got', want 0.2.0"; exit 1; }
+              got=$(kubectl get aimclustermodels.v1alpha2.aim.eai.amd.com \
+                -l aim.eai.amd.com/model-source=upgrade-model-source | version_column)
+              [ "$got" = "0.2.2" ] || { echo "ERROR: AIMClusterModel Version column is '$got', want 0.2.2"; exit 1; }
+
+    # The lane removed the template CRDs after the upgrade with the kubectl
+    # commands of the upgrade guide.
+    - name: The template CRDs are gone and nothing is terminating
+      try:
+        - script:
+            content: |
+              set -eu
+              left=$(kubectl get crd aimservicetemplates.aim.eai.amd.com \
+                aimclusterservicetemplates.aim.eai.amd.com aimtemplatecaches.aim.eai.amd.com \
+                --ignore-not-found -o name)
+              if [ -n "$left" ]; then
+                echo "ERROR: template CRDs still exist: $left"
+                exit 1
+              fi
+              terminating=$(for resource in $(kubectl api-resources --api-group=aim.eai.amd.com -o name); do
+                kubectl get "$resource" --all-namespaces \
+                  -o jsonpath='{range .items[?(@.metadata.deletionTimestamp)]}{.kind} {.metadata.namespace}/{.metadata.name}{"\n"}{end}'
+              done)
+              if [ -n "$terminating" ]; then
+                echo "ERROR: objects stuck terminating:"
+                echo "$terminating"
+                exit 1
+              fi

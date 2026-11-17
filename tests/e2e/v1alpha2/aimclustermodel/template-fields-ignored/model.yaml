@@ -1,0 +1,16 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterModel
+metadata:
+  name: template-fields-ignored
+spec:
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.2
+  discovery:
+    extractMetadata: false
+    createServiceTemplates: false
+  defaultServiceTemplate: legacy-default
+  env:
+    - name: VLLM_LOGGING_LEVEL
+      value: DEBUG
+  resources:
+    requests:
+      memory: 1Gi
