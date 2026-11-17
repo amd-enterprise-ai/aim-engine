@@ -5,7 +5,7 @@
 :::{admonition} API version
 :class: note
 
-`AIMClusterModelSource` remains under `aim.eai.amd.com/v1alpha1`. It creates `AIMClusterModel` resources through `aim.eai.amd.com/v1alpha2`: registry-discovered images with `spec.image` set, and entries declared under `spec.models` with `spec.modelId`. Both flows produce `AIMProfile` resources.
+`AIMClusterModelSource` is `aim.eai.amd.com/v1alpha2`. It creates `AIMClusterModel` resources at the same version: registry-discovered images with `spec.image` set, and entries declared under `spec.models` with `spec.modelId`. Both flows produce `AIMProfile` resources.
 :::
 ## Overview
 
@@ -23,7 +23,7 @@ Key features:
 ## Basic Example
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterModelSource
 metadata:
   name: amd-models
@@ -186,7 +186,7 @@ type: kubernetes.io/dockerconfigjson
 data:
   .dockerconfigjson: BASE64_CONFIG
 ---
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterModelSource
 metadata:
   name: private-models
@@ -320,7 +320,7 @@ Key status fields:
 ### Docker Hub with Explicit Images
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterModelSource
 metadata:
   name: dockerhub-models
@@ -335,7 +335,7 @@ spec:
 ### GitHub Container Registry with Version Constraints
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterModelSource
 metadata:
   name: ghcr-stable-models
@@ -353,7 +353,7 @@ spec:
 ### Multiple Registries (advanced filters)
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterModelSource
 metadata:
   name: multi-registry-models
@@ -377,7 +377,7 @@ type: kubernetes.io/dockerconfigjson
 data:
   .dockerconfigjson: BASE64_ENCODED_CONFIG
 ---
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterModelSource
 metadata:
   name: private-models
@@ -396,7 +396,7 @@ spec:
 ### Specific Versions Only
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterModelSource
 metadata:
   name: specific-versions

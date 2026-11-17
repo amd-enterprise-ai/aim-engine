@@ -13,10 +13,10 @@ deployments set at least a cluster-scoped `default`.
 | `AIMClusterRuntimeConfig` | Cluster | Non-secret defaults shared across all namespaces |
 | `AIMRuntimeConfig` | Namespace | Namespace overrides, registry credentials, additional trust, routing policy |
 
-Both resources are part of `aim.eai.amd.com/v1alpha1` and continue unchanged in
-v1alpha2. Services, models, profile caches, and artifacts that expose
-`runtimeConfigName` use the same resolution rules. Profiles do not expose that
-field; a profile-owned shared cache resolves the `default` RuntimeConfig.
+Both resources are `aim.eai.amd.com/v1alpha2`. Services, models, profile
+caches, and artifacts that expose `runtimeConfigName` use the same resolution
+rules. Profiles do not expose that field; a profile-owned shared cache
+resolves the `default` RuntimeConfig.
 
 ## Resolution algorithm
 
@@ -97,7 +97,7 @@ Set `spec.baseImageRegistry` when aim-base lives somewhere other than the model
 images. The value is a registry and org, without a tag:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default
@@ -170,7 +170,7 @@ platform-managed config named `default`, or override
 different runtime policy.
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default
@@ -280,7 +280,7 @@ models can carry their hardware shape.
 The most common reason to apply a runtime config: pin the storage class used for cache PVCs.
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default
@@ -291,7 +291,7 @@ spec:
 Override per namespace:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMRuntimeConfig
 metadata:
   name: default
@@ -307,7 +307,7 @@ Profiles, caches, and artifacts pick this up unless they set `spec.storageClassN
 `spec.routing` carries default routing parameters that `AIMService` inherits when its own `spec.routing` is unset (or partially set).
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMRuntimeConfig
 metadata:
   name: default
@@ -354,7 +354,7 @@ AIMService.spec.routing.pathTemplate  >  Runtime config spec.routing.pathTemplat
 Runtime config:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMRuntimeConfig
 metadata:
   name: default
@@ -405,7 +405,7 @@ cluster-scoped config named `default` supplies the query to every AIMService
 that does not select a different `runtimeConfigName`:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default
@@ -549,7 +549,7 @@ Each Job reads the runtime config that applies to it. The model download and siz
 Cluster default for environments where XET is unreliable:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default
@@ -563,7 +563,7 @@ spec:
 Namespace override preferring plain HTTP:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMRuntimeConfig
 metadata:
   name: default
@@ -582,7 +582,7 @@ Runtime configs can propagate labels from parent AIM resources to their child Ku
 ### Configuration
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMRuntimeConfig
 metadata:
   name: default
@@ -627,7 +627,7 @@ This enables pod-level tracking, so discovery and download pods inherit the same
 ### Example: multi-tenant cost tracking
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default

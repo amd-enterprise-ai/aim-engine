@@ -37,7 +37,7 @@ This creates an HTTPRoute matching the path `/ml-team/qwen-chat` and forwarding 
 Set routing defaults for all services via runtime configuration:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default

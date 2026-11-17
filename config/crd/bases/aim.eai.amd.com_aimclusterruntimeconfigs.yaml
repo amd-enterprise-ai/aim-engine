@@ -19,7 +19,9 @@ spec:
     singular: aimclusterruntimeconfig
   scope: Cluster
   versions:
-  - name: v1alpha1
+  - deprecated: true
+    deprecationWarning: AIMClusterRuntimeConfig v1alpha1 is deprecated; use aim.eai.amd.com/v1alpha2
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: AIMClusterRuntimeConfig is a cluster-scoped runtime configuration

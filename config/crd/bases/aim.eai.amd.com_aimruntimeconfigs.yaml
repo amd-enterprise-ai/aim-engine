@@ -19,7 +19,9 @@ spec:
     singular: aimruntimeconfig
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - deprecated: true
+    deprecationWarning: AIMRuntimeConfig v1alpha1 is deprecated; use aim.eai.amd.com/v1alpha2
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: AIMRuntimeConfig is the Schema for namespace-scoped AIM runtime

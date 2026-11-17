@@ -2,7 +2,7 @@
 #
 # There is no implicit fallback: without a config like this, an AIMModel with
 # spec.modelId reports NoCompatibleRuntime and produces no profiles.
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMRuntimeConfig
 metadata:
   name: default

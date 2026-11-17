@@ -1,6 +1,6 @@
 # Generated-profile onboarding. Requires a RuntimeConfig with a matching
 # model.profileGeneration fallback — see
-# aim_v1alpha1_aimruntimeconfig_nvidia_fallback.yaml.
+# aim_v1alpha2_aimruntimeconfig_nvidia_fallback.yaml.
 apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMModel
 metadata:

@@ -135,7 +135,7 @@ After updating the CRDs but before upgrading the operator:
    services; named configurations do not inherit it from `default`.
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default
@@ -395,6 +395,19 @@ and deletes nothing.
 
 v0.2.7 doesn't restore everything; see [Rollback limits](#rollback-limits).
 
+## Artifact, runtime config and model source versions
+
+This release serves `AIMArtifact`, `AIMRuntimeConfig`, `AIMClusterRuntimeConfig`
+and `AIMClusterModelSource` at `aim.eai.amd.com/v1alpha2`. `v1alpha1` still
+applies, and the API server returns a deprecation warning that names
+`aim.eai.amd.com/v1alpha2`. The next release stops serving `v1alpha1` for these
+kinds. Switch GitOps manifests, Helm charts and scripts to `v1alpha2` now.
+
+Upgrade the CRDs before the operator, as in
+[Update CRDs first](#2-update-crds-first). The chart manifest contains a
+v1alpha2 `AIMClusterRuntimeConfig`, so that object applies only after the new
+CRDs are established.
+
 ## Version Compatibility
 
 AIM Engine follows semantic versioning. Within a major version:
@@ -404,10 +417,10 @@ AIM Engine follows semantic versioning. Within a major version:
   `AIMService`, `AIMModel` and `AIMClusterModel`
 - Existing resources continue to work without modification, except the ones
   the [Migration window](#migration-window) replaces
-- API group is `aim.eai.amd.com`. `AIMService`, `AIMModel`, `AIMClusterModel`
-  and the profile kinds serve `v1alpha2`. `AIMArtifact`, `AIMRuntimeConfig`,
-  `AIMClusterRuntimeConfig` and `AIMClusterModelSource` serve `v1alpha1` (see
-  [Migration window](#migration-window)).
+- API group is `aim.eai.amd.com`. Every AIM kind serves `v1alpha2`.
+  `AIMArtifact`, `AIMRuntimeConfig`, `AIMClusterRuntimeConfig` and
+  `AIMClusterModelSource` also still serve deprecated `v1alpha1` (see
+  [Artifact, runtime config and model source versions](#artifact-runtime-config-and-model-source-versions)).
 
 The minimum supported Kubernetes version is **1.32** (see [Prerequisites](../getting-started/installation.md#prerequisites)).
 
@@ -970,7 +983,9 @@ before you upgrade. Replace template objects in those manifests too:
 | `AIMModel.spec.modelSources` | `AIMProfile.spec.modelSources` |
 
 AIMArtifact, AIMRuntimeConfig, AIMClusterRuntimeConfig and
-AIMClusterModelSource stay at v1alpha1.
+AIMClusterModelSource still apply at v1alpha1 in this release. They are
+deprecated; switch them to v1alpha2 before the next release. See
+[Artifact, runtime config and model source versions](#artifact-runtime-config-and-model-source-versions).
 
 Roll the changed manifests out before you upgrade the CRDs: `helm upgrade` the
 release, or sync the GitOps app. Helm, and Flux's helm-controller, look up each

@@ -32,6 +32,8 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    deprecated: true
+    deprecationWarning: AIMClusterModelSource v1alpha1 is deprecated; use aim.eai.amd.com/v1alpha2
     name: v1alpha1
     schema:
       openAPIV3Schema:

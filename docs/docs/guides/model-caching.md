@@ -65,7 +65,7 @@ The default order is `XET,HF_TRANSFER`. If a protocol fails, the downloader clea
 Override the protocol order via the runtime config `spec.caching.env`, which reaches the download Jobs:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMRuntimeConfig
 metadata:
   name: default
@@ -82,7 +82,7 @@ spec:
 AIM Engine automatically sizes PVCs based on discovered model sizes plus a headroom percentage (default 10%). Configure the headroom via cluster runtime config:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default
@@ -132,7 +132,7 @@ this way are downloaded again; see
 [Upgrading](../admin/upgrading.md#download-filters-declared-by-aim-images).
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMRuntimeConfig
 metadata:
   name: diffusers-model

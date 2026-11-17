@@ -122,7 +122,7 @@ Static services infer their ceiling from the declared artifacts.
 The same default can be configured for a namespace or cluster:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMRuntimeConfig
 metadata:
   name: default
@@ -214,7 +214,7 @@ of compatible base artifacts. Compatibility is evaluated only when an
 # 1. Optional pre-created parent base model with an adapter disk. Normally the
 #    adapter-enabled profile cache requests this disk automatically; it is shown
 #    explicitly so the example is standalone.
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMArtifact
 metadata:
   name: gemma-3-27b-it-cache
@@ -227,7 +227,7 @@ spec:
     size: 50Gi
 ---
 # 2. A shared, pre-authored adapter logically compatible with the model.
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMArtifact
 metadata:
   name: cs-tone-v3
