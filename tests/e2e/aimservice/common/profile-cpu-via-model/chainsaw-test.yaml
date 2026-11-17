@@ -81,10 +81,6 @@ spec:
             content: |
               set -eu
 
-              # Always target v1alpha2 explicitly. kubectl defaults to the first
-              # served version for a CRD, which currently resolves to v1alpha1
-              # and strips v1alpha2-only status fields (profileSetRef, etc.) via
-              # the conversion webhook.
               MODEL_GV=aimmodels.v1alpha2.aim.eai.amd.com
               PROFILE_GV=aimprofiles.v1alpha2.aim.eai.amd.com
 
@@ -141,7 +137,7 @@ spec:
       try:
         - assert:
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: test-cpu-via-model-service
@@ -268,7 +264,7 @@ spec:
       try:
         - assert:
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: test-cpu-via-model-service

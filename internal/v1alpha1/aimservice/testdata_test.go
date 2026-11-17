@@ -45,15 +45,15 @@ const (
 
 // ServiceBuilder provides a fluent API for constructing AIMService test fixtures.
 type ServiceBuilder struct {
-	service *aimv1alpha1.AIMService
+	service *aimv1alpha2.AIMService
 }
 
 // NewService creates a new ServiceBuilder with sensible defaults.
 func NewService(name string) *ServiceBuilder {
 	return &ServiceBuilder{
-		service: &aimv1alpha1.AIMService{
+		service: &aimv1alpha2.AIMService{
 			TypeMeta: metav1.TypeMeta{
-				APIVersion: aimv1alpha1.GroupVersion.String(),
+				APIVersion: aimv1alpha2.GroupVersion.String(),
 				Kind:       "AIMService",
 			},
 			ObjectMeta: metav1.ObjectMeta{
@@ -79,21 +79,6 @@ func (b *ServiceBuilder) WithModelImage(image string) *ServiceBuilder {
 	return b
 }
 
-func (b *ServiceBuilder) Build() *aimv1alpha1.AIMService {
+func (b *ServiceBuilder) Build() *aimv1alpha2.AIMService {
 	return b.service.DeepCopy()
-}
-
-// v1alpha2View presents a v1alpha1 fixture to helpers that take a v1alpha2
-// service. The copy is shallow, so field assignments made through the returned
-// service are not seen by the caller.
-func v1alpha2View(service *aimv1alpha1.AIMService) *aimv1alpha2.AIMService {
-	if service == nil {
-		return nil
-	}
-	return &aimv1alpha2.AIMService{
-		TypeMeta:   service.TypeMeta,
-		ObjectMeta: service.ObjectMeta,
-		Spec:       service.Spec,
-		Status:     service.Status,
-	}
 }

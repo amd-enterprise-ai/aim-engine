@@ -46,9 +46,7 @@ Key behaviours:
 - **AIMProfile resources** are owner-referenced by the producing `AIMModel` (for direct discovery or generation) or `AIMProfileSet` (for derivation). User-authored profiles have no AIM controller owner.
 - **Logical model definitions** are discovered catalog entries used for source selection. They have no separate Kubernetes resource or runtime.
 - **Standalone derived outputs** belong to their profile set. Source provenance does not add them to the source model's managed-profile counts or readiness.
-- **Auto-created models**:
-    - v1alpha1 `spec.model.image` path: no owner reference; the model persists for reuse by other services.
-    - v1alpha2 `spec.model.image` path: owner-referenced by the originating service and garbage-collected with it. Named `<service>-auto-<6charHash(image)>`. See [Services → By image](services.md#by-image).
+- **Auto-created models** (`spec.model.image`) are owner-referenced by the originating service and garbage-collected with it. Named `<service>-auto-<6charHash(image)>`. See [Services → By image](services.md#by-image).
 
 ### Profile source lifecycle
 
@@ -105,12 +103,11 @@ The reconciliation framework manages a standard set of conditions on every resou
 | `ConfigValid` | Resource configuration is valid |
 | `Ready` | Overall readiness rollup |
 
-Component-specific conditions are added per CRD. See [Conditions](../reference/conditions.md) for the full catalogue; the v1alpha2 highlights:
+Component-specific conditions are added per CRD. See [Conditions](../reference/conditions.md) for the full catalogue; the highlights:
 
 | CRD | Conditions added |
 |---|---|
-| `AIMService` (v1alpha2) | `ProfileReady`, `ProfileCacheReady`, `InferenceServiceReady`, `HTTPRouteReady`, `HPAReady` |
-| `AIMService` (v1alpha1) | `ModelReady`, `TemplateReady`, `RuntimeConfigReady`, `CacheReady`, `InferenceServiceReady`, `HTTPRouteReady`, `HPAReady` |
+| `AIMService` | `ProfileReady`, `ProfileCacheReady`, `InferenceServiceReady`, `HTTPRouteReady`, `HPAReady` |
 | `AIMModel` / `AIMClusterModel` | `DiscoveryReady` for image discovery; `DerivationReady` for external derivation through `spec.profiles` |
 | `AIMProfileSet` / `AIMClusterProfileSet` | `DerivationReady` |
 | `AIMProfile` / `AIMClusterProfile` | `HardwareAvailable` |
@@ -153,7 +150,7 @@ CRD schemas include [CEL validation rules](https://kubernetes.io/docs/tasks/exte
 | `AIMProfile` / `AIMClusterProfile` | `spec.aimId`, `spec.modelId`, `spec.acceleratorModel`, `spec.acceleratorType`, `spec.acceleratorCount`, `spec.precision`, `spec.metric`, `spec.engine` |
 | `AIMArtifact` | `spec.sourceUri` |
 
-#### Structural rules (v1alpha2)
+#### Structural rules
 
 | CRD | Rule |
 |---|---|
@@ -168,19 +165,11 @@ CRD schemas include [CEL validation rules](https://kubernetes.io/docs/tasks/exte
 | `AIMService` | `spec.profile.selector.role: base` is forbidden |
 | `AIMService` | `spec.profile.selector` requires `aimId`, `modelRef`, or paired `spec.model` |
 | `AIMService` | `spec.profileOverrides` requires `spec.profile.name` |
-| `AIMService` | `spec.template` is forbidden on v1alpha2 (rejected by CEL `!has(spec.template)`); use `spec.profile` or `spec.model` |
+| `AIMService` | `spec.template`, `spec.overrides` and `spec.model.custom` are rejected on create and on updates that add them; use `spec.profile` or `spec.model`, `spec.profileOverrides`, or an `AIMModel` referenced with `spec.model.name` |
 | `AIMProfile` / `AIMClusterProfile` | `spec.aimId` and `spec.modelSources` must be both populated or both empty |
 | `AIMProfileSet` / `AIMClusterProfileSet` | Default source selection requires at least one selector field; explicit `sourceRef` scopes a catalog without a selector |
 | `AIMProfileSet` / `AIMClusterProfileSet` | `versionPolicy: pinned` requires `version` |
 | `AIMProfileSet` / `AIMClusterProfileSet` | A partitioning override requires an explicit target override count; an explicit source selector count is recommended |
-
-#### Structural rules (v1alpha1, legacy)
-
-| CRD | Rule |
-|---|---|
-| `AIMService` | Exactly one of `model.name`, `model.image`, or `model.custom` must be specified |
-| `AIMService` (custom) | At least one model source required |
-| `hardware.gpu` | `model` and `minVram` are mutually exclusive |
 
 ### Reconciliation validation (eventual)
 

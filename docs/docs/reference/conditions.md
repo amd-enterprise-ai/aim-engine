@@ -90,17 +90,6 @@ See [Template-era fields](../concepts/models.md#template-era-fields) for the mod
 
 When `ProfileReady=False`, the controller suppresses downstream component conditions (`InferenceServiceReady`, `HTTPRouteReady`) — the resources aren't being created until profile resolution succeeds.
 
-### ModelReady
-
-Set when `spec.model` is used (by-model, model+selector, or model.image with the v1alpha2 profile-pipeline annotation).
-
-| Status | Reason | Description |
-|---|---|---|
-| `True` | `ModelResolved` | Model found and ready |
-| `False` | `ModelNotFound` | Referenced model does not exist |
-| `False` | `ModelNotReady` | Model exists but is not ready |
-| `False` | `CreatingModel` | Auto-creating a model from `spec.model.image` (v1alpha1 template pipeline). v1alpha2's image-shape auto-create does not currently set this reason — the transient state is surfaced through `ProfileReady=False / ProfileNotFound` with a message that explains the auto-create. |
-
 ### RuntimeConfigReady
 
 | Status | Reason | Description |
@@ -110,15 +99,14 @@ Set when `spec.model` is used (by-model, model+selector, or model.image with the
 
 ### ProfileCacheReady
 
-Replaces v1alpha1's `CacheReady`. Tracks the `AIMProfileCache` lifecycle.
+Tracks the `AIMProfileCache` lifecycle.
 
 | Status | Reason | Description |
 |---|---|---|
-| `True` | `CacheReady` | All cache artifacts are downloaded and verified |
-| `False` | `CacheCreating` | Creating the profile cache |
-| `False` | `CacheNotReady` | Cache exists but download is incomplete |
-| `False` | `CacheFailed` | Cache download failed |
-| `False` | `CacheLost` | Previously-ready cache is no longer available |
+| `True` | `ProfileCacheReady` | The profile cache is Ready |
+| `False` | `ProfileCacheNotFound` | The profile cache is not created yet |
+| `False` | `ProfileCacheNotReady` | The profile cache exists but is not Ready; the message includes the cache's own Ready message, such as a failed download |
+| `False` | `FetchError` | The operator could not read the profile cache |
 
 ### ProfileRuntimeReady
 
@@ -224,6 +212,15 @@ Set for image-backed models (`spec.image` set), including models with inline `sp
 | `False` | `DiscoveryCapReached` | Concurrent discovery cap reached; waiting for slot |
 
 `status.discovery.lastFailureReason` records the most recent failure reason. The message includes the retry backoff window.
+
+### RuntimeImageLineage
+
+Set for image-backed models whose image metadata has no `AIM_BASE_IMAGE_REF`. Only weight-replacing profile copies need that reference, so the condition does not participate in the `Ready` rollup. It is removed once the model has a base image reference.
+
+| Status | Reason | Description |
+|---|---|---|
+| `False` | `BaseImageRefMissing` | The image does not declare `AIM_BASE_IMAGE_REF`; set `spec.imageMetadata` with `baseImageRef` to allow weight-replacing copies |
+| `False` | `BaseImageRefInspectionFailed` | Re-inspecting metadata cached by an earlier release failed; the message includes the registry error, and the cached metadata stays in use |
 
 ### DerivationReady
 

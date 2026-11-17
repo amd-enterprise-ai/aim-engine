@@ -202,7 +202,7 @@ func TestConfigureReplicasAndAutoscaling_AutoscalerClass(t *testing.T) {
 			isvc := &servingv1beta1.InferenceService{
 				ObjectMeta: metav1.ObjectMeta{Name: "isvc", Namespace: testNamespace},
 			}
-			configureReplicasAndAutoscaling(isvc, v1alpha2View(service))
+			configureReplicasAndAutoscaling(isvc, service)
 
 			if got := isvc.Annotations[constants.AnnotationKServeAutoscalerClass]; got != tt.expectClass {
 				t.Errorf("autoscalerClass: expected %q, got %q", tt.expectClass, got)
@@ -243,7 +243,7 @@ func TestConfigureReplicasAndAutoscaling_ForwardsUserMetricsForOTelCollector(t *
 	isvc := &servingv1beta1.InferenceService{
 		ObjectMeta: metav1.ObjectMeta{Name: "isvc", Namespace: testNamespace},
 	}
-	configureReplicasAndAutoscaling(isvc, v1alpha2View(service))
+	configureReplicasAndAutoscaling(isvc, service)
 
 	if isvc.Spec.Predictor.AutoScaling == nil {
 		t.Fatal("isvc.Spec.Predictor.AutoScaling must be populated; got nil")
@@ -280,7 +280,7 @@ func TestConfigureReplicasAndAutoscaling_SidecarAnnotations(t *testing.T) {
 	isvc := &servingv1beta1.InferenceService{
 		ObjectMeta: metav1.ObjectMeta{Name: "qwen", Namespace: testNamespace},
 	}
-	configureReplicasAndAutoscaling(isvc, v1alpha2View(service))
+	configureReplicasAndAutoscaling(isvc, service)
 
 	want := "qwen" + constants.PredictorServiceSuffix
 	if got := isvc.Annotations[constants.AnnotationOTelSidecarInject]; got != want {

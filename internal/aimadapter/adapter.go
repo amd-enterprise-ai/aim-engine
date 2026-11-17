@@ -102,8 +102,8 @@ type Dependencies struct {
 	AdapterDiskPVCUID     string
 
 	// ProfileSupportsAdapters reports whether the resolved profile advertises the
-	// LoRA feature. nil means unknown / not gated (e.g. the v1alpha1 pipeline has
-	// no features field); Compose only rejects when this is explicitly false.
+	// LoRA feature. nil means unknown / not gated; Compose only rejects when
+	// this is explicitly false.
 	ProfileSupportsAdapters *bool
 
 	// ParentResolutionErr is a terminal base-model resolution error (e.g. the

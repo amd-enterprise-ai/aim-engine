@@ -307,8 +307,8 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 		health = append(health, podsHealth)
 	}
 
-	// HPA health (autoscaling configured). Shared with v1alpha1 so the
-	// activation metric never gates readiness under scale-to-zero.
+	// HPA health (autoscaling configured). The activation metric never gates
+	// readiness under scale-to-zero.
 	if hpaHealth := v1alpha1service.HPAComponentHealth(
 		obs.service,
 		obs.hpa,
@@ -330,8 +330,8 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 }
 
 // podItemCount returns the number of pods in a (possibly nil) pod-list fetch
-// result, treating a missing or failed fetch as zero. Mirrors the v1alpha1
-// helper so the shared HPA verdict sees an identical pod count.
+// result, treating a missing or failed fetch as zero, as the shared HPA
+// verdict expects.
 func podItemCount(pods *controllerutils.FetchResult[*corev1.PodList]) int {
 	if pods == nil || !pods.OK() || pods.Value == nil {
 		return 0
@@ -1189,7 +1189,7 @@ func (r *ProfileServiceReconciler) PlanResources(
 	// behind would leave a stale, cache-eligible profile in the namespace.
 	// 2. Plan AIMProfileCache if the profile has model sources.
 	//
-	// Cache ownership tracks the service's caching mode, mirroring v1alpha1:
+	// Cache ownership tracks the service's caching mode:
 	//   - Shared: applied without an owner reference so the cache persists
 	//     across service deletions and is shared by every service in the
 	//     namespace that resolves to the same AIMProfile.
@@ -1436,7 +1436,7 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 	setTemplateFieldsIgnoredCondition(cm, obs.service.Spec)
 
 	// Report-only: whether KEDA can read the scale-from-zero activation
-	// trigger. Shared with v1alpha1; never gates readiness.
+	// trigger. Never gates readiness.
 	v1alpha1service.SetActivationMetricCondition(
 		cm,
 		obs.service,

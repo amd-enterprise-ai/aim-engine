@@ -31,7 +31,7 @@ type DependencyType string
 
 const (
 	// DependencyTypeUpstream indicates this component is an upstream dependency that this controller depends on.
-	// Examples: templates, runtime configs, secrets, configmaps.
+	// Examples: profiles, runtime configs, secrets, configmaps.
 	// When upstream dependencies are not ready, the resource should be Pending.
 	DependencyTypeUpstream DependencyType = "Upstream"
 
@@ -45,11 +45,11 @@ const (
 )
 
 // ComponentHealth describes the health of a component (dependency, child resource, or virtual component).
-// It unifies tracking for logical components (model, template, cache), physical resources (pods, deployments),
+// It unifies tracking for logical components (model, profile, cache), physical resources (pods, deployments),
 // and virtual components (external API queries, image registry access, etc.).
 type ComponentHealth struct {
 	// Component is the logical name of this component:
-	// - Physical dependencies: "Model", "Cache", "Template"
+	// - Physical dependencies: "Model", "Cache", "Profile"
 	// - Child resources: "Workload"
 	// - Virtual components: "MetadataQuery", "ImageRegistry", "ExternalAPI"
 	Component string

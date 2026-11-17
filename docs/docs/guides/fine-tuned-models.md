@@ -5,7 +5,7 @@ A **fine-tuned model** reuses an official AIM model's profile definitions — it
 :::{admonition} v1alpha2
 :class: note
 
-Fine-tuned models use the `aim.eai.amd.com/v1alpha2` API. The v1alpha1 fine-tune path via `spec.profileCopy` is replaced by `spec.profiles`.
+Fine-tuned models use the `aim.eai.amd.com/v1alpha2` API.
 :::
 ## When to use this flow
 

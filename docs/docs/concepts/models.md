@@ -313,7 +313,7 @@ The v1alpha2 CRD explicitly forbids legacy fields such as `spec.modelSources`, `
 
 ### Template-era fields
 
-Models produce profiles only; they create no `AIMServiceTemplate` or `AIMClusterServiceTemplate`. Fields that only configured those templates remain in the schema but have no effect. A model that sets any of them reports `TemplateFieldsIgnored=True` (reason `TemplateFieldsSet`) naming the fields, with a `Warning` event when the condition appears. The condition never affects readiness and clears once the fields are removed.
+Some fields only configured the service templates that models created in earlier releases. They remain in the schema but have no effect. A model that sets any of them reports `TemplateFieldsIgnored=True` (reason `TemplateFieldsSet`) naming the fields, with a `Warning` event when the condition appears. The condition never affects readiness and clears once the fields are removed.
 
 | Field | Profile-based equivalent |
 |---|---|

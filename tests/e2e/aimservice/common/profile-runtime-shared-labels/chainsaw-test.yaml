@@ -95,7 +95,7 @@ spec:
 
         - assert:
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: shared-label-consumer-a
@@ -105,7 +105,7 @@ spec:
                     reason: ProfileRuntimeReady
         - assert:
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: shared-label-consumer-b

@@ -128,10 +128,6 @@ func TestEnsureBaseImageBridge_NilStatusIsNoOp(t *testing.T) {
 	EnsureBaseImageBridge(&aimv1alpha1.AIMModelSpec{}, nil)
 }
 
-// TestHasLegacyInputs_DocumentedSignalsTrigger pins the legacy-pipeline
-// gate to its documented v1alpha1-only signals. Adding new entries here
-// without thinking through the dual-pipeline interaction would silently
-// route pure v1alpha2 specs through the OCI inspection path.
 func TestProfilesSpecToProfileSet_PropagatesOutputPolicy(t *testing.T) {
 	t.Parallel()
 

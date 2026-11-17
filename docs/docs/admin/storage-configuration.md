@@ -2,10 +2,10 @@
 
 AIM Engine uses persistent volumes for model caching. This guide covers storage setup and sizing.
 
-:::{admonition} v1alpha2 vs v1alpha1
+:::{admonition} API versions
 :class: note
 
-`AIMRuntimeConfig` / `AIMClusterRuntimeConfig` remain `aim.eai.amd.com/v1alpha1` resources — they are consumed by both the v1alpha2 profile pipeline and the v1alpha1 template pipeline unchanged. Storage fields (`spec.storage`, `spec.artifactStorageQuota`, `spec.artifact.defaultRetentionPriority`) are the same regardless of which pipeline reads them.
+`AIMRuntimeConfig` / `AIMClusterRuntimeConfig` remain `aim.eai.amd.com/v1alpha1` resources. Their storage fields (`spec.storage`, `spec.artifactStorageQuota`, `spec.artifact.defaultRetentionPriority`) apply to the v1alpha2 AIMServices and profile caches that use them.
 :::
 ## Requirements
 

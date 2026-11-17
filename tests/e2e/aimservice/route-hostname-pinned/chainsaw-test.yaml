@@ -159,7 +159,7 @@ spec:
         - error:
             timeout: 5s
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: test-pinned-service

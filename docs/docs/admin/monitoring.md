@@ -104,29 +104,20 @@ The operator emits Kubernetes Events on AIM resources when conditions change. Ev
 
 Events use the condition's `reason` field as the event reason. Common event reasons:
 
-**AIMService (v1alpha2):**
+**AIMService:**
 
 | Reason | Type | Description |
 |--------|------|-------------|
 | `ProfileResolved` | Normal | Profile resolved successfully |
 | `ProfileNotFound` | Warning | No profile matched `spec.profile` / `spec.model` |
 | `BaseProfile` | Warning | Resolved profile is a base profile (not deployable) |
-| `CacheReady` | Normal | Profile cache is populated |
-| `CacheFailed` | Warning | Cache download failed |
+| `ProfileCacheReady` | Normal | Profile cache is ready |
+| `ProfileCacheNotReady` | Normal | Profile cache is not Ready; the message includes the cache's own Ready message |
 | `RuntimeReady` | Normal | InferenceService is serving |
 | `InvalidImageReference` | Warning | Model image URI is invalid |
 | `PathTemplateInvalid` | Warning | Routing path template failed to resolve |
 
-**AIMService (v1alpha1, legacy template pipeline):**
-
-| Reason | Type | Description |
-|--------|------|-------------|
-| `ModelResolved` | Normal | Model found and ready |
-| `ModelNotFound` | Warning | Referenced model does not exist |
-| `Resolved` | Normal | Template resolved successfully |
-| `TemplateSelectionAmbiguous` | Warning | Multiple templates scored equally |
-
-**AIMModel / AIMClusterModel (v1alpha2):**
+**AIMModel / AIMClusterModel:**
 
 | Reason | Type | Description |
 |--------|------|-------------|
@@ -134,13 +125,6 @@ Events use the condition's `reason` field as the event reason. Common event reas
 | `AllProfilesFailed` | Warning | All managed profiles failed |
 | `NoMatchingProfiles` | Warning | Derivation selector matched zero sources |
 | `MetadataExtractionFailed` | Warning | Failed to extract model metadata |
-
-**AIMModel (v1alpha1):**
-
-| Reason | Type | Description |
-|--------|------|-------------|
-| `AllTemplatesReady` | Normal | All discovered templates are ready |
-| `AllTemplatesFailed` | Warning | All discovered templates failed |
 
 **AIMArtifact:**
 
@@ -155,10 +139,10 @@ Events use the condition's `reason` field as the event reason. Common event reas
 # Events for a specific resource
 kubectl describe aimservice qwen-chat -n <namespace>
 
-# All AIM-related events in a namespace (v1alpha2)
+# Events for AIMService, AIMModel and the profile kinds in a namespace
 kubectl get events -n <namespace> --field-selector involvedObject.apiVersion=aim.eai.amd.com/v1alpha2
 
-# Or for v1alpha1 resources still being reconciled
+# Events for the kinds served at v1alpha1, such as AIMArtifact
 kubectl get events -n <namespace> --field-selector involvedObject.apiVersion=aim.eai.amd.com/v1alpha1
 ```
 

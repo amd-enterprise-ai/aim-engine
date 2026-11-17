@@ -46,7 +46,8 @@ const (
 
 // Label keys for AIM resources
 const (
-	// LabelTemplate is the label key for the template name
+	// LabelTemplate is the template-name label that earlier releases set on
+	// InferenceServices created from a service template.
 	LabelTemplate = AimLabelDomain + "/template"
 	// LabelProfile is the label key for the profile name (v1alpha2 path)
 	LabelProfile = AimLabelDomain + "/profile"

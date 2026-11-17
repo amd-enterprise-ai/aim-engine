@@ -160,8 +160,7 @@ func TestFindModelsForNodeChange_QueuesEveryImageBackedModel(t *testing.T) {
 			},
 		},
 	}
-	// No image → not affected by node changes (legacy aimId-matching path
-	// does not look at node labels).
+	// No image and no modelId → not affected by node changes.
 	fineTuneOnly := &aimv1alpha2.AIMModel{
 		ObjectMeta: metav1.ObjectMeta{Name: "fine-tune-only", Namespace: "team-a"},
 		Spec: aimv1alpha1.AIMModelSpec{

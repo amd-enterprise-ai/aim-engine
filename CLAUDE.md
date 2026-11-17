@@ -102,13 +102,11 @@ Chainsaw tests are declarative YAML in `tests/e2e/*/chainsaw-test.yaml`. When `E
 
 **GPU vendor gating.** Tests needing real accelerators carry a vendor-scoped `requires` label so a run only picks up tests its hardware can satisfy ("which GPU", not just "is there a GPU"): `requires=gpu-amd` (AMD Instinct, `amd-smi`/MI*), `requires=gpu-nvidia` (NVIDIA, `nvidia-smi`/H100, A100, …), or the legacy bare `requires=gpu` (treated as AMD today; migrate to `gpu-amd` over time). Environments: `ENV=kind` excludes all GPU values; `ENV=gpu` runs AMD (`gpu`, `gpu-amd`) and excludes `gpu-nvidia`; `ENV=nvidia` (explicit, via `make test-chainsaw-nvidia`) runs only `gpu-nvidia`. NVIDIA clusters are not auto-detected from the kubectl context, so select them with `ENV=nvidia`.
 
-### v1alpha2 test conventions
+### Test conventions
 
-v1alpha2 and v1alpha1 have different resolution models. Keep test fixtures version-pure:
-
-- **v1alpha2 `AIMService` resolves via profiles, not templates.** New v1alpha2 tests MUST NOT use `AIMServiceTemplate` / `AIMClusterServiceTemplate` (v1alpha1 concepts). v1alpha2 services use `spec.profile.name` referencing an `AIMProfile` or `AIMClusterProfile`.
-- **Produce profiles the real way.** Either apply an `AIMProfile` / `AIMClusterProfile` directly, or derive one from an `AIMModel` / `AIMClusterModel` via `profileCopy` (or `AIMProfileSet` / `AIMClusterProfileSet`). Do not use `AIMServiceTemplate` as a scaffold to produce profiles in v1alpha2 tests.
-- **Prefer `apiVersion: aim.eai.amd.com/v1alpha2`** for every new fixture under `tests/e2e/aimservice/**/profile-*` and `tests/e2e/v1alpha2/**`. The remaining v1alpha1 template-kind tests under `tests/e2e/aimservice/common/{custom-model,custom-profiles}` stay v1alpha1 for now.
+- **Use the served API version.** `AIMService`, `AIMModel`, `AIMClusterModel` and the profile kinds (`AIMProfile`, `AIMClusterProfile`, `AIMProfileSet`, `AIMClusterProfileSet`, `AIMProfileCache`) are written at `aim.eai.amd.com/v1alpha2`. `AIMArtifact`, `AIMRuntimeConfig`, `AIMClusterRuntimeConfig` and `AIMClusterModelSource` are written at `aim.eai.amd.com/v1alpha1`.
+- **`AIMService` resolves through profiles.** A service uses `spec.profile.name`, `spec.profile.selector`, `spec.model.name` or `spec.model.image`, and always serves from an `AIMProfile` or `AIMClusterProfile`.
+- **Produce profiles the real way.** Either apply an `AIMProfile` / `AIMClusterProfile` directly, or derive one from an `AIMModel` / `AIMClusterModel` via `spec.profiles` (or `AIMProfileSet` / `AIMClusterProfileSet`).
 - **Full-chain over frozen when feasible.** The frozen-status tests (`tests/e2e/aimservice/frozen/*`) exercise AIMService behaviour against fabricated profile/cache states. New tests that can reach Ready naturally in kind should do so (see `profile-cpu-via-model/` for the seed→model→derived-profile→service pattern).
 
 ### Diagnosing Chainsaw Test Failures
@@ -138,7 +136,7 @@ mise exec -- jq -r '.tests[] | select(.steps[].operations[].failure) | {name, ba
 Chainsaw creates unique namespaces like `chainsaw-<adjective>-<noun>` for each test. Extract from the error message:
 ```bash
 # The namespace appears in error output as: "namespace/resource-name"
-# Example error: aim.eai.amd.com/v1alpha1/AIMServiceTemplate/chainsaw-profound-cowbird/test-service-template
+# Example error: aim.eai.amd.com/v1alpha2/AIMService/chainsaw-profound-cowbird/test-service
 # Namespace: chainsaw-profound-cowbird
 ```
 
@@ -174,11 +172,13 @@ grep -E '(error|failed|Error|Failed)' "$LOG"
 
 ## Architecture
 
-### CRDs (9 total)
+### CRDs (12 total)
 - **AIMService**: Main resource - deploys AI models via KServe + Gateway API
 - **AIMModel/AIMClusterModel**: Model definitions (namespace/cluster scoped)
-- **AIMServiceTemplate/AIMClusterServiceTemplate**: Template mappings (model→runtime)
-- **AIMRuntimeConfig/AIMClusterRuntimeConfig**: Runtime profiles (GPU, precision)
+- **AIMProfile/AIMClusterProfile**: Deployment profiles a service runs (runtime image, accelerator, engine args, model sources)
+- **AIMProfileSet/AIMClusterProfileSet**: Derive profiles from model definitions and copyable profiles
+- **AIMProfileCache**: Model weight caching for a profile
+- **AIMRuntimeConfig/AIMClusterRuntimeConfig**: Runtime configuration (storage, routing, environment, profile generation)
 - **AIMArtifact**: Model pre-caching (S3/PVC downloads)
 - **AIMClusterModelSource**: Registry discovery for cluster models
 
@@ -203,9 +203,9 @@ PlanResources(ctx, reconcileCtx, obs) PlanResult   // Decide what to create/upda
 
 **Condition management**: Framework manages DependenciesReachable, AuthValid, ConfigValid, Ready. Domain reconcilers add custom conditions via `StatusDecorator`.
 
-**Template auto-selection**: When `service.spec.template.name` is empty, AIMService auto-selects based on model's `defaultServiceTemplate`, availability, GPU capacity. Logic in `internal/v1alpha1/aimservice/selection.go`.
+**Profile resolution**: When `service.spec.profile.name` is empty, AIMService ranks the candidate AIMProfiles of its model or selector (primary flag, type, accelerator, precision, version). Logic in `internal/v1alpha2/aimservice/resolver.go`.
 
-**Watch indexing**: Controllers use field indexers for efficient lookups (e.g., find all services referencing a template). See `SetupWithManager` for index setup.
+**Watch indexing**: Controllers use field indexers for efficient lookups (e.g., find all services referencing a profile). See `SetupWithManager` for index setup.
 
 ## Code Generation
 
@@ -275,7 +275,7 @@ mise exec -- make release VERSION=v0.2.0
 - `cmd/main.go` - Entry point, controller setup, scheme registration
 - `internal/controller/utils/reconciler.go` - Pipeline & DomainReconciler interface
 - `api/v1alpha1/aimservice_types.go` - Most complex CRD definition
-- `internal/v1alpha1/aimservice/reconcile.go` - Complex domain logic example
+- `internal/v1alpha2/aimservice/reconcile.go` - Complex domain logic example
 
 ## External Dependencies
 

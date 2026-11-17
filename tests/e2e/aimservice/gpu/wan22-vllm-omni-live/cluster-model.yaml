@@ -7,5 +7,4 @@ spec:
   imagePullSecrets:
     - name: wan22-vllm-omni-live-pull
   discovery:
-    createServiceTemplates: false
     extractMetadata: true

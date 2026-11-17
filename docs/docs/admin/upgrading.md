@@ -250,8 +250,9 @@ AIM Engine follows semantic versioning. Within a major version:
 
 - CRD changes are additive (new optional fields)
 - Existing resources continue to work without modification
-- API group is `aim.eai.amd.com`. During the bridge release, only
-  `AIMService`, `AIMModel`, and `AIMClusterModel` serve both versions (see
+- API group is `aim.eai.amd.com`. `AIMService`, `AIMModel`, `AIMClusterModel`
+  and the profile kinds serve `v1alpha2`. `AIMArtifact`, `AIMRuntimeConfig`,
+  `AIMClusterRuntimeConfig` and `AIMClusterModelSource` serve `v1alpha1` (see
   [Migration window](#migration-window)).
 
 The minimum supported Kubernetes version is **1.32** (see [Prerequisites](../getting-started/installation.md#prerequisites)).

@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
@@ -47,24 +48,24 @@ func TestPlanScaledObject_GatedByAutoscalingFields(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		mutate    func(*aimv1alpha1.AIMService)
+		mutate    func(*aimv1alpha2.AIMService)
 		expectObj bool
 	}{
 		{
 			name:      "no autoscaling fields: returns nil",
-			mutate:    func(s *aimv1alpha1.AIMService) {},
+			mutate:    func(s *aimv1alpha2.AIMService) {},
 			expectObj: false,
 		},
 		{
 			name: "spec.replicas only (legacy fixed): returns nil",
-			mutate: func(s *aimv1alpha1.AIMService) {
+			mutate: func(s *aimv1alpha2.AIMService) {
 				s.Spec.Replicas = ptr.To(int32(2))
 			},
 			expectObj: false,
 		},
 		{
 			name: "minReplicas set: returns ScaledObject",
-			mutate: func(s *aimv1alpha1.AIMService) {
+			mutate: func(s *aimv1alpha2.AIMService) {
 				s.Spec.MinReplicas = ptr.To(int32(1))
 				s.Spec.AutoScaling = &aimv1alpha1.AIMServiceAutoScaling{
 					Metrics: []aimv1alpha1.AIMServiceMetricsSpec{validVLLMMetric()},
@@ -74,7 +75,7 @@ func TestPlanScaledObject_GatedByAutoscalingFields(t *testing.T) {
 		},
 		{
 			name: "minReplicas=0 + autoScaling: returns ScaledObject",
-			mutate: func(s *aimv1alpha1.AIMService) {
+			mutate: func(s *aimv1alpha2.AIMService) {
 				s.Spec.MinReplicas = ptr.To(int32(0))
 				s.Spec.MaxReplicas = ptr.To(int32(3))
 				s.Spec.AutoScaling = &aimv1alpha1.AIMServiceAutoScaling{
@@ -87,7 +88,7 @@ func TestPlanScaledObject_GatedByAutoscalingFields(t *testing.T) {
 			// minReplicas>=1 has no gateway trigger, so an empty
 			// trigger list -> skipped (KEDA rejects empty triggers).
 			name: "autoscaling requested but no user triggers and minReplicas>=1: returns nil",
-			mutate: func(s *aimv1alpha1.AIMService) {
+			mutate: func(s *aimv1alpha2.AIMService) {
 				s.Spec.MinReplicas = ptr.To(int32(1))
 			},
 			expectObj: false,
@@ -99,7 +100,7 @@ func TestPlanScaledObject_GatedByAutoscalingFields(t *testing.T) {
 			service := NewService("my-svc").Build()
 			tt.mutate(service)
 
-			obj := planScaledObject(context.Background(), v1alpha2View(service), nil, nil)
+			obj := planScaledObject(context.Background(), service, nil, nil)
 			if tt.expectObj && obj == nil {
 				t.Fatal("expected ScaledObject, got nil")
 			}
@@ -125,7 +126,7 @@ func TestPlanScaledObject_ScaleToZeroTriggers(t *testing.T) {
 		Metrics: []aimv1alpha1.AIMServiceMetricsSpec{validVLLMMetric()},
 	}
 
-	obj := planScaledObject(context.Background(), v1alpha2View(service), nil, nil)
+	obj := planScaledObject(context.Background(), service, nil, nil)
 	if obj == nil {
 		t.Fatal("expected ScaledObject")
 	}
@@ -247,7 +248,7 @@ func TestPlanScaledObject_ActivationMetricQueryOverride(t *testing.T) {
 			},
 		},
 	}
-	obj := planScaledObject(context.Background(), v1alpha2View(service), nil, runtimeConfig)
+	obj := planScaledObject(context.Background(), service, nil, runtimeConfig)
 	wantRuntimeQuery := fmt.Sprintf(
 		`sum(custom_requests{namespace=%q,service=%q,route=%q,deployment=%q})`,
 		service.Namespace,
@@ -262,7 +263,7 @@ func TestPlanScaledObject_ActivationMetricQueryOverride(t *testing.T) {
 	service.Spec.ScaleFromZero = &aimv1alpha1.AIMScaleFromZeroConfig{
 		ActivationMetricQueryTemplate: `sum(service_override{service="${serviceName}"})`,
 	}
-	obj = planScaledObject(context.Background(), v1alpha2View(service), nil, runtimeConfig)
+	obj = planScaledObject(context.Background(), service, nil, runtimeConfig)
 	wantServiceQuery := fmt.Sprintf(`sum(service_override{service=%q})`, service.Name)
 	if got := activationQueryFromScaledObject(t, obj); got != wantServiceQuery {
 		t.Errorf("service metricQuery must override RuntimeConfig: want %q, got %q", wantServiceQuery, got)
@@ -282,7 +283,7 @@ func TestPlanScaledObject_CustomProviderUsesRuntimeConfigQuery(t *testing.T) {
 		},
 	}
 
-	obj := planScaledObject(context.Background(), v1alpha2View(service), nil, runtimeConfig)
+	obj := planScaledObject(context.Background(), service, nil, runtimeConfig)
 	want := fmt.Sprintf(`sum(custom_gateway_requests{namespace=%q})`, service.Namespace)
 	if got := activationQueryFromScaledObject(t, obj); got != want {
 		t.Errorf("custom provider metricQuery: want %q, got %q", want, got)
@@ -302,7 +303,7 @@ func TestPlanScaledObject_NoneProviderDisablesActivation(t *testing.T) {
 		},
 	}
 
-	if obj := planScaledObject(context.Background(), v1alpha2View(service), nil, runtimeConfig); obj != nil {
+	if obj := planScaledObject(context.Background(), service, nil, runtimeConfig); obj != nil {
 		t.Fatalf("gatewayProvider=none must not author an activation ScaledObject, got %T", obj)
 	}
 }
@@ -321,7 +322,7 @@ func TestPlanScaledObject_InvalidActivationDoesNotPromoteUserMetricToS0(t *testi
 	// The custom provider has no activation query. A user-only ScaledObject
 	// would make KEDA name the user metric s0 and break the controller's
 	// zero-to-one identity invariant, so planning must stop entirely.
-	if obj := planScaledObject(context.Background(), v1alpha2View(service), nil, nil); obj != nil {
+	if obj := planScaledObject(context.Background(), service, nil, nil); obj != nil {
 		t.Fatalf("invalid activation query must not produce a user-only ScaledObject, got %T", obj)
 	}
 }
@@ -341,7 +342,7 @@ func TestGatewayActivationScopeDefaultsToNone(t *testing.T) {
 func TestRenderActivationMetricQueryTemplateRejectsUnknownPlaceholder(t *testing.T) {
 	service := NewService("qwen-chat").Build()
 	_, err := renderActivationMetricQueryTemplate(
-		v1alpha2View(service),
+		service,
 		"predictor",
 		`sum(custom_requests{route="${unsupported}"})`,
 	)
@@ -413,7 +414,7 @@ func TestPlanScaledObject_GatewayActivationScopeDeployment(t *testing.T) {
 		Metrics: []aimv1alpha1.AIMServiceMetricsSpec{validVLLMMetric()},
 	}
 
-	obj := planScaledObject(context.Background(), v1alpha2View(service), nil, nil)
+	obj := planScaledObject(context.Background(), service, nil, nil)
 	if obj == nil {
 		t.Fatal("expected ScaledObject")
 	}
@@ -448,7 +449,7 @@ func TestPlanScaledObject_WarmModeDefaults(t *testing.T) {
 		Metrics: []aimv1alpha1.AIMServiceMetricsSpec{validVLLMMetric()},
 	}
 
-	obj := planScaledObject(context.Background(), v1alpha2View(service), nil, nil)
+	obj := planScaledObject(context.Background(), service, nil, nil)
 	if obj == nil {
 		t.Fatal("expected ScaledObject")
 	}
@@ -495,7 +496,7 @@ func TestPlanScaledObject_UserQueryWithLabelSelectorPreserved(t *testing.T) {
 		Metrics: []aimv1alpha1.AIMServiceMetricsSpec{metric},
 	}
 
-	obj := planScaledObject(context.Background(), v1alpha2View(service), nil, nil)
+	obj := planScaledObject(context.Background(), service, nil, nil)
 	if obj == nil {
 		t.Fatal("expected ScaledObject")
 	}
@@ -522,7 +523,7 @@ func TestPlanScaledObject_PollingAndCooldownOverrides(t *testing.T) {
 		Metrics:         []aimv1alpha1.AIMServiceMetricsSpec{validVLLMMetric()},
 	}
 
-	obj := planScaledObject(context.Background(), v1alpha2View(service), nil, nil)
+	obj := planScaledObject(context.Background(), service, nil, nil)
 	if obj == nil {
 		t.Fatal("expected ScaledObject")
 	}
@@ -549,7 +550,7 @@ func TestPlanScaledObject_ReplicaBoundsClampMax(t *testing.T) {
 	}
 	// MaxReplicas intentionally left nil.
 
-	obj := planScaledObject(context.Background(), v1alpha2View(service), nil, nil)
+	obj := planScaledObject(context.Background(), service, nil, nil)
 	if obj == nil {
 		t.Fatal("expected ScaledObject")
 	}
@@ -573,7 +574,7 @@ func TestPlanScaledObject_OwnerReferenceAndLabels(t *testing.T) {
 		Metrics: []aimv1alpha1.AIMServiceMetricsSpec{validVLLMMetric()},
 	}
 
-	obj := planScaledObject(context.Background(), v1alpha2View(service), nil, nil)
+	obj := planScaledObject(context.Background(), service, nil, nil)
 	if obj == nil {
 		t.Fatal("expected ScaledObject")
 	}
@@ -613,7 +614,7 @@ func TestPlanScaledObject_ScalerAddressEnvOverride(t *testing.T) {
 		Metrics: []aimv1alpha1.AIMServiceMetricsSpec{validVLLMMetric()},
 	}
 
-	obj := planScaledObject(context.Background(), v1alpha2View(service), nil, nil)
+	obj := planScaledObject(context.Background(), service, nil, nil)
 	so := obj.(*unstructured.Unstructured)
 	triggers, _, _ := unstructured.NestedSlice(so.Object, "spec", "triggers")
 	for i, raw := range triggers {
@@ -639,7 +640,7 @@ func TestPlanScaledObject_GatewayActivationDefaultsAreCompiledIn(t *testing.T) {
 		Metrics: []aimv1alpha1.AIMServiceMetricsSpec{validVLLMMetric()},
 	}
 
-	obj := planScaledObject(context.Background(), v1alpha2View(service), nil, nil)
+	obj := planScaledObject(context.Background(), service, nil, nil)
 	so := obj.(*unstructured.Unstructured)
 	triggers, _, _ := unstructured.NestedSlice(so.Object, "spec", "triggers")
 	if len(triggers) == 0 {
@@ -667,8 +668,8 @@ func TestPlanScaledObject_Idempotent(t *testing.T) {
 		Metrics: []aimv1alpha1.AIMServiceMetricsSpec{validVLLMMetric()},
 	}
 
-	a := planScaledObject(context.Background(), v1alpha2View(service), nil, nil)
-	b := planScaledObject(context.Background(), v1alpha2View(service), nil, nil)
+	a := planScaledObject(context.Background(), service, nil, nil)
+	b := planScaledObject(context.Background(), service, nil, nil)
 	if a == nil || b == nil {
 		t.Fatal("expected ScaledObject from both calls")
 	}
@@ -730,7 +731,7 @@ func TestComputePredictorCooldown(t *testing.T) {
 					},
 				}
 			}
-			got := computePredictorCooldown(v1alpha2View(svc), nil)
+			got := computePredictorCooldown(svc, nil)
 			if got != tc.want {
 				t.Errorf("computePredictorCooldown(memory=%q) = %d, want %d", tc.memory, got, tc.want)
 			}
@@ -766,7 +767,7 @@ func TestComputePredictorCooldown_PerGiBOverride(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(constants.EnvAIMCooldownSecondsPerGiMemory, tc.override)
-			got := computePredictorCooldown(v1alpha2View(svc), nil)
+			got := computePredictorCooldown(svc, nil)
 			if tc.wantClamp {
 				if got != cooldownPeriodMaxSeconds {
 					t.Errorf("expected clamp to %d, got %d", cooldownPeriodMaxSeconds, got)
@@ -786,7 +787,7 @@ func TestComputePredictorCooldown_PerGiBOverride(t *testing.T) {
 
 // TestComputePredictorCooldown_EffectiveResourcesPriority pins the
 // memory-source precedence: effectiveResources wins over
-// service.Spec.Resources; the latter is the fallback when the template
+// service.Spec.Resources; the latter is the fallback when the profile
 // hasn't resolved yet.
 func TestComputePredictorCooldown_EffectiveResourcesPriority(t *testing.T) {
 	t.Setenv(constants.EnvAIMCooldownSecondsPerGiMemory, "") // default 5 s/GiB
@@ -799,7 +800,7 @@ func TestComputePredictorCooldown_EffectiveResourcesPriority(t *testing.T) {
 	}{
 		{
 			// The canonical real-world case from kaiwo-tw-1: no
-			// service override, template+GPU default merges to
+			// service override, profile+GPU default merges to
 			// 48 GiB. Effective resources MUST be the source.
 			name:                "no override, template-merged 48Gi -> formula on 48Gi",
 			effectiveMemory:     "48Gi",
@@ -833,7 +834,7 @@ func TestComputePredictorCooldown_EffectiveResourcesPriority(t *testing.T) {
 		{
 			// Both unset: the genuine "we have no information"
 			// case. Returns flat default; the reconciler is
-			// expected to re-plan once the template resolves.
+			// expected to re-plan once the profile resolves.
 			name:                "both unset -> flat default",
 			wantCooldownSeconds: defaultCooldownPeriodScaleToZero,
 		},
@@ -857,7 +858,7 @@ func TestComputePredictorCooldown_EffectiveResourcesPriority(t *testing.T) {
 					},
 				}
 			}
-			got := computePredictorCooldown(v1alpha2View(svc), eff)
+			got := computePredictorCooldown(svc, eff)
 			if got != tc.wantCooldownSeconds {
 				t.Errorf("got cooldown=%d, want %d", got, tc.wantCooldownSeconds)
 			}
@@ -926,7 +927,7 @@ func TestComputePredictorCooldown_RequestsVsLimits(t *testing.T) {
 				}
 			}
 			svc := NewService("test").Build()
-			got := computePredictorCooldown(v1alpha2View(svc), eff)
+			got := computePredictorCooldown(svc, eff)
 			if got != tc.wantCooldownSeconds {
 				t.Errorf("got cooldown=%d, want %d", got, tc.wantCooldownSeconds)
 			}
@@ -986,7 +987,7 @@ func TestResolvePollingAndCooldown_Precedence(t *testing.T) {
 					CooldownPeriod: tc.userCooldown,
 				}
 			}
-			_, cd := resolvePollingAndCooldown(v1alpha2View(svc), tc.scaleToZero, nil)
+			_, cd := resolvePollingAndCooldown(svc, tc.scaleToZero, nil)
 			if tc.wantCooldownNil {
 				if cd != nil {
 					t.Errorf("expected cooldown to be unset for warm-state, got %d", *cd)

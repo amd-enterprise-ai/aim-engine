@@ -35,9 +35,8 @@ The device plugins separately advertise schedulable resources:
 
 The AMD device plugin may also publish compatibility metadata such as
 `amd.com/gpu.device-id`, `amd.com/gpu.family`, and `amd.com/gpu.vram`.
-Legacy labels with the `beta.amd.com/` prefix remain relevant to the deprecated
-template pipeline; v1alpha2 profile matching uses the normalized
-`aim-accelerator.*` labels.
+Profile matching uses the normalized `aim-accelerator.*` labels, not the
+legacy labels with the `beta.amd.com/` prefix.
 
 ## GPU-Aware Resolution
 

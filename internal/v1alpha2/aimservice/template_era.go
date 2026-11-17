@@ -69,7 +69,8 @@ func clearTemplateEraStatus(status *aimv1alpha1.AIMServiceStatus, cm *controller
 }
 
 // setTemplateFieldsIgnoredCondition warns about spec fields that only the
-// AIMServiceTemplate pipeline reads. The profile pipeline ignores them.
+// AIMServiceTemplate pipeline of earlier releases read. The profile pipeline
+// ignores them.
 func setTemplateFieldsIgnoredCondition(cm *controllerutils.ConditionManager, spec aimv1alpha1.AIMServiceSpec) {
 	if cm == nil {
 		return

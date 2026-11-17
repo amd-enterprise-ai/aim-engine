@@ -36,6 +36,7 @@ import (
 	duckv1 "knative.dev/pkg/apis/duck/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
@@ -54,10 +55,6 @@ import (
 
 // ============================================================================
 // DECORATE STATUS TESTS
-// ============================================================================
-
-// ============================================================================
-// GET RESOLVED TEMPLATE TESTS
 // ============================================================================
 
 // hpaWithScalingActive returns a minimal HPA whose ScalingActive condition
@@ -141,7 +138,7 @@ func TestIsScaleToZero(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := NewService("svc").WithModelImage("test-image:v1").Build()
 			svc.Spec.MinReplicas = tt.minReplicas
-			if got := isScaleToZero(v1alpha2View(svc)); got != tt.want {
+			if got := isScaleToZero(svc); got != tt.want {
 				t.Errorf("isScaleToZero=%v, want %v", got, tt.want)
 			}
 		})
@@ -594,7 +591,7 @@ func TestActivationMetricCondition(t *testing.T) {
 			}
 
 			status, reason, message, ok := activationMetricCondition(
-				v1alpha2View(svc),
+				svc,
 				tt.runtimeConfig,
 				controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]{Value: tt.hpa},
 				tt.podCount,
@@ -753,7 +750,7 @@ func TestActivationMetricRequeueAfter(t *testing.T) {
 				svc.Status.Conditions = []metav1.Condition{*tt.existing}
 			}
 
-			got := activationMetricRequeueAfter(v1alpha2View(svc), nil, tt.hpa, tt.podCount, now)
+			got := activationMetricRequeueAfter(svc, nil, tt.hpa, tt.podCount, now)
 			if got != tt.want {
 				t.Errorf("activationMetricRequeueAfter()=%s, want %s", got, tt.want)
 			}
@@ -772,7 +769,7 @@ func TestSetActivationMetricCondition(t *testing.T) {
 			condType, controllerutils.ComponentConditionSuffix)
 	}
 
-	newSvc := func(minReplicas *int32) *aimv1alpha1.AIMService {
+	newSvc := func(minReplicas *int32) *aimv1alpha2.AIMService {
 		svc := NewService("svc").WithModelImage("test-image:v1").Build()
 		svc.Spec.MinReplicas = minReplicas
 		svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{Enabled: ptr.To(true)}
@@ -784,7 +781,7 @@ func TestSetActivationMetricCondition(t *testing.T) {
 
 	t.Run("sets the condition when applicable", func(t *testing.T) {
 		cm := controllerutils.NewConditionManager(nil)
-		setActivationMetricCondition(cm, v1alpha2View(newSvc(ptr.To(int32(0)))), nil, unreadableHPA, 1)
+		setActivationMetricCondition(cm, newSvc(ptr.To(int32(0))), nil, unreadableHPA, 1)
 
 		got := cm.Get(condType)
 		if got == nil {
@@ -803,7 +800,7 @@ func TestSetActivationMetricCondition(t *testing.T) {
 		}})
 		// Idled to zero replicas: absence is the resting state, so the
 		// condition must not linger.
-		setActivationMetricCondition(cm, v1alpha2View(newSvc(ptr.To(int32(0)))), nil, unreadableHPA, 0)
+		setActivationMetricCondition(cm, newSvc(ptr.To(int32(0))), nil, unreadableHPA, 0)
 
 		if got := cm.Get(condType); got != nil {
 			t.Errorf("expected %s to be removed, got %+v", condType, got)
@@ -811,7 +808,7 @@ func TestSetActivationMetricCondition(t *testing.T) {
 	})
 
 	t.Run("nil condition manager is a no-op", func(t *testing.T) {
-		setActivationMetricCondition(nil, v1alpha2View(newSvc(ptr.To(int32(0)))), nil, unreadableHPA, 1)
+		setActivationMetricCondition(nil, newSvc(ptr.To(int32(0))), nil, unreadableHPA, 1)
 	})
 }
 

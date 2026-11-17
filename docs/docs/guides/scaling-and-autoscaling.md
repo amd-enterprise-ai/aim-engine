@@ -5,7 +5,7 @@ AIM Engine supports static replica scaling and KEDA-based autoscaling with OpenT
 :::{admonition} v1alpha2
 :class: note
 
-Examples on this page use `aim.eai.amd.com/v1alpha2`. The `spec.replicas`, `spec.minReplicas`, `spec.maxReplicas`, and `spec.autoScaling` fields are identical across versions — only the resolution shape differs (`spec.profile` and `spec.model` instead of `spec.template`).
+Examples on this page use `aim.eai.amd.com/v1alpha2`.
 :::
 ## Static Scaling
 

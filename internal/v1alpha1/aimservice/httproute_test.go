@@ -33,6 +33,7 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
@@ -100,7 +101,7 @@ func TestGenerateHTTPRouteName_Deterministic(t *testing.T) {
 func TestIsRoutingEnabled(t *testing.T) {
 	tests := []struct {
 		name          string
-		service       *aimv1alpha1.AIMService
+		service       *aimv1alpha2.AIMService
 		runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon
 		expected      bool
 	}{
@@ -112,7 +113,7 @@ func TestIsRoutingEnabled(t *testing.T) {
 		},
 		{
 			name: "service routing enabled",
-			service: func() *aimv1alpha1.AIMService {
+			service: func() *aimv1alpha2.AIMService {
 				svc := NewService("svc").Build()
 				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
 					Enabled: ptr.To(true),
@@ -124,7 +125,7 @@ func TestIsRoutingEnabled(t *testing.T) {
 		},
 		{
 			name: "service routing explicitly disabled",
-			service: func() *aimv1alpha1.AIMService {
+			service: func() *aimv1alpha2.AIMService {
 				svc := NewService("svc").Build()
 				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
 					Enabled: ptr.To(false),
@@ -148,7 +149,7 @@ func TestIsRoutingEnabled(t *testing.T) {
 		},
 		{
 			name: "service overrides runtime config - disables",
-			service: func() *aimv1alpha1.AIMService {
+			service: func() *aimv1alpha2.AIMService {
 				svc := NewService("svc").Build()
 				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
 					Enabled: ptr.To(false),
@@ -166,7 +167,7 @@ func TestIsRoutingEnabled(t *testing.T) {
 		},
 		{
 			name: "service overrides runtime config - enables",
-			service: func() *aimv1alpha1.AIMService {
+			service: func() *aimv1alpha2.AIMService {
 				svc := NewService("svc").Build()
 				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
 					Enabled: ptr.To(true),
@@ -186,7 +187,7 @@ func TestIsRoutingEnabled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isRoutingEnabled(v1alpha2View(tt.service), tt.runtimeConfig)
+			result := isRoutingEnabled(tt.service, tt.runtimeConfig)
 
 			if result != tt.expected {
 				t.Errorf("expected %v, got %v", tt.expected, result)
@@ -211,7 +212,7 @@ func TestResolveGatewayRef(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		service       *aimv1alpha1.AIMService
+		service       *aimv1alpha2.AIMService
 		runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon
 		expectName    gatewayapiv1.ObjectName
 		expectNil     bool
@@ -224,7 +225,7 @@ func TestResolveGatewayRef(t *testing.T) {
 		},
 		{
 			name: "service-level gateway ref",
-			service: func() *aimv1alpha1.AIMService {
+			service: func() *aimv1alpha2.AIMService {
 				svc := NewService("svc").Build()
 				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
 					GatewayRef: serviceGateway,
@@ -248,7 +249,7 @@ func TestResolveGatewayRef(t *testing.T) {
 		},
 		{
 			name: "service overrides runtime config",
-			service: func() *aimv1alpha1.AIMService {
+			service: func() *aimv1alpha2.AIMService {
 				svc := NewService("svc").Build()
 				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
 					GatewayRef: serviceGateway,
@@ -268,7 +269,7 @@ func TestResolveGatewayRef(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := resolveGatewayRef(v1alpha2View(tt.service), tt.runtimeConfig)
+			result := resolveGatewayRef(tt.service, tt.runtimeConfig)
 
 			if tt.expectNil {
 				if result != nil {
@@ -299,7 +300,7 @@ func TestResolveRequestTimeout(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		service       *aimv1alpha1.AIMService
+		service       *aimv1alpha2.AIMService
 		runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon
 		expectNil     bool
 		expectSeconds int
@@ -312,7 +313,7 @@ func TestResolveRequestTimeout(t *testing.T) {
 		},
 		{
 			name: "service-level timeout",
-			service: func() *aimv1alpha1.AIMService {
+			service: func() *aimv1alpha2.AIMService {
 				svc := NewService("svc").Build()
 				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
 					RequestTimeout: serviceTimeout,
@@ -336,7 +337,7 @@ func TestResolveRequestTimeout(t *testing.T) {
 		},
 		{
 			name: "service overrides runtime config",
-			service: func() *aimv1alpha1.AIMService {
+			service: func() *aimv1alpha2.AIMService {
 				svc := NewService("svc").Build()
 				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
 					RequestTimeout: serviceTimeout,
@@ -356,7 +357,7 @@ func TestResolveRequestTimeout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := resolveRequestTimeout(v1alpha2View(tt.service), tt.runtimeConfig)
+			result := resolveRequestTimeout(tt.service, tt.runtimeConfig)
 
 			if tt.expectNil {
 				if result != nil {
@@ -384,7 +385,7 @@ func TestResolveRequestTimeout(t *testing.T) {
 func TestMergeRouteAnnotations(t *testing.T) {
 	tests := []struct {
 		name             string
-		service          *aimv1alpha1.AIMService
+		service          *aimv1alpha2.AIMService
 		runtimeConfig    *aimv1alpha1.AIMRuntimeConfigCommon
 		expectedContains map[string]string
 		expectedLen      int
@@ -417,7 +418,7 @@ func TestMergeRouteAnnotations(t *testing.T) {
 		},
 		{
 			name: "service annotations only",
-			service: func() *aimv1alpha1.AIMService {
+			service: func() *aimv1alpha2.AIMService {
 				svc := NewService("svc").Build()
 				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
 					Annotations: map[string]string{
@@ -434,7 +435,7 @@ func TestMergeRouteAnnotations(t *testing.T) {
 		},
 		{
 			name: "service annotations override runtime config for conflicting keys",
-			service: func() *aimv1alpha1.AIMService {
+			service: func() *aimv1alpha2.AIMService {
 				svc := NewService("svc").Build()
 				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
 					Annotations: map[string]string{
@@ -465,7 +466,7 @@ func TestMergeRouteAnnotations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := mergeRouteAnnotations(v1alpha2View(tt.service), tt.runtimeConfig)
+			result := mergeRouteAnnotations(tt.service, tt.runtimeConfig)
 
 			for key, expectedValue := range tt.expectedContains {
 				if result[key] != expectedValue {
@@ -492,7 +493,7 @@ func TestPlanHTTPRoute(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		service       *aimv1alpha1.AIMService
+		service       *aimv1alpha2.AIMService
 		runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon
 		expectRoute   bool
 	}{
@@ -503,7 +504,7 @@ func TestPlanHTTPRoute(t *testing.T) {
 		},
 		{
 			name: "routing enabled but no gateway - no route",
-			service: func() *aimv1alpha1.AIMService {
+			service: func() *aimv1alpha2.AIMService {
 				svc := NewService("svc").Build()
 				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
 					Enabled: ptr.To(true),
@@ -514,7 +515,7 @@ func TestPlanHTTPRoute(t *testing.T) {
 		},
 		{
 			name: "routing enabled with gateway - creates route",
-			service: func() *aimv1alpha1.AIMService {
+			service: func() *aimv1alpha2.AIMService {
 				svc := NewService("svc").Build()
 				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
 					Enabled:    ptr.To(true),
@@ -541,7 +542,7 @@ func TestPlanHTTPRoute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := PlanHTTPRoute(context.Background(), v1alpha2View(tt.service), tt.runtimeConfig, nil)
+			result := PlanHTTPRoute(context.Background(), tt.service, tt.runtimeConfig, nil)
 
 			if tt.expectRoute {
 				if result == nil {
@@ -586,7 +587,7 @@ func TestPlanHTTPRoute_BlocksRuntimeLoRAMutations(t *testing.T) {
 		},
 	}
 
-	route := buildHTTPRoute(v1alpha2View(service), gatewayRef, runtimeConfig, nil)
+	route := buildHTTPRoute(service, gatewayRef, runtimeConfig, nil)
 	if len(route.Spec.Rules) != len(blockedExternalPaths)+1 {
 		t.Fatalf("expected %d rules, got %d", len(blockedExternalPaths)+1, len(route.Spec.Rules))
 	}
@@ -644,7 +645,7 @@ func TestPlanHTTPRoute_BlocksRuntimeLoRAMutationsAtRootPrefix(t *testing.T) {
 		},
 	}
 
-	route := buildHTTPRoute(v1alpha2View(service), gatewayRef, runtimeConfig, nil)
+	route := buildHTTPRoute(service, gatewayRef, runtimeConfig, nil)
 	for i, blockedPath := range blockedExternalPaths {
 		match := route.Spec.Rules[i].Matches[0].Path
 		if match == nil || match.Value == nil || *match.Value != blockedPath {
@@ -664,7 +665,7 @@ func TestPlanHTTPRoute_Labels(t *testing.T) {
 		GatewayRef: gatewayRef,
 	}
 
-	result := PlanHTTPRoute(context.Background(), v1alpha2View(service), nil, nil)
+	result := PlanHTTPRoute(context.Background(), service, nil, nil)
 	if result == nil {
 		t.Fatal("expected HTTPRoute, got nil")
 	}
@@ -692,7 +693,7 @@ func TestPlanHTTPRoute_OwnerReference(t *testing.T) {
 		GatewayRef: gatewayRef,
 	}
 
-	result := PlanHTTPRoute(context.Background(), v1alpha2View(service), nil, nil)
+	result := PlanHTTPRoute(context.Background(), service, nil, nil)
 	if result == nil {
 		t.Fatal("expected HTTPRoute, got nil")
 	}
@@ -741,7 +742,7 @@ func TestResolveHostnames(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		service       *aimv1alpha1.AIMService
+		service       *aimv1alpha2.AIMService
 		runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon
 		want          []gatewayapiv1.Hostname
 	}{
@@ -752,7 +753,7 @@ func TestResolveHostnames(t *testing.T) {
 		},
 		{
 			name: "service only",
-			service: func() *aimv1alpha1.AIMService {
+			service: func() *aimv1alpha2.AIMService {
 				svc := NewService("svc").Build()
 				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{Hostnames: svcHosts}
 				return svc
@@ -771,7 +772,7 @@ func TestResolveHostnames(t *testing.T) {
 		},
 		{
 			name: "service overrides runtime config",
-			service: func() *aimv1alpha1.AIMService {
+			service: func() *aimv1alpha2.AIMService {
 				svc := NewService("svc").Build()
 				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{Hostnames: svcHosts}
 				return svc
@@ -787,7 +788,7 @@ func TestResolveHostnames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveHostnames(v1alpha2View(tt.service), tt.runtimeConfig)
+			got := resolveHostnames(tt.service, tt.runtimeConfig)
 			if len(got) != len(tt.want) {
 				t.Fatalf("expected %v, got %v", tt.want, got)
 			}
@@ -804,7 +805,7 @@ func TestPlanHTTPRoute_Hostnames(t *testing.T) {
 	gatewayRef := &gatewayapiv1.ParentReference{Name: "test-gateway"}
 	hosts := []gatewayapiv1.Hostname{"workloads.example.com"}
 
-	newService := func(hostnames []gatewayapiv1.Hostname) *aimv1alpha1.AIMService {
+	newService := func(hostnames []gatewayapiv1.Hostname) *aimv1alpha2.AIMService {
 		svc := NewService("svc").Build()
 		svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
 			Enabled:    ptr.To(true),
@@ -816,7 +817,7 @@ func TestPlanHTTPRoute_Hostnames(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		service       *aimv1alpha1.AIMService
+		service       *aimv1alpha2.AIMService
 		gateway       *gatewayapiv1.Gateway
 		expectRoute   bool
 		expectedHosts []gatewayapiv1.Hostname
@@ -859,7 +860,7 @@ func TestPlanHTTPRoute_Hostnames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := PlanHTTPRoute(context.Background(), v1alpha2View(tt.service), nil, tt.gateway)
+			result := PlanHTTPRoute(context.Background(), tt.service, nil, tt.gateway)
 
 			if !tt.expectRoute {
 				if result != nil {
@@ -891,7 +892,7 @@ func TestPlanHTTPRoute_Hostnames(t *testing.T) {
 func TestRoutingHostnameComponentHealth(t *testing.T) {
 	gatewayRef := &gatewayapiv1.ParentReference{Name: "test-gateway"}
 
-	routingEnabled := func(hostnames []gatewayapiv1.Hostname) *aimv1alpha1.AIMService {
+	routingEnabled := func(hostnames []gatewayapiv1.Hostname) *aimv1alpha2.AIMService {
 		svc := NewService("svc").Build()
 		svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{
 			Enabled:    ptr.To(true),
@@ -907,7 +908,7 @@ func TestRoutingHostnameComponentHealth(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		service    *aimv1alpha1.AIMService
+		service    *aimv1alpha2.AIMService
 		gateway    controllerutils.FetchResult[*gatewayapiv1.Gateway]
 		wantFailed bool
 	}{
@@ -941,7 +942,7 @@ func TestRoutingHostnameComponentHealth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			health := RoutingHostnameComponentHealth(v1alpha2View(tt.service), nil, tt.gateway)
+			health := RoutingHostnameComponentHealth(tt.service, nil, tt.gateway)
 
 			if tt.wantFailed {
 				if health.Component != ComponentRouteConfig {

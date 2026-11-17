@@ -9,25 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Populate this section during release-prep, then rename to the release version -->
 
+### Removed (breaking)
+- **`AIMServiceTemplate`, `AIMClusterServiceTemplate` and `AIMTemplateCache`.** The three kinds, their CRDs and the template pipeline that served AIMServices from them are removed. Delete the template objects before you upgrade, as described in `docs/docs/admin/upgrading.md#delete-template-objects`.
+- **`aim-template-migration`.** The tool and its runbook are removed. Services it already moved to the profile pipeline keep running through the upgrade without a restart. Move the remaining template services as described in `docs/docs/admin/upgrading.md#move-template-services`.
+- **Legacy model mode.** AIMModels and AIMClusterModels, including the ones an AIMClusterModelSource discovers, no longer create AIMServiceTemplates or AIMClusterServiceTemplates. They serve only through the AIMProfiles they discover, generate or derive; see `docs/docs/admin/upgrading.md#replace-models-without-a-native-path`.
+- **`aim.eai.amd.com/v1alpha1` AIMService, AIMModel and AIMClusterModel.** The API server serves these three kinds only at v1alpha2. Existing objects stay readable and updatable at v1alpha2, but applying a v1alpha1 manifest for them fails; see `docs/docs/admin/upgrading.md#update-v1alpha1-manifests`. AIMArtifact, AIMRuntimeConfig, AIMClusterRuntimeConfig and AIMClusterModelSource stay at v1alpha1.
+
 ### Added
 - Hand-authored `AIMProfile` and `AIMClusterProfile` resources can declare `spec.baseImageRef`, the supported clean-runtime lineage used when ProfileSets or service overlays replace model weights.
 - **Tolerations for inference pods.** Set `spec.tolerations` in an `AIMRuntimeConfig`, `AIMClusterRuntimeConfig` or `AIMService` to let inference pods onto tainted nodes. An AIMService's list replaces the runtime config's, a namespace runtime config's replaces the cluster's, and an empty list removes the inherited one.
 - **Tolerations for the Jobs that prepare a model.** The size check, download and discovery Jobs get the runtime config's `spec.tolerations`, and the adapter staging Jobs get the same tolerations as the inference pods. A model can now start when every node that can run these Jobs has a taint.
 
-### Changed
-- **Every AIMService is served through profiles.** Services with `spec.model.name` or `spec.model.image` no longer need the `aim.eai.amd.com/reconciler-pipeline: profile` annotation, and the operator ignores it. A new AIMService CRD validation rule rejects `spec.model.custom` on new v1alpha2 objects and on updates that add it: create an AIMModel and reference it with `spec.model.name` instead.
-- **AIMModel and AIMClusterModel produce profiles only.** Image models no longer create AIMServiceTemplates or AIMClusterServiceTemplates, and models no longer report `MigrationRequired`. Fields that only configured templates (`spec.discovery.createServiceTemplates`, `spec.defaultServiceTemplate`, `spec.custom`, `spec.customTemplates`, `spec.env`, `spec.resources`) are reported in a `TemplateFieldsIgnored` warning; templates a model created earlier stay until the model is deleted.
+### Changed (behavioural)
+- **Every AIMService is served through profiles.** Services with `spec.model.name` or `spec.model.image` no longer need the `aim.eai.amd.com/reconciler-pipeline: profile` annotation, and the operator ignores it. A service with `spec.model.image` uses or creates an AIMModel for the image.
+- **Image models are served natively.** Image AIMModels and AIMClusterModels record `status.imageMetadata`, `status.version` and `status.sourceType`, take their primary profile from the image's recommended deployments, and look up their runtime config without templates.
+- **`spec.model.custom` is rejected.** A new AIMService CRD validation rule rejects `spec.model.custom` on new objects and on updates that add it. Create an AIMModel and reference it with `spec.model.name` instead; see `docs/docs/admin/upgrading.md#replace-unservable-services`.
+- **Template-era fields produce a warning.** AIMServices with `spec.template`, `spec.overrides` or `spec.model.custom`, and models with `spec.discovery.createServiceTemplates: false`, `spec.defaultServiceTemplate`, `spec.custom`, `spec.customTemplates`, `spec.env` or `spec.resources`, report those fields in a `TemplateFieldsIgnored` warning condition and event. It doesn't affect readiness and clears when you remove the fields.
+- **Template-era status is cleared.** AIMServices drop `status.reconcilerPipeline`, `status.resolvedTemplate`, the template cache reference and the `ModelReady`, `TemplateReady`, `CacheReady` and `MigrationRequired` conditions. Models drop `MigrationRequired`, `ServiceTemplatesReady`, `ClusterServiceTemplatesReady` and `LegacyAutoCustomSpecReady`.
+- **Fine-tune and auto-custom models produce no profiles.** Models with `spec.modelSources` and `spec.aimId`, such as fine-tunes and the models generated for inline custom services, reconcile without producing AIMProfiles and no longer report `MigrationRequired`. Only the upgrade preflight's `models-without-native-path` check flags them; see `docs/docs/admin/upgrading.md#replace-models-without-a-native-path`.
+- **Re-inspected image models can get a different primary profile.** Image models whose `status.imageMetadata` an earlier release left without the image labels are inspected again, and their primary profile now comes from the image's recommended deployments. Services already bound to a profile keep it.
+- **`ImageMetadataReady=False` doesn't block a model.** Where the operator can't reach the registry, image models report `ImageMetadataReady=False` but become Ready once discovery and their profiles are Ready.
 - Weight-replacing profile derivations now use the producer's exact `AIM_BASE_IMAGE_REF` or `spec.baseImageRef`. Tags and digests are no longer truncated or synthesized. The operator uses the private producer prefixes found in released images (`docker.io/silogenai` and `ghcr.io/silogen`) as public `docker.io/amdenterpriseai` compatibility fallbacks even when a resource selects a named RuntimeConfig; matching configured mappings remain authoritative for private and air-gapped mirrors. The fallbacks are built into the operator; the Helm chart does not add mappings to its default cluster RuntimeConfig.
-
-### Removed
-- **`aim-template-migration`.** The tool and its runbook are removed. Services it already moved to the profile pipeline keep running through the upgrade without a restart. Move the remaining template services as described in `docs/docs/admin/upgrading.md#migration-window`.
-- **`AIMServiceTemplate`, `AIMClusterServiceTemplate` and `AIMTemplateCache`.** The kinds and their CRDs are removed. Remove the CRDs with Helm or kubectl as described in `docs/docs/admin/upgrading.md#remove-the-template-crds`.
 
 ### Fixed
 - Cached v1alpha1 image metadata from older operators is re-inspected to recover `AIM_BASE_IMAGE_REF`. Reinspection failures retain cached metadata and normal readiness while reporting a non-gating diagnostic that can recover on a later reconcile; images that genuinely omit the field are recorded without repeated registry polling.
 - Missing runtime lineage now reports `BaseImageUnresolved` instead of the misleading `InvalidProfileOverrides`, while existing ProfileSet and AIMService resources remain untouched.
 - ProfileSet controllers no longer requeue every set for RuntimeConfig status-only updates.
 - Service overlay profiles now record canonical runtime lineage consistently in both `spec.baseImageRef` and the `aim.eai.amd.com/base-image` annotation, while `spec.image` remains the mapped deployment reference.
+
+### Upgrade
+- **Upgrade from v0.2.7 or later.** Upgrade older releases to the latest 0.2.x release first and let it reconcile your resources; see `docs/docs/admin/upgrading.md#minimum-version`.
+- **Run the upgrade preflight, then follow the documented steps.** Download `upgrade-preflight.sh` from this release, fix what it reports as described in `docs/docs/admin/upgrading.md#migration-window`, and upgrade the CRDs before the operator once it passes; see `docs/docs/admin/upgrading.md#run-the-upgrade-preflight`.
+- **Dedicated template-cache weights are downloaded again.** Moving a service whose template cache is Dedicated creates an AIMProfileCache that downloads the weights again; Shared template caches are adopted without a download. The preflight lists the Dedicated caches with their sizes; see `docs/docs/admin/upgrading.md#cache-outcomes`.
+- **Helm fallback for the template CRDs.** Upgrading the CRDs chart deletes the template CRDs. If you can't delete every template object first, annotate the template CRDs with `helm.sh/resource-policy=keep` before the upgrade and remove them by hand afterwards; see `docs/docs/admin/upgrading.md#remove-the-template-crds`.
+- **Check GitOps manifests.** Change v1alpha1 AIMService, AIMModel and AIMClusterModel manifests in GitOps repositories, Helm charts and scripts to v1alpha2, and replace template objects with profiles, before you upgrade; see `docs/docs/admin/upgrading.md#update-v1alpha1-manifests`.
+- **Rollback has limits.** Until you delete the template objects, a moved service can go back to the template pipeline. Rolling the CRDs and operator back to v0.2.7 after the upgrade restores the template pipeline and v1alpha1 serving, but not the deleted template objects or Dedicated weights; see `docs/docs/admin/upgrading.md#rollback-limits`.
 
 ## [0.2.7] - 2026-10-08
 

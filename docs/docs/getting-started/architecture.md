@@ -36,7 +36,7 @@ v1alpha2 is the current API.
 | `AIMProfileSet` / `AIMClusterProfileSet` | Namespace / Cluster | Selects across model definitions and copyable profile resources, applies overrides, and materialises derived profiles. Also synthesised by `AIMModel.spec.profiles`. |
 | `AIMProfileCache` | Namespace | Pre-warms a profile's `modelSources` to a PVC for fast service start. |
 | `AIMArtifact` | Namespace | Manages a single model artifact download to a PVC. |
-| `AIMClusterModelSource` | Cluster | Auto-discovers AIM images from a registry (`spec.filters`/`spec.images`) or materializes declared model IDs (`spec.models`). Declared models are created as v1alpha2 `AIMClusterModel`, since `spec.modelId` is a v1alpha2-only field; discovered images are created as v1alpha1. Both are the same stored object — v1alpha2 is the storage version. |
+| `AIMClusterModelSource` | Cluster | Auto-discovers AIM images from a registry (`spec.filters`/`spec.images`) or materializes declared model IDs (`spec.models`). Both discovered images and declared models are created as v1alpha2 `AIMClusterModel`. |
 | `AIMRuntimeConfig` / `AIMClusterRuntimeConfig` | Namespace / Cluster | Storage defaults, routing defaults, environment defaults. |
 
 ## Four model flows

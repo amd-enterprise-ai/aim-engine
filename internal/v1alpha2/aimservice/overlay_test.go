@@ -70,8 +70,7 @@ func TestHasProfileOverrides_DetectsRealOverrides(t *testing.T) {
 // materialising a per-service overlay for users who emit `profileOverrides: {}`
 // from a templating layer. Two services that both end up with nil/empty
 // overrides on the same seed must continue to point at the seed (and hence
-// share the namespace cache) — that's the v1alpha1 sharing parity the chain
-// promises.
+// share the namespace cache).
 func TestHasProfileOverrides_TreatsEmptyAsNoOp(t *testing.T) {
 	cases := map[string]*aimv1alpha1.AIMServiceProfileOverrides{
 		"nil":   nil,

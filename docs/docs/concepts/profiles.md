@@ -13,7 +13,7 @@ An **AIM profile** is a self-contained runtime configuration for an inference wo
 :::{admonition} v1alpha2
 :class: note
 
-Profiles are part of `aim.eai.amd.com/v1alpha2`. They replace the v1alpha1 service templates, which are removed.
+Profiles are part of `aim.eai.amd.com/v1alpha2`.
 :::
 ## Where profiles come from
 
@@ -78,7 +78,7 @@ The matching `status` fields mirror the labels for kubectl-friendly access:
 - `status.sourceModel.{name,kind,namespace}` mirrors `source-model` + `source-model-scope`
 - `status.deployable` derives from spec (also implicit from `profile-role`)
 
-See [Naming and Labels → Profile labels](../reference/naming-and-labels.md#profile-labels) for the canonical list (including label setters and selector recipes).
+See [Naming and Labels → Profile labels](../reference/naming-and-labels.md#v1alpha2-profile-provenance-labels) for the canonical list (including label setters and selector recipes).
 
 ## Projected profile YAML compatibility
 

@@ -150,11 +150,11 @@ func NewAuthError(reason, message string, cause error) StateEngineError {
 }
 
 // NewMissingDownstreamDependencyError creates an error for missing internal dependencies
-// that the controller is waiting for (e.g., a template being created, a pod starting).
+// that the controller is waiting for (e.g., a profile cache being created, a pod starting).
 // These are transient states that should self-heal - the controller will keep progressing.
 //
 // Parameters:
-//   - reason: Machine-readable reason code (e.g., "TemplateNotReady")
+//   - reason: Machine-readable reason code (e.g., "CacheNotReady")
 //   - message: Human-readable description for users
 //   - cause: Underlying error that caused this issue (may be nil)
 func NewMissingDownstreamDependencyError(reason, message string, cause error) StateEngineError {

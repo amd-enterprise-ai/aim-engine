@@ -5,7 +5,7 @@ Model caching pre-downloads model artifacts to shared persistent volumes, reduci
 :::{admonition} v1alpha2
 :class: note
 
-Examples on this page use `aim.eai.amd.com/v1alpha2`. Caching is keyed by the **resolved profile** (via `AIMProfileCache`) instead of the v1alpha1 template (`AIMTemplateCache`). The `spec.caching.mode` field and its semantics are unchanged across versions.
+Examples on this page use `aim.eai.amd.com/v1alpha2`. Caching is keyed by the **resolved profile** (via `AIMProfileCache`).
 :::
 ## Caching Modes
 
@@ -35,7 +35,7 @@ The caching mode is immutable after creation. Legacy values `Always`, `Auto`, an
 
 When caching is active, AIM Engine creates a hierarchy of resources:
 
-1. **AIMProfileCache** (v1alpha2) — Groups all model artifacts for a specific resolved profile on a shared PVC. (v1alpha1 used `AIMTemplateCache`, keyed by template.)
+1. **AIMProfileCache** (v1alpha2) — Groups all model artifacts for a specific resolved profile on a shared PVC.
 2. **AIMArtifact** — Manages the download of individual model sources
 3. **PVC + Download Job** — The actual storage and download execution
 

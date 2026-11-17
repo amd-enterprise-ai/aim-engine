@@ -65,7 +65,7 @@ func TestComputeRuntimeStatus_ScaleToZeroOverridesHPAMinFloor(t *testing.T) {
 		Value: hpaWithReplicas(ptr.To(int32(1)), 3, 1, 1), // KEDA pins to 1
 	}
 
-	got := ComputeRuntimeStatus(v1alpha2View(svc), hpa)
+	got := ComputeRuntimeStatus(svc, hpa)
 	if got.MinReplicas != 0 {
 		t.Errorf("MinReplicas=%d, want 0 (spec override of HPA's KEDA-pinned 1)", got.MinReplicas)
 	}
@@ -94,7 +94,7 @@ func TestComputeRuntimeStatus_ScaleToZeroIdleReportsZero(t *testing.T) {
 		Value: hpaWithReplicas(ptr.To(int32(1)), 3, 0, 0),
 	}
 
-	got := ComputeRuntimeStatus(v1alpha2View(svc), hpa)
+	got := ComputeRuntimeStatus(svc, hpa)
 	if got.MinReplicas != 0 {
 		t.Errorf("MinReplicas=%d, want 0", got.MinReplicas)
 	}
@@ -122,7 +122,7 @@ func TestComputeRuntimeStatus_NonScaleToZeroPreservesLegacyDesiredFallback(t *te
 		Value: hpaWithReplicas(ptr.To(int32(2)), 5, 2, 0),
 	}
 
-	got := ComputeRuntimeStatus(v1alpha2View(svc), hpa)
+	got := ComputeRuntimeStatus(svc, hpa)
 	if got.MinReplicas != 2 {
 		t.Errorf("MinReplicas=%d, want 2", got.MinReplicas)
 	}
@@ -140,7 +140,7 @@ func TestComputeRuntimeStatus_NoHPAFallsBackToSpec(t *testing.T) {
 	svc.Spec.MaxReplicas = ptr.To(int32(3))
 	svc.Spec.AutoScaling = &aimv1alpha1.AIMServiceAutoScaling{}
 
-	got := ComputeRuntimeStatus(v1alpha2View(svc), controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]{})
+	got := ComputeRuntimeStatus(svc, controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]{})
 	if got.MinReplicas != 0 {
 		t.Errorf("MinReplicas=%d, want 0 (from spec fallback)", got.MinReplicas)
 	}
@@ -215,7 +215,7 @@ func TestScaleToZeroRoutingComponentHealth(t *testing.T) {
 				svc.Spec.Routing = &aimv1alpha1.AIMRuntimeRoutingConfig{Enabled: tt.serviceRoute}
 			}
 
-			got := ScaleToZeroRoutingComponentHealth(v1alpha2View(svc), tt.runtimeConfig)
+			got := ScaleToZeroRoutingComponentHealth(svc, tt.runtimeConfig)
 
 			if !tt.wantFailed {
 				if got.Component != "" {
@@ -313,7 +313,7 @@ func TestScaleToZeroActivationMetricComponentHealth(t *testing.T) {
 				}
 			}
 
-			got := ScaleToZeroActivationMetricComponentHealth(v1alpha2View(svc), tt.runtimeConfig)
+			got := ScaleToZeroActivationMetricComponentHealth(svc, tt.runtimeConfig)
 			if !tt.wantFailed {
 				if got.Component != "" {
 					t.Fatalf("expected no component health, got %+v", got)
@@ -354,7 +354,7 @@ func TestScaleToZeroActivationMetricComponentHealth_NoneProvider(t *testing.T) {
 		},
 	}
 
-	got := ScaleToZeroActivationMetricComponentHealth(v1alpha2View(svc), runtimeConfig)
+	got := ScaleToZeroActivationMetricComponentHealth(svc, runtimeConfig)
 	if got.Component != ComponentScaleToZeroConfig {
 		t.Errorf("Component=%q, want %q", got.Component, ComponentScaleToZeroConfig)
 	}
@@ -419,7 +419,7 @@ func TestAutoscalingTriggerComponentHealth(t *testing.T) {
 			svc.Spec.Replicas = tt.replicas
 			svc.Spec.AutoScaling = tt.autoScaling
 
-			got := AutoscalingTriggerComponentHealth(v1alpha2View(svc))
+			got := AutoscalingTriggerComponentHealth(svc)
 
 			if !tt.wantFailed {
 				if got.Component != "" {
@@ -460,7 +460,7 @@ func TestComputeRuntimeStatus_HPAValueOnlyUsedWhenSpecAbsent(t *testing.T) {
 		Value: hpaWithReplicas(ptr.To(int32(2)), 5, 3, 3),
 	}
 
-	got := ComputeRuntimeStatus(v1alpha2View(svc), hpa)
+	got := ComputeRuntimeStatus(svc, hpa)
 	if got.MinReplicas != 2 {
 		t.Errorf("MinReplicas=%d, want 2 (from HPA, spec is nil)", got.MinReplicas)
 	}

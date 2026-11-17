@@ -30,9 +30,7 @@ kubectl get aimservice <name> -n <namespace> -o jsonpath='{.status.conditions}' 
 
 | Blocked Component | Likely Cause |
 |------------------|-------------|
-| Profile (v1alpha2) | No profile matched `spec.profile` / `spec.model.name` / `spec.model.image` — verify the profile exists or that the model produces deployable profiles |
-| Model | Model not found — check `model.name` spelling or `model.image` accessibility |
-| Template (v1alpha1) | No matching template — verify templates exist and are `Ready` |
+| Profile | No profile matched `spec.profile` / `spec.model.name` / `spec.model.image` — verify the profile or model exists, that `model.image` is accessible, and that the model produces deployable profiles |
 | RuntimeConfig | Runtime config not found or invalid |
 
 ### Service Stuck in "Starting"

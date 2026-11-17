@@ -114,7 +114,7 @@ spec:
         - assert:
             timeout: 600s
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: custom-service

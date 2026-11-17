@@ -194,12 +194,12 @@ spec:
   maxModels: 500
 ```
 
-The discovered `AIMClusterModel` resources are then reconciled the same way as manually applied image-based models. Registry-discovered images are written through the v1alpha1 API with `spec.image` set.
+The discovered `AIMClusterModel` resources are then reconciled the same way as manually applied image-based models. Registry-discovered images are written through the v1alpha2 API with `spec.image` set.
 
 :::{admonition} v1alpha1 source resource
 :class: note
 
-`AIMClusterModelSource` itself remains under `v1alpha1`. Registry-discovered images are also created through v1alpha1, while entries declared under `spec.models` are created through v1alpha2 because `spec.modelId` is v1alpha2-only. Both API versions address the same stored v1alpha2 object.
+`AIMClusterModelSource` itself remains under `v1alpha1`. It creates both registry-discovered images and the entries declared under `spec.models` as v1alpha2 `AIMClusterModel` resources.
 :::
 ### Selecting images
 

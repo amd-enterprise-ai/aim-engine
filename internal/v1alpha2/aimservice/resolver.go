@@ -285,8 +285,7 @@ func resolveByName(
 //     the AIMService. Surfaces ProfileNotFound with a "creating model;
 //     waiting for discovery" message so users see the progress.
 //   - Multiple matches: ProfileNotFound with a clear "pin via
-//     spec.model.name" message. This mirrors the v1alpha1
-//     ErrMultipleModelsFound shape — we never guess which of N models
+//     spec.model.name" message — we never guess which of N models
 //     the user intended.
 //
 // Namespace AIMModel wins over AIMClusterModel of the same image (mirrors
@@ -358,8 +357,7 @@ func resolveByImage(
 		finalRes.shape = resolutionShapeModelImage
 		return nsRes, clusterRes, finalRes
 	default:
-		// Multiple matches: don't guess. Mirror the v1alpha1
-		// ErrMultipleModelsFound posture and tell the user how to
+		// Multiple matches: don't guess. Tell the user how to
 		// disambiguate (author the spec.model.name explicitly).
 		names := make([]string, len(matches))
 		for i, m := range matches {
@@ -854,11 +852,11 @@ func sortClusterCandidates(profiles []aimv1alpha2.AIMClusterProfile) {
 //  3. AcceleratorModel  — well-known order from
 //     utils.AcceleratorModelPreferenceOrder (MI325X > MI300X > ... ,
 //     R9700 > W7900). Unknown / empty ties at the bottom.
-//  4. Metric            — latency > throughput. Mirrors v1alpha1's
-//     long-standing default; opinionated but stable.
+//  4. Metric            — latency > throughput. Long-standing default;
+//     opinionated but stable.
 //  5. Precision         — fp4 > int4 > fp8 > int8 > fp16 > bf16 > fp32.
 //     Smaller bit-width preferred for performance; fp > bf > int for
-//     accuracy. Mirrors v1alpha1.
+//     accuracy.
 //  6. AcceleratorCount  — smaller count wins. Resource-conservation
 //     default: when tp1 and tp2 both ship and both are Ready, tp1
 //     leaves more cluster capacity for other workloads. A zero count

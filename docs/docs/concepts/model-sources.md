@@ -5,7 +5,7 @@
 :::{admonition} API version
 :class: note
 
-`AIMClusterModelSource` remains under `aim.eai.amd.com/v1alpha1`. Registry-discovered images are created through v1alpha1 with `spec.image` set, while entries declared under `spec.models` are created through v1alpha2 because `spec.modelId` is v1alpha2-only. Both API versions address the same stored v1alpha2 `AIMClusterModel`, and both flows produce `AIMProfile` resources.
+`AIMClusterModelSource` remains under `aim.eai.amd.com/v1alpha1`. It creates `AIMClusterModel` resources through `aim.eai.amd.com/v1alpha2`: registry-discovered images with `spec.image` set, and entries declared under `spec.models` with `spec.modelId`. Both flows produce `AIMProfile` resources.
 :::
 ## Overview
 
@@ -415,9 +415,9 @@ spec:
 
 Model sources create `AIMClusterModel` resources with auto-generated names based on the image URI. These models are owned by the source via an owner reference.
 
-Registry-discovered models are written through v1alpha1 with `spec.image` set. Because v1alpha1 and v1alpha2 share the stored v1alpha2 object, they immediately enter the **official flow**: the model controller runs in-cluster image discovery and materialises one `AIMClusterProfile` per supported (accelerator, precision, metric) combination. The complete discovered definitions remain available to profile-set selectors, including hardware-unsupported entries. See [AIM Models — Flow 1](models.md#flow-1-official-aim-model) for the lifecycle.
+Registry-discovered models are written with `spec.image` set, so they immediately enter the **official flow**: the model controller runs in-cluster image discovery and materialises one `AIMClusterProfile` per supported (accelerator, precision, metric) combination. The complete discovered definitions remain available to profile-set selectors, including hardware-unsupported entries. See [AIM Models — Flow 1](models.md#flow-1-official-aim-model) for the lifecycle.
 
-The model also reads the image's OCI labels into `status.imageMetadata`, records the image tag as `status.version` (the `VERSION` column) and sets `status.sourceType: Image`. Profiles matching the image's recommended deployments are marked `spec.primary`. Created models produce profiles only; they create no `AIMClusterServiceTemplate`.
+The model also reads the image's OCI labels into `status.imageMetadata`, records the image tag as `status.version` (the `VERSION` column) and sets `status.sourceType: Image`. Profiles matching the image's recommended deployments are marked `spec.primary`.
 
 A generic AIM base image publishes base definitions for `selector.role: base`. Hardware-supported entries become base profile resources, reflected in `status.managedProfiles.base`; the catalog remains selectable when that count is zero. See [Base-image models](models.md#base-image-models).
 
