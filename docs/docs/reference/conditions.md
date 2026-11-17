@@ -140,6 +140,52 @@ Tracks the namespaced profile `ServingRuntime` and its same-name ConfigMap befor
 
 Tracks whether the predictor pods are running and ready.
 
+### LLMInferenceServiceReady
+
+Replaces `InferenceServiceReady` when `status.servingAPI` is `LLMInferenceService`. `LLMInferenceServicePodsReady` replaces `InferenceServicePodsReady` the same way.
+
+| Status | Reason | Description |
+|---|---|---|
+| `True` | `RuntimeReady` | KServe `LLMInferenceService` is ready |
+| `False` | `CreatingRuntime` | Creating the LLMInferenceService |
+| `False` | `LLMInferenceServiceNotReady` | KServe reports the LLMInferenceService not ready; the message carries KServe's reason |
+
+### LLMInferenceServiceBaseRefsReady
+
+Set only when `spec.llmInferenceService.baseRefs` is non-empty.
+
+| Status | Reason | Description |
+|---|---|---|
+| `True` | `LLMInferenceServiceConfigsResolved` | Every referenced config exists and sets no field AIM Engine owns |
+| `False` | `LLMInferenceServiceConfigNotFound` | A referenced config exists in neither the service namespace nor KServe's system namespace |
+| `False` | `LLMInferenceServiceConfigConflict` | A referenced config sets `spec.router`, `spec.replicas`, `spec.scaling`, `spec.prefill`, `spec.worker`, or `spec.model.lora` |
+| `False` | `FetchError` | A referenced config could not be read; the message names it and carries the API error |
+
+### ServingAPIReady
+
+Set only when the requested `spec.servingAPI` cannot be served.
+
+| Status | Reason | Description |
+|---|---|---|
+| `False` | `ServingAPIUnsupported` | `LLMInferenceService` was requested, but AIM Engine runs without the LLMInferenceService CRDs or with `--enable-llm-inference-service=false`, or the service resolves through the v1alpha1 template pipeline. Drives `ConfigValid=False` |
+
+### LLMInferenceServiceAutoscalingReady
+
+Set only when an autoscaled service is served by an LLMInferenceService and the cluster does not serve the `opentelemetry.io/v1beta1` OpenTelemetryCollector CRD, which carries the per-service metric collector sidecar.
+
+| Status | Reason | Description |
+|---|---|---|
+| `False` | `OpenTelemetryCollectorUnavailable` | Drives `ConfigValid=False`. Install the OpenTelemetry Operator and restart AIM Engine, or use a fixed replica count |
+
+### ProfileContractIntact
+
+Set only when `spec.llmInferenceService.baseRefs` is non-empty and every referenced config resolved. Reports whether the configs override the profile's contract: its engine image and launch, its accelerator count, or its node affinity. Overrides are allowed and are the config author's responsibility, so this condition is **informational only** and excluded from the `Ready` rollup. See [Additional LLMInferenceServiceConfigs](../concepts/services.md#additional-llminferenceserviceconfigs).
+
+| Status | Reason | Description |
+|---|---|---|
+| `True` | `NoProfileOverrides` | The configs leave the profile's contract alone |
+| `False` | `ProfileContractOverridden` | The message lists each config and the fields it overrides, including `spec.parallelism` and `spec.kvCacheOffloading`, which have no effect with the profile's launch. Emits a warning event on transition |
+
 ### HTTPRouteReady
 
 Set only when `spec.routing.enabled: true`.
@@ -307,6 +353,16 @@ Appears only while runtime construction or its shared-cache lookup is failing, a
 ### RuntimeProjectionElectionReady
 
 Appears only when AIM Engine cannot list the profiles needed to elect a model-slug runtime winner, and gates aggregate `Ready`. The reason reflects the categorized dependency error. It is removed after election succeeds.
+
+### LLMInferenceServiceConfigProjected
+
+Set when AIM Engine runs with [LLMInferenceService support](../admin/kserve-configuration.md#llminferenceservice-support) and the profile projects at least one runtime. Reports the `LLMInferenceServiceConfig` projected next to each runtime of the same name. Informational: it does not gate aggregate `Ready`, and a failure leaves the ServingRuntime projection untouched.
+
+| Status | Reason | Description |
+|---|---|---|
+| `True` | `LLMInferenceServiceConfigProjected` | The configs are projected |
+| `False` | `LLMInferenceServiceConfigProjectionFailed` | The config cannot be rendered, for example because the profile's first model source has no URI scheme |
+| `False` | `ApplyFailed` | KServe rejected the apply, typically because the LLMInferenceService controller's webhook is unavailable. Retried every 30 seconds; emits a warning event |
 
 ## AIMProfileCache conditions
 

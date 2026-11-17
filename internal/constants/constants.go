@@ -404,8 +404,8 @@ const (
 	//     upstream cluster httproute/<ns>/<name>/rule/N; the collector labels
 	//     the series by HTTPRoute.
 	//   - GatewayActivationScopeDeployment: legacy kgateway names the cluster
-	//     kube_<ns>_<svc>_<port>; the collector labels the series by the
-	//     predictor Deployment.
+	//     kube_<ns>_<svc>_<port>; the collector copies <svc>, the HTTPRoute's
+	//     backend Service, into the series' "deployment" label.
 	//   - GatewayActivationScopeCustom: every scale-to-zero service must resolve
 	//     an activationMetricQueryTemplate from its service or RuntimeConfig.
 	//   - GatewayActivationScopeNone: gateway activation is disabled; services
@@ -422,6 +422,13 @@ const (
 	// `opentelemetryCollector.metricScalerEndpoint` so warm and activation
 	// triggers share a single scaler instance.
 	DefaultKEDAOTelScalerAddress = "keda-otel-scaler.keda.svc:4318"
+
+	// DefaultKEDAOTelReceiverEndpoint is the OTLP endpoint of the
+	// keda-otel-add-on the per-service OpenTelemetry collector sidecar exports
+	// pod metrics to. Matches the KServe inferenceservice-config
+	// `opentelemetryCollector.metricReceiverEndpoint` and the
+	// AIMServicePodMetric.serverAddress default.
+	DefaultKEDAOTelReceiverEndpoint = "keda-otel-scaler.keda.svc:4317"
 
 	// DefaultCooldownSecondsPerGiMemory is the seconds-per-GiB multiplier
 	// in the cooldown heuristic
@@ -456,7 +463,8 @@ const (
 	GatewayActivationScopeHTTPRoute = "httproute"
 
 	// GatewayActivationScopeDeployment scopes the gateway activation trigger by
-	// the predictor Deployment (legacy kgateway cluster naming).
+	// the HTTPRoute's backend Service, carried in the "deployment" label (legacy
+	// kgateway cluster naming).
 	GatewayActivationScopeDeployment = "deployment"
 
 	// GatewayActivationScopeCustom requires a service or RuntimeConfig-provided

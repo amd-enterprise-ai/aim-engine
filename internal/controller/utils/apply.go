@@ -399,6 +399,12 @@ func PropagateLabelsForResult(parent client.Object, planResult *PlanResult, conf
 		}
 		PropagateLabels(parent, obj, config)
 	}
+	for _, item := range planResult.toApplyWithForceBestEffort {
+		if _, skip := planResult.labelPropagationSkips[item.obj]; skip {
+			continue
+		}
+		PropagateLabels(parent, item.obj, config)
+	}
 }
 
 // ApplyControllerLabelsToResult adds controller-specific labels to all resources in the PlanResult.
@@ -416,6 +422,9 @@ func ApplyControllerLabelsToResult(planResult *PlanResult, labels map[string]str
 	}
 	for _, obj := range planResult.toApplyWithForce {
 		applyControllerLabels(obj, labels)
+	}
+	for _, item := range planResult.toApplyWithForceBestEffort {
+		applyControllerLabels(item.obj, labels)
 	}
 }
 

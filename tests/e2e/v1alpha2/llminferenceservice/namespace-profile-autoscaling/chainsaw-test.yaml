@@ -1,0 +1,150 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# An autoscaled AIMService served through a KServe LLMInferenceService:
+#
+#   - The namespace profile projects its LLMInferenceServiceConfig eagerly.
+#   - The LLMInferenceService leaves spec.replicas unset, so KServe preserves
+#     the replica count KEDA manages, and its workload pods request the
+#     per-service OpenTelemetry collector sidecar.
+#   - AIM Engine owns the KEDA ScaledObject (targeting the <name>-kserve
+#     Deployment, with the user metric scoped to it) and the
+#     OpenTelemetryCollector.
+#
+# The LLMInferenceService name carries a namespace-dependent hash (like an
+# InferenceService name), so resources are matched by label and the derived
+# names are cross-checked in a script.
+#
+# Uses the KEDA, keda-otel-add-on, OpenTelemetry Operator, and KServe
+# LLMInferenceService controller the dependency Helmfile installs, so it runs
+# in the default kind lane.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: llminferenceservice-namespace-profile-autoscaling
+spec:
+  timeouts:
+    assert: 180s
+    cleanup: 240s
+  steps:
+    - name: Create the namespace profile
+      try:
+        - apply:
+            file: profile.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: test-llmisvc-autoscaling
+              status:
+                status: Ready
+                (conditions[?type == 'LLMInferenceServiceConfigProjected']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1alpha2
+              kind: LLMInferenceServiceConfig
+              metadata:
+                labels:
+                  aim.eai.amd.com/profile: test-llmisvc-autoscaling
+                  aim.eai.amd.com/runtime-projection: eager
+                (ownerReferences[?kind == 'AIMProfile']):
+                  - name: test-llmisvc-autoscaling
+
+    - name: Create the autoscaled AIMService
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: Assert the LLMInferenceService hands replicas to KEDA
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1alpha2
+              kind: LLMInferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: llmisvc-autoscaled
+              spec:
+                (replicas == null): true
+                (annotations."sidecar.opentelemetry.io/inject" != null): true
+
+    - name: Assert AIM Engine authored the ScaledObject and the collector
+      try:
+        - assert:
+            resource:
+              apiVersion: keda.sh/v1alpha1
+              kind: ScaledObject
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: llmisvc-autoscaled
+                  app.kubernetes.io/managed-by: aim-engine
+              spec:
+                minReplicaCount: 1
+                maxReplicaCount: 2
+        - assert:
+            resource:
+              apiVersion: opentelemetry.io/v1beta1
+              kind: OpenTelemetryCollector
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: llmisvc-autoscaled
+              spec:
+                mode: sidecar
+        - script:
+            timeout: 30s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              SEL=aim.eai.amd.com/service=llmisvc-autoscaled
+              LLM=$(kubectl get llminferenceservice -n "$NAMESPACE" -l "$SEL" -o jsonpath='{.items[0].metadata.name}')
+              WANT="${LLM}-kserve"
+              INJECT=$(kubectl get llminferenceservice -n "$NAMESPACE" "$LLM" -o jsonpath='{.spec.annotations.sidecar\.opentelemetry\.io/inject}')
+              TARGET=$(kubectl get scaledobject -n "$NAMESPACE" -l "$SEL" -o jsonpath='{.items[0].spec.scaleTargetRef.name}')
+              QUERY=$(kubectl get scaledobject -n "$NAMESPACE" -l "$SEL" -o jsonpath='{.items[0].spec.triggers[0].metadata.metricQuery}')
+              COLLECTOR=$(kubectl get opentelemetrycollector -n "$NAMESPACE" -l "$SEL" -o jsonpath='{.items[0].metadata.name}')
+              fail=0
+              [ "$TARGET" = "$WANT" ] || { echo "ScaledObject targets $TARGET, want $WANT"; fail=1; }
+              [ "$COLLECTOR" = "$WANT" ] || { echo "collector is $COLLECTOR, want $WANT"; fail=1; }
+              [ "$INJECT" = "$WANT" ] || { echo "sidecar inject annotation is $INJECT, want $WANT"; fail=1; }
+              case "$QUERY" in *"deployment=\"$WANT\""*) ;; *) echo "metric query not scoped to $WANT: $QUERY"; fail=1 ;; esac
+              [ "$fail" = 0 ] && echo "OK: everything targets $WANT"
+              exit "$fail"
+
+    - name: Assert the service reaches Running with the sidecar injected
+      try:
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: llmisvc-autoscaled
+              status:
+                status: Running
+                servingAPI: LLMInferenceService
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  app.kubernetes.io/part-of: llminferenceservice
+                  app.kubernetes.io/component: llminferenceservice-workload
+                (annotations."sidecar.opentelemetry.io/inject" != null): true
+              spec:
+                # The OpenTelemetry Operator injects the collector as a native
+                # sidecar (restartable init container) where Kubernetes supports
+                # it, and as a regular container otherwise.
+                (length([containers, initContainers || `[]`][] | [?name == 'otc-container'])): 1
+      catch:
+        - describe:
+            apiVersion: serving.kserve.io/v1alpha2
+            kind: LLMInferenceService
+            selector: aim.eai.amd.com/service=llmisvc-autoscaled
+        - podLogs:
+            selector: app.kubernetes.io/part-of=llminferenceservice
+            tail: 50

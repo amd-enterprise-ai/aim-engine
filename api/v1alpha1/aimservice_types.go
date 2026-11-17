@@ -221,6 +221,59 @@ const (
 	CachingModeNever AIMCachingMode = "Never"
 )
 
+// AIMServingAPI selects the KServe API that serves an AIMService.
+// +kubebuilder:validation:Enum=Auto;InferenceService;LLMInferenceService
+type AIMServingAPI string
+
+const (
+	// ServingAPIAuto lets AIM Engine choose the KServe API. It currently
+	// resolves to InferenceService.
+	ServingAPIAuto AIMServingAPI = "Auto"
+
+	// ServingAPIInferenceService serves the service through a KServe
+	// InferenceService that references the profile's projected ServingRuntime.
+	ServingAPIInferenceService AIMServingAPI = "InferenceService"
+
+	// ServingAPILLMInferenceService serves the service through a KServe
+	// LLMInferenceService that references the profile's projected
+	// LLMInferenceServiceConfig.
+	ServingAPILLMInferenceService AIMServingAPI = "LLMInferenceService"
+)
+
+// AIMServiceLLMInferenceServiceConfig configures the KServe
+// LLMInferenceService that serves an AIMService.
+type AIMServiceLLMInferenceServiceConfig struct {
+	// BaseRefs lists additional KServe LLMInferenceServiceConfigs to merge into
+	// the LLMInferenceService after the resolved profile's projected config.
+	// Later entries override earlier ones, and they may override any profile
+	// field. Fields set on the AIMService (replicas, spec.resources, caching,
+	// pull secrets, service account, priority class, CA trust) still take
+	// precedence. Each name resolves in the service namespace first, then in the
+	// KServe namespace, as KServe resolves baseRefs. Names under the reserved
+	// aim- prefix are rejected. A config that sets spec.router, spec.replicas,
+	// spec.scaling, spec.prefill, spec.worker, or spec.model.lora conflicts with
+	// AIM Engine's routing, autoscaling, workload topology, or adapters and
+	// makes the service ConfigValid=False. Overrides of the profile's engine
+	// image, launch, accelerator count, or node affinity are reported by the
+	// informational ProfileContractIntact condition.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=16
+	BaseRefs []AIMLLMInferenceServiceConfigReference `json:"baseRefs,omitempty"`
+}
+
+// AIMLLMInferenceServiceConfigReference names a KServe
+// LLMInferenceServiceConfig.
+type AIMLLMInferenceServiceConfigReference struct {
+	// Name of the LLMInferenceServiceConfig. The aim- prefix is reserved for
+	// configs AIM Engine projects from profiles.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:XValidation:rule="!self.startsWith('aim-')",message="baseRefs names must not use the reserved aim- prefix"
+	Name string `json:"name"`
+}
+
 // AIMServiceCachingConfig controls caching behavior for a service.
 // +kubebuilder:validation:XValidation:rule="self.mode == oldSelf.mode",message="caching mode is immutable after creation"
 type AIMServiceCachingConfig struct {
@@ -477,6 +530,23 @@ type AIMServiceSpec struct {
 	// +optional
 	ProfileOverrides *AIMServiceProfileOverrides `json:"profileOverrides,omitempty"`
 
+	// ServingAPI selects the KServe API that serves this service. Auto (the
+	// default) currently resolves to InferenceService. The resolved API is
+	// recorded in status.servingAPI and kept for the service's lifetime, so a
+	// later change to what Auto selects never moves an existing service.
+	// LLMInferenceService requires spec.profile (aim.eai.amd.com/v1alpha2) and
+	// an operator running with LLMInferenceService support, which needs the
+	// KServe LLMInferenceService CRDs. Immutable after creation.
+	// +optional
+	// +kubebuilder:default=Auto
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec.servingAPI is immutable after creation"
+	ServingAPI AIMServingAPI `json:"servingAPI,omitempty"`
+
+	// LLMInferenceService configures the KServe LLMInferenceService that serves
+	// the service. Only valid with spec.servingAPI=LLMInferenceService.
+	// +optional
+	LLMInferenceService *AIMServiceLLMInferenceServiceConfig `json:"llmInferenceService,omitempty"`
+
 	// AdapterMode is the immutable adapter contract for the service, mapped
 	// directly to the AIM_ADAPTER_MODE container env. static (default) freezes
 	// spec.adapters and mounts the adapter disk only when adapters are declared;
@@ -590,6 +660,12 @@ type AIMServiceStatus struct {
 	// +optional
 	// +kubebuilder:validation:Enum=template;profile
 	ReconcilerPipeline string `json:"reconcilerPipeline,omitempty"`
+
+	// ServingAPI is the KServe API this service resolved to. It is recorded
+	// on first resolution and kept for the service's lifetime.
+	// +optional
+	// +kubebuilder:validation:Enum=InferenceService;LLMInferenceService
+	ServingAPI AIMServingAPI `json:"servingAPI,omitempty"`
 
 	// Conditions represent the latest observations of template state.
 	// +listType=map
@@ -768,6 +844,16 @@ const (
 	// it (fixing the collector or gateway policy, alerting) is the cluster
 	// administrator's call.
 	AIMServiceConditionActivationMetricAvailable = "ActivationMetricAvailable"
+
+	// AIMServiceConditionProfileContractIntact reports whether
+	// spec.llmInferenceService.baseRefs leave the resolved profile's contract
+	// in place: its engine image and launch, its accelerator count, and its
+	// node affinity. False lists the overriding fields, including ones the
+	// profile's launch makes ineffective (spec.parallelism,
+	// spec.kvCacheOffloading). Overrides are allowed and are the user's
+	// responsibility, so the condition is informational only and never
+	// participates in the Ready rollup. Present only when baseRefs are set.
+	AIMServiceConditionProfileContractIntact = "ProfileContractIntact"
 )
 
 // Condition reasons for AIMService
@@ -835,6 +921,26 @@ const (
 	// grace period, so the service may not wake after scaling to zero.
 	AIMServiceReasonActivationMetricUnavailable = "ActivationMetricUnavailable"
 
+	// Profile contract signal (ProfileContractIntact).
+	// AIMServiceReasonNoProfileOverrides indicates the baseRefs leave the
+	// profile's engine launch, accelerator count, and node affinity alone.
+	AIMServiceReasonNoProfileOverrides = "NoProfileOverrides"
+	// AIMServiceReasonProfileContractOverridden indicates the baseRefs override
+	// part of the profile's contract; the message lists the fields.
+	AIMServiceReasonProfileContractOverridden = "ProfileContractOverridden"
+
+	// AIMServiceReasonServingAPIUnsupported indicates the requested
+	// spec.servingAPI cannot serve the service: its CRDs are not installed, or
+	// the service resolves through a pipeline that does not support it.
+	// Drives ConfigValid=False.
+	AIMServiceReasonServingAPIUnsupported = "ServingAPIUnsupported"
+
+	// AIMServiceReasonOpenTelemetryCollectorUnavailable indicates an
+	// autoscaled LLMInferenceService-served service on a cluster without the
+	// opentelemetry.io/v1beta1 OpenTelemetryCollector kind, which carries its
+	// metric collector sidecar. Drives ConfigValid=False.
+	AIMServiceReasonOpenTelemetryCollectorUnavailable = "OpenTelemetryCollectorUnavailable"
+
 	// Routing
 	AIMServiceReasonPathTemplateInvalid = "PathTemplateInvalid"
 
@@ -874,6 +980,8 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.profileOverrides) || !has(self.spec.profileOverrides.acceleratorPartitioningMode) || size(self.spec.profileOverrides.acceleratorPartitioningMode) == 0 || has(self.spec.profileOverrides.acceleratorCount)",message="acceleratorCount must be specified together with any acceleratorPartitioningMode override; partition mode changes the per-unit interpretation of acceleratorCount"
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.adapters) || self.spec.adapters.all(a, self.spec.adapters.exists_one(b, b.kind == a.kind && b.name == a.name))",message="spec.adapters entries must have unique (kind, name) pairs"
 // +kubebuilder:validation:XValidation:rule="self.spec.adapterMode == 'dynamic' || (has(self.spec.adapters) == has(oldSelf.spec.adapters) && (!has(self.spec.adapters) || self.spec.adapters == oldSelf.spec.adapters))",message="spec.adapters is immutable unless spec.adapterMode is dynamic"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.servingAPI) || self.spec.servingAPI != 'LLMInferenceService' || (oldSelf.hasValue() && has(oldSelf.value().spec.servingAPI) && oldSelf.value().spec.servingAPI == 'LLMInferenceService')",message="spec.servingAPI=LLMInferenceService is not supported on v1alpha1; use aim.eai.amd.com/v1alpha2",optionalOldSelf=true
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.llmInferenceService) || (oldSelf.hasValue() && has(oldSelf.value().spec.llmInferenceService))",message="spec.llmInferenceService is not supported on v1alpha1; use aim.eai.amd.com/v1alpha2",optionalOldSelf=true
 // Note: KServe uses {name}-{namespace} format which must not exceed 63 characters.
 // This constraint is validated at runtime since CEL cannot access metadata.namespace.
 //
@@ -923,6 +1031,15 @@ func (spec *AIMServiceSpec) GetCachingMode() AIMCachingMode {
 		// Defensive default for unknown values.
 		return CachingModeShared
 	}
+}
+
+// GetServingAPI returns the requested serving API, treating an unset value as
+// Auto.
+func (spec *AIMServiceSpec) GetServingAPI() AIMServingAPI {
+	if spec.ServingAPI == "" {
+		return ServingAPIAuto
+	}
+	return spec.ServingAPI
 }
 
 func init() {

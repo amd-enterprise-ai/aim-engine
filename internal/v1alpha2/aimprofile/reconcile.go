@@ -40,6 +40,7 @@ import (
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profilecache"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/serving"
 )
 
 const profileCacheReconcilingReason = "ProfileCacheReconciling"
@@ -57,6 +58,10 @@ type ProfileReconciler struct {
 	// ServingRuntime for the profile (Exhaustive / Both project per-profile;
 	// Reduced does not).
 	ProjectionMode aimv1alpha2.RuntimeProjectionMode
+
+	// LLMInferenceService enables projecting an LLMInferenceServiceConfig next
+	// to each ServingRuntime the profile maintains.
+	LLMInferenceService serving.LLMInferenceServiceSupport
 }
 
 // ClusterProfileReconciler implements the DomainReconciler interface for cluster-scoped profiles.
@@ -68,6 +73,11 @@ type ClusterProfileReconciler struct {
 	// ClusterServingRuntime for the profile (Exhaustive / Both project
 	// per-profile; Reduced does not).
 	ProjectionMode aimv1alpha2.RuntimeProjectionMode
+
+	// LLMInferenceService enables projecting a bare LLMInferenceServiceConfig
+	// into the KServe namespace next to each ClusterServingRuntime the profile
+	// maintains.
+	LLMInferenceService serving.LLMInferenceServiceSupport
 }
 
 // ============================================================================
@@ -182,6 +192,9 @@ type ProfileObservation struct {
 	projectionDeferred bool
 	projectionWaiting  bool
 	projectionErr      error
+	// llmConfigErr reports an LLMInferenceServiceConfig that cannot be rendered.
+	// It does not block the ServingRuntime projection.
+	llmConfigErr error
 }
 
 // GetComponentHealth returns health of all components for automatic status management.
@@ -218,6 +231,9 @@ type ClusterProfileObservation struct {
 	// (deployable, has an image, and hardware is available — freshly computed).
 	projectable   bool
 	projectionErr error
+	// llmConfigErr reports an LLMInferenceServiceConfig that cannot be rendered.
+	// It does not block the ClusterServingRuntime projection.
+	llmConfigErr error
 }
 
 // GetComponentHealth returns health of all components for automatic status management.
@@ -273,6 +289,9 @@ func (r *ProfileReconciler) ComposeState(
 	if obs.projectionErr == nil {
 		obs.projectionErr = validateNamespaceRuntimeProjection(r.ProjectionMode, fetch.profile, obs)
 	}
+	if obs.projectionErr == nil {
+		obs.llmConfigErr = validateNamespaceLLMConfigProjection(r.ProjectionMode, r.LLMInferenceService, fetch.profile, obs)
+	}
 	return obs
 }
 
@@ -307,6 +326,9 @@ func (r *ClusterProfileReconciler) ComposeState(
 		// A bare ClusterServingRuntime does not consume profile YAML, so a
 		// retained projection can be rebuilt directly after its gate flips.
 		obs.projectionErr = validateClusterRuntimeProjection(r.ProjectionMode, fetch.profile, obs)
+	}
+	if obs.projectionErr == nil {
+		obs.llmConfigErr = validateClusterLLMConfigProjection(r.ProjectionMode, r.LLMInferenceService, fetch.profile, obs)
 	}
 	return obs
 }
@@ -367,6 +389,7 @@ func (r *ProfileReconciler) PlanResources(
 		) {
 			planNamespaceModelSlugRuntime(ctx, &plan, r.ProjectionMode, profile, obs)
 		}
+		planNamespaceLLMConfigs(&plan, r.ProjectionMode, r.LLMInferenceService, profile, obs)
 	}
 
 	return plan
@@ -397,6 +420,7 @@ func (r *ClusterProfileReconciler) PlanResources(
 		) {
 			planClusterModelSlugRuntime(ctx, &plan, r.ProjectionMode, profile, obs)
 		}
+		planClusterLLMConfigs(&plan, r.ProjectionMode, r.LLMInferenceService, profile, obs)
 	}
 	return plan
 }
@@ -433,6 +457,11 @@ func (r *ProfileReconciler) DecorateStatus(
 			obs.projectable,
 			obs.modelSlugWinner,
 		)
+		decorateLLMConfigProjectionCondition(
+			cm, r.LLMInferenceService,
+			len(namespaceLLMConfigNames(r.ProjectionMode, obs.profile, obs)) > 0,
+			obs.llmConfigErr,
+		)
 	}
 }
 
@@ -463,6 +492,11 @@ func (r *ClusterProfileReconciler) DecorateStatus(
 			obs.profile.Name,
 			obs.projectable,
 			obs.modelSlugWinner,
+		)
+		decorateLLMConfigProjectionCondition(
+			cm, r.LLMInferenceService,
+			len(clusterLLMConfigNames(r.ProjectionMode, obs.profile, obs)) > 0,
+			obs.llmConfigErr,
 		)
 	}
 }

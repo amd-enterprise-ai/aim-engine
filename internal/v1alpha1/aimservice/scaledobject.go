@@ -127,10 +127,7 @@ func planScaledObject(
 ) client.Object {
 	logger := log.FromContext(ctx).WithName("planScaledObject")
 
-	hasAutoscaling := service.Spec.AutoScaling != nil ||
-		service.Spec.MinReplicas != nil ||
-		service.Spec.MaxReplicas != nil
-	if !hasAutoscaling {
+	if !HasAutoscaling(service) {
 		return nil
 	}
 
@@ -143,9 +140,38 @@ func planScaledObject(
 		return nil
 	}
 	predictorName := isvcName + constants.PredictorServiceSuffix
+	return planScaledObjectForDeployment(ctx, service, effectiveResources, runtimeConfig, predictorName, predictorName)
+}
+
+// HasAutoscaling reports whether the AIMService asks for autoscaling.
+func HasAutoscaling(service *aimv1alpha1.AIMService) bool {
+	return service.Spec.AutoScaling != nil ||
+		service.Spec.MinReplicas != nil ||
+		service.Spec.MaxReplicas != nil
+}
+
+// planScaledObjectForDeployment is planScaledObject for an explicit serving
+// Deployment. The ScaledObject is named after it, scales it, and scopes bare
+// user metric queries to it. backendServiceName is the Service the HTTPRoute
+// forwards to; for the InferenceService predictor it equals predictorName.
+func planScaledObjectForDeployment(
+	ctx context.Context,
+	service *aimv1alpha1.AIMService,
+	effectiveResources *corev1.ResourceRequirements,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	predictorName string,
+	backendServiceName string,
+) client.Object {
+	logger := log.FromContext(ctx).WithName("planScaledObject")
+	if !HasAutoscaling(service) {
+		return nil
+	}
+
 	minReplicas, maxReplicas := resolveReplicaBounds(service)
 	scaleToZero := minReplicas == 0
-	activationQuery, activationRequired, activationErr := resolveScaleToZeroActivationMetric(service, runtimeConfig)
+	activationQuery, activationRequired, activationErr := resolveScaleToZeroActivationMetricForDeployment(
+		service, runtimeConfig, predictorName, backendServiceName,
+	)
 	if activationRequired && activationErr != nil {
 		logger.Error(activationErr,
 			"cannot build gateway activation metric query; skipping ScaledObject",
@@ -359,26 +385,42 @@ func resolvedUserMetricTriggerCount(service *aimv1alpha1.AIMService, predictorNa
 	return count
 }
 
-// resolveScaleToZeroActivationMetric is the single source of truth for whether
-// a zero-to-one activation metric is required and whether its provider-neutral
-// query can be built. Provider selection remains encapsulated in
-// gatewayActivationMetricQuery.
-func resolveScaleToZeroActivationMetric(
+// validateScaleToZeroActivationMetric is the single source of truth for whether
+// a zero-to-one activation metric is required for the InferenceService
+// predictor and whether its provider-neutral query can be built. Provider
+// selection remains encapsulated in gatewayActivationMetricQuery.
+func validateScaleToZeroActivationMetric(
 	service *aimv1alpha1.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+) (required bool, err error) {
+	if !isScaleToZero(service) {
+		return false, nil
+	}
+	isvcName, err := GenerateInferenceServiceName(service.Name, service.Namespace)
+	if err != nil {
+		return true, err
+	}
+	predictorName := isvcName + constants.PredictorServiceSuffix
+	_, required, err = resolveScaleToZeroActivationMetricForDeployment(
+		service, runtimeConfig, predictorName, predictorName,
+	)
+	return required, err
+}
+
+// resolveScaleToZeroActivationMetricForDeployment resolves the activation
+// query for an explicit serving Deployment. The ${predictorDeployment}
+// template placeholder refers to deploymentName; the legacy kgateway scope
+// matches backendServiceName, the Service the HTTPRoute forwards to.
+func resolveScaleToZeroActivationMetricForDeployment(
+	service *aimv1alpha1.AIMService,
+	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
+	deploymentName string,
+	backendServiceName string,
 ) (query string, required bool, err error) {
 	if !isScaleToZero(service) {
 		return "", false, nil
 	}
-	isvcName, err := GenerateInferenceServiceName(service.Name, service.Namespace)
-	if err != nil {
-		return "", true, err
-	}
-	query, err = gatewayActivationMetricQuery(
-		service,
-		isvcName+constants.PredictorServiceSuffix,
-		runtimeConfig,
-	)
+	query, err = gatewayActivationMetricQuery(service, deploymentName, backendServiceName, runtimeConfig)
 	return query, true, err
 }
 
@@ -431,6 +473,7 @@ func gatewayActivationScope() string {
 func gatewayActivationMetricQuery(
 	service *aimv1alpha1.AIMService,
 	predictorName string,
+	backendServiceName string,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) (string, error) {
 	scope := gatewayActivationScope()
@@ -447,10 +490,10 @@ func gatewayActivationMetricQuery(
 
 	switch scope {
 	case constants.GatewayActivationScopeDeployment:
-		// Legacy kgateway: the collector names the upstream cluster
-		// kube_<ns>_<svc>_<port> and labels the series by the predictor
-		// Deployment, identical to the user-metric scoping.
-		return scopedMetricQuery(gatewayActivationMetricName, service.Namespace, predictorName), nil
+		// Legacy kgateway: the upstream cluster is named
+		// kube_<ns>_<svc>_<port>, and the collector copies <svc> into the
+		// "deployment" label. Match the backend Service, not the Deployment.
+		return scopedMetricQuery(gatewayActivationMetricName, service.Namespace, backendServiceName), nil
 	case constants.GatewayActivationScopeCustom:
 		return "", fmt.Errorf(
 			"gatewayProvider=custom requires spec.scaleFromZero.activationMetricQueryTemplate " +

@@ -1994,6 +1994,62 @@ func TestPipeline_Run_ApplyError_SetsDependenciesReachable(t *testing.T) {
 	}
 }
 
+func TestPipeline_Run_BestEffortApplyErrorReportsConditionWithoutFailing(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = metav1.AddMetaToScheme(scheme)
+	scheme.AddKnownTypes(schema.GroupVersion{Group: "test.k8s.io", Version: "v1"}, &testObject{})
+
+	obj := &testObject{
+		TypeMeta: metav1.TypeMeta{APIVersion: "test.k8s.io/v1", Kind: "TestObject"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test-obj",
+			Namespace:         "default",
+			CreationTimestamp: metav1.Now(),
+			Generation:        7,
+		},
+		Status: testStatus{ObservedGeneration: 6},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(obj).WithStatusSubresource(obj).Build()
+
+	plan := PlanResult{}
+	plan.ApplyWithForceBestEffort(&testObject{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "test.k8s.io/v1", Kind: "TestObject"},
+		ObjectMeta: metav1.ObjectMeta{Name: "optional-child", Namespace: "default"},
+	}, "OptionalProjected")
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservation]{
+		Client:         &failingApplyClient{Client: fakeClient},
+		StatusClient:   fakeClient.Status(),
+		Recorder:       record.NewFakeRecorder(10),
+		Reconciler:     &testReconcilerWithPlan{fetchResult: testFetch{ModelReady: true}, planResult: plan},
+		Scheme:         scheme,
+		ControllerName: "test",
+	}
+
+	result, err := p.Run(context.Background(), obj)
+	if err != nil {
+		t.Fatalf("Run() error = %v, want a best-effort failure not to fail the reconcile", err)
+	}
+	if result.RequeueAfter != BestEffortApplyRetryInterval {
+		t.Errorf("RequeueAfter = %s, want %s", result.RequeueAfter, BestEffortApplyRetryInterval)
+	}
+
+	persisted := &testObject{}
+	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(obj), persisted); err != nil {
+		t.Fatalf("Failed to get persisted object: %v", err)
+	}
+	if persisted.Status.ObservedGeneration != 7 {
+		t.Errorf("ObservedGeneration = %d, want 7: a best-effort failure must not hold back status", persisted.Status.ObservedGeneration)
+	}
+	if cond := findCondition(persisted.Status.Conditions, ConditionTypeDependenciesReachable); cond != nil && cond.Status == metav1.ConditionFalse {
+		t.Errorf("DependenciesReachable = False (%s), want it unaffected", cond.Message)
+	}
+	cond := findCondition(persisted.Status.Conditions, "OptionalProjected")
+	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != ReasonApplyFailed ||
+		!strings.Contains(cond.Message, "optional-child") {
+		t.Errorf("OptionalProjected = %+v, want False/%s naming the object", cond, ReasonApplyFailed)
+	}
+}
+
 func TestPipeline_Run_CreateCollisionRequeuesWithoutApplyingSiblings(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = metav1.AddMetaToScheme(scheme)

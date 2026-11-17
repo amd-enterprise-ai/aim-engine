@@ -1,6 +1,6 @@
 # KServe Configuration
 
-AIM Engine requires KServe v0.16.1 or later with specific configuration. CI tests against KServe v0.20.0. Use the values file below when installing KServe.
+AIM Engine requires KServe v0.16.1 or later with specific configuration and is tested against KServe v0.20.0. [LLMInferenceService support](#llminferenceservice-support) requires KServe v0.20.0. Use the values file below when installing KServe.
 
 ## Required Values
 
@@ -62,6 +62,64 @@ AIM Engine uses KServe in Standard mode (without Knative) to support KEDA-based 
 AIM Engine manages model caching independently via `AIMArtifact` and `AIMProfileCache` (v1alpha2) / `AIMTemplateCache` (v1alpha1) resources. KServe's built-in local model feature must be disabled to avoid conflicts.
 
 This is already configured in the values snippet above via `kserve.localmodel.enabled: false` (and in the repository's local dependency Helmfile).
+
+## LLMInferenceService support
+
+AIMServices with `spec.servingAPI: LLMInferenceService` are served through KServe's LLMInferenceService controller, a separate KServe component. This integration requires KServe v0.20.0; InferenceService serving keeps working on v0.16.1 and later. Install the LLMInferenceService controller into the same namespace as the controller above. The InferenceService release keeps owning the resources both controllers share, so the LLMInferenceService release must not create them:
+
+```bash
+helm install kserve-llmisvc-crd oci://ghcr.io/kserve/charts/kserve-llmisvc-crd \
+  --namespace kserve-system \
+  --version v0.20.0
+
+helm install kserve-llmisvc oci://ghcr.io/kserve/charts/kserve-llmisvc-resources \
+  --namespace kserve-system \
+  --version v0.20.0 \
+  --set kserve.createSharedResources=false
+
+# KServe's built-in LLMInferenceServiceConfig base templates
+helm template kserve-llmisvc-configs oci://ghcr.io/kserve/charts/kserve-runtime-configs \
+  --version v0.20.0 \
+  --set kserve.llmisvcConfigs.enabled=true \
+  --set kserve.servingruntime.enabled=false \
+  | sed -E 's/^(  namespace: )kserve$/\1kserve-system/' \
+  | kubectl apply --server-side -f -
+```
+
+The `kserve-runtime-configs` v0.20.0 chart writes these configs to the `kserve` namespace whatever the release namespace is, and KServe only resolves its built-in configs in its own namespace, hence the `sed`. Substitute your KServe namespace if it is not `kserve-system`. If the apply fails with a webhook connection error, the LLMInferenceService controller is still starting; retry after a few seconds.
+
+AIM Engine detects the `serving.kserve.io/v1alpha2` LLMInferenceService and LLMInferenceServiceConfig CRDs, and the `opentelemetry.io/v1beta1` OpenTelemetryCollector CRD, once at startup. Restart the operator after installing any of them. Two chart values control the integration:
+
+| Value | Default | Purpose |
+|---|---|---|
+| `manager.enableLLMInferenceService` | `true` | Set to `false` to turn the integration off even when the CRDs are installed. |
+| `manager.kserveNamespace` | `kserve-system` | Namespace of the KServe control plane. AIMClusterProfiles project their LLMInferenceServiceConfigs here, because KServe resolves `spec.baseRefs` in this namespace when the service namespace has no config of that name. |
+
+Leave LLMInferenceService TLS disabled (KServe's default; `enableLLMInferenceServiceTLS` unset in `inferenceservice-config`). AIM images serve plain HTTP on port 8000, and the probes and workload Service KServe generates switch to HTTPS when TLS is enabled.
+
+AIM profiles and AIMClusterProfiles project an LLMInferenceServiceConfig next to each ServingRuntime they maintain. KServe validates these configs with the LLMInferenceService controller's webhook, so they cannot be written while that controller is down. The profile then reports `LLMInferenceServiceConfigProjected=False` (reason `ApplyFailed`) and retries every 30 seconds, while its ServingRuntimes and InferenceService-served AIMServices are unaffected.
+
+KServe merges its built-in `kserve-config-llm-template` under every LLMInferenceService, and the projected configs override the parts that conflict with AIM images:
+
+- **Launch.** Profiles that rely on the image entrypoint run `./entrypoint.py` from `/workspace`, the AIM image contract, with `HF_HUB_CACHE=/workspace/model-cache/hub`. Profiles that invoke vLLM directly (NVIDIA profiles with the `vllm` engine) keep their `vllm serve` command and KServe's `HF_HUB_CACHE=/models`, an emptyDir.
+- **Security context.** `runAsNonRoot` is set to `false`, because AIM images run as root. KServe's template drops all Linux capabilities, and a config merge cannot undo that.
+- **Probes.** All probes check `/health` on port 8000. The startup probe allows one hour for weights to load. The liveness probe restarts the pod after one minute of failures, and the readiness probe removes the pod from endpoints after 15 seconds. Probe timeouts are 5–10 seconds instead of KServe's 1 second, so a busy engine is not restarted.
+- **Model loading.** KServe's storage initializer is disabled, so AIM Engine loads models exactly as it does for InferenceServices.
+
+### Routing and autoscaling
+
+An LLMInferenceService can route and scale itself through KServe, but AIM Engine does not use either mechanism. It routes and scales the workload the same way it does for an InferenceService, so `spec.routing` and `spec.replicas` / autoscaling on the AIMService mean the same thing on both serving APIs.
+
+| Concern | KServe LLMInferenceService | AIM Engine |
+|---|---|---|
+| Routing | `spec.router`: a KServe-managed `HTTPRoute` on a default or referenced Gateway, optionally fronted by the endpoint picker (`spec.router.scheduler`) and an `InferencePool` for load- and prefix-aware request scheduling | Leaves `spec.router` unset, so KServe creates no route, Gateway, scheduler, or `InferencePool`. AIM Engine owns the `HTTPRoute` and points it at the `<name>-kserve-workload-svc` Service on port 8000. |
+| Autoscaling | `spec.scaling`: the Workload Variant Autoscaler (WVA) computes a desired replica count from Prometheus metrics and drives an HPA or KEDA actuator | Leaves `spec.scaling` and, when autoscaling, `spec.replicas` unset, so KServe preserves the Deployment's replica count. AIM Engine owns a KEDA `ScaledObject` on the `<name>-kserve` Deployment and an OpenTelemetry Collector sidecar that pushes vLLM metrics to the KEDA OTel add-on, which also enables scale-to-zero. |
+
+Autoscaling an LLMInferenceService-served AIMService requires the [OpenTelemetry Operator](https://github.com/open-telemetry/opentelemetry-operator), which injects the collector sidecar. Without its CRD, such services report `ConfigValid=False` with reason `OpenTelemetryCollectorUnavailable`. The collector's scrape interval (5s) and resources (200m CPU / 512Mi memory requested, 1 CPU / 2Gi limit) match the collector KServe creates for an autoscaled InferenceService and are not configurable.
+
+With the `kgateway` scale-from-zero provider, the activation metric is matched by the HTTPRoute's backend Service (`<name>-kserve-workload-svc`), not by the Deployment.
+
+Request scheduling through the endpoint picker is therefore not available to AIMServices today. Prefill/decode disaggregation (`spec.prefill`) and multi-node workers (`spec.worker`) are not used either. AIMServices reject additional LLMInferenceServiceConfigs that set any of these fields (see [Additional LLMInferenceServiceConfigs](../concepts/services.md#additional-llminferenceserviceconfigs)).
 
 ## Verifying Configuration
 
