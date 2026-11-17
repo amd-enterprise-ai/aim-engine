@@ -405,6 +405,15 @@ spec:
                       retained for API compatibility and has no effect.
                     type: string
                 type: object
+              baseImageRegistry:
+                description: |-
+                  BaseImageRegistry is the registry and org that host aim-base, such as
+                  registry.example.com/amdenterpriseai. Models whose weights are replaced
+                  deploy aim-base from here. When unset, they use the model image's
+                  registry and org.
+                maxLength: 512
+                pattern: ^[^[:space:]@/:]+(?::[0-9]+)?(?:/[^[:space:]@/:]+)*$
+                type: string
               defaultStorageClassName:
                 description: |-
                   DEPRECATED: Use Storage.DefaultStorageClassName instead. This field will be removed in a future version.

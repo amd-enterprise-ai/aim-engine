@@ -1,0 +1,6 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterModel
+metadata:
+  name: profileset-catalog-only-source
+spec:
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.2

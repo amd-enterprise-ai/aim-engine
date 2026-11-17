@@ -39,15 +39,13 @@
 //     version filter, so by definition all matches share it).
 //  2. Otherwise (latest/any, or pinned with empty image): fetch the source
 //     owner identified by match.Spec.ModelName + match.OwnerNamespace, take
-//     status.imageMetadata.baseImageRef, fall back to aim-base:MAJOR.MINOR
-//     synthesized from the owner's spec.image tag for legacy installs whose
-//     metadata was cached before AIM_BASE_IMAGE_REF extraction existed, and
-//     rebase the result onto the owner's registry+org so private mirrors
-//     work without extra plumbing.
+//     status.imageMetadata.baseImageRef, and deploy it from the RuntimeConfig's
+//     baseImageRegistry, or from the owner image's registry and org when that
+//     is unset (see aimimage.ResolveBaseImage).
 //
-// When resolution defers (owner not found, no baseImageRef and no semver tag
-// to fall back to), the caller skips Apply for that copy. A subsequent
-// reconcile triggered by the owner's update will retry.
+// When resolution defers (owner not found or AIM_BASE_IMAGE_REF absent), the
+// caller skips Apply for that copy. A subsequent reconcile triggered by the
+// owner's update will retry.
 
 package aimmodel
 
@@ -65,9 +63,10 @@ import (
 // It fetches each source owner at most once per reconcile via an in-memory
 // cache so multiple matches sharing one owner don't trigger redundant GETs.
 type imageResolver struct {
-	c         client.Client
-	modelSpec *aimv1alpha1.AIMModelSpec
-	cache     map[ownerKey]ownerInfo
+	c                 client.Client
+	modelSpec         *aimv1alpha1.AIMModelSpec
+	baseImageRegistry string
+	cache             map[ownerKey]ownerInfo
 }
 
 type ownerKey struct {
@@ -81,11 +80,18 @@ type ownerInfo struct {
 }
 
 // newImageResolver constructs a resolver for the given fine-tuned model spec.
-func newImageResolver(c client.Client, modelSpec *aimv1alpha1.AIMModelSpec) *imageResolver {
+// baseImageRegistry is the selected RuntimeConfig's aim-base registry, or ""
+// to deploy aim-base from the source owner's image registry.
+func newImageResolver(
+	c client.Client,
+	modelSpec *aimv1alpha1.AIMModelSpec,
+	baseImageRegistry string,
+) *imageResolver {
 	return &imageResolver{
-		c:         c,
-		modelSpec: modelSpec,
-		cache:     map[ownerKey]ownerInfo{},
+		c:                 c,
+		modelSpec:         modelSpec,
+		baseImageRegistry: baseImageRegistry,
+		cache:             map[ownerKey]ownerInfo{},
 	}
 }
 
@@ -111,29 +117,11 @@ func (r *imageResolver) Resolve(ctx context.Context, match TemplateMatchResult) 
 
 	baseRef := owner.baseImageRef
 	if baseRef == "" {
-		// Legacy fallback: status.imageMetadata was cached before
-		// AIM_BASE_IMAGE_REF extraction existed and we don't re-inspect a
-		// model that already has metadata. Synthesize aim-base:MAJOR.MINOR
-		// from the owner's spec.image tag and let aimimage.RebaseRegistry
-		// graft the registry+org back on. When the tag isn't semver-shaped
-		// we can't synthesize anything sensible — fail and let the caller
-		// defer.
-		baseRef = aimimage.LegacyBaseImageFromSource(owner.specImage)
-		if baseRef == "" {
-			return "", fmt.Errorf("source owner %s/%s has no baseImageRef and no semver tag to fall back to",
-				match.OwnerNamespace, match.Spec.ModelName)
-		}
-	} else {
-		// Normalise AIM_BASE_IMAGE_REF tags to MAJOR.MINOR (e.g.
-		// `aim-base:0.11-rc21` → `aim-base:0.11`). Build pipelines bake
-		// release-candidate tags into the image but the deployable
-		// aim-base image is always tagged with its MAJOR.MINOR rolling
-		// tag; without this rewrite the rebased reference points at a
-		// non-existent registry coordinate.
-		baseRef = aimimage.NormalizeBaseImageTag(baseRef)
+		return "", fmt.Errorf("source owner %s/%s has no AIM_BASE_IMAGE_REF",
+			match.OwnerNamespace, match.Spec.ModelName)
 	}
 
-	return aimimage.RebaseRegistry(owner.specImage, baseRef), nil
+	return aimimage.ResolveBaseImage(baseRef, owner.specImage, r.baseImageRegistry), nil
 }
 
 func (r *imageResolver) lookupOwner(ctx context.Context, namespace, name string) (ownerInfo, error) {

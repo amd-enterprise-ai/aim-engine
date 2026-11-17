@@ -595,6 +595,13 @@ type AIMModelStatus struct {
 	// +optional
 	ImageMetadata *ImageMetadata `json:"imageMetadata,omitempty"`
 
+	// ImageMetadataVersion identifies the extraction contract used to populate
+	// ImageMetadata. Controllers use it to migrate cached metadata when new
+	// producer-owned fields are introduced without repeatedly inspecting images
+	// that legitimately omit those fields.
+	// +optional
+	ImageMetadataVersion int32 `json:"imageMetadataVersion,omitempty"`
+
 	// SourceType indicates how this model's artifacts are sourced.
 	// - "Image": Model discovered from container image labels
 	// - "Custom": Model uses explicit spec.modelSources

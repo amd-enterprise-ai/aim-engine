@@ -17,7 +17,7 @@ Fine-tuned models use the `aim.eai.amd.com/v1alpha2` API. The v1alpha1 fine-tune
 
 ## Mental model
 
-A fine-tuned model is a single AIMModel that derives from an already-existing official AIMModel: you inherit the published model's tuned engine arguments, accelerator pairings, and benchmarked precisions, and swap in your weights via `modelSources`. Because the override replaces the weights, each derived profile's image resolves back to the official model's `aim-base` runtime (rebased onto its registry+org) — the model-optimized image is specific to the published weights, so your fine-tune loads onto the clean base runtime instead. See [Image resolution](../concepts/profilesets.md#image-resolution) for how the derived image is chosen.
+A fine-tuned model is a single AIMModel that derives from an already-existing official AIMModel: you inherit the published model's tuned engine arguments, accelerator pairings, and benchmarked precisions, and swap in your weights via `modelSources`. Because the override replaces the weights, each derived profile's image resolves back to the `AIM_BASE_IMAGE_REF` recorded for the official model, pulled from the official model image's registry and org. The model-optimized image is specific to the published weights, so your fine-tune loads onto the clean base runtime instead. Set [`baseImageRegistry`](../concepts/runtime-config.md#aim-base-registry-for-derived-images) when aim-base lives in a different registry from the model images. See [Image resolution](../concepts/profilesets.md#image-resolution) for how the derived image is chosen.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/diagrams/fine-tuned-flow-dark.svg">
@@ -38,6 +38,8 @@ The source definitions are available after discovery even when the original hard
   kubectl get aimmodel <official-model> \
     -o jsonpath='{.status.discoveredProfiles}'
   ```
+
+- An official model image at version `0.9.0` or later. Replacing the weights requires the image to record its clean runtime in `AIM_BASE_IMAGE_REF`. `0.8.4` and earlier don't record one, so the derivation fails rather than guessing one (see [Troubleshooting](#derivation-fails-with-has-no-aim_base_image_ref)). `0.8.5` records a runtime tag that isn't published, so it isn't supported either. To fine-tune an older image anyway, set `overrides.image` to the runtime image you choose.
 
 - The `aimId` value the official model uses (this is your match key). Read it from the model:
 
@@ -245,6 +247,10 @@ spec:
 For a source model using the compatibility `profileCopy` shape, set `spec.profileCopy.outputPolicy.copyable: true` instead. This is preferred over manually annotating generated profiles because it records the producer's intent and survives reconciliation.
 
 Disabling copyability later removes the source from downstream selection and causes dependent derived profiles to be pruned. Confirm that no running services depend on those profiles before changing the producer policy.
+
+### Derivation fails with "has no AIM_BASE_IMAGE_REF"
+
+The derivation is `Degraded`, with a message that the source image `has no AIM_BASE_IMAGE_REF or spec.baseImageRef; refusing to guess a runtime image`. A selected source profile's image doesn't record `AIM_BASE_IMAGE_REF`, so AIM Engine can't tell which clean runtime your weights should load onto, and it doesn't guess one. This is expected for official images older than `0.9.0`. Select a newer source version, or set `overrides.image` to the runtime image you want. While any selected source is unresolved, the derivation keeps its existing profiles and doesn't create, update, or prune any.
 
 ### AIMService stuck in `Pending` with `ProfileNotFound`
 

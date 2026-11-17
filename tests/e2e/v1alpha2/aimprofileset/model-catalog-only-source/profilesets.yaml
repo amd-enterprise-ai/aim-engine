@@ -1,0 +1,26 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfileSet
+metadata:
+  name: catalog-only-mi308x
+spec:
+  selector:
+    modelRef:
+      name: profileset-catalog-only-source
+      scope: Cluster
+    profileId: mi325x-fp8-latency
+  versionPolicy: all
+  overrides:
+    acceleratorModel: MI308X
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterProfileSet
+metadata:
+  name: catalog-only-mi308x
+spec:
+  selector:
+    modelRef:
+      name: profileset-catalog-only-source
+    profileId: mi325x-fp8-latency
+  versionPolicy: all
+  overrides:
+    acceleratorModel: MI308X

@@ -40,6 +40,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimmodel"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofileset"
@@ -77,6 +78,7 @@ type AIMProfileSetReconciler struct {
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimprofiles,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimclusterprofiles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimmodels;aimclustermodels,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aim.eai.amd.com,resources=aimruntimeconfigs;aimclusterruntimeconfigs,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
@@ -154,6 +156,22 @@ func (r *AIMProfileSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	modelHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
 		return profileSetsForModel(ctx, r.Client, obj)
 	})
+	runtimeConfigHandler := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		switch config := obj.(type) {
+		case *aimv1alpha1.AIMRuntimeConfig:
+			if config.Name != aimruntimeconfig.DefaultRuntimeConfigName {
+				return nil
+			}
+			return allProfileSets(ctx, r.Client, config.Namespace)
+		case *aimv1alpha1.AIMClusterRuntimeConfig:
+			if config.Name != aimruntimeconfig.DefaultRuntimeConfigName {
+				return nil
+			}
+			return allProfileSets(ctx, r.Client, "")
+		default:
+			return nil
+		}
+	})
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha2.AIMProfileSet{}).
@@ -162,12 +180,40 @@ func (r *AIMProfileSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&aimv1alpha2.AIMModel{}, modelHandler, builder.WithPredicates(modelDefinitionPredicate())).
 		Watches(&aimv1alpha2.AIMClusterModel{}, modelHandler, builder.WithPredicates(modelDefinitionPredicate())).
 		Watches(
+			&aimv1alpha1.AIMRuntimeConfig{},
+			runtimeConfigHandler,
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
+		).
+		Watches(
+			&aimv1alpha1.AIMClusterRuntimeConfig{},
+			runtimeConfigHandler,
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
+		).
+		Watches(
 			&corev1.ConfigMap{},
 			configMapHandler,
 			builder.WithPredicates(discoveryCatalogConfigMapPredicate()),
 		).
 		Named(profileSetControllerName).
 		Complete(r)
+}
+
+func allProfileSets(ctx context.Context, c client.Client, namespace string) []reconcile.Request {
+	return listRequests(ctx, func(ctx context.Context) ([]*aimv1alpha2.AIMProfileSet, error) {
+		var sets aimv1alpha2.AIMProfileSetList
+		var options []client.ListOption
+		if namespace != "" {
+			options = append(options, client.InNamespace(namespace))
+		}
+		if err := c.List(ctx, &sets, options...); err != nil {
+			return nil, err
+		}
+		items := make([]*aimv1alpha2.AIMProfileSet, 0, len(sets.Items))
+		for i := range sets.Items {
+			items = append(items, &sets.Items[i])
+		}
+		return items, nil
+	}, "failed to list AIMProfileSets for default RuntimeConfig event")
 }
 
 func directProfileSetRequest(obj client.Object) []reconcile.Request {

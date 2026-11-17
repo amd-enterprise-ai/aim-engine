@@ -363,6 +363,15 @@ type AIMRuntimeConfigCommon struct {
 	// +optional
 	AdditionalCABundleRef *AdditionalCABundleReference `json:"additionalCABundleRef,omitempty"`
 
+	// BaseImageRegistry is the registry and org that host aim-base, such as
+	// registry.example.com/amdenterpriseai. Models whose weights are replaced
+	// deploy aim-base from here. When unset, they use the model image's
+	// registry and org.
+	// +optional
+	// +kubebuilder:validation:MaxLength=512
+	// +kubebuilder:validation:Pattern=`^[^[:space:]@/:]+(?::[0-9]+)?(?:/[^[:space:]@/:]+)*$`
+	BaseImageRegistry string `json:"baseImageRegistry,omitempty"`
+
 	// Model controls model creation and discovery defaults.
 	// This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services.
 	// +optional

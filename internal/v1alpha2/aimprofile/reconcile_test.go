@@ -23,6 +23,7 @@
 package aimprofile
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -36,6 +37,88 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
+
+func TestReconcileBaseImageLineage(t *testing.T) {
+	t.Parallel()
+
+	const oldBase = "docker.io/vllm/vllm-openai-rocm:v0.16.0"
+	const newBase = "docker.io/amdenterpriseai/aim-base:0.11.2"
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		specBase    string
+		statusBase  string
+		want        string
+	}{
+		{
+			name:        "hand-authored spec is authoritative",
+			annotations: map[string]string{AnnotationBaseImage: oldBase},
+			specBase:    newBase,
+			statusBase:  oldBase,
+			want:        newBase,
+		},
+		{
+			name:        "fresh lineage",
+			annotations: map[string]string{AnnotationBaseImage: newBase},
+			want:        newBase,
+		},
+		{
+			name:        "corrected lineage replaces persisted status",
+			annotations: map[string]string{AnnotationBaseImage: newBase},
+			statusBase:  oldBase,
+			want:        newBase,
+		},
+		{
+			name:        "explicitly cleared lineage replaces persisted status",
+			annotations: map[string]string{AnnotationBaseImage: ""},
+			statusBase:  oldBase,
+		},
+		{
+			name:       "legacy status without producer annotation",
+			statusBase: oldBase,
+			want:       oldBase,
+		},
+	}
+	for _, namespace := range []string{"team-a", ""} {
+		for _, tt := range tests {
+			t.Run(namespace+"/"+tt.name, func(t *testing.T) {
+				objectMeta := metav1.ObjectMeta{Name: "custom-profile", Namespace: namespace, Annotations: tt.annotations}
+				spec := aimv1alpha2.AIMProfileSpecCommon{
+					Image: newBase, AimId: "team/custom", AcceleratorModel: "MI300X",
+					BaseImageRef: tt.specBase,
+					ModelSources: []aimv1alpha1.AIMModelSource{{ModelID: "team/custom", SourceURI: "hf://team/custom"}},
+				}
+				status := aimv1alpha2.AIMProfileStatus{BaseImage: tt.statusBase}
+				if namespace == "" {
+					profile := &aimv1alpha2.AIMClusterProfile{
+						ObjectMeta: objectMeta,
+						Spec:       aimv1alpha2.AIMClusterProfileSpec{AIMProfileSpecCommon: spec},
+						Status:     status,
+					}
+					reconciler := &ClusterProfileReconciler{}
+					obs := reconciler.ComposeState(context.Background(),
+						controllerutils.ReconcileContext[*aimv1alpha2.AIMClusterProfile]{Object: profile},
+						ClusterProfileFetchResult{profile: profile})
+					reconciler.DecorateStatus(&status, controllerutils.NewConditionManager(nil), obs)
+				} else {
+					profile := &aimv1alpha2.AIMProfile{
+						ObjectMeta: objectMeta,
+						Spec:       aimv1alpha2.AIMProfileSpec{AIMProfileSpecCommon: spec},
+						Status:     status,
+					}
+					reconciler := &ProfileReconciler{}
+					obs := reconciler.ComposeState(context.Background(),
+						controllerutils.ReconcileContext[*aimv1alpha2.AIMProfile]{Object: profile},
+						ProfileFetchResult{profile: profile})
+					reconciler.DecorateStatus(&status, controllerutils.NewConditionManager(nil), obs)
+				}
+				if status.BaseImage != tt.want {
+					t.Fatalf("reconciled base image = %q, want %q", status.BaseImage, tt.want)
+				}
+			})
+		}
+	}
+}
 
 func TestDecorateStatusPreservesObservedGeneration(t *testing.T) {
 	t.Run("namespace profile", func(t *testing.T) {

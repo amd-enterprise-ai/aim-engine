@@ -1,0 +1,18 @@
+# KServe values required by AIM Engine.
+# Keep these values aligned with docs/docs/admin/kserve-configuration.md.
+kserve:
+  controller:
+    deploymentMode: Standard
+    gateway:
+      ingressGateway:
+        enableGatewayApi: false
+  localmodel:
+    enabled: false
+  inferenceservice:
+    resources:
+      limits:
+        cpu: ""
+        memory: ""
+      requests:
+        cpu: ""
+        memory: ""

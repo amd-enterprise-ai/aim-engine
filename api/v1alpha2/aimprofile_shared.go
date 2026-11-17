@@ -233,6 +233,21 @@ type AIMProfileSpecCommon struct {
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
 
+	// BaseImageRef is the clean AIM runtime image to use when a derivation or
+	// service overlay replaces this deployable profile's modelSources. Image
+	// discovery populates it from AIM_BASE_IMAGE_REF. User-authored profiles
+	// should set it explicitly when they are intended to seed weight-replacing
+	// copies. The copy deploys this image from the RuntimeConfig's
+	// baseImageRegistry, or from the source image's registry and org when that
+	// is unset; a pre-release tag becomes its MAJOR.MINOR rolling tag.
+	//
+	// Base profiles may omit this field because their Image already names the
+	// runtime. Deployable profiles may also omit it when they will never seed a
+	// weight-replacing copy.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	BaseImageRef string `json:"baseImageRef,omitempty"`
+
 	// ModelSources specifies model artifact sources for this profile.
 	// Populated during discovery or set by user.
 	// +optional
@@ -358,12 +373,12 @@ type AIMProfileStatus struct {
 	// +optional
 	Version string `json:"version,omitempty"`
 
-	// BaseImage is the AIM_BASE_IMAGE_REF the inspector extracted from the
-	// source image when this profile was materialised by AIMModel discovery.
-	// Used by derivation flows (AIMService overlays, AIMProfileSet) to rebase
-	// the deployment image onto the source's base when overriding model
-	// sources, so private mirrors stay self-contained. Empty for
-	// user-authored profiles.
+	// BaseImage is the canonical runtime lineage: spec.baseImageRef when set,
+	// otherwise the AIM_BASE_IMAGE_REF that AIMModel discovery extracted from
+	// the source image, as recorded. Derivations that replace model sources
+	// deploy it as described on spec.baseImageRef. Empty when neither is
+	// known; weight-replacing derivations from deployable profiles then defer
+	// rather than guessing a runtime image.
 	// +optional
 	BaseImage string `json:"baseImage,omitempty"`
 
