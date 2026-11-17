@@ -735,7 +735,7 @@ func activationMetricCondition(
 	if !isRoutingEnabled(service, runtimeConfig) {
 		return "", "", "", false
 	}
-	_, activationRequired, activationErr := resolveScaleToZeroActivationMetric(service, runtimeConfig)
+	activationRequired, activationErr := validateScaleToZeroActivationMetric(service, runtimeConfig)
 	if !activationRequired || activationErr != nil {
 		// Invalid activation configuration is reported by ScaleToZeroConfig.
 		// Do not inspect a potentially stale, user-only HPA and mislabel its s0

@@ -1997,8 +1997,8 @@ func TestResolvedModelIdFromProfile(t *testing.T) {
 	modelIDWins.ModelSources = []aimv1alpha1.AIMModelSource{
 		{ModelID: "acme/my-finetune-v1", SourceURI: "hf://acme/my-finetune-v1"},
 	}
-	if got := resolvedModelId(modelIDWins); got != testModelIDFP8 {
-		t.Errorf("ModelId set: resolvedModelId() = %q, want ModelId %q", got, testModelIDFP8)
+	if got := serving.ResolvedServedModelID(modelIDWins); got != testModelIDFP8 {
+		t.Errorf("ModelId set: serving.ResolvedServedModelID() = %q, want ModelId %q", got, testModelIDFP8)
 	}
 
 	// ModelId empty falls back to modelSources[0].modelId.
@@ -2007,15 +2007,23 @@ func TestResolvedModelIdFromProfile(t *testing.T) {
 	viaSources.ModelSources = []aimv1alpha1.AIMModelSource{
 		{ModelID: "acme/my-finetune-v1", SourceURI: "hf://acme/my-finetune-v1"},
 	}
-	if got := resolvedModelId(viaSources); got != "acme/my-finetune-v1" {
-		t.Errorf("ModelId empty + modelSources: resolvedModelId() = %q, want %q", got, "acme/my-finetune-v1")
+	if got := serving.ResolvedServedModelID(viaSources); got != "acme/my-finetune-v1" {
+		t.Errorf("ModelId empty + modelSources: serving.ResolvedServedModelID() = %q, want %q", got, "acme/my-finetune-v1")
+	}
+
+	// A model source without a model id also falls back to aimId.
+	sourceWithoutID := sampleProfileSpec()
+	sourceWithoutID.ModelId = ""
+	sourceWithoutID.ModelSources = []aimv1alpha1.AIMModelSource{{SourceURI: "s3://bucket/qwen3-32b"}}
+	if got := serving.ResolvedServedModelID(sourceWithoutID); got != sourceWithoutID.AimId {
+		t.Errorf("modelSources[0] without modelId: ResolvedServedModelID() = %q, want aimId %q", got, sourceWithoutID.AimId)
 	}
 
 	// ModelId and modelSources empty falls back to aimId.
-	viaAimID := sampleProfileSpec() // AimId = qwen/qwen3-32b
+	viaAimID := sampleProfileSpec()
 	viaAimID.ModelId = ""
-	if got := resolvedModelId(viaAimID); got != "qwen/qwen3-32b" {
-		t.Errorf("ModelId + modelSources empty: resolvedModelId() = %q, want aimId %q", got, "qwen/qwen3-32b")
+	if got := serving.ResolvedServedModelID(viaAimID); got != viaAimID.AimId {
+		t.Errorf("ModelId + modelSources empty: serving.ResolvedServedModelID() = %q, want aimId %q", got, viaAimID.AimId)
 	}
 }
 

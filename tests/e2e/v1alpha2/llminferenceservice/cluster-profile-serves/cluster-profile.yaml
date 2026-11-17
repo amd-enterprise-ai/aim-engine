@@ -1,0 +1,28 @@
+# Cluster profile served through a KServe LLMInferenceService. No accelerator
+# fields, so it reaches Ready in any cluster. aim-dummy follows the AIM image
+# launch contract (./entrypoint.py from /workspace) and answers /health on
+# port 8000, so the LLMInferenceService workload becomes Ready.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterProfile
+metadata:
+  name: test-llmisvc-cluster
+spec:
+  # Unique to this test so other cluster-scoped tests cannot collide with it.
+  aimId: test/llmisvc-cluster
+  modelId: HuggingFaceTB/SmolLM2-135M
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  image: docker.io/amdenterpriseai/aim-dummy:0.3.0
+  resources:
+    requests:
+      cpu: 100m
+      memory: 100Mi
+    limits:
+      memory: 512Mi
+  modelSources:
+    - modelId: HuggingFaceTB/SmolLM2-135M
+      sourceUri: hf://HuggingFaceTB/SmolLM2-135M
+      # Small PVC: the download is simulated (no real bytes).
+      size: 1Gi

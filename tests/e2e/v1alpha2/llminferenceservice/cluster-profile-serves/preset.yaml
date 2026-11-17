@@ -1,0 +1,13 @@
+# User-supplied LLMInferenceServiceConfig merged after the profile's projected
+# config through spec.llmInferenceService.baseRefs.
+apiVersion: serving.kserve.io/v1alpha2
+kind: LLMInferenceServiceConfig
+metadata:
+  name: team-preset
+spec:
+  template:
+    containers:
+      - name: main
+        env:
+          - name: AIM_E2E_PRESET
+            value: applied

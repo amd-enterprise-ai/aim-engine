@@ -1,0 +1,205 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# An AIMService with spec.servingAPI=LLMInferenceService, backed by a cluster
+# profile, is served end to end by a KServe LLMInferenceService:
+#
+#   - The cluster profile projects a bare LLMInferenceServiceConfig into the
+#     KServe namespace (kserve-system).
+#   - The service records status.servingAPI, waits for the lazy projection to
+#     materialize a complete namespaced LLMInferenceServiceConfig (plus the
+#     profile ConfigMap it mounts), then creates an LLMInferenceService that
+#     references it through spec.baseRefs.
+#   - KServe merges the config over its built-in template, then the
+#     user-supplied preset from spec.llmInferenceService.baseRefs; the workload
+#     runs the AIM entrypoint with the preset's env and the service reaches
+#     Running.
+#   - A preset that sets spec.router (owned by AIM Engine's HTTPRoute) is
+#     rejected with ConfigValid=False and no LLMInferenceService.
+#
+# The cache download is simulated and aim-dummy needs no accelerator, so this
+# runs in the default kind lane. It requires the KServe LLMInferenceService
+# controller, which the repository's dependency Helmfile installs by default.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: llminferenceservice-cluster-profile-serves
+spec:
+  timeouts:
+    assert: 180s
+    # The service stands up an AIMProfileCache -> AIMArtifact -> PVC chain;
+    # namespace teardown can exceed the 60s default on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the cluster profile
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-llmisvc-cluster
+              status:
+                status: Ready
+                (conditions[?type == 'LLMInferenceServiceConfigProjected']):
+                  - status: "True"
+
+    - name: Assert the bare LLMInferenceServiceConfig in the KServe namespace
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1alpha2
+              kind: LLMInferenceServiceConfig
+              metadata:
+                namespace: kserve-system
+                labels:
+                  app.kubernetes.io/managed-by: aim-engine
+                  aim.eai.amd.com/profile: test-llmisvc-cluster
+                (ownerReferences[?kind == 'AIMClusterProfile']):
+                  - name: test-llmisvc-cluster
+              spec:
+                storageInitializer:
+                  enabled: false
+                template:
+                  (containers[?name == 'main']):
+                    - image: docker.io/amdenterpriseai/aim-dummy:0.3.0
+                      command:
+                        - ./entrypoint.py
+
+    - name: Create the AIMService and its preset
+      try:
+        - apply:
+            file: preset.yaml
+        - apply:
+            file: service.yaml
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: llmisvc-cluster
+              status:
+                servingAPI: LLMInferenceService
+
+    - name: Assert the lazily materialized namespaced projection
+      description: |
+        The bare KServe-namespace config cannot mount the namespaced profile
+        ConfigMap, so the lazy projection materializes a complete config (and
+        the ConfigMap) in the service namespace, owned by the cluster profile.
+        KServe prefers it over the KServe-namespace config of the same name.
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1alpha2
+              kind: LLMInferenceServiceConfig
+              metadata:
+                labels:
+                  aim.eai.amd.com/profile: test-llmisvc-cluster
+                (ownerReferences[?kind == 'AIMClusterProfile']):
+                  - name: test-llmisvc-cluster
+              spec:
+                template:
+                  (volumes[?name == 'aim-profile']):
+                    - (configMap != null): true
+
+    - name: Assert the LLMInferenceService references the projected config
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1alpha2
+              kind: LLMInferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: llmisvc-cluster
+                annotations:
+                  aim.eai.amd.com/runtime-profile: test-llmisvc-cluster
+                (ownerReferences[?kind == 'AIMService']):
+                  - name: llmisvc-cluster
+              spec:
+                (length(baseRefs)): 2
+                (baseRefs[1].name): team-preset
+                replicas: 1
+                storageInitializer:
+                  enabled: false
+
+    - name: Assert the workload runs the AIM entrypoint
+      try:
+        - assert:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                labels:
+                  app.kubernetes.io/part-of: llminferenceservice
+                  app.kubernetes.io/component: llminferenceservice-workload
+              spec:
+                template:
+                  spec:
+                    (containers[?name == 'main']):
+                      - image: docker.io/amdenterpriseai/aim-dummy:0.3.0
+                        command:
+                          - ./entrypoint.py
+                        workingDir: /workspace
+                        (env[?name == 'AIM_E2E_PRESET']):
+                          - value: applied
+
+    - name: Assert the LLMInferenceService and the AIMService become ready
+      try:
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: serving.kserve.io/v1alpha2
+              kind: LLMInferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: llmisvc-cluster
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: llmisvc-cluster
+              status:
+                status: Running
+                (conditions[?type == 'LLMInferenceServiceReady']):
+                  - status: "True"
+      catch:
+        - describe:
+            apiVersion: serving.kserve.io/v1alpha2
+            kind: LLMInferenceService
+            selector: aim.eai.amd.com/service=llmisvc-cluster
+        - podLogs:
+            selector: app.kubernetes.io/part-of=llminferenceservice
+            tail: 50
+
+    - name: Reject a preset that conflicts with AIM Engine's routing
+      try:
+        - apply:
+            file: conflicting-preset.yaml
+        - apply:
+            file: conflicting-service.yaml
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: llmisvc-conflict
+              status:
+                (conditions[?type == 'ConfigValid']):
+                  - status: "False"
+                (conditions[?type == 'LLMInferenceServiceBaseRefsReady']):
+                  - status: "False"
+                    reason: LLMInferenceServiceConfigConflict
+        - error:
+            resource:
+              apiVersion: serving.kserve.io/v1alpha2
+              kind: LLMInferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: llmisvc-conflict

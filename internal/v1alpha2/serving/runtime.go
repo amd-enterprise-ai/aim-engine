@@ -211,37 +211,81 @@ type NamespaceRuntimeInput struct {
 // applying them (with the reserved-prefix force-apply policy) and setting owner
 // references for garbage collection.
 func BuildNamespaceServingRuntime(input NamespaceRuntimeInput) (*kservev1alpha1.ServingRuntime, *corev1.ConfigMap, error) {
+	projection, err := buildNamespaceProjection(input)
+	if err != nil {
+		return nil, nil, err
+	}
+	configMap := projection.configMap
+
+	runtime := &kservev1alpha1.ServingRuntime{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: kservev1alpha1.SchemeGroupVersion.String(),
+			Kind:       "ServingRuntime",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        projection.name,
+			Namespace:   input.Namespace,
+			Labels:      projection.labels,
+			Annotations: projection.annotations,
+		},
+		Spec: projection.runtimeSpec,
+	}
+
+	contentHash, err := RuntimeProjectionContentHash(runtime, configMap)
+	if err != nil {
+		return nil, nil, fmt.Errorf("hash runtime projection content: %w", err)
+	}
+	runtime.Annotations[constants.AnnotationRuntimeProjectionContentHash] = contentHash
+	configMap.Annotations[constants.AnnotationRuntimeProjectionContentHash] = contentHash
+
+	return runtime, configMap, nil
+}
+
+// namespaceProjection is the kind-independent part of a namespace projection:
+// the object name, correlator metadata, the colocated profile ConfigMap, and
+// the serving pod shape. The KServe ServingRuntime and the
+// LLMInferenceServiceConfig projected from one profile are both rendered from
+// it, so they serve the profile identically and share one ConfigMap.
+type namespaceProjection struct {
+	name        string
+	labels      map[string]string
+	annotations map[string]string
+	configMap   *corev1.ConfigMap
+	runtimeSpec kservev1alpha1.ServingRuntimeSpec
+}
+
+func buildNamespaceProjection(input NamespaceRuntimeInput) (namespaceProjection, error) {
 	if input.Spec == nil {
-		return nil, nil, fmt.Errorf("profile spec is nil")
+		return namespaceProjection{}, fmt.Errorf("profile spec is nil")
 	}
 	if input.ProfileName == "" {
-		return nil, nil, fmt.Errorf("profile name is empty")
+		return namespaceProjection{}, fmt.Errorf("profile name is empty")
 	}
 	if input.Namespace == "" {
-		return nil, nil, fmt.Errorf("namespace is empty")
+		return namespaceProjection{}, fmt.Errorf("namespace is empty")
 	}
 
 	spec := input.Spec
 
 	yamlBytes, filename, err := AssembleProfileYAMLForContract(spec, input.YAMLContract)
 	if err != nil {
-		return nil, nil, fmt.Errorf("assemble profile YAML: %w", err)
+		return namespaceProjection{}, fmt.Errorf("assemble profile YAML: %w", err)
 	}
 
-	runtimeName := input.Name
-	if runtimeName == "" {
-		runtimeName = RuntimeName(input.ProfileName)
+	name := input.Name
+	if name == "" {
+		name = RuntimeName(input.ProfileName)
 	}
 	labels := runtimeLabels(input.ProfileName, spec)
 	annotations := runtimeAnnotations(input.ProfileName, spec)
 
-	configMap := BuildProfileConfigMap(runtimeName, input.Namespace, maps.Clone(labels), filename, yamlBytes)
+	configMap := BuildProfileConfigMap(name, input.Namespace, maps.Clone(labels), filename, yamlBytes)
 	configMap.Annotations = maps.Clone(annotations)
 
 	modelReference := resolveVLLMModelReference(spec, input.Cache)
 	envVars := buildRuntimeEnv(spec, filename, modelReference)
 
-	volumes := []corev1.Volume{sharedMemoryVolume(spec.Engine), BuildProfileVolume(runtimeName)}
+	volumes := []corev1.Volume{sharedMemoryVolume(spec.Engine), BuildProfileVolume(name)}
 	mounts := []corev1.VolumeMount{sharedMemoryMount(), BuildProfileVolumeMount(spec.AimId)}
 
 	cacheVolumes, cacheMounts := buildProfileCacheMounts(input.Cache)
@@ -257,31 +301,16 @@ func BuildNamespaceServingRuntime(input NamespaceRuntimeInput) (*kservev1alpha1.
 		input.NodeAffinity,
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("build runtime spec: %w", err)
+		return namespaceProjection{}, fmt.Errorf("build runtime spec: %w", err)
 	}
 
-	runtime := &kservev1alpha1.ServingRuntime{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: kservev1alpha1.SchemeGroupVersion.String(),
-			Kind:       "ServingRuntime",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        runtimeName,
-			Namespace:   input.Namespace,
-			Labels:      labels,
-			Annotations: annotations,
-		},
-		Spec: runtimeSpec,
-	}
-
-	contentHash, err := RuntimeProjectionContentHash(runtime, configMap)
-	if err != nil {
-		return nil, nil, fmt.Errorf("hash runtime projection content: %w", err)
-	}
-	runtime.Annotations[constants.AnnotationRuntimeProjectionContentHash] = contentHash
-	configMap.Annotations[constants.AnnotationRuntimeProjectionContentHash] = contentHash
-
-	return runtime, configMap, nil
+	return namespaceProjection{
+		name:        name,
+		labels:      labels,
+		annotations: annotations,
+		configMap:   configMap,
+		runtimeSpec: runtimeSpec,
+	}, nil
 }
 
 // runtimeProjectionContent contains exactly the fields that can change what a
@@ -377,24 +406,47 @@ type ClusterRuntimeInput struct {
 // The returned runtime is pure desired state; the caller owns applying it (with
 // the reserved-prefix force-apply policy) and setting the owner reference.
 func BuildClusterServingRuntime(input ClusterRuntimeInput) (*kservev1alpha1.ClusterServingRuntime, error) {
+	projection, err := buildClusterProjection(input)
+	if err != nil {
+		return nil, err
+	}
+
+	return &kservev1alpha1.ClusterServingRuntime{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: kservev1alpha1.SchemeGroupVersion.String(),
+			Kind:       "ClusterServingRuntime",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        projection.name,
+			Labels:      projection.labels,
+			Annotations: projection.annotations,
+		},
+		Spec: projection.runtimeSpec,
+	}, nil
+}
+
+// buildClusterProjection is the cluster-scope counterpart of
+// buildNamespaceProjection: the bare serving pod shape (no profile ConfigMap,
+// no profile volume or cache mount) shared by the ClusterServingRuntime and the
+// system-namespace LLMInferenceServiceConfig projected from one
+// AIMClusterProfile. The returned configMap is always nil.
+func buildClusterProjection(input ClusterRuntimeInput) (namespaceProjection, error) {
 	if input.Spec == nil {
-		return nil, fmt.Errorf("profile spec is nil")
+		return namespaceProjection{}, fmt.Errorf("profile spec is nil")
 	}
 	if input.ProfileName == "" {
-		return nil, fmt.Errorf("profile name is empty")
+		return namespaceProjection{}, fmt.Errorf("profile name is empty")
 	}
 
 	spec := input.Spec
-	runtimeName := input.Name
-	if runtimeName == "" {
-		runtimeName = RuntimeName(input.ProfileName)
+	name := input.Name
+	if name == "" {
+		name = RuntimeName(input.ProfileName)
 	}
-	labels := runtimeLabels(input.ProfileName, spec)
-	annotations := runtimeAnnotations(input.ProfileName, spec)
 
 	filename, err := ProfileFilename(spec)
 	if err != nil {
-		return nil, fmt.Errorf("resolve profile filename: %w", err)
+		return namespaceProjection{}, fmt.Errorf("resolve profile filename: %w", err)
 	}
 	modelReference := resolveVLLMModelReference(spec, nil)
 	envVars := buildRuntimeEnv(spec, filename, modelReference)
@@ -411,20 +463,14 @@ func BuildClusterServingRuntime(input ClusterRuntimeInput) (*kservev1alpha1.Clus
 		input.NodeAffinity,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("build runtime spec: %w", err)
+		return namespaceProjection{}, fmt.Errorf("build runtime spec: %w", err)
 	}
 
-	return &kservev1alpha1.ClusterServingRuntime{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: kservev1alpha1.SchemeGroupVersion.String(),
-			Kind:       "ClusterServingRuntime",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        runtimeName,
-			Labels:      labels,
-			Annotations: annotations,
-		},
-		Spec: runtimeSpec,
+	return namespaceProjection{
+		name:        name,
+		labels:      runtimeLabels(input.ProfileName, spec),
+		annotations: runtimeAnnotations(input.ProfileName, spec),
+		runtimeSpec: runtimeSpec,
 	}, nil
 }
 

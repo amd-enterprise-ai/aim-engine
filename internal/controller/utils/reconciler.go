@@ -84,6 +84,14 @@ const (
 	MessageComponentsNotReady = "Some components are not ready"
 	MessageProgressing        = "Waiting for components to become ready"
 	MessageInfraError         = "Infrastructure error - waiting for retry"
+
+	// ReasonApplyFailed marks the condition of a best-effort object whose
+	// apply failed (see PlanResult.ApplyWithForceBestEffort).
+	ReasonApplyFailed = "ApplyFailed"
+
+	// BestEffortApplyRetryInterval is how soon a reconcile with a failed
+	// best-effort apply is retried.
+	BestEffortApplyRetryInterval = 30 * time.Second
 )
 
 // PlanResult contains the desired state changes from the PlanResources phase.
@@ -113,6 +121,10 @@ type PlanResult struct {
 	// toApplyFields are partial objects applied without owner references under a
 	// field manager of their own. See ApplyFields.
 	toApplyFields []FieldApply
+	// toApplyWithForceBestEffort are owned objects force-applied after every
+	// other bucket succeeded, without failing the reconcile. See
+	// ApplyWithForceBestEffort.
+	toApplyWithForceBestEffort []bestEffortApply
 
 	// toDelete are objects to delete
 	toDelete []client.Object
@@ -201,6 +213,25 @@ func (pr *PlanResult) ApplyFields(obj client.Object, fieldManagerSuffix string, 
 	})
 }
 
+// bestEffortApply is an optional object and the condition its apply failure
+// is reported on.
+type bestEffortApply struct {
+	obj           client.Object
+	conditionType string
+}
+
+// ApplyWithForceBestEffort adds an owned object that is force-applied like
+// ApplyWithForce, but only after every other bucket succeeded, and whose
+// failure does not fail the reconcile: conditionType is set False with
+// ReasonApplyFailed, a Warning event is emitted on the transition, and the
+// reconcile is requeued after BestEffortApplyRetryInterval. Use it only for
+// optional projections that no other reconciler depends on, so an outage of
+// their API (for example a failing admission webhook) cannot hold back the
+// owner's status.
+func (pr *PlanResult) ApplyWithForceBestEffort(obj client.Object, conditionType string) {
+	pr.toApplyWithForceBestEffort = append(pr.toApplyWithForceBestEffort, bestEffortApply{obj: obj, conditionType: conditionType})
+}
+
 // Delete adds an object to be deleted
 func (pr *PlanResult) Delete(obj client.Object) {
 	pr.toDelete = append(pr.toDelete, obj)
@@ -262,6 +293,15 @@ func (pr *PlanResult) GetToApplyFields() []FieldApply {
 	return pr.toApplyFields
 }
 
+// GetToApplyWithForceBestEffort returns the best-effort force-applied objects (for testing)
+func (pr *PlanResult) GetToApplyWithForceBestEffort() []client.Object {
+	objects := make([]client.Object, 0, len(pr.toApplyWithForceBestEffort))
+	for _, item := range pr.toApplyWithForceBestEffort {
+		objects = append(objects, item.obj)
+	}
+	return objects
+}
+
 // GetToDelete returns the objects to be deleted (for testing)
 func (pr *PlanResult) GetToDelete() []client.Object {
 	return pr.toDelete
@@ -284,6 +324,7 @@ func (pr *PlanResult) Merge(other PlanResult) {
 	pr.toApplyWithoutOwnerRef = append(pr.toApplyWithoutOwnerRef, other.toApplyWithoutOwnerRef...)
 	pr.toApplyWithForce = append(pr.toApplyWithForce, other.toApplyWithForce...)
 	pr.toApplyFields = append(pr.toApplyFields, other.toApplyFields...)
+	pr.toApplyWithForceBestEffort = append(pr.toApplyWithForceBestEffort, other.toApplyWithForceBestEffort...)
 	pr.toDelete = append(pr.toDelete, other.toDelete...)
 	for obj, labels := range other.labelExclusions {
 		for label := range labels {
@@ -562,6 +603,10 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) (ctrl.Result, e
 				applyErr = fmt.Errorf("failed to apply fields: %w", applyErr)
 			}
 		}
+
+		if applyErr == nil {
+			p.applyBestEffort(ctx, cm, &planResult, obj)
+		}
 	}
 
 	// === Phase 7: Handle Apply/Delete Errors ===
@@ -623,6 +668,33 @@ func (p *Pipeline[T, S, F, Obs]) Run(ctx context.Context, obj T) (ctrl.Result, e
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// applyBestEffort force-applies each best-effort object independently. A
+// failure is reported on the object's condition and requeues the reconcile
+// instead of failing it.
+func (p *Pipeline[T, S, F, Obs]) applyBestEffort(ctx context.Context, cm *ConditionManager, planResult *PlanResult, owner T) {
+	failed := map[string][]string{}
+	var order []string
+	for _, item := range planResult.toApplyWithForceBestEffort {
+		err := ApplyDesiredStateWithForce(ctx, p.Client, p.GetFullName(), p.Scheme, []client.Object{item.obj}, owner)
+		if err == nil {
+			continue
+		}
+		if _, seen := failed[item.conditionType]; !seen {
+			order = append(order, item.conditionType)
+		}
+		gvk := item.obj.GetObjectKind().GroupVersionKind()
+		failed[item.conditionType] = append(failed[item.conditionType], fmt.Sprintf("%s %s/%s: %v",
+			gvk.Kind, item.obj.GetNamespace(), item.obj.GetName(), err))
+	}
+	for _, conditionType := range order {
+		cm.Set(conditionType, metav1.ConditionFalse, ReasonApplyFailed,
+			"Failed to apply "+strings.Join(failed[conditionType], "; "), AsWarning())
+	}
+	if len(order) > 0 {
+		planResult.RequestRequeueAfter(BestEffortApplyRetryInterval)
+	}
 }
 
 // errorCategories holds the results of error categorization from component health.

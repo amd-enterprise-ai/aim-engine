@@ -1,0 +1,24 @@
+# Namespace profile: its reconciler projects the LLMInferenceServiceConfig
+# eagerly into this namespace, next to the ServingRuntime of the same name.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: test-llmisvc-autoscaling
+spec:
+  aimId: test/llmisvc-autoscaling
+  modelId: HuggingFaceTB/SmolLM2-135M
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: general
+  image: docker.io/amdenterpriseai/aim-dummy:0.3.0
+  resources:
+    requests:
+      cpu: 100m
+      memory: 100Mi
+    limits:
+      memory: 512Mi
+  modelSources:
+    - modelId: HuggingFaceTB/SmolLM2-135M
+      sourceUri: hf://HuggingFaceTB/SmolLM2-135M
+      size: 1Gi
