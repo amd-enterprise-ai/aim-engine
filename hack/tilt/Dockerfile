@@ -13,7 +13,7 @@
 #   - These persist across Docker builds on the same machine
 #   - PVCs in k8s provide caching for live_update rebuilds
 
-FROM golang:1.25.4-bookworm AS base
+FROM golang:1.25.14-bookworm AS base
 
 WORKDIR /workspace
 
