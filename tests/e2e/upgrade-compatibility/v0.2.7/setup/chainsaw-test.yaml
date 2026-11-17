@@ -77,6 +77,15 @@ spec:
               kind: AIMClusterServiceTemplate
               status:
                 status: Ready
+        - script:
+            content: |
+              set -eu
+              uid=$(kubectl get aimclustermodelsource upgrade-model-source -o jsonpath='{.metadata.uid}')
+              kubectl get aimclustermodel -l aim.eai.amd.com/model-source=upgrade-model-source -o json \
+                | jq -e --arg uid "$uid" '
+                    [.items[] | .metadata.ownerReferences[]? | select(.uid == $uid) | .apiVersion]
+                    == ["aim.eai.amd.com/v1alpha1"]
+                  ' >/dev/null
 
     - name: Wait for the template services and their caches
       try:

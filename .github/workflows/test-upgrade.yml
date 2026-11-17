@@ -683,6 +683,11 @@ jobs:
             echo "artifact owner reference still names v1alpha1" >&2
             exit 1
           fi
+          if grep -E $'^AIMClusterModel\t' "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv" \
+              | grep -q 'aim.eai.amd.com/v1alpha1 AIMClusterModelSource '; then
+            echo "discovered model owner reference still names v1alpha1" >&2
+            exit 1
+          fi
 
       - name: Garbage collection follows the rewritten owner reference
         if: matrix.scenario == 'v0.2.7'

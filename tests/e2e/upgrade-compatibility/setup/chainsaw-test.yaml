@@ -9,7 +9,8 @@ spec:
     Creates a registry-independent corpus under the baseline operator. It covers
     namespace and cluster profiles, model-owned profile derivation, profile sets,
     services, simulated profile caches, a model artifact with an adapter disk,
-    and an adapter artifact linked to that model.
+    an adapter artifact linked to that model, and a model source that discovers
+    one image.
     The workflow keeps these resources in place while it upgrades the CRDs and operator.
   timeouts:
     assert: 180s
@@ -194,5 +195,26 @@ spec:
               kubectl get aimartifact upgrade-adapter-artifact -n "$NAMESPACE" -o json \
                 | jq -e --arg uid "$uid" '
                     [.metadata.ownerReferences[]? | select(.uid == $uid) | .apiVersion]
+                    == ["aim.eai.amd.com/v1alpha1"]
+                  ' >/dev/null
+
+    - name: Wait for the discovered cluster model
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterModelSource
+              metadata:
+                name: upgrade-model-source
+              status:
+                status: Ready
+                discoveredModels: 1
+        - script:
+            content: |
+              set -eu
+              uid=$(kubectl get aimclustermodelsource upgrade-model-source -o jsonpath='{.metadata.uid}')
+              kubectl get aimclustermodel -l aim.eai.amd.com/model-source=upgrade-model-source -o json \
+                | jq -e --arg uid "$uid" '
+                    [.items[] | .metadata.ownerReferences[]? | select(.uid == $uid) | .apiVersion]
                     == ["aim.eai.amd.com/v1alpha1"]
                   ' >/dev/null

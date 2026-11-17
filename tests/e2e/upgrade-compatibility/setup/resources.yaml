@@ -150,3 +150,14 @@ spec:
   parentArtifact: upgrade-model-artifact
   modelId: upgrade-example/adapter
   sourceUri: hf://upgrade-example/adapter
+---
+# Exact image tag, so the source records the model without listing a registry.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModelSource
+metadata:
+  name: upgrade-model-source
+  labels:
+    app.kubernetes.io/part-of: aim-engine-upgrade-compatibility
+spec:
+  images:
+    - amdenterpriseai/aim-dummy:0.2.2
