@@ -23,7 +23,7 @@
 #   - jq
 #
 # Example YAML file:
-#   apiVersion: aim.eai.amd.com/v1alpha1
+#   apiVersion: aim.eai.amd.com/v1alpha2
 #   kind: AIMModel
 #   metadata:
 #     name: test-model

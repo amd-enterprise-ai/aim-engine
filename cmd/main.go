@@ -227,13 +227,10 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
-	// Deduplicate API-server warning headers so each unique deprecation
-	// warning (notably "aim.eai.amd.com/v1alpha1 AIMService is
-	// deprecated; ...") is logged once per process lifetime instead of
-	// once per reconcile. F9 in the v1alpha2 validation walk recorded
-	// 2055 occurrences over a single ~3h controller lifetime against a
-	// single v1alpha1 AIMService — pure log spam since the actionable
-	// info doesn't change between reconciles.
+	// Deduplicate API-server warning headers so each unique warning, such
+	// as a deprecated API version, is logged once per process lifetime
+	// instead of once per reconcile; its content doesn't change between
+	// reconciles.
 	//
 	// Use controller-runtime's KubeAPIWarningLogger (a
 	// rest.WarningHandlerWithContext) so the warning still benefits from

@@ -5,7 +5,7 @@ A **custom model** lets you deploy a model whose architecture isn't published in
 :::{admonition} v1alpha2
 :class: note
 
-Custom models use the `aim.eai.amd.com/v1alpha2` API. The v1alpha1 `spec.custom` / `spec.modelSources` flow on `AIMModel` is deprecated and removed from v1alpha2.
+Custom models use the `aim.eai.amd.com/v1alpha2` API.
 :::
 ## When to use this flow
 

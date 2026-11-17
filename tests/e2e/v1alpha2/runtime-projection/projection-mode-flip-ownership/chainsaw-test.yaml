@@ -24,7 +24,7 @@
 #      a new matching content hash. Reduced must maintain an existing eager
 #      projection even though it would not create that per-profile runtime anew.
 #
-# Follows v1alpha2 conventions (profile-based, no AIMServiceTemplate) and the
+# Follows the test conventions (v1alpha2, profile-based) and the
 # computed hashed runtime name aim-flip-ns-profile-bba2ad9c
 # (serving.RuntimeName("flip-ns-profile")).
 #
@@ -406,7 +406,7 @@ spec:
         - assert:
             timeout: 60s
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: flip-ns-consumer

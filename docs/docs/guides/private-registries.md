@@ -27,7 +27,7 @@ configures outbound TLS only after the workload has started.
 :::{admonition} v1alpha2
 :class: note
 
-`AIMService` examples use `aim.eai.amd.com/v1alpha2`. `AIMRuntimeConfig` / `AIMClusterRuntimeConfig` remain `aim.eai.amd.com/v1alpha1` resources — both pipelines consume them unchanged. `spec.imagePullSecrets`, `spec.serviceAccountName`, and the runtime-config env fields are identical regardless of pipeline.
+`AIMService` examples use `aim.eai.amd.com/v1alpha2`. `AIMRuntimeConfig` / `AIMClusterRuntimeConfig` remain `aim.eai.amd.com/v1alpha1` resources.
 :::
 ## Container Image Pull Secrets
 
@@ -332,11 +332,11 @@ describes its certificate-request and self-signed certificate facilities.
 different CA; S3 Jobs then combine public roots, the RuntimeConfig additional
 bundle, and the S3-specific bundle.
 
-Model discovery uses separate trust paths. Legacy v1alpha1 image metadata
-inspection connects to the registry from the operator process; custom CA trust
-for that deprecated discovery path is not supported by
-`additionalCABundleRef`. Native v1alpha2 discovery starts a Job from the model
-image and walks the profiles embedded in that image. The platform
+Model discovery uses separate trust paths. Image metadata inspection
+(`status.imageMetadata`) connects to the registry from the operator process
+and uses the operator pod's trust roots; `additionalCABundleRef` doesn't apply
+to it. Profile discovery starts a Job from the model image and walks the
+profiles embedded in that image. The platform
 kubelet/container runtime pulls the image before an init container could run,
 so configure private-container-registry credentials as described above and
 install any private container registry CA in the platform's

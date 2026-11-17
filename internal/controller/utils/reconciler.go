@@ -53,7 +53,7 @@ const (
 	ConditionTypeConfigValid           = "ConfigValid"
 	ConditionTypeReady                 = "Ready"
 
-	// Component condition suffix (e.g., "ModelReady", "TemplateReady")
+	// Component condition suffix (e.g., "ProfileReady", "ProfileCacheReady")
 	ComponentConditionSuffix = "Ready"
 
 	// DependenciesReachable condition reasons
@@ -227,10 +227,6 @@ func (pr *PlanResult) RequestRequeueAfter(duration time.Duration) {
 // Merge appends every object queued in `other` into this plan. RequeueAfter
 // adopts the smaller non-zero of the two values so the controller wakes up
 // as soon as either contributing pipeline asks to.
-//
-// Used by composite reconcilers that drive several independent sub-plans on
-// the same parent object (e.g. v1alpha1 + v1alpha2 AIMModel pipelines that
-// both produce children).
 func (pr *PlanResult) Merge(other PlanResult) {
 	pr.toCreate = append(pr.toCreate, other.toCreate...)
 	pr.toApply = append(pr.toApply, other.toApply...)

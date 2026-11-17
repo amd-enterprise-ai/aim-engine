@@ -174,7 +174,7 @@ func (fr FetchResult[T]) ToComponentHealthWithContext(
 }
 
 // ToUpstreamComponentHealth converts a FetchResult for an upstream dependency into ComponentHealth.
-// Upstream dependencies are resources that this controller depends on (templates, configs, secrets, etc.).
+// Upstream dependencies are resources that this controller depends on (profiles, configs, secrets, etc.).
 // NotFound errors for upstream dependencies are categorized as MissingUpstreamDependency (non-retriable, but can be
 // resolved when they are created via external actions).
 func (fr FetchResult[T]) ToUpstreamComponentHealth(component string, inspector func(T) ComponentHealth) ComponentHealth {

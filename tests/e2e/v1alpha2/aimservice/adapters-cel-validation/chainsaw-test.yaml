@@ -3,9 +3,8 @@
 # AIMService CEL Validation: spec.adapters + spec.adapterMode constraints
 #
 # Validates the AIMService-root CEL rules for LoRA adapter support:
-# - spec.adapters is allowed on v1alpha1 (template pipeline)
-# - spec.adapters requires spec.profile (v1alpha2 only)
-# - spec.adapters entries must have unique (kind, name) pairs (both versions)
+# - spec.adapters requires spec.profile
+# - spec.adapters entries must have unique (kind, name) pairs
 # - spec.adapterMode defaults to "static" and is immutable after creation
 # - spec.adapters may only be edited after creation when adapterMode is "dynamic"
 #   (static freezes the set; the adapter disk mount itself is decoupled from the
@@ -24,49 +23,29 @@ spec:
   steps:
     # --- Acceptance: adapters default to static (no adapterMode needed) ---
 
-    - name: Accept adapters on v1alpha1 AIMService (defaults to static)
+    - name: Accept adapters with profile (defaults to static)
       try:
         - apply:
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
-                name: cel-adapters-v1a1
+                name: cel-adapters-default-mode
               spec:
-                model:
-                  name: some-model
+                profile:
+                  name: some-profile
                 adapters:
                   - name: lora-a
                     kind: AIMArtifact
         - assert:
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
-                name: cel-adapters-v1a1
+                name: cel-adapters-default-mode
               # adapterMode is defaulted to static when omitted.
               spec:
                 adapterMode: static
-
-    - name: Reject v1alpha1 adapters with duplicate (kind, name)
-      try:
-        - apply:
-            expect:
-              - check:
-                  ($error != null): true
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMService
-              metadata:
-                name: cel-adapters-v1a1-dup
-              spec:
-                model:
-                  name: some-model
-                adapters:
-                  - name: lora-a
-                    kind: AIMArtifact
-                  - name: lora-a
-                    kind: AIMArtifact
 
     # --- Rejection: invalid adapterMode value (enum is static|dynamic) ---
 
@@ -171,7 +150,7 @@ spec:
                     kind: AIMArtifact
         - assert:
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: cel-adapters-dynamic

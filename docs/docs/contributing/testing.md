@@ -258,6 +258,13 @@ spec:
             timeout: 120s
 ```
 
+### Fixture Conventions
+
+- Write `AIMService`, `AIMModel`, `AIMClusterModel` and the profile kinds (`AIMProfile`, `AIMClusterProfile`, `AIMProfileSet`, `AIMClusterProfileSet`, `AIMProfileCache`) at `aim.eai.amd.com/v1alpha2`. Write `AIMArtifact`, `AIMRuntimeConfig`, `AIMClusterRuntimeConfig` and `AIMClusterModelSource` at `aim.eai.amd.com/v1alpha1`.
+- An `AIMService` serves from an `AIMProfile` or `AIMClusterProfile`, which it finds through `spec.profile.name`, `spec.profile.selector`, `spec.model.name` or `spec.model.image`.
+- Produce profiles the way users do: apply an `AIMProfile` / `AIMClusterProfile`, or derive them with `spec.profiles` on an `AIMModel` / `AIMClusterModel` or with an `AIMProfileSet` / `AIMClusterProfileSet`.
+- Prefer a full chain that reaches Ready in Kind over fabricated status. The frozen-status tests in `tests/e2e/aimservice/frozen/` cover service behaviour that Kind can't reach naturally.
+
 ### Debug Simulation
 
 For tests that involve model downloads, use simulation mode to avoid real network calls:

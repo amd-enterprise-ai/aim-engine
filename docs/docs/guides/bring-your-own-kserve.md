@@ -11,7 +11,7 @@ AIM Engine projects each deployable `AIMProfile` / `AIMClusterProfile` into a na
 :::{admonition} v1alpha2
 :class: note
 
-Runtime projection is a v1alpha2 feature. It is driven by `AIMProfile` / `AIMClusterProfile`, not the deprecated v1alpha1 `AIMServiceTemplate` shape.
+Runtime projection is a v1alpha2 feature. It is driven by `AIMProfile` / `AIMClusterProfile`.
 :::
 
 ## Why projection exists

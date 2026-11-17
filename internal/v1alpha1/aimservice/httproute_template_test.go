@@ -31,6 +31,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 )
 
 func TestResolveServiceRoutePath_ServiceOverride(t *testing.T) {
@@ -41,7 +42,7 @@ func TestResolveServiceRoutePath_ServiceOverride(t *testing.T) {
 		PathTemplate: ptr.To("/{.metadata.namespace}/{.metadata.labels['aim.silogen.ai/workload-id']}/"),
 	}
 
-	path, err := ResolveServiceRoutePath(v1alpha2View(svc), nil)
+	path, err := ResolveServiceRoutePath(svc, nil)
 	if err != nil {
 		t.Fatalf("ResolveServiceRoutePath failed: %v", err)
 	}
@@ -63,7 +64,7 @@ func TestResolveServiceRoutePath_RuntimeConfigFallback(t *testing.T) {
 		},
 	}
 
-	path, err := ResolveServiceRoutePath(v1alpha2View(svc), runtimeCfg)
+	path, err := ResolveServiceRoutePath(svc, runtimeCfg)
 	if err != nil {
 		t.Fatalf("ResolveServiceRoutePath failed: %v", err)
 	}
@@ -82,7 +83,7 @@ func TestResolveServiceRoutePath_Annotation(t *testing.T) {
 		PathTemplate: ptr.To("/{.metadata.annotations['route.suffix']}"),
 	}
 
-	path, err := ResolveServiceRoutePath(v1alpha2View(svc), nil)
+	path, err := ResolveServiceRoutePath(svc, nil)
 	if err != nil {
 		t.Fatalf("ResolveServiceRoutePath failed: %v", err)
 	}
@@ -95,7 +96,7 @@ func TestResolveServiceRoutePath_DefaultFallback(t *testing.T) {
 	svc := newRouteTestService()
 	// No runtime overrides - should use default path
 
-	path, err := ResolveServiceRoutePath(v1alpha2View(svc), nil)
+	path, err := ResolveServiceRoutePath(svc, nil)
 	if err != nil {
 		t.Fatalf("ResolveServiceRoutePath failed: %v", err)
 	}
@@ -111,7 +112,7 @@ func TestResolveServiceRoutePath_MissingLabel(t *testing.T) {
 		PathTemplate: ptr.To("/{.metadata.labels['missing']}"),
 	}
 
-	_, err := ResolveServiceRoutePath(v1alpha2View(svc), nil)
+	_, err := ResolveServiceRoutePath(svc, nil)
 	if err == nil {
 		t.Fatalf("expected error when label is missing")
 	}
@@ -132,7 +133,7 @@ func TestResolveServiceRoutePath_PathTooLong(t *testing.T) {
 		PathTemplate: ptr.To("/{.metadata.labels['segment-a']}/{.metadata.labels['segment-b']}/{.metadata.labels['segment-c']}/{.metadata.labels['segment-d']}"),
 	}
 
-	_, err := ResolveServiceRoutePath(v1alpha2View(svc), nil)
+	_, err := ResolveServiceRoutePath(svc, nil)
 	if err == nil {
 		t.Fatalf("expected error for oversized path")
 	}
@@ -148,7 +149,7 @@ func TestResolveServiceRoutePath_InvalidExpression(t *testing.T) {
 		PathTemplate: ptr.To("/{.metadata[}"),
 	}
 
-	_, err := ResolveServiceRoutePath(v1alpha2View(svc), nil)
+	_, err := ResolveServiceRoutePath(svc, nil)
 	if err == nil {
 		t.Fatalf("expected error for invalid jsonpath")
 	}
@@ -157,8 +158,8 @@ func TestResolveServiceRoutePath_InvalidExpression(t *testing.T) {
 	}
 }
 
-func newRouteTestService() *aimv1alpha1.AIMService {
-	return &aimv1alpha1.AIMService{
+func newRouteTestService() *aimv1alpha2.AIMService {
+	return &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "demo",
 			Namespace: "Testing",

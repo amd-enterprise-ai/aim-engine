@@ -291,7 +291,7 @@ The controller creates an `HTTPRoute` that attaches to the referenced Gateway. T
 |---|---|
 | `resolvedProfile` | The profile that was resolved (`name`, `scope`, `kind`, `uid`). The single source of truth for which profile is backing this service. |
 | `resolvedRuntimeConfig` | The runtime config (if any) that contributed defaults |
-| `cache` | Cache state — `profileCacheRef` (v1alpha2 profile pipeline) or `templateCacheRef` (v1alpha1 template pipeline), `retryAttempts` |
+| `cache` | Cache state — `profileCacheRef`, `retryAttempts` |
 | `runtime` | Replica counts when autoscaling is active (`currentReplicas`, `desiredReplicas`, `minReplicas`, `maxReplicas`) |
 | `routing` | Observed routing including the rendered HTTP path |
 | `conditions` | Per-component conditions — see below |
@@ -315,16 +315,19 @@ See [Conditions Reference](../reference/conditions.md) for the full reason catal
 
 ## Validation
 
-CEL admission rules reject a handful of v1alpha1-isms outright:
+CEL admission rules reject these spec shapes:
 
 | Rejected on v1alpha2 | Use instead |
 |---|---|
 | `spec.template` (any value) | `spec.profile` (or `spec.model`) |
 | `spec.overrides` | `spec.profileOverrides` |
+| `spec.model.custom` | An `AIMModel` referenced with `spec.model.name` |
 | Neither `spec.model` nor `spec.profile` | Set at least one |
 | `spec.profileOverrides` without `spec.profile` | Set `spec.profile` (`name` or `selector`) |
 | `spec.profile.selector.role: base` | Omit `role` or set `deployable` |
 | `spec.profile.selector` without `aimId`, `modelRef`, or paired `spec.model` | Add one of those anchor fields |
+
+The `spec.template`, `spec.overrides` and `spec.model.custom` rules reject the field on create and on updates that add it. An existing service that already has the field stays updatable and reports it in a [`TemplateFieldsIgnored`](../reference/conditions.md#templatefieldsignored) warning.
 
 See [Resource lifecycle → validation](resource-lifecycle.md#validation) for the canonical list of validation rules across all v1alpha2 CRDs.
 

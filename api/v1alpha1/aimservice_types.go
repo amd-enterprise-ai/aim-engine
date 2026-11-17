@@ -858,6 +858,7 @@ const (
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:deprecatedversion:warning="aim.eai.amd.com/v1alpha1 AIMService is deprecated; use aim.eai.amd.com/v1alpha2 (spec.profile) instead. The v1alpha1 model/template fields may be removed in a future release."
+// +kubebuilder:unservedversion
 // +kubebuilder:resource:shortName=aimsvc,categories=aim;all
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 // +kubebuilder:printcolumn:name="Model",type=string,JSONPath=`.status.resolvedModel.name`

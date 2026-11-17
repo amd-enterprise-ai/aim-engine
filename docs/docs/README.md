@@ -128,7 +128,7 @@ Task-oriented walkthroughs for common workflows:
 ### Reference
 
 - [CRD API (v1alpha2)](reference/api/v1alpha2.md) — API specification for Models, Profiles, ProfileSets, Services
-- [CRD API (v1alpha1)](reference/api/v1alpha1.md) — Legacy API specification
+- [CRD API (v1alpha1)](reference/api/v1alpha1.md) — API specification for Artifacts, RuntimeConfigs, ModelSources and the shared spec types
 - [Helm Chart Values](reference/helm-values.md) — All configurable Helm chart values
 - [CLI and Operator Flags](reference/cli.md) — Operator binary flags and endpoints
 - [Environment Variables](reference/environment-variables.md) — Operator and downloader configuration

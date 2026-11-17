@@ -636,7 +636,7 @@ jobs:
           kubectl create namespace "${NS}"
           trap 'kubectl delete namespace "${NS}" --ignore-not-found --wait=false 2>/dev/null || true' EXIT
           cat <<EOF | kubectl apply -n "${NS}" -f -
-          apiVersion: aim.eai.amd.com/v1alpha1
+          apiVersion: aim.eai.amd.com/v1alpha2
           kind: AIMModel
           metadata:
             name: reconcile-smoke-model
@@ -644,7 +644,6 @@ jobs:
             image: docker.io/amdenterpriseai/aim-dummy:${AIM_DUMMY_TAG}
             discovery:
               extractMetadata: false
-              createServiceTemplates: false
           EOF
           echo "Waiting for AIMModel status (proves manager RBAC + reconciliation)..."
           ok=

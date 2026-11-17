@@ -115,9 +115,10 @@ func kedaOTelScalerAddress() string {
 //     metric available at zero replicas.
 //   - The user's warm-state triggers (spec.autoScaling.metrics), driving 1->N.
 //
-// effectiveResources is the fully-merged predictor resource block from
-// resolveResources(). Pass nil before the template has resolved; the
-// reconciler re-plans on the next pass once it has.
+// effectiveResources is the fully-merged predictor resource block from the
+// profile pipeline's resolveEffectiveResourcesFromProfile(). Pass nil before
+// the profile has resolved; the reconciler re-plans on the next pass once it
+// has.
 //
 // Returns nil for the legacy fixed-replica path.
 func planScaledObject(
@@ -297,11 +298,11 @@ func computePredictorCooldown(service *aimv1alpha2.AIMService, effectiveResource
 
 // predictorMemoryGiB returns the predictor's effective memory footprint in
 // GiB (binary). Prefers the fully-merged effectiveResources; falls back to
-// service.Spec.Resources when the template hasn't resolved yet.
+// service.Spec.Resources when the profile hasn't resolved yet.
 //
 // Reads max(requests, limits) rather than requests-first because the
 // cooldown heuristic is estimating the workload's working-set size, not
-// the kubelet's admission-time guarantee -- AIM templates typically set
+// the kubelet's admission-time guarantee -- AIM profiles typically set
 // requests low (for scheduling) and limits at the actual cold-start
 // footprint (for KV cache + page cache headroom).
 func predictorMemoryGiB(service *aimv1alpha2.AIMService, effectiveResources *corev1.ResourceRequirements) int32 {

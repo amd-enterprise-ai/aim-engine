@@ -45,6 +45,7 @@ const (
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:deprecatedversion:warning="AIMClusterModel v1alpha1 is deprecated; use aim.eai.amd.com/v1alpha2"
+// +kubebuilder:unservedversion
 // +kubebuilder:resource:scope=Cluster,shortName=aimclmdl,categories=aim;all
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 // +kubebuilder:printcolumn:name="Source",type=string,JSONPath=`.status.sourceType`

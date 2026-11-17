@@ -668,10 +668,8 @@ checking that the cache PVC created by AIM is `Bound` with access mode `RWX`.
 The sample
 [`aimservice-mi300x.yaml`](https://github.com/amd-enterprise-ai/aim-engine/blob/main/config/samples/openshift/aimservice-mi300x.yaml)
 contains both an `AIMClusterModel` and an `AIMService`. Both use
-`aim.eai.amd.com/v1alpha2`. The service's `spec.profile` automatically selects
-the profile-based reconciler, so no pipeline annotation is needed. Applying
-the file once is valid; the service remains pending until profile discovery
-produces a deployable profile.
+`aim.eai.amd.com/v1alpha2`. Applying the file once is valid; the service
+remains pending until profile discovery produces a deployable profile.
 
 On this OpenShift release, the generated predictor uses the
 `aim-models/default` service account with UID 1000. The default restricted SCC

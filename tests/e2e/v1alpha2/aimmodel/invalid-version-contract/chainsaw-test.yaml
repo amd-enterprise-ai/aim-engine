@@ -9,8 +9,7 @@ spec:
     onboarding fields (profileCopy, custom, customTemplates, top-level
     modelSources) are rejected; spec.derivedFrom is rejected on new v1alpha2
     objects (deprecated flat shape); spec.profiles cannot be combined with
-    image / aimId / etc.; profiles version contract is enforced; and
-    v1alpha1 keeps rejecting spec.derivedFrom and spec.profiles.
+    image / aimId / etc.; and the profiles version contract is enforced.
   timeouts:
     assert: 30s
   steps:
@@ -177,43 +176,6 @@ spec:
                 name: invalid-aimid-plus-profiles
               spec:
                 aimId: invalid-org/invalid-model
-                profiles:
-                  derivedFrom:
-                    selector:
-                      aimId: invalid-org/invalid-model
-                  versionPolicy: pinned
-                  version: 0.1.0
-
-    - name: Reject v1alpha1 spec.derivedFrom
-      try:
-        - apply:
-            expect:
-              - check:
-                  ($error != null): true
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMModel
-              metadata:
-                name: invalid-derivedfrom-v1alpha1
-              spec:
-                derivedFrom:
-                  selector:
-                    aimId: invalid-org/invalid-model
-                  versionPolicy: pinned
-                  version: 0.1.0
-
-    - name: Reject v1alpha1 spec.profiles
-      try:
-        - apply:
-            expect:
-              - check:
-                  ($error != null): true
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMModel
-              metadata:
-                name: invalid-profiles-v1alpha1
-              spec:
                 profiles:
                   derivedFrom:
                     selector:

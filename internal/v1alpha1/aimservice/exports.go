@@ -53,8 +53,8 @@ func FetchHPA(
 
 // FetchPredictorPods lists the predictor pods owned by the given
 // InferenceService (matched via the KServe inference-service label). Exported
-// so the v1alpha2 profile pipeline observes the same pod set the template
-// pipeline uses to derive scale-to-zero and pod health.
+// for the v1alpha2 profile pipeline, which derives scale-to-zero and pod
+// health from this pod set.
 func FetchPredictorPods(
 	ctx context.Context,
 	c client.Client,

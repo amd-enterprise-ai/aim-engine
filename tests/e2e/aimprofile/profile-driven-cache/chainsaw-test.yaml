@@ -2,8 +2,7 @@
 #
 # AIMProfile E2E Test: Profile-Driven Cache (Path A)
 #
-# Validates the AIMProfile -> AIMProfileCache path that mirrors v1alpha1's
-# AIMServiceTemplate -> AIMTemplateCache pattern: a namespace-scoped profile
+# Validates the AIMProfile -> AIMProfileCache path: a namespace-scoped profile
 # that opts into caching via spec.caching.enabled produces a 1:1
 # AIMProfileCache, owner-ref'd back to the profile so deleting the profile
 # garbage-collects the cache (and transitively any dedicated artifacts).
@@ -46,8 +45,7 @@ spec:
               apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMProfileCache
               metadata:
-                # 1:1 naming: cache name == profile name. Mirrors
-                # v1alpha1's BuildTemplateCache(template).Name = template.Name.
+                # 1:1 naming: cache name == profile name.
                 name: test-profile-driven-cache
                 namespace: ($namespace)
                 # Owner reference is the source profile, NOT the AIMService

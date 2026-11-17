@@ -61,7 +61,7 @@ const (
 	LabelKeyCustomModel = AimLabelDomain + "/custom-model"
 
 	// ==========================================================================
-	// Cache labels - for model and template caches
+	// Cache labels - for artifact caches
 	// ==========================================================================
 
 	// LabelKeyCacheType identifies the type of cache.

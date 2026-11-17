@@ -99,7 +99,7 @@ spec:
         - assert:
             timeout: 15m
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: qwen25-05b-lora

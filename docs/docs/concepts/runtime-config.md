@@ -69,14 +69,14 @@ Only one reference is present — namespace or cluster, never both. When the two
 
 ## Resources that consume runtime config
 
-| Resource | v1alpha2 path | v1alpha1 path |
-|---|---|---|
-| `AIMService` | Yes (resolved per service) | Yes |
-| `AIMModel` / `AIMClusterModel` | Yes (used by discovery Job) | Yes |
-| `AIMProfile` | Indirectly: profile-owned caching creates a cache that resolves `default` | n/a |
-| `AIMClusterProfile` | No | n/a |
-| `AIMProfileCache` | Yes (download env from `spec.caching.env`, storage defaults) | n/a |
-| `AIMArtifact` | Yes (download env from `spec.caching.env`) | Yes |
+| Resource | Consumes runtime config |
+|---|---|
+| `AIMService` | Yes (resolved per service) |
+| `AIMModel` / `AIMClusterModel` | Yes (used by discovery Job) |
+| `AIMProfile` | Indirectly: profile-owned caching creates a cache that resolves `default` |
+| `AIMClusterProfile` | No |
+| `AIMProfileCache` | Yes (download env from `spec.caching.env`, storage defaults) |
+| `AIMArtifact` | Yes (download env from `spec.caching.env`) |
 
 Each consuming resource independently resolves its RuntimeConfig and publishes
 the result. A named RuntimeConfig selected by an `AIMService` does not retarget
@@ -602,10 +602,10 @@ spec:
 
 When enabled, labels matching the `match` patterns are automatically copied:
 
-- **AIMService** → `InferenceService`, `HTTPRoute`, PVCs, auto-created `AIMModel` (v1alpha1 image path), `AIMProfileCache`
+- **AIMService** → `InferenceService`, `HTTPRoute`, PVCs, auto-created `AIMModel`, `AIMProfileCache`
 - **AIMProfileCache** → `AIMArtifact` resources
 - **AIMArtifact** → PVCs, download `Job`s
-- **AIMModel** / **AIMClusterModel** → `AIMProfile` (v1alpha2 discovery), child `AIMProfileSet` (v1alpha2 derivation)
+- **AIMModel** / **AIMClusterModel** → `AIMProfile` (discovery), child `AIMProfileSet` (derivation)
 - **AIMProfileSet** → derived `AIMProfile`s
 - **AIMClusterModelSource** → auto-discovered `AIMClusterModel`s
 
@@ -690,7 +690,7 @@ This lets workloads without special requirements run on a fresh cluster without 
 
 ## Operator namespace
 
-The AIM controllers determine the operator namespace from the `AIM_SYSTEM_NAMESPACE` environment variable (default: `aim-system`). Cluster-scoped workflows — cluster template discovery, cluster image inspection, auto-generated cluster templates — run auxiliary pods in this namespace and resolve namespaced runtime configs there.
+The AIM controllers determine the operator namespace from the `AIM_SYSTEM_NAMESPACE` environment variable (default: `aim-system`). Cluster-scoped workflows, such as `AIMClusterModel` discovery and image inspection, run auxiliary pods in this namespace and resolve namespaced runtime configs there.
 
 ## Related documentation
 

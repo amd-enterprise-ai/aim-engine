@@ -2961,7 +2961,7 @@ spec:
           rule: self.spec.adapterMode == 'dynamic' || (has(self.spec.adapters) ==
             has(oldSelf.spec.adapters) && (!has(self.spec.adapters) || self.spec.adapters
             == oldSelf.spec.adapters))
-    served: true
+    served: false
     storage: false
     subresources:
       status: {}

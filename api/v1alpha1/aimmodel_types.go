@@ -38,6 +38,7 @@ const (
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:deprecatedversion:warning="v1alpha1 AIMModel is deprecated; use v1alpha2 AIMModel"
+// +kubebuilder:unservedversion
 // +kubebuilder:resource:shortName=aimmdl,categories=aim;all
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 // +kubebuilder:printcolumn:name="Source",type=string,JSONPath=`.status.sourceType`

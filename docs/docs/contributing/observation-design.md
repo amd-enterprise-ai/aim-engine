@@ -44,11 +44,11 @@ Use a separate observation struct only when you need to:
 ```go
 type MyObservation struct {
     // Store for use in PlanResources
-    template *Template
+    profile *Profile
 
     // ComponentHealth from fetches
-    modelHealth    ComponentHealth
-    templateHealth ComponentHealth
+    modelHealth   ComponentHealth
+    profileHealth ComponentHealth
 }
 ```
 
@@ -61,7 +61,7 @@ type MyObservation struct {
 ```go
 func (obs MyObservation) AllDependenciesReady() bool {
     return obs.modelHealth.GetState() == Ready &&
-           obs.templateHealth.GetState() == Ready
+           obs.profileHealth.GetState() == Ready
 }
 
 func (obs MyObservation) NeedsScaleUp(desired int32) bool {
@@ -107,9 +107,9 @@ When adding to your observation, ask:
 type ServiceObservation struct {
     // Fields: Raw state and component health
     modelHealth    ComponentHealth
-    templateHealth ComponentHealth
+    profileHealth  ComponentHealth
     workloadHealth ComponentHealth
-    template       *Template  // Stored for PlanResources
+    profile        *Profile  // Stored for PlanResources
 
     currentReplicas int32
     desiredReplicas int32
@@ -119,14 +119,14 @@ type ServiceObservation struct {
 func (obs ServiceObservation) GetComponentHealth() []ComponentHealth {
     return []ComponentHealth{
         obs.modelHealth,
-        obs.templateHealth,
+        obs.profileHealth,
         obs.workloadHealth,
     }
 }
 
 func (obs ServiceObservation) AllDependenciesReady() bool {
     return obs.modelHealth.GetState() == Ready &&
-           obs.templateHealth.GetState() == Ready
+           obs.profileHealth.GetState() == Ready
 }
 
 func (obs ServiceObservation) NeedsScaling() bool {
@@ -145,7 +145,7 @@ func (r *Reconciler) PlanResources(ctx, obj, obs) PlanResult {
     var apply []client.Object
 
     if obs.CanDeploy() {
-        apply = append(apply, buildWorkload(obj, obs.template))
+        apply = append(apply, buildWorkload(obj, obs.profile))
     }
 
     return PlanResult{Apply: apply}

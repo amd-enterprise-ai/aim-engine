@@ -6,8 +6,7 @@
 #      switches all downstream resolution onto it.
 #
 #   2. spec.caching.mode=Dedicated puts the AIMProfileCache in
-#      per-service-Dedicated mode (mirroring v1alpha1's AIMService -> dedicated
-#      AIMTemplateCache pattern). The cache must be owner-ref'd by the
+#      per-service-Dedicated mode. The cache must be owner-ref'd by the
 #      AIMService so it (and its dedicated artifacts) GC with the service.
 apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMService

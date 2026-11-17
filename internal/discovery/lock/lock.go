@@ -69,8 +69,8 @@ const (
 	DiscoveryLockRetryInterval = 100 * time.Millisecond
 
 	// DiscoveryLabelName is the shared app.kubernetes.io/name value used to
-	// identify all discovery Jobs across API versions. Counting against this
-	// label keeps v1alpha1 and v1alpha2 discovery sharing the same global budget.
+	// identify all discovery Jobs. Counting against this label keeps every
+	// discovery Job under the same global budget.
 	DiscoveryLabelName = "aim-discovery"
 )
 

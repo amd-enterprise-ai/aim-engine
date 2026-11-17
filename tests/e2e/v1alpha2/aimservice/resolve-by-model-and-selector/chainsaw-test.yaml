@@ -49,7 +49,7 @@ spec:
             timeout: 60s
             content: |
               set -eu
-              SERVICE_GV=aimservices.v1alpha1.aim.eai.amd.com
+              SERVICE_GV=aimservices.v1alpha2.aim.eai.amd.com
               PROFILE_GV=aimprofiles.v1alpha2.aim.eai.amd.com
 
               for _ in $(seq 1 30); do

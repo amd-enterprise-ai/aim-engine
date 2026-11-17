@@ -89,24 +89,24 @@ package logs; AWS SDK and HTTP wire loggers remain at `WARNING`.
 
 ## Inference Container Variables
 
-These are set on inference containers by the operator. The "Source" column lists where the value comes from in v1alpha2 (`AIMProfile`) and v1alpha1 (`AIMServiceTemplate`).
+These are set on inference containers by the operator. The "Source" column lists where the value comes from; "Profile" is the resolved `AIMProfile` or `AIMClusterProfile`.
 
 | Variable | Source | Description |
 |----------|--------|-------------|
 | `AIM_CACHE_PATH` | Constant | Base path for cached model artifacts. |
 | `VLLM_ENABLE_METRICS` | Constant | Always `true` — enables vLLM Prometheus metrics. |
-| `AIM_ID` | Profile (v1alpha2) / Template (v1alpha1) | AIM product family identifier (e.g., `meta-llama/Llama-3-8B`). Determines the model-specific profile search path and serves as a fallback model identifier. Mutually exclusive with `AIM_MODEL_ID`. |
-| `AIM_ENGINE` | Profile (v1alpha2) | Runtime engine selected from the resolved profile's `spec.engine` (for example `vllm` or `vllm_omni`). |
-| `AIM_PROFILE_ID` | Profile (v1alpha2) / Template (v1alpha1) | Active profile identifier. For custom-profile templates (v1alpha1), set to `custom/{aimId}/{profileName}` to bypass the runtime's normal profile selection logic. In v1alpha2, discovered profiles preserve `spec.profileId` as the projected filename; hand-authored profiles without it receive an engine-aware generated filename. |
-| `AIM_METRIC` | Profile / Template | Optimization metric (`latency` or `throughput`). |
-| `AIM_PRECISION` | Profile / Template | Model precision (e.g., `fp16`, `fp8`). |
-| `AIM_MODEL_ID` | Profile / Template | Model identifier for custom models (base container deployments). Mutually exclusive with `AIM_ID`. |
-| `AIM_ENGINE_ARGS` | Merged | JSON-encoded engine arguments. v1alpha2: merged key by key from the AIMService `spec.env`, the profile `containerEnv` and the runtime config `spec.env`; the AIM runtime merges the result over the profile `engineArgs`, including `profileOverrides.engineArgs`. Direct NVIDIA vLLM profiles don't read it. v1alpha1: merged from service, template, and runtime config; the AIM runtime merges it over the selected profile's engine arguments. |
+| `AIM_ID` | Profile | AIM product family identifier (e.g., `meta-llama/Llama-3-8B`). Determines the model-specific profile search path and serves as a fallback model identifier. Mutually exclusive with `AIM_MODEL_ID`. |
+| `AIM_ENGINE` | Profile | Runtime engine selected from the resolved profile's `spec.engine` (for example `vllm` or `vllm_omni`). |
+| `AIM_PROFILE_ID` | Profile | Active profile identifier, `custom/{aimId}/{filename}`, naming the profile file the operator projects for the runtime so the runtime skips its own profile selection. Discovered profiles preserve `spec.profileId` as the filename; hand-authored profiles without it receive an engine-aware generated filename. |
+| `AIM_METRIC` | Profile | Optimization metric (`latency` or `throughput`). |
+| `AIM_PRECISION` | Profile | Model precision (e.g., `fp16`, `fp8`). |
+| `AIM_MODEL_ID` | Profile | Model identifier for custom models (base container deployments). Mutually exclusive with `AIM_ID`. |
+| `AIM_ENGINE_ARGS` | Merged | JSON-encoded engine arguments, merged key by key from the AIMService `spec.env`, the profile `containerEnv` and the runtime config `spec.env`. The AIM runtime merges the result over the profile `engineArgs`, including `profileOverrides.engineArgs`. Direct NVIDIA vLLM profiles don't read it. |
 | `AIM_ADAPTER_MAX_RANK` | Adapter controller | Static mode: inferred from the largest declared adapter rank. Dynamic mode: `AIMService.spec.adapterRuntime.maxRank`, then namespace/cluster RuntimeConfig, then default `32`. |
 
 ### Environment Variable Merge Order
 
-:::{admonition} Framework-owned v1alpha2 variables
+:::{admonition} Framework-owned variables
 :class: important
 
 `AIM_ENGINE`, `AIM_PROFILE_ID`, `AIM_ID`, `AIM_MODEL_ID`, and
@@ -122,7 +122,7 @@ An inference container gets its env at two levels:
 - **Engine process.** For a profile that runs the AIM runtime, the AIM runtime applies the AIMProfile `engineEnv`, including `spec.profileOverrides.engineEnv`, over all pod env before it starts the engine.
 - **Pod env.** The env that AIM Engine sets wins, then the AIMService `spec.env`, then the AIMProfile `containerEnv`, then the `AIMRuntimeConfig` `spec.env`, then the `AIMClusterRuntimeConfig` `spec.env`.
 
-[Inference container env](../concepts/runtime-config.md#inference-container-env) gives the full order, the entries that AIM Engine leaves out, how `AIM_ENGINE_ARGS` is merged, and how direct NVIDIA vLLM profiles and the v1alpha1 template pipeline differ. Download Jobs get their env from other fields, in the order given in [Download Job env](../concepts/runtime-config.md#download-job-env).
+[Inference container env](../concepts/runtime-config.md#inference-container-env) gives the full order, the entries that AIM Engine leaves out, how `AIM_ENGINE_ARGS` is merged, and how direct NVIDIA vLLM profiles differ. Download Jobs get their env from other fields, in the order given in [Download Job env](../concepts/runtime-config.md#download-job-env).
 
 ## Next Steps
 
