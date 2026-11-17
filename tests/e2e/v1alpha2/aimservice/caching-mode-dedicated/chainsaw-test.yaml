@@ -1,0 +1,71 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# A service with caching.mode Dedicated gets its own AIMProfileCache, owned by
+# the service, and is deployed once that cache is ready.
+#
+# No accelerator is involved and the cache download is simulated, so this runs
+# in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-caching-mode-dedicated
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the profile and a service with dedicated caching
+      try:
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+
+    - name: The service resolves the profile and gets its own cache
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: caching-mode-dedicated
+              status:
+                resolvedProfile:
+                  name: caching-mode-dedicated
+                (conditions[?type == 'ProfileReady']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: caching-mode-dedicated
+                (ownerReferences[?kind == 'AIMService' && name == 'caching-mode-dedicated']):
+                  - controller: true
+              spec:
+                mode: Dedicated
+              status:
+                status: Ready
+
+    - name: The service is deployed and reaches Running
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: caching-mode-dedicated
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: caching-mode-dedicated
+              status:
+                status: Running
+                (conditions[?type == 'ProfileCacheReady']):
+                  - status: "True"

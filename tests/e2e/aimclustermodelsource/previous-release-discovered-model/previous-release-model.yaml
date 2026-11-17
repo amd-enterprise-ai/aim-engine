@@ -1,0 +1,23 @@
+# An AIMClusterModel as an earlier release's source discovered it: written
+# through aim.eai.amd.com/v1alpha1, with the labels and annotations that source
+# set. The owner reference is left out because the source does not exist yet;
+# the source matches existing models by image, so neither the owner reference
+# nor the name changes how it treats this model.
+#
+# Cluster-scoped resources share one global namespace, so the names and the
+# image are made unique per test run via the chainsaw $namespace binding.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModel
+metadata:
+  name: (join('-', ['test-previous-release-model', $namespace]))
+  labels:
+    aim.eai.amd.com/model-source: (join('-', ['test-previous-release', $namespace]))
+    aim.eai.amd.com/origin: auto-generated
+    aim.eai.amd.com/cluster-model-source.name: (join('-', ['test-previous-release', $namespace]))
+    app.kubernetes.io/managed-by: aim-cluster-model-source-controller
+  annotations:
+    aim.eai.amd.com/source-registry: registry.invalid
+    aim.eai.amd.com/source-repository: (join('/', [$namespace, 'previous-release']))
+    aim.eai.amd.com/source-tag: "1.0"
+spec:
+  image: (join('', ['registry.invalid/', $namespace, '/previous-release:1.0']))

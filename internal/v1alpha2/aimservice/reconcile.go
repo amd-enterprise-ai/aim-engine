@@ -1440,7 +1440,8 @@ func (r *ProfileServiceReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ServiceObservation,
 ) {
-	controllerutils.SetTemplateMigrationRequired(cm, false)
+	clearTemplateEraStatus(status, cm)
+	setTemplateFieldsIgnoredCondition(cm, obs.service.Spec)
 
 	// Report-only: whether KEDA can read the scale-from-zero activation
 	// trigger. Shared with v1alpha1; never gates readiness.

@@ -48,6 +48,15 @@ jobs:
             scenario: v1alpha1-bridge
             setup_dir: tests/e2e/upgrade-compatibility/bridge/setup
             verify_dir: tests/e2e/upgrade-compatibility/bridge/verify
+          - name: v0.2.7
+            slug: v027
+            repository: amd-enterprise-ai/aim-engine
+            ref: 3f585b07c3d7fa215d6ceed20190a809e82dbe11
+            # The upgrade preflight reads the operator version from this tag.
+            baseline_image_tag: v0.2.7
+            scenario: v0.2.7
+            setup_dir: tests/e2e/upgrade-compatibility/v0.2.7/setup
+            verify_dir: tests/e2e/upgrade-compatibility/v0.2.7/verify
     concurrency:
       group: test-upgrade-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ matrix.slug }}
       cancel-in-progress: true
@@ -56,8 +65,8 @@ jobs:
       UPGRADE_NAMESPACE: aim-upgrade-compatibility
       BASELINE_DIR: .tmp/upgrade-baseline
       BASELINE_IMAGE_REPOSITORY: aim-engine-upgrade-baseline
-      BASELINE_IMAGE_TAG: ${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.slug }}
-      BASELINE_OPERATOR_IMAGE: aim-engine-upgrade-baseline:${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.slug }}
+      BASELINE_IMAGE_TAG: ${{ matrix.baseline_image_tag || format('{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.slug) }}
+      BASELINE_OPERATOR_IMAGE: aim-engine-upgrade-baseline:${{ matrix.baseline_image_tag || format('{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.slug) }}
       CANDIDATE_IMAGE_REPOSITORY: aim-engine-upgrade-candidate
       CANDIDATE_IMAGE_TAG: ${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.slug }}
       CANDIDATE_OPERATOR_IMAGE: aim-engine-upgrade-candidate:${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.slug }}
@@ -285,6 +294,111 @@ jobs:
         if: matrix.scenario == 'v1alpha1-bridge'
         run: hack/ci/upgrade/snapshot-bridge.sh "${UPGRADE_REPORT_DIR}/baseline"
 
+      - name: Preflight blocks the v0.2.7 corpus
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          set -euo pipefail
+          report="${UPGRADE_REPORT_DIR}/preflight-before-cleanup.txt"
+          if hack/upgrade-preflight.sh > "${report}"; then
+            cat "${report}"
+            echo "The preflight passed before the documented cleanup" >&2
+            exit 1
+          fi
+          cat "${report}"
+          for expected in \
+            "FAIL [template-pipeline-services] AIMService ${UPGRADE_NAMESPACE}/upgrade-shared-service:" \
+            "FAIL [template-pipeline-services] AIMService ${UPGRADE_NAMESPACE}/upgrade-dedicated-service:" \
+            "FAIL [template-objects] AIMServiceTemplate ${UPGRADE_NAMESPACE}/upgrade-cpu-template:" \
+            "FAIL [template-objects] AIMClusterServiceTemplate " \
+            "FAIL [template-objects] AIMTemplateCache ${UPGRADE_NAMESPACE}/" \
+            "FAIL [template-finalizers] AIMTemplateCache ${UPGRADE_NAMESPACE}/" \
+            "FAIL [stale-owner-references] AIMArtifact ${UPGRADE_NAMESPACE}/" \
+            "INFO [dedicated-template-caches] AIMTemplateCache ${UPGRADE_NAMESPACE}/" \
+            "ok   [minimum-version]"; do
+            if ! grep -qF -- "${expected}" "${report}"; then
+              echo "The preflight report has no line with: ${expected}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Move the v0.2.7 template services
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          set -euo pipefail
+          read -r shared_artifact shared_artifact_uid < <(kubectl get aimtemplatecaches -n "${UPGRADE_NAMESPACE}" \
+            -l aim.eai.amd.com/service=upgrade-shared-service -o json \
+            | jq -r '.items[0].status.artifacts[] | .name + " " + .uid')
+          moved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          # The commands of docs/docs/admin/upgrading.md#move-template-services.
+          # Both services set spec.template.allowUnoptimized.
+          for service in upgrade-shared-service upgrade-dedicated-service; do
+            kubectl annotate aimservice "${service}" -n "${UPGRADE_NAMESPACE}" aim.eai.amd.com/reconciler-pipeline=profile
+            kubectl patch aimservice "${service}" -n "${UPGRADE_NAMESPACE}" --type merge \
+              -p '{"spec":{"profile":{"selector":{"minimumType":"unoptimized"}}}}'
+            kubectl wait aimservice/"${service}" -n "${UPGRADE_NAMESPACE}" --for=condition=ProfileCacheReady --timeout=15m
+            kubectl wait aimservice/"${service}" -n "${UPGRADE_NAMESPACE}" --for=jsonpath='{.status.status}'=Running --timeout=15m
+          done
+
+          read -r adopted_artifact adopted_artifact_uid < <(kubectl get aimprofilecaches -n "${UPGRADE_NAMESPACE}" \
+            -l aim.eai.amd.com/service=upgrade-shared-service -o json \
+            | jq -r '.items[0].status.artifacts[] | .name + " " + .uid')
+          if [[ "${adopted_artifact_uid}" != "${shared_artifact_uid}" ]]; then
+            echo "The Shared profile cache uses ${adopted_artifact} (${adopted_artifact_uid})," \
+              "not the template cache's ${shared_artifact} (${shared_artifact_uid})" >&2
+            exit 1
+          fi
+          new_downloads="$(kubectl get jobs -n "${UPGRADE_NAMESPACE}" \
+            -l "aim.eai.amd.com/component=download,aim.eai.amd.com/artifact.name=${shared_artifact}" -o json \
+            | jq --arg since "${moved_at}" '[.items[] | select(.metadata.creationTimestamp >= $since)] | length')"
+          if [[ "${new_downloads}" != 0 ]]; then
+            echo "The move started ${new_downloads} download Job(s) for the adopted artifact ${shared_artifact}" >&2
+            exit 1
+          fi
+          echo "The Shared profile cache adopted ${shared_artifact} (${shared_artifact_uid}) without a download"
+
+      - name: Delete the v0.2.7 template objects
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          set -euo pipefail
+          # The commands of docs/docs/admin/upgrading.md#delete-template-objects.
+          kubectl get aimmodels --all-namespaces -o json \
+            | jq -r '.items[] | select(.spec.image) | "\(.metadata.namespace) \(.metadata.name)"' \
+            | while read -r namespace name; do
+                kubectl patch aimmodel "${name}" -n "${namespace}" --type merge \
+                  -p '{"spec":{"discovery":{"createServiceTemplates":false}}}'
+              done
+          kubectl get aimclustermodels -o json \
+            | jq -r '.items[] | select(.spec.image) | .metadata.name' \
+            | while read -r name; do
+                kubectl patch aimclustermodel "${name}" --type merge \
+                  -p '{"spec":{"discovery":{"createServiceTemplates":false}}}'
+              done
+          kubectl delete aimtemplatecaches --all --all-namespaces
+          kubectl delete aimservicetemplates --all --all-namespaces
+          kubectl delete aimclusterservicetemplates --all
+
+      - name: Preflight passes after the documented cleanup
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          set -euo pipefail
+          report="${UPGRADE_REPORT_DIR}/preflight-after-cleanup.txt"
+          # Garbage collection of what the template objects owned takes a while.
+          for attempt in $(seq 1 30); do
+            if hack/upgrade-preflight.sh > "${report}"; then
+              cat "${report}"
+              exit 0
+            fi
+            echo "Preflight attempt ${attempt}/30 failed"
+            sleep 10
+          done
+          cat "${report}"
+          exit 1
+
+      - name: Record v0.2.7 identities before the upgrade
+        if: matrix.scenario == 'v0.2.7'
+        run: hack/ci/upgrade/record-v0.2.7-identities.sh "${UPGRADE_REPORT_DIR}/identities-before-upgrade.tsv"
+
       - name: Upgrade CRDs
         run: |
           set -euo pipefail
@@ -328,6 +442,14 @@ jobs:
         if: matrix.scenario == 'generic'
         run: hack/ci/upgrade/verify-convergence.sh "${UPGRADE_REPORT_DIR}/baseline-objects.tsv"
 
+      - name: Verify v0.2.7 identities survived the upgrade
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          set -euo pipefail
+          hack/ci/upgrade/record-v0.2.7-identities.sh "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv"
+          diff -u "${UPGRADE_REPORT_DIR}/identities-before-upgrade.tsv" \
+            "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv"
+
       - name: Verify bridge upgrade convergence
         if: matrix.scenario == 'v1alpha1-bridge'
         run: |
@@ -361,6 +483,16 @@ jobs:
         run: |
           kubectl get aimservices,aimmodels,aimservicetemplates,aimtemplatecaches,aimartifacts,aimprofiles,aimprofilecaches,inferenceservices,pvc,pods \
             -A -o yaml > "${UPGRADE_REPORT_DIR}/diagnostics/bridge-resources.yaml" 2>&1 || true
+
+      - name: Capture v0.2.7 diagnostics
+        if: always() && matrix.scenario == 'v0.2.7'
+        run: |
+          mkdir -p "${UPGRADE_REPORT_DIR}/diagnostics/v0.2.7"
+          for resource in aimservices aimmodels aimclustermodels aimclustermodelsources aimservicetemplates \
+            aimclusterservicetemplates aimtemplatecaches aimartifacts aimprofiles aimclusterprofiles \
+            aimprofilecaches inferenceservices jobs pvc pods; do
+            kubectl get "${resource}" -A -o yaml > "${UPGRADE_REPORT_DIR}/diagnostics/v0.2.7/${resource}.yaml" 2>&1 || true
+          done
 
       - name: Upload upgrade report
         if: always()

@@ -1,0 +1,75 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v0.2.7-verify
+  labels:
+    requires: upgrade-workflow
+spec:
+  description: |
+    After the upgrade from v0.2.7, the services the guide moved keep serving
+    from their profile caches, and the image and discovered models stay Ready.
+  timeouts:
+    assert: 300s
+  steps:
+    - name: Moved services keep serving from their profile caches
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-shared-service
+              status:
+                status: Running
+                (conditions[?type == 'ProfileCacheReady']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-dedicated-service
+              status:
+                status: Running
+                (conditions[?type == 'ProfileCacheReady']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-shared-service
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-dedicated-service
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: Image and discovered models stay Ready
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: upgrade-image-model
+              status:
+                status: Ready
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/model-source: upgrade-model-source
+              status:
+                status: Ready

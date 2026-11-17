@@ -1,0 +1,90 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimmodel-image-metadata-native
+spec:
+  description: |
+    Verifies what an image-backed v1alpha2 AIMModel reads from its image labels:
+    status.sourceType, status.imageMetadata and the tag-derived status.version
+    (the Version print column), the RuntimeConfig and ImageMetadata conditions,
+    and the primary flag derived from the recommendedDeployments label. The
+    aim-dummy image recommends mi300x-fp16-latency-unopt (1x MI300X) but not
+    mi300x-fp8-tp2-throughput (2x MI300X). Profile-set copies expose the flag
+    on hardware-independent profiles, since the model only materialises
+    profiles for hardware present in the cluster.
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create the image-backed AIMModel
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert status describes the image
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: image-metadata-native
+              status:
+                aimId: HuggingFaceTB/SmolLM2-135M
+                sourceType: Image
+                version: "0.2.2"
+                imageMetadata:
+                  model:
+                    canonicalName: HuggingFaceTB/SmolLM2-135M
+                    (length(recommendedDeployments) > `0`): true
+                (discoveryCacheRef.name != ''): true
+                (conditions[?type == 'RuntimeConfigReady']):
+                  - status: "True"
+                (conditions[?type == 'ImageMetadataReady']):
+                  - status: "True"
+
+    - name: Assert the Version column shows the image tag
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              set -eu
+              OUT=$(kubectl get aimmodel image-metadata-native -n "$NAMESPACE")
+              echo "$OUT"
+              echo "$OUT" | awk '
+                NR == 1 { for (i = 1; i <= NF; i++) if ($i == "VERSION") col = i }
+                NR == 2 { found = (col && $col == "0.2.2") }
+                END { exit !found }
+              ' || { echo "ERROR: Version column does not show 0.2.2"; exit 1; }
+
+    - name: Copy a recommended and a non-recommended definition
+      try:
+        - apply:
+            file: profilesets.yaml
+
+    - name: Assert only the recommended copy is primary
+      try:
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                annotations:
+                  aim.eai.amd.com/profile-source: copy
+                  aim.eai.amd.com/profile-set-name: image-metadata-native-recommended
+              spec:
+                profileId: mi300x-fp16-latency-unopt
+                primary: true
+        - assert:
+            timeout: 90s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                annotations:
+                  aim.eai.amd.com/profile-source: copy
+                  aim.eai.amd.com/profile-set-name: image-metadata-native-other
+              spec:
+                profileId: mi300x-fp8-tp2-throughput
+                primary: false

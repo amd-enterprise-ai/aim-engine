@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# A service deploying a real AIM image with dedicated caching downloads the
+# model into its own AIMProfileCache, reaches Running, and answers chat
+# completions through the gateway.
+#
+# The model is downloaded for real because the chat request needs real weights.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-gpu-happy-path-dedicated
+  labels:
+    requires: gpu
+    hf-access: live
+spec:
+  timeouts:
+    assert: 600s
+  steps:
+    - use:
+        template: ../../../_shared/hf-token-step.yaml
+
+    - name: Create the routing runtime config and the service
+      try:
+        - apply:
+            file: runtime-config.yaml
+        - apply:
+            file: service.yaml
+
+    - name: The service runs on its own cache
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: gpu-happy-path-dedicated
+              status:
+                status: Running
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                (ownerReferences[?kind == 'AIMService' && name == 'gpu-happy-path-dedicated']):
+                  - controller: true
+              spec:
+                mode: Dedicated
+              status:
+                status: Ready
+
+    - name: Chat completions work through the gateway
+      try:
+        - script:
+            timeout: 3m
+            env:
+              - name: HTTP_BASE_PATH
+                value: (join('', ['/integration/v1alpha2-gpu-happy-path-dedicated/', $namespace, '/gpu-happy-path-dedicated/v1']))
+            content: bash ../_shared/validate-http.sh

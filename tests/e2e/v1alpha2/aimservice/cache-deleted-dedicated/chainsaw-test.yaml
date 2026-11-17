@@ -1,0 +1,112 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Deleting a running service's dedicated AIMProfileCache and its artifacts
+# does not break the service: a replacement cache is created, becomes Ready,
+# and the service references it and returns to Running. The predictor keeps
+# its cache PVC mount throughout.
+#
+# No accelerator is involved and the cache download is simulated, so this runs
+# in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-cache-deleted-dedicated
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the profile and a service with dedicated caching
+      try:
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: cache-deleted-dedicated
+              status:
+                status: Running
+                (conditions[?type == 'ProfileCacheReady']):
+                  - status: "True"
+                    reason: ProfileCacheReady
+
+    - name: The predictor mounts the cache PVC
+      try:
+        - assert:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: cache-deleted-dedicated
+                  component: predictor
+              spec:
+                template:
+                  spec:
+                    (length(volumes[?persistentVolumeClaim]) >= `1`): true
+
+    - name: A replacement cache is created and the service recovers
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              kubectl get aimprofilecaches.aim.eai.amd.com -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service.name=cache-deleted-dedicated \
+                -o jsonpath='{.items[0].metadata.uid}'
+            outputs:
+              - name: oldCacheUID
+                value: ($stdout)
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              kubectl delete aimartifacts.aim.eai.amd.com -n "$NAMESPACE" --wait=false \
+                -l aim.eai.amd.com/service.name=cache-deleted-dedicated
+              kubectl delete aimprofilecaches.aim.eai.amd.com -n "$NAMESPACE" --wait=false \
+                -l aim.eai.amd.com/service.name=cache-deleted-dedicated
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: cache-deleted-dedicated
+                (uid != $oldCacheUID): true
+              status:
+                status: Ready
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: cache-deleted-dedicated
+              status:
+                status: Running
+                cache:
+                  profileCacheRef:
+                    (uid != $oldCacheUID): true
+                (conditions[?type == 'ProfileCacheReady']):
+                  - status: "True"
+                    reason: ProfileCacheReady
+        - assert:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: cache-deleted-dedicated
+                  component: predictor
+              spec:
+                template:
+                  spec:
+                    (length(volumes[?persistentVolumeClaim]) >= `1`): true

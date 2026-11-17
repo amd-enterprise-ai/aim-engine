@@ -1,0 +1,13 @@
+# Source that discovers the image of the previous-release model. The pinned tag
+# means no registry call is made.
+#
+# syncInterval is long so that re-creating the model after it is deleted can
+# only come from the source's AIMClusterModel watch, not from a scheduled sync.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModelSource
+metadata:
+  name: (join('-', ['test-previous-release', $namespace]))
+spec:
+  syncInterval: 1h
+  images:
+    - (join('', ['registry.invalid/', $namespace, '/previous-release:1.0']))

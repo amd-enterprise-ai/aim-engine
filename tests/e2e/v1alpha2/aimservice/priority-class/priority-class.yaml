@@ -1,0 +1,9 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: v1alpha2-aimservice-priority-class
+value: 1000000
+globalDefault: false
+# The test pod must not evict pods of tests running alongside it.
+preemptionPolicy: Never
+description: Priority class for the v1alpha2 AIMService priority-class e2e test

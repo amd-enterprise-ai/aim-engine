@@ -860,3 +860,46 @@ func TestFindServicesForClusterProfile_FansOutByResolvedProfile(t *testing.T) {
 	}
 	assertRequests(t, findServicesForProfileCache(c)(context.Background(), cache), "alpha/svc-alpha")
 }
+
+// TestFindServicesForRuntimeConfig_BothScopes checks that a runtime config
+// event reaches the profile-pipeline services that name the config or name
+// none: within the config's namespace for AIMRuntimeConfig, and across all
+// namespaces for AIMClusterRuntimeConfig.
+func TestFindServicesForRuntimeConfig_BothScopes(t *testing.T) {
+	scheme := newWatchTestScheme(t)
+	profileService := func(name, namespace, runtimeConfigName string) *aimv1alpha2.AIMService {
+		return &aimv1alpha2.AIMService{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+			Spec: aimv1alpha1.AIMServiceSpec{
+				Profile:          &aimv1alpha1.AIMServiceProfileConfig{Name: "p"},
+				RuntimeConfigRef: aimv1alpha1.RuntimeConfigRef{Name: runtimeConfigName},
+			},
+		}
+	}
+	templateService := &aimv1alpha2.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: "template", Namespace: "alpha"},
+		Spec: aimv1alpha1.AIMServiceSpec{
+			Model:            &aimv1alpha1.AIMServiceModel{Name: ptr.To("model")},
+			RuntimeConfigRef: aimv1alpha1.RuntimeConfigRef{Name: "rc"},
+		},
+	}
+	c := newWatchTestClient(t, scheme,
+		profileService("names-it", "alpha", "rc"),
+		profileService("names-none", "alpha", ""),
+		profileService("names-other", "alpha", "other"),
+		profileService("other-namespace", "beta", "rc"),
+		templateService,
+	)
+
+	t.Run("namespace config stays in its namespace", func(t *testing.T) {
+		config := &aimv1alpha1.AIMRuntimeConfig{ObjectMeta: metav1.ObjectMeta{Name: "rc", Namespace: "alpha"}}
+		assertRequests(t, findServicesForRuntimeConfig(c)(context.Background(), config),
+			"alpha/names-it", "alpha/names-none")
+	})
+
+	t.Run("cluster config spans all namespaces", func(t *testing.T) {
+		config := &aimv1alpha1.AIMClusterRuntimeConfig{ObjectMeta: metav1.ObjectMeta{Name: "rc"}}
+		assertRequests(t, findServicesForClusterRuntimeConfig(c)(context.Background(), config),
+			"alpha/names-it", "alpha/names-none", "beta/other-namespace")
+	})
+}

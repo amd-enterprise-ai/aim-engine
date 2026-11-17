@@ -1,0 +1,122 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Service labels matching the runtime config's labelPropagation rules are
+# copied to the resources the service creates.
+#
+# The service carries team-alpha and cost-center, which match the rules, and
+# env, which does not. The matching labels must appear on the AIMProfileCache,
+# its AIMArtifact, PVC and download Job, and on the InferenceService, HTTPRoute
+# and inference Pod; env must not.
+#
+# No accelerator is involved and the cache download is simulated, so this runs
+# in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-label-propagation
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the runtime config, profile and labelled service
+      try:
+        - apply:
+            file: runtime-config.yaml
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: label-propagation
+              status:
+                status: Running
+
+    - name: Matching labels reach the child resources
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: label-propagation
+                  team-alpha: frontend
+                  cost-center: cc-12345
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                labels:
+                  team-alpha: frontend
+                  cost-center: cc-12345
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: PersistentVolumeClaim
+              metadata:
+                labels:
+                  team-alpha: frontend
+                  cost-center: cc-12345
+        - assert:
+            resource:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                labels:
+                  team-alpha: frontend
+                  cost-center: cc-12345
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: label-propagation
+                  team-alpha: frontend
+                  cost-center: cc-12345
+        - assert:
+            resource:
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: label-propagation
+                  team-alpha: frontend
+                  cost-center: cc-12345
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: label-propagation
+                  app.kubernetes.io/component: inference
+                  team-alpha: frontend
+                  cost-center: cc-12345
+
+    - name: The non-matching label is not propagated
+      try:
+        - error:
+            timeout: 5s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                labels:
+                  env: test
+        - error:
+            timeout: 5s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  env: test

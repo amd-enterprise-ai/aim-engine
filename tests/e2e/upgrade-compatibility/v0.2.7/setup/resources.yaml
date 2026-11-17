@@ -1,0 +1,82 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: upgrade-image-model
+spec:
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMServiceTemplate
+metadata:
+  name: upgrade-cpu-template
+spec:
+  modelName: upgrade-image-model
+  aimId: HuggingFaceTB/SmolLM2-135M
+  modelId: HuggingFaceTB/SmolLM2-135M
+  metric: latency
+  precision: bf16
+  type: unoptimized
+  hardware:
+    # A zero-count GPU shape with a custom profile requests no accelerator on
+    # the CPU-only Kind nodes.
+    gpu:
+      requests: 0
+  customProfile:
+    engineArgs:
+      dtype: bfloat16
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+  # The same source as the image's discovered CPU profile, so a Shared profile
+  # cache adopts this template cache's artifact after the move.
+  modelSources:
+    - modelId: HuggingFaceTB/SmolLM2-135M
+      sourceUri: hf://HuggingFaceTB/SmolLM2-135M
+      size: 1Mi
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: upgrade-shared-service
+spec:
+  replicas: 1
+  model:
+    name: upgrade-image-model
+  template:
+    name: upgrade-cpu-template
+    allowUnoptimized: true
+  caching:
+    mode: Shared
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "1"
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: upgrade-dedicated-service
+spec:
+  replicas: 1
+  model:
+    name: upgrade-image-model
+  template:
+    name: upgrade-cpu-template
+    allowUnoptimized: true
+  caching:
+    mode: Dedicated
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "1"
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterModelSource
+metadata:
+  name: upgrade-model-source
+spec:
+  images:
+    - amdenterpriseai/aim-dummy:0.2.2

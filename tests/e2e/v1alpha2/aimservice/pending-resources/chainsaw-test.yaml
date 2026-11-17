@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# A service whose pods cannot be scheduled reports Pending, with the scheduler's
+# FailedScheduling reason on InferenceServicePodsReady.
+#
+# The profile requests 20 GPUs. Kind nodes do not report amd.com/gpu, so the
+# profile still matches a node and the pod is created but cannot be scheduled.
+# On a GPU cluster the profile would be rejected for exceeding node capacity
+# before any pod exists, hence `requires: kind`.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-pending-resources
+  labels:
+    requires: kind
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the profile and a service that needs 20 GPUs
+      try:
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+
+    - name: The service reports Pending because its pod cannot be scheduled
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: pending-resources
+              status:
+                status: Pending
+                (conditions[?type == 'InferenceServicePodsReady']):
+                  - status: "False"
+                    reason: FailedScheduling

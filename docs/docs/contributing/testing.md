@@ -10,6 +10,13 @@ go test ./internal/v1alpha1/aimservice -v    # Specific package
 go test ./internal/... -run TestFoo # Specific test
 ```
 
+`TestManagerStartsWithAllControllers` in `cmd/` starts the manager with every controller against an envtest control plane (kube-apiserver and etcd) loaded with the generated CRDs. It fails if any controller watches a kind or version the API server doesn't serve. `make test` downloads the control plane with `setup-envtest` (installed by `mise install`). To run it with plain `go test`, export the path first:
+
+```bash
+export KUBEBUILDER_ASSETS="$(make -s envtest)"
+go test ./cmd/...
+```
+
 ## E2E Tests (Chainsaw)
 
 Chainsaw tests are declarative YAML files in `tests/e2e/`. Each test directory contains a `chainsaw-test.yaml` that defines steps: apply resources, assert conditions, run scripts.

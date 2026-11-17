@@ -160,17 +160,33 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet test-artifact-downloader ## Run tests.
-	go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+test: manifests generate fmt vet test-artifact-downloader test-upgrade-preflight ## Run tests.
+	KUBEBUILDER_ASSETS="$$($(MAKE) -s envtest)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+
+# Kubernetes version of the envtest control plane (kube-apiserver, etcd) that
+# the operator-start test in cmd/ runs against.
+ENVTEST_K8S_VERSION ?= 1.34.1
+
+.PHONY: envtest
+envtest: ## Download the envtest control plane if needed and print its path (the KUBEBUILDER_ASSETS value).
+	@setup-envtest use $(ENVTEST_K8S_VERSION) -p path
 
 .PHONY: test-bridge-contract
 test-bridge-contract: ## Verify the minimal v1alpha1 bridge contract.
 	go test ./internal/bridgecontract -run '^TestBridgeContract$$' -count=1
 
+.PHONY: test-rbac-contract
+test-rbac-contract: ## Verify the generated operator ClusterRole stays least-privilege.
+	go test ./internal/rbaccontract -run '^TestRBACContract$$' -count=1
+
 .PHONY: test-artifact-downloader
 test-artifact-downloader: ## Run dependency-free artifact-downloader script tests.
 	PYTHONPATH=images/artifact-downloader python3 -m unittest discover \
 		-s images/artifact-downloader/tests -p 'test_combine_ca.py'
+
+.PHONY: test-upgrade-preflight
+test-upgrade-preflight: ## Run the upgrade preflight script tests against a fake kubectl.
+	python3 -B hack/test_upgrade_preflight.py
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.

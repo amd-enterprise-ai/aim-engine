@@ -42,8 +42,10 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimimage"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/imagemetadata"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	legacyaimmodel "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimmodel"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
@@ -119,6 +121,7 @@ type ModelFetchResult struct {
 	existingProfiles controllerutils.FetchResult[[]managedProfile]
 	childProfileSet  controllerutils.FetchResult[*aimv1alpha2.AIMProfileSet]
 	runtimeConfig    controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
+	imageMetadata    controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]
 	legacyFetch      *legacyaimmodel.ModelFetchResult
 }
 
@@ -159,14 +162,14 @@ func (obs ModelObservation) GetComponentHealth(_ context.Context, _ kubernetes.I
 }
 
 // GetApplyOptions delegates to the legacy reconciler when the legacy
-// pipeline ran (RuntimeConfig is a v1alpha1-shaped concept fetched on the
-// legacy side). For pure v1alpha2 specs (profileCopy-only) the legacy
-// pipeline is skipped entirely and no apply-time options are needed.
+// pipeline ran. Image and modelId models otherwise use the runtime config
+// fetched natively. For pure v1alpha2 specs (profileCopy-only) no apply-time
+// options are needed.
 func (r *ModelReconciler) GetApplyOptions(obs ModelObservation) controllerutils.ApplyOptions {
 	if obs.legacyObservation != nil {
 		return r.legacy().GetApplyOptions(*obs.legacyObservation)
 	}
-	if obs.model != nil && obs.model.Spec.ModelID != "" {
+	if obs.model != nil && (obs.model.Spec.ModelID != "" || obs.model.Spec.Image != "") {
 		return aimruntimeconfig.GetApplyOptions(obs.runtimeConfig.Value)
 	}
 	return controllerutils.ApplyOptions{}
@@ -184,8 +187,8 @@ func (r *ModelReconciler) FetchRemoteState(
 	// pipelines emit disjoint outputs (legacy → AIMServiceTemplates from
 	// RecommendedDeployments / customTemplates / aimId-matching; native →
 	// AIMProfiles from in-cluster discovery + AIMProfileSet from
-	// profileCopy) and write disjoint status fields, so it is safe to
-	// compose them whenever both have work to do.
+	// profileCopy), so it is safe to compose them whenever both have work
+	// to do.
 	//
 	// Skipping the legacy fetch for pure v1alpha2 specs (profileCopy-only)
 	// is essential: otherwise the legacy ImageMetadata fetch tries to parse
@@ -216,6 +219,9 @@ func (r *ModelReconciler) FetchRemoteState(
 		result.legacyModel = asLegacyModel(model)
 		legacyFetch := r.legacy().FetchRemoteState(ctx, c, controllerutils.ReconcileContext[*aimv1alpha1.AIMModel]{Object: result.legacyModel})
 		result.legacyFetch = &legacyFetch
+	}
+	if model.Spec.Image != "" {
+		result.imageMetadata = imagemetadata.Fetch(ctx, r.Clientset, model.Spec, &model.Status, model.Namespace)
 	}
 	// Profile generation and the discovery Job tolerations use the runtime config.
 	result.runtimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, model.Spec.Name, model.Namespace)
@@ -297,10 +303,10 @@ func (r *ModelReconciler) ComposeState(
 		return obs
 	}
 
-	// Always compose a legacy observation alongside native. Both contribute
-	// disjoint conditions and component health entries; legacy adds entries
-	// like RuntimeConfig / ImageMetadata / ServiceTemplates while native adds
-	// Discovery / ManagedProfiles / ProfileSet / NodeInventory.
+	// Always compose a legacy observation alongside native. Legacy adds
+	// ServiceTemplates, plus RuntimeConfig / ImageMetadata for specs without
+	// spec.image; native adds Discovery / ManagedProfiles / ProfileSet /
+	// NodeInventory, plus RuntimeConfig / ImageMetadata for image models.
 	if fetch.legacyFetch != nil {
 		legacyObs := r.legacy().ComposeState(ctx, controllerutils.ReconcileContext[*aimv1alpha1.AIMModel]{Object: fetch.legacyModel}, *fetch.legacyFetch)
 		obs.legacyObservation = &legacyObs
@@ -356,13 +362,9 @@ func (r *ModelReconciler) ComposeState(
 				if fetch.nodes.Error != nil {
 					obs.BuildErr = controllerutils.NewInfrastructureError("NodeListFailed", "failed to list cluster nodes", fetch.nodes.Error)
 				} else {
-					var legacyMetadata *aimv1alpha1.ImageMetadata
-					if fetch.legacyFetch != nil {
-						legacyMetadata = fetch.legacyFetch.ImageMetadata()
-					}
 					obs.DesiredProfiles, obs.BuildErr = buildDesiredOfficialProfiles(
 						fetch.model, catalog, fetch.nodes.Value,
-						recommendedDeploymentsFrom(legacyMetadata),
+						recommendedDeploymentsFrom(resolveImageMetadata(fetch.imageMetadata, &fetch.model.Status)),
 						fetch.existingProfiles.Value...,
 					)
 					desiredProfilesKnown = obs.BuildErr == nil
@@ -423,8 +425,15 @@ func (r *ModelReconciler) ComposeState(
 	)
 	preserveCopyability(obs.DesiredProfiles, fetch.existingProfiles.Value)
 	obs.componentHealth = buildModelComponentHealth(obs)
+	if fetch.model.Spec.Image != "" {
+		obs.componentHealth = append(obs.componentHealth,
+			fetch.runtimeConfig.ToComponentHealth(componentRuntimeConfig, aimruntimeconfig.GetRuntimeConfigHealth),
+			imagemetadata.ResultForHealth(fetch.imageMetadata, &fetch.model.Status).
+				ToComponentHealth(componentImageMetadata, imagemetadata.GetHealth),
+		)
+	}
 	if obs.legacyObservation != nil {
-		obs.componentHealth = append(obs.componentHealth, obs.legacyObservation.GetComponentHealth()...)
+		obs.componentHealth = appendLegacyComponentHealth(obs.componentHealth, obs.legacyObservation.GetComponentHealth())
 	}
 	applyModelServingPathPolicy(
 		&fetch.model.Spec,
@@ -518,8 +527,9 @@ func (r *ModelReconciler) DecorateStatus(
 ) {
 	// Apply legacy decorations first (SourceType, ImageMetadata, finetune
 	// resolution) and then native (AimId, BaseImage, DiscoveryCacheRef,
-	// DiscoveredProfiles, ProfileSetRef, ManagedProfiles). Both write
-	// disjoint fields, so order only matters for EnsureBaseImageBridge at
+	// DiscoveredProfiles, ProfileSetRef, ManagedProfiles). For image models
+	// both write SourceType, ImageMetadata and Version from the same inputs,
+	// so the values agree; order only matters for EnsureBaseImageBridge at
 	// the end.
 	if obs.legacyObservation != nil {
 		r.legacy().DecorateStatus(status, cm, *obs.legacyObservation)
@@ -551,6 +561,9 @@ func (r *ModelReconciler) DecorateStatus(
 	if obs.DiscoveryState != nil {
 		status.Discovery = obs.DiscoveryState
 	}
+	if obs.model.Spec.Image != "" && !obs.legacyAutoCustom {
+		decorateImageModelStatus(status, cm, &obs.model.Spec, obs.imageMetadata)
+	}
 	activeSpec := &obs.model.Spec
 	if obs.legacyAutoCustom && obs.legacyModel != nil {
 		activeSpec = &obs.legacyModel.Spec
@@ -565,6 +578,22 @@ func (r *ModelReconciler) DecorateStatus(
 		obs.componentHealth,
 	)
 	EnsureBaseImageBridge(&obs.model.Spec, status)
+}
+
+// decorateImageModelStatus describes spec.image in status. Version is
+// tag-derived, so it is set even when metadata extraction is disabled.
+func decorateImageModelStatus(
+	status *aimv1alpha1.AIMModelStatus,
+	cm *controllerutils.ConditionManager,
+	spec *aimv1alpha1.AIMModelSpec,
+	imageMetadata controllerutils.FetchResult[*aimv1alpha1.ImageMetadata],
+) {
+	status.SourceType = aimv1alpha1.AIMModelSourceTypeImage
+	if len(spec.ModelSources) > 0 {
+		status.SourceType = aimv1alpha1.AIMModelSourceTypeCustom
+	}
+	imagemetadata.DecorateStatus(status, cm, spec, imageMetadata)
+	status.Version = aimimage.ExtractTag(spec.Image)
 }
 
 func buildLegacyAutoCustomComponentHealth(err error) []controllerutils.ComponentHealth {
@@ -996,13 +1025,32 @@ func applyModelServingPathPolicy(
 	switch {
 	case legacyReady && nativeApplicable && !nativeReady:
 		markComponentsNonBlocking(health, nativeComponents)
-	case nativeReady && legacyApplicable && !legacyReady:
+	case nativeReady && !legacyReady:
+		// Image models report RuntimeConfig and ImageMetadata even without
+		// legacy work; neither may block a ready native path.
 		markComponentsNonBlocking(health, map[string]struct{}{
 			componentRuntimeConfig: {},
 			componentImageMetadata: {},
 			templateComponent:      {},
 		})
 	}
+}
+
+// appendLegacyComponentHealth adds the legacy entries for components the
+// native path did not report. For image models both paths report
+// RuntimeConfig and ImageMetadata from the same lookups; the native entries
+// win.
+func appendLegacyComponentHealth(health, legacy []controllerutils.ComponentHealth) []controllerutils.ComponentHealth {
+	reported := make(map[string]bool, len(health))
+	for i := range health {
+		reported[health[i].Component] = true
+	}
+	for i := range legacy {
+		if !reported[legacy[i].Component] {
+			health = append(health, legacy[i])
+		}
+	}
+	return health
 }
 
 func componentsReady(health []controllerutils.ComponentHealth, components ...string) bool {
@@ -1067,7 +1115,7 @@ func retireRemovedModelPathState(
 	health []controllerutils.ComponentHealth,
 ) {
 	retireRemovedNativeModelState(status, cm, spec, health)
-	retireRemovedLegacyModelState(status, cm, legacyObserved, templateComponent, health)
+	retireRemovedLegacyModelState(status, cm, spec, legacyObserved, templateComponent, health)
 }
 
 func retireRemovedNativeModelState(
@@ -1106,19 +1154,24 @@ func retireRemovedNativeModelState(
 func retireRemovedLegacyModelState(
 	status *aimv1alpha1.AIMModelStatus,
 	cm *controllerutils.ConditionManager,
+	spec *aimv1alpha1.AIMModelSpec,
 	legacyObserved bool,
 	templateComponent string,
 	health []controllerutils.ComponentHealth,
 ) {
-	deleteRemovedComponentCondition(cm, health, componentRuntimeConfig, legacyObserved)
-	deleteRemovedComponentCondition(cm, health, componentImageMetadata, legacyObserved)
+	// The native path owns this state for image models.
+	imageStateApplicable := legacyObserved || (spec != nil && spec.Image != "")
+	deleteRemovedComponentCondition(cm, health, componentRuntimeConfig, imageStateApplicable)
+	deleteRemovedComponentCondition(cm, health, componentImageMetadata, imageStateApplicable)
 	deleteRemovedComponentCondition(cm, health, templateComponent, legacyObserved)
-	if legacyObserved {
+	if imageStateApplicable {
 		return
 	}
 	status.SourceType = ""
 	status.ImageMetadata = nil
+	status.ImageMetadataVersion = 0
 	status.Version = ""
+	cm.Delete(imagemetadata.ConditionTypeRuntimeImageLineage)
 }
 
 func deleteRemovedComponentCondition(
@@ -1338,6 +1391,18 @@ func recommendedDeploymentsFrom(metadata *aimv1alpha1.ImageMetadata) []aimv1alph
 		return nil
 	}
 	return metadata.Model.RecommendedDeployments
+}
+
+// resolveImageMetadata prefers this reconcile's fetch and falls back to
+// status, because the fetch skips the registry once status holds metadata.
+func resolveImageMetadata(
+	fetched controllerutils.FetchResult[*aimv1alpha1.ImageMetadata],
+	status *aimv1alpha1.AIMModelStatus,
+) *aimv1alpha1.ImageMetadata {
+	if fetched.Value != nil {
+		return fetched.Value
+	}
+	return status.ImageMetadata
 }
 
 func buildDesiredProfileSet(model *aimv1alpha2.AIMModel, cacheRef *aimv1alpha1.DiscoveryCacheReference, name string) *aimv1alpha2.AIMProfileSet {

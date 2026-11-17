@@ -22,7 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-package aimmodel
+package imagemetadata
 
 import (
 	"errors"
@@ -474,39 +474,6 @@ func TestParseImageLabels_InvalidHFToken(t *testing.T) {
 	// Invalid boolean should be silently ignored, not cause error
 	if metadata.Model.HFTokenRequired {
 		t.Error("expected HFTokenRequired to be false when invalid value provided")
-	}
-}
-
-func TestMetadataFormatError_Error(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      *metadataFormatError
-		expected string
-	}{
-		{
-			name: "with message",
-			err: &metadataFormatError{
-				Reason:  "TestReason",
-				Message: "test error message",
-			},
-			expected: "test error message",
-		},
-		{
-			name: "without message",
-			err: &metadataFormatError{
-				Reason: "TestReason",
-			},
-			expected: "image metadata malformed",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.err.Error()
-			if result != tt.expected {
-				t.Errorf("Error() = %q, want %q", result, tt.expected)
-			}
-		})
 	}
 }
 

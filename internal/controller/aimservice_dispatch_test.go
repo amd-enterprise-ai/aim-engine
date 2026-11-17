@@ -29,20 +29,28 @@ import (
 	"strings"
 	"testing"
 
+	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
+	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	servicepolicy "github.com/amd-enterprise-ai/aim-engine/internal/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	profileservice "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimservice"
 )
 
 const dispatchTestModelName = "model"
@@ -647,6 +655,158 @@ func TestAIMServiceReconcilerGrandfatheredMarkersRemainOperational(t *testing.T)
 				}
 			}
 		})
+	}
+}
+
+// The pipeline-selection step and the profile pipeline both clear template-era
+// status. Run together on a service that still carries it, they must settle on
+// profile status instead of rewriting each other's status every reconcile.
+func TestAIMServiceReconcilerTemplateEraStatusConverges(t *testing.T) {
+	const (
+		profileName = "cluster-profile"
+		modelID     = "org/model"
+	)
+	tests := []struct {
+		name             string
+		recordedPipeline string
+	}{
+		{name: "template pipeline recorded", recordedPipeline: constants.ReconcilerPipelineTemplate},
+		{name: "no pipeline recorded", recordedPipeline: ""},
+		{name: "profile pipeline recorded", recordedPipeline: constants.ReconcilerPipelineProfile},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			service := &aimv1alpha2.AIMService{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "template-era",
+					Namespace:  "default",
+					UID:        "service-uid",
+					Finalizers: []string{finalizerCacheCleanup},
+				},
+				Spec: aimv1alpha1.AIMServiceSpec{
+					Profile: &aimv1alpha1.AIMServiceProfileConfig{Name: profileName},
+				},
+				Status: aimv1alpha1.AIMServiceStatus{
+					ReconcilerPipeline: test.recordedPipeline,
+					Status:             constants.AIMStatusRunning,
+					Conditions: []metav1.Condition{
+						{Type: "ModelReady", Status: metav1.ConditionTrue, Reason: "ModelResolved"},
+						{Type: "TemplateReady", Status: metav1.ConditionTrue, Reason: "TemplateReady"},
+						{Type: "CacheReady", Status: metav1.ConditionTrue, Reason: "CacheReady"},
+						{Type: "MigrationRequired", Status: metav1.ConditionTrue, Reason: "TemplateAPIDeprecated"},
+					},
+					ResolvedModel:    &aimv1alpha1.AIMResolvedReference{Name: "template-era-model", UID: "model-uid"},
+					ResolvedTemplate: &aimv1alpha1.AIMResolvedReference{Name: "template", UID: "template-uid"},
+					Cache: &aimv1alpha1.AIMServiceCacheStatus{
+						TemplateCacheRef: &aimv1alpha1.AIMResolvedReference{Name: "template-cache"},
+					},
+				},
+			}
+			clusterProfile := &aimv1alpha2.AIMClusterProfile{
+				ObjectMeta: metav1.ObjectMeta{Name: profileName, UID: "profile-uid"},
+				Spec: aimv1alpha2.AIMClusterProfileSpec{AIMProfileSpecCommon: aimv1alpha2.AIMProfileSpecCommon{
+					AimId:     modelID,
+					ModelId:   modelID,
+					Engine:    "vllm",
+					Metric:    aimv1alpha1.AIMMetric("latency"),
+					Precision: aimv1alpha1.AIMPrecision("bf16"),
+					Type:      aimv1alpha1.AIMProfileType("general"),
+					Image:     "docker.io/amdenterpriseai/aim-dummy:0.2.0",
+				}},
+				Status: aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady, Deployable: true},
+			}
+			cl, reconciler := newProfileDispatchReconcilerForTest(t, service, clusterProfile)
+			key := client.ObjectKeyFromObject(service)
+
+			var settled aimv1alpha2.AIMService
+			for reconciles := 0; ; reconciles++ {
+				if reconciles == 10 {
+					t.Fatal("status still changing after 10 reconciles")
+				}
+				if err := cl.Get(ctx, key, &settled); err != nil {
+					t.Fatalf("get service: %v", err)
+				}
+				resourceVersion := settled.ResourceVersion
+				if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil {
+					t.Fatalf("Reconcile() error = %v", err)
+				}
+				if err := cl.Get(ctx, key, &settled); err != nil {
+					t.Fatalf("get service: %v", err)
+				}
+				if settled.ResourceVersion == resourceVersion {
+					break
+				}
+			}
+
+			status := settled.Status
+			for _, conditionType := range []string{"ModelReady", "TemplateReady", "CacheReady", "MigrationRequired"} {
+				if condition := findServiceCondition(status.Conditions, conditionType); condition != nil {
+					t.Errorf("template-era condition %s survived: %#v", conditionType, condition)
+				}
+			}
+			if status.ResolvedTemplate != nil || status.Cache != nil {
+				t.Fatalf("template-era references survived: resolvedTemplate=%#v cache=%#v", status.ResolvedTemplate, status.Cache)
+			}
+			if status.ResolvedModel == nil || status.ResolvedModel.Name != modelID {
+				t.Fatalf("resolvedModel = %#v, want profile model ID %q", status.ResolvedModel, modelID)
+			}
+			if status.ReconcilerPipeline != constants.ReconcilerPipelineProfile {
+				t.Fatalf("ReconcilerPipeline = %q, want %q", status.ReconcilerPipeline, constants.ReconcilerPipelineProfile)
+			}
+		})
+	}
+}
+
+func newProfileDispatchReconcilerForTest(
+	t *testing.T,
+	objects ...client.Object,
+) (client.Client, *AIMServiceReconciler) {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	for _, addToScheme := range []func(*runtime.Scheme) error{
+		corev1.AddToScheme,
+		autoscalingv2.AddToScheme,
+		aimv1alpha1.AddToScheme,
+		aimv1alpha2.AddToScheme,
+		kservev1alpha1.AddToScheme,
+		servingv1beta1.AddToScheme,
+		gatewayapiv1.Install,
+	} {
+		if err := addToScheme(scheme); err != nil {
+			t.Fatalf("add test types to scheme: %v", err)
+		}
+	}
+	cl := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&aimv1alpha2.AIMService{}).
+		WithObjects(objects...).
+		Build()
+	recorder := &record.FakeRecorder{}
+	profilePipeline := &controllerutils.Pipeline[
+		*aimv1alpha1.AIMService,
+		*aimv1alpha1.AIMServiceStatus,
+		profileservice.ServiceFetchResult,
+		profileservice.ServiceObservation,
+	]{
+		Client:         cl,
+		StatusClient:   cl.Status(),
+		Recorder:       recorder,
+		ControllerName: serviceName,
+		Reconciler:     &profileservice.ProfileServiceReconciler{Scheme: scheme, Recorder: recorder},
+		Scheme:         scheme,
+		Clientset:      kubernetesfake.NewClientset(),
+	}
+	return cl, &AIMServiceReconciler{
+		Client:           cl,
+		Scheme:           scheme,
+		Recorder:         recorder,
+		templatePipeline: &recordingServicePipeline{},
+		profilePipeline: &legacyAIMServicePipeline[
+			profileservice.ServiceFetchResult,
+			profileservice.ServiceObservation,
+		]{pipeline: profilePipeline},
 	}
 }
 

@@ -125,6 +125,8 @@ const (
 //   - AIMProfileCache -> downstream cache state
 //   - AIMModel / AIMClusterModel -> upstream model state for model-driven
 //     services (status.managedProfiles drives downstream profile readiness).
+//   - AIMRuntimeConfig / AIMClusterRuntimeConfig -> services that read the
+//     merged runtime config (routing, label propagation).
 func RegisterWatches(ctx context.Context, mgr manager.Manager, b *builder.Builder, c client.Client) (*builder.Builder, error) {
 	if err := registerServiceIndexes(ctx, mgr); err != nil {
 		return nil, err
@@ -165,6 +167,14 @@ func RegisterWatches(ctx context.Context, mgr manager.Manager, b *builder.Builde
 			&aimv1alpha2.AIMClusterModel{},
 			handler.EnqueueRequestsFromMapFunc(findServicesForClusterModel(c)),
 			builder.WithPredicates(modelRelevantChangePredicate()),
+		).
+		Watches(
+			&aimv1alpha1.AIMRuntimeConfig{},
+			handler.EnqueueRequestsFromMapFunc(findServicesForRuntimeConfig(c)),
+		).
+		Watches(
+			&aimv1alpha1.AIMClusterRuntimeConfig{},
+			handler.EnqueueRequestsFromMapFunc(findServicesForClusterRuntimeConfig(c)),
 		), nil
 }
 
@@ -600,6 +610,64 @@ func findServicesForClusterModel(c client.Client) handler.MapFunc {
 			collectServicesByField(ctx, c, requests, ServiceModelImageIndex, model.Spec.Image, "")
 		}
 		return requestsFromSet(requests)
+	}
+}
+
+func findServicesForRuntimeConfig(c client.Client) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		config, ok := obj.(*aimv1alpha1.AIMRuntimeConfig)
+		if !ok {
+			return nil
+		}
+		requests := map[types.NamespacedName]struct{}{}
+		collectServicesForRuntimeConfig(ctx, c, requests, config.Name, config.Namespace)
+		return requestsFromSet(requests)
+	}
+}
+
+func findServicesForClusterRuntimeConfig(c client.Client) handler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		config, ok := obj.(*aimv1alpha1.AIMClusterRuntimeConfig)
+		if !ok {
+			return nil
+		}
+		// Cluster runtime configs merge into services in every namespace.
+		requests := map[types.NamespacedName]struct{}{}
+		collectServicesForRuntimeConfig(ctx, c, requests, config.Name, "")
+		return requestsFromSet(requests)
+	}
+}
+
+// collectServicesForRuntimeConfig adds the profile-pipeline services that name
+// the runtime config, or name none, to requests. Services that name none read
+// the default runtime config but are matched on every config name; runtime
+// config edits are rare, so the extra reconciles are cheap.
+//
+// namespace == "" widens the lookup to all namespaces.
+func collectServicesForRuntimeConfig(
+	ctx context.Context,
+	c client.Client,
+	requests map[types.NamespacedName]struct{},
+	configName, namespace string,
+) {
+	var opts []client.ListOption
+	if namespace != "" {
+		opts = append(opts, client.InNamespace(namespace))
+	}
+	var services aimv1alpha2.AIMServiceList
+	if err := c.List(ctx, &services, opts...); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list AIMServices for runtime config",
+			"config", configName, "namespace", namespace)
+		return
+	}
+	for i := range services.Items {
+		service := &services.Items[i]
+		if !usesProfilePipeline(service) {
+			continue
+		}
+		if service.Spec.Name == configName || service.Spec.Name == "" {
+			requests[types.NamespacedName{Name: service.Name, Namespace: service.Namespace}] = struct{}{}
+		}
 	}
 }
 

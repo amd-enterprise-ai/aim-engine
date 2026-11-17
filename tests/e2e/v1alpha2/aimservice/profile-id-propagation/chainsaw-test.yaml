@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# The ID of the image profile a service resolves to reaches the inference
+# container as AIM_PROFILE_ID.
+#
+# The service deploys the aim-dummy image and selects its bf16 latency profile,
+# the only one of the image's profiles that schedules without GPUs. The runtime
+# loads an operator-projected copy of that profile, so the value has the form
+# custom/<aimId>/<profileId>.
+#
+# The image's profiles do not record the model size, so the cache looks it up
+# on Hugging Face. Hence `hf-access: live`.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-profile-id-propagation
+  labels:
+    hf-access: live
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - use:
+        template: ../../../_shared/hf-token-step.yaml
+
+    - name: Create a service selecting the image's bf16 latency profile
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: The inference container gets the profile's ID
+      try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: profile-id-propagation
+                  app.kubernetes.io/component: inference
+              spec:
+                (containers[?name == 'kserve-container']):
+                  - (env[?name == 'AIM_PROFILE_ID']):
+                      - value: custom/HuggingFaceTB/SmolLM2-135M/cpu-bf16-latency

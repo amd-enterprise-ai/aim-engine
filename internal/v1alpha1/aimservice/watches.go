@@ -215,6 +215,9 @@ func findServicesForRuntimeConfig(c client.Client) handler.MapFunc {
 		}
 		var requests []reconcile.Request
 		for _, svc := range services.Items {
+			if !usesTemplatePipeline(&svc) {
+				continue
+			}
 			if svc.Spec.Name == config.Name || svc.Spec.Name == "" {
 				requests = append(requests, reconcile.Request{
 					NamespacedName: types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace},
@@ -238,6 +241,9 @@ func findServicesForClusterRuntimeConfig(c client.Client) handler.MapFunc {
 		}
 		var requests []reconcile.Request
 		for _, svc := range services.Items {
+			if !usesTemplatePipeline(&svc) {
+				continue
+			}
 			if svc.Spec.Name == config.Name || svc.Spec.Name == "" {
 				requests = append(requests, reconcile.Request{
 					NamespacedName: types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace},

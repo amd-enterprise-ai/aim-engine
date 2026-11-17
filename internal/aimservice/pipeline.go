@@ -74,6 +74,7 @@ var (
 		"ProfileConfigReady":  {},
 		"ProfileCacheReady":   {},
 		"ProfileRuntimeReady": {},
+		controllerutils.ConditionTypeTemplateFieldsIgnored: {},
 	}
 	pipelineAggregateConditions = map[string]struct{}{
 		"Ready":                 {},

@@ -43,10 +43,10 @@
 //     AIMProfile, plus profileCopy → AIMProfileSet) always runs. It is a
 //     no-op when neither spec.image nor spec.profileCopy is set.
 //
-// The two pipelines write disjoint plan items (templates vs profiles) and
-// disjoint status fields, so they compose without conflict. Earlier
-// revisions used an aim.eai.amd.com/mode annotation to pick one pipeline;
-// that annotation has been removed and is no longer consulted.
+// The two pipelines write disjoint plan items (templates vs profiles), so
+// they compose without conflict. Earlier revisions used an
+// aim.eai.amd.com/mode annotation to pick one pipeline; that annotation has
+// been removed and is no longer consulted.
 
 package aimmodel
 
@@ -262,6 +262,9 @@ func asLegacyClusterModel(model *aimv1alpha2.AIMClusterModel) *aimv1alpha1.AIMCl
 // the v1alpha1-style status.imageMetadata.baseImageRef so consumers that read
 // either field see a consistent value. Either field may be authoritative
 // depending on which reconcile path populated it.
+//
+// It never creates status.imageMetadata: the image metadata fetch treats any
+// value there as already inspected and would stop reading the image labels.
 func EnsureBaseImageBridge(spec *aimv1alpha1.AIMModelSpec, status *aimv1alpha1.AIMModelStatus) {
 	if status == nil {
 		return
@@ -272,12 +275,7 @@ func EnsureBaseImageBridge(spec *aimv1alpha1.AIMModelSpec, status *aimv1alpha1.A
 	if ref := spec.GetBaseImageRef(status); ref != "" && status.BaseImage == "" {
 		status.BaseImage = ref
 	}
-	if status.BaseImage != "" {
-		if status.ImageMetadata == nil {
-			status.ImageMetadata = &aimv1alpha1.ImageMetadata{}
-		}
-		if status.ImageMetadata.BaseImageRef == "" {
-			status.ImageMetadata.BaseImageRef = status.BaseImage
-		}
+	if status.BaseImage != "" && status.ImageMetadata != nil && status.ImageMetadata.BaseImageRef == "" {
+		status.ImageMetadata.BaseImageRef = status.BaseImage
 	}
 }

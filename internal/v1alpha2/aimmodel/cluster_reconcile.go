@@ -39,6 +39,7 @@ import (
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/imagemetadata"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	legacyaimmodel "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimmodel"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
@@ -74,6 +75,7 @@ type ClusterModelFetchResult struct {
 	existingClusterProfiles controllerutils.FetchResult[[]managedProfile]
 	childProfileSet         controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfileSet]
 	runtimeConfig           controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
+	imageMetadata           controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]
 	legacyFetch             *legacyaimmodel.ClusterModelFetchResult
 }
 
@@ -113,14 +115,14 @@ func (obs ClusterModelObservation) GetComponentHealth(_ context.Context, _ kuber
 	return obs.componentHealth
 }
 
-// GetApplyOptions delegates to the legacy reconciler because RuntimeConfig
-// (the only current driver of ApplyOptions) is a v1alpha1-shaped concept and
-// is fetched on the legacy side.
+// GetApplyOptions delegates to the legacy reconciler when the legacy
+// pipeline ran. Image and modelId models otherwise use the runtime config
+// fetched natively; RuntimeConfig is the only current driver of ApplyOptions.
 func (r *ClusterModelReconciler) GetApplyOptions(obs ClusterModelObservation) controllerutils.ApplyOptions {
 	if obs.legacyObservation != nil {
 		return r.legacy().GetApplyOptions(*obs.legacyObservation)
 	}
-	if obs.model != nil && obs.model.Spec.ModelID != "" {
+	if obs.model != nil && (obs.model.Spec.ModelID != "" || obs.model.Spec.Image != "") {
 		return aimruntimeconfig.GetApplyOptions(obs.runtimeConfig.Value)
 	}
 	return controllerutils.ApplyOptions{}
@@ -147,6 +149,9 @@ func (r *ClusterModelReconciler) FetchRemoteState(
 		result.legacyModel = asLegacyClusterModel(model)
 		legacyFetch := r.legacy().FetchRemoteState(ctx, c, controllerutils.ReconcileContext[*aimv1alpha1.AIMClusterModel]{Object: result.legacyModel})
 		result.legacyFetch = &legacyFetch
+	}
+	if model.Spec.Image != "" {
+		result.imageMetadata = imagemetadata.Fetch(ctx, r.Clientset, model.Spec, &model.Status, constants.GetOperatorNamespace())
 	}
 	// Profile generation and the discovery Job tolerations use the runtime config.
 	result.runtimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, model.Spec.Name, "")
@@ -256,13 +261,9 @@ func (r *ClusterModelReconciler) ComposeState(
 				if fetch.nodes.Error != nil {
 					obs.BuildErr = controllerutils.NewInfrastructureError("NodeListFailed", "failed to list cluster nodes", fetch.nodes.Error)
 				} else {
-					var legacyMetadata *aimv1alpha1.ImageMetadata
-					if fetch.legacyFetch != nil {
-						legacyMetadata = fetch.legacyFetch.ImageMetadata()
-					}
 					obs.DesiredProfiles, obs.BuildErr = buildDesiredOfficialClusterModelProfiles(
 						fetch.model, catalog, fetch.nodes.Value,
-						recommendedDeploymentsFrom(legacyMetadata),
+						recommendedDeploymentsFrom(resolveImageMetadata(fetch.imageMetadata, &fetch.model.Status)),
 						fetch.existingClusterProfiles.Value...,
 					)
 					desiredProfilesKnown = obs.BuildErr == nil
@@ -323,8 +324,15 @@ func (r *ClusterModelReconciler) ComposeState(
 	)
 	preserveCopyability(obs.DesiredProfiles, fetch.existingClusterProfiles.Value)
 	obs.componentHealth = buildClusterModelComponentHealth(obs)
+	if fetch.model.Spec.Image != "" {
+		obs.componentHealth = append(obs.componentHealth,
+			fetch.runtimeConfig.ToUpstreamComponentHealth(componentRuntimeConfig, aimruntimeconfig.GetRuntimeConfigHealth),
+			imagemetadata.ResultForHealth(fetch.imageMetadata, &fetch.model.Status).
+				ToUpstreamComponentHealth(componentImageMetadata, imagemetadata.GetHealth),
+		)
+	}
 	if obs.legacyObservation != nil {
-		obs.componentHealth = append(obs.componentHealth, obs.legacyObservation.GetComponentHealth()...)
+		obs.componentHealth = appendLegacyComponentHealth(obs.componentHealth, obs.legacyObservation.GetComponentHealth())
 	}
 	applyModelServingPathPolicy(
 		&fetch.model.Spec,
@@ -414,6 +422,9 @@ func (r *ClusterModelReconciler) DecorateStatus(
 	status.ProfileGeneration = obs.ProfileGeneration
 	if obs.DiscoveryState != nil {
 		status.Discovery = obs.DiscoveryState
+	}
+	if obs.model.Spec.Image != "" {
+		decorateImageModelStatus(status, cm, &obs.model.Spec, obs.imageMetadata)
 	}
 	controllerutils.SetTemplateMigrationRequired(cm, requiresTemplateMigration(&obs.model.Spec))
 	retireRemovedModelPathState(

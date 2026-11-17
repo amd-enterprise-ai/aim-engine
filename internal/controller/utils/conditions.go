@@ -37,6 +37,13 @@ const (
 	ConditionTypeMigrationRequired = "MigrationRequired"
 	ReasonTemplateAPIDeprecated    = "TemplateAPIDeprecated"
 	MessageTemplateAPIDeprecated   = "This resource depends on deprecated template APIs; inventory affected or dependent AIMServices and review the bounded template migration runbook before API removal"
+
+	// ConditionTypeTemplateFieldsIgnored names template-era spec fields that are
+	// set but have no effect on how the resource is reconciled. Like
+	// MigrationRequired it does not end in ComponentConditionSuffix, so it never
+	// participates in readiness rollup.
+	ConditionTypeTemplateFieldsIgnored = "TemplateFieldsIgnored"
+	ReasonTemplateFieldsSet            = "TemplateFieldsSet"
 )
 
 // ConfiguredCondition extends the metav1.Condition with observability configuration that
