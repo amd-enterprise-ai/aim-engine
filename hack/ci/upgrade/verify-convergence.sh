@@ -38,7 +38,7 @@ normalize_owners() {
 
 verify_identity() {
     local resource scope_namespace name expected_uid expected_owners
-    local actual_uid actual_owners json
+    local actual_uid actual_owners json owner_kind
 
     while IFS=$'\t' read -r resource scope_namespace name expected_uid expected_owners; do
         [[ "${resource}" == "resource" ]] && continue
@@ -59,10 +59,15 @@ verify_identity() {
             echo "actual:   $(base64 --decode <<<"${actual_owners}")" >&2
             return 1
         fi
-        if [[ "${resource}" == "persistentvolumeclaims" || "${resource}" == "aimartifacts" ]] &&
-            base64 --decode <<<"${expected_owners}" | jq -e 'any(.[]; .kind == "AIMArtifact")' >/dev/null &&
-            ! jq -e '[.metadata.ownerReferences[]? | select(.kind == "AIMArtifact").apiVersion] | all(. == "aim.eai.amd.com/v1alpha2")' >/dev/null <<<"${json}"; then
-            echo "${resource}/${name} artifact owner reference is not aim.eai.amd.com/v1alpha2" >&2
+        owner_kind=""
+        case "${resource}" in
+            persistentvolumeclaims|aimartifacts) owner_kind="AIMArtifact" ;;
+            aimclustermodels) owner_kind="AIMClusterModelSource" ;;
+        esac
+        if [[ -n "${owner_kind}" ]] &&
+            base64 --decode <<<"${expected_owners}" | jq -e --arg kind "${owner_kind}" 'any(.[]; .kind == $kind)' >/dev/null &&
+            ! jq -e --arg kind "${owner_kind}" '[.metadata.ownerReferences[]? | select(.kind == $kind).apiVersion] | all(. == "aim.eai.amd.com/v1alpha2")' >/dev/null <<<"${json}"; then
+            echo "${resource}/${name} ${owner_kind} owner reference is not aim.eai.amd.com/v1alpha2" >&2
             jq '.metadata.ownerReferences' <<<"${json}" >&2
             return 1
         fi

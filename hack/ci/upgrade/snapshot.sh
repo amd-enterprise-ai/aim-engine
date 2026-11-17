@@ -84,6 +84,8 @@ record_named aimclusterruntimeconfigs - default
 
 record_named aimclusterprofiles - upgrade-cluster-source
 record_named aimclustermodels - upgrade-cluster-model
+# Registry-discovered model owned by upgrade-model-source. Its UID must not change.
+record_selected aimclustermodels - 'aim.eai.amd.com/model-source=upgrade-model-source'
 record_selected aimclusterprofilesets - \
     'aim.eai.amd.com/source-model=upgrade-cluster-model,aim.eai.amd.com/source-model-scope=cluster'
 record_selected aimclusterprofiles - \

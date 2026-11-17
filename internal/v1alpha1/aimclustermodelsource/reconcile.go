@@ -87,6 +87,19 @@ func (r *ClusterModelSourceReconciler) FetchRemoteState(
 		fetch.filterResults = append(fetch.filterResults, result)
 	}
 
+	// Patched from the models this list already loaded. Discovered models are
+	// not re-applied, so this is what moves their owner reference to v1alpha2.
+	// A reference whose UID is not this source's is left unchanged.
+	if fetch.existingModels.OK() {
+		for i := range fetch.existingModels.Value.Items {
+			model := &fetch.existingModels.Value.Items[i]
+			if err := controllerutils.RewriteV1alpha1OwnerReference(ctx, c, model, source.GetUID()); err != nil {
+				fetch.existingModels.Error = err
+				break
+			}
+		}
+	}
+
 	return fetch
 }
 
