@@ -79,9 +79,10 @@ func TestEnsureAdapterParentOwnerRef(t *testing.T) {
 	annotations := map[string]string{"keep": "annotation"}
 
 	tests := []struct {
-		name string
-		refs []metav1.OwnerReference
-		want []metav1.OwnerReference
+		name      string
+		refs      []metav1.OwnerReference
+		want      []metav1.OwnerReference
+		wantAdded bool
 	}{
 		{
 			name: "v1alpha1 link is rewritten and flags stay",
@@ -101,6 +102,7 @@ func TestEnsureAdapterParentOwnerRef(t *testing.T) {
 				otherRef,
 				parentRef(aimv1alpha2.GroupVersion.String(), nil, nil),
 			},
+			wantAdded: true,
 		},
 	}
 
@@ -145,12 +147,12 @@ func TestEnsureAdapterParentOwnerRef(t *testing.T) {
 				t.Fatalf("get adapter: %v", err)
 			}
 			specBefore := loaded.Spec.DeepCopy()
-			updated, err := reconciler.ensureAdapterParentOwnerRef(context.Background(), loaded)
+			added, err := reconciler.ensureAdapterParentOwnerRef(context.Background(), loaded)
 			if err != nil {
 				t.Fatalf("ensure owner reference: %v", err)
 			}
-			if !updated {
-				t.Fatal("ensure owner reference reported no write")
+			if added != tt.wantAdded {
+				t.Fatalf("added = %v, want %v", added, tt.wantAdded)
 			}
 
 			got := &aimv1alpha1.AIMArtifact{}
@@ -174,12 +176,12 @@ func TestEnsureAdapterParentOwnerRef(t *testing.T) {
 			}
 
 			writtenVersion := got.ResourceVersion
-			updated, err = reconciler.ensureAdapterParentOwnerRef(context.Background(), got)
+			added, err = reconciler.ensureAdapterParentOwnerRef(context.Background(), got)
 			if err != nil {
 				t.Fatalf("second ensure owner reference: %v", err)
 			}
-			if updated {
-				t.Fatal("second ensure owner reference wrote again")
+			if added {
+				t.Fatal("second ensure owner reference added it again")
 			}
 			if err := reconciler.Get(context.Background(), key, got); err != nil {
 				t.Fatalf("get adapter after second run: %v", err)

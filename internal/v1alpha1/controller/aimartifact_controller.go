@@ -102,12 +102,12 @@ func (r *AIMArtifactReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Adapter artifacts are cascade-deleted with their parent model artifact, so
 	// ensure the owner reference is in place before reconciling.
 	if model.Spec.Type == aimv1alpha1.ArtifactTypeAdapter {
-		updated, err := r.ensureAdapterParentOwnerRef(ctx, &model)
+		added, err := r.ensureAdapterParentOwnerRef(ctx, &model)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		if updated {
-			// The owner-ref write re-triggers reconciliation; let it run fresh.
+		if added {
+			// The owner-ref Update re-triggers reconciliation; let it run fresh.
 			return ctrl.Result{}, nil
 		}
 	}
@@ -213,10 +213,9 @@ func downloadJobPodPredicate() predicate.Predicate {
 
 // ensureAdapterParentOwnerRef sets an owner reference from a type=adapter artifact
 // to its parent model artifact so Kubernetes-native cascade reclaims the adapter
-// when the parent is deleted. The reference names aim.eai.amd.com/v1alpha2.
-// A reference that already has the parent's UID is patched when it still says
-// v1alpha1; controller and blockOwnerDeletion are kept. Returns true when a
-// write was performed.
+// when the parent is deleted. The reference names aim.eai.amd.com/v1alpha2; an
+// existing v1alpha1 reference is rewritten in place. Returns true when it added
+// the reference.
 //
 // Remove the v1alpha1 rewrite in the release that deletes the v1alpha1 entries.
 func (r *AIMArtifactReconciler) ensureAdapterParentOwnerRef(ctx context.Context, adapter *aimv1alpha1.AIMArtifact) (bool, error) {
@@ -234,15 +233,9 @@ func (r *AIMArtifactReconciler) ensureAdapterParentOwnerRef(ctx context.Context,
 	}
 
 	for _, ref := range adapter.GetOwnerReferences() {
-		if ref.UID != parent.GetUID() {
-			continue
+		if ref.UID == parent.GetUID() {
+			return false, controllerutils.RewriteV1alpha1OwnerReference(ctx, r.Client, adapter, parent.GetUID())
 		}
-		before := adapter.GetResourceVersion()
-		if err := controllerutils.RewriteV1alpha1OwnerReference(ctx, r.Client, adapter, parent.GetUID()); err != nil {
-			return false, err
-		}
-		// A patch changes the resource version. An already-v1alpha2 reference does not.
-		return adapter.GetResourceVersion() != before, nil
 	}
 
 	// controller and blockOwnerDeletion stay unset. Background garbage collection
