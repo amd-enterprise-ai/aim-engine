@@ -288,6 +288,61 @@ func TestAllocationAvailable(t *testing.T) {
 	}
 }
 
+// A service made before the allocation modes requests amd.com/gpu. When a
+// DeviceClass maps amd.com/gpu, its pod still runs on a DRA node, so the
+// device-plugin mode that Auto keeps for it must find that node.
+func TestAutoKeepsRunningDevicePluginServiceOnMappedDRANode(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "dra", Labels: map[string]string{
+			aimprofile.AcceleratorLabelPrefix + "MI300X":                                    "8",
+			aimprofile.PartitioningSchemeLabelPrefix + aimprofile.PartitioningSchemeDefault: "8",
+		}},
+		Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("192"),
+			corev1.ResourceMemory: resource.MustParse("1Ti"),
+		}},
+	}
+	slice := &resourcev1.ResourceSlice{
+		ObjectMeta: metav1.ObjectMeta{Name: "dra"},
+		Spec: resourcev1.ResourceSliceSpec{
+			Driver:   constants.AMDGPUDRADriverName,
+			NodeName: ptr.To("dra"),
+			Pool:     resourcev1.ResourcePool{Name: "dra", Generation: 1, ResourceSliceCount: 1},
+			Devices: []resourcev1.Device{{
+				Name: "gpu-0",
+				Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
+					"deviceID":         {StringValue: ptr.To("0x74a1")},
+					"type":             {StringValue: ptr.To(aimprofile.DRADeviceTypeGPU)},
+					"partitionProfile": {StringValue: ptr.To(aimprofile.DRAUnpartitionedProfile)},
+				},
+			}},
+		},
+	}
+	class := &resourcev1.DeviceClass{
+		ObjectMeta: metav1.ObjectMeta{Name: constants.AMDGPUDRADriverName},
+		Spec:       resourcev1.DeviceClassSpec{ExtendedResourceName: ptr.To(constants.AMDGPUResourceName)},
+	}
+	spec := sampleProfileSpec()
+	service := &aimv1alpha1.AIMService{ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"}}
+	profile := &aimv1alpha2.AIMClusterProfile{ObjectMeta: metav1.ObjectMeta{Name: testClusterProfileName}}
+	c, _ := newProfileRuntimePipelineFixture(t, service, profile, node, slice, class)
+
+	inventory, err := aimprofile.ListNodeInventory(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := aimprofile.MatchProfileNodes(inventory, *spec, aimprofile.ResolveProfileResources(*spec))
+	status := profileStatusWith(match.MatchingNodes, match.DRAMatchingNodes)
+	running := &servingv1beta1.InferenceService{}
+
+	decision := decideAllocation(service, testClusterProfileName, spec, status.MatchingNodesByAllocation, running, nil)
+
+	if decision.mode != aimv1alpha1.AcceleratorAllocationDevicePlugin || !allocationAvailable(decision, status) {
+		t.Errorf("mode %q, nodes available %t (device plugin %d, DRA %d); want DevicePlugin with a node",
+			decision.mode, allocationAvailable(decision, status), match.MatchingNodes, match.DRAMatchingNodes)
+	}
+}
+
 func TestStaleClaimTemplateCleanup(t *testing.T) {
 	obs := ServiceObservation{}
 	named := func(name string) resourcev1.ResourceClaimTemplate {
