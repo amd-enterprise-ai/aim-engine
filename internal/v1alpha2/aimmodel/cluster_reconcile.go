@@ -94,13 +94,9 @@ func (obs ClusterModelObservation) GetComponentHealth(_ context.Context, _ kuber
 	return obs.componentHealth
 }
 
-// GetApplyOptions uses the runtime config fetched for image and modelId
-// models; RuntimeConfig is the only current driver of ApplyOptions.
+// GetApplyOptions uses the runtime config, which is fetched for every model.
 func (r *ClusterModelReconciler) GetApplyOptions(obs ClusterModelObservation) controllerutils.ApplyOptions {
-	if obs.model != nil && (obs.model.Spec.ModelID != "" || obs.model.Spec.Image != "") {
-		return aimruntimeconfig.GetApplyOptions(obs.runtimeConfig.Value)
-	}
-	return controllerutils.ApplyOptions{}
+	return aimruntimeconfig.GetApplyOptions(obs.runtimeConfig.Value)
 }
 
 func (r *ClusterModelReconciler) FetchRemoteState(
@@ -115,7 +111,8 @@ func (r *ClusterModelReconciler) FetchRemoteState(
 	if model.Spec.Image != "" {
 		result.imageMetadata = imagemetadata.Fetch(ctx, r.Clientset, model.Spec, &model.Status, constants.GetOperatorNamespace())
 	}
-	// Profile generation and the discovery Job tolerations use the runtime config.
+	// Profile generation, label propagation and the discovery Job tolerations
+	// use the runtime config.
 	result.runtimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, model.Spec.Name, "")
 	// See ModelReconciler.FetchRemoteState for why models with
 	// spec.modelSources skip discovery — their image is typically a base

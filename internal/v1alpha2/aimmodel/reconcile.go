@@ -136,13 +136,9 @@ func (obs ModelObservation) GetComponentHealth(_ context.Context, _ kubernetes.I
 	return obs.componentHealth
 }
 
-// GetApplyOptions uses the runtime config fetched for image and modelId
-// models. Derivation-only specs need no apply-time options.
+// GetApplyOptions uses the runtime config, which is fetched for every model.
 func (r *ModelReconciler) GetApplyOptions(obs ModelObservation) controllerutils.ApplyOptions {
-	if obs.model != nil && (obs.model.Spec.ModelID != "" || obs.model.Spec.Image != "") {
-		return aimruntimeconfig.GetApplyOptions(obs.runtimeConfig.Value)
-	}
-	return controllerutils.ApplyOptions{}
+	return aimruntimeconfig.GetApplyOptions(obs.runtimeConfig.Value)
 }
 
 func (r *ModelReconciler) FetchRemoteState(
@@ -158,7 +154,8 @@ func (r *ModelReconciler) FetchRemoteState(
 	if model.Spec.Image != "" {
 		result.imageMetadata = imagemetadata.Fetch(ctx, r.Clientset, model.Spec, &model.Status, model.Namespace)
 	}
-	// Profile generation and the discovery Job tolerations use the runtime config.
+	// Profile generation, label propagation and the discovery Job tolerations
+	// use the runtime config.
 	result.runtimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, model.Spec.Name, model.Namespace)
 	// Skip discovery for models that bring their own model artifacts via
 	// spec.modelSources. Their image is typically a base image (e.g.
