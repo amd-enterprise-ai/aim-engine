@@ -461,6 +461,8 @@ The size check, download and discovery Jobs use the runtime config's list. One o
 
 A Job keeps the tolerations that it was created with. After you change the list, delete a `Pending` Job, and AIM Engine creates it again with the new list.
 
+Changing a runtime config's list restarts the inference pods of every service that inherits it, even when no pod would move to another node: the tolerations are part of each predictor's pod template, and a Deployment replaces its pods whenever that template changes. Services with their own `spec.tolerations` are not affected. If the rollout starts new pods before it stops the old ones, GPU services need free GPUs to complete it.
+
 ## Environment variable overrides
 
 `spec.env` injects environment variables into managed workloads. Most commonly used to set the HuggingFace downloader fallback chain.

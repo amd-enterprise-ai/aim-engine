@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Weight-replacing profile derivations now use the producer's exact `AIM_BASE_IMAGE_REF` or `spec.baseImageRef`. Tags and digests are no longer truncated or synthesized. The operator uses the private producer prefixes found in released images (`docker.io/silogenai` and `ghcr.io/silogen`) as public `docker.io/amdenterpriseai` compatibility fallbacks even when a resource selects a named RuntimeConfig; matching configured mappings remain authoritative for private and air-gapped mirrors. The fallbacks are built into the operator; the Helm chart does not add mappings to its default cluster RuntimeConfig.
+- **Label propagation also covers models without `spec.modelId`.** `AIMModel` and `AIMClusterModel` resources without a model ID now resolve their runtime config too, for their discovery Job tolerations. When that runtime config enables `labelPropagation`, their child resources get the propagated labels as well.
 
 ### Fixed
 - Cached v1alpha1 image metadata from older operators is re-inspected to recover `AIM_BASE_IMAGE_REF`. Reinspection failures retain cached metadata and normal readiness while reporting a non-gating diagnostic that can recover on a later reconcile; images that genuinely omit the field are recorded without repeated registry polling.
