@@ -113,17 +113,13 @@ func (obs ClusterModelObservation) GetComponentHealth(_ context.Context, _ kuber
 	return obs.componentHealth
 }
 
-// GetApplyOptions delegates to the legacy reconciler because RuntimeConfig
-// (the only current driver of ApplyOptions) is a v1alpha1-shaped concept and
-// is fetched on the legacy side.
+// GetApplyOptions delegates to the legacy reconciler when the legacy
+// pipeline ran, and otherwise uses the native runtime config.
 func (r *ClusterModelReconciler) GetApplyOptions(obs ClusterModelObservation) controllerutils.ApplyOptions {
 	if obs.legacyObservation != nil {
 		return r.legacy().GetApplyOptions(*obs.legacyObservation)
 	}
-	if obs.model != nil && obs.model.Spec.ModelID != "" {
-		return aimruntimeconfig.GetApplyOptions(obs.runtimeConfig.Value)
-	}
-	return controllerutils.ApplyOptions{}
+	return aimruntimeconfig.GetApplyOptions(obs.runtimeConfig.Value)
 }
 
 func (r *ClusterModelReconciler) FetchRemoteState(
@@ -148,7 +144,8 @@ func (r *ClusterModelReconciler) FetchRemoteState(
 		legacyFetch := r.legacy().FetchRemoteState(ctx, c, controllerutils.ReconcileContext[*aimv1alpha1.AIMClusterModel]{Object: result.legacyModel})
 		result.legacyFetch = &legacyFetch
 	}
-	// Profile generation and the discovery Job tolerations use the runtime config.
+	// Profile generation, label propagation and the discovery Job tolerations
+	// use the runtime config.
 	result.runtimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, model.Spec.Name, "")
 	// See ModelReconciler.FetchRemoteState for why custom / fine-tuned models
 	// skip native discovery — their image is typically a base image without

@@ -179,3 +179,42 @@ func TestBuildDesiredOfficialClusterModelProfiles_BaseEntriesStampedAsBase(t *te
 		t.Fatalf("summary.Deployable = %d, want 0 for base-only cluster catalog", summary.Deployable)
 	}
 }
+
+func TestClusterGetApplyOptions_PropagatesLabelsForModelWithoutModelID(t *testing.T) {
+	model := &aimv1alpha2.AIMClusterModel{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "derived",
+			UID:    "model-uid",
+			Labels: map[string]string{"example.com/team": "inference"},
+		},
+		Spec: aimv1alpha1.AIMModelSpec{
+			DerivedFrom: &aimv1alpha1.AIMProfileSetSpec{
+				Selector: aimv1alpha1.ProfileSelector{AimId: "qwen/qwen3"},
+			},
+		},
+	}
+	runtimeConfig := &aimv1alpha1.AIMRuntimeConfigCommon{}
+	runtimeConfig.LabelPropagation = &aimv1alpha1.AIMRuntimeConfigLabelPropagationSpec{
+		Enabled: true,
+		Match:   []string{"example.com/team"},
+	}
+	fetch := ClusterModelFetchResult{
+		model:         model,
+		runtimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{Value: runtimeConfig},
+	}
+	reconciler := &ClusterModelReconciler{}
+	rc := controllerutils.ReconcileContext[*aimv1alpha2.AIMClusterModel]{Object: model}
+	obs := reconciler.ComposeState(context.Background(), rc, fetch)
+	plan := reconciler.PlanResources(context.Background(), rc, obs)
+	controllerutils.PropagateLabelsForResult(model, &plan, reconciler.GetApplyOptions(obs).LabelPropagation)
+
+	for _, obj := range plan.GetToApply() {
+		if profileSet, ok := obj.(*aimv1alpha2.AIMClusterProfileSet); ok {
+			if got := profileSet.Labels["example.com/team"]; got != "inference" {
+				t.Fatalf("child AIMClusterProfileSet label example.com/team = %q, want inference", got)
+			}
+			return
+		}
+	}
+	t.Fatalf("plan has no child AIMClusterProfileSet: %#v", plan.GetToApply())
+}

@@ -159,17 +159,13 @@ func (obs ModelObservation) GetComponentHealth(_ context.Context, _ kubernetes.I
 }
 
 // GetApplyOptions delegates to the legacy reconciler when the legacy
-// pipeline ran (RuntimeConfig is a v1alpha1-shaped concept fetched on the
-// legacy side). For pure v1alpha2 specs (profileCopy-only) the legacy
-// pipeline is skipped entirely and no apply-time options are needed.
+// pipeline ran, because auto-detected custom models skip the native runtime
+// config fetch. Every other model uses the native runtime config.
 func (r *ModelReconciler) GetApplyOptions(obs ModelObservation) controllerutils.ApplyOptions {
 	if obs.legacyObservation != nil {
 		return r.legacy().GetApplyOptions(*obs.legacyObservation)
 	}
-	if obs.model != nil && obs.model.Spec.ModelID != "" {
-		return aimruntimeconfig.GetApplyOptions(obs.runtimeConfig.Value)
-	}
-	return controllerutils.ApplyOptions{}
+	return aimruntimeconfig.GetApplyOptions(obs.runtimeConfig.Value)
 }
 
 func (r *ModelReconciler) FetchRemoteState(
@@ -217,7 +213,8 @@ func (r *ModelReconciler) FetchRemoteState(
 		legacyFetch := r.legacy().FetchRemoteState(ctx, c, controllerutils.ReconcileContext[*aimv1alpha1.AIMModel]{Object: result.legacyModel})
 		result.legacyFetch = &legacyFetch
 	}
-	// Profile generation and the discovery Job tolerations use the runtime config.
+	// Profile generation, label propagation and the discovery Job tolerations
+	// use the runtime config.
 	result.runtimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, model.Spec.Name, model.Namespace)
 	// Skip native v1alpha2 discovery for custom and fine-tuned models. They
 	// either bring their own model artifacts via spec.modelSources +
