@@ -1056,3 +1056,45 @@ func TestSummarizeManagedProfiles_CountsDeployableEntries(t *testing.T) {
 		t.Fatalf("summary.Base = %d, want 0 for deployable-only desired set", summary.Base)
 	}
 }
+
+func TestGetApplyOptions_PropagatesLabelsForModelWithoutModelID(t *testing.T) {
+	t.Parallel()
+
+	model := &aimv1alpha2.AIMModel{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "derived",
+			Namespace: "team-a",
+			UID:       "model-uid",
+			Labels:    map[string]string{"example.com/team": "inference"},
+		},
+		Spec: aimv1alpha1.AIMModelSpec{
+			DerivedFrom: &aimv1alpha1.AIMProfileSetSpec{
+				Selector: aimv1alpha1.ProfileSelector{AimId: "qwen/qwen3"},
+			},
+		},
+	}
+	runtimeConfig := &aimv1alpha1.AIMRuntimeConfigCommon{}
+	runtimeConfig.LabelPropagation = &aimv1alpha1.AIMRuntimeConfigLabelPropagationSpec{
+		Enabled: true,
+		Match:   []string{"example.com/team"},
+	}
+	fetch := ModelFetchResult{
+		model:         model,
+		runtimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{Value: runtimeConfig},
+	}
+	reconciler := &ModelReconciler{}
+	rc := controllerutils.ReconcileContext[*aimv1alpha2.AIMModel]{Object: model}
+	obs := reconciler.ComposeState(context.Background(), rc, fetch)
+	plan := reconciler.PlanResources(context.Background(), rc, obs)
+	controllerutils.PropagateLabelsForResult(model, &plan, reconciler.GetApplyOptions(obs).LabelPropagation)
+
+	for _, obj := range plan.GetToApply() {
+		if profileSet, ok := obj.(*aimv1alpha2.AIMProfileSet); ok {
+			if got := profileSet.Labels["example.com/team"]; got != "inference" {
+				t.Fatalf("child AIMProfileSet label example.com/team = %q, want inference", got)
+			}
+			return
+		}
+	}
+	t.Fatalf("plan has no child AIMProfileSet: %#v", plan.GetToApply())
+}
