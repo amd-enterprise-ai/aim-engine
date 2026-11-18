@@ -567,3 +567,109 @@ jobs:
       - name: Delete kubeconfig
         if: always()
         run: rm -f "${KUBECONFIG}"
+
+  # Scheduling onto fake AMD GPU nodes run by KWOK (requires=kwok tests). The
+  # fleet's GPU-labelled nodes would change the node counts other tests assert
+  # on, so this lane runs on its own cluster. See
+  # docs/docs/contributing/testing.md#fake-gpu-nodes-kwok.
+  test-e2e-kwok:
+    name: test-e2e-kwok
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: test-e2e-kwok-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    env:
+      KIND_CLUSTER: aim-kwok-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Isolate mise state
+        run: |
+          echo "MISE_DATA_DIR=${RUNNER_TEMP}/mise/data" >> "$GITHUB_ENV"
+          echo "MISE_CACHE_DIR=${RUNNER_TEMP}/mise/cache" >> "$GITHUB_ENV"
+          echo "MISE_CONFIG_DIR=${RUNNER_TEMP}/mise/config" >> "$GITHUB_ENV"
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+        with:
+          cache_key_prefix: mise-isolated-v1
+        env:
+          TMPDIR: ${{ runner.temp }}
+          MISE_OVERRIDE_CONFIG_FILENAMES: "mise.toml"
+
+      - name: Cache Go modules and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-v2-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-v2-${{ runner.os }}-
+
+      - name: Set per-run kubeconfig path
+        run: echo "KUBECONFIG=${RUNNER_TEMP}/kubeconfig-kwok-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_ENV}"
+
+      # hack/kind/config.yaml enables the ExtendedResourceToleration admission
+      # plugin, which the device-plugin placement test relies on.
+      - name: Create Kind cluster
+        run: kind create cluster --name "${KIND_CLUSTER}" --config hack/kind/config.yaml
+
+      - name: Check the API server enables ExtendedResourceToleration
+        run: |
+          args=$(kubectl -n kube-system get pod -l component=kube-apiserver -o jsonpath='{.items[0].spec.containers[0].command}')
+          echo "$args" | tr ',' '\n' | grep -- '--enable-admission-plugins' || true
+          if ! echo "$args" | grep -q ExtendedResourceToleration; then
+            echo "::error::kind did not apply the kubeadm patch in hack/kind/config.yaml"
+            exit 1
+          fi
+
+      - name: Install KWOK and the fake GPU fleet
+        run: |
+          make kwok-install
+          make fake-gpu-fleet
+
+      - name: Run KWOK Chainsaw tests
+        run: make test-chainsaw-kwok ENV=kind
+
+      - name: Upload Chainsaw report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chainsaw-report-${{ github.run_id }}-${{ github.run_attempt }}-kwok
+          path: .tmp/chainsaw-reports/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Chainsaw failure debug bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chainsaw-debug-${{ github.run_id }}-${{ github.run_attempt }}-kwok
+          path: .tmp/chainsaw-debug/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Debug on failure
+        if: failure()
+        run: |
+          echo "=== Fake GPU nodes ==="
+          kubectl get nodes -l aim.eai.amd.com/fake-gpu=true -o wide || true
+          echo "=== ResourceSlices and DeviceClasses ==="
+          kubectl get resourceslices,deviceclasses || true
+          echo "=== KWOK controller ==="
+          kubectl logs -n kube-system deployment/kwok-controller --tail=200 || true
+          echo "=== Non-running pods ==="
+          kubectl get pods -A --field-selector 'status.phase!=Running,status.phase!=Succeeded' -o wide || true
+          echo "=== Events (warnings only) ==="
+          kubectl get events -A --field-selector type=Warning --sort-by='.lastTimestamp' || true
+
+      - name: Delete Kind cluster
+        if: always()
+        run: kind delete cluster --name "${KIND_CLUSTER}" || true
+
+      - name: Delete kubeconfig
+        if: always()
+        run: rm -f "${KUBECONFIG}"
