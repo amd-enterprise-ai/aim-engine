@@ -479,7 +479,11 @@ func (r *ProfileCacheReconciler) PlanResources(
 
 		// Provision the shared adapter disk; size/class are left empty so the
 		// AIMArtifact reconciler resolves them from AIMRuntimeConfig.Storage.
-		if pc.Spec.RequiresAdapterDisk {
+		// A replacement also inherits the disk of the artifact it replaces: a
+		// LoRA-serving cache sharing that artifact resolves to the same replacement
+		// name and will only switch to a disk-bearing one.
+		replacement, replacing := obs.Replacements[model.ModelID]
+		if pc.Spec.RequiresAdapterDisk || (replacing && replacement.serving.Spec.AdapterDisk != nil) {
 			artifact.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
 		}
 

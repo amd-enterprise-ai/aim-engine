@@ -1363,6 +1363,48 @@ func TestReplacement_KeepsServedArtifactUntilReplacementIsReady(t *testing.T) {
 	}
 }
 
+// TestReplacement_InheritsServedAdapterDisk verifies that a replacement carries the
+// served artifact's adapter disk even when this cache does not serve adapters, so a
+// LoRA-serving cache sharing the artifact can switch to the replacement too.
+func TestReplacement_InheritsServedAdapterDisk(t *testing.T) {
+	tests := []struct {
+		name                string
+		servedHasDisk       bool
+		requiresAdapterDisk bool
+		wantDisk            bool
+	}{
+		{name: "served artifact has a disk", servedHasDisk: true, wantDisk: true},
+		{name: "served artifact has no disk", servedHasDisk: false, wantDisk: false},
+		{name: "cache serves adapters", servedHasDisk: true, requiresAdapterDisk: true, wantDisk: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newReplacementFixture(t, aimv1alpha2.ProfileCacheModeShared)
+			f.pc.Spec.RequiresAdapterDisk = tt.requiresAdapterDisk
+			if tt.servedHasDisk {
+				f.served.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
+			}
+			obs, _, _ := f.reconcile(t, f.served)
+			if _, ok := obs.Replacements["org/model-a"]; !ok {
+				t.Fatalf("replacements = %v, want one for org/model-a", obs.Replacements)
+			}
+
+			plan := f.plannedApplies(t, obs)
+			applies := plan.GetToApplyWithoutOwnerRef()
+			if len(applies) != 1 || applies[0].GetName() != f.replacementName {
+				t.Fatalf("planned applies = %d, want only the replacement %s", len(applies), f.replacementName)
+			}
+			created, ok := applies[0].(*aimv1alpha1.AIMArtifact)
+			if !ok {
+				t.Fatalf("planned apply is %T, want *AIMArtifact", applies[0])
+			}
+			if hasDisk := created.Spec.AdapterDisk != nil; hasDisk != tt.wantDisk {
+				t.Fatalf("replacement adapterDisk set = %v, want %v", hasDisk, tt.wantDisk)
+			}
+		})
+	}
+}
+
 func TestReplacement_FailureEmitsWarning(t *testing.T) {
 	f := newReplacementFixture(t, aimv1alpha2.ProfileCacheModeShared)
 	previous := slices.Clone(f.pc.Status.Conditions)
