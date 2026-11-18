@@ -34,6 +34,8 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
@@ -122,5 +124,61 @@ func TestListNodeInventoryWithoutResourceAPI(t *testing.T) {
 	}
 	if len(inventory.Nodes) != 1 || inventory.DRADevices != nil {
 		t.Errorf("inventory = %+v, want one node and no DRA devices", inventory)
+	}
+}
+
+// When a DeviceClass sets extendedResourceName: amd.com/gpu, the scheduler
+// serves an amd.com/gpu request from DRA devices. The node then has no
+// allocatable amd.com/gpu, but a device-plugin style pod still runs there.
+func TestMatchProfileNodesDRANodeWithExtendedResourceMapping(t *testing.T) {
+	node := makeNode("dra", map[string]string{
+		AcceleratorVendorLabelPrefix + "GPU.AMD":                  "8",
+		AcceleratorLabelPrefix + "MI300X":                         "8",
+		PartitioningSchemeLabelPrefix + PartitioningSchemeDefault: "8",
+	}, hostCapacity("192"))
+	slice := amdSlice("dra", "dra", "dra", 1, repeatDevices(8, "0x74a1", DRADeviceTypeGPU, "spx_nps1")...)
+	spec := aimv1alpha2.AIMProfileSpecCommon{
+		AcceleratorType:  aimv1alpha1.AcceleratorTypeGPU,
+		AcceleratorModel: "MI300X",
+		AcceleratorCount: 1,
+	}
+
+	for _, tt := range []struct {
+		name                 string
+		extendedResourceName *string
+		wantDevicePlugin     int32
+	}{
+		{name: "no mapping", wantDevicePlugin: 0},
+		{name: "class maps amd.com/gpu", extendedResourceName: ptr.To(constants.AMDGPUResourceName), wantDevicePlugin: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			class := &resourcev1.DeviceClass{
+				ObjectMeta: metav1.ObjectMeta{Name: constants.AMDGPUDRADriverName},
+				Spec: resourcev1.DeviceClassSpec{
+					Selectors: []resourcev1.DeviceSelector{{CEL: &resourcev1.CELDeviceSelector{
+						Expression: "device.driver == '" + constants.AMDGPUDRADriverName + "'",
+					}}},
+					ExtendedResourceName: tt.extendedResourceName,
+				},
+			}
+			scheme := runtime.NewScheme()
+			if err := corev1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			if err := resourcev1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&node, &slice, class).Build()
+
+			inventory, err := ListNodeInventory(context.Background(), c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := MatchProfileNodes(inventory, spec, ResolveProfileResources(spec))
+			if result.MatchingNodes != tt.wantDevicePlugin || result.DRAMatchingNodes != 1 {
+				t.Errorf("device plugin %d, DRA %d; want %d and 1\nmismatches: %+v",
+					result.MatchingNodes, result.DRAMatchingNodes, tt.wantDevicePlugin, result.NodeMismatches)
+			}
+		})
 	}
 }

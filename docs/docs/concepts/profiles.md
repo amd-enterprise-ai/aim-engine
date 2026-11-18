@@ -239,7 +239,7 @@ GPU profiles also get a `feature.node.kubernetes.io/aim-accelerator.mixed-models
 
 ### Nodes with DRA GPUs
 
-The AMD GPU DRA driver publishes a node's GPUs in `gpu.amd.com` ResourceSlices instead of advertising `amd.com/gpu`. AIM Engine reads the GPUs of these nodes from the ResourceSlices, not the node labels. A node that publishes ResourceSlices while `amd.com/gpu` is still allocatable counts as both kinds of node. An AMD GPU profile matches a DRA node when the node has `acceleratorCount` devices of a single GPU model that fit the profile:
+The AMD GPU DRA driver publishes a node's GPUs in `gpu.amd.com` ResourceSlices instead of advertising `amd.com/gpu`. AIM Engine reads the GPUs of these nodes from the ResourceSlices, not the node labels. A node that publishes ResourceSlices while `amd.com/gpu` is still allocatable counts as both kinds of node. So does every DRA node while a DeviceClass sets `extendedResourceName: amd.com/gpu`, because the scheduler then serves `amd.com/gpu` requests from DRA devices. AIM Engine checks only that some DeviceClass has the mapping, not which devices its selector covers, and it picks up a changed DeviceClass at the next Node or ResourceSlice change. An AMD GPU profile matches a DRA node when the node has `acceleratorCount` devices of a single GPU model that fit the profile:
 
 - **Model:** the device's PCI device ID is one of the IDs of `acceleratorModel`. Profiles without a model, or with the family-level model `GPU`, accept any model.
 - **Partitioning:** `unpartitioned` takes whole GPUs in the default SPX-NPS1 mode, as on device-plugin nodes, `partitioned` takes partitions, and a scheme such as `CPX-NPS4` takes devices with that partition profile (`cpx_nps4`).

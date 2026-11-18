@@ -466,7 +466,9 @@ func matchNodes(
 		}
 		// A node can publish DRA devices while amd.com/gpu is still allocatable,
 		// for example while it moves from the device plugin to the DRA driver.
-		if !draNode || draReq == nil || advertisesAMDGPUs(node) {
+		// With the extended resource mapping, an amd.com/gpu request also gets
+		// DRA devices.
+		if !draNode || draReq == nil || advertisesAMDGPUs(node) || inventory.AMDGPUExtendedResource {
 			devicePluginReasons := nodeMismatchReasons(
 				node,
 				vendorReq,

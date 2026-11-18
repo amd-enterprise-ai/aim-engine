@@ -31,6 +31,7 @@ import (
 	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -63,6 +64,10 @@ type NodeInventory struct {
 	// ResourceSlices to the devices they publish. Such a node presents its
 	// GPUs through DRA, not as device-plugin resources.
 	DRADevices map[string][]DRADevice
+	// AMDGPUExtendedResource is true when a DeviceClass has
+	// extendedResourceName amd.com/gpu. The scheduler then serves amd.com/gpu
+	// requests from DRA devices on nodes that do not advertise amd.com/gpu.
+	AMDGPUExtendedResource bool
 }
 
 // NodesOnly is an inventory of nodes without DRA devices.
@@ -85,7 +90,17 @@ func ListNodeInventory(ctx context.Context, c client.Reader) (NodeInventory, err
 		}
 		return NodeInventory{}, fmt.Errorf("list ResourceSlices: %w", err)
 	}
-	return BuildNodeInventory(nodes.Items, slices.Items), nil
+	inventory := BuildNodeInventory(nodes.Items, slices.Items)
+	var classes resourcev1.DeviceClassList
+	if err := c.List(ctx, &classes); err != nil {
+		return NodeInventory{}, fmt.Errorf("list DeviceClasses: %w", err)
+	}
+	for _, class := range classes.Items {
+		if ptr.Deref(class.Spec.ExtendedResourceName, "") == constants.AMDGPUResourceName {
+			inventory.AMDGPUExtendedResource = true
+		}
+	}
+	return inventory, nil
 }
 
 // BuildNodeInventory combines nodes with the devices of the AMD GPU DRA
