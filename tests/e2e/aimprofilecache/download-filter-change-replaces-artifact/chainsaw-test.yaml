@@ -1,0 +1,367 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMProfileCache E2E Test: changing a profile's download filter replaces its artifact
+#
+# The download filter is part of a Shared artifact's identity, so a profile whose
+# filter changes needs a different artifact. The cache keeps serving the artifact it
+# already resolved until that replacement is Ready, then switches and leaves the
+# previous artifact in place for any other cache still using it.
+#
+# The served artifact is shared with an adapter-serving cache for another profile,
+# which only adopts artifacts carrying an adapter disk. The replacement is created by
+# the cache that does not serve adapters, so it has to inherit the disk for the
+# adapter-serving cache to follow it later.
+#
+# Artifact Ready transitions are injected rather than downloaded: downloads are
+# irrelevant to the replacement under test, and driving them for real would make this
+# test depend on network access, a pullable downloader image and storage. Pausing an
+# artifact before patching its status keeps its controller from reverting it.
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: profile-cache-download-filter-change-replaces-artifact
+spec:
+  description: |
+    Two profiles share one artifact; the adapter-serving cache gives it an adapter
+    disk. Adding a download filter to one profile keeps that profile's cache serving
+    the shared artifact while a replacement with the new filter and an adapter disk is
+    created, switches once the replacement is Ready, and keeps the previous artifact.
+    Adding the same filter to the second profile moves its adapter-serving cache onto
+    the same replacement instead of creating another.
+  timeouts:
+    assert: 3m
+  steps:
+    - name: Create the runtime config, two profiles sharing weights and an adapter-serving cache
+      try:
+        - apply:
+            file: runtime.yaml
+        - apply:
+            file: profiles.yaml
+        - apply:
+            file: lora-cache.yaml
+
+    - name: Assert both profiles are Ready
+      try:
+        - assert:
+            timeout: 2m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: filter-change-base
+              status:
+                status: Ready
+        - assert:
+            timeout: 2m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: filter-change-lora
+              status:
+                status: Ready
+
+    - name: Drive the shared artifact to Ready once it carries an adapter disk
+      try:
+        - script:
+            # Two retry loops of up to 120s each, plus their kubectl calls.
+            timeout: 5m
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+
+              ARTIFACT=""
+              for _ in $(seq 1 60); do
+                NAMES="$(kubectl -n "$NAMESPACE" get aimartifacts -o jsonpath='{.items[*].metadata.name}')"
+                set -- $NAMES
+                if [ "$#" -eq 1 ] && [ -n "$(kubectl -n "$NAMESPACE" get aimartifact "$1" -o jsonpath='{.spec.adapterDisk}')" ]; then
+                  ARTIFACT="$1"
+                  break
+                fi
+                sleep 2
+              done
+              if [ -z "$ARTIFACT" ]; then
+                echo "expected exactly one shared AIMArtifact carrying an adapter disk"
+                kubectl -n "$NAMESPACE" get aimartifacts.aim.eai.amd.com -o yaml
+                exit 1
+              fi
+
+              # Caches skip status-less artifacts, and the PVC name is recorded only
+              # once the PVC exists, so wait for both before freezing.
+              PVC=""
+              for _ in $(seq 1 60); do
+                SNAPSHOT="$(kubectl -n "$NAMESPACE" get aimartifact "$ARTIFACT" \
+                  -o jsonpath='{.status.status}|{.status.persistentVolumeClaim}')"
+                if [ -n "${SNAPSHOT%%|*}" ] && [ -n "${SNAPSHOT#*|}" ]; then
+                  PVC="${SNAPSHOT#*|}"
+                  break
+                fi
+                sleep 2
+              done
+              if [ -z "$PVC" ]; then
+                echo "artifact $ARTIFACT never reported a status and persistentVolumeClaim"
+                kubectl -n "$NAMESPACE" get aimartifact "$ARTIFACT" -o yaml
+                exit 1
+              fi
+
+              kubectl -n "$NAMESPACE" annotate aimartifact "$ARTIFACT" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+              kubectl -n "$NAMESPACE" patch aimartifact "$ARTIFACT" \
+                --type=merge --subresource=status \
+                -p "{\"status\":{\"status\":\"Ready\",\"persistentVolumeClaim\":\"$PVC\"}}"
+              echo "froze shared artifact $ARTIFACT as Ready, pvc=$PVC"
+
+    - name: Assert both caches are Ready on the shared artifact
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                name: filter-change-base
+              status:
+                status: Ready
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                name: filter-change-lora-cache
+              status:
+                status: Ready
+        - script:
+            timeout: 1m
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              SHARED="$(kubectl -n "$NAMESPACE" get aimartifacts -o jsonpath='{.items[0].metadata.name}')"
+              for cache in filter-change-base filter-change-lora-cache; do
+                RESOLVED="$(kubectl -n "$NAMESPACE" get aimprofilecache "$cache" -o jsonpath='{.status.artifacts.*.name}')"
+                if [ "$RESOLVED" != "$SHARED" ]; then
+                  echo "expected cache $cache to resolve $SHARED, got '$RESOLVED'"
+                  exit 1
+                fi
+              done
+              echo "both caches resolve $SHARED"
+
+    - name: Add a download filter to the profile without adapters
+      try:
+        - patch:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: filter-change-base
+              spec:
+                modelSources:
+                  - modelId: test/filter-change-fp8
+                    sourceUri: hf://test-org/filter-change-weights
+                    size: 10Mi
+                    downloadFilter:
+                      exclude:
+                        - "*.bin"
+
+    - name: Assert a replacement with the new filter and an adapter disk is created while the shared artifact keeps serving
+      try:
+        - script:
+            timeout: 3m
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+
+              SHARED="$(kubectl -n "$NAMESPACE" get aimprofilecache filter-change-lora-cache -o jsonpath='{.status.artifacts.*.name}')"
+              REPLACEMENT=""
+              for _ in $(seq 1 60); do
+                for name in $(kubectl -n "$NAMESPACE" get aimartifacts -o jsonpath='{.items[*].metadata.name}'); do
+                  if [ "$name" != "$SHARED" ]; then
+                    REPLACEMENT="$name"
+                  fi
+                done
+                if [ -n "$REPLACEMENT" ]; then
+                  break
+                fi
+                sleep 2
+              done
+              if [ -z "$REPLACEMENT" ]; then
+                echo "no replacement artifact was created after the profile's filter changed"
+                kubectl -n "$NAMESPACE" get aimartifacts.aim.eai.amd.com -o yaml
+                exit 1
+              fi
+
+              FILTER="$(kubectl -n "$NAMESPACE" get aimartifact "$REPLACEMENT" -o jsonpath='{.spec.downloadFilter.exclude[*]}')"
+              if [ "$FILTER" != "*.bin" ]; then
+                echo "expected replacement $REPLACEMENT to exclude '*.bin', got '$FILTER'"
+                exit 1
+              fi
+              # The adapter-serving cache only adopts disk-bearing artifacts; without
+              # an inherited disk it could not follow this replacement.
+              if [ -z "$(kubectl -n "$NAMESPACE" get aimartifact "$REPLACEMENT" -o jsonpath='{.spec.adapterDisk}')" ]; then
+                echo "expected replacement $REPLACEMENT to inherit the shared artifact's adapter disk"
+                kubectl -n "$NAMESPACE" get aimartifact "$REPLACEMENT" -o yaml
+                exit 1
+              fi
+
+              for cache in filter-change-base filter-change-lora-cache; do
+                RESOLVED="$(kubectl -n "$NAMESPACE" get aimprofilecache "$cache" -o jsonpath='{.status.artifacts.*.name}')"
+                if [ "$RESOLVED" != "$SHARED" ]; then
+                  echo "expected cache $cache to keep serving $SHARED during the replacement, got '$RESOLVED'"
+                  exit 1
+                fi
+              done
+              echo "replacement $REPLACEMENT created; both caches still serve $SHARED"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                name: filter-change-base
+              status:
+                status: Ready
+                (conditions[?type == 'ArtifactsReady']):
+                  - status: "True"
+                (conditions[?type == 'ArtifactsReplacing']):
+                  - status: "True"
+
+    - name: Drive the replacement to Ready
+      try:
+        - script:
+            timeout: 3m
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+
+              SHARED="$(kubectl -n "$NAMESPACE" get aimprofilecache filter-change-lora-cache -o jsonpath='{.status.artifacts.*.name}')"
+              REPLACEMENT=""
+              for name in $(kubectl -n "$NAMESPACE" get aimartifacts -o jsonpath='{.items[*].metadata.name}'); do
+                if [ "$name" != "$SHARED" ]; then
+                  REPLACEMENT="$name"
+                fi
+              done
+
+              PVC=""
+              for _ in $(seq 1 60); do
+                SNAPSHOT="$(kubectl -n "$NAMESPACE" get aimartifact "$REPLACEMENT" \
+                  -o jsonpath='{.status.status}|{.status.persistentVolumeClaim}')"
+                if [ -n "${SNAPSHOT%%|*}" ] && [ -n "${SNAPSHOT#*|}" ]; then
+                  PVC="${SNAPSHOT#*|}"
+                  break
+                fi
+                sleep 2
+              done
+              if [ -z "$PVC" ]; then
+                echo "replacement $REPLACEMENT never reported a status and persistentVolumeClaim"
+                kubectl -n "$NAMESPACE" get aimartifact "$REPLACEMENT" -o yaml
+                exit 1
+              fi
+
+              kubectl -n "$NAMESPACE" annotate aimartifact "$REPLACEMENT" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+              kubectl -n "$NAMESPACE" patch aimartifact "$REPLACEMENT" \
+                --type=merge --subresource=status \
+                -p "{\"status\":{\"status\":\"Ready\",\"persistentVolumeClaim\":\"$PVC\"}}"
+              echo "froze replacement $REPLACEMENT as Ready, pvc=$PVC"
+
+    - name: Assert the cache switched to the replacement and the shared artifact is kept
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                name: filter-change-base
+              status:
+                status: Ready
+                (conditions[?type == 'ArtifactsReplacing']):
+                  - status: "False"
+                    reason: ArtifactsReplaced
+        - script:
+            timeout: 1m
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+
+              SHARED="$(kubectl -n "$NAMESPACE" get aimprofilecache filter-change-lora-cache -o jsonpath='{.status.artifacts.*.name}')"
+              BASE="$(kubectl -n "$NAMESPACE" get aimprofilecache filter-change-base -o jsonpath='{.status.artifacts.*.name}')"
+              if [ "$BASE" = "$SHARED" ]; then
+                echo "expected filter-change-base to switch away from $SHARED"
+                exit 1
+              fi
+              if ! kubectl -n "$NAMESPACE" get aimartifact "$SHARED" >/dev/null; then
+                echo "the previous artifact $SHARED was deleted, but the adapter-serving cache still uses it"
+                exit 1
+              fi
+              echo "filter-change-base serves $BASE; filter-change-lora-cache still serves $SHARED"
+
+    - name: Add the same filter to the adapter-serving profile
+      try:
+        - patch:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: filter-change-lora
+              spec:
+                modelSources:
+                  - modelId: test/filter-change-fp8
+                    sourceUri: hf://test-org/filter-change-weights
+                    size: 10Mi
+                    downloadFilter:
+                      exclude:
+                        - "*.bin"
+
+    - name: Assert the adapter-serving cache follows onto the same replacement
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                name: filter-change-lora-cache
+              status:
+                status: Ready
+                (conditions[?type == 'ArtifactsReplacing']):
+                  - status: "False"
+                    reason: ArtifactsReplaced
+        - script:
+            timeout: 1m
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+
+              BASE="$(kubectl -n "$NAMESPACE" get aimprofilecache filter-change-base -o jsonpath='{.status.artifacts.*.name}')"
+              LORA="$(kubectl -n "$NAMESPACE" get aimprofilecache filter-change-lora-cache -o jsonpath='{.status.artifacts.*.name}')"
+              if [ "$LORA" != "$BASE" ]; then
+                echo "expected filter-change-lora-cache to resolve $BASE, got '$LORA'"
+                exit 1
+              fi
+              COUNT="$(kubectl -n "$NAMESPACE" get aimartifacts -o name | wc -l | tr -d ' ')"
+              if [ "$COUNT" -ne 2 ]; then
+                echo "expected the shared artifact and one replacement, got $COUNT artifacts"
+                kubectl -n "$NAMESPACE" get aimartifacts.aim.eai.amd.com -o yaml
+                exit 1
+              fi
+              echo "both caches serve $BASE"
+      catch:
+        - script:
+            timeout: 1m
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              echo "=== profile caches ==="
+              kubectl -n "$NAMESPACE" get aimprofilecaches.aim.eai.amd.com -o yaml
+              echo "=== artifacts ==="
+              kubectl -n "$NAMESPACE" get aimartifacts.aim.eai.amd.com -o yaml

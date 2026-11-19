@@ -142,8 +142,9 @@ func (s *AIMProfileCacheStatus) GetAIMStatus() constants.AIMStatus {
 
 // Condition types for AIMProfileCache.
 const (
-	AIMProfileCacheConditionProfileFound   = "ProfileFound"
-	AIMProfileCacheConditionArtifactsReady = "ArtifactsReady"
+	AIMProfileCacheConditionProfileFound       = "ProfileFound"
+	AIMProfileCacheConditionArtifactsReady     = "ArtifactsReady"
+	AIMProfileCacheConditionArtifactsReplacing = "ArtifactsReplacing"
 )
 
 // Condition reasons for AIMProfileCache.
@@ -157,6 +158,15 @@ const (
 	// AIMProfileCacheReasonArtifactTerminating is distinct from CreatingCaches so an
 	// operator can tell "not created yet" from "waiting for a delete to finish".
 	AIMProfileCacheReasonArtifactTerminating = "ArtifactTerminating"
+	// AIMProfileCacheReasonReplacingArtifacts: a replacement artifact is being created
+	// or downloaded while the previous artifact keeps serving.
+	AIMProfileCacheReasonReplacingArtifacts = "ReplacingArtifacts"
+	// AIMProfileCacheReasonReplacementFailed: a replacement artifact failed or is
+	// degraded; the previous artifact keeps serving.
+	AIMProfileCacheReasonReplacementFailed = "ReplacementFailed"
+	// AIMProfileCacheReasonArtifactsReplaced: the cache switched to a Ready
+	// replacement. The previous artifact is not deleted.
+	AIMProfileCacheReasonArtifactsReplaced = "ArtifactsReplaced"
 )
 
 // +kubebuilder:object:root=true

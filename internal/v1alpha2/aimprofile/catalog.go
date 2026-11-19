@@ -122,6 +122,9 @@ type imageProfileFile struct {
 	Metadata   imageProfileMetadata `json:"metadata"`
 	EngineArgs map[string]any       `json:"engine_args,omitempty"`
 	EnvVars    map[string]string    `json:"env_vars,omitempty"`
+	// DownloadFilter is nil when the key is absent and non-nil but empty for
+	// `download_filter: {}`, which downloads the complete repository.
+	DownloadFilter *aimv1alpha1.AIMDownloadFilter `json:"download_filter,omitempty"`
 }
 
 type imageProfileMetadata struct {
@@ -400,7 +403,7 @@ func parseProfileYAMLIntoCatalogItem(raw []byte, relpath, defaultAimID, sourceIm
 			EngineArgs:                  engineArgsJSON,
 			EngineEnv:                   parsed.EnvVars,
 			Image:                       sourceImage,
-			ModelSources:                deriveModelSources(parsed.ModelID),
+			ModelSources:                deriveModelSources(parsed.ModelID, parsed.DownloadFilter),
 			Features:                    append([]string(nil), parsed.Metadata.Features...),
 		},
 	}, nil
@@ -417,13 +420,14 @@ func marshalEngineArgs(value map[string]any) (*apiextensionsv1.JSON, error) {
 	return &apiextensionsv1.JSON{Raw: raw}, nil
 }
 
-func deriveModelSources(modelID string) []aimv1alpha1.AIMModelSource {
+func deriveModelSources(modelID string, downloadFilter *aimv1alpha1.AIMDownloadFilter) []aimv1alpha1.AIMModelSource {
 	if modelID == "" {
 		return nil
 	}
 	return []aimv1alpha1.AIMModelSource{{
-		ModelID:   modelID,
-		SourceURI: "hf://" + modelID,
+		ModelID:        modelID,
+		SourceURI:      "hf://" + modelID,
+		DownloadFilter: downloadFilter.DeepCopy(),
 	}}
 }
 

@@ -112,6 +112,14 @@ var (
 		"engine_args": {},
 		"env_vars":    {},
 	}
+
+	// v1EngineConsumedTopLevelFields are read by AIM Engine during discovery and are
+	// never projected into the runtime profile. Kept apart from v1OwnedTopLevelFields
+	// because Validate rejects owned keys in persisted extensions, and contracts
+	// persisted before a field was consumed may still carry it there.
+	v1EngineConsumedTopLevelFields = map[string]struct{}{
+		"download_filter": {},
+	}
 )
 
 // Extensions contains source-owned fields that AIM Engine does not model.
@@ -400,6 +408,9 @@ func inspectV1(profile map[string]any) (Contract, error) {
 	}
 	for key, value := range profile {
 		if _, owned := v1OwnedTopLevelFields[key]; owned {
+			continue
+		}
+		if _, consumed := v1EngineConsumedTopLevelFields[key]; consumed {
 			continue
 		}
 		extensions.TopLevel[key] = value

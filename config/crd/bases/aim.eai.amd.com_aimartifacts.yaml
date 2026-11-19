@@ -131,9 +131,6 @@ spec:
                       type: string
                     type: array
                 type: object
-                x-kubernetes-validations:
-                - message: downloadFilter is immutable
-                  rule: self == oldSelf
               env:
                 description: Env lists environment variables used when downloading
                   the artifact.
@@ -615,6 +612,9 @@ spec:
           optionalOldSelf: true
           rule: '!has(self.spec.type) || !oldSelf.hasValue() || !has(oldSelf.value().spec.type)
             || self.spec.type == oldSelf.value().spec.type'
+        - message: spec.downloadFilter is immutable
+          rule: has(self.spec.downloadFilter) == has(oldSelf.spec.downloadFilter)
+            && (!has(self.spec.downloadFilter) || self.spec.downloadFilter == oldSelf.spec.downloadFilter)
         - message: exactly one of spec.parentArtifact or spec.compatibleWith is required
             when spec.type is adapter
           rule: '!has(self.spec.type) || self.spec.type != ''adapter'' || ((has(self.spec.parentArtifact)

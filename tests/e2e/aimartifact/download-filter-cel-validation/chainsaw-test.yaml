@@ -1,0 +1,116 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMArtifact CEL Validation: spec.downloadFilter is immutable
+#
+# The filter is part of an artifact's identity: caches derive the artifact name from
+# it, and the files on disk were downloaded with it. Editing it in place would leave a
+# spec that no longer describes the download and a name a cache cannot reuse, so
+# adding, removing and changing it are all rejected.
+#
+# No special infrastructure required (admission-time validation only).
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: download-filter-cel-validation
+spec:
+  description: Adding, removing or changing an AIMArtifact's download filter is rejected
+  timeouts:
+    assert: 30s
+  steps:
+    - name: Create artifacts with and without a download filter
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: cel-filter-unset
+              spec:
+                sourceUri: hf://org/model
+                size: 1Mi
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: cel-filter-set
+              spec:
+                sourceUri: hf://org/model
+                size: 1Mi
+                downloadFilter:
+                  exclude:
+                    - "*.bin"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: cel-filter-set
+              spec:
+                downloadFilter:
+                  exclude:
+                    - "*.bin"
+
+    - name: Reject adding a download filter
+      try:
+        - script:
+            content: |
+              set -eu
+              if kubectl patch aimartifact -n "$NAMESPACE" cel-filter-unset \
+                  --type merge -p '{"spec":{"downloadFilter":{"exclude":["*.bin"]}}}' 2>/dev/null; then
+                echo "ERROR: adding spec.downloadFilter was accepted"
+                exit 1
+              fi
+              echo "OK: adding spec.downloadFilter is rejected"
+
+    - name: Reject adding an empty download filter
+      try:
+        - script:
+            content: |
+              set -eu
+              if kubectl patch aimartifact -n "$NAMESPACE" cel-filter-unset \
+                  --type merge -p '{"spec":{"downloadFilter":{}}}' 2>/dev/null; then
+                echo "ERROR: adding an empty spec.downloadFilter was accepted"
+                exit 1
+              fi
+              echo "OK: adding an empty spec.downloadFilter is rejected"
+
+    - name: Reject removing the download filter
+      try:
+        - script:
+            content: |
+              set -eu
+              if kubectl patch aimartifact -n "$NAMESPACE" cel-filter-set \
+                  --type json -p '[{"op":"remove","path":"/spec/downloadFilter"}]' 2>/dev/null; then
+                echo "ERROR: removing spec.downloadFilter was accepted"
+                exit 1
+              fi
+              echo "OK: removing spec.downloadFilter is rejected"
+
+    - name: Reject changing the download filter
+      try:
+        - script:
+            content: |
+              set -eu
+              if kubectl patch aimartifact -n "$NAMESPACE" cel-filter-set \
+                  --type merge -p '{"spec":{"downloadFilter":{"exclude":["*.md"]}}}' 2>/dev/null; then
+                echo "ERROR: changing spec.downloadFilter was accepted"
+                exit 1
+              fi
+              echo "OK: changing spec.downloadFilter is rejected"
+
+    - name: Accept re-applying the same download filter
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: cel-filter-set
+              spec:
+                sourceUri: hf://org/model
+                size: 1Mi
+                downloadFilter:
+                  exclude:
+                    - "*.bin"

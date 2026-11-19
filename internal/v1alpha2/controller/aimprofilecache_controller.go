@@ -196,17 +196,7 @@ func (r *AIMProfileCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorderFor(r.pipeline.GetFullName())
 	r.pipeline.Recorder = r.Recorder
 
-	// Profile status change predicate — only reconcile when profile readiness changes
-	profileStatusPredicate := predicate.Funcs{
-		CreateFunc:  func(_ event.CreateEvent) bool { return true },
-		DeleteFunc:  func(_ event.DeleteEvent) bool { return true },
-		GenericFunc: func(_ event.GenericEvent) bool { return false },
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldStatus := getProfileStatus(e.ObjectOld)
-			newStatus := getProfileStatus(e.ObjectNew)
-			return oldStatus != newStatus
-		},
-	}
+	profilePredicate := profileChangePredicate()
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aimv1alpha2.AIMProfileCache{}).
@@ -221,12 +211,12 @@ func (r *AIMProfileCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&aimv1alpha2.AIMProfile{},
 			handler.EnqueueRequestsFromMapFunc(r.findProfileCachesForProfile),
-			builder.WithPredicates(profileStatusPredicate),
+			builder.WithPredicates(profilePredicate),
 		).
 		Watches(
 			&aimv1alpha2.AIMClusterProfile{},
 			handler.EnqueueRequestsFromMapFunc(r.findProfileCachesForClusterProfile),
-			builder.WithPredicates(profileStatusPredicate),
+			builder.WithPredicates(profilePredicate),
 		).
 		Named(profileCacheName).
 		Complete(r)
@@ -353,6 +343,21 @@ func profileCacheRequests(cacheKeys map[client.ObjectKey]struct{}) []ctrl.Reques
 		})
 	}
 	return requests
+}
+
+// profileChangePredicate wakes profile caches when a profile's readiness or spec
+// changes. A spec edit on a profile that stays Ready can still change the model
+// sources, and their download filters, that a cache resolves artifacts for.
+func profileChangePredicate() predicate.Funcs {
+	return predicate.Funcs{
+		CreateFunc:  func(_ event.CreateEvent) bool { return true },
+		DeleteFunc:  func(_ event.DeleteEvent) bool { return true },
+		GenericFunc: func(_ event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() ||
+				getProfileStatus(e.ObjectOld) != getProfileStatus(e.ObjectNew)
+		},
+	}
 }
 
 func getProfileStatus(obj client.Object) constants.AIMStatus {
