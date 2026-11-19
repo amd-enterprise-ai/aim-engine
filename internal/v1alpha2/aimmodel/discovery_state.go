@@ -99,6 +99,7 @@ type DiscoveryInputs struct {
 	Image            string
 	ImagePullSecrets []corev1.LocalObjectReference
 	ServiceAccount   string
+	Tolerations      []corev1.Toleration
 	OwnerRef         metav1.OwnerReference
 	CurrentState     *aimv1alpha1.ModelDiscoveryState
 	Clientset        kubernetes.Interface
@@ -274,6 +275,7 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 		Image:            in.Image,
 		ImagePullSecrets: in.ImagePullSecrets,
 		ServiceAccount:   in.ServiceAccount,
+		Tolerations:      in.Tolerations,
 		SpecHash:         specHash,
 		OwnerRef:         in.OwnerRef,
 		Kind:             in.Kind,

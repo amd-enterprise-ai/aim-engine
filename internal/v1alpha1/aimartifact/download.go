@@ -37,6 +37,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 )
 
 // ResolveDownloadImage exposes the download-image resolution to other packages
@@ -255,6 +256,7 @@ func buildDownloadJob(
 				},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
+					Tolerations:   aimruntimeconfig.Tolerations(runtimeConfigSpec),
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsUser:    ptr.To(int64(1000)), // kserve storage-initializer user
 						RunAsGroup:   ptr.To(int64(1000)),
@@ -348,6 +350,7 @@ func buildCheckSizeJob(
 				},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
+					Tolerations:   aimruntimeconfig.Tolerations(runtimeConfigSpec),
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsUser:    ptr.To(int64(1000)),
 						RunAsGroup:   ptr.To(int64(1000)),

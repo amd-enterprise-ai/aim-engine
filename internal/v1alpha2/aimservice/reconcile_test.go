@@ -1337,6 +1337,30 @@ func TestBuildInferenceServiceFromProfile_ServiceAccountPrecedence(t *testing.T)
 	}
 }
 
+func TestBuildInferenceServiceFromProfile_Tolerations(t *testing.T) {
+	gpuTaint := corev1.Toleration{Key: "amd.com/gpu", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
+	}
+	obs := ServiceObservation{
+		resolvedProfileSpec:   sampleProfileSpec(),
+		resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{Status: constants.AIMStatusReady},
+		profileName:           testProfileA,
+		isvcName:              "service-isvc",
+	}
+	if got := buildInferenceServiceFromProfile(service, obs).Spec.Predictor.Tolerations; got != nil {
+		t.Fatalf("tolerations without configuration = %v, want none", got)
+	}
+
+	runtimeConfig := &aimv1alpha1.AIMRuntimeConfigCommon{}
+	runtimeConfig.Tolerations = []corev1.Toleration{gpuTaint}
+	obs.mergedRuntimeConfig = controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{Value: runtimeConfig}
+	got := buildInferenceServiceFromProfile(service, obs).Spec.Predictor.Tolerations
+	if len(got) != 1 || got[0] != gpuTaint {
+		t.Fatalf("tolerations from the runtime config = %v, want [%v]", got, gpuTaint)
+	}
+}
+
 // TestBuildInferenceServiceFromProfile_ConvergesRuntimeReference pins that an
 // existing InferenceService follows the currently resolved profile rather than
 // indefinitely serving through a stale projection.

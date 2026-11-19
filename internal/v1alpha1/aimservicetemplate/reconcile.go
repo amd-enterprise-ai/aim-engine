@@ -570,6 +570,7 @@ func (r *ServiceTemplateReconciler) PlanResources(
 			ImagePullSecrets: model.Spec.ImagePullSecrets,
 			ServiceAccount:   model.Spec.ServiceAccountName,
 			TemplateSpec:     template.Spec.AIMServiceTemplateSpecCommon,
+			Tolerations:      aimruntimeconfig.Tolerations(obs.mergedRuntimeConfig.Value),
 			OwnerRef: metav1.OwnerReference{
 				APIVersion:         aimv1alpha1.GroupVersion.String(),
 				Kind:               "AIMServiceTemplate",
@@ -701,6 +702,7 @@ func (r *ClusterServiceTemplateReconciler) PlanResources(
 			ImagePullSecrets: clusterModel.Spec.ImagePullSecrets,
 			ServiceAccount:   clusterModel.Spec.ServiceAccountName,
 			TemplateSpec:     template.Spec.AIMServiceTemplateSpecCommon,
+			Tolerations:      aimruntimeconfig.Tolerations(obs.mergedRuntimeConfig.Value),
 			OwnerRef: metav1.OwnerReference{
 				APIVersion:         aimv1alpha1.GroupVersion.String(),
 				Kind:               "AIMClusterServiceTemplate",

@@ -280,6 +280,7 @@ func buildAdapterReaperJob(
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
 					RestartPolicy:    corev1.RestartPolicyNever,
+					Tolerations:      aimruntimeconfig.Tolerations(runtimeConfig),
 					ImagePullSecrets: mc.Spec.ImagePullSecrets,
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsUser:    ptr.To(int64(1000)),

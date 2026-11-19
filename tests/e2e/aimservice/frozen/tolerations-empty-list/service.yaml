@@ -1,0 +1,17 @@
+# v1alpha2 AIMService without its own tolerations, so it inherits the
+# namespace runtime config's.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: test-tolerations-service
+spec:
+  profile:
+    name: test-tolerations-profile
+  caching:
+    env:
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: huggingface-creds
+            key: token
+  replicas: 1
