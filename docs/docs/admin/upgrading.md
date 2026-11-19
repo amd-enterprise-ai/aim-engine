@@ -1096,6 +1096,12 @@ them, and expect Dedicated caches to download again. Do the steps at the start
 of [Rollback](#rollback) first; v0.2.7 otherwise moves services back to the
 template pipeline, creates templates again and stops reconciling some models.
 
+This release rewrites the owner references of artifact PVCs, adapter
+AIMArtifacts and discovered AIMClusterModels to v1alpha2 AIMArtifact and
+AIMClusterModelSource. v0.2.7's CRDs don't serve that version, so after the
+rollback, deleting such an AIMArtifact or AIMClusterModelSource leaves those
+children behind.
+
 ## Next Steps
 
 - [Installation Reference](installation.md) — Full installation options
