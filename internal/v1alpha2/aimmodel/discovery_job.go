@@ -469,24 +469,24 @@ func ComputeDiscoverySpecHash(image string, pullSecrets []corev1.LocalObjectRefe
 }
 
 // ShouldCreateDiscoveryJob returns true if the operator should create (or recreate)
-// a discovery Job now. Returns (false, reason, message) with a human-readable
-// explanation when backoff applies.
-func ShouldCreateDiscoveryJob(state *aimv1alpha1.ModelDiscoveryState, currentSpecHash string, now time.Time) (bool, string, string) {
+// a discovery Job now. During backoff it returns false with the time left until
+// the retry, a reason and a message. The message names the absolute retry time
+// so status stays unchanged, and doesn't retrigger the model, until then.
+func ShouldCreateDiscoveryJob(state *aimv1alpha1.ModelDiscoveryState, currentSpecHash string, now time.Time) (bool, time.Duration, string, string) {
 	if state == nil || state.Attempts == 0 {
-		return true, "", ""
+		return true, 0, "", ""
 	}
 	if state.SpecHash != "" && state.SpecHash != currentSpecHash {
-		return true, "", ""
+		return true, 0, "", ""
 	}
 	if state.LastAttemptTime != nil && state.Attempts > 0 {
-		backoff := calculateDiscoveryBackoff(state.Attempts)
-		next := state.LastAttemptTime.Add(backoff)
+		next := state.LastAttemptTime.Add(calculateDiscoveryBackoff(state.Attempts))
 		if now.Before(next) {
-			remaining := next.Sub(now).Round(time.Second)
-			return false, "AwaitingDiscovery", fmt.Sprintf("Waiting %s before retry (attempt %d)", remaining, state.Attempts+1)
+			return false, next.Sub(now), "AwaitingDiscovery",
+				fmt.Sprintf("Waiting until %s before retry (attempt %d)", next.UTC().Format(time.RFC3339), state.Attempts+1)
 		}
 	}
-	return true, "", ""
+	return true, 0, "", ""
 }
 
 // calculateDiscoveryBackoff uses exponential backoff: base * 2^(attempts-1), capped at max.

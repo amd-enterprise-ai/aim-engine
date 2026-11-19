@@ -121,6 +121,44 @@ spec:
       - name: AIM_DEBUG_SIMULATE_HF_DURATION
         value: "1"
 ---
+# The upgrade guide replaces upgrade-custom-service with an AIMProfile of this
+# model. Its discovered CPU profile has the service's model source, so the
+# Shared profile cache adopts the template-era artifact.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: upgrade-custom-weights
+spec:
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  discovery:
+    createServiceTemplates: false
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMService
+metadata:
+  name: upgrade-custom-service
+spec:
+  replicas: 1
+  model:
+    custom:
+      baseImage: docker.io/amdenterpriseai/aim-dummy:0.2.0
+      modelSources:
+        - modelId: HuggingFaceTB/SmolLM2-135M
+          sourceUri: hf://HuggingFaceTB/SmolLM2-135M
+          size: 1Mi
+      hardware:
+        cpu:
+          requests: 500m
+  template:
+    allowUnoptimized: true
+  caching:
+    mode: Shared
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "1"
+---
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMClusterModelSource
 metadata:

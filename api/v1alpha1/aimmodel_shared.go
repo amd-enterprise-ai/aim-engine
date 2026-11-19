@@ -40,6 +40,13 @@ const (
 	// AIMModelReasonMetadataExtractionFailed indicates metadata extraction failed (non-blocking, prevents retries).
 	AIMModelReasonMetadataExtractionFailed = "MetadataExtractionFailed"
 
+	// AIMModelConditionProfilesAvailable is False when the model's spec
+	// produces no AIMProfiles. It does not take part in the Ready rollup.
+	AIMModelConditionProfilesAvailable = "ProfilesAvailable"
+
+	// AIMModelReasonNoDeployableProfiles indicates the spec produces no AIMProfiles; the message names the cause.
+	AIMModelReasonNoDeployableProfiles = "NoDeployableProfiles"
+
 	// Runtime config resolution reasons
 	AIMModelReasonConfigNotFound     = "ConfigNotFound"
 	AIMModelReasonRuntimeConfigError = "RuntimeConfigError"

@@ -101,6 +101,7 @@ func TestRBACContract(t *testing.T) {
 			assertRBACAllows(t, role, "", resource, "get", "list", "watch")
 		}
 		assertRBACAllows(t, role, "", "pods/log", "get")
+		assertRBACAllows(t, role, "apps", "deployments", "get", "list", "watch")
 		assertRBACAllows(t, role, "autoscaling", "horizontalpodautoscalers", "get", "list", "watch")
 		assertRBACAllows(t, role, "batch", "jobs", "create", "delete", "get", "list", "patch", "update", "watch")
 		assertRBACAllows(t, role, "coordination.k8s.io", "leases", "create", "delete", "get", "list", "patch", "update", "watch")

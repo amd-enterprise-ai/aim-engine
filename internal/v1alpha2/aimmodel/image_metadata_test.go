@@ -25,6 +25,7 @@ package aimmodel
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -39,6 +40,7 @@ import (
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/imagemetadata"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
@@ -139,9 +141,10 @@ func TestImageModelFetch_ExtractMetadataDisabledSkipsInspection(t *testing.T) {
 		reconciler := &ModelReconciler{}
 		rc := controllerutils.ReconcileContext[*aimv1alpha2.AIMModel]{Object: model}
 		obs := reconciler.ComposeState(context.Background(), rc, reconciler.FetchRemoteState(context.Background(), imageModelFakeClient(t), rc))
-		reconciler.DecorateStatus(&model.Status, controllerutils.NewConditionManager(nil), obs)
+		cm := controllerutils.NewConditionManager(nil)
+		reconciler.DecorateStatus(&model.Status, cm, obs)
 
-		requireUninspectedImageModel(t, model.Status, obs.componentHealth)
+		requireUninspectedImageModel(t, model.Status, cm, obs.componentHealth)
 	})
 
 	t.Run("AIMClusterModel", func(t *testing.T) {
@@ -153,9 +156,10 @@ func TestImageModelFetch_ExtractMetadataDisabledSkipsInspection(t *testing.T) {
 		reconciler := &ClusterModelReconciler{}
 		rc := controllerutils.ReconcileContext[*aimv1alpha2.AIMClusterModel]{Object: model}
 		obs := reconciler.ComposeState(context.Background(), rc, reconciler.FetchRemoteState(context.Background(), imageModelFakeClient(t), rc))
-		reconciler.DecorateStatus(&model.Status, controllerutils.NewConditionManager(nil), obs)
+		cm := controllerutils.NewConditionManager(nil)
+		reconciler.DecorateStatus(&model.Status, cm, obs)
 
-		requireUninspectedImageModel(t, model.Status, obs.componentHealth)
+		requireUninspectedImageModel(t, model.Status, cm, obs.componentHealth)
 	})
 }
 
@@ -419,7 +423,12 @@ func requireImageModelOutputs(
 	}
 }
 
-func requireUninspectedImageModel(t *testing.T, status aimv1alpha1.AIMModelStatus, health []controllerutils.ComponentHealth) {
+func requireUninspectedImageModel(
+	t *testing.T,
+	status aimv1alpha1.AIMModelStatus,
+	cm *controllerutils.ConditionManager,
+	health []controllerutils.ComponentHealth,
+) {
 	t.Helper()
 	for i := range health {
 		if health[i].Component == componentImageMetadata && len(health[i].Errors) != 0 {
@@ -431,6 +440,16 @@ func requireUninspectedImageModel(t *testing.T, status aimv1alpha1.AIMModelStatu
 	}
 	if status.Version != "1.0" || status.SourceType != aimv1alpha1.AIMModelSourceTypeImage {
 		t.Errorf("status version/sourceType = %q/%q, want 1.0/Image", status.Version, status.SourceType)
+	}
+	if got := cm.Get(aimv1alpha1.AIMModelConditionProfilesAvailable); got == nil ||
+		got.Status != metav1.ConditionFalse || got.Reason != aimv1alpha1.AIMModelReasonNoDeployableProfiles {
+		t.Errorf("ProfilesAvailable = %#v, want False/NoDeployableProfiles", got)
+	}
+	lineage := cm.Get(imagemetadata.ConditionTypeRuntimeImageLineage)
+	if lineage == nil ||
+		!strings.Contains(lineage.Message, "not inspected for AIM_BASE_IMAGE_REF because spec.discovery.extractMetadata is false") ||
+		strings.Contains(lineage.Message, "serves normally") {
+		t.Errorf("RuntimeImageLineage = %#v, want it to name extractMetadata=false without claiming the model serves", lineage)
 	}
 }
 

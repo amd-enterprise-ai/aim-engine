@@ -140,6 +140,33 @@ func TestProfileRelevantChangePredicate_NoiseFilteredOut(t *testing.T) {
 	}
 }
 
+// TestModelRelevantChangePredicate_ProfilesAvailableChange covers a model
+// that gains ProfilesAvailable=False in a write that leaves status.status
+// Ready, such as its first reconcile after an operator upgrade. Services that
+// resolved through it before must re-resolve to report ModelHasNoProfiles.
+func TestModelRelevantChangePredicate_ProfilesAvailableChange(t *testing.T) {
+	pred := modelRelevantChangePredicate()
+	noProfiles := metav1.Condition{
+		Type:    aimv1alpha1.AIMModelConditionProfilesAvailable,
+		Status:  metav1.ConditionFalse,
+		Reason:  aimv1alpha1.AIMModelReasonNoDeployableProfiles,
+		Message: "spec.discovery.extractMetadata is false",
+	}
+	oldModel := &aimv1alpha2.AIMClusterModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "m"},
+		Status:     aimv1alpha1.AIMModelStatus{Status: constants.AIMStatusReady},
+	}
+	newModel := oldModel.DeepCopy()
+	newModel.Status.Conditions = []metav1.Condition{noProfiles}
+
+	if !pred.Update(event.UpdateEvent{ObjectOld: oldModel, ObjectNew: newModel}) {
+		t.Error("expected ProfilesAvailable appearing to fire the predicate")
+	}
+	if pred.Update(event.UpdateEvent{ObjectOld: newModel, ObjectNew: newModel.DeepCopy()}) {
+		t.Error("expected an unchanged ProfilesAvailable condition to be filtered out")
+	}
+}
+
 // TestProfileRelevantChangePredicate_ProvenanceLabelsFire covers the
 // PR 3 addition: a profile whose role label flips from base to deployable
 // (a base profile becoming materialised in iteration 2) must trigger a

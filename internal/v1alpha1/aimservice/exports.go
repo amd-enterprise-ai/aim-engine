@@ -28,6 +28,7 @@ import (
 	"time"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
@@ -127,11 +128,14 @@ func InferenceServicePodsComponentHealth(
 // InferenceServiceComponentHealth returns the shared runtime health verdict.
 // A current Ready condition is authoritative, while Ready predictor pods prove
 // the service is still running during status-generation lag or active scaling.
+// While predictorDeployment still runs previous-revision pods, Ready pods keep
+// the service running but report RolloutInProgress instead of Ready.
 func InferenceServiceComponentHealth(
 	inferenceService controllerutils.FetchResult[*servingv1beta1.InferenceService],
 	inferenceServicePods *controllerutils.FetchResult[*corev1.PodList],
+	predictorDeployment controllerutils.FetchResult[*appsv1.Deployment],
 ) controllerutils.ComponentHealth {
-	return inferenceServiceComponentHealth(inferenceService, inferenceServicePods)
+	return inferenceServiceComponentHealth(inferenceService, inferenceServicePods, predictorDeployment)
 }
 
 // InferenceServiceReady reports whether the fetched InferenceService has

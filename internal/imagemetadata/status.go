@@ -33,6 +33,8 @@ const (
 	ConditionTypeRuntimeImageLineage   = "RuntimeImageLineage"
 	ReasonBaseImageRefMissing          = "BaseImageRefMissing"
 	ReasonBaseImageRefInspectionFailed = "BaseImageRefInspectionFailed"
+	ReasonInvalidImageReference        = "InvalidImageReference"
+	ReasonImageInspectionFailed        = "ImageInspectionFailed"
 )
 
 // DecorateStatus records fetched image metadata on an image model's status
@@ -94,13 +96,15 @@ func decorateRuntimeImageLineage(
 		cm.Delete(ConditionTypeRuntimeImageLineage)
 		return
 	}
-	cm.MarkFalse(
-		ConditionTypeRuntimeImageLineage,
-		ReasonBaseImageRefMissing,
-		fmt.Sprintf(
-			"Image %q does not declare AIM_BASE_IMAGE_REF; the model serves normally, but weight-replacing profile copies need spec.imageMetadata with baseImageRef",
-			spec.Image,
-		),
-		controllerutils.AsInfo(),
+	message := fmt.Sprintf(
+		"Image %q does not declare AIM_BASE_IMAGE_REF; the model serves normally, but weight-replacing profile copies need spec.imageMetadata with baseImageRef",
+		spec.Image,
 	)
+	if !spec.Discovery.IsExtractMetadataEnabled() {
+		message = fmt.Sprintf(
+			"Image %q is not inspected for AIM_BASE_IMAGE_REF because spec.discovery.extractMetadata is false; weight-replacing profile copies need spec.imageMetadata with baseImageRef",
+			spec.Image,
+		)
+	}
+	cm.MarkFalse(ConditionTypeRuntimeImageLineage, ReasonBaseImageRefMissing, message, controllerutils.AsInfo())
 }

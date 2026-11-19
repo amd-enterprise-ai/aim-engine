@@ -1,0 +1,41 @@
+# Copyable seeds for the two AIMModels. Each model derives one deployable
+# AIMProfile from its seed.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: model-change-seed-a
+  annotations:
+    aim.eai.amd.com/profile-copyable: "true"
+spec:
+  aimId: test/model-change-a
+  modelId: Qwen/Qwen3-0.6B
+  engine: vllm
+  metric: latency
+  precision: bf16
+  # AIMService auto-selection skips profiles below type optimized.
+  type: optimized
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  modelSources:
+    - modelId: Qwen/Qwen3-0.6B
+      sourceUri: hf://Qwen/Qwen3-0.6B
+      # The download is simulated, so the PVC only needs to provision.
+      size: 1Gi
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: model-change-seed-b
+  annotations:
+    aim.eai.amd.com/profile-copyable: "true"
+spec:
+  aimId: test/model-change-b
+  modelId: Qwen/Qwen2.5-0.5B-Instruct
+  engine: vllm
+  metric: latency
+  precision: bf16
+  type: optimized
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  modelSources:
+    - modelId: Qwen/Qwen2.5-0.5B-Instruct
+      sourceUri: hf://Qwen/Qwen2.5-0.5B-Instruct
+      size: 1Gi

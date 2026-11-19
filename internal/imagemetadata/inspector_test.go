@@ -26,11 +26,21 @@ package imagemetadata
 
 import (
 	"errors"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
 	"reflect"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
+
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
@@ -54,9 +64,7 @@ func TestInspectFailureCooldown(t *testing.T) {
 		t.Fatalf("non-registry error should not trigger cooldown, got %v", err)
 	}
 
-	// All registry error types start the cooldown: DNS/unreachable failures are
-	// categorized as not-found, so the cooldown must throttle every type to avoid
-	// re-opening registry hammering.
+	// Every registry error type starts the cooldown.
 	regErr := &utils.ImageRegistryError{Type: utils.ImagePullErrorGeneric, Message: "dial tcp: lookup failed"}
 	recordInspectResult(imageURI, regErr)
 	if got := recentInspectFailure(imageURI); !errors.Is(got, regErr) {
@@ -83,6 +91,80 @@ func TestInspectFailureCooldown(t *testing.T) {
 	recordInspectResult(imageURI, nil)
 	if err := recentInspectFailure(imageURI); err != nil {
 		t.Fatalf("success should clear cooldown, got %v", err)
+	}
+}
+
+func TestRegistryError(t *testing.T) {
+	const imageURI = "docker.io/amdenterpriseai/aim-dummy:does-not-exist"
+	dial := func(err error) error {
+		return &url.Error{Op: "Get", URL: "https://registry.invalid/v2/", Err: &net.OpError{Op: "dial", Net: "tcp", Err: err}}
+	}
+	tests := []struct {
+		name         string
+		err          error
+		wantCategory controllerutils.ErrorCategory
+		wantReason   string
+	}{
+		{
+			name: "missing tag",
+			err: &transport.Error{StatusCode: http.StatusNotFound, Errors: []transport.Diagnostic{
+				{Code: transport.ManifestUnknownErrorCode, Message: "manifest unknown"},
+			}},
+			wantCategory: controllerutils.ErrorCategoryMissingUpstreamDependency,
+			wantReason:   constants.ReasonImageNotFound,
+		},
+		{
+			name:         "unauthorized",
+			err:          &transport.Error{StatusCode: http.StatusUnauthorized},
+			wantCategory: controllerutils.ErrorCategoryAuth,
+			wantReason:   constants.ReasonImagePullAuthFailure,
+		},
+		{
+			name:         "forbidden",
+			err:          &transport.Error{StatusCode: http.StatusForbidden},
+			wantCategory: controllerutils.ErrorCategoryAuth,
+			wantReason:   constants.ReasonImagePullAuthFailure,
+		},
+		{
+			name:         "unresolvable registry",
+			err:          dial(&net.DNSError{Err: "no such host", Name: "registry.invalid", IsNotFound: true}),
+			wantCategory: controllerutils.ErrorCategoryInfrastructure,
+			wantReason:   "DNSFailure",
+		},
+		{
+			name:         "connection refused",
+			err:          dial(os.NewSyscallError("connect", syscall.ECONNREFUSED)),
+			wantCategory: controllerutils.ErrorCategoryInfrastructure,
+			wantReason:   "ConnectionRefused",
+		},
+		{
+			name:         "registry server error",
+			err:          &transport.Error{StatusCode: http.StatusServiceUnavailable},
+			wantCategory: controllerutils.ErrorCategoryInfrastructure,
+			wantReason:   ReasonImageInspectionFailed,
+		},
+		{
+			name:         "forbidden text without a status",
+			err:          errors.New("proxyconnect tcp: Forbidden"),
+			wantCategory: controllerutils.ErrorCategoryInfrastructure,
+			wantReason:   ReasonImageInspectionFailed,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := registryError(imageURI, tt.err)
+			got := controllerutils.CategorizeError(err)
+			if got.Category() != tt.wantCategory || got.Reason() != tt.wantReason {
+				t.Errorf("category=%v reason=%q, want category=%v reason=%q", got.Category(), got.Reason(), tt.wantCategory, tt.wantReason)
+			}
+			if !strings.Contains(got.UserMessage(), imageURI) {
+				t.Errorf("message %q does not name the image", got.UserMessage())
+			}
+			var regErr *utils.ImageRegistryError
+			if !errors.As(err, &regErr) {
+				t.Error("classified error must wrap ImageRegistryError so the failure cooldown applies")
+			}
+		})
 	}
 }
 

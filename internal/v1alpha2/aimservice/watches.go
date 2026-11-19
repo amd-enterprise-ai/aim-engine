@@ -29,6 +29,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -425,8 +427,9 @@ func profileCacheRelevantChangePredicate() predicate.Predicate {
 }
 
 // modelRelevantChangePredicate fires when an AIMModel / AIMClusterModel's
-// managedProfiles set or readiness changes — those are the signals that
-// move the set of profiles a model-driven AIMService can resolve to.
+// managedProfiles set, readiness or ProfilesAvailable condition changes —
+// those are the signals that move the set of profiles a model-driven
+// AIMService can resolve to, or the reason it reports when none match.
 // Cosmetic status writes (e.g. observedGeneration nudges without a real
 // change) are filtered.
 func modelRelevantChangePredicate() predicate.Predicate {
@@ -435,12 +438,13 @@ func modelRelevantChangePredicate() predicate.Predicate {
 		DeleteFunc:  func(_ event.DeleteEvent) bool { return true },
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldStatus, oldGen, oldManaged := modelRelevantFields(e.ObjectOld)
-			newStatus, newGen, newManaged := modelRelevantFields(e.ObjectNew)
+			oldStatus, oldGen, oldManaged, oldProfiles := modelRelevantFields(e.ObjectOld)
+			newStatus, newGen, newManaged, newProfiles := modelRelevantFields(e.ObjectNew)
 			if oldStatus != newStatus || oldGen != newGen {
 				return true
 			}
-			return !equality.Semantic.DeepEqual(oldManaged, newManaged)
+			return !equality.Semantic.DeepEqual(oldManaged, newManaged) ||
+				!equality.Semantic.DeepEqual(oldProfiles, newProfiles)
 		},
 	}
 }
@@ -465,16 +469,20 @@ func profileRelevantFields(obj client.Object) (
 }
 
 // modelRelevantFields extracts the model status fields the predicate cares
-// about (status, observedGeneration, and the managedProfiles summary).
-func modelRelevantFields(obj client.Object) (constants.AIMStatus, int64, any) {
+// about (status, observedGeneration, the managedProfiles summary and the
+// ProfilesAvailable condition).
+func modelRelevantFields(obj client.Object) (constants.AIMStatus, int64, any, *metav1.Condition) {
+	var status *aimv1alpha1.AIMModelStatus
 	switch m := obj.(type) {
 	case *aimv1alpha2.AIMModel:
-		return m.Status.Status, m.Status.ObservedGeneration, m.Status.ManagedProfiles
+		status = &m.Status
 	case *aimv1alpha2.AIMClusterModel:
-		return m.Status.Status, m.Status.ObservedGeneration, m.Status.ManagedProfiles
+		status = &m.Status
 	default:
-		return "", 0, nil
+		return "", 0, nil, nil
 	}
+	return status.Status, status.ObservedGeneration, status.ManagedProfiles,
+		meta.FindStatusCondition(status.Conditions, aimv1alpha1.AIMModelConditionProfilesAvailable)
 }
 
 // provenanceLabelsChanged returns true when any of the

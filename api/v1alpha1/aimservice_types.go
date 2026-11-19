@@ -257,7 +257,7 @@ type AIMServiceTemplateConfig struct {
 
 // AIMServiceModel specifies which model to deploy. Exactly one field must be set.
 // +kubebuilder:validation:XValidation:rule="(has(self.name) ? 1 : 0) + (has(self.image) ? 1 : 0) + (has(self.custom) ? 1 : 0) == 1",message="exactly one of name, image, or custom must be specified"
-// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="model selection is immutable after creation"
+// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec.model can't be edited in place; to change the model, remove spec.model and set spec.profile in the same update"
 type AIMServiceModel struct {
 	// Name references an existing AIMModel or AIMClusterModel by metadata.name.
 	// The controller looks for a namespace-scoped AIMModel first, then falls back to cluster-scoped AIMClusterModel.
@@ -447,7 +447,9 @@ type AIMServiceSpec struct {
 	// Model specifies which model to deploy using one of the available reference methods.
 	// Use `name` to reference an existing AIMModel/AIMClusterModel by name, or use `image`
 	// to specify a container image URI directly (which will auto-create a model if needed).
-	// Required for v1alpha1 (template path), not permitted for v1alpha2 (profile path).
+	// Required for v1alpha1 (template path). Model can't be edited in place; on v1alpha2,
+	// change it by removing Model and setting `spec.profile` in one update, then add Model
+	// back in a later update. `spec.profile.name` takes precedence over Model when both are set.
 	// +optional
 	Model *AIMServiceModel `json:"model,omitempty"`
 
@@ -792,6 +794,9 @@ const (
 	AIMServiceReasonCreatingRuntime = "CreatingRuntime"
 	AIMServiceReasonRuntimeReady    = "RuntimeReady"
 	AIMServiceReasonRuntimeScaling  = "RuntimeScaling"
+	// AIMServiceReasonRolloutInProgress indicates the predictor is rolling out a
+	// new revision that is not ready yet while the previous revision serves.
+	AIMServiceReasonRolloutInProgress = "RolloutInProgress"
 	// AIMServiceReasonScaledToZero indicates the deployment is idled to zero
 	// replicas by KEDA under scale-to-zero. Healthy state, not a failure.
 	AIMServiceReasonScaledToZero = "ScaledToZero"
@@ -835,6 +840,9 @@ const (
 	AIMServiceReasonProfileResolved          = "ProfileResolved"
 	AIMServiceReasonBaseProfile              = "BaseProfile"
 	AIMServiceReasonProfileSelectorAmbiguous = "ProfileSelectorAmbiguous"
+	// AIMServiceReasonModelHasNoProfiles indicates the AIMModel or
+	// AIMClusterModel the service resolves through produces no AIMProfiles.
+	AIMServiceReasonModelHasNoProfiles = "ModelHasNoProfiles"
 	// AIMServiceReasonProfileRebound is emitted (Normal severity) when the
 	// resolver picks a different profile than the one currently recorded
 	// in status.resolvedProfile. Carries the previous and new profile

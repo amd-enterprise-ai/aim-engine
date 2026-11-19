@@ -7,7 +7,8 @@ spec:
     An AIMClusterModel that sets spec fields which only configured the
     AIMClusterServiceTemplates it used to create gets a TemplateFieldsIgnored
     condition naming exactly those fields and still reaches Ready. Removing the
-    fields clears the warning. Extraction is disabled so no discovery Job runs.
+    fields clears the warning. Extraction is disabled so no discovery Job runs,
+    and the model reports ProfilesAvailable=False naming extractMetadata.
   timeouts:
     assert: 90s
   steps:
@@ -28,6 +29,10 @@ spec:
                   - status: "True"
                     reason: TemplateFieldsSet
                     message: "These fields have no effect on profile-based serving and can be removed: spec.discovery.createServiceTemplates, spec.defaultServiceTemplate, spec.env, spec.resources"
+                (conditions[?type == 'ProfilesAvailable']):
+                  - status: "False"
+                    reason: NoDeployableProfiles
+                    message: "spec.discovery.extractMetadata is false, so the image is not inspected; set it to true to discover AIMProfiles"
 
     - name: Removing the fields clears the warning
       try:

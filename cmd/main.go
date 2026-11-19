@@ -41,6 +41,7 @@ import (
 
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 	kservev1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -257,7 +258,9 @@ func main() {
 		// ServingRuntime's colocated ConfigMap, and an administrator CA bundle —
 		// go through the uncached APIReader instead. User-managed inputs are read
 		// on demand, but their edits do not create a live watch event.
-		Cache:                  configMapCacheOptions(),
+		// Deployments are scoped the same way: the operator only reads predictor
+		// Deployments, which KServe labels with their InferenceService's labels.
+		Cache:                  cacheOptions(),
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
@@ -409,14 +412,14 @@ func setupControllers(mgr ctrl.Manager, runtimeProjectionMode aimv1alpha2.Runtim
 	return nil
 }
 
-func configMapCacheOptions() cache.Options {
+func cacheOptions() cache.Options {
+	managedByAIM := labels.SelectorFromSet(labels.Set{
+		constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
+	})
 	return cache.Options{
 		ByObject: map[client.Object]cache.ByObject{
-			&corev1.ConfigMap{}: {
-				Label: labels.SelectorFromSet(labels.Set{
-					constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
-				}),
-			},
+			&corev1.ConfigMap{}:  {Label: managedByAIM},
+			&appsv1.Deployment{}: {Label: managedByAIM},
 		},
 	}
 }

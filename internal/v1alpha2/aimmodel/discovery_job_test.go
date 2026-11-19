@@ -264,7 +264,7 @@ func TestShouldCreateDiscoveryJob_BackoffAndSpecHashInvalidation(t *testing.T) {
 	now := time.Now()
 
 	// First attempt: always proceed.
-	ok, reason, _ := ShouldCreateDiscoveryJob(nil, hash, now)
+	ok, _, reason, _ := ShouldCreateDiscoveryJob(nil, hash, now)
 	if !ok || reason != "" {
 		t.Fatalf("first attempt: ok=%v reason=%q, want true/empty", ok, reason)
 	}
@@ -275,23 +275,27 @@ func TestShouldCreateDiscoveryJob_BackoffAndSpecHashInvalidation(t *testing.T) {
 		LastAttemptTime: &metav1.Time{Time: now.Add(-5 * time.Second)},
 		SpecHash:        "previous",
 	}
-	ok, _, _ = ShouldCreateDiscoveryJob(state, hash, now)
+	ok, _, _, _ = ShouldCreateDiscoveryJob(state, hash, now)
 	if !ok {
 		t.Fatal("spec hash change must override backoff and force retry")
 	}
 
-	// Inside backoff, same hash: do not proceed, return reason.
+	// Inside backoff, same hash: wait until the retry time, with a message
+	// that names it and stays the same while waiting.
 	state = &aimv1alpha1.ModelDiscoveryState{
 		Attempts:        1,
 		LastAttemptTime: &metav1.Time{Time: now.Add(-5 * time.Second)},
 		SpecHash:        hash,
 	}
-	ok, reason, msg := ShouldCreateDiscoveryJob(state, hash, now)
-	if ok {
-		t.Fatal("inside backoff window, must wait")
+	retryAt := state.LastAttemptTime.Add(time.Duration(constants.DiscoveryBaseBackoffSeconds) * time.Second)
+	ok, retryIn, reason, msg := ShouldCreateDiscoveryJob(state, hash, now)
+	if ok || retryIn != retryAt.Sub(now) || reason != "AwaitingDiscovery" ||
+		!strings.HasPrefix(msg, "Waiting ") || !strings.Contains(msg, retryAt.UTC().Format(time.RFC3339)) {
+		t.Fatalf("inside backoff: ok=%v retryIn=%v reason=%q msg=%q, want wait %v naming %s",
+			ok, retryIn, reason, msg, retryAt.Sub(now), retryAt.UTC().Format(time.RFC3339))
 	}
-	if reason == "" || !strings.Contains(msg, "attempt") {
-		t.Fatalf("reason/msg = %q/%q, want populated", reason, msg)
+	if _, _, _, later := ShouldCreateDiscoveryJob(state, hash, now.Add(20*time.Second)); later != msg {
+		t.Fatalf("message changed while waiting: %q, then %q", msg, later)
 	}
 
 	// Past the first backoff window (60s base * 2^0), proceed.
@@ -300,7 +304,7 @@ func TestShouldCreateDiscoveryJob_BackoffAndSpecHashInvalidation(t *testing.T) {
 		LastAttemptTime: &metav1.Time{Time: now.Add(-time.Duration(constants.DiscoveryBaseBackoffSeconds+5) * time.Second)},
 		SpecHash:        hash,
 	}
-	ok, _, _ = ShouldCreateDiscoveryJob(state, hash, now)
+	ok, _, _, _ = ShouldCreateDiscoveryJob(state, hash, now)
 	if !ok {
 		t.Fatal("past first backoff window, must retry")
 	}

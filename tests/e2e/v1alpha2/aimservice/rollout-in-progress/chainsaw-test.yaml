@@ -1,0 +1,105 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# A running service whose new predictor revision cannot start keeps serving from
+# the previous revision. It stays Running but reports Ready=False with reason
+# RolloutInProgress until the rollout completes.
+#
+# The new revision requests more memory than any node has. No accelerator is
+# involved and the cache download is simulated, so this runs in the kind lane
+# without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-rollout-in-progress
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the profile and a single-replica service
+      try:
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+
+    - name: The service reaches Running and Ready
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: rollout-in-progress
+              status:
+                status: Running
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: Roll out a revision that requests more memory than any node has
+      try:
+        - patch:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: rollout-in-progress
+              spec:
+                resources:
+                  requests:
+                    memory: 64Ti
+                  limits:
+                    memory: 64Ti
+
+    - name: The old pod keeps serving, so the service stays Running but not Ready
+      try:
+        - assert:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: rollout-in-progress
+              status:
+                readyReplicas: 1
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: rollout-in-progress
+              status:
+                status: Running
+                (conditions[?type == 'Ready']):
+                  - status: "False"
+                    reason: RolloutInProgress
+                (conditions[?type == 'InferenceServiceReady']):
+                  - status: "False"
+                    reason: RolloutInProgress
+
+    - name: A schedulable revision completes the rollout and Ready returns
+      try:
+        - patch:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: rollout-in-progress
+              spec:
+                resources:
+                  requests:
+                    memory: 1Gi
+                  limits:
+                    memory: 2Gi
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: rollout-in-progress
+              status:
+                status: Running
+                (conditions[?type == 'Ready']):
+                  - status: "True"

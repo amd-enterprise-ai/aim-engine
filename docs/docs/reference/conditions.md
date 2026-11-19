@@ -61,11 +61,15 @@ Overall readiness — the aggregate of all other conditions and component health
 | `False` | `ComponentsNotReady` | One or more components are not ready |
 | `False` | `Progressing` | Waiting for components to become ready |
 
+When a component fails, `Ready` takes that component's reason. `AIMService` also reports `Ready=False` with reason `RolloutInProgress` while a new predictor revision is not ready and the previous revision still serves. See [InferenceServiceReady](#inferenceserviceready).
+
 ## Template-era fields condition
 
 ### TemplateFieldsIgnored
 
-`TemplateFieldsIgnored=True` with reason `TemplateFieldsSet` lists spec fields that only configured templates and have no effect on profile-based serving. A `Warning` event is emitted when the condition appears. It does not participate in the `Ready` rollup and is removed once the fields are removed.
+`TemplateFieldsIgnored=True` with reason `TemplateFieldsSet` lists spec fields that only configured templates and have no effect on profile-based serving. A `Warning` event is emitted when the condition appears; the operator logs it at info level, not as an error. It does not participate in the `Ready` rollup and is removed once the fields are removed.
+
+`spec.model` can't be edited in place, so for `spec.model.custom` the message names the merge patch that removes it and selects an `AIMProfile` in one step, `{"spec":{"model":null,"profile":{"name":"<AIMProfile>"}}}`. See [Replace unservable services](../admin/upgrading.md#replace-unservable-services).
 
 | Resource | Reported fields |
 |---|---|
@@ -84,11 +88,14 @@ See [Template-era fields](../concepts/models.md#template-era-fields) for the mod
 |---|---|---|
 | `True` | `ProfileResolved` | Profile found and is deployable |
 | `False` | `ProfileNotFound` | No matching `AIMProfile` / `AIMClusterProfile`. For the image shape (`spec.model.image`), this also covers the transient "auto-creating AIMModel; waiting for discovery" window — the message text disambiguates. |
+| `False` | `ModelHasNoProfiles` | The `AIMModel` or `AIMClusterModel` the service resolves through reports [`ProfilesAvailable=False`](#profilesavailable); the message names the model and the cause |
 | `False` | `ProfileNotReady` | Profile exists but its own `Ready` condition is false |
 | `False` | `BaseProfile` | `spec.profile.name` resolved to a base profile (not deployable) |
 | `False` | `ProfileSelectorAmbiguous` | Selector returned multiple equally-scored candidates |
 
 When `ProfileReady=False`, the controller suppresses downstream component conditions (`InferenceServiceReady`, `HTTPRouteReady`) — the resources aren't being created until profile resolution succeeds.
+
+`ProfileNotFound` and `ModelHasNoProfiles` only clear after a spec change or a new `AIMProfile`, so they emit a `Warning` event when they appear and are logged at info level, not as errors.
 
 ### RuntimeConfigReady
 
@@ -126,8 +133,9 @@ Tracks the namespaced profile `ServingRuntime` and its same-name ConfigMap befor
 | Status | Reason | Description |
 |---|---|---|
 | `True` | `RuntimeReady` | KServe `InferenceService` is serving |
+| `True` | `RuntimeScaling` | Predictor pods on the current revision are ready while KServe reports the InferenceService not ready, for example during a scale-up |
 | `False` | `CreatingRuntime` | Creating or updating the InferenceService |
-| `False` | `RuntimeScaling` | Replica scaling in progress |
+| `False` | `RolloutInProgress` | A new predictor revision is not ready yet while previous-revision pods keep serving. `status.status` stays `Running` and `Ready` is `False` with this reason. The message names a Pending pod and, when the scheduler reports one, its reason, such as `Unschedulable` |
 
 ### InferenceServicePodsReady
 
@@ -210,8 +218,27 @@ Set for image-backed models (`spec.image` set), including models with inline `sp
 | `False` | `DiscoveryFailed` | Discovery Job failed (image pull failure, registry auth, etc.) |
 | `False` | `DiscoveryCountFailed` | Could not count current attempts |
 | `False` | `DiscoveryCapReached` | Concurrent discovery cap reached; waiting for slot |
+| `False` | `AwaitingDiscovery` | Waiting out the backoff after a failed discovery attempt |
+| `False` | `AwaitingImageMetadata` | A missing image or pull secret, or an invalid reference, holds off discovery; rechecked every minute |
 
-`status.discovery.lastFailureReason` records the most recent failure reason. The message includes the retry backoff window.
+`status.discovery.lastFailureReason` records the most recent failure reason. During backoff the message names the retry time.
+
+### ImageMetadataReady
+
+Set for image-backed models. Tracks the operator's registry read of the labels on `spec.image`. The labels are optional, because discovery runs the image in a Job, so only a missing image or pull secret, or an invalid reference, blocks the model. For any other failure the message starts with "Image labels were not read", and the discovery Job is still created: nodes may reach a registry that the operator cannot. Set `spec.imageMetadata` to supply the labels without a registry read.
+
+| Status | Reason | Description |
+|---|---|---|
+| `True` | `ImageMetadataFound` | The image labels describe the model |
+| `True` | `ImageFound` | The image was read but has no AIM model labels |
+| `False` | `ImageNotFound` | The registry has no such repository or tag (HTTP 404). The message names the image. Sets `ConfigValid=False` and blocks the discovery Job |
+| `False` | `InvalidImageReference` | `spec.image` is not a valid image reference. Sets `ConfigValid=False` |
+| `False` | `SecretNotFound` | A referenced `spec.imagePullSecrets` entry does not exist. Sets `ConfigValid=False` |
+| `False` | `ImagePullAuthFailure` | The registry refused access (HTTP 401 or 403). Sets `AuthValid=False`; discovery still runs. Some registries, such as Docker Hub, also answer 401 for a repository that does not exist |
+| `False` | `DNSFailure`, `ConnectionRefused`, `NetworkTimeout`, `ConnectionReset`, `NetworkError` | The operator cannot reach the registry. Discovery still runs |
+| `False` | `ImageInspectionFailed` | Any other registry failure, such as a 5xx response. Discovery still runs |
+
+For a model with `spec.modelSources`, which runs no discovery, auth and network failures block the model and set `AuthValid=False` or `DependenciesReachable=False`.
 
 ### RuntimeImageLineage
 
@@ -219,8 +246,16 @@ Set for image-backed models whose image metadata has no `AIM_BASE_IMAGE_REF`. On
 
 | Status | Reason | Description |
 |---|---|---|
-| `False` | `BaseImageRefMissing` | The image does not declare `AIM_BASE_IMAGE_REF`; set `spec.imageMetadata` with `baseImageRef` to allow weight-replacing copies |
+| `False` | `BaseImageRefMissing` | The image does not declare `AIM_BASE_IMAGE_REF`, or is not inspected because `spec.discovery.extractMetadata` is `false`; set `spec.imageMetadata` with `baseImageRef` to allow weight-replacing copies |
 | `False` | `BaseImageRefInspectionFailed` | Re-inspecting metadata cached by an earlier release failed; the message includes the registry error, and the cached metadata stays in use |
+
+### ProfilesAvailable
+
+Set to `False` when the model's spec produces no `AIMProfiles`. The model stays `Ready`, because the condition does not participate in the `Ready` rollup; an `AIMService` that resolves through the model fails with `ModelHasNoProfiles` instead. A `Warning` event is emitted when the condition appears. The condition is removed once the spec produces `AIMProfiles` or managed `AIMProfiles` exist.
+
+| Status | Reason | Description |
+|---|---|---|
+| `False` | `NoDeployableProfiles` | The message names the cause and the fix: `spec.discovery.extractMetadata` is `false` (set it to `true`); `spec.modelSources` is set on an image model; or none of `spec.image`, `spec.modelId` and `spec.profiles` is set. For the last two, see [Replace models without a native path](../admin/upgrading.md#replace-models-without-a-native-path). |
 
 ### DerivationReady
 
@@ -344,7 +379,7 @@ Appears when an artifact the cache serves no longer matches its model source, ty
 
 ## Condition polarity
 
-Readiness and health conditions follow positive polarity — `status: True` means healthy. `TemplateFieldsIgnored` is the explicit non-health exception: `True` means fields can be removed, and it never gates readiness. When building dashboards or alerting:
+Readiness and health conditions follow positive polarity — `status: True` means healthy. `TemplateFieldsIgnored` is the explicit non-health exception: `True` means template-only fields are set, and it never gates readiness. When building dashboards or alerting:
 
 - **Green** — condition `status: True`
 - **Yellow** — condition `status: False` with reason containing `Progressing`, `Creating`, `Awaiting`, `Started`

@@ -1032,7 +1032,8 @@ spec:
                 - message: exactly one of name, image, or custom must be specified
                   rule: '(has(self.name) ? 1 : 0) + (has(self.image) ? 1 : 0) + (has(self.custom)
                     ? 1 : 0) == 1'
-                - message: model selection is immutable after creation
+                - message: spec.model can't be edited in place; to change the model,
+                    remove spec.model and set spec.profile in the same update
                   rule: self == oldSelf
               overrides:
                 description: |-
@@ -3547,7 +3548,8 @@ spec:
                 - message: exactly one of name, image, or custom must be specified
                   rule: '(has(self.name) ? 1 : 0) + (has(self.image) ? 1 : 0) + (has(self.custom)
                     ? 1 : 0) == 1'
-                - message: model selection is immutable after creation
+                - message: spec.model can't be edited in place; to change the model,
+                    remove spec.model and set spec.profile in the same update
                   rule: self == oldSelf
               overrides:
                 description: |-

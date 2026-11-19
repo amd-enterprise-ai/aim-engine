@@ -1,0 +1,21 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: model-change-a
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        aimId: test/model-change-a
+    versionPolicy: latest
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: model-change-b
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        aimId: test/model-change-b
+    versionPolicy: latest

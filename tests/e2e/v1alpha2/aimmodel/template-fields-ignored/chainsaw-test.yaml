@@ -10,7 +10,8 @@ spec:
     event, and still reaches Ready. A model whose spec.discovery only sets
     extractMetadata (createServiceTemplates defaults to true) gets no warning.
     Removing the fields clears the warning. Extraction is disabled so no
-    discovery Job runs.
+    discovery Job runs, and both models report ProfilesAvailable=False with a
+    Warning event naming extractMetadata while staying Ready.
   timeouts:
     assert: 90s
   steps:
@@ -27,6 +28,10 @@ spec:
               status:
                 status: Ready
                 (length(conditions[?type == 'MigrationRequired'])): 0
+                (conditions[?type == 'ProfilesAvailable']):
+                  - status: "False"
+                    reason: NoDeployableProfiles
+                    message: "spec.discovery.extractMetadata is false, so the image is not inspected; set it to true to discover AIMProfiles"
         - assert:
             resource:
               apiVersion: aim.eai.amd.com/v1alpha2
@@ -35,6 +40,19 @@ spec:
                 name: without-template-fields
               status:
                 status: Ready
+                (conditions[?type == 'ProfilesAvailable']):
+                  - status: "False"
+                    reason: NoDeployableProfiles
+                    message: "spec.discovery.extractMetadata is false, so the image is not inspected; set it to true to discover AIMProfiles"
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Event
+              type: Warning
+              reason: NoDeployableProfiles
+              involvedObject:
+                kind: AIMModel
+                name: without-template-fields
 
     - name: Only the model with template-only fields is warned
       try:

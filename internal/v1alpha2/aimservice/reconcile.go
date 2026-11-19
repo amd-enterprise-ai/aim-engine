@@ -31,6 +31,7 @@ import (
 	"github.com/go-logr/logr"
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -105,6 +106,7 @@ type ServiceFetchResult struct {
 
 	inferenceService     controllerutils.FetchResult[*servingv1beta1.InferenceService]
 	inferenceServicePods *controllerutils.FetchResult[*corev1.PodList]
+	predictorDeployment  controllerutils.FetchResult[*appsv1.Deployment]
 	hpa                  controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]
 	httpRoute            controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
 	gateway              controllerutils.FetchResult[*gatewayapiv1.Gateway]
@@ -115,6 +117,11 @@ type ServiceFetchResult struct {
 	// transitioned away from it. Absent (IsNotFound) for services created after
 	// the ServingRuntime-reference rewrite, in which case cleanup is a no-op.
 	legacyProfileConfigMap controllerutils.FetchResult[*corev1.ConfigMap]
+
+	// serviceProfileCaches and serviceOverlayProfiles carry this service's
+	// controller label, so PlanResources can delete those of a previous AIMProfile.
+	serviceProfileCaches   controllerutils.FetchResult[*aimv1alpha2.AIMProfileCacheList]
+	serviceOverlayProfiles controllerutils.FetchResult[*aimv1alpha2.AIMProfileList]
 
 	// profileRuntime and profileRuntimeConfigMap must both exist before a new
 	// InferenceService references a cluster profile's bare ClusterServingRuntime.
@@ -279,7 +286,7 @@ func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset 
 	// downstream components as "Creating"/"not found" in that case is
 	// misleading — the controller is not creating anything. Surface only
 	// the gating Profile condition so the user sees a single, accurate
-	// reason (ProfileNotFound or BaseProfile) on both ProfileReady and
+	// reason (ProfileNotFound, ModelHasNoProfiles or BaseProfile) on both ProfileReady and
 	// the aggregate Ready condition. Profile health is still
 	// progressing-aware: a resolved-but-not-yet-ready profile keeps
 	// downstream conditions visible so users see cache / ISVC progress.
@@ -562,7 +569,11 @@ func (obs ServiceObservation) getProfileHealth() controllerutils.ComponentHealth
 	// Degraded/NotAvailable states (see processComponentStatus in
 	// internal/controller/utils/reconciler.go).
 	health.State = constants.AIMStatusFailed
+	health.UserFixable = true
 	health.Reason = aimv1alpha1.AIMServiceReasonProfileNotFound
+	if reason := obs.resolution.notFoundReason; reason != "" {
+		health.Reason = reason
+	}
 	if msg := obs.resolution.notFoundMessage; msg != "" {
 		health.Message = msg
 	} else {
@@ -575,6 +586,7 @@ func (obs ServiceObservation) getInferenceServiceHealth() controllerutils.Compon
 	return v1alpha1service.InferenceServiceComponentHealth(
 		obs.inferenceService,
 		obs.inferenceServicePods,
+		obs.predictorDeployment,
 	)
 }
 
@@ -603,15 +615,25 @@ func (r *ProfileServiceReconciler) FetchRemoteState(
 	// failure or a not-found result is handled downstream (cleanup is skipped).
 	result.legacyProfileConfigMap = fetchLegacyProfileConfigMap(ctx, c, service)
 
+	children := []client.ListOption{client.InNamespace(service.Namespace), client.MatchingLabels{serviceControllerNameLabel: service.Name}}
+	result.serviceProfileCaches = controllerutils.FetchList(ctx, c, &aimv1alpha2.AIMProfileCacheList{}, children...)
+	result.serviceOverlayProfiles = controllerutils.FetchList(ctx, c, &aimv1alpha2.AIMProfileList{}, children...)
+
 	// Fetch HPA and predictor pods if the InferenceService exists. The HPA is
 	// only present when KServe has created the predictor (KEDA names it
 	// keda-hpa-{isvc}-predictor). Pods feed the shared scale-to-zero idle
 	// verdict so a healthily-idled service reports Ready rather than stalling
-	// at "no pods" forever.
+	// at "no pods" forever. The predictor Deployment tells whether ready pods
+	// belong to the current revision.
 	if result.inferenceService.OK() && result.inferenceService.Value != nil {
-		result.hpa = v1alpha1service.FetchHPA(ctx, c, result.inferenceService.Value)
-		pods := v1alpha1service.FetchPredictorPods(ctx, c, result.inferenceService.Value)
+		isvc := result.inferenceService.Value
+		result.hpa = v1alpha1service.FetchHPA(ctx, c, isvc)
+		pods := v1alpha1service.FetchPredictorPods(ctx, c, isvc)
 		result.inferenceServicePods = &pods
+		result.predictorDeployment = controllerutils.Fetch(ctx, c, client.ObjectKey{
+			Namespace: isvc.Namespace,
+			Name:      isvc.Name + constants.PredictorServiceSuffix,
+		}, &appsv1.Deployment{})
 	}
 
 	// Resolve the profile using whichever of the four supported shapes the
@@ -1293,6 +1315,7 @@ func (r *ProfileServiceReconciler) PlanResources(
 			}
 		}
 	}
+	planStaleChildCleanup(&planResult, obs, logger)
 
 	// 3. Plan the HTTPRoute if routing is enabled on the merged AIMRuntimeConfig.
 	if route := v1alpha1service.PlanHTTPRoute(ctx, service, obs.mergedRuntimeConfig.Value, obs.gateway.Value); route != nil {
@@ -1404,6 +1427,40 @@ func planLegacyProfileConfigMapCleanup(plan *controllerutils.PlanResult, obs Ser
 	logger.V(1).Info("garbage-collecting orphaned legacy profile ConfigMap",
 		"configMap", configMap.Name, "service", obs.service.Name)
 	plan.Delete(configMap)
+}
+
+// planStaleChildCleanup deletes the Dedicated AIMProfileCaches and overlay
+// AIMProfiles this service created for an AIMProfile other than the current
+// one. It waits until neither the InferenceService nor any predictor pod is
+// labeled with that AIMProfile, because those pods mount its cache PVC and its
+// profile ConfigMap.
+func planStaleChildCleanup(plan *controllerutils.PlanResult, obs ServiceObservation, logger logr.Logger) {
+	isvc, pods := obs.inferenceService.Value, obs.inferenceServicePods
+	caches, overlays := obs.serviceProfileCaches, obs.serviceOverlayProfiles
+	if isvc == nil || pods == nil || pods.HasError() || caches.HasError() || overlays.HasError() ||
+		caches.Value == nil || overlays.Value == nil {
+		return
+	}
+	inUse := map[string]bool{isvc.Labels[constants.LabelProfile]: true}
+	for _, pod := range pods.Value.Items {
+		inUse[pod.Labels[constants.LabelProfile]] = true
+	}
+	stale := func(child client.Object, profileName string) bool {
+		label, _ := utils.SanitizeLabelValue(profileName)
+		return profileName != obs.profileName && !inUse[label] && metav1.IsControlledBy(child, obs.service)
+	}
+	for i := range caches.Value.Items {
+		if cache := &caches.Value.Items[i]; stale(cache, cache.Spec.ProfileName) {
+			logger.Info("Deleting the AIMProfileCache of a previous AIMProfile", "profileCache", cache.Name)
+			plan.Delete(cache)
+		}
+	}
+	for i := range overlays.Value.Items {
+		if overlay := &overlays.Value.Items[i]; stale(overlay, overlay.Name) {
+			logger.Info("Deleting the overlay AIMProfile of a previous AIMProfile", "profile", overlay.Name)
+			plan.Delete(overlay)
+		}
+	}
 }
 
 // serviceOwnsConfigMap reports whether the ConfigMap carries a controller-style

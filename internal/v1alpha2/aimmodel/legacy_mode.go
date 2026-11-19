@@ -42,6 +42,7 @@ package aimmodel
 
 import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
 // derivationSpec returns the active AIMProfileSet derivation source for the
@@ -130,14 +131,56 @@ func profilesSpecToProfileSet(profiles *aimv1alpha1.AIMModelProfilesSpec) *aimv1
 // and exec's the image inside the cluster).
 //
 // When extractMetadata is false, the model is expected to reach Ready
-// without producing AIMProfiles. Callers that gate Discovery / NodeInventory
-// / Profiles component health on this helper get a clean "no native work
-// required" outcome rather than a stuck "DiscoveryPending".
+// without producing AIMProfiles, and ProfilesAvailable=False says so.
+// Callers that gate Discovery / NodeInventory / Profiles component health on
+// this helper get a clean "no native work required" outcome rather than a
+// stuck "DiscoveryPending".
 func shouldRunNativeDiscovery(spec *aimv1alpha1.AIMModelSpec) bool {
 	if spec == nil {
 		return false
 	}
 	return spec.Discovery.IsExtractMetadataEnabled()
+}
+
+const replaceModelHint = "replace the model as described in the upgrade guide's #replace-models-without-a-native-path section"
+
+// noProfilesCause names why the spec produces no AIMProfiles, or returns ""
+// when discovery, profile generation or a derivation produces them.
+func noProfilesCause(spec *aimv1alpha1.AIMModelSpec) string {
+	switch {
+	case spec == nil || spec.ModelID != "" || derivationSpec(spec) != nil || nativeDiscoveryApplicable(spec):
+		return ""
+	case spec.Image == "":
+		return "none of spec.image, spec.modelId or spec.profiles is set; " + replaceModelHint
+	case len(spec.ModelSources) > 0:
+		return "spec.modelSources turns off image discovery; " + replaceModelHint
+	default:
+		return "spec.discovery.extractMetadata is false, so the image is not inspected; set it to true to discover AIMProfiles"
+	}
+}
+
+// setProfilesAvailableCondition reports a model that has no AIMProfiles
+// because its spec produces none. It stays out of the Ready rollup: the
+// AIMServices that resolve through the model report the failure.
+func setProfilesAvailableCondition(
+	cm *controllerutils.ConditionManager,
+	spec *aimv1alpha1.AIMModelSpec,
+	existingProfiles controllerutils.FetchResult[[]managedProfile],
+) {
+	if !existingProfiles.OK() {
+		return
+	}
+	cause := noProfilesCause(spec)
+	if cause == "" || len(existingProfiles.Value) > 0 {
+		cm.Delete(aimv1alpha1.AIMModelConditionProfilesAvailable)
+		return
+	}
+	cm.MarkFalse(
+		aimv1alpha1.AIMModelConditionProfilesAvailable,
+		aimv1alpha1.AIMModelReasonNoDeployableProfiles,
+		cause,
+		controllerutils.AsUserWarning(),
+	)
 }
 
 // EnsureBaseImageBridge keeps the v1alpha2-style status.baseImage in sync with

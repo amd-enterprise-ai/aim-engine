@@ -77,6 +77,6 @@ func setTemplateFieldsIgnoredCondition(cm *controllerutils.ConditionManager, spe
 		controllerutils.ConditionTypeTemplateFieldsIgnored,
 		controllerutils.ReasonTemplateFieldsSet,
 		"These fields have no effect on profile-based serving and can be removed: "+strings.Join(fields, ", "),
-		controllerutils.AsWarning(),
+		controllerutils.AsUserWarning(),
 	)
 }

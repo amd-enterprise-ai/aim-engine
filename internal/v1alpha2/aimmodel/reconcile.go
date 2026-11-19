@@ -182,6 +182,8 @@ func (r *ModelReconciler) FetchRemoteState(
 			OwnerRef:         ownerReferenceForModel(model),
 			CurrentState:     model.Status.Discovery,
 			Clientset:        r.Clientset,
+			BlockedByImageMetadata: imageMetadataBlocks(
+				imagemetadata.ResultForHealth(result.imageMetadata, &model.Status).Error),
 		}
 		fetch := FetchDiscoveryState(ctx, c, inputs)
 		result.discovery = DecideDiscovery(ctx, c, inputs, fetch)
@@ -328,8 +330,8 @@ func (r *ModelReconciler) ComposeState(
 	if fetch.model.Spec.Image != "" {
 		obs.componentHealth = append(obs.componentHealth,
 			fetch.runtimeConfig.ToComponentHealth(componentRuntimeConfig, aimruntimeconfig.GetRuntimeConfigHealth),
-			imagemetadata.ResultForHealth(fetch.imageMetadata, &fetch.model.Status).
-				ToComponentHealth(componentImageMetadata, imagemetadata.GetHealth),
+			imageMetadataHealth(&fetch.model.Spec, imagemetadata.ResultForHealth(fetch.imageMetadata, &fetch.model.Status).
+				ToComponentHealth(componentImageMetadata, imagemetadata.GetHealth)),
 		)
 	}
 	applyModelServingPathPolicy(&fetch.model.Spec, obs.componentHealth)
@@ -417,6 +419,7 @@ func (r *ModelReconciler) DecorateStatus(
 	}
 	clearTemplateEraStatus(cm)
 	setTemplateFieldsIgnoredCondition(cm, &obs.model.Spec)
+	setProfilesAvailableCondition(cm, &obs.model.Spec, obs.existingProfiles)
 	retireRemovedModelPathState(status, cm, &obs.model.Spec, obs.componentHealth)
 	EnsureBaseImageBridge(&obs.model.Spec, status)
 }
@@ -604,7 +607,8 @@ func buildModelComponentHealth(obs ModelObservation) []controllerutils.Component
 	// Likewise, when spec.discovery.extractMetadata=false the user has
 	// explicitly opted out of any image inspection, so the discovery
 	// pipeline contributes no components — the model is "Ready" when its
-	// other components are.
+	// other components are, and ProfilesAvailable=False reports that it
+	// produces no AIMProfiles.
 	runNativeDiscovery := len(obs.model.Spec.ModelSources) == 0 &&
 		shouldRunNativeDiscovery(&obs.model.Spec)
 	if runNativeDiscovery && obs.model.Spec.Image != "" {
@@ -820,6 +824,40 @@ const (
 	componentRuntimeConfig = "RuntimeConfig"
 	componentImageMetadata = "ImageMetadata"
 )
+
+// imageMetadataHealth reports the registry read of spec.image's labels. A
+// missing image or pull secret, or an invalid reference, blocks the model.
+// Any other failure only leaves the labels unread while discovery runs the
+// image in-cluster, where nodes may reach a registry the operator cannot.
+func imageMetadataHealth(spec *aimv1alpha1.AIMModelSpec, health controllerutils.ComponentHealth) controllerutils.ComponentHealth {
+	if len(health.Errors) == 0 {
+		return health
+	}
+	switch {
+	case imageMetadataBlocks(health.Errors[0]):
+		health.UserFixable = true
+	case nativeDiscoveryApplicable(spec):
+		cause := controllerutils.CategorizeError(health.Errors[0])
+		health.State = constants.AIMStatusNotAvailable
+		health.Reason = cause.Reason()
+		health.Message = fmt.Sprintf("Image labels were not read: %s. Discovery still runs the image in-cluster; "+
+			"spec.imageMetadata can supply the labels", cause.UserMessage())
+		health.NonBlocking = true
+		health.UserFixable = true
+	}
+	return health
+}
+
+// imageMetadataBlocks reports whether a failed read of spec.image's labels
+// blocks the model: a missing image or pull secret, or an invalid reference.
+func imageMetadataBlocks(err error) bool {
+	if err == nil {
+		return false
+	}
+	category := controllerutils.CategorizeError(err).Category()
+	return category == controllerutils.ErrorCategoryMissingUpstreamDependency ||
+		category == controllerutils.ErrorCategoryInvalidSpec
+}
 
 // applyModelServingPathPolicy keeps RuntimeConfig and ImageMetadata, which
 // image models always report, from blocking a model whose profiles are ready.

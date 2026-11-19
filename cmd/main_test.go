@@ -72,7 +72,7 @@ func TestManagerStartsWithAllControllers(t *testing.T) {
 
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:     scheme,
-		Cache:      configMapCacheOptions(),
+		Cache:      cacheOptions(),
 		Metrics:    metricsserver.Options{BindAddress: "0"},
 		Controller: config.Controller{CacheSyncTimeout: cacheSyncTimeout},
 	})

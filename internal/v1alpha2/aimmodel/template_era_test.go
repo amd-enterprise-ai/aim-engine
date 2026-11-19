@@ -59,7 +59,8 @@ func (w *countingStatusWriter) Update(
 
 // A model reconciled while it still produced AIMServiceTemplates arrives with
 // that pipeline's conditions. The first reconcile must replace them in its
-// single status write and warn once about the template-only field.
+// single status write and warn once about the template-only field. With
+// extractMetadata false it stays Ready and reports that it has no AIMProfiles.
 func TestPipelineRun_ReplacesTemplateEraStatusWithFieldWarning(t *testing.T) {
 	ctx := context.Background()
 	model := &aimv1alpha2.AIMModel{
@@ -118,6 +119,13 @@ func TestPipelineRun_ReplacesTemplateEraStatusWithFieldWarning(t *testing.T) {
 	}
 	if status.Status != constants.AIMStatusReady {
 		t.Fatalf("status = %s, want Ready with a field warning", status.Status)
+	}
+	profiles := meta.FindStatusCondition(status.Conditions, aimv1alpha1.AIMModelConditionProfilesAvailable)
+	if profiles == nil ||
+		profiles.Status != metav1.ConditionFalse ||
+		profiles.Reason != aimv1alpha1.AIMModelReasonNoDeployableProfiles ||
+		!strings.Contains(profiles.Message, "spec.discovery.extractMetadata is false") {
+		t.Fatalf("ProfilesAvailable = %#v, want False/NoDeployableProfiles naming extractMetadata", profiles)
 	}
 	if got := drainTemplateFieldsEvents(recorder); got != 1 {
 		t.Fatalf("TemplateFieldsSet warning events after first reconcile = %d, want 1", got)

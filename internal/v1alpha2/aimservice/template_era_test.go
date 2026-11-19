@@ -125,29 +125,33 @@ func TestPipelineRun_ClearsTemplateEraStatusInOneStatusWrite(t *testing.T) {
 func TestDecorateStatus_TemplateFieldsIgnoredNamesSetFields(t *testing.T) {
 	custom := &aimv1alpha1.AIMServiceModelCustom{BaseImage: "docker.io/amdenterpriseai/aim-base:0.7.0"}
 	profile := &aimv1alpha1.AIMServiceProfileConfig{Name: testProfileA}
+	const removable = "These fields have no effect on a profile-based AIMService and can be removed: "
+	const customMessage = `spec.model.custom is not read by a profile-based AIMService, and spec.model can't be edited in place: ` +
+		`switch to an AIMProfile with the merge patch {"spec":{"model":null,"profile":{"name":"<AIMProfile>"}}}, ` +
+		`as in the upgrade guide's #replace-unservable-services section`
 	tests := []struct {
-		name       string
-		spec       aimv1alpha1.AIMServiceSpec
-		wantFields string
+		name        string
+		spec        aimv1alpha1.AIMServiceSpec
+		wantMessage string
 	}{
 		{
 			name: "no template-era fields",
 			spec: aimv1alpha1.AIMServiceSpec{Profile: profile},
 		},
 		{
-			name:       "spec.template",
-			spec:       aimv1alpha1.AIMServiceSpec{Profile: profile, Template: &aimv1alpha1.AIMServiceTemplateConfig{Name: "t"}},
-			wantFields: "spec.template",
+			name:        "spec.template",
+			spec:        aimv1alpha1.AIMServiceSpec{Profile: profile, Template: &aimv1alpha1.AIMServiceTemplateConfig{Name: "t"}},
+			wantMessage: removable + "spec.template",
 		},
 		{
-			name:       "spec.overrides",
-			spec:       aimv1alpha1.AIMServiceSpec{Profile: profile, Overrides: &aimv1alpha1.AIMServiceOverrides{}},
-			wantFields: "spec.overrides",
+			name:        "spec.overrides",
+			spec:        aimv1alpha1.AIMServiceSpec{Profile: profile, Overrides: &aimv1alpha1.AIMServiceOverrides{}},
+			wantMessage: removable + "spec.overrides",
 		},
 		{
-			name:       "spec.model.custom",
-			spec:       aimv1alpha1.AIMServiceSpec{Profile: profile, Model: &aimv1alpha1.AIMServiceModel{Custom: custom}},
-			wantFields: "spec.model.custom",
+			name:        "spec.model.custom names the merge patch instead of removal",
+			spec:        aimv1alpha1.AIMServiceSpec{Profile: profile, Model: &aimv1alpha1.AIMServiceModel{Custom: custom}},
+			wantMessage: customMessage,
 		},
 		{
 			name: "all template-era fields",
@@ -156,7 +160,7 @@ func TestDecorateStatus_TemplateFieldsIgnoredNamesSetFields(t *testing.T) {
 				Template:  &aimv1alpha1.AIMServiceTemplateConfig{},
 				Overrides: &aimv1alpha1.AIMServiceOverrides{},
 			},
-			wantFields: "spec.template, spec.overrides, spec.model.custom",
+			wantMessage: removable + "spec.template, spec.overrides. " + customMessage,
 		},
 	}
 
@@ -178,19 +182,18 @@ func TestDecorateStatus_TemplateFieldsIgnoredNamesSetFields(t *testing.T) {
 			)
 
 			got := cm.Get(controllerutils.ConditionTypeTemplateFieldsIgnored)
-			if test.wantFields == "" {
+			if test.wantMessage == "" {
 				if got != nil {
 					t.Fatalf("TemplateFieldsIgnored = %#v, want no condition", got)
 				}
 				return
 			}
-			wantMessage := "These fields have no effect on a profile-based AIMService and can be removed: " + test.wantFields
 			if got == nil ||
 				got.Status != metav1.ConditionTrue ||
 				got.Reason != controllerutils.ReasonTemplateFieldsSet ||
-				got.Message != wantMessage {
+				got.Message != test.wantMessage {
 				t.Fatalf("TemplateFieldsIgnored = %#v, want True/%s with message %q",
-					got, controllerutils.ReasonTemplateFieldsSet, wantMessage)
+					got, controllerutils.ReasonTemplateFieldsSet, test.wantMessage)
 			}
 		})
 	}

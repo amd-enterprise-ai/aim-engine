@@ -29,6 +29,7 @@ import (
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
@@ -64,6 +65,40 @@ func TestDecorateStatusReportsMissingBaseImageWithoutGatingReadiness(t *testing.
 	}
 	if status.ImageMetadataVersion != CurrentVersion {
 		t.Fatalf("image metadata version = %d, want %d", status.ImageMetadataVersion, CurrentVersion)
+	}
+}
+
+func TestDecorateStatusMissingBaseImageMessageNamesWhyImageIsUninspected(t *testing.T) {
+	const image = "registry.example/model:1.0"
+	tests := []struct {
+		name        string
+		discovery   *aimv1alpha1.AIMModelDiscoveryConfig
+		result      controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]
+		wantMessage string
+	}{
+		{
+			name:        "inspected image without the reference",
+			result:      controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]{Value: &aimv1alpha1.ImageMetadata{}},
+			wantMessage: `Image "registry.example/model:1.0" does not declare AIM_BASE_IMAGE_REF; the model serves normally, but weight-replacing profile copies need spec.imageMetadata with baseImageRef`,
+		},
+		{
+			name:        "extractMetadata false",
+			discovery:   &aimv1alpha1.AIMModelDiscoveryConfig{ExtractMetadata: ptr.To(false)},
+			wantMessage: `Image "registry.example/model:1.0" is not inspected for AIM_BASE_IMAGE_REF because spec.discovery.extractMetadata is false; weight-replacing profile copies need spec.imageMetadata with baseImageRef`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cm := controllerutils.NewConditionManager(nil)
+			DecorateStatus(&aimv1alpha1.AIMModelStatus{}, cm, &aimv1alpha1.AIMModelSpec{Image: image, Discovery: tt.discovery}, tt.result)
+
+			condition := cm.Get(ConditionTypeRuntimeImageLineage)
+			if condition == nil || condition.Reason != ReasonBaseImageRefMissing || condition.Message != tt.wantMessage {
+				t.Fatalf("runtime image lineage condition = %#v, want %s with message %q",
+					condition, ReasonBaseImageRefMissing, tt.wantMessage)
+			}
+		})
 	}
 }
 

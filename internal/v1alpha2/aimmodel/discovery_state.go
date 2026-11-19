@@ -103,6 +103,10 @@ type DiscoveryInputs struct {
 	OwnerRef         metav1.OwnerReference
 	CurrentState     *aimv1alpha1.ModelDiscoveryState
 	Clientset        kubernetes.Interface
+
+	// BlockedByImageMetadata holds off new discovery Jobs while a missing image
+	// or pull secret, or an invalid reference, blocks the model.
+	BlockedByImageMetadata bool
 }
 
 // FetchDiscoveryState pulls the latest cache + Job for the model. It never returns
@@ -233,13 +237,25 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 		}
 	}
 
+	// The model's blocked apply would drop a new Job, so no attempt is counted.
+	// The requeue re-reads the image: neither the registry nor pull secrets are watched.
+	if in.BlockedByImageMetadata {
+		return DiscoveryDecision{
+			State:        nextState,
+			Progressing:  true,
+			RequeueAfter: time.Duration(constants.DiscoveryBaseBackoffSeconds) * time.Second,
+			Reason:       "AwaitingImageMetadata",
+			Message:      "Waiting for ImageMetadataReady before starting a discovery Job",
+		}
+	}
+
 	// No valid cache and no Job: decide whether to create one now (respecting backoff + cap).
-	shouldCreate, backoffReason, backoffMsg := ShouldCreateDiscoveryJob(in.CurrentState, specHash, time.Now())
+	shouldCreate, retryIn, backoffReason, backoffMsg := ShouldCreateDiscoveryJob(in.CurrentState, specHash, time.Now())
 	if !shouldCreate {
 		return DiscoveryDecision{
 			State:        nextState,
 			Progressing:  true,
-			RequeueAfter: 5 * time.Second,
+			RequeueAfter: retryIn,
 			Reason:       backoffReason,
 			Message:      backoffMsg,
 		}

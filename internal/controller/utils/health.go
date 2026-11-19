@@ -84,8 +84,20 @@ type ComponentHealth struct {
 	ChildRef *ChildRef
 
 	// NonBlocking keeps this component's condition visible without allowing its
-	// state or errors to gate root readiness, apply, or requeue decisions.
+	// state or errors to gate root readiness, apply, or requeue decisions. Its
+	// auth errors still set AuthValid=False.
 	NonBlocking bool
+
+	// Serving marks a not-ready component that still serves traffic, such as a
+	// workload rolling out a new revision while the previous one runs. It keeps
+	// root Ready False with its own reason but does not lower the root status.
+	Serving bool
+
+	// UserFixable reports a Failed, Degraded or NotAvailable component, and the
+	// root Ready it explains, with AsUserWarning instead of AsError. Use it for
+	// states only a spec or referenced-object change resolves, such as a
+	// reference that matches nothing.
+	UserFixable bool
 }
 
 // ChildRef identifies a child resource (e.g., Pod, Deployment, Service).

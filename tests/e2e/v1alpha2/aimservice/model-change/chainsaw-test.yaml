@@ -1,0 +1,164 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# A running service moves from model A to model B in the two writes the docs
+# describe: remove spec.model and pin an AIMProfile of B, then set
+# spec.model.name back. The same InferenceService rolls onto B's AIMProfile,
+# and the service's Dedicated AIMProfileCache for A is deleted once the
+# rollout completes.
+#
+# No accelerator is involved and the cache download is simulated, so this runs
+# in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-model-change
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create models A and B, each with a derived AIMProfile
+      try:
+        - apply:
+            file: seed-profiles.yaml
+        - apply:
+            file: models.yaml
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: model-change-a
+              status:
+                managedProfiles:
+                  ready: 1
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: model-change-b
+              status:
+                managedProfiles:
+                  ready: 1
+
+    - name: The service is Ready on model A with a Dedicated cache
+      try:
+        - apply:
+            file: service.yaml
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: model-change
+              status:
+                status: Running
+                resolvedModel:
+                  name: Qwen/Qwen3-0.6B
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                (ownerReferences[?kind == 'AIMService' && name == 'model-change']):
+                  - controller: true
+              spec:
+                mode: Dedicated
+              status:
+                status: Ready
+
+    - name: Change the model to B in two writes
+      try:
+        - script:
+            content: |
+              kubectl get aimprofiles.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" \
+                -l aim.eai.amd.com/source-model=model-change-b -o jsonpath='{.items[0].metadata.name}'
+            outputs:
+              - name: profileB
+                value: ($stdout)
+        - script:
+            content: |
+              kubectl get inferenceservices -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=model-change -o jsonpath='{.items[0].metadata.uid}'
+            outputs:
+              - name: isvcUID
+                value: ($stdout)
+        - script:
+            env:
+              - name: PROFILE
+                value: ($profileB)
+            content: |
+              kubectl patch aimservices.v1alpha2.aim.eai.amd.com model-change -n "$NAMESPACE" --type merge \
+                -p "{\"spec\":{\"model\":null,\"profile\":{\"name\":\"$PROFILE\"}}}"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: model-change
+              status:
+                resolvedProfile:
+                  name: ($profileB)
+        - script:
+            content: |
+              kubectl patch aimservices.v1alpha2.aim.eai.amd.com model-change -n "$NAMESPACE" --type merge \
+                -p '{"spec":{"model":{"name":"model-change-b"},"profile":null}}'
+
+        # The same InferenceService rolls onto B. Once the rollout finishes, only
+        # B's Dedicated cache is left and the service is Ready on B.
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                uid: ($isvcUID)
+                annotations:
+                  aim.eai.amd.com/runtime-profile: ($profileB)
+                  aim.eai.amd.com/model-id: Qwen/Qwen2.5-0.5B-Instruct
+        - error:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                (ownerReferences[?kind == 'AIMService' && name == 'model-change']):
+                  - controller: true
+              spec:
+                (profileName != $profileB): true
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                (ownerReferences[?kind == 'AIMService' && name == 'model-change']):
+                  - controller: true
+              spec:
+                profileName: ($profileB)
+              status:
+                status: Ready
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: model-change
+              spec:
+                model:
+                  name: model-change-b
+              status:
+                status: Running
+                resolvedProfile:
+                  name: ($profileB)
+                resolvedModel:
+                  name: Qwen/Qwen2.5-0.5B-Instruct
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+        - script:
+            content: |
+              set -eu
+              COUNT=$(kubectl get inferenceservices -n "$NAMESPACE" -o name | wc -l)
+              [ "$COUNT" -eq 1 ] || { echo "want 1 InferenceService, got $COUNT"; exit 1; }

@@ -278,11 +278,14 @@ jobs:
           for expected in \
             "FAIL [template-pipeline-services] AIMService ${UPGRADE_NAMESPACE}/upgrade-shared-service:" \
             "FAIL [template-pipeline-services] AIMService ${UPGRADE_NAMESPACE}/upgrade-dedicated-service:" \
+            "FAIL [unservable-services] AIMService ${UPGRADE_NAMESPACE}/upgrade-custom-service:" \
+            "FAIL [models-without-native-path] AIMModel ${UPGRADE_NAMESPACE}/" \
             "FAIL [template-objects] AIMServiceTemplate ${UPGRADE_NAMESPACE}/upgrade-cpu-template:" \
             "FAIL [template-objects] AIMClusterServiceTemplate " \
             "FAIL [template-objects] AIMTemplateCache ${UPGRADE_NAMESPACE}/" \
             "FAIL [template-finalizers] AIMTemplateCache ${UPGRADE_NAMESPACE}/" \
             "FAIL [stale-owner-references] AIMArtifact ${UPGRADE_NAMESPACE}/" \
+            "FAIL [stale-owner-references] ConfigMap ${UPGRADE_NAMESPACE}/upgrade-v1alpha1-owned:" \
             "INFO [dedicated-template-caches] AIMTemplateCache ${UPGRADE_NAMESPACE}/" \
             "ok   [minimum-version]"; do
             if ! grep -qF -- "${expected}" "${report}"; then
@@ -290,6 +293,66 @@ jobs:
               exit 1
             fi
           done
+
+      - name: The template CRD cleanup stops while a template-era PVC is mounted
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          set -euo pipefail
+          report="${UPGRADE_REPORT_DIR}/template-crd-cleanup-stopped.txt"
+          mapfile -t pods < <(kubectl get pods -n "${UPGRADE_NAMESPACE}" \
+            -l aim.eai.amd.com/service=upgrade-dedicated-service,app.kubernetes.io/component=inference \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+          if ((${#pods[@]} == 0)); then
+            echo "upgrade-dedicated-service has no inference pod" >&2
+            exit 1
+          fi
+
+          # The kubectl commands of docs/docs/admin/upgrading.md#remove-the-template-crds.
+          # The pods of upgrade-dedicated-service mount the PVC of their Dedicated template cache's artifact.
+          set +e
+          (
+            set -euo pipefail
+            mounted="$({ kubectl get aimartifacts --all-namespaces -o json; kubectl get pods --all-namespaces -o json; } \
+              | jq -rs '.[0].items as $artifacts | .[1].items[]
+                  | select(.status.phase | IN("Succeeded", "Failed") | not) | . as $pod
+                  | (.spec.volumes[]?.persistentVolumeClaim.claimName // empty) as $claim
+                  | $artifacts[] | select(.metadata.namespace == $pod.metadata.namespace
+                    and .status.persistentVolumeClaim == $claim
+                    and any(.metadata.ownerReferences[]?; .kind == "AIMTemplateCache"))
+                  | "\($pod.metadata.namespace)/\($pod.metadata.name) mounts PVC \($claim)"')"
+            if [[ -n "${mounted}" ]]; then
+              printf 'Stopped. These pods mount the PVC of an AIMArtifact that an AIMTemplateCache owns:\n%s\n' \
+                "${mounted}" >&2
+              exit 1
+            fi
+            for resource in aimtemplatecaches aimservicetemplates aimclusterservicetemplates; do
+              kubectl get "${resource}.aim.eai.amd.com" --all-namespaces \
+                -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.namespace}{"\n"}{end}' \
+                | while read -r name namespace; do
+                    kubectl patch "${resource}.aim.eai.amd.com" "${name}" --namespace "${namespace}" \
+                      --type merge -p '{"metadata":{"finalizers":null}}'
+                  done
+              kubectl delete "${resource}.aim.eai.amd.com" --all --all-namespaces
+            done
+            kubectl delete crd aimtemplatecaches.aim.eai.amd.com \
+              aimservicetemplates.aim.eai.amd.com aimclusterservicetemplates.aim.eai.amd.com
+          ) > "${report}" 2>&1
+          status=$?
+          set -e
+
+          cat "${report}"
+          if ((status == 0)); then
+            echo "The template CRD cleanup didn't stop while a pod mounts a template-era PVC" >&2
+            exit 1
+          fi
+          for pod in "${pods[@]}"; do
+            if ! grep -qF -- "${UPGRADE_NAMESPACE}/${pod} mounts PVC " "${report}"; then
+              echo "The template CRD cleanup didn't list ${UPGRADE_NAMESPACE}/${pod}" >&2
+              exit 1
+            fi
+          done
+          kubectl get crd aimtemplatecaches.aim.eai.amd.com aimservicetemplates.aim.eai.amd.com \
+            aimclusterservicetemplates.aim.eai.amd.com
 
       - name: Move the v0.2.7 template services
         if: matrix.scenario == 'v0.2.7'
@@ -301,13 +364,16 @@ jobs:
           moved_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
           # The commands of docs/docs/admin/upgrading.md#move-template-services.
-          # Both services set spec.template.allowUnoptimized.
+          # Both services set spec.template.allowUnoptimized, and their template requests no GPU.
           for service in upgrade-shared-service upgrade-dedicated-service; do
-            kubectl annotate aimservice "${service}" -n "${UPGRADE_NAMESPACE}" aim.eai.amd.com/reconciler-pipeline=profile
             kubectl patch aimservice "${service}" -n "${UPGRADE_NAMESPACE}" --type merge \
-              -p '{"spec":{"profile":{"selector":{"minimumType":"unoptimized"}}}}'
-            kubectl wait aimservice/"${service}" -n "${UPGRADE_NAMESPACE}" --for=condition=ProfileCacheReady --timeout=15m
-            kubectl wait aimservice/"${service}" -n "${UPGRADE_NAMESPACE}" --for=jsonpath='{.status.status}'=Running --timeout=15m
+              -p '{"spec":{"profile":{"selector":{"minimumType":"unoptimized","acceleratorType":"cpu"}}}}'
+            kubectl annotate aimservice "${service}" -n "${UPGRADE_NAMESPACE}" aim.eai.amd.com/reconciler-pipeline=profile
+            kubectl wait deployment -n "${UPGRADE_NAMESPACE}" --timeout=15m \
+              --for=jsonpath='{.metadata.labels.aim\.eai\.amd\.com/profile}' \
+              -l aim.eai.amd.com/service="${service}"
+            kubectl rollout status deployment -n "${UPGRADE_NAMESPACE}" --timeout=15m \
+              -l aim.eai.amd.com/service="${service}",aim.eai.amd.com/profile
           done
 
           read -r adopted_artifact adopted_artifact_uid < <(kubectl get aimprofilecaches -n "${UPGRADE_NAMESPACE}" \
@@ -326,6 +392,54 @@ jobs:
             exit 1
           fi
           echo "The Shared profile cache adopted ${shared_artifact} (${shared_artifact_uid}) without a download"
+
+      - name: Replace the v0.2.7 custom service
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          set -euo pipefail
+          # The AIMModel loop of docs/docs/admin/upgrading.md#delete-template-objects must leave
+          # the model v0.2.7 generated for the custom service unchanged.
+          kubectl get aimmodels --all-namespaces -o json \
+            | jq -r '.items[] | select(.spec.image and .metadata.annotations["aim.eai.amd.com/legacy-auto-custom-spec"] == null)
+                | "\(.metadata.namespace) \(.metadata.name)"' \
+            | while read -r namespace name; do
+                kubectl patch aimmodel "${name}" -n "${namespace}" --type merge \
+                  -p '{"spec":{"discovery":{"createServiceTemplates":false}}}'
+              done
+          if ! kubectl get aimmodels -n "${UPGRADE_NAMESPACE}" -o json \
+            -l aim.eai.amd.com/custom-model=true,aim.eai.amd.com/service=upgrade-custom-service \
+            | jq -e '.items | length == 1 and .[0].spec.discovery == null' >/dev/null; then
+            echo "The createServiceTemplates loop changed the AIMModel generated for upgrade-custom-service" >&2
+            exit 1
+          fi
+
+          profile="$(kubectl get aimprofiles -n "${UPGRADE_NAMESPACE}" -o json \
+            -l aim.eai.amd.com/source-model=upgrade-custom-weights \
+            | jq -r '[.items[] | select(.spec.acceleratorType == "cpu") | .metadata.name] | first // empty')"
+          if [[ -z "${profile}" ]]; then
+            echo "upgrade-custom-weights has no CPU AIMProfile" >&2
+            exit 1
+          fi
+          switched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # The commands of docs/docs/admin/upgrading.md#replace-unservable-services, then the
+          # rollout waits of #move-template-services.
+          kubectl patch aimservice upgrade-custom-service -n "${UPGRADE_NAMESPACE}" --type merge \
+            -p '{"spec":{"model":null,"profile":{"name":"'"${profile}"'"}}}'
+          kubectl delete aimmodel -n "${UPGRADE_NAMESPACE}" \
+            -l aim.eai.amd.com/custom-model=true,aim.eai.amd.com/service=upgrade-custom-service
+          kubectl wait deployment -n "${UPGRADE_NAMESPACE}" --timeout=15m \
+            --for=jsonpath='{.metadata.labels.aim\.eai\.amd\.com/profile}' \
+            -l aim.eai.amd.com/service=upgrade-custom-service
+          kubectl rollout status deployment -n "${UPGRADE_NAMESPACE}" --timeout=15m \
+            -l aim.eai.amd.com/service=upgrade-custom-service,aim.eai.amd.com/profile
+
+          new_downloads="$(kubectl get jobs -n "${UPGRADE_NAMESPACE}" -l aim.eai.amd.com/component=download -o json \
+            | jq --arg since "${switched_at}" '[.items[] | select(.metadata.creationTimestamp >= $since)] | length')"
+          if [[ "${new_downloads}" != 0 ]]; then
+            echo "Replacing upgrade-custom-service started ${new_downloads} download Job(s)" >&2
+            exit 1
+          fi
+          echo "upgrade-custom-service runs ${profile} without a download"
 
       - name: Move a service with v0.2.7's aim-template-migration
         if: matrix.scenario == 'v0.2.7'
@@ -355,7 +469,8 @@ jobs:
           set -euo pipefail
           # The commands of docs/docs/admin/upgrading.md#delete-template-objects.
           kubectl get aimmodels --all-namespaces -o json \
-            | jq -r '.items[] | select(.spec.image) | "\(.metadata.namespace) \(.metadata.name)"' \
+            | jq -r '.items[] | select(.spec.image and .metadata.annotations["aim.eai.amd.com/legacy-auto-custom-spec"] == null)
+                | "\(.metadata.namespace) \(.metadata.name)"' \
             | while read -r namespace name; do
                 kubectl patch aimmodel "${name}" -n "${namespace}" --type merge \
                   -p '{"spec":{"discovery":{"createServiceTemplates":false}}}'
@@ -369,6 +484,36 @@ jobs:
           kubectl delete aimtemplatecaches --all --all-namespaces
           kubectl delete aimservicetemplates --all --all-namespaces
           kubectl delete aimclusterservicetemplates --all
+
+      - name: Rewrite stale v1alpha1 owner references
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          set -euo pipefail
+          # The commands of docs/docs/admin/upgrading.md#remove-stale-v1alpha1-owner-references.
+          resources="$(kubectl api-resources -o name)"
+          for resource in inferenceservices.serving.kserve.io httproutes.gateway.networking.k8s.io \
+            scaledobjects.keda.sh persistentvolumeclaims jobs.batch configmaps \
+            aimartifacts.aim.eai.amd.com aimprofiles.aim.eai.amd.com aimprofilecaches.aim.eai.amd.com; do
+            grep -qxF "${resource}" <<<"${resources}" || continue
+            kubectl get "${resource}" --all-namespaces -o json \
+              | jq -r '.items[] | . as $item | .metadata.ownerReferences // [] | to_entries[]
+                  | select(.value.apiVersion == "aim.eai.amd.com/v1alpha1"
+                    and (.value.kind | IN("AIMService", "AIMModel", "AIMClusterModel")))
+                  | [$item.metadata.namespace, $item.metadata.name,
+                    ([{op: "test", path: "/metadata/ownerReferences/\(.key)/uid", value: .value.uid},
+                      {op: "replace", path: "/metadata/ownerReferences/\(.key)/apiVersion",
+                        value: "aim.eai.amd.com/v1alpha2"}] | tojson)] | join(" ")' \
+              | while read -r namespace name patch; do
+                  kubectl patch "${resource}" "${name}" -n "${namespace}" --type json -p "${patch}"
+                done
+          done
+
+          owner="$(kubectl get configmap upgrade-v1alpha1-owned -n "${UPGRADE_NAMESPACE}" \
+            -o jsonpath='{.metadata.ownerReferences[0].apiVersion} {.metadata.ownerReferences[0].kind}')"
+          if [[ "${owner}" != "aim.eai.amd.com/v1alpha2 AIMService" ]]; then
+            echo "upgrade-v1alpha1-owned is owned through ${owner}, want aim.eai.amd.com/v1alpha2 AIMService" >&2
+            exit 1
+          fi
 
       - name: Preflight passes after the documented cleanup
         if: matrix.scenario == 'v0.2.7'
@@ -427,17 +572,33 @@ jobs:
         run: |
           set -euo pipefail
           # The kubectl commands of docs/docs/admin/upgrading.md#remove-the-template-crds.
-          for resource in aimtemplatecaches aimservicetemplates aimclusterservicetemplates; do
-            kubectl get "${resource}.aim.eai.amd.com" --all-namespaces \
-              -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.namespace}{"\n"}{end}' \
-              | while read -r name namespace; do
-                  kubectl patch "${resource}.aim.eai.amd.com" "${name}" --namespace "${namespace}" \
-                    --type merge -p '{"metadata":{"finalizers":null}}'
-                done
-            kubectl delete "${resource}.aim.eai.amd.com" --all --all-namespaces
-          done
-          kubectl delete crd aimtemplatecaches.aim.eai.amd.com \
-            aimservicetemplates.aim.eai.amd.com aimclusterservicetemplates.aim.eai.amd.com
+          (
+            set -euo pipefail
+            mounted="$({ kubectl get aimartifacts --all-namespaces -o json; kubectl get pods --all-namespaces -o json; } \
+              | jq -rs '.[0].items as $artifacts | .[1].items[]
+                  | select(.status.phase | IN("Succeeded", "Failed") | not) | . as $pod
+                  | (.spec.volumes[]?.persistentVolumeClaim.claimName // empty) as $claim
+                  | $artifacts[] | select(.metadata.namespace == $pod.metadata.namespace
+                    and .status.persistentVolumeClaim == $claim
+                    and any(.metadata.ownerReferences[]?; .kind == "AIMTemplateCache"))
+                  | "\($pod.metadata.namespace)/\($pod.metadata.name) mounts PVC \($claim)"')"
+            if [[ -n "${mounted}" ]]; then
+              printf 'Stopped. These pods mount the PVC of an AIMArtifact that an AIMTemplateCache owns:\n%s\n' \
+                "${mounted}" >&2
+              exit 1
+            fi
+            for resource in aimtemplatecaches aimservicetemplates aimclusterservicetemplates; do
+              kubectl get "${resource}.aim.eai.amd.com" --all-namespaces \
+                -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.namespace}{"\n"}{end}' \
+                | while read -r name namespace; do
+                    kubectl patch "${resource}.aim.eai.amd.com" "${name}" --namespace "${namespace}" \
+                      --type merge -p '{"metadata":{"finalizers":null}}'
+                  done
+              kubectl delete "${resource}.aim.eai.amd.com" --all --all-namespaces
+            done
+            kubectl delete crd aimtemplatecaches.aim.eai.amd.com \
+              aimservicetemplates.aim.eai.amd.com aimclusterservicetemplates.aim.eai.amd.com
+          )
 
       - name: Verify upgraded resources with Chainsaw
         run: |
@@ -463,6 +624,44 @@ jobs:
           hack/ci/upgrade/record-v0.2.7-identities.sh "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv"
           diff -u "${UPGRADE_REPORT_DIR}/identities-before-upgrade.tsv" \
             "${UPGRADE_REPORT_DIR}/identities-after-upgrade.tsv"
+
+      - name: Garbage collection follows the rewritten owner reference
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          set -euo pipefail
+          # Before the upgrade the lane rewrote the ConfigMap's v1alpha1 owner reference to this service.
+          kubectl delete aimservice upgrade-custom-service -n "${UPGRADE_NAMESPACE}" --timeout=2m
+          kubectl wait --for=delete configmap/upgrade-v1alpha1-owned -n "${UPGRADE_NAMESPACE}" --timeout=1m
+
+      - name: Roll back to v0.2.7
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          set -euo pipefail
+          # The commands of docs/docs/admin/upgrading.md#rollback, for the kubectl CRD install this lane uses.
+          kubectl apply --server-side -f "${BASELINE_DIR}/dist/crds.yaml"
+          kubectl wait --for=condition=Established --timeout=60s \
+            crd/aimservicetemplates.aim.eai.amd.com \
+            crd/aimclusterservicetemplates.aim.eai.amd.com \
+            crd/aimtemplatecaches.aim.eai.amd.com
+          helm rollback aim-engine -n aim-system --wait --timeout 5m
+
+      - name: Wait for the rolled-back operator
+        if: matrix.scenario == 'v0.2.7'
+        run: kubectl rollout status deployment/aim-engine-controller-manager -n aim-system --timeout=180s
+
+      - name: Verify the rollback with Chainsaw
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          mkdir -p "${UPGRADE_REPORT_DIR}/rollback"
+          chainsaw test \
+            --test-dir tests/e2e/upgrade-compatibility/v0.2.7/rollback \
+            --config tests/chainsaw/config/kind-ci.yaml \
+            --namespace "${UPGRADE_NAMESPACE}" \
+            --skip-delete \
+            --parallel 1 \
+            --report-format JSON \
+            --report-name rollback \
+            --report-path "${UPGRADE_REPORT_DIR}/rollback"
 
       - name: Capture upgrade diagnostics
         if: always()
