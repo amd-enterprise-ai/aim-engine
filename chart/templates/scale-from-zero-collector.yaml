@@ -1,0 +1,205 @@
+{{- $c := .Values.scaleFromZero.gatewayMetricsCollector -}}
+{{- if hasKey $c "enable" -}}
+{{- fail "scaleFromZero.gatewayMetricsCollector.enable was replaced by scaleFromZero.gatewayMetricsCollector.management; use helm or external" -}}
+{{- end -}}
+{{- if hasKey $c "gatewayName" -}}
+{{- fail "scaleFromZero.gatewayMetricsCollector.gatewayName moved to scaleFromZero.gatewayMetricsCollector.kgateway.gatewayName" -}}
+{{- end -}}
+{{- $management := required "scaleFromZero.gatewayMetricsCollector.management is required" $c.management -}}
+{{- if not (has $management (list "helm" "external")) -}}
+{{- fail (printf "scaleFromZero.gatewayMetricsCollector.management must be one of helm or external, got %q" $management) -}}
+{{- end -}}
+{{- $scope := include "chart.gatewayActivationScope" . -}}
+{{- if and (eq $scope "custom") (ne $management "external") -}}
+{{- fail "scaleFromZero.gatewayProvider=custom requires scaleFromZero.gatewayMetricsCollector.management=external" -}}
+{{- end -}}
+{{- if and (eq $management "helm") (ne $scope "none") }}
+{{- $isEnvoyGateway := eq $scope "httproute" -}}
+{{- if and (not $isEnvoyGateway) (ne (int $c.replicas) 1) -}}
+{{- fail "scaleFromZero.gatewayMetricsCollector.replicas must be 1 for kgateway because Prometheus targets are not sharded" -}}
+{{- end -}}
+{{- $collectorName := ternary "aim-engine-envoy-gateway-metrics-collector" "aim-engine-kgateway-metrics-collector" $isEnvoyGateway -}}
+{{- $resourceName := ternary "aim-engine-envoy-gateway-metrics" "aim-engine-kgateway-metrics" $isEnvoyGateway -}}
+# OpenTelemetry collector for gateway-specific scale-from-zero metrics.
+# Envoy Gateway pushes source-side deltas directly over OTLP. kgateway retains
+# Prometheus pod discovery until it has an equivalent source-side delta sink.
+# Requires the OpenTelemetry Operator CRDs.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $collectorName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: aim-scale-from-zero
+    app.kubernetes.io/component: gateway-metrics-collector
+    {{- include "chart.labels" . | nindent 4 }}
+{{ if $isEnvoyGateway }}
+automountServiceAccountToken: false
+{{ end }}
+{{ if not $isEnvoyGateway }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $collectorName }}
+  labels:
+    app.kubernetes.io/name: aim-scale-from-zero
+    app.kubernetes.io/component: gateway-metrics-collector
+    {{- include "chart.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "endpoints", "services", "namespaces", "nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $collectorName }}
+  labels:
+    app.kubernetes.io/name: aim-scale-from-zero
+    app.kubernetes.io/component: gateway-metrics-collector
+    {{- include "chart.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $collectorName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $collectorName }}
+    namespace: {{ .Release.Namespace }}
+{{ end }}
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ $resourceName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: aim-scale-from-zero
+    app.kubernetes.io/component: gateway-metrics-collector
+    {{- include "chart.labels" . | nindent 4 }}
+spec:
+  mode: deployment
+  replicas: {{ $c.replicas }}
+  serviceAccount: {{ $collectorName }}
+  {{- with $c.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  config:
+    receivers:
+{{ if $isEnvoyGateway }}
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+{{ else }}
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: kgateway-envoy
+              scrape_interval: {{ $c.scrapeInterval }}
+              scrape_timeout: 900ms
+              metrics_path: /stats/prometheus
+              params:
+                filter:
+                  - upstream_rq_completed
+                usedonly:
+                  - ""
+              kubernetes_sd_configs:
+                - role: pod
+                  selectors:
+                    - role: pod
+                      label: {{ printf "gateway.networking.k8s.io/gateway-name=%s" (required "scaleFromZero.gatewayMetricsCollector.kgateway.gatewayName is required when gatewayProvider=kgateway" $c.kgateway.gatewayName) | quote }}
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_container_port_name]
+                  action: keep
+                  regex: http-monitoring
+                - source_labels: [__meta_kubernetes_namespace]
+                  target_label: kgateway_namespace
+                - source_labels: [__meta_kubernetes_pod_name]
+                  target_label: kgateway_pod
+{{ end }}
+    processors:
+      filter/metrics:
+        metrics:
+          include:
+{{ if $isEnvoyGateway }}
+            match_type: regexp
+            metric_names:
+              - ^http\.lua\.aim_activation_requests\..*
+{{ else }}
+            match_type: strict
+            metric_names:
+              - envoy_cluster_external_upstream_rq_completed
+{{ end }}
+{{ if $isEnvoyGateway }}
+      # Preserve the existing Prometheus-style metric query contract used by
+      # controller-authored KEDA triggers.
+      transform/metric-name:
+        error_mode: propagate
+        metric_statements:
+          - context: metric
+            statements:
+              - 'replace_pattern(metric.name, "^http\\.lua\\.aim_activation_requests\\.", "envoy_http_lua_aim_activation_requests_")'
+              - 'replace_pattern(metric.name, "\\.", "_") where IsMatch(metric.name, "^envoy_http_lua_aim_activation_requests_")'
+{{ else }}
+      filter/exclude_envoy_internal:
+        error_mode: ignore
+        metrics:
+          datapoint:
+            - 'metric.name == "envoy_cluster_external_upstream_rq_completed" and (attributes["envoy_cluster_name"] == nil or not IsMatch(attributes["envoy_cluster_name"], "^kube_"))'
+      transform/cluster_labels:
+        error_mode: ignore
+        metric_statements:
+          - context: datapoint
+            conditions:
+              - 'metric.name == "envoy_cluster_external_upstream_rq_completed"'
+              - 'attributes["envoy_cluster_name"] != nil'
+              - 'IsMatch(attributes["envoy_cluster_name"], "^kube_")'
+            statements:
+              - 'set(attributes["namespace"], Split(attributes["envoy_cluster_name"], "_")[1])'
+              - 'set(attributes["deployment"], Split(attributes["envoy_cluster_name"], "_")[2])'
+      # Envoy counters are cumulative. Emit per-scrape deltas and keep the first
+      # observed value so a single cold request is never swallowed.
+      cumulativetodelta:
+        initial_value: keep
+        include:
+          metrics:
+            - envoy_cluster_external_upstream_rq_completed
+          match_type: strict
+{{ end }}
+      batch:
+        send_batch_size: 1024
+        timeout: 1s
+    exporters:
+      otlp:
+        endpoint: {{ $c.otlpEndpoint }}
+        compression: none
+        tls:
+          insecure: true
+      debug:
+        verbosity: basic
+        sampling_initial: 2
+        sampling_thereafter: 200
+    service:
+      pipelines:
+        metrics:
+{{ if $isEnvoyGateway }}
+          receivers: [otlp]
+          processors: [filter/metrics, transform/metric-name, batch]
+{{ else }}
+          receivers: [prometheus]
+          processors: [filter/metrics, filter/exclude_envoy_internal, transform/cluster_labels, cumulativetodelta, batch]
+{{ end }}
+          exporters: [otlp, debug]
+      telemetry:
+        metrics:
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: 0.0.0.0
+                    port: 8888
+{{- end }}
