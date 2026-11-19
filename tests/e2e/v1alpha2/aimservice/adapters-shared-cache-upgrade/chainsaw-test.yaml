@@ -1,0 +1,317 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService E2E Test: adapter-enabled service adds the adapter disk to a Shared
+# base model artifact
+#
+# A service that serves no adapters creates a Shared AIMProfileCache whose base
+# model artifact has no adapter disk. A dynamic-adapter service on the same
+# profile must reuse that cache and add spec.adapterDisk to the SAME artifact:
+# no new cache or artifact, no cache spec change, no re-download, and the first
+# service's InferenceService and pod are left untouched and its Ready condition
+# never transitions. The artifact records an AdapterDiskRequested event.
+#
+# Once the adapter-enabled service is gone, the disk can be reclaimed without a
+# re-download by removing spec.adapterDisk, then deleting the reaper Job and the
+# adapter disk PVC. A new adapter-enabled service then adds the disk back.
+#
+# Full chain, nothing frozen: the profile, profile cache, artifact and service
+# controllers all reconcile naturally. No GPU is needed: the profile has no
+# accelerator requirement and serves with aim-dummy, downloads are simulated
+# through the first service's caching.env, and the adapter disk uses the
+# cluster's default storage class, which must support ReadWriteMany (nfs from
+# csi-driver-nfs in kind).
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-adapters-shared-cache-upgrade
+spec:
+  timeouts:
+    assert: 120s
+    # PVC-backed caches and InferenceService finalizers make namespace teardown
+    # slower than the global cleanup default.
+    cleanup: 240s
+  steps:
+    - name: Apply the namespace profile and wait for Ready
+      try:
+        - apply:
+            file: profile.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                name: adapters-upgrade-profile
+              status:
+                status: Ready
+
+    - name: Create the service that serves no adapters
+      try:
+        - apply:
+            file: plain-service.yaml
+
+    - name: Assert its Shared cache and InferenceService reach Ready
+      try:
+        - assert:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: adapters-upgrade-plain
+              spec:
+                profileName: adapters-upgrade-profile
+                profileScope: Namespace
+                mode: Shared
+              status:
+                status: Ready
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: adapters-upgrade-plain
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: adapters-upgrade-plain
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: Record the cache, its artifact, and the first service's InferenceService and pods
+      try:
+        - script:
+            timeout: 30s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              CACHE=$(kubectl get aimprofilecache -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=adapters-upgrade-plain -o jsonpath='{.items[0].metadata.name}')
+              CACHE_GEN=$(kubectl get aimprofilecache -n "$NAMESPACE" "$CACHE" -o jsonpath='{.metadata.generation}')
+              ARTIFACT=$(kubectl get aimprofilecache -n "$NAMESPACE" "$CACHE" -o jsonpath='{.status.artifacts.*.name}')
+              ARTIFACT_UID=$(kubectl get aimartifact -n "$NAMESPACE" "$ARTIFACT" -o jsonpath='{.metadata.uid}')
+              DISK=$(kubectl get aimartifact -n "$NAMESPACE" "$ARTIFACT" -o jsonpath='{.spec.adapterDisk}')
+              MODEL_PVC=$(kubectl get aimartifact -n "$NAMESPACE" "$ARTIFACT" -o jsonpath='{.status.persistentVolumeClaim}')
+              MODEL_PVC_UID=$(kubectl get pvc -n "$NAMESPACE" "$MODEL_PVC" -o jsonpath='{.metadata.uid}')
+              ISVC=$(kubectl get inferenceservice -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=adapters-upgrade-plain -o jsonpath='{.items[0].metadata.name}')
+              ISVC_GEN=$(kubectl get inferenceservice -n "$NAMESPACE" "$ISVC" -o jsonpath='{.metadata.generation}')
+              PODS=$(kubectl get pods -n "$NAMESPACE" -l serving.kserve.io/inferenceservice="$ISVC" \
+                -o jsonpath='{.items[*].metadata.uid}')
+              READY_SINCE=$(kubectl get aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" adapters-upgrade-plain \
+                -o jsonpath='{.status.conditions[?(@.type=="Ready")].lastTransitionTime}')
+              echo "cache=$CACHE generation=$CACHE_GEN artifact=$ARTIFACT uid=$ARTIFACT_UID modelPVC=$MODEL_PVC ($MODEL_PVC_UID)"
+              echo "isvc=$ISVC generation=$ISVC_GEN pods=$PODS readySince=$READY_SINCE"
+              [ -n "$ARTIFACT" ] && [ -n "$ARTIFACT_UID" ] && [ -n "$MODEL_PVC_UID" ] && [ -n "$ISVC_GEN" ] \
+                && [ -n "$PODS" ] && [ -n "$READY_SINCE" ] || { echo "ERROR: missing state"; exit 1; }
+              [ -z "$DISK" ] || { echo "ERROR: artifact already has an adapter disk: $DISK"; exit 1; }
+              kubectl create configmap adapters-upgrade-state -n "$NAMESPACE" \
+                --from-literal=cache="$CACHE" --from-literal=cacheGeneration="$CACHE_GEN" \
+                --from-literal=artifact="$ARTIFACT" --from-literal=artifactUID="$ARTIFACT_UID" \
+                --from-literal=modelPVC="$MODEL_PVC" --from-literal=modelPVCUID="$MODEL_PVC_UID" \
+                --from-literal=isvc="$ISVC" --from-literal=isvcGeneration="$ISVC_GEN" \
+                --from-literal=pods="$PODS" --from-literal=readySince="$READY_SINCE"
+              # lastTransitionTime has one-second precision: any Ready transition
+              # after this point, even one reverted at once, records a later time.
+              sleep 1
+
+    - name: Create the dynamic-adapter service on the same profile
+      try:
+        - apply:
+            file: lora-service.yaml
+
+    - name: Assert the same artifact gains the adapter disk and the cache is unchanged
+      try:
+        - script:
+            # Polls for up to ~180s; override the config exec timeout.
+            timeout: 240s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              state() { kubectl get configmap adapters-upgrade-state -n "$NAMESPACE" -o jsonpath="{.data.$1}"; }
+              CACHE=$(state cache); ARTIFACT=$(state artifact); ARTIFACT_UID=$(state artifactUID)
+              for i in $(seq 1 90); do
+                CACHES=$(kubectl get aimprofilecache -n "$NAMESPACE" -o name | wc -l)
+                ARTIFACTS=$(kubectl get aimartifact -n "$NAMESPACE" -o name | wc -l)
+                UID_NOW=$(kubectl get aimartifact -n "$NAMESPACE" "$ARTIFACT" -o jsonpath='{.metadata.uid}')
+                DISK=$(kubectl get aimartifact -n "$NAMESPACE" "$ARTIFACT" -o jsonpath='{.spec.adapterDisk}')
+                PVC=$(kubectl get aimartifact -n "$NAMESPACE" "$ARTIFACT" -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+                if [ "$CACHES" = 1 ] && [ "$ARTIFACTS" = 1 ] && [ "$UID_NOW" = "$ARTIFACT_UID" ] \
+                  && [ -n "$DISK" ] && [ -n "$PVC" ]; then
+                  kubectl get pvc -n "$NAMESPACE" "$PVC" >/dev/null
+                  GEN=$(kubectl get aimprofilecache -n "$NAMESPACE" "$CACHE" -o jsonpath='{.metadata.generation}')
+                  FLAG=$(kubectl get aimprofilecache -n "$NAMESPACE" "$CACHE" -o jsonpath='{.spec.requiresAdapterDisk}')
+                  MODEL_PVC_UID=$(kubectl get pvc -n "$NAMESPACE" "$(state modelPVC)" -o jsonpath='{.metadata.uid}')
+                  [ "$GEN" = "$(state cacheGeneration)" ] || { echo "ERROR: cache generation changed: $(state cacheGeneration) -> $GEN"; exit 1; }
+                  [ -z "$FLAG" ] || { echo "ERROR: cache requiresAdapterDisk was set to $FLAG"; exit 1; }
+                  [ "$MODEL_PVC_UID" = "$(state modelPVCUID)" ] || { echo "ERROR: model PVC replaced: $(state modelPVCUID) -> $MODEL_PVC_UID"; exit 1; }
+                  EVENTS=$(kubectl get events -n "$NAMESPACE" \
+                    --field-selector "reason=AdapterDiskRequested,involvedObject.kind=AIMArtifact,involvedObject.name=$ARTIFACT" \
+                    -o name | wc -l)
+                  [ "$EVENTS" -ge 1 ] || { echo "ERROR: no AdapterDiskRequested event on AIMArtifact/$ARTIFACT"; exit 1; }
+                  echo "artifact $ARTIFACT ($UID_NOW) has adapter PVC $PVC; cache $CACHE unchanged at generation $GEN"
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "ERROR: caches=$CACHES artifacts=$ARTIFACTS uid='$UID_NOW' (want $ARTIFACT_UID) adapterDisk='$DISK' pvc='$PVC'"
+              kubectl get aimprofilecache,aimartifact -n "$NAMESPACE" -o yaml
+              exit 1
+
+    - name: Assert the dynamic-adapter service serves with the adapter disk mounted
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: adapters-upgrade-lora
+              status:
+                (conditions[?type == 'AdaptersReady']):
+                  - status: "True"
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: adapters-upgrade-lora
+              spec:
+                predictor:
+                  model:
+                    (volumeMounts[?mountPath == '/adapters']):
+                      - readOnly: true
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: Assert the first service was not disturbed
+      try:
+        - script:
+            timeout: 30s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              state() { kubectl get configmap adapters-upgrade-state -n "$NAMESPACE" -o jsonpath="{.data.$1}"; }
+              ISVC=$(state isvc)
+              GEN=$(kubectl get inferenceservice -n "$NAMESPACE" "$ISVC" -o jsonpath='{.metadata.generation}')
+              PODS=$(kubectl get pods -n "$NAMESPACE" -l serving.kserve.io/inferenceservice="$ISVC" \
+                -o jsonpath='{.items[*].metadata.uid}')
+              [ "$GEN" = "$(state isvcGeneration)" ] || { echo "ERROR: InferenceService generation changed: $(state isvcGeneration) -> $GEN"; exit 1; }
+              [ "$PODS" = "$(state pods)" ] || { echo "ERROR: predictor pods changed: $(state pods) -> $PODS"; exit 1; }
+              echo "InferenceService $ISVC unchanged at generation $GEN with the same pods"
+              READY=$(kubectl get aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" adapters-upgrade-plain \
+                -o jsonpath='{.status.conditions[?(@.type=="Ready")].status} {.status.conditions[?(@.type=="Ready")].lastTransitionTime}')
+              [ "$READY" = "True $(state readySince)" ] \
+                || { echo "ERROR: Ready transitioned while the adapter disk was added: True $(state readySince) -> $READY"; exit 1; }
+              ADAPTERS=$(kubectl get aimservices.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" adapters-upgrade-plain \
+                -o jsonpath='{.status.conditions[?(@.type=="AdaptersReady")].type}')
+              [ -z "$ADAPTERS" ] || { echo "ERROR: the service without adapters reports AdaptersReady"; exit 1; }
+              echo "AIMService adapters-upgrade-plain stayed Ready since $(state readySince)"
+
+    - name: Delete the dynamic-adapter service
+      try:
+        - delete:
+            timeout: 120s
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              name: adapters-upgrade-lora
+        - error:
+            timeout: 120s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: adapters-upgrade-lora
+
+    - name: Reclaim the adapter disk without downloading the model again
+      try:
+        - script:
+            timeout: 120s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              state() { kubectl get configmap adapters-upgrade-state -n "$NAMESPACE" -o jsonpath="{.data.$1}"; }
+              ARTIFACT=$(state artifact)
+              DISK=$(kubectl get aimartifact -n "$NAMESPACE" "$ARTIFACT" -o jsonpath='{.spec.adapterDisk}')
+              PVC=$(kubectl get aimartifact -n "$NAMESPACE" "$ARTIFACT" -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+              [ -n "$DISK" ] && [ -n "$PVC" ] || { echo "ERROR: the disk did not survive the adapter-enabled service: adapterDisk='$DISK' pvc='$PVC'"; exit 1; }
+              kubectl get pvc -n "$NAMESPACE" "$PVC" -o jsonpath='{.metadata.uid}' > /dev/null
+              kubectl patch aimartifact -n "$NAMESPACE" "$ARTIFACT" --type json -p '[{"op":"remove","path":"/spec/adapterDisk"}]'
+              # A finished reaper pod still holds the PVC through pvc-protection.
+              kubectl delete job -n "$NAMESPACE" \
+                -l aim.eai.amd.com/component=adapter-reap,aim.eai.amd.com/cache.name="$ARTIFACT"
+              if ! kubectl delete pvc -n "$NAMESPACE" "$PVC" --timeout=90s; then
+                echo "ERROR: adapter disk PVC $PVC is still in use by:"
+                kubectl get pods -n "$NAMESPACE" -o json | jq -r --arg pvc "$PVC" \
+                  '.items[] | select(any(.spec.volumes[]?; .persistentVolumeClaim.claimName == $pvc))
+                   | "\(.metadata.name) phase=\(.status.phase) deleting=\(.metadata.deletionTimestamp // "-") owner=\(.metadata.ownerReferences[0].kind // "-")/\(.metadata.ownerReferences[0].name // "-")"'
+                kubectl get jobs -n "$NAMESPACE" -o wide
+                exit 1
+              fi
+              # Give the artifact controller time to react: it must not recreate the PVC.
+              sleep 10
+              if kubectl get pvc -n "$NAMESPACE" "$PVC" >/dev/null 2>&1; then
+                echo "ERROR: adapter disk PVC $PVC was recreated without spec.adapterDisk"; exit 1
+              fi
+              STATUS_PVC=$(kubectl get aimartifact -n "$NAMESPACE" "$ARTIFACT" -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+              [ -z "$STATUS_PVC" ] || { echo "ERROR: status.adapterPersistentVolumeClaim still reports $STATUS_PVC"; exit 1; }
+              STATUS=$(kubectl get aimartifact -n "$NAMESPACE" "$ARTIFACT" -o jsonpath='{.status.status}')
+              MODEL_PVC_UID=$(kubectl get pvc -n "$NAMESPACE" "$(state modelPVC)" -o jsonpath='{.metadata.uid}')
+              [ "$STATUS" = Ready ] || { echo "ERROR: artifact status is $STATUS after reclaiming the disk"; exit 1; }
+              [ "$MODEL_PVC_UID" = "$(state modelPVCUID)" ] || { echo "ERROR: model PVC replaced: $(state modelPVCUID) -> $MODEL_PVC_UID"; exit 1; }
+              echo "adapter disk $PVC reclaimed; artifact $ARTIFACT Ready on the same model PVC"
+
+    - name: Recreate the dynamic-adapter service
+      try:
+        - apply:
+            file: lora-service.yaml
+
+    - name: Assert the adapter disk is added back and the service serves adapters again
+      try:
+        - assert:
+            timeout: 180s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: adapters-upgrade-lora
+              status:
+                (conditions[?type == 'AdaptersReady']):
+                  - status: "True"
+        - script:
+            timeout: 30s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              state() { kubectl get configmap adapters-upgrade-state -n "$NAMESPACE" -o jsonpath="{.data.$1}"; }
+              ARTIFACT=$(state artifact)
+              DISK=$(kubectl get aimartifact -n "$NAMESPACE" "$ARTIFACT" -o jsonpath='{.spec.adapterDisk}')
+              PVC=$(kubectl get aimartifact -n "$NAMESPACE" "$ARTIFACT" -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+              [ -n "$DISK" ] || { echo "ERROR: spec.adapterDisk was not added back"; exit 1; }
+              kubectl get pvc -n "$NAMESPACE" "$PVC" >/dev/null
+              MODEL_PVC_UID=$(kubectl get pvc -n "$NAMESPACE" "$(state modelPVC)" -o jsonpath='{.metadata.uid}')
+              [ "$MODEL_PVC_UID" = "$(state modelPVCUID)" ] || { echo "ERROR: model PVC replaced: $(state modelPVCUID) -> $MODEL_PVC_UID"; exit 1; }
+              echo "adapter disk $PVC added back to $ARTIFACT on the same model PVC"

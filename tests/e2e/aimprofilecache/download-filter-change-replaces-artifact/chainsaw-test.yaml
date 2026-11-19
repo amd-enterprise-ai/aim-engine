@@ -7,10 +7,11 @@
 # already resolved until that replacement is Ready, then switches and leaves the
 # previous artifact in place for any other cache still using it.
 #
-# The served artifact is shared with an adapter-serving cache for another profile,
-# which only adopts artifacts carrying an adapter disk. The replacement is created by
-# the cache that does not serve adapters, so it has to inherit the disk for the
-# adapter-serving cache to follow it later.
+# The served artifact is shared with the cache of another profile whose
+# adapter-enabled AIMServices added an adapter disk to it; the test adds the disk
+# directly in their place. The replacement is created by the cache of the profile
+# without adapters, and inherits the disk so those services find it already there
+# once their cache follows.
 #
 # Artifact Ready transitions are injected rather than downloaded: downloads are
 # irrelevant to the replacement under test, and driving them for real would make this
@@ -23,8 +24,7 @@ metadata:
   name: profile-cache-download-filter-change-replaces-artifact
 spec:
   description: |
-    Two profiles share one artifact; the adapter-serving cache gives it an adapter
-    disk. Adding a download filter to one profile keeps that profile's cache serving
+    Two profiles share one artifact that carries an adapter disk. Adding a download filter to one profile keeps that profile's cache serving
     the shared artifact while a replacement with the new filter and an adapter disk is
     created, switches once the replacement is Ready, and keeps the previous artifact.
     Adding the same filter to the second profile moves its adapter-serving cache onto
@@ -62,7 +62,7 @@ spec:
               status:
                 status: Ready
 
-    - name: Drive the shared artifact to Ready once it carries an adapter disk
+    - name: Add an adapter disk to the shared artifact and drive it to Ready
       try:
         - script:
             # Two retry loops of up to 120s each, plus their kubectl calls.
@@ -77,17 +77,21 @@ spec:
               for _ in $(seq 1 60); do
                 NAMES="$(kubectl -n "$NAMESPACE" get aimartifacts -o jsonpath='{.items[*].metadata.name}')"
                 set -- $NAMES
-                if [ "$#" -eq 1 ] && [ -n "$(kubectl -n "$NAMESPACE" get aimartifact "$1" -o jsonpath='{.spec.adapterDisk}')" ]; then
+                if [ "$#" -eq 1 ]; then
                   ARTIFACT="$1"
                   break
                 fi
                 sleep 2
               done
               if [ -z "$ARTIFACT" ]; then
-                echo "expected exactly one shared AIMArtifact carrying an adapter disk"
+                echo "expected exactly one shared AIMArtifact"
                 kubectl -n "$NAMESPACE" get aimartifacts.aim.eai.amd.com -o yaml
                 exit 1
               fi
+
+              # What an adapter-enabled AIMService on filter-change-lora applies.
+              kubectl -n "$NAMESPACE" patch aimartifact "$ARTIFACT" --type=merge \
+                -p '{"spec":{"adapterDisk":{}}}'
 
               # Caches skip status-less artifacts, and the PVC name is recorded only
               # once the PVC exists, so wait for both before freezing.
@@ -200,8 +204,8 @@ spec:
                 echo "expected replacement $REPLACEMENT to exclude '*.bin', got '$FILTER'"
                 exit 1
               fi
-              # The adapter-serving cache only adopts disk-bearing artifacts; without
-              # an inherited disk it could not follow this replacement.
+              # Inherited so the adapter-enabled services find the disk already there
+              # once their cache follows this replacement.
               if [ -z "$(kubectl -n "$NAMESPACE" get aimartifact "$REPLACEMENT" -o jsonpath='{.spec.adapterDisk}')" ]; then
                 echo "expected replacement $REPLACEMENT to inherit the shared artifact's adapter disk"
                 kubectl -n "$NAMESPACE" get aimartifact "$REPLACEMENT" -o yaml
