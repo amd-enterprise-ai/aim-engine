@@ -142,7 +142,7 @@ A natural rebind happens when the existing binding is no longer usable:
 | Trigger | Mechanism |
 |---|---|
 | Bound profile deleted | The `Get` for `status.resolvedProfile` returns NotFound → re-rank against remaining candidates. |
-| Bound profile no longer matches the current selector | The user narrowed `spec.profile.selector` (or `spec.model.name` changed) and the bound profile no longer passes the filter → re-rank with the new intent. |
+| Bound profile no longer matches the current selector | The user narrowed `spec.profile.selector` (or [changed the model](#change-a-services-model)) and the bound profile no longer passes the filter → re-rank with the new intent. |
 | Bound profile drops below the `minimumType` floor | The bound profile's `type` is now below the selector's `minimumType` (e.g. retyped to `unoptimized` while the floor is `optimized`) → re-rank. |
 | Transient infrastructure error fetching the bound profile | Re-rank rather than risk serving a stale binding through an outage. |
 
@@ -171,6 +171,22 @@ Leaving the annotation in place is safe — the ranker is deterministic and `Pro
 
 Stickiness is a default-on protection, not a guarantee. The strongest guarantee is `spec.profile.name`: by name there's no ranking at all, so the binding is fixed for the lifetime of the spec.
 
+### Change a service's model
+
+`spec.model` can't be edited in place. To move a service to another AIMModel, remove `spec.model` and set `spec.profile.name` to one of the new AIMModel's AIMProfiles in one update. To select by model again, add `spec.model.name` back and remove `spec.profile` in a second update:
+
+```bash
+kubectl get aimprofile -n <namespace> -l aim.eai.amd.com/source-model=<new-model>
+kubectl patch aimservice <service> -n <namespace> --type merge \
+  -p '{"spec":{"model":null,"profile":{"name":"<AIMProfile of the new model>"}}}'
+kubectl patch aimservice <service> -n <namespace> --type merge \
+  -p '{"spec":{"model":{"name":"<new-model>"},"profile":null}}'
+```
+
+The first update rolls the service's InferenceService onto the new AIMProfile in place. The second keeps that binding, because the AIMProfile belongs to the new model. A service that already uses `spec.profile.name` changes model by pointing it at another AIMProfile. When both `spec.profile.name` and `spec.model` are set, `spec.profile.name` wins and `spec.model` is ignored.
+
+Once the predictor rollout finishes, the controller deletes the Dedicated AIMProfileCache and the overlay AIMProfile the service used for the old AIMProfile. Shared AIMProfileCaches stay; they belong to their AIMProfile.
+
 ## Profile overlays
 
 Sometimes you want to tweak a published profile for one service without forking it. `spec.profileOverrides` creates a service-owned **overlay AIMProfile** derived from the profile that `spec.profile` resolves:
@@ -193,7 +209,7 @@ What happens:
 1. The controller materialises an `AIMProfile` named `<seed>-<service>-overlay-<hash>` in the service's namespace.
 2. The overlay carries `profile-role: deployable`, `profile-origin: derived`, and an annotation pointing back at the service.
 3. Downstream (cache, ConfigMap, KServe wiring) keys off the overlay — so the override participates in cache-key computation, not just runtime env wiring.
-4. The overlay is owner-referenced by the service and garbage-collected on service deletion.
+4. The overlay is owner-referenced by the service and garbage-collected on service deletion, or once the service has rolled out on another AIMProfile.
 
 The override field set mirrors [`ProfileOverrides`](profilesets.md#overrides)
 used by AIMProfileSet derivation — the same internal primitive applies both.
@@ -219,7 +235,7 @@ When the resolved profile has `spec.caching.enabled: true` (namespace-scoped pro
 | Mode | Behavior |
 |---|---|
 | `Shared` (default) | The cache PVC is shared across services using the same profile. Reused indefinitely; outlives any single service. |
-| `Dedicated` | Each service gets its own cache PVC, garbage-collected with the service. |
+| `Dedicated` | Each service gets its own cache PVC, deleted with the service or once the service has rolled out on another AIMProfile. |
 
 ```yaml
 spec:

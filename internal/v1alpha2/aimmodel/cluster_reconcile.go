@@ -134,6 +134,8 @@ func (r *ClusterModelReconciler) FetchRemoteState(
 			OwnerRef:         ownerReferenceForClusterModel(model),
 			CurrentState:     model.Status.Discovery,
 			Clientset:        r.Clientset,
+			BlockedByImageMetadata: imageMetadataBlocks(
+				imagemetadata.ResultForHealth(result.imageMetadata, &model.Status).Error),
 		}
 		fetch := FetchDiscoveryState(ctx, c, inputs)
 		result.discovery = DecideDiscovery(ctx, c, inputs, fetch)
@@ -283,8 +285,8 @@ func (r *ClusterModelReconciler) ComposeState(
 	if fetch.model.Spec.Image != "" {
 		obs.componentHealth = append(obs.componentHealth,
 			fetch.runtimeConfig.ToUpstreamComponentHealth(componentRuntimeConfig, aimruntimeconfig.GetRuntimeConfigHealth),
-			imagemetadata.ResultForHealth(fetch.imageMetadata, &fetch.model.Status).
-				ToUpstreamComponentHealth(componentImageMetadata, imagemetadata.GetHealth),
+			imageMetadataHealth(&fetch.model.Spec, imagemetadata.ResultForHealth(fetch.imageMetadata, &fetch.model.Status).
+				ToUpstreamComponentHealth(componentImageMetadata, imagemetadata.GetHealth)),
 		)
 	}
 	applyModelServingPathPolicy(&fetch.model.Spec, obs.componentHealth)
@@ -362,6 +364,7 @@ func (r *ClusterModelReconciler) DecorateStatus(
 	}
 	clearTemplateEraStatus(cm)
 	setTemplateFieldsIgnoredCondition(cm, &obs.model.Spec)
+	setProfilesAvailableCondition(cm, &obs.model.Spec, obs.existingClusterProfiles)
 	retireRemovedModelPathState(status, cm, &obs.model.Spec, obs.componentHealth)
 	EnsureBaseImageBridge(&obs.model.Spec, status)
 }

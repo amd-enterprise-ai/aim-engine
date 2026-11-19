@@ -75,6 +75,8 @@ type ObservabilityConfig struct {
 	logMode LogMode
 	// logLevel specifies the log verbosity level (0=error, 1=info, 2=debug)
 	logLevel int
+	// logAsInfo logs at info level even when eventLevel is Warning
+	logAsInfo bool
 	// logMessage overrides the default log message (default: condition message)
 	logMessage *string
 }
@@ -199,6 +201,16 @@ func AsWarning() ObservabilityOption {
 	return func(c *ObservabilityConfig) {
 		WithErrorLog()(c)
 		WithWarningEvent()(c)
+	}
+}
+
+// AsUserWarning is for states the user fixes, such as ignored spec fields or a
+// reference that resolves to nothing. Emits info log (V(0)) and warning event
+// on transition only, so error logs stay reserved for operator failures.
+func AsUserWarning() ObservabilityOption {
+	return func(c *ObservabilityConfig) {
+		AsWarning()(c)
+		c.logAsInfo = true
 	}
 }
 
@@ -378,7 +390,7 @@ func EmitConditionLogs(
 
 		// Use Error() for warning-level events (actual errors), Info() for normal events
 		// We can't use logLevel alone since both INFO and ERROR use V(0)
-		if cfg.eventLevel == LevelWarning {
+		if cfg.eventLevel == LevelWarning && !cfg.logAsInfo {
 			logger.Error(nil, message,
 				"condition", newCondition.Type,
 				"status", newCondition.Status,
@@ -415,7 +427,7 @@ func EmitRecurringLogs(
 
 		// Use Error() for warning-level events (actual errors), Info() for normal events
 		// We can't use logLevel alone since both INFO and ERROR use V(0)
-		if cc.Config.eventLevel == LevelWarning {
+		if cc.Config.eventLevel == LevelWarning && !cc.Config.logAsInfo {
 			logger.Error(nil, message,
 				"condition", cc.Type,
 				"status", cc.Status,

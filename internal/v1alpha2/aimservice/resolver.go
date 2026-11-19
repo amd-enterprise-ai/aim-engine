@@ -30,6 +30,8 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -627,15 +629,57 @@ func resolveBySelector(
 	// confusing case under the default optimized floor (e.g. a catalog of only
 	// general/unoptimized CPU profiles), so surface an actionable message that
 	// names the floor and the opt-out knob instead of a bare "no match".
+	res.notFoundMessage = "no AIMProfile or AIMClusterProfile matched the selector"
 	if excluded := countFloorExcluded(selector, nsRaw, clusterRaw); excluded > 0 {
 		res.notFoundMessage = fmt.Sprintf(
 			"no AIMProfile or AIMClusterProfile met the minimumType=%s floor: %d candidate(s) matched the selector but rank below it; set spec.profile.selector.minimumType (e.g. \"any\" or \"unoptimized\") to include lower tiers",
 			selector.MinimumType, excluded)
-	} else {
-		res.notFoundMessage = "no AIMProfile or AIMClusterProfile matched the selector"
+	} else if len(nsRaw)+len(clusterRaw) == 0 {
+		if msg := modelWithoutProfilesMessage(ctx, c, service.Namespace, selector, scope); msg != "" {
+			res.notFoundReason = aimv1alpha1.AIMServiceReasonModelHasNoProfiles
+			res.notFoundMessage = msg
+		}
 	}
 	return controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{},
 		controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]{}, res
+}
+
+// modelWithoutProfilesMessage names the AIMModel or AIMClusterModel in
+// selector.modelRef when it reports ProfilesAvailable=False, or returns "".
+// The namespace model shadows the cluster model, as in profile resolution.
+// Get errors fall back to the generic not-found message.
+func modelWithoutProfilesMessage(
+	ctx context.Context,
+	c client.Client,
+	namespace string,
+	selector aimv1alpha1.ProfileSelector,
+	scope aimprofile.SelectorScope,
+) string {
+	if selector.ModelRef == nil {
+		return ""
+	}
+	name := selector.ModelRef.Name
+	var (
+		kind         string
+		status       *aimv1alpha1.AIMModelStatus
+		model        aimv1alpha2.AIMModel
+		clusterModel aimv1alpha2.AIMClusterModel
+	)
+	switch {
+	case scope != aimprofile.SelectorScopeCluster &&
+		c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &model) == nil:
+		kind, status = "AIMModel", model.GetStatus()
+	case scope != aimprofile.SelectorScopeNamespace &&
+		c.Get(ctx, client.ObjectKey{Name: name}, &clusterModel) == nil:
+		kind, status = "AIMClusterModel", clusterModel.GetStatus()
+	default:
+		return ""
+	}
+	cond := meta.FindStatusCondition(status.Conditions, aimv1alpha1.AIMModelConditionProfilesAvailable)
+	if cond == nil || cond.Status != metav1.ConditionFalse {
+		return ""
+	}
+	return fmt.Sprintf("%s %q produces no AIMProfiles: %s", kind, name, cond.Message)
 }
 
 // countFloorExcluded returns how many listed candidates satisfied every

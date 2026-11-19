@@ -29,6 +29,7 @@ import (
 	"time"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,6 +44,7 @@ import (
 func inferenceServiceComponentHealth(
 	inferenceService controllerutils.FetchResult[*servingv1beta1.InferenceService],
 	inferenceServicePods *controllerutils.FetchResult[*corev1.PodList],
+	predictorDeployment controllerutils.FetchResult[*appsv1.Deployment],
 ) controllerutils.ComponentHealth {
 	health := controllerutils.ComponentHealth{
 		Component:      "InferenceService",
@@ -90,6 +92,32 @@ func inferenceServiceComponentHealth(
 			}
 		}
 		if readyPodCount > 0 {
+			if predictorDeployment.HasError() && !predictorDeployment.IsNotFound() {
+				health.State = constants.AIMStatusFailed
+				health.Reason = "FetchError"
+				health.Message = predictorDeployment.Error.Error()
+				health.Errors = []error{predictorDeployment.Error}
+				return health
+			}
+			// While previous-revision pods remain, ready pods may all be old ones,
+			// so they keep the service running without proving the rollout ready.
+			if deployment := predictorDeployment.Value; deployment != nil &&
+				deployment.Status.UpdatedReplicas < deployment.Status.Replicas {
+				health.State = constants.AIMStatusProgressing
+				health.Reason = aimv1alpha1.AIMServiceReasonRolloutInProgress
+				health.Message = fmt.Sprintf(
+					"Predictor rollout in progress: %d of %d pods are on the new revision, %d pod(s) are ready and serving%s",
+					deployment.Status.UpdatedReplicas,
+					deployment.Status.Replicas,
+					readyPodCount,
+					pendingPodDetail(inferenceServicePods.Value.Items),
+				)
+				if refusal, refused := predictorPodCreationFailure(isvc); refused {
+					health.Message += "; the predictor Deployment cannot create a pod: " + refusal
+				}
+				health.Serving = true
+				return health
+			}
 			health.State = constants.AIMStatusReady
 			health.Reason = aimv1alpha1.AIMServiceReasonRuntimeScaling
 			health.Message = fmt.Sprintf("InferenceService has %d ready pod(s), scaling in progress", readyPodCount)
@@ -164,6 +192,27 @@ func activePodCount(pods *controllerutils.FetchResult[*corev1.PodList]) int {
 		}
 	}
 	return count
+}
+
+// pendingPodDetail names a Pending pod and, when the scheduler reported one,
+// why it cannot be scheduled. The pod with the smallest name is chosen so the
+// message is stable across reconciles of an unordered pod list.
+func pendingPodDetail(pods []corev1.Pod) string {
+	var pending *corev1.Pod
+	for i := range pods {
+		if pods[i].Status.Phase == corev1.PodPending && (pending == nil || pods[i].Name < pending.Name) {
+			pending = &pods[i]
+		}
+	}
+	if pending == nil {
+		return ""
+	}
+	for _, cond := range pending.Status.Conditions {
+		if cond.Type == corev1.PodScheduled && cond.Status == corev1.ConditionFalse {
+			return fmt.Sprintf("; pod %s is Pending: %s: %s", pending.Name, cond.Reason, cond.Message)
+		}
+	}
+	return fmt.Sprintf("; pod %s is Pending", pending.Name)
 }
 
 // hpaComponentHealth is the HPA health verdict. It takes the observed

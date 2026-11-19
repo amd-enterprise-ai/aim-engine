@@ -9,8 +9,9 @@ spec:
     After the upgrade from v0.2.7, the operator started cleanly, v1alpha1 is no
     longer served for AIMService, AIMModel and AIMClusterModel, the services
     the guide moved keep serving from their profile caches, the service
-    aim-template-migration moved keeps its InferenceService and pods, none of
-    the moved services keeps template-era status, objects written through
+    aim-template-migration moved keeps its InferenceService and pods, the
+    replaced spec.model.custom service serves from the AIMProfile of its new
+    model, none of the moved services keeps template-era status, objects written through
     v1alpha1 stay updatable at v1alpha2, the image and discovered models stay
     Ready with their image status and Version column, no dependent object is
     owned through v1alpha1, and the template CRDs are gone.
@@ -144,6 +145,32 @@ spec:
                 (conditions[?type == 'Ready']):
                   - status: "True"
 
+    - name: The replaced custom service keeps serving from the AIMProfile of its new model
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-custom-service
+              spec:
+                (model == null): true
+                (starts_with(profile.name, 'upgrade-custom-weights-')): true
+              status:
+                status: Running
+                (conditions[?type == 'ProfileCacheReady']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-custom-service
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
     - name: Moved services carry no template-era status
       try:
         - assert:
@@ -172,6 +199,16 @@ spec:
               kind: AIMService
               metadata:
                 name: upgrade-migrated-service
+              status:
+                (conditions[?type == 'ModelReady' || type == 'TemplateReady' || type == 'CacheReady' || type == 'MigrationRequired'] | length(@)): 0
+                (resolvedTemplate == null): true
+                (reconcilerPipeline == null): true
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-custom-service
               status:
                 (conditions[?type == 'ModelReady' || type == 'TemplateReady' || type == 'CacheReady' || type == 'MigrationRequired'] | length(@)): 0
                 (resolvedTemplate == null): true
@@ -279,6 +316,7 @@ spec:
     - name: No dependent object is owned by a v1alpha1 AIMService, AIMModel or AIMClusterModel
       try:
         - script:
+            timeout: 2m
             content: |
               set -eu
               available=$(kubectl api-resources -o name)
@@ -303,6 +341,7 @@ spec:
     - name: The template CRDs are gone and nothing is terminating
       try:
         - script:
+            timeout: 2m
             content: |
               set -eu
               left=$(kubectl get crd aimservicetemplates.aim.eai.amd.com \

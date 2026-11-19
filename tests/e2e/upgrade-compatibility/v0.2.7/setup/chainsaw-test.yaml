@@ -10,7 +10,9 @@ spec:
     clean up: Shared and Dedicated services on the template pipeline, an image
     model that emits templates and discovers a CPU profile, and a model source
     whose discovered cluster model emits cluster templates. A third, Shared
-    template service is moved later with v0.2.7's aim-template-migration.
+    template service is moved later with v0.2.7's aim-template-migration. A
+    spec.model.custom service, which the guide replaces with an AIMProfile of
+    another model, and a ConfigMap with a v1alpha1 owner reference to it.
   timeouts:
     assert: 420s
     cleanup: 180s
@@ -166,3 +168,88 @@ spec:
               status:
                 (conditions[?type == 'Ready']):
                   - status: "True"
+
+    - name: Wait for the custom service, its generated model and its replacement model
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-custom-service
+              status:
+                status: Running
+                reconcilerPipeline: template
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                labels:
+                  aim.eai.amd.com/custom-model: "true"
+                  aim.eai.amd.com/service: upgrade-custom-service
+                (annotations."aim.eai.amd.com/legacy-auto-custom-spec" != null): true
+              status:
+                status: Ready
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMTemplateCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-custom-service
+              spec:
+                mode: Shared
+              status:
+                status: Ready
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: upgrade-custom-service
+              status:
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: upgrade-custom-weights
+              status:
+                status: Ready
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfile
+              metadata:
+                labels:
+                  aim.eai.amd.com/source-model: upgrade-custom-weights
+              spec:
+                acceleratorType: cpu
+              status:
+                status: Ready
+
+    - name: Create a ConfigMap owned through a v1alpha1 owner reference
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              uid="$(kubectl get aimservice upgrade-custom-service -n "${NAMESPACE}" -o jsonpath='{.metadata.uid}')"
+              kubectl apply -n "${NAMESPACE}" -f - <<EOF
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: upgrade-v1alpha1-owned
+                ownerReferences:
+                  - apiVersion: aim.eai.amd.com/v1alpha1
+                    kind: AIMService
+                    name: upgrade-custom-service
+                    uid: ${uid}
+                    blockOwnerDeletion: true
+              EOF

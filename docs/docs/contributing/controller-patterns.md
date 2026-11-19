@@ -369,6 +369,9 @@ cm.MarkTrue(condType, reason, msg, controllerutils.Silent())
 // Error log + Warning event on transition
 cm.MarkFalse(condType, reason, msg, controllerutils.AsWarning())
 
+// Info log + Warning event on transition (for states the user fixes in a spec)
+cm.MarkFalse(condType, reason, msg, controllerutils.AsUserWarning())
+
 // Error log + Warning event EVERY reconcile (for critical errors)
 cm.MarkFalse(condType, reason, msg, controllerutils.AsError())
 ```

@@ -29,13 +29,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -52,9 +55,8 @@ import (
 // image after a registry-side failure. The cache is keyed by image and shared
 // across models, so many AIMModels referencing the same failing image do not
 // collectively hammer the registry; each image is re-inspected at most once per
-// cooldown. All registry failure types are throttled (note: DNS/unreachable
-// failures are categorized as not-found, so excluding any type would re-open the
-// hammering this guards against).
+// cooldown. Every registry failure is throttled, whatever registryError
+// classifies it as.
 const imageInspectCooldown = 15 * time.Minute
 
 var (
@@ -111,7 +113,7 @@ func recordInspectResult(imageURI string, err error) {
 // Returns:
 //   - *imageMetadata: Extracted metadata if successful
 //   - error: Any error encountered during inspection (authentication, network, parsing, etc.)
-//     Registry access errors are wrapped in ImageRegistryError for categorization.
+//     Registry access errors are classified by registryError.
 func inspectImage(
 	ctx context.Context,
 	imageURI string,
@@ -131,9 +133,9 @@ func inspectImage(
 	// Parse the image reference
 	ref, err := name.ParseReference(imageURI)
 	if err != nil {
-		// Parse errors are user errors (invalid image format) - log at Info level without stack trace
 		logger.Info("Invalid image reference format", "imageURI", imageURI, "error", err.Error())
-		return nil, fmt.Errorf("failed to parse image reference %q: %w", imageURI, err)
+		return nil, controllerutils.NewInvalidSpecError(ReasonInvalidImageReference,
+			fmt.Sprintf("image %q is not a valid image reference: %v", imageURI, err), err)
 	}
 
 	// Pre-validate that all referenced imagePullSecrets exist.
@@ -176,67 +178,16 @@ func inspectImage(
 		return nil, err
 	}
 
-	// Fetch the image descriptor
-	desc, err := remote.Get(ref, remote.WithAuthFromKeychain(keychain), remote.WithContext(ctx))
-	if err != nil {
-		errType := utils.CategorizeRegistryError(err)
-		// Log user errors (auth, not-found) at Info level without stack trace
-		// Log system errors (generic) at ListError level with stack trace
-		if errType == utils.ImagePullErrorAuth || errType == utils.ImagePullErrorNotFound {
-			logger.Info("Failed to fetch image descriptor",
-				"imageURI", imageURI,
-				"errorType", errType,
-				"error", err.Error())
-		} else {
-			logger.Error(err, "Failed to fetch image descriptor",
-				"imageURI", imageURI,
-				"errorType", errType)
-		}
-		return nil, &utils.ImageRegistryError{
-			Type:    errType,
-			Message: fmt.Sprintf("failed to fetch image %q: %v", imageURI, err),
-			Cause:   err,
-		}
+	// The config file holds the labels.
+	img, err := remote.Image(ref, remote.WithAuthFromKeychain(keychain), remote.WithContext(ctx))
+	var configFile *v1.ConfigFile
+	if err == nil {
+		configFile, err = img.ConfigFile()
 	}
-
-	// Get the image
-	img, err := desc.Image()
 	if err != nil {
-		errType := utils.CategorizeRegistryError(err)
-		// Log user errors at Info level, system errors at ListError level
-		if errType == utils.ImagePullErrorAuth || errType == utils.ImagePullErrorNotFound {
-			logger.Info("Failed to get image from descriptor",
-				"imageURI", imageURI,
-				"errorType", errType,
-				"error", err.Error())
-		} else {
-			logger.Error(err, "Failed to get image from descriptor", "imageURI", imageURI, "errorType", errType)
-		}
-		return nil, &utils.ImageRegistryError{
-			Type:    errType,
-			Message: fmt.Sprintf("failed to get image from descriptor: %v", err),
-			Cause:   err,
-		}
-	}
-
-	// Get the config file which contains labels
-	configFile, err := img.ConfigFile()
-	if err != nil {
-		errType := utils.CategorizeRegistryError(err)
-		// Log user errors at Info level, system errors at ListError level
-		if errType == utils.ImagePullErrorAuth || errType == utils.ImagePullErrorNotFound {
-			logger.Info("Failed to get image config file",
-				"imageURI", imageURI,
-				"errorType", errType,
-				"error", err.Error())
-		} else {
-			logger.Error(err, "Failed to get image config file", "imageURI", imageURI, "errorType", errType)
-		}
-		return nil, &utils.ImageRegistryError{
-			Type:    errType,
-			Message: fmt.Sprintf("failed to get image config: %v", err),
-			Cause:   err,
-		}
+		err = registryError(imageURI, err)
+		logger.Info("Failed to read image from its registry", "imageURI", imageURI, "error", err.Error())
+		return nil, err
 	}
 
 	// Extract metadata from labels
@@ -259,6 +210,34 @@ func inspectImage(
 		"baseImageRef", metadata.BaseImageRef)
 
 	return metadata, nil
+}
+
+// registryError classifies a failed registry read of imageURI by its HTTP
+// status, not its text: 404 means the repository or tag does not exist, 401
+// and 403 mean the registry refused the credentials, and anything else is
+// infrastructure. The result wraps an ImageRegistryError so the failure
+// cooldown applies.
+func registryError(imageURI string, err error) error {
+	regErr := &utils.ImageRegistryError{Type: utils.ImagePullErrorGeneric, Message: err.Error(), Cause: err}
+	var transportErr *transport.Error
+	if errors.As(err, &transportErr) {
+		switch transportErr.StatusCode {
+		case http.StatusNotFound:
+			regErr.Type = utils.ImagePullErrorNotFound
+			return controllerutils.NewMissingUpstreamDependencyError(constants.ReasonImageNotFound,
+				fmt.Sprintf("image %q does not exist in its registry (%v); check the repository and tag", imageURI, err), regErr)
+		case http.StatusUnauthorized, http.StatusForbidden:
+			regErr.Type = utils.ImagePullErrorAuth
+			return controllerutils.NewAuthError(constants.ReasonImagePullAuthFailure,
+				fmt.Sprintf("the registry refused access to image %q (%v); check spec.imagePullSecrets and that the repository exists", imageURI, err), regErr)
+		}
+	}
+	if network := controllerutils.CategorizeError(err); network.Category() == controllerutils.ErrorCategoryInfrastructure {
+		return controllerutils.NewInfrastructureError(network.Reason(),
+			fmt.Sprintf("cannot reach the registry of image %q: %v", imageURI, err), regErr)
+	}
+	return controllerutils.NewInfrastructureError(ReasonImageInspectionFailed,
+		fmt.Sprintf("failed to read image %q from its registry: %v", imageURI, err), regErr)
 }
 
 // extractEnvValue scans an OCI image Config.Env slice (entries in "KEY=VALUE" form)

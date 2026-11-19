@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# A service resolving through an AIMModel whose spec produces no AIMProfiles
+# (spec.discovery.extractMetadata: false) fails with ModelHasNoProfiles, naming
+# the model and the cause, instead of the generic ProfileNotFound. The model
+# itself stays Ready and reports ProfilesAvailable=False.
+#
+# Nothing is deployed, so this runs in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-model-without-profiles
+spec:
+  timeouts:
+    assert: 90s
+  steps:
+    - name: Create a model that produces no AIMProfiles and a service using it
+      try:
+        - apply:
+            file: resources.yaml
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: model-without-profiles
+              status:
+                status: Ready
+                (conditions[?type == 'ProfilesAvailable']):
+                  - status: "False"
+                    reason: NoDeployableProfiles
+
+    - name: The service fails with a reason naming the model
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: model-without-profiles
+              status:
+                status: Failed
+                (conditions[?type == 'ProfileReady']):
+                  - status: "False"
+                    reason: ModelHasNoProfiles
+                    message: 'AIMModel "model-without-profiles" produces no AIMProfiles: spec.discovery.extractMetadata is false, so the image is not inspected; set it to true to discover AIMProfiles'
+                (conditions[?type == 'Ready']):
+                  - status: "False"
+                    reason: ModelHasNoProfiles
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Event
+              type: Warning
+              reason: ModelHasNoProfiles
+              involvedObject:
+                kind: AIMService
+                name: model-without-profiles
+        - error:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: model-without-profiles

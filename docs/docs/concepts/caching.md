@@ -148,6 +148,11 @@ Deletion follows Kubernetes ownership. AIM finalizers also delete **non-Ready** 
 - **Shared cache** referenced by the service: untouched. Other services may still use it.
 - **Service finalizer**: deletes any caches the service created (by label) that are **not Ready**, so stuck Pending/Progressing/Failed caches don't block a future service from creating a new one.
 
+### When an AIMService moves to another AIMProfile
+
+- **Dedicated cache** for the old AIMProfile: deleted once the predictor rollout onto the new AIMProfile finishes, so no running pod still mounts its PVC.
+- **Shared cache** for the old AIMProfile: untouched.
+
 ### When an AIMProfile is deleted
 
 - Profile-owned caches (created via `spec.caching.enabled: true`) are garbage-collected with the profile.

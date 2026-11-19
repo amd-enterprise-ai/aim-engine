@@ -24,7 +24,6 @@ package controller
 
 import (
 	"context"
-	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -46,7 +45,6 @@ import (
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
-	discoverylock "github.com/amd-enterprise-ai/aim-engine/internal/discovery/lock"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimmodel"
@@ -135,17 +133,9 @@ func (r *AIMClusterModelReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	if model.Spec.Image != "" {
-		var result ctrl.Result
-		lockErr := discoverylock.WithDiscoveryLock(ctx, r.Client, 30*time.Second, func() error {
-			var err error
-			result, err = r.pipeline.Run(ctx, &model)
-			return err
+		return runWithDiscoveryLock(ctx, r.Client, func() (ctrl.Result, error) {
+			return r.pipeline.Run(ctx, &model)
 		})
-		if lockErr != nil {
-			logger.V(1).Info("could not acquire discovery lock, requeuing", "model", model.Name)
-			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
-		}
-		return result, nil
 	}
 
 	return r.pipeline.Run(ctx, &model)

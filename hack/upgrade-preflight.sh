@@ -6,14 +6,20 @@
 #
 # Usage: upgrade-preflight.sh
 #
-# Exits 0 when every blocking check passes and 1 when any fails. Each failure
-# names the check, the object and the section of the upgrade guide that fixes
-# it. Rerun the script after each fix until it passes.
+# Exits 0 when every blocking check passes or the cluster is already upgraded,
+# and 1 when any check fails. Each failure names the check, the object and the
+# section of the upgrade guide that fixes it. Rerun the script after each fix
+# until it passes.
+
+# The jq filters use jq variables such as $object, which must stay unexpanded.
+# shellcheck disable=SC2016
 
 set -euo pipefail
 
 guide="https://github.com/amd-enterprise-ai/aim-engine/blob/main/docs/docs/admin/upgrading.md"
 minimum_version="0.2.7"
+template_crds=(aimservicetemplates.aim.eai.amd.com aimclusterservicetemplates.aim.eai.amd.com
+  aimtemplatecaches.aim.eai.amd.com)
 failures=0
 manual_checks=0
 
@@ -26,6 +32,26 @@ report() {
   fi
 }
 
+# Reports problems with template objects like report, or as MANUAL lines when
+# the template CRDs are kept, because the objects are then removed after the
+# upgrade.
+report_template_problems() {
+  local problem
+  if [[ "${template_crds_kept}" != true ]]; then
+    report "$@"
+  elif [[ -n "$3" ]]; then
+    while IFS= read -r problem; do
+      manual "$1" remove-the-template-crds "${problem}"
+    done <<<"$3"
+  fi
+}
+
+# Fails check $1 for each list that failed since the last call.
+report_list_errors() {
+  report "$1" run-the-upgrade-preflight "$(<"${scratch}/list-errors")"
+  : >"${scratch}/list-errors"
+}
+
 # Prints a MANUAL line for something the script can't check, which the admin
 # confirms by hand. It doesn't block.
 manual() {
@@ -35,19 +61,26 @@ manual() {
 
 # Prints "<object>: <problem>" for each problem the jq filter $1 emits for an
 # item of the JSON lists on stdin. The object is "<Kind> <namespace>/<name>",
-# or "<Kind> <name>" when cluster-scoped.
+# or "<Kind> <name>" when cluster-scoped. Further arguments go to jq.
 problems() {
-  jq -r '.items[]
+  jq -r "${@:2}" '.items[]
     | "\(.kind) \(if .metadata.namespace then .metadata.namespace + "/" else "" end)\(.metadata.name)" as $object
     | '"$1"' | "\($object): \(.)"'
 }
 
 # Prints all objects of a resource type as a JSON list. A resource type the
-# cluster doesn't have counts as no objects.
+# cluster doesn't have counts as no objects. When kubectl fails, it prints an
+# empty list and records the resource and kubectl's error, which
+# report_list_errors reports as a failure, so an unreadable resource never passes.
 list() {
-  if grep -qxF "$1" <<<"${api_resources}"; then
-    kubectl get "$1" --all-namespaces -o json
+  local items error
+  if ! grep -qxF "$1" <<<"${api_resources}"; then
+    echo '{"items": []}'
+  elif items="$(kubectl get "$1" --all-namespaces -o json 2>"${scratch}/$1.stderr")"; then
+    echo "${items}"
   else
+    error="$(<"${scratch}/$1.stderr")"
+    echo "$1: cannot list it: ${error//$'\n'/ }" >>"${scratch}/list-errors"
     echo '{"items": []}'
   fi
 }
@@ -102,13 +135,53 @@ check_minimum_version() {
   done <<<"${images}"
 }
 
+# v0.2.7 records the profile pipeline before the profile cache is Ready and
+# before it rewrites the InferenceService, and the old pods keep mounting the
+# PVC of a Dedicated template cache until the rollout ends. Deleting the
+# template cache before then leaves the next pod unable to mount it, so a
+# service has only moved once each predictor Deployment has the profile label,
+# has observed its generation, and has equal desired, current, updated and
+# available replica counts. KServe derives the InferenceService's
+# observedGeneration and Ready from the Deployment, and Ready stays True while
+# an old pod serves, so neither shows the rollout. A service whose
+# migration-preserve annotations match its generation and its InferenceService's
+# UID keeps that InferenceService and its pods unchanged, without the profile
+# label, so only the rollout counts for it.
 check_template_pipeline_services() {
   local found
-  found="$(problems 'select((.spec.profile != null
-        or .metadata.annotations["aim.eai.amd.com/reconciler-pipeline"] == "profile")
-      and .status.reconcilerPipeline == "profile" | not)
-    | "is not on the profile pipeline (status.reconcilerPipeline: \(.status.reconcilerPipeline // "unset"))"' \
-    <<<"${services}")"
+  found="$(echo "${services}" | problems '. as $service
+    | [$isvcs[0].items[] | select(any(.metadata.ownerReferences[]?; .uid == $service.metadata.uid))][0] as $isvc
+    | [$deployments[0].items[] | select(any(.metadata.ownerReferences[]?; .uid == $isvc.metadata.uid))] as $owned
+    | [.status.conditions[]? | select(.type == "ProfileCacheReady") | .status][0] as $cache_ready
+    | ($isvc != null
+        and .metadata.annotations["aim.eai.amd.com/migration-preserve-inference-service-uid"] == $isvc.metadata.uid
+        and .metadata.annotations["aim.eai.amd.com/migration-preserve-inference-service-generation"]
+          == "\(.metadata.generation)") as $pinned
+    | if (.spec.profile != null or .metadata.annotations["aim.eai.amd.com/reconciler-pipeline"] == "profile")
+        and .status.reconcilerPipeline == "profile" | not then
+        "is not on the profile pipeline (status.reconcilerPipeline: \(.status.reconcilerPipeline // "unset"))"
+      elif $cache_ready != "True" then
+        "has not finished moving (ProfileCacheReady: \($cache_ready // "unset"))"
+      elif $owned == [] then
+        "has not finished moving (no predictor Deployment)"
+      elif $isvc.metadata.labels["aim.eai.amd.com/profile"] == null and ($pinned | not) then
+        "has not finished moving (InferenceService \($isvc.metadata.name) still runs the template)"
+      else $owned[] | select((.metadata.labels["aim.eai.amd.com/profile"] == null and ($pinned | not))
+          or .status.observedGeneration < .metadata.generation
+          or ([.spec.replicas, (.status | .replicas, .updatedReplicas, .availableReplicas)] | map(. // 0) | min < max))
+        | "has not finished moving (predictor Deployment \(.metadata.name) is still rolling out)" end' \
+    --slurpfile isvcs <(list inferenceservices.serving.kserve.io) --slurpfile deployments <(list deployments.apps))"
+  report template-pipeline-services move-template-services "${found}"
+
+  found="$(list pods | problems 'select(.status.phase | IN("Succeeded", "Failed") | not)
+    | .metadata.namespace as $namespace
+    | (.spec.volumes[]?.persistentVolumeClaim.claimName // empty) as $claim
+    | $artifacts[0].items[]
+    | select(.metadata.namespace == $namespace and .status.persistentVolumeClaim == $claim)
+    | .metadata.name as $artifact
+    | .metadata.ownerReferences[]? | select(.kind == "AIMTemplateCache")
+    | "mounts PVC \($claim) of AIMArtifact \($artifact), which AIMTemplateCache \(.name) owns"' \
+    --slurpfile artifacts <(list aimartifacts.aim.eai.amd.com))"
   report template-pipeline-services move-template-services "${found}"
 }
 
@@ -137,34 +210,46 @@ check_models_without_native_path() {
 
 check_template_objects() {
   local found
-  found="$(for resource in aimservicetemplates aimclusterservicetemplates aimtemplatecaches; do
-    list "${resource}.aim.eai.amd.com"
+  found="$(for resource in "${template_crds[@]}"; do
+    list "${resource}"
   done | problems '"still exists"')"
-  report template-objects delete-template-objects "${found}"
+  report_template_problems template-objects delete-template-objects "${found}"
 }
 
 check_template_finalizers() {
   local found
-  found="$(for resource in aimservices aimtemplatecaches; do
-    list "${resource}.aim.eai.amd.com"
-  done | problems '.metadata.finalizers[]?
+  found="$(printf '%s\n' "${services}" "$(list aimtemplatecaches.aim.eai.amd.com)" | problems '.metadata.finalizers[]?
     | select(IN("aim.eai.amd.com/artifactcleanup", "aim.eai.amd.com/template-cache-cleanup",
       "aim.eai.amd.com/template-cache.cleanup"))
     | "has the finalizer \(.)"')"
-  report template-finalizers delete-template-objects "${found}"
+  report_template_problems template-finalizers delete-template-objects "${found}"
 }
 
 check_stale_owner_references() {
-  local found
-  found="$(for resource in inferenceservices.serving.kserve.io httproutes.gateway.networking.k8s.io \
+  local lists found
+  lists="$(for resource in inferenceservices.serving.kserve.io httproutes.gateway.networking.k8s.io \
     scaledobjects.keda.sh persistentvolumeclaims jobs.batch configmaps \
     aimartifacts.aim.eai.amd.com aimprofiles.aim.eai.amd.com aimprofilecaches.aim.eai.amd.com; do
     list "${resource}"
-  done | problems '.metadata.ownerReferences[]?
-    | select(.apiVersion == "aim.eai.amd.com/v1alpha1" and (.kind | IN("AIMService", "AIMModel",
-      "AIMClusterModel", "AIMServiceTemplate", "AIMClusterServiceTemplate", "AIMTemplateCache")))
-    | "is owned by v1alpha1 \(.kind) \(.name)"')"
+  done)"
+  found="$(problems '"kubectl patch \(.kind | ascii_downcase) \(.metadata.name) -n \(.metadata.namespace)" as $patch
+    | .metadata.ownerReferences // [] | to_entries[]
+    | select(.value.apiVersion == "aim.eai.amd.com/v1alpha1"
+      and (.value.kind | IN("AIMService", "AIMModel", "AIMClusterModel")))
+    | ([{op: "replace", path: "/metadata/ownerReferences/\(.key)/apiVersion", value: "aim.eai.amd.com/v1alpha2"}]
+      | tojson | @sh) as $operations
+    | "is owned by v1alpha1 \(.value.kind) \(.value.name); rewrite the reference with:"
+      + " \($patch) --type json -p \($operations)"' <<<"${lists}")"
   report stale-owner-references remove-stale-v1alpha1-owner-references "${found}"
+
+  found="$(problems '"kubectl patch \(.kind | ascii_downcase) \(.metadata.name) -n \(.metadata.namespace)" as $patch
+    | .metadata.ownerReferences // [] | to_entries[]
+    | select(.value.apiVersion == "aim.eai.amd.com/v1alpha1"
+      and (.value.kind | IN("AIMServiceTemplate", "AIMClusterServiceTemplate", "AIMTemplateCache")))
+    | ([{op: "remove", path: "/metadata/ownerReferences/\(.key)"}] | tojson | @sh) as $operations
+    | "is owned by v1alpha1 \(.value.kind) \(.value.name); delete it with its owner, or remove the reference with:"
+      + " \($patch) --type json -p \($operations)"' <<<"${lists}")"
+  report_template_problems stale-owner-references remove-stale-v1alpha1-owner-references "${found}"
 }
 
 report_dedicated_caches() {
@@ -180,6 +265,7 @@ report_dedicated_caches() {
 run_check() {
   local name="$1" failures_before="${failures}" manual_before="${manual_checks}"
   "check_${name//-/_}"
+  report_list_errors "${name}"
   if ((failures == failures_before && manual_checks == manual_before)); then
     echo "ok   [${name}]"
   fi
@@ -192,12 +278,33 @@ for tool in kubectl jq; do
   fi
 done
 
+scratch="$(mktemp -d)"
+trap 'rm -rf "${scratch}"' EXIT
+: >"${scratch}/list-errors"
+
+# The new release's AIMService CRD stops serving v1alpha1, and the new operator
+# clears status.reconcilerPipeline, so the checks below would fail every
+# service of an upgraded cluster.
+crds="$(kubectl get customresourcedefinitions aimservices.aim.eai.amd.com "${template_crds[@]}" \
+  --ignore-not-found -o json)"
+if jq -e '.items[] | select(.metadata.name == "aimservices.aim.eai.amd.com")
+    | any(.spec.versions[]; .name == "v1alpha1" and .served) | not' <<<"${crds}" >/dev/null; then
+  echo "Already upgraded: the AIMService CRD no longer serves aim.eai.amd.com/v1alpha1, so there is nothing to check."
+  exit 0
+fi
+template_crds_kept="$(jq '[.items[] | select(.metadata.annotations["helm.sh/resource-policy"] == "keep")
+  | .metadata.name] as $kept | all($ARGS.positional[]; IN($kept[]))' --args "${template_crds[@]}" <<<"${crds}")"
+
 api_resources="$(kubectl api-resources -o name)"
 services="$(kubectl get aimservices.aim.eai.amd.com --all-namespaces -o json)"
 models="$(kubectl get aimmodels.aim.eai.amd.com --all-namespaces -o json)"
 cluster_models="$(kubectl get aimclustermodels.aim.eai.amd.com -o json)"
 
 echo "Sections (#...) refer to ${guide}"
+if [[ "${template_crds_kept}" == true ]]; then
+  echo "The template CRDs have helm.sh/resource-policy=keep, so template objects don't block:\
+ remove them after the upgrade. See #remove-the-template-crds"
+fi
 run_check minimum-version
 run_check template-pipeline-services
 run_check unservable-services
@@ -206,6 +313,7 @@ run_check template-objects
 run_check template-finalizers
 run_check stale-owner-references
 report_dedicated_caches
+report_list_errors dedicated-template-caches
 manual v1alpha1-clients update-v1alpha1-manifests "AIMService, AIMModel and AIMClusterModel stop serving\
  aim.eai.amd.com/v1alpha1: check GitOps repositories and scripts for such manifests"
 

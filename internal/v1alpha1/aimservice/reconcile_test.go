@@ -31,6 +31,7 @@ import (
 	"time"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -929,6 +930,7 @@ func TestGetInferenceServiceHealth_PredictorPodCreationFailed(t *testing.T) {
 			health := inferenceServiceComponentHealth(
 				controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: isvc},
 				&controllerutils.FetchResult[*corev1.PodList]{Value: tt.pods, Error: tt.podsErr},
+				controllerutils.FetchResult[*appsv1.Deployment]{},
 			)
 
 			if health.State != tt.wantState || health.Reason != tt.wantReason {
@@ -958,7 +960,7 @@ func TestGetInferenceServiceHealth_ScaleToZeroWithFailedCreate(t *testing.T) {
 	pods := &controllerutils.FetchResult[*corev1.PodList]{Value: &corev1.PodList{}}
 	hpa := controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]{Value: hpaWithScalingActive(corev1.ConditionFalse, hpaReasonScalingDisabled)}
 
-	isvcHealth := inferenceServiceComponentHealth(isvc, pods)
+	isvcHealth := inferenceServiceComponentHealth(isvc, pods, controllerutils.FetchResult[*appsv1.Deployment]{})
 	if isvcHealth.State != constants.AIMStatusFailed ||
 		isvcHealth.Reason != aimv1alpha1.AIMServiceReasonPodCreationFailed {
 		t.Fatalf("InferenceService = %s/%s, want Failed/PodCreationFailed", isvcHealth.State, isvcHealth.Reason)

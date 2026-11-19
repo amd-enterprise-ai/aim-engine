@@ -70,7 +70,7 @@ The controller:
 5. Materialises one `AIMProfile` per supported entry and marks the entries listed in the image's recommended deployments `spec.primary`. Unsupported entries are counted in `status.discoveredProfiles.unsupported` and remain available as derivation sources.
 6. Watches node events and re-evaluates hardware support when nodes are added or removed.
 
-`spec.discovery.extractMetadata: false` skips both the label read and the discovery Job.
+`spec.discovery.extractMetadata: false` skips both the label read and the discovery Job. Without `spec.profiles`, such a model produces no `AIMProfiles`: it stays `Ready` and reports [`ProfilesAvailable=False`](../reference/conditions.md#profilesavailable), and an `AIMService` that uses it fails with `ModelHasNoProfiles`.
 
 The resulting profiles are **deployable** (carry `aimId` and `modelSources`) and labelled `aim.eai.amd.com/profile-role=deployable`, `aim.eai.amd.com/profile-origin=discovered`.
 

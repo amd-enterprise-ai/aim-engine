@@ -68,6 +68,10 @@ func clearTemplateEraStatus(status *aimv1alpha1.AIMServiceStatus, cm *controller
 	}
 }
 
+const customModelFieldMessage = `spec.model.custom is not read by a profile-based AIMService, and spec.model can't be edited in place: ` +
+	`switch to an AIMProfile with the merge patch {"spec":{"model":null,"profile":{"name":"<AIMProfile>"}}}, ` +
+	`as in the upgrade guide's #replace-unservable-services section`
+
 // setTemplateFieldsIgnoredCondition warns about spec fields that only the
 // AIMServiceTemplate pipeline of earlier releases read. The profile pipeline
 // ignores them.
@@ -75,24 +79,28 @@ func setTemplateFieldsIgnoredCondition(cm *controllerutils.ConditionManager, spe
 	if cm == nil {
 		return
 	}
-	var fields []string
+	var fields, messages []string
 	if spec.Template != nil {
 		fields = append(fields, "spec.template")
 	}
 	if spec.Overrides != nil {
 		fields = append(fields, "spec.overrides")
 	}
-	if spec.Model != nil && spec.Model.Custom != nil {
-		fields = append(fields, "spec.model.custom")
+	if len(fields) > 0 {
+		messages = append(messages,
+			"These fields have no effect on a profile-based AIMService and can be removed: "+strings.Join(fields, ", "))
 	}
-	if len(fields) == 0 {
+	if spec.Model != nil && spec.Model.Custom != nil {
+		messages = append(messages, customModelFieldMessage)
+	}
+	if len(messages) == 0 {
 		cm.Delete(controllerutils.ConditionTypeTemplateFieldsIgnored)
 		return
 	}
 	cm.MarkTrue(
 		controllerutils.ConditionTypeTemplateFieldsIgnored,
 		controllerutils.ReasonTemplateFieldsSet,
-		"These fields have no effect on a profile-based AIMService and can be removed: "+strings.Join(fields, ", "),
-		controllerutils.AsWarning(),
+		strings.Join(messages, ". "),
+		controllerutils.AsUserWarning(),
 	)
 }

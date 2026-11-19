@@ -1,0 +1,17 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: model-without-profiles
+spec:
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.2
+  discovery:
+    extractMetadata: false
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: model-without-profiles
+spec:
+  model:
+    name: model-without-profiles
+  replicas: 1

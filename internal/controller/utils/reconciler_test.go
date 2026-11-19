@@ -436,6 +436,39 @@ func TestPipeline_processStateEngine_NonBlockingFailureRemainsVisible(t *testing
 	}
 }
 
+func TestPipeline_processStateEngine_NonBlockingAuthErrorSetsAuthValid(t *testing.T) {
+	obs := testObservationCustomHealth{health: []ComponentHealth{
+		{Component: "ActivePath", State: constants.AIMStatusReady, Reason: "ServingOutputReady"},
+		{
+			Component:   "InactivePath",
+			Errors:      []error{NewAuthError("RegistryDenied", "Registry refused the credentials", nil)},
+			NonBlocking: true,
+		},
+	}}
+	cm := NewConditionManager(nil)
+	status := &testStatus{}
+	p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+		Reconciler: &testReconcilerCustomHealth{},
+	}
+
+	decision, err := p.processStateEngine(context.Background(), obs, cm, status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authValid := cm.Get(ConditionTypeAuthValid); authValid == nil || authValid.Status != metav1.ConditionFalse {
+		t.Errorf("AuthValid = %#v, want False", authValid)
+	}
+	if !cm.ConfigFor(ConditionTypeAuthValid).logAsInfo {
+		t.Error("AuthValid from a non-blocking component should log at info level")
+	}
+	if ready := cm.Get(ConditionTypeReady); ready == nil || ready.Status != metav1.ConditionTrue {
+		t.Errorf("Ready = %#v, want True when only a non-blocking component has an auth error", ready)
+	}
+	if !decision.ShouldApply || decision.ShouldRequeue {
+		t.Errorf("decision = %+v, want apply without requeue", decision)
+	}
+}
+
 func TestPipeline_processStateEngine_AllNonBlockingCannotEstablishReadiness(t *testing.T) {
 	obs := testObservationCustomHealth{health: []ComponentHealth{{
 		Component:   "InactivePath",
@@ -462,6 +495,59 @@ func TestPipeline_processStateEngine_AllNonBlockingCannotEstablishReadiness(t *t
 	}
 	if !decision.ShouldApply || decision.ShouldRequeue || decision.RequeueError != nil {
 		t.Fatalf("decision = %+v, want apply without requeue", decision)
+	}
+}
+
+func TestPipeline_processStateEngine_ServingComponentKeepsStatus(t *testing.T) {
+	rollout := ComponentHealth{
+		Component: "Runtime",
+		State:     constants.AIMStatusProgressing,
+		Reason:    "RolloutInProgress",
+		Message:   "new revision is pending",
+		Serving:   true,
+	}
+	tests := []struct {
+		name       string
+		other      ComponentHealth
+		wantStatus constants.AIMStatus
+		wantReason string
+	}{
+		{
+			name:       "serving component alone keeps status and explains Ready",
+			other:      ComponentHealth{Component: "Route", State: constants.AIMStatusReady, Reason: "RouteReady"},
+			wantStatus: constants.AIMStatusReady,
+			wantReason: "RolloutInProgress",
+		},
+		{
+			name:       "failed component still lowers status and explains Ready",
+			other:      ComponentHealth{Component: "Route", State: constants.AIMStatusFailed, Reason: "RouteFailed"},
+			wantStatus: constants.AIMStatusFailed,
+			wantReason: "RouteFailed",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obs := testObservationCustomHealth{health: []ComponentHealth{rollout, tt.other}}
+			cm := NewConditionManager(nil)
+			status := &testStatus{}
+			p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
+				Reconciler: &testReconcilerCustomHealth{},
+			}
+
+			if _, err := p.processStateEngine(context.Background(), obs, cm, status); err != nil {
+				t.Fatal(err)
+			}
+			if status.Status != string(tt.wantStatus) {
+				t.Errorf("status = %q, want %q", status.Status, tt.wantStatus)
+			}
+			if component := cm.Get("RuntimeReady"); component == nil || component.Status != metav1.ConditionFalse {
+				t.Errorf("RuntimeReady = %#v, want False", component)
+			}
+			ready := cm.Get(ConditionTypeReady)
+			if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != tt.wantReason {
+				t.Errorf("Ready = %#v, want False with reason %q", ready, tt.wantReason)
+			}
+		})
 	}
 }
 
@@ -512,6 +598,7 @@ func TestPipeline_processStateEngine_ObservabilityLevels(t *testing.T) {
 		wantEventLevel  EventLevel
 		wantLogMode     LogMode
 		wantLogLevel    int
+		wantLogAsInfo   bool
 		description     string
 	}{
 		{
@@ -650,6 +737,42 @@ func TestPipeline_processStateEngine_ObservabilityLevels(t *testing.T) {
 			wantLogLevel:   0,
 			description:    "Ready=False due to component failure should use AsError",
 		},
+		{
+			name: "User-fixable failed component uses AsUserWarning",
+			componentHealth: []ComponentHealth{
+				{
+					Component:   testComponentModel,
+					State:       constants.AIMStatusFailed,
+					Reason:      "ProfileNotFound",
+					Message:     "no AIMProfile matched",
+					UserFixable: true,
+				},
+			},
+			conditionType:  testConditionTypeModelReady,
+			wantEventMode:  EventOnTransition,
+			wantEventLevel: LevelWarning,
+			wantLogMode:    LogOnTransition,
+			wantLogAsInfo:  true,
+			description:    "User-fixable failures should emit a warning event with an info log on transition only",
+		},
+		{
+			name: "Ready=False explained by a user-fixable component uses AsUserWarning",
+			componentHealth: []ComponentHealth{
+				{
+					Component:   testComponentModel,
+					State:       constants.AIMStatusFailed,
+					Reason:      "ProfileNotFound",
+					Message:     "no AIMProfile matched",
+					UserFixable: true,
+				},
+			},
+			conditionType:  ConditionTypeReady,
+			wantEventMode:  EventOnTransition,
+			wantEventLevel: LevelWarning,
+			wantLogMode:    LogOnTransition,
+			wantLogAsInfo:  true,
+			description:    "Ready=False should follow the user-fixable component it reports",
+		},
 	}
 
 	for _, tt := range tests {
@@ -685,6 +808,10 @@ func TestPipeline_processStateEngine_ObservabilityLevels(t *testing.T) {
 
 			if cfg.logLevel != tt.wantLogLevel {
 				t.Errorf("%s: logLevel = %v, want %v", tt.description, cfg.logLevel, tt.wantLogLevel)
+			}
+
+			if cfg.logAsInfo != tt.wantLogAsInfo {
+				t.Errorf("%s: logAsInfo = %v, want %v", tt.description, cfg.logAsInfo, tt.wantLogAsInfo)
 			}
 		})
 	}

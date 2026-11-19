@@ -251,6 +251,90 @@ func TestResolveByName_NotFound(t *testing.T) {
 	}
 }
 
+// TestResolveByModel_ModelWithoutProfiles covers a service that resolves
+// through a model whose spec produces no AIMProfiles: ProfileReady names the
+// model and its ProfilesAvailable cause instead of the generic ProfileNotFound.
+func TestResolveByModel_ModelWithoutProfiles(t *testing.T) {
+	const (
+		cause    = "spec.discovery.extractMetadata is false, so the image is not inspected; set it to true to discover AIMProfiles"
+		noMatch  = "no AIMProfile or AIMClusterProfile matched the selector"
+		modelRef = "my-model"
+	)
+	noProfiles := aimv1alpha1.AIMModelStatus{Conditions: []metav1.Condition{{
+		Type:    aimv1alpha1.AIMModelConditionProfilesAvailable,
+		Status:  metav1.ConditionFalse,
+		Reason:  aimv1alpha1.AIMModelReasonNoDeployableProfiles,
+		Message: cause,
+	}}}
+	namespaceModel := &aimv1alpha2.AIMModel{ObjectMeta: metav1.ObjectMeta{Name: modelRef, Namespace: "ns"}}
+	tests := []struct {
+		name        string
+		objs        []client.Object
+		wantReason  string
+		wantMessage string
+	}{
+		{
+			name: "AIMModel without AIMProfiles",
+			objs: []client.Object{&aimv1alpha2.AIMModel{
+				ObjectMeta: namespaceModel.ObjectMeta,
+				Status:     noProfiles,
+			}},
+			wantReason:  aimv1alpha1.AIMServiceReasonModelHasNoProfiles,
+			wantMessage: `AIMModel "my-model" produces no AIMProfiles: ` + cause,
+		},
+		{
+			name: "AIMClusterModel without AIMProfiles",
+			objs: []client.Object{&aimv1alpha2.AIMClusterModel{
+				ObjectMeta: metav1.ObjectMeta{Name: modelRef},
+				Status:     noProfiles,
+			}},
+			wantReason:  aimv1alpha1.AIMServiceReasonModelHasNoProfiles,
+			wantMessage: `AIMClusterModel "my-model" produces no AIMProfiles: ` + cause,
+		},
+		{
+			name:        "AIMModel without the condition",
+			objs:        []client.Object{namespaceModel},
+			wantReason:  aimv1alpha1.AIMServiceReasonProfileNotFound,
+			wantMessage: noMatch,
+		},
+		{
+			name: "namespace AIMModel shadows an AIMClusterModel without AIMProfiles",
+			objs: []client.Object{namespaceModel, &aimv1alpha2.AIMClusterModel{
+				ObjectMeta: metav1.ObjectMeta{Name: modelRef},
+				Status:     noProfiles,
+			}},
+			wantReason:  aimv1alpha1.AIMServiceReasonProfileNotFound,
+			wantMessage: noMatch,
+		},
+		{
+			name:        "missing model",
+			wantReason:  aimv1alpha1.AIMServiceReasonProfileNotFound,
+			wantMessage: noMatch,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newResolverClient(t, newResolverTestScheme(t), tt.objs...)
+			service := &aimv1alpha2.AIMService{
+				ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "ns"},
+				Spec: aimv1alpha1.AIMServiceSpec{
+					Model: &aimv1alpha1.AIMServiceModel{Name: ptr.To(modelRef)},
+				},
+			}
+
+			_, _, res := resolveProfileCandidates(context.Background(), c, nil, service)
+			health := ServiceObservation{ServiceFetchResult: ServiceFetchResult{resolution: res}}.getProfileHealth()
+
+			if health.State != constants.AIMStatusFailed || !health.UserFixable ||
+				health.Reason != tt.wantReason || health.Message != tt.wantMessage {
+				t.Fatalf("profile health = %s/%s %q (userFixable=%v), want Failed/%s %q (userFixable=true)",
+					health.State, health.Reason, health.Message, health.UserFixable, tt.wantReason, tt.wantMessage)
+			}
+		})
+	}
+}
+
 // TestResolveBySelector_NamespaceListErrorIsInfra ensures a transient
 // List failure on the namespace AIMProfile list surfaces as a FetchResult
 // error (infrastructure) rather than ProfileNotFound. Without this,

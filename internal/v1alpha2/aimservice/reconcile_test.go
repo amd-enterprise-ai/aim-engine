@@ -26,6 +26,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +34,7 @@ import (
 	"github.com/go-logr/logr"
 	kservev1alpha1 "github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -2482,6 +2484,137 @@ func TestGetInferenceServiceHealth_PredictorPodCreationFailed(t *testing.T) {
 	}
 }
 
+func TestGetInferenceServiceHealth_PredictorRollout(t *testing.T) {
+	inferenceService := &servingv1beta1.InferenceService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", Generation: 2},
+		Status: servingv1beta1.InferenceServiceStatus{
+			Status: duckv1.Status{
+				ObservedGeneration: 2,
+				Conditions:         duckv1.Conditions{{Type: "Ready", Status: corev1.ConditionFalse}},
+			},
+		},
+	}
+	readyPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-predictor-old"},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+		},
+	}
+	pendingPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-predictor-new"},
+		Status:     corev1.PodStatus{Phase: corev1.PodPending},
+	}
+	unschedulablePod := *pendingPod.DeepCopy()
+	unschedulablePod.Status.Conditions = []corev1.PodCondition{{
+		Type:    corev1.PodScheduled,
+		Status:  corev1.ConditionFalse,
+		Reason:  corev1.PodReasonUnschedulable,
+		Message: "0/3 nodes are available: 3 Insufficient memory.",
+	}}
+	deployment := func(replicas, updated int32) controllerutils.FetchResult[*appsv1.Deployment] {
+		return controllerutils.FetchResult[*appsv1.Deployment]{Value: &appsv1.Deployment{
+			Status: appsv1.DeploymentStatus{Replicas: replicas, UpdatedReplicas: updated, ReadyReplicas: 1},
+		}}
+	}
+
+	tests := []struct {
+		name        string
+		pods        []corev1.Pod
+		deployment  controllerutils.FetchResult[*appsv1.Deployment]
+		refusal     string
+		wantState   constants.AIMStatus
+		wantReason  string
+		wantServing bool
+		wantMessage string
+	}{
+		{
+			name:        "old revision serves while new pod is unschedulable",
+			pods:        []corev1.Pod{readyPod, unschedulablePod},
+			deployment:  deployment(2, 1),
+			wantState:   constants.AIMStatusProgressing,
+			wantReason:  aimv1alpha1.AIMServiceReasonRolloutInProgress,
+			wantServing: true,
+			wantMessage: "Predictor rollout in progress: 1 of 2 pods are on the new revision, 1 pod(s) are ready and serving; " +
+				"pod svc-predictor-new is Pending: Unschedulable: 0/3 nodes are available: 3 Insufficient memory.",
+		},
+		{
+			name:        "old revision serves while new pod is pending without a scheduler reason",
+			pods:        []corev1.Pod{readyPod, pendingPod},
+			deployment:  deployment(2, 1),
+			wantState:   constants.AIMStatusProgressing,
+			wantReason:  aimv1alpha1.AIMServiceReasonRolloutInProgress,
+			wantServing: true,
+			wantMessage: "Predictor rollout in progress: 1 of 2 pods are on the new revision, 1 pod(s) are ready and serving; " +
+				"pod svc-predictor-new is Pending",
+		},
+		{
+			name:        "old revision serves while the new pod is refused",
+			pods:        []corev1.Pod{readyPod},
+			deployment:  deployment(1, 0),
+			refusal:     `pods "svc-predictor-new" is forbidden: exceeded quota: compute`,
+			wantState:   constants.AIMStatusProgressing,
+			wantReason:  aimv1alpha1.AIMServiceReasonRolloutInProgress,
+			wantServing: true,
+			wantMessage: "Predictor rollout in progress: 0 of 1 pods are on the new revision, 1 pod(s) are ready and serving; " +
+				`the predictor Deployment cannot create a pod: pods "svc-predictor-new" is forbidden: exceeded quota: compute`,
+		},
+		{
+			name:       "scale-up on the current revision stays ready",
+			pods:       []corev1.Pod{readyPod, unschedulablePod},
+			deployment: deployment(2, 2),
+			wantState:  constants.AIMStatusReady,
+			wantReason: aimv1alpha1.AIMServiceReasonRuntimeScaling,
+		},
+		{
+			name: "missing predictor deployment keeps ready pods authoritative",
+			pods: []corev1.Pod{readyPod},
+			deployment: controllerutils.FetchResult[*appsv1.Deployment]{
+				Error: apierrors.NewNotFound(schema.GroupResource{Group: "apps", Resource: "deployments"}, "svc-predictor"),
+			},
+			wantState:  constants.AIMStatusReady,
+			wantReason: aimv1alpha1.AIMServiceReasonRuntimeScaling,
+		},
+		{
+			name:       "predictor deployment fetch error is reported",
+			pods:       []corev1.Pod{readyPod},
+			deployment: controllerutils.FetchResult[*appsv1.Deployment]{Error: errors.New("cache unavailable")},
+			wantState:  constants.AIMStatusFailed,
+			wantReason: reasonFetchError,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isvc := inferenceService
+			if tt.refusal != "" {
+				isvc = inferenceService.DeepCopy()
+				isvc.Status.Conditions = append(isvc.Status.Conditions, duckv1.Conditions{{
+					Type:    servingv1beta1.PredictorReady,
+					Status:  corev1.ConditionFalse,
+					Reason:  "FailedCreate",
+					Message: tt.refusal,
+				}}...)
+			}
+			obs := ServiceObservation{ServiceFetchResult: ServiceFetchResult{
+				inferenceService: controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: isvc},
+				inferenceServicePods: &controllerutils.FetchResult[*corev1.PodList]{
+					Value: &corev1.PodList{Items: tt.pods},
+				},
+				predictorDeployment: tt.deployment,
+			}}
+
+			health := obs.getInferenceServiceHealth()
+			if health.State != tt.wantState || health.Reason != tt.wantReason || health.Serving != tt.wantServing {
+				t.Fatalf("health = %s/%s serving=%t, want %s/%s serving=%t",
+					health.State, health.Reason, health.Serving, tt.wantState, tt.wantReason, tt.wantServing)
+			}
+			if tt.wantMessage != "" && health.Message != tt.wantMessage {
+				t.Errorf("message = %q, want %q", health.Message, tt.wantMessage)
+			}
+		})
+	}
+}
+
 func TestPlanProfileCache_SkipsWhenExisting(t *testing.T) {
 	service := &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns"},
@@ -3591,4 +3724,77 @@ func legacyConfigMapDeleteCount(
 		count++
 	}
 	return count
+}
+
+func TestPlanStaleChildCleanup(t *testing.T) {
+	service := &aimv1alpha2.AIMService{ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "svc-uid"}}
+	owner := []metav1.OwnerReference{{Kind: "AIMService", Name: testServiceName, UID: service.UID, Controller: ptr.To(true)}}
+	otherOwner := []metav1.OwnerReference{{Kind: "AIMService", Name: "other", UID: "other-uid", Controller: ptr.To(true)}}
+	labeled := func(profile string) metav1.ObjectMeta {
+		return metav1.ObjectMeta{Labels: map[string]string{constants.LabelProfile: profile}}
+	}
+	cache := func(name, profile string, owners []metav1.OwnerReference) aimv1alpha2.AIMProfileCache {
+		return aimv1alpha2.AIMProfileCache{
+			ObjectMeta: metav1.ObjectMeta{Name: name, OwnerReferences: owners},
+			Spec:       aimv1alpha2.AIMProfileCacheSpec{ProfileName: profile},
+		}
+	}
+	overlay := func(name string) aimv1alpha2.AIMProfile {
+		return aimv1alpha2.AIMProfile{ObjectMeta: metav1.ObjectMeta{Name: name, OwnerReferences: owner}}
+	}
+	pods := func(profiles ...string) *controllerutils.FetchResult[*corev1.PodList] {
+		list := &corev1.PodList{}
+		for _, profile := range profiles {
+			list.Items = append(list.Items, corev1.Pod{ObjectMeta: labeled(profile)})
+		}
+		return &controllerutils.FetchResult[*corev1.PodList]{Value: list}
+	}
+
+	tests := []struct {
+		name        string
+		isvcProfile string
+		pods        *controllerutils.FetchResult[*corev1.PodList]
+		want        []string
+	}{
+		{name: "rollout onto profile-b finished", isvcProfile: "profile-b", pods: pods("profile-b"), want: []string{"cache-a", "profile-a"}},
+		{name: "InferenceService still on profile-a", isvcProfile: "profile-a", pods: pods("profile-a")},
+		{name: "pod on profile-a still running", isvcProfile: "profile-b", pods: pods("profile-b", "profile-a")},
+		{name: "pods not observed", isvcProfile: "profile-b"},
+		{name: "pod list failed", isvcProfile: "profile-b", pods: &controllerutils.FetchResult[*corev1.PodList]{Error: errors.New("boom")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isvc := currentReadyInferenceService("ns")
+			isvc.Labels = labeled(tt.isvcProfile).Labels
+			obs := ServiceObservation{
+				ServiceFetchResult: ServiceFetchResult{
+					service:              service,
+					inferenceService:     controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: isvc},
+					inferenceServicePods: tt.pods,
+					serviceProfileCaches: controllerutils.FetchResult[*aimv1alpha2.AIMProfileCacheList]{Value: &aimv1alpha2.AIMProfileCacheList{
+						Items: []aimv1alpha2.AIMProfileCache{
+							cache("cache-a", "profile-a", owner),
+							cache("cache-b", "profile-b", owner),
+							cache("cache-a-other-service", "profile-a", otherOwner),
+						},
+					}},
+					serviceOverlayProfiles: controllerutils.FetchResult[*aimv1alpha2.AIMProfileList]{Value: &aimv1alpha2.AIMProfileList{
+						Items: []aimv1alpha2.AIMProfile{overlay("profile-a"), overlay("profile-b")},
+					}},
+				},
+				profileName: "profile-b",
+			}
+
+			plan := controllerutils.PlanResult{}
+			planStaleChildCleanup(&plan, obs, logr.Discard())
+
+			var got []string
+			for _, obj := range plan.GetToDelete() {
+				got = append(got, obj.GetName())
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("deleted %v, want %v", got, tt.want)
+			}
+		})
+	}
 }

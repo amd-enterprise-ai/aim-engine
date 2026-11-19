@@ -156,7 +156,7 @@ spec:
       VLLM_LOG_LEVEL: DEBUG
 ```
 
-The controller materialises a service-owned overlay `AIMProfile` named `<seed>-<service>-overlay-<hash>` with the override applied, then resolves the service to the overlay. The overlay is garbage-collected with the service.
+The controller materialises a service-owned overlay `AIMProfile` named `<seed>-<service>-overlay-<hash>` with the override applied, then resolves the service to the overlay. The overlay is garbage-collected with the service, or once the service has rolled out on another AIMProfile.
 
 Which container image the overlay runs is tied to whether you are replacing the model weights. If you set `modelSources` (for example to use fine-tuned weights), the controller does not keep the seed profile's model-optimized image — that image is built for the vendor's weights. Instead it uses the `aim-base` runtime for that model line so your new weights land on the standard base image. If you do not override weights and only change things like `acceleratorPartitioningMode`, `containerEnv` / `engineEnv`, or `engineArgs`, the overlay keeps the seed's model-optimized image, so changing partitioning or environment settings cannot quietly switch the service to the generic base runtime. See [Image resolution](../concepts/profilesets.md#image-resolution) for the full table.
 

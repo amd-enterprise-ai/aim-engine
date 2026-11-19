@@ -41,7 +41,8 @@ When caching is active, AIM Engine creates a hierarchy of resources:
 
 When `AIMProfile.spec.caching.enabled` is set, the shared profile cache is owned
 by the profile, so multiple services using that profile reuse it. A dedicated
-cache is owned by its service and is garbage-collected with the service.
+cache is owned by its service and is deleted with the service, or once the
+service has rolled out on another AIMProfile.
 
 A profile-owned cache resolves the namespace or cluster RuntimeConfig named
 `default`; `AIMProfile.spec.caching` has no `runtimeConfigName` selector.

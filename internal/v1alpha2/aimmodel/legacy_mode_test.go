@@ -23,10 +23,119 @@
 package aimmodel
 
 import (
+	"errors"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
+
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
+
+func TestDecorateStatus_ProfilesAvailableNamesCause(t *testing.T) {
+	t.Parallel()
+
+	const replaceHint = "; replace the model as described in the upgrade guide's #replace-models-without-a-native-path section"
+	sources := []aimv1alpha1.AIMModelSource{{ModelID: "org/model", SourceURI: "hf://org/model"}}
+	noExtract := &aimv1alpha1.AIMModelDiscoveryConfig{ExtractMetadata: ptr.To(false)}
+	tests := []struct {
+		name        string
+		spec        aimv1alpha1.AIMModelSpec
+		existing    controllerutils.FetchResult[[]managedProfile]
+		wantMessage string
+	}{
+		{
+			name:        "extractMetadata false",
+			spec:        aimv1alpha1.AIMModelSpec{Image: testImageModelImage, Discovery: noExtract},
+			wantMessage: "spec.discovery.extractMetadata is false, so the image is not inspected; set it to true to discover AIMProfiles",
+		},
+		{
+			name:        "image with spec.modelSources",
+			spec:        aimv1alpha1.AIMModelSpec{Image: testImageModelImage, ModelSources: sources},
+			wantMessage: "spec.modelSources turns off image discovery" + replaceHint,
+		},
+		{
+			name:        "fine-tune without an image",
+			spec:        aimv1alpha1.AIMModelSpec{AimId: "org/model", ModelSources: sources},
+			wantMessage: "none of spec.image, spec.modelId or spec.profiles is set" + replaceHint,
+		},
+		{
+			name: "image with discovery",
+			spec: aimv1alpha1.AIMModelSpec{Image: testImageModelImage},
+		},
+		{
+			name: "modelId",
+			spec: aimv1alpha1.AIMModelSpec{ModelID: "org/model"},
+		},
+		{
+			name: "managed AIMProfiles still exist",
+			spec: aimv1alpha1.AIMModelSpec{Image: testImageModelImage, Discovery: noExtract},
+			existing: controllerutils.FetchResult[[]managedProfile]{
+				Value: []managedProfile{{Object: &aimv1alpha2.AIMProfile{}}},
+			},
+		},
+		{
+			name:        "profile list error keeps the previous condition",
+			spec:        aimv1alpha1.AIMModelSpec{Image: testImageModelImage},
+			existing:    controllerutils.FetchResult[[]managedProfile]{Error: errors.New("list failed")},
+			wantMessage: "stale",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Start from a stale condition so the cases without a cause show it clears.
+			cm := staleProfilesAvailable()
+			(&ModelReconciler{}).DecorateStatus(&aimv1alpha1.AIMModelStatus{}, cm, ModelObservation{
+				ModelFetchResult: ModelFetchResult{
+					model:            &aimv1alpha2.AIMModel{Spec: test.spec},
+					existingProfiles: test.existing,
+				},
+			})
+			requireProfilesAvailable(t, "AIMModel", cm, test.wantMessage)
+
+			cm = staleProfilesAvailable()
+			(&ClusterModelReconciler{}).DecorateStatus(&aimv1alpha1.AIMModelStatus{}, cm, ClusterModelObservation{
+				ClusterModelFetchResult: ClusterModelFetchResult{
+					model:                   &aimv1alpha2.AIMClusterModel{Spec: test.spec},
+					existingClusterProfiles: test.existing,
+				},
+			})
+			requireProfilesAvailable(t, "AIMClusterModel", cm, test.wantMessage)
+		})
+	}
+}
+
+func staleProfilesAvailable() *controllerutils.ConditionManager {
+	return controllerutils.NewConditionManager([]metav1.Condition{{
+		Type:    aimv1alpha1.AIMModelConditionProfilesAvailable,
+		Status:  metav1.ConditionFalse,
+		Reason:  aimv1alpha1.AIMModelReasonNoDeployableProfiles,
+		Message: "stale",
+	}})
+}
+
+func requireProfilesAvailable(t *testing.T, kind string, cm *controllerutils.ConditionManager, wantMessage string) {
+	t.Helper()
+	got := cm.Get(aimv1alpha1.AIMModelConditionProfilesAvailable)
+	if wantMessage == "" {
+		if got != nil {
+			t.Fatalf("%s ProfilesAvailable = %#v, want no condition", kind, got)
+		}
+		return
+	}
+	if got == nil ||
+		got.Status != metav1.ConditionFalse ||
+		got.Reason != aimv1alpha1.AIMModelReasonNoDeployableProfiles ||
+		got.Message != wantMessage {
+		t.Fatalf("%s ProfilesAvailable = %#v, want False/%s with message %q",
+			kind, got, aimv1alpha1.AIMModelReasonNoDeployableProfiles, wantMessage)
+	}
+}
 
 func TestEnsureBaseImageBridge(t *testing.T) {
 	t.Parallel()
