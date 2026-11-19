@@ -232,7 +232,8 @@ func TestNewDRAClaimRequest(t *testing.T) {
 	}{
 		{
 			name: "whole GPUs of one model", spec: gpu("MI355X", 8, ""), wantCount: 8,
-			want: `device.attributes["gpu.amd.com"].deviceID in ["0x75a3", "0x75b3"] && device.attributes["gpu.amd.com"].type == "amdgpu"`,
+			want: `device.attributes["gpu.amd.com"].deviceID in ["0x75a3", "0x75b3"] && device.attributes["gpu.amd.com"].type == "amdgpu" && ` +
+				`(!has(device.attributes["gpu.amd.com"].partitionProfile) || device.attributes["gpu.amd.com"].partitionProfile in ["", "spx_nps1"])`,
 		},
 		{
 			name: "a partition scheme", spec: gpu("MI300X", 4, "CPX-NPS4"), wantCount: 4,

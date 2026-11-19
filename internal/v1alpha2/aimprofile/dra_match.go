@@ -196,7 +196,9 @@ func (r *draRequirement) celSelector() string {
 	}
 	switch r.partitioning {
 	case "", PartitioningModeUnpartitioned:
-		terms = append(terms, fmt.Sprintf("%s == %q", attr("type"), DRADeviceTypeGPU))
+		terms = append(terms, fmt.Sprintf("%s == %q", attr("type"), DRADeviceTypeGPU),
+			fmt.Sprintf("(!has(%s) || %s in [\"\", %q])",
+				attr("partitionProfile"), attr("partitionProfile"), DRAUnpartitionedProfile))
 	case PartitioningModePartitioned:
 		terms = append(terms, fmt.Sprintf("%s == %q", attr("type"), DRADeviceTypePartition))
 	default:
