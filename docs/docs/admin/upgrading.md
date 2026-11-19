@@ -295,21 +295,32 @@ Before you roll back, while the current operator still runs:
        done
    ```
 
-Then roll back both Helm releases, the CRDs first:
+Then roll back both Helm releases, the operator first, then restart the operator:
 
 ```bash
+helm rollback aim-engine -n aim-system
 helm rollback aim-engine-crds -n aim-system
 kubectl wait --for=condition=Established --timeout=60s \
   crd/aimservicetemplates.aim.eai.amd.com \
   crd/aimclusterservicetemplates.aim.eai.amd.com \
   crd/aimtemplatecaches.aim.eai.amd.com
-helm rollback aim-engine -n aim-system --wait --timeout 5m
+kubectl rollout restart deployment/aim-engine-controller-manager -n aim-system
+kubectl rollout status deployment/aim-engine-controller-manager -n aim-system --timeout=5m
 ```
 
 Without a revision, `helm rollback` returns to the previous revision;
 `helm history` lists the others. If you install the CRDs with kubectl, replace
-the first command with `kubectl apply --server-side -f crds.yaml`, using the
+the second command with `kubectl apply --server-side -f crds.yaml`, using the
 `crds.yaml` of the release you roll back to.
+
+The operator chart goes first because its manifest contains a v1alpha2
+`AIMClusterRuntimeConfig`, which v0.2.7's CRDs don't serve: once they are
+back, `helm rollback aim-engine` can't read the current release's manifest.
+v0.2.7 needs the template CRDs and v1alpha1 AIMService, AIMModel and
+AIMClusterModel, so until the CRDs are rolled back its pod exits on
+`no matches for kind "AIMTemplateCache"`, and the rolling update keeps the
+current operator running. That's why the operator rollback has no `--wait`.
+The restart replaces the crash-looping pod once the CRDs are back.
 
 If you [kept the template CRDs](#remove-the-template-crds) and haven't removed
 them yet, the current CRDs release no longer includes them, so
@@ -317,26 +328,17 @@ them yet, the current CRDs release no longer includes them, so
 `no CustomResourceDefinition with the name ... found`. Upgrade the CRDs release
 to the chart version you roll back to instead. Helm adopts the kept CRDs,
 because they still carry the release's labels and annotations. This also works
-after a failed rollback. Then roll back the operator as above:
+after a failed rollback:
 
 ```bash
 helm upgrade aim-engine-crds oci://docker.io/amdenterpriseai/aim-engine-crds-chart \
   --version <previous-version> \
   --namespace aim-system
-helm rollback aim-engine -n aim-system --wait --timeout 5m
 ```
 
-This release removes the template CRDs and stops serving v1alpha1 for
-AIMService, AIMModel and AIMClusterModel. v0.2.7 needs both, so rolling back
-only the operator fails: the v0.2.7 pod exits on
-`no matches for kind "AIMTemplateCache"`, and the rolling update keeps the
-current operator running. Without `--wait`, `helm rollback` still reports
-success. If you already rolled back only the operator, roll back the CRDs, then
-delete the crash-looping operator pod.
-
-Between the two rollbacks, the current operator runs on the v0.2.7 CRDs. It
-logs failed applies, such as `.spec.baseImageRef: field not declared in schema`,
-and deletes nothing.
+Between the CRDs rollback and the restart, the current operator runs on the
+v0.2.7 CRDs. It logs failed applies, such as
+`.spec.baseImageRef: field not declared in schema`, and deletes nothing.
 
 v0.2.7 doesn't restore everything; see [Rollback limits](#rollback-limits).
 

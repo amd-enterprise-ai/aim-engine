@@ -702,16 +702,17 @@ jobs:
         run: |
           set -euo pipefail
           # The commands of docs/docs/admin/upgrading.md#rollback, for the kubectl CRD install this lane uses.
+          helm rollback aim-engine -n aim-system
           kubectl apply --server-side -f "${BASELINE_DIR}/dist/crds.yaml"
           kubectl wait --for=condition=Established --timeout=60s \
             crd/aimservicetemplates.aim.eai.amd.com \
             crd/aimclusterservicetemplates.aim.eai.amd.com \
             crd/aimtemplatecaches.aim.eai.amd.com
-          helm rollback aim-engine -n aim-system --wait --timeout 5m
+          kubectl rollout restart deployment/aim-engine-controller-manager -n aim-system
 
       - name: Wait for the rolled-back operator
         if: matrix.scenario == 'v0.2.7'
-        run: kubectl rollout status deployment/aim-engine-controller-manager -n aim-system --timeout=180s
+        run: kubectl rollout status deployment/aim-engine-controller-manager -n aim-system --timeout=5m
 
       - name: Verify the rollback with Chainsaw
         if: matrix.scenario == 'v0.2.7'
