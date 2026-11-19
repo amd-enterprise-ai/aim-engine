@@ -217,6 +217,24 @@ spec:
                 value: (join('', ['/integration/adapters-feature-override/', $namespace, '/qwen25-05b-lora/v1']))
             content: bash ../_shared/validate-adapter-loaded.sh
 
+    - name: Assert runtime adapter loading reaches AIMService status
+      description: |
+        The controller polls each ready predictor's /v1/models endpoint and
+        promotes a fully observed adapter from Downloaded to Loaded.
+      try:
+        - assert:
+            timeout: 2m
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: qwen25-05b-lora
+              status:
+                (adapters[?name == 'qwen25-05b-lora']):
+                  - state: Loaded
+                    loadedReplicas: 1/1
+                    (lastObserved != null): true
+
     - name: Verify the Gateway blocks dynamic LoRA mutation APIs
       description: |
         The load/unload handlers must respond inside the predictor but return

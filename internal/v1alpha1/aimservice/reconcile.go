@@ -49,9 +49,10 @@ import (
 
 // ServiceReconciler implements the domain logic for AIMService reconciliation.
 type ServiceReconciler struct {
-	Clientset kubernetes.Interface
-	Scheme    *runtime.Scheme
-	APIReader client.Reader
+	Clientset          kubernetes.Interface
+	Scheme             *runtime.Scheme
+	APIReader          client.Reader
+	RuntimeModelClient aimadapter.RuntimeModelClient
 }
 
 func (r *ServiceReconciler) GetApplyOptions(obs ServiceObservation) controllerutils.ApplyOptions {
@@ -92,7 +93,8 @@ type ServiceFetchResult struct {
 	// adapterDeps holds the per-adapter artifacts, staging Jobs, and resolved
 	// base-model artifact for spec.adapters. Populated only when the service
 	// declares adapters. See internal/aimadapter.
-	adapterDeps aimadapter.Dependencies
+	adapterDeps    aimadapter.Dependencies
+	adapterRuntime aimadapter.RuntimeObservation
 }
 
 // FetchRemoteState fetches all resources needed for AIMService reconciliation.
@@ -189,6 +191,24 @@ func (r *ServiceReconciler) FetchRemoteState(
 		parentName, parentErr := resolveAdapterParentName(result)
 		result.adapterDeps = aimadapter.Fetch(ctx, c, service, parentName)
 		result.adapterDeps.ParentResolutionErr = parentErr
+		if aimadapter.ShouldObserveRuntime(service) &&
+			result.inferenceServicePods != nil &&
+			result.inferenceServicePods.OK() &&
+			result.inferenceServicePods.Value != nil {
+			result.adapterRuntime = aimadapter.ObserveRuntimeModels(
+				ctx,
+				r.RuntimeModelClient,
+				result.inferenceServicePods.Value,
+			)
+			if result.adapterRuntime.FailedReplicas > 0 {
+				logger.V(1).Info(
+					"Runtime adapter observation incomplete; preserving last confirmed state",
+					"replicas", result.adapterRuntime.Replicas,
+					"failedReplicas", result.adapterRuntime.FailedReplicas,
+					"failures", result.adapterRuntime.Failures,
+				)
+			}
+		}
 	}
 
 	return result
@@ -1418,6 +1438,7 @@ func (r *ServiceReconciler) ComposeState(
 			fetch.mergedRuntimeConfig.Value,
 			fetch.mergedRuntimeConfig.Error,
 		)
+		obs.adapterState.Runtime = fetch.adapterRuntime
 	}
 
 	return obs
@@ -1446,6 +1467,7 @@ func (r *ServiceReconciler) PlanResources(
 	); requeueAfter > 0 {
 		planResult.RequestRequeueAfter(requeueAfter)
 	}
+	planResult.RequestRequeueAfter(aimadapter.RuntimePollRequeueAfter(service, obs.adapterState))
 
 	// 0. Plan model creation if needed (before template check - model can be created independently).
 	// Image-based models are shared. Inline-custom compatibility models carry

@@ -51,6 +51,7 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimadapter"
 	servicepolicy "github.com/amd-enterprise-ai/aim-engine/internal/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
@@ -338,11 +339,13 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		r.APIReader = mgr.GetAPIReader()
 	}
 	recorder := mgr.GetEventRecorderFor("aim-" + serviceName + "-controller")
+	runtimeModelClient := aimadapter.NewHTTPRuntimeModelClient()
 
 	r.templateReconciler = &aimservice.ServiceReconciler{
-		Clientset: r.Clientset,
-		Scheme:    r.Scheme,
-		APIReader: mgr.GetAPIReader(),
+		Clientset:          r.Clientset,
+		Scheme:             r.Scheme,
+		APIReader:          mgr.GetAPIReader(),
+		RuntimeModelClient: runtimeModelClient,
 	}
 	templatePipeline := &controllerutils.Pipeline[
 		*aimv1alpha1.AIMService,
@@ -364,9 +367,10 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	]{pipeline: templatePipeline}
 
 	r.profileReconciler = &profileservice.ProfileServiceReconciler{
-		Scheme:    r.Scheme,
-		Recorder:  recorder,
-		APIReader: mgr.GetAPIReader(),
+		Scheme:             r.Scheme,
+		Recorder:           recorder,
+		APIReader:          mgr.GetAPIReader(),
+		RuntimeModelClient: runtimeModelClient,
 	}
 	profilePipeline := &controllerutils.Pipeline[
 		*aimv1alpha1.AIMService,

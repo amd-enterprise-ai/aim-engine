@@ -127,6 +127,10 @@ type State struct {
 	AdapterDiskPVC        string
 	AdapterDiskPVCUID     string
 	StorageBindingChanged bool
+	// Runtime is the latest complete or partial /v1/models observation across
+	// ready predictor replicas. It is report-only and never gates staging or
+	// InferenceService readiness.
+	Runtime RuntimeObservation
 	// MaxRank is the AIM_ADAPTER_MAX_RANK value resolved for the serving
 	// workload. Dynamic mode uses service/runtime configuration; static mode
 	// infers the value from the declared adapter artifacts.
@@ -1189,19 +1193,62 @@ func PreserveExistingMount(service *aimv1alpha1.AIMService, st State) bool {
 			(st.StorageBindingChanged && !st.CurrentSyncSucceeded))
 }
 
-// DecorateStatus mirrors the disk-side adapter state onto the AIMService.
+// DecorateStatus mirrors disk-side adapter state onto the AIMService and folds
+// in a complete runtime observation when one is available. Incomplete runtime
+// observations preserve the last confirmed load state rather than turning a
+// transient timeout into a false unload.
 func DecorateStatus(status *aimv1alpha1.AIMServiceStatus, st State) {
 	now := metav1.Now()
+	previous := make(map[string]aimv1alpha1.AIMServiceAdapterStatus, len(status.Adapters))
+	for _, adapter := range status.Adapters {
+		previous[adapter.Name] = adapter
+	}
+
 	adapters := make([]aimv1alpha1.AIMServiceAdapterStatus, 0, len(st.Adapters))
 	for _, ad := range st.Adapters {
-		adapters = append(adapters, aimv1alpha1.AIMServiceAdapterStatus{
+		old, hadOld := previous[ad.Name]
+		item := aimv1alpha1.AIMServiceAdapterStatus{
 			Name:         ad.Name,
 			AdapterPath:  ad.AdapterPath,
 			ModelID:      ad.ModelID,
 			State:        ad.State,
 			LastObserved: &now,
 			LastError:    ad.LastError,
-		})
+		}
+
+		if ad.State == aimv1alpha1.AdapterStateDownloaded {
+			if st.Runtime.Complete && st.Runtime.Replicas > 0 {
+				loaded := st.Runtime.LoadedReplicas[ad.AdapterPath]
+				item.LoadedReplicas = fmt.Sprintf("%d/%d", loaded, st.Runtime.Replicas)
+				item.LastObserved = st.Runtime.ObservedAt.DeepCopy()
+				if loaded == st.Runtime.Replicas {
+					item.State = aimv1alpha1.AdapterStateLoaded
+				}
+			} else if hadOld && old.AdapterPath == ad.AdapterPath {
+				item.LoadedReplicas = old.LoadedReplicas
+				if old.LastObserved != nil {
+					item.LastObserved = old.LastObserved.DeepCopy()
+				}
+				if old.State == aimv1alpha1.AdapterStateLoaded {
+					item.State = aimv1alpha1.AdapterStateLoaded
+				}
+			}
+		}
+
+		// LastObserved tracks the latest reported state transition, not every
+		// identical poll. Preserving it for a stable observation prevents the
+		// status write from immediately retriggering another reconcile/poll.
+		if hadOld &&
+			old.AdapterPath == item.AdapterPath &&
+			old.ModelID == item.ModelID &&
+			old.State == item.State &&
+			old.LoadedReplicas == item.LoadedReplicas &&
+			old.LastError == item.LastError &&
+			old.LastObserved != nil {
+			item.LastObserved = old.LastObserved.DeepCopy()
+		}
+
+		adapters = append(adapters, item)
 	}
 	status.Adapters = adapters
 	// Report the valid startup ceiling resolved for this service. Configuration
