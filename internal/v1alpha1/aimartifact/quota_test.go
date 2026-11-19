@@ -23,6 +23,7 @@
 package aimartifact
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -33,7 +34,9 @@ import (
 	"k8s.io/utils/ptr"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
 const gi = int64(1024 * 1024 * 1024)
@@ -362,7 +365,7 @@ func TestFindEvictable_EvictionProtectedWithDefaultPriority(t *testing.T) {
 }
 
 func TestBuildInUseArtifactUIDs(t *testing.T) {
-	caches := []aimv1alpha1.AIMTemplateCache{
+	templateCaches := []aimv1alpha1.AIMTemplateCache{
 		{
 			Status: aimv1alpha1.AIMTemplateCacheStatus{
 				Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
@@ -381,14 +384,87 @@ func TestBuildInUseArtifactUIDs(t *testing.T) {
 		},
 	}
 
-	inUse := BuildInUseArtifactUIDs(caches)
-	if len(inUse) != 3 {
-		t.Fatalf("expected 3 in-use UIDs, got %d", len(inUse))
+	profileCaches := []aimv1alpha2.AIMProfileCache{
+		{
+			Status: aimv1alpha2.AIMProfileCacheStatus{
+				Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
+					"art-c": {UID: "uid-c", Name: "art-c"},
+					"art-d": {UID: "uid-d", Name: "art-d"},
+				},
+			},
+		},
 	}
-	for _, uid := range []types.UID{"uid-a", "uid-b", "uid-c"} {
+
+	inUse := BuildInUseArtifactUIDs(templateCaches, profileCaches)
+	if len(inUse) != 4 {
+		t.Fatalf("expected 4 in-use UIDs, got %d", len(inUse))
+	}
+	for _, uid := range []types.UID{"uid-a", "uid-b", "uid-c", "uid-d"} {
 		if !inUse[uid] {
 			t.Errorf("expected %s to be in use", uid)
 		}
+	}
+}
+
+func TestComposeState_ArtifactServedByProfileCacheIsNotEvicted(t *testing.T) {
+	defaultPriority := int32(0)
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "default",
+			Annotations: map[string]string{aimv1alpha1.ArtifactStorageQuotaAnnotation: "100Gi"},
+		},
+	}
+	served := makeArtifact("served", "uid-served", withReady(), withAllocatedSize(80*gi))
+	replacement := makeArtifact("replacement", "uid-replacement", withSpecSize(30*gi))
+	servingCache := aimv1alpha2.AIMProfileCache{
+		Status: aimv1alpha2.AIMProfileCacheStatus{
+			Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
+				"model": {UID: string(served.UID), Name: served.Name},
+			},
+		},
+	}
+
+	compose := func(profileCaches ...aimv1alpha2.AIMProfileCache) *QuotaDecision {
+		t.Helper()
+		fetch := ArtifactFetchResult{
+			artifact: &replacement,
+			mergedRuntimeConfig: controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{
+				Value: &aimv1alpha1.AIMRuntimeConfigCommon{
+					Artifact: &aimv1alpha1.AIMArtifactConfig{DefaultRetentionPriority: &defaultPriority},
+				},
+			},
+			namespace: &controllerutils.FetchResult[*corev1.Namespace]{Value: ns},
+			namespaceArtifacts: &controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]{
+				Value: &aimv1alpha1.AIMArtifactList{Items: []aimv1alpha1.AIMArtifact{served, replacement}},
+			},
+			templateCaches: &controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCacheList]{
+				Value: &aimv1alpha1.AIMTemplateCacheList{},
+			},
+			profileCaches: &controllerutils.FetchResult[*aimv1alpha2.AIMProfileCacheList]{
+				Value: &aimv1alpha2.AIMProfileCacheList{Items: profileCaches},
+			},
+		}
+		obs := (&ArtifactReconciler{}).ComposeState(
+			context.Background(),
+			controllerutils.ReconcileContext[*aimv1alpha1.AIMArtifact]{Object: &replacement},
+			fetch,
+		)
+		if obs.quotaDecision == nil {
+			t.Fatal("quota was not evaluated")
+		}
+		return obs.quotaDecision
+	}
+
+	if dec := compose(); len(dec.ToEvict) != 1 || dec.ToEvict[0].UID != served.UID {
+		t.Fatalf("without a profile cache serving it, the artifact should be evicted, got %+v", dec.ToEvict)
+	}
+
+	dec := compose(servingCache)
+	if len(dec.ToEvict) != 0 {
+		t.Errorf("artifact served by a profile cache was planned for eviction: %+v", dec.ToEvict)
+	}
+	if !dec.Blocked {
+		t.Error("replacement should be blocked by the quota while the served artifact is protected")
 	}
 }
 

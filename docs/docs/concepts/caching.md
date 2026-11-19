@@ -49,7 +49,7 @@ The cache and its artifacts persist independently of any single service. When a 
 The deduplication boundary is per-namespace:
 
 - The cache controller finds an existing shared `AIMProfileCache` for the same profile and reuses it (no new cache resource).
-- If a new cache is created, the artifact controller finds existing shared `AIMArtifact`s for the same `sourceUri` (+ storage class + downloader env) and reuses them.
+- If a new cache is created, the artifact controller finds existing shared `AIMArtifact`s for the same `sourceUri` (+ storage class + downloader env) and reuses them. The artifact's `downloadFilter` must also select the same files as the model source's: an artifact with no filter serves a source with no filter, and equal filters match regardless of glob order. An artifact with `downloadFilter: {}` holds the whole repository and serves any source with the same `sourceUri`.
 
 Result: multiple services that share a profile fan in onto a single set of `AIMArtifact`s, one download per artifact per namespace.
 
@@ -117,8 +117,19 @@ Cluster-scoped `AIMClusterProfile` resources cannot enable caching directly (clu
 |---|---|
 | `ProfileFound` | `ProfileResolved`, `ProfileNotFound` |
 | `ArtifactsReady` | `AllCachesReady`, `CreatingCaches`, `CachesNotReady`, `NoCaches` |
+| `ArtifactsReplacing` | `ReplacingArtifacts`, `ReplacementFailed`, `ArtifactsReplaced` |
 
 `status.artifacts` is a map from logical artifact name to the resolved `AIMArtifact` reference (`name`, `uid`).
+
+### Replacing an artifact
+
+When a model source's `downloadFilter` changes so the artifact a cache serves no longer selects the right files, the cache keeps serving that artifact while it creates and downloads one that matches. `status.artifacts` and `ArtifactsReady` follow the served artifact, so the cache and its services stay `Ready` during the download. `ArtifactsReplacing` is `True` and names both artifacts: `ReplacingArtifacts` with the replacement's status while it is created or downloads, and `ReplacementFailed` with the download error if the replacement fails or its download stalls (`Degraded`). In both cases the served artifact stays in use.
+
+Once the replacement is `Ready`, the cache switches `status.artifacts` to it, sets `ArtifactsReplacing` to `False` with reason `ArtifactsReplaced`, and emits an event naming the old and new artifacts. Services then mount the new artifact's PVC.
+
+The served artifact is kept only while it is still `Ready`, not being deleted, has the same `sourceUri`, could still be adopted by the cache, and, for `s3://` sources, uses the cache's runtime config. Otherwise the cache moves to the replacement and is not ready until it finishes. A served artifact that drops out of `Ready` even briefly is not picked up again, because the cache no longer lists it. The switch does not delete the old artifact; see [Upgrading](../admin/upgrading.md#download-filters-declared-by-aim-images) for reclaiming it.
+
+Both copies exist until the old artifact is deleted, so a replacement needs storage for a second copy of the model. The artifact the cache is serving counts as in use for [artifact storage quotas](../admin/storage-configuration.md#storage-quotas) and is never evicted to make room for its replacement: if the quota has no space left, the replacement is blocked with `StorageQuotaExceeded` and the cache keeps serving the old artifact.
 
 ## Deletion behaviour
 

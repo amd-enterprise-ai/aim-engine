@@ -1,0 +1,49 @@
+# Two profiles of one model that pull identical weights, so their caches resolve the
+# same Shared AIMArtifact. Neither declares a download filter yet; the test adds one
+# later. Their model sources must otherwise stay identical: sourceUri, env and the
+# filter feed the artifact name hash, and any divergence would split them onto two
+# artifacts before the test starts.
+#
+# filter-change-base opts into caching, so its profile reconciler materialises a
+# Shared cache that does not serve adapters. filter-change-lora is consumed by the
+# hand-made adapter-serving cache in lora-cache.yaml instead.
+#
+# No accelerator requirements, so both profiles reach Ready anywhere and their caches
+# are left waiting only on artifacts.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: filter-change-base
+spec:
+  aimId: test/filter-change
+  modelId: test/filter-change-fp8
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: general
+  primary: true
+  image: registry.example.com/test-image:1.0.0
+  modelSources:
+    - modelId: test/filter-change-fp8
+      sourceUri: hf://test-org/filter-change-weights
+      size: 10Mi
+  caching:
+    enabled: true
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: filter-change-lora
+spec:
+  aimId: test/filter-change
+  modelId: test/filter-change-fp8
+  engine: vllm
+  metric: throughput
+  precision: fp8
+  type: general
+  primary: false
+  image: registry.example.com/test-image:1.0.0
+  modelSources:
+    - modelId: test/filter-change-fp8
+      sourceUri: hf://test-org/filter-change-weights
+      size: 10Mi

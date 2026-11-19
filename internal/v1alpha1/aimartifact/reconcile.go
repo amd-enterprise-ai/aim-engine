@@ -32,6 +32,7 @@ import (
 	"time"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
@@ -43,7 +44,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -108,6 +108,7 @@ type ArtifactFetchResult struct {
 	namespaceArtifacts *controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]
 	clusterArtifacts   *controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]
 	templateCaches     *controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCacheList]
+	profileCaches      *controllerutils.FetchResult[*aimv1alpha2.AIMProfileCacheList]
 }
 
 type checkSizeOutput struct {
@@ -359,17 +360,17 @@ func (r *ArtifactReconciler) FetchRemoteState(
 			result.clusterArtifacts = &clArtifacts
 		}
 
-		// Fetch template caches to identify in-use artifacts (whose PVCs may be mounted).
-		// When cluster quota is active, eviction can span namespaces, so we need
-		// template caches from all namespaces to protect in-use artifacts everywhere.
-		if result.clusterArtifacts != nil {
-			tcFetch := controllerutils.FetchListDirect(ctx, ar, &aimv1alpha1.AIMTemplateCacheList{})
-			result.templateCaches = &tcFetch
-		} else {
-			tcFetch := controllerutils.FetchListDirect(ctx, ar,
-				&aimv1alpha1.AIMTemplateCacheList{}, client.InNamespace(mc.Namespace))
-			result.templateCaches = &tcFetch
+		// Fetch template and profile caches to identify in-use artifacts (whose PVCs
+		// may be mounted). When cluster quota is active, eviction can span namespaces,
+		// so we need caches from all namespaces to protect in-use artifacts everywhere.
+		var cacheListOpts []client.ListOption
+		if result.clusterArtifacts == nil {
+			cacheListOpts = append(cacheListOpts, client.InNamespace(mc.Namespace))
 		}
+		tcFetch := controllerutils.FetchListDirect(ctx, ar, &aimv1alpha1.AIMTemplateCacheList{}, cacheListOpts...)
+		result.templateCaches = &tcFetch
+		pcFetch := controllerutils.FetchListDirect(ctx, ar, &aimv1alpha2.AIMProfileCacheList{}, cacheListOpts...)
+		result.profileCaches = &pcFetch
 	}
 
 	return result
@@ -604,10 +605,15 @@ func (r *ArtifactReconciler) ComposeState(
 				clusterArtifacts = fetch.clusterArtifacts.Value.Items
 			}
 
-			var inUseUIDs map[types.UID]bool
+			var templateCaches []aimv1alpha1.AIMTemplateCache
 			if fetch.templateCaches != nil && !fetch.templateCaches.HasError() {
-				inUseUIDs = BuildInUseArtifactUIDs(fetch.templateCaches.Value.Items)
+				templateCaches = fetch.templateCaches.Value.Items
 			}
+			var profileCaches []aimv1alpha2.AIMProfileCache
+			if fetch.profileCaches != nil && !fetch.profileCaches.HasError() {
+				profileCaches = fetch.profileCaches.Value.Items
+			}
+			inUseUIDs := BuildInUseArtifactUIDs(templateCaches, profileCaches)
 
 			var defaultRetentionPriority *int32
 			if runtimeConfig != nil && runtimeConfig.Artifact != nil {

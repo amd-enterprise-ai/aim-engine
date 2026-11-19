@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
@@ -98,6 +99,31 @@ func ownedByProfileCache(pc *aimv1alpha2.AIMProfileCache) metav1.OwnerReference 
 		Kind:       "AIMProfileCache",
 		Name:       pc.Name,
 		UID:        pc.UID,
+	}
+}
+
+func TestProfileChangePredicate(t *testing.T) {
+	profile := func(generation int64, status constants.AIMStatus) *aimv1alpha2.AIMProfile {
+		return &aimv1alpha2.AIMProfile{
+			ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: testNamespace, Generation: generation},
+			Status:     aimv1alpha2.AIMProfileStatus{Status: status},
+		}
+	}
+	tests := []struct {
+		name     string
+		old, new *aimv1alpha2.AIMProfile
+		want     bool
+	}{
+		{"spec edit on a Ready profile", profile(1, constants.AIMStatusReady), profile(2, constants.AIMStatusReady), true},
+		{"readiness change", profile(1, constants.AIMStatusPending), profile(1, constants.AIMStatusReady), true},
+		{"status-only update keeping readiness", profile(1, constants.AIMStatusReady), profile(1, constants.AIMStatusReady), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := profileChangePredicate().Update(event.UpdateEvent{ObjectOld: tt.old, ObjectNew: tt.new}); got != tt.want {
+				t.Fatalf("Update() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

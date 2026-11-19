@@ -318,6 +318,16 @@ Appears only when AIM Engine cannot list the profiles needed to elect a model-sl
 | `False` | `Creating` | Creating artifact resources |
 | `False` | `CachesNotReady` | Some artifacts not ready |
 
+### ArtifactsReplacing
+
+Appears when an artifact the cache serves no longer matches its model source, typically after the source's `downloadFilter` changed. It does not gate aggregate `Ready`: the served artifact stays in `status.artifacts` until its replacement is `Ready`. See [Replacing an artifact](../concepts/caching.md#replacing-an-artifact).
+
+| Status | Reason | Description |
+|---|---|---|
+| `True` | `ReplacingArtifacts` | The replacement artifact is being created or downloaded; the message names both artifacts |
+| `True` | `ReplacementFailed` | The replacement failed or its download stalled (`Degraded`); the cache keeps serving the old artifact and the message carries the error |
+| `False` | `ArtifactsReplaced` | The cache switched to a `Ready` replacement; an event names the old and new artifacts |
+
 ## AIMArtifact conditions
 
 ### Ready

@@ -152,6 +152,12 @@ type AIMModelSource struct {
 	// +kubebuilder:validation:Enum=fp4;fp8;fp16;fp32;fp64;bf16;int4;int8
 	Precision AIMPrecision `json:"precision,omitempty"`
 
+	// DownloadFilter declares which files of this source to download, overriding the
+	// runtime config filter and the hf:// subdirectory-exclude default.
+	// An empty object downloads every file.
+	// +optional
+	DownloadFilter *AIMDownloadFilter `json:"downloadFilter,omitempty"`
+
 	// Env specifies per-source credential overrides.
 	// These variables are used for authentication when downloading this specific source.
 	// Takes precedence over base-level env for the same variable name.

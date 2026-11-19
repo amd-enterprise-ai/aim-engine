@@ -1,0 +1,8 @@
+# Namespace-local runtime config so the artifacts' PVC sizing is deterministic
+# and independent of whatever cluster-scoped defaults the environment carries.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+spec:
+  pvcHeadroomPercent: 10

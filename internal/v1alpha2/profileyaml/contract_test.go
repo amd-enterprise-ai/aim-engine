@@ -188,6 +188,46 @@ func TestParseKeepsPreviouslyOpaqueFieldAuthoritative(t *testing.T) {
 	}
 }
 
+func TestInspectDoesNotRecordEngineConsumedFieldAsExtension(t *testing.T) {
+	contract, err := Inspect([]byte(`metadata:
+  engine: vllm
+  metric: latency
+  precision: fp16
+  type: optimized
+download_filter:
+  include: ["*.safetensors"]
+future_top_level: true
+`))
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	extensions := contract.Extensions()
+	if _, ok := extensions.TopLevel["download_filter"]; ok {
+		t.Errorf("download_filter must not be projected to the runtime profile: %#v", extensions.TopLevel)
+	}
+	if _, ok := extensions.TopLevel["future_top_level"]; !ok {
+		t.Errorf("unrelated top-level field was dropped: %#v", extensions.TopLevel)
+	}
+}
+
+func TestParseKeepsEngineConsumedFieldFromOlderAnnotationsUntilReinspection(t *testing.T) {
+	contract, err := Parse(`{
+			"codec": "aim-profile/v1",
+			"metadataFields": ["engine", "metric", "precision", "type"],
+			"extensions": {
+				"topLevel": {
+					"download_filter": {}
+				}
+			}
+	}`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if _, ok := contract.Extensions().TopLevel["download_filter"]; !ok {
+		t.Errorf("a previously opaque download_filter must stay authoritative: %s", contract.Encode())
+	}
+}
+
 func TestInspectRejectsUnknownExplicitSchema(t *testing.T) {
 	raw := []byte(`profile_schema_version: 2
 metadata:
