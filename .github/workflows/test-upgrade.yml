@@ -744,6 +744,7 @@ jobs:
         run: |
           set -euo pipefail
           # The commands of docs/docs/admin/upgrading.md#rollback.
+          helm rollback aim-engine -n aim-system
           if [[ "${{ matrix.crds_install }}" == helm ]]; then
             helm rollback aim-engine-crds -n aim-system
           else
@@ -753,11 +754,11 @@ jobs:
             crd/aimservicetemplates.aim.eai.amd.com \
             crd/aimclusterservicetemplates.aim.eai.amd.com \
             crd/aimtemplatecaches.aim.eai.amd.com
-          helm rollback aim-engine -n aim-system --wait --timeout 5m
+          kubectl rollout restart deployment/aim-engine-controller-manager -n aim-system
 
       - name: Wait for the rolled-back operator
         if: matrix.scenario == 'v0.2.7'
-        run: kubectl rollout status deployment/aim-engine-controller-manager -n aim-system --timeout=180s
+        run: kubectl rollout status deployment/aim-engine-controller-manager -n aim-system --timeout=5m
 
       - name: Verify the rollback with Chainsaw
         if: matrix.scenario == 'v0.2.7'
