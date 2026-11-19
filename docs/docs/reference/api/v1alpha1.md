@@ -32,6 +32,26 @@ Package v1alpha1 contains API Schema definitions for the aim v1alpha1 API group.
 
 
 
+#### AIMAcceleratorAllocationConfig
+
+
+
+AIMAcceleratorAllocationConfig selects how inference pods request GPUs.
+
+
+
+_Appears in:_
+- [AIMClusterRuntimeConfigSpec](#aimclusterruntimeconfigspec)
+- [AIMRuntimeConfigCommon](#aimruntimeconfigcommon)
+- [AIMRuntimeConfigSpec](#aimruntimeconfigspec)
+- [AIMServiceRuntimeConfig](#aimserviceruntimeconfig)
+- [AIMServiceSpec](#aimservicespec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `mode` _[AcceleratorAllocationMode](#acceleratorallocationmode)_ | Mode is Auto (the default), DRA or DevicePlugin. |  | Enum: [Auto DRA DevicePlugin] <br />Optional: \{\} |
+
+
 #### AIMAdapterDisk
 
 
@@ -514,11 +534,13 @@ _Appears in:_
 | `storage` _[AIMStorageConfig](#aimstorageconfig)_ | Storage configures storage defaults for this service's PVCs and caches. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `routing` _[AIMRuntimeRoutingConfig](#aimruntimeroutingconfig)_ | Routing controls HTTP routing configuration for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `scaleFromZero` _[AIMScaleFromZeroConfig](#aimscalefromzeroconfig)_ | ScaleFromZero configures the activation metric query for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
+| `acceleratorAllocation` _[AIMAcceleratorAllocationConfig](#aimacceleratorallocationconfig)_ | AcceleratorAllocation selects how inference pods request GPUs: as device-plugin resources such as amd.com/gpu, or through Dynamic Resource Allocation (DRA). Applies to profile-based services. |  | Optional: \{\} |
 | `tolerations` _[Toleration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#toleration-v1-core) array_ | Tolerations for inference pods. Runtime config lists also apply to the model download and discovery Jobs. An AIMService's list replaces the runtime config's, a namespace config's replaces the cluster's, and an empty list removes the inherited one. |  | Optional: \{\} |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for inference containers. When set on AIMService, these take highest precedence in the merge hierarchy. When set on RuntimeConfig, these provide namespace/cluster-level defaults. Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} |
 | `additionalCABundleRef` _[AdditionalCABundleReference](#additionalcabundlereference)_ | AdditionalCABundleRef selects PEM CA certificates that AIM Engine adds to its standard public trust roots for outbound TLS from inference, artifact-download, size-check, and adapter-staging containers. The ConfigMap is resolved in each workload namespace. When configured on an AIMClusterRuntimeConfig, each consuming namespace needs a ConfigMap with the same name and key to receive the additional trust. AIM Engine checks the reference directly during reconciliation and omits the projection when the ConfigMap or key is absent. Certificate parsing occurs only in a workload init container. CA changes are consumed when workloads are recreated; the ConfigMap is not watched for rotation. |  | Optional: \{\} |
 | `baseImageRegistry` _string_ | BaseImageRegistry is the registry and org that host aim-base, such as registry.example.com/amdenterpriseai. Models whose weights are replaced deploy aim-base from here. When unset, they use the model image's registry and org. |  | MaxLength: 512 <br />Pattern: `^[^[:space:]@/:]+(?::[0-9]+)?(?:/[^[:space:]@/:]+)*$` <br />Optional: \{\} |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
+| `dra` _[AIMDRAConfig](#aimdraconfig)_ | DRA configures GPU allocation through Dynamic Resource Allocation for services whose accelerator allocation mode resolves to DRA. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
 | `artifact` _[AIMArtifactConfig](#aimartifactconfig)_ | Artifact controls artifact-level defaults such as eviction policy. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
 | `artifactCache` _[ArtifactCacheConfig](#artifactcacheconfig)_ | DEPRECATED: The embedded Hugging Face-to-S3 artifact cache has been removed. This field is retained temporarily for API compatibility and is no longer honored by the controller. Use direct s3:// model sources with Artifact.S3 connection settings instead. |  | Optional: \{\} |
 | `labelPropagation` _[AIMRuntimeConfigLabelPropagationSpec](#aimruntimeconfiglabelpropagationspec)_ | LabelPropagation controls how labels from parent AIM resources are propagated to child resources. When enabled, labels matching the specified patterns are automatically copied from parent resources (e.g., AIMService, AIMTemplateCache) to their child resources (e.g., Deployments, Services, PVCs). This is useful for propagating organizational metadata like cost centers, team identifiers, or compliance labels through the resource hierarchy. |  | Optional: \{\} |
@@ -677,6 +699,24 @@ _Appears in:_
 | `aimId` _string_ | AimId is the AIM product family identifier (e.g., "meta-llama/Llama-3-8B"). Required when customProfile is set. |  | Optional: \{\} |
 | `modelId` _string_ | ModelId is the specific model identifier / HuggingFace URI (e.g., "Qwen/Qwen3-32B-FP8"). Required when customProfile is set. |  | Optional: \{\} |
 | `customProfile` _[AIMCustomProfile](#aimcustomprofile)_ | CustomProfile defines inline custom profile data for the inference engine. When set, the resulting template will have a custom profile ConfigMap mounted. Requires aimId, modelId, hardware, profile.metric, and profile.precision. |  | Optional: \{\} |
+
+
+#### AIMDRAConfig
+
+
+
+AIMDRAConfig configures GPU allocation through Dynamic Resource Allocation.
+
+
+
+_Appears in:_
+- [AIMClusterRuntimeConfigSpec](#aimclusterruntimeconfigspec)
+- [AIMRuntimeConfigCommon](#aimruntimeconfigcommon)
+- [AIMRuntimeConfigSpec](#aimruntimeconfigspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `deviceClassName` _string_ | DeviceClassName is the DeviceClass that AMD GPU ResourceClaims request devices from. Defaults to gpu.amd.com, the class the AMD GPU DRA driver installs. |  | Optional: \{\} |
 
 
 #### AIMDiscoveredProfile
@@ -1485,11 +1525,13 @@ _Appears in:_
 | `storage` _[AIMStorageConfig](#aimstorageconfig)_ | Storage configures storage defaults for this service's PVCs and caches. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `routing` _[AIMRuntimeRoutingConfig](#aimruntimeroutingconfig)_ | Routing controls HTTP routing configuration for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `scaleFromZero` _[AIMScaleFromZeroConfig](#aimscalefromzeroconfig)_ | ScaleFromZero configures the activation metric query for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
+| `acceleratorAllocation` _[AIMAcceleratorAllocationConfig](#aimacceleratorallocationconfig)_ | AcceleratorAllocation selects how inference pods request GPUs: as device-plugin resources such as amd.com/gpu, or through Dynamic Resource Allocation (DRA). Applies to profile-based services. |  | Optional: \{\} |
 | `tolerations` _[Toleration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#toleration-v1-core) array_ | Tolerations for inference pods. Runtime config lists also apply to the model download and discovery Jobs. An AIMService's list replaces the runtime config's, a namespace config's replaces the cluster's, and an empty list removes the inherited one. |  | Optional: \{\} |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for inference containers. When set on AIMService, these take highest precedence in the merge hierarchy. When set on RuntimeConfig, these provide namespace/cluster-level defaults. Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} |
 | `additionalCABundleRef` _[AdditionalCABundleReference](#additionalcabundlereference)_ | AdditionalCABundleRef selects PEM CA certificates that AIM Engine adds to its standard public trust roots for outbound TLS from inference, artifact-download, size-check, and adapter-staging containers. The ConfigMap is resolved in each workload namespace. When configured on an AIMClusterRuntimeConfig, each consuming namespace needs a ConfigMap with the same name and key to receive the additional trust. AIM Engine checks the reference directly during reconciliation and omits the projection when the ConfigMap or key is absent. Certificate parsing occurs only in a workload init container. CA changes are consumed when workloads are recreated; the ConfigMap is not watched for rotation. |  | Optional: \{\} |
 | `baseImageRegistry` _string_ | BaseImageRegistry is the registry and org that host aim-base, such as registry.example.com/amdenterpriseai. Models whose weights are replaced deploy aim-base from here. When unset, they use the model image's registry and org. |  | MaxLength: 512 <br />Pattern: `^[^[:space:]@/:]+(?::[0-9]+)?(?:/[^[:space:]@/:]+)*$` <br />Optional: \{\} |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
+| `dra` _[AIMDRAConfig](#aimdraconfig)_ | DRA configures GPU allocation through Dynamic Resource Allocation for services whose accelerator allocation mode resolves to DRA. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
 | `artifact` _[AIMArtifactConfig](#aimartifactconfig)_ | Artifact controls artifact-level defaults such as eviction policy. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
 | `artifactCache` _[ArtifactCacheConfig](#artifactcacheconfig)_ | DEPRECATED: The embedded Hugging Face-to-S3 artifact cache has been removed. This field is retained temporarily for API compatibility and is no longer honored by the controller. Use direct s3:// model sources with Artifact.S3 connection settings instead. |  | Optional: \{\} |
 | `labelPropagation` _[AIMRuntimeConfigLabelPropagationSpec](#aimruntimeconfiglabelpropagationspec)_ | LabelPropagation controls how labels from parent AIM resources are propagated to child resources. When enabled, labels matching the specified patterns are automatically copied from parent resources (e.g., AIMService, AIMTemplateCache) to their child resources (e.g., Deployments, Services, PVCs). This is useful for propagating organizational metadata like cost centers, team identifiers, or compliance labels through the resource hierarchy. |  | Optional: \{\} |
@@ -1551,11 +1593,13 @@ _Appears in:_
 | `storage` _[AIMStorageConfig](#aimstorageconfig)_ | Storage configures storage defaults for this service's PVCs and caches. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `routing` _[AIMRuntimeRoutingConfig](#aimruntimeroutingconfig)_ | Routing controls HTTP routing configuration for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `scaleFromZero` _[AIMScaleFromZeroConfig](#aimscalefromzeroconfig)_ | ScaleFromZero configures the activation metric query for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
+| `acceleratorAllocation` _[AIMAcceleratorAllocationConfig](#aimacceleratorallocationconfig)_ | AcceleratorAllocation selects how inference pods request GPUs: as device-plugin resources such as amd.com/gpu, or through Dynamic Resource Allocation (DRA). Applies to profile-based services. |  | Optional: \{\} |
 | `tolerations` _[Toleration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#toleration-v1-core) array_ | Tolerations for inference pods. Runtime config lists also apply to the model download and discovery Jobs. An AIMService's list replaces the runtime config's, a namespace config's replaces the cluster's, and an empty list removes the inherited one. |  | Optional: \{\} |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for inference containers. When set on AIMService, these take highest precedence in the merge hierarchy. When set on RuntimeConfig, these provide namespace/cluster-level defaults. Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} |
 | `additionalCABundleRef` _[AdditionalCABundleReference](#additionalcabundlereference)_ | AdditionalCABundleRef selects PEM CA certificates that AIM Engine adds to its standard public trust roots for outbound TLS from inference, artifact-download, size-check, and adapter-staging containers. The ConfigMap is resolved in each workload namespace. When configured on an AIMClusterRuntimeConfig, each consuming namespace needs a ConfigMap with the same name and key to receive the additional trust. AIM Engine checks the reference directly during reconciliation and omits the projection when the ConfigMap or key is absent. Certificate parsing occurs only in a workload init container. CA changes are consumed when workloads are recreated; the ConfigMap is not watched for rotation. |  | Optional: \{\} |
 | `baseImageRegistry` _string_ | BaseImageRegistry is the registry and org that host aim-base, such as registry.example.com/amdenterpriseai. Models whose weights are replaced deploy aim-base from here. When unset, they use the model image's registry and org. |  | MaxLength: 512 <br />Pattern: `^[^[:space:]@/:]+(?::[0-9]+)?(?:/[^[:space:]@/:]+)*$` <br />Optional: \{\} |
 | `model` _[AIMModelConfig](#aimmodelconfig)_ | Model controls model creation and discovery defaults. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
+| `dra` _[AIMDRAConfig](#aimdraconfig)_ | DRA configures GPU allocation through Dynamic Resource Allocation for services whose accelerator allocation mode resolves to DRA. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
 | `artifact` _[AIMArtifactConfig](#aimartifactconfig)_ | Artifact controls artifact-level defaults such as eviction policy. This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services. |  | Optional: \{\} |
 | `artifactCache` _[ArtifactCacheConfig](#artifactcacheconfig)_ | DEPRECATED: The embedded Hugging Face-to-S3 artifact cache has been removed. This field is retained temporarily for API compatibility and is no longer honored by the controller. Use direct s3:// model sources with Artifact.S3 connection settings instead. |  | Optional: \{\} |
 | `labelPropagation` _[AIMRuntimeConfigLabelPropagationSpec](#aimruntimeconfiglabelpropagationspec)_ | LabelPropagation controls how labels from parent AIM resources are propagated to child resources. When enabled, labels matching the specified patterns are automatically copied from parent resources (e.g., AIMService, AIMTemplateCache) to their child resources (e.g., Deployments, Services, PVCs). This is useful for propagating organizational metadata like cost centers, team identifiers, or compliance labels through the resource hierarchy. |  | Optional: \{\} |
@@ -2011,6 +2055,7 @@ _Appears in:_
 | `storage` _[AIMStorageConfig](#aimstorageconfig)_ | Storage configures storage defaults for this service's PVCs and caches. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `routing` _[AIMRuntimeRoutingConfig](#aimruntimeroutingconfig)_ | Routing controls HTTP routing configuration for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `scaleFromZero` _[AIMScaleFromZeroConfig](#aimscalefromzeroconfig)_ | ScaleFromZero configures the activation metric query for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
+| `acceleratorAllocation` _[AIMAcceleratorAllocationConfig](#aimacceleratorallocationconfig)_ | AcceleratorAllocation selects how inference pods request GPUs: as device-plugin resources such as amd.com/gpu, or through Dynamic Resource Allocation (DRA). Applies to profile-based services. |  | Optional: \{\} |
 | `tolerations` _[Toleration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#toleration-v1-core) array_ | Tolerations for inference pods. Runtime config lists also apply to the model download and discovery Jobs. An AIMService's list replaces the runtime config's, a namespace config's replaces the cluster's, and an empty list removes the inherited one. |  | Optional: \{\} |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for inference containers. When set on AIMService, these take highest precedence in the merge hierarchy. When set on RuntimeConfig, these provide namespace/cluster-level defaults. Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} |
 
@@ -2069,6 +2114,7 @@ _Appears in:_
 | `storage` _[AIMStorageConfig](#aimstorageconfig)_ | Storage configures storage defaults for this service's PVCs and caches. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `routing` _[AIMRuntimeRoutingConfig](#aimruntimeroutingconfig)_ | Routing controls HTTP routing configuration for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
 | `scaleFromZero` _[AIMScaleFromZeroConfig](#aimscalefromzeroconfig)_ | ScaleFromZero configures the activation metric query for this service. When set, these values override namespace/cluster runtime config defaults. |  | Optional: \{\} |
+| `acceleratorAllocation` _[AIMAcceleratorAllocationConfig](#aimacceleratorallocationconfig)_ | AcceleratorAllocation selects how inference pods request GPUs: as device-plugin resources such as amd.com/gpu, or through Dynamic Resource Allocation (DRA). Applies to profile-based services. |  | Optional: \{\} |
 | `tolerations` _[Toleration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#toleration-v1-core) array_ | Tolerations for inference pods. Runtime config lists also apply to the model download and discovery Jobs. An AIMService's list replaces the runtime config's, a namespace config's replaces the cluster's, and an empty list removes the inherited one. |  | Optional: \{\} |
 | `env` _[EnvVar](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#envvar-v1-core) array_ | Env specifies environment variables for inference containers. When set on AIMService, these take highest precedence in the merge hierarchy. When set on RuntimeConfig, these provide namespace/cluster-level defaults. Merge order (highest to lowest): Service.Env > Template.Env > RuntimeConfig.Env > Profile.Env |  | Optional: \{\} |
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.32/#resourcerequirements-v1-core)_ | Resources overrides the container resource requirements for this service. When specified, these values take precedence over the template and image defaults. |  | Optional: \{\} |
@@ -2100,6 +2146,7 @@ _Appears in:_
 | `routing` _[AIMServiceRoutingStatus](#aimserviceroutingstatus)_ | Routing surfaces information about the configured HTTP routing, when enabled. |  | Optional: \{\} |
 | `resolvedTemplate` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedTemplate captures metadata about the template that satisfied the reference. |  |  |
 | `resolvedProfile` _[AIMResolvedReference](#aimresolvedreference)_ | ResolvedProfile captures metadata about the profile that satisfied the reference. Set when the service uses a profile-based reconciliation path (v1alpha2). |  | Optional: \{\} |
+| `acceleratorAllocation` _[AcceleratorAllocationMode](#acceleratorallocationmode)_ | AcceleratorAllocation is how the service's inference pods request GPUs: DRA or DevicePlugin. Unset for services whose profile needs no GPUs. |  | Enum: [Auto DRA DevicePlugin] <br />Optional: \{\} |
 | `cache` _[AIMServiceCacheStatus](#aimservicecachestatus)_ | Cache captures cache-related status for this service. |  | Optional: \{\} |
 | `runtime` _[AIMServiceRuntimeStatus](#aimserviceruntimestatus)_ | Runtime captures runtime status including replica counts. |  | Optional: \{\} |
 | `adapters` _[AIMServiceAdapterStatus](#aimserviceadapterstatus) array_ | Adapters reports the per-adapter disk-side status for services that declare spec.adapters. One entry per declared adapter. Observation is best-effort/eventual; the disk state the controller wrote is authoritative. |  | Optional: \{\} |
@@ -2453,6 +2500,26 @@ _Appears in:_
 | `latest` | AIMVersionPolicyLatest matches only templates at the newest available status.version. |
 | `all` | AIMVersionPolicyAll matches templates at any version. This is the canonical spelling, aligned with v1alpha2 ProfileVersionPolicy. |
 | `any` | AIMVersionPolicyAny is a deprecated alias of AIMVersionPolicyAll, kept for backward compatibility with existing v1alpha1 objects. Prefer "all". |
+
+
+#### AcceleratorAllocationMode
+
+_Underlying type:_ _string_
+
+AcceleratorAllocationMode is how inference pods request GPUs.
+
+_Validation:_
+- Enum: [Auto DRA DevicePlugin]
+
+_Appears in:_
+- [AIMAcceleratorAllocationConfig](#aimacceleratorallocationconfig)
+- [AIMServiceStatus](#aimservicestatus)
+
+| Field | Description |
+| --- | --- |
+| `Auto` | AcceleratorAllocationAuto uses the device plugin when a device-plugin node has the profile's GPUs, and DRA when only nodes with the AMD GPU DRA driver have them. A service that already runs keeps the mode it runs with. |
+| `DRA` | AcceleratorAllocationDRA requests GPUs through ResourceClaims for the AMD GPU DRA driver. Only AMD GPU profiles support it. |
+| `DevicePlugin` | AcceleratorAllocationDevicePlugin requests GPUs as device-plugin resources such as amd.com/gpu. |
 
 
 #### AcceleratorType

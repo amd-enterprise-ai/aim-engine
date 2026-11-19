@@ -448,6 +448,38 @@ func AutoscalingTriggerComponentHealth(
 	}
 }
 
+// ComponentAcceleratorAllocationConfig names the config check for a service's
+// accelerator allocation mode.
+const ComponentAcceleratorAllocationConfig = "AcceleratorAllocationConfig"
+
+// AcceleratorAllocationComponentHealth rejects acceleratorAllocation.mode DRA
+// on a template-based service: only profile-based services allocate GPUs
+// through DRA. A runtime config's mode is a default for profile-based
+// services, so template-based services ignore it.
+func AcceleratorAllocationComponentHealth(service *aimv1alpha1.AIMService) controllerutils.ComponentHealth {
+	if service.Spec.AcceleratorAllocation == nil ||
+		service.Spec.AcceleratorAllocation.Mode != aimv1alpha1.AcceleratorAllocationDRA {
+		return controllerutils.ComponentHealth{}
+	}
+	message := "acceleratorAllocation.mode DRA is supported only for profile-based services; " +
+		"this service uses a template, so its inference pods request GPUs through the device plugin. " +
+		"Remove the mode or move the service to a profile."
+	return controllerutils.ComponentHealth{
+		Component:      ComponentAcceleratorAllocationConfig,
+		State:          constants.AIMStatusFailed,
+		Reason:         aimv1alpha1.AIMServiceReasonAcceleratorAllocationUnsupported,
+		Message:        message,
+		DependencyType: controllerutils.DependencyTypeUpstream,
+		Errors: []error{
+			controllerutils.NewInvalidSpecError(
+				aimv1alpha1.AIMServiceReasonAcceleratorAllocationUnsupported,
+				message,
+				nil,
+			),
+		},
+	}
+}
+
 // ScaleToZeroRoutingComponentHealth validates the scale-from-zero prerequisite
 // that routing be enabled. The 0->1 activation trigger reads a gateway metric
 // associated with the service's HTTPRoute. With routing disabled a

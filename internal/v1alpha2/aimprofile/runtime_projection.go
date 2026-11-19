@@ -49,8 +49,10 @@ const (
 // runtimeProjectable reports whether a profile should have a runtime projected.
 // A profile is projectable when it is deployable, carries an image, and either
 // needs no accelerator (no hardware constraint to satisfy) or has at least one
-// matching node — read from the freshly-computed match result, not last
-// reconcile's status.
+// matching device-plugin node — read from the freshly-computed match result,
+// not last reconcile's status. DRA nodes do not count: a projected runtime is
+// self-contained only with a device-plugin GPU request, and DRA services use
+// serving.DRARuntimeName instead.
 func runtimeProjectable(spec aimv1alpha2.AIMProfileSpecCommon, deployable bool, match NodeMatchResult) bool {
 	if !deployable || spec.Image == "" {
 		return false

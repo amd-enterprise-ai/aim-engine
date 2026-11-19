@@ -245,7 +245,7 @@ The AMD GPU DRA driver publishes a node's GPUs in `gpu.amd.com` ResourceSlices i
 - **Partitioning:** `unpartitioned` takes whole GPUs in the default SPX-NPS1 mode, as on device-plugin nodes, `partitioned` takes partitions, and a scheme such as `CPX-NPS4` takes devices with that partition profile (`cpx_nps4`).
 - **Host resources:** the node has room for the profile's CPU and memory requests.
 
-Both kinds of node are matched against what they have, not what is free: a node whose GPUs are all in use still matches. `status.matchingNodesByAllocation` reports the device-plugin and DRA matches separately. AIM Engine does not allocate GPUs through DRA yet, so DRA nodes don't count in `status.matchingNodes`. A profile whose GPUs exist only on DRA nodes reports `HardwareAvailable=False` with the reason `HardwareOnlyOnDRANodes`.
+Both kinds of node are matched against what they have, not what is free: a node whose GPUs are all in use still matches. `status.matchingNodes` counts each matching node once, and `status.matchingNodesByAllocation` reports the device-plugin and DRA matches separately. Which kind an AIMService uses depends on its [accelerator allocation mode](runtime-config.md#accelerator-allocation). The runtimes AIM Engine projects for a profile (`status.projectedRuntimeName` and the model-slug runtime) request GPUs as `amd.com/gpu`, so they are projected only when a device-plugin node matches. A ServingRuntime can't carry a ResourceClaim on its own.
 
 ### Hardware support
 

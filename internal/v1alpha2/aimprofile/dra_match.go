@@ -24,11 +24,15 @@ package aimprofile
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
+	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
 
@@ -144,6 +148,64 @@ func (r *draRequirement) mismatchReasons(node *corev1.Node, devices []DRADevice)
 		}
 	}
 	return append(reasons, resourceMismatchReasons(node, r.hostResources)...)
+}
+
+// DRAClaimRequest is the device request a ResourceClaim makes for a profile's
+// GPUs from the AMD GPU DRA driver.
+type DRAClaimRequest struct {
+	// Count is the number of devices, all of one GPU model.
+	Count int64
+	// Selector is a CEL expression over the driver's device attributes that
+	// accepts the same devices as the DRA node matcher.
+	Selector string
+}
+
+// NewDRAClaimRequest returns the DRA device request for a profile with the
+// given resolved resources. It reports false for profiles that cannot be
+// served by AMD GPU DRA devices: profiles without GPUs, profiles for other
+// vendors, and models without known device IDs.
+func NewDRAClaimRequest(spec aimv1alpha2.AIMProfileSpecCommon, resolvedResources *corev1.ResourceRequirements) (DRAClaimRequest, bool) {
+	req := newDRARequirement(
+		spec.AcceleratorType,
+		spec.AcceleratorVendor,
+		spec.AcceleratorModel,
+		spec.AcceleratorPartitioningMode,
+		resolvedResources,
+	)
+	if req == nil || (req.deviceIDs != nil && len(req.deviceIDs) == 0) {
+		return DRAClaimRequest{}, false
+	}
+	return DRAClaimRequest{Count: req.count, Selector: req.celSelector()}, true
+}
+
+// celSelector expresses matchesDevice in CEL. Device IDs are published
+// lower-case with a 0x prefix. GPUs that cannot be partitioned publish no
+// partitionProfile, so reading it is guarded by has().
+func (r *draRequirement) celSelector() string {
+	attr := func(name string) string {
+		return fmt.Sprintf("device.attributes[%q].%s", constants.AMDGPUDRADriverName, name)
+	}
+	var terms []string
+	if r.deviceIDs != nil {
+		ids := make([]string, 0, len(r.deviceIDs))
+		for id := range r.deviceIDs {
+			ids = append(ids, strconv.Quote("0x"+id))
+		}
+		sort.Strings(ids)
+		terms = append(terms, fmt.Sprintf("%s in [%s]", attr("deviceID"), strings.Join(ids, ", ")))
+	}
+	switch r.partitioning {
+	case "", PartitioningModeUnpartitioned:
+		terms = append(terms, fmt.Sprintf("%s == %q", attr("type"), DRADeviceTypeGPU),
+			fmt.Sprintf("(!has(%s) || %s in [\"\", %q])",
+				attr("partitionProfile"), attr("partitionProfile"), DRAUnpartitionedProfile))
+	case PartitioningModePartitioned:
+		terms = append(terms, fmt.Sprintf("%s == %q", attr("type"), DRADeviceTypePartition))
+	default:
+		terms = append(terms, fmt.Sprintf("has(%s) && %s == %q",
+			attr("partitionProfile"), attr("partitionProfile"), draPartitionProfile(r.partitioning)))
+	}
+	return strings.Join(terms, " && ")
 }
 
 func (r *draRequirement) describe() string {

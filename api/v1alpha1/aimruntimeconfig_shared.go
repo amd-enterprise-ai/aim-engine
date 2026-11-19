@@ -166,6 +166,12 @@ type AIMServiceRuntimeConfig struct {
 	// +optional
 	ScaleFromZero *AIMScaleFromZeroConfig `json:"scaleFromZero,omitempty"`
 
+	// AcceleratorAllocation selects how inference pods request GPUs: as
+	// device-plugin resources such as amd.com/gpu, or through Dynamic Resource
+	// Allocation (DRA). Applies to profile-based services.
+	// +optional
+	AcceleratorAllocation *AIMAcceleratorAllocationConfig `json:"acceleratorAllocation,omitempty"`
+
 	// Tolerations for inference pods. Runtime config lists also apply to the
 	// model download and discovery Jobs. An AIMService's list replaces the
 	// runtime config's, a namespace config's replaces the cluster's, and an
@@ -182,6 +188,40 @@ type AIMServiceRuntimeConfig struct {
 	// +listType=map
 	// +listMapKey=name
 	Env []corev1.EnvVar `json:"env,omitempty"`
+}
+
+// AcceleratorAllocationMode is how inference pods request GPUs.
+// +kubebuilder:validation:Enum=Auto;DRA;DevicePlugin
+type AcceleratorAllocationMode string
+
+const (
+	// AcceleratorAllocationAuto uses the device plugin when a device-plugin
+	// node has the profile's GPUs, and DRA when only nodes with the AMD GPU
+	// DRA driver have them. A service that already runs keeps the mode it
+	// runs with.
+	AcceleratorAllocationAuto AcceleratorAllocationMode = "Auto"
+	// AcceleratorAllocationDRA requests GPUs through ResourceClaims for the
+	// AMD GPU DRA driver. Only AMD GPU profiles support it.
+	AcceleratorAllocationDRA AcceleratorAllocationMode = "DRA"
+	// AcceleratorAllocationDevicePlugin requests GPUs as device-plugin
+	// resources such as amd.com/gpu.
+	AcceleratorAllocationDevicePlugin AcceleratorAllocationMode = "DevicePlugin"
+)
+
+// AIMAcceleratorAllocationConfig selects how inference pods request GPUs.
+type AIMAcceleratorAllocationConfig struct {
+	// Mode is Auto (the default), DRA or DevicePlugin.
+	// +optional
+	Mode AcceleratorAllocationMode `json:"mode,omitempty"`
+}
+
+// AIMDRAConfig configures GPU allocation through Dynamic Resource Allocation.
+type AIMDRAConfig struct {
+	// DeviceClassName is the DeviceClass that AMD GPU ResourceClaims request
+	// devices from. Defaults to gpu.amd.com, the class the AMD GPU DRA driver
+	// installs.
+	// +optional
+	DeviceClassName string `json:"deviceClassName,omitempty"`
 }
 
 type AIMModelConfig struct {
@@ -384,6 +424,12 @@ type AIMRuntimeConfigCommon struct {
 	// This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services.
 	// +optional
 	Model *AIMModelConfig `json:"model,omitempty"`
+
+	// DRA configures GPU allocation through Dynamic Resource Allocation for
+	// services whose accelerator allocation mode resolves to DRA.
+	// This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services.
+	// +optional
+	DRA *AIMDRAConfig `json:"dra,omitempty"`
 
 	// Artifact controls artifact-level defaults such as eviction policy.
 	// This field only applies to RuntimeConfig/ClusterRuntimeConfig and is not available for services.

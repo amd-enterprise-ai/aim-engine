@@ -103,9 +103,9 @@ feature.node.kubernetes.io/aim-accelerator.mixed-models.GPU: "2"
 
 GPUs whose device ID the detector doesn't recognise get no model labels, and don't count in the `GPU` family label. They still count toward the marker, one model per device ID: the device plugin offers them as `amd.com/gpu` like any other GPU. A node with seven MI300X GPUs and one unrecognised GPU is labelled `MI300X=7` and `mixed-models.GPU=2`.
 
-AIM Engine does not schedule GPU workloads onto nodes with the `mixed-models.GPU` marker. The device-plugin resources (`amd.com/gpu`, `nvidia.com/gpu`) are a single pool per node, so a pod there could be given any of the node's GPUs, whatever model its profile targets. Every GPU profile's node affinity therefore includes a `mixed-models.GPU` `DoesNotExist` term, and these nodes appear in the profile's hardware mismatch reasons. CPU profiles are not affected.
+AIM Engine does not schedule device-plugin GPU workloads onto nodes with the `mixed-models.GPU` marker. The device-plugin resources (`amd.com/gpu`, `nvidia.com/gpu`) are a single pool per node, so a pod there could be given any of the node's GPUs, whatever model its profile targets. Every GPU profile's node affinity therefore includes a `mixed-models.GPU` `DoesNotExist` term, and these nodes appear in the profile's hardware mismatch reasons. CPU profiles are not affected.
 
-Scheduling onto nodes with mixed GPU models requires the GPU vendor's DRA (Dynamic Resource Allocation) driver on those nodes, so that devices can be selected by model. DRA allocation in AIM Engine is in development.
+AMD GPU nodes with mixed models can serve AIMServices through DRA (Dynamic Resource Allocation): install the AMD GPU DRA driver on them, and the services' ResourceClaims select devices by model. With the default `Auto` [accelerator allocation mode](runtime-config.md#accelerator-allocation), a service uses DRA when no device-plugin node has its GPUs. NVIDIA GPUs have no DRA path in AIM Engine, so NVIDIA nodes with mixed models serve no GPU workloads.
 
 ## GPU Partition Scheme Labels
 

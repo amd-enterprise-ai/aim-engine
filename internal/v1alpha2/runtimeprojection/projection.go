@@ -225,6 +225,11 @@ func DesiredForRuntime(namespace, runtimeName string, state ProjectionState) (De
 	if runtimeName != serving.RuntimeName(profile.GetName()) && matchesModelSlugRuntime(profile, runtimeName) {
 		input.Name = runtimeName
 	}
+	if runtimeName == serving.DRARuntimeName(profile.GetName()) {
+		input.Name = runtimeName
+		input.Resources = withoutDevicePluginGPU(status.Resources)
+		input.NodeAffinity = nil
+	}
 
 	runtime, configMap, err := serving.BuildNamespaceServingRuntime(input)
 	if err != nil {
@@ -256,17 +261,31 @@ func markLazyProjection(obj metav1.Object) {
 
 // runtimeNameMatchesProfile reports whether runtimeName is a reserved KServe
 // ServingRuntime or ClusterServingRuntime name the resolved profile actually
-// projects. Two names qualify: the per-profile name (aim-<profile.Name>) and the
+// projects. Three names qualify: the per-profile name (aim-<profile.Name>), the
 // Reduced/Both-mode model-slug primary name (aim-<model-slug>, derived from the
-// profile's aimId). A native KServe InferenceService referencing either resolves
-// to this profile, so both must be shadowed cross-namespace — the slug is the
-// portable, vendor-independent handle the eager slug projection publishes
+// profile's aimId), and the DRA variant AIMServices reference when they
+// allocate GPUs through DRA (serving.DRARuntimeName). A native KServe
+// InferenceService referencing the first two resolves to this profile, so they
+// must be shadowed cross-namespace — the slug is the portable,
+// vendor-independent handle the eager slug projection publishes
 // (aimprofile.planClusterModelSlugRuntime).
 func runtimeNameMatchesProfile(profile BackingProfile, runtimeName string) bool {
-	if serving.RuntimeName(profile.GetName()) == runtimeName {
+	if serving.RuntimeName(profile.GetName()) == runtimeName || serving.DRARuntimeName(profile.GetName()) == runtimeName {
 		return true
 	}
 	return matchesModelSlugRuntime(profile, runtimeName)
+}
+
+// withoutDevicePluginGPU returns the resources without the AMD device-plugin
+// GPU resource, for runtimes of services that request GPUs through DRA.
+func withoutDevicePluginGPU(resources *corev1.ResourceRequirements) *corev1.ResourceRequirements {
+	if resources == nil {
+		return nil
+	}
+	out := resources.DeepCopy()
+	delete(out.Requests, corev1.ResourceName(constants.AMDGPUResourceName))
+	delete(out.Limits, corev1.ResourceName(constants.AMDGPUResourceName))
+	return out
 }
 
 // RuntimeNameMatchesProfile reports whether the profile projects runtimeName as

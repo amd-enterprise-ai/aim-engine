@@ -208,6 +208,18 @@ rules:
   - list
   - watch
 - apiGroups:
+  - resource.k8s.io
+  resources:
+  - resourceclaimtemplates
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - serving.kserve.io
   resources:
   - clusterservingruntimes

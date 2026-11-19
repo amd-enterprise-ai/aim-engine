@@ -111,6 +111,21 @@ func RuntimeName(profileName string) string {
 	return name
 }
 
+// DRARuntimeName returns the name of the namespaced ServingRuntime that
+// AIMServices allocating GPUs through DRA reference for a profile. It is the
+// profile's runtime without the device-plugin GPU request and node affinity:
+// the service's ResourceClaim requests the GPUs and decides placement. Unlike
+// RuntimeName and ModelSlugRuntimeName it is never projected eagerly, because
+// on its own it does not describe a pod that gets a GPU.
+func DRARuntimeName(profileName string) string {
+	name, _ := utils.GenerateDerivedName(
+		[]string{runtimeNameStem, profileName, "dra"},
+		utils.WithHashSource(profileName, "dra"),
+		utils.WithMaxLength(utils.MaxKubernetesNameLength),
+	)
+	return name
+}
+
 // ModelSlug derives the portable, vendor-independent slug used to name the
 // Reduced-mode model-slug primary runtime. It is keyed on the profile's aimId
 // (the model architecture identifier, which carries no accelerator or precision

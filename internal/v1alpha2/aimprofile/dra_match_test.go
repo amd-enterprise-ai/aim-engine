@@ -215,11 +215,62 @@ func TestMatchProfileNodesExplainsDRAMismatches(t *testing.T) {
 	}
 }
 
-func TestDecorateProfileStatusReportsDRAOnlyHardware(t *testing.T) {
+func TestNewDRAClaimRequest(t *testing.T) {
+	gpu := func(model string, count int32, partitioning string) aimv1alpha2.AIMProfileSpecCommon {
+		return aimv1alpha2.AIMProfileSpecCommon{
+			AcceleratorType:             aimv1alpha1.AcceleratorTypeGPU,
+			AcceleratorModel:            model,
+			AcceleratorCount:            count,
+			AcceleratorPartitioningMode: partitioning,
+		}
+	}
+	tests := []struct {
+		name      string
+		spec      aimv1alpha2.AIMProfileSpecCommon
+		wantCount int64
+		want      string
+	}{
+		{
+			name: "whole GPUs of one model", spec: gpu("MI355X", 8, ""), wantCount: 8,
+			want: `device.attributes["gpu.amd.com"].deviceID in ["0x75a3", "0x75b3"] && device.attributes["gpu.amd.com"].type == "amdgpu" && ` +
+				`(!has(device.attributes["gpu.amd.com"].partitionProfile) || device.attributes["gpu.amd.com"].partitionProfile in ["", "spx_nps1"])`,
+		},
+		{
+			name: "a partition scheme", spec: gpu("MI300X", 4, "CPX-NPS4"), wantCount: 4,
+			want: `device.attributes["gpu.amd.com"].deviceID in ["0x74a1", "0x74a9", "0x74b5", "0x74bd"] && ` +
+				`has(device.attributes["gpu.amd.com"].partitionProfile) && device.attributes["gpu.amd.com"].partitionProfile == "cpx_nps4"`,
+		},
+		{
+			name: "any partition of any model", spec: gpu("GPU", 2, "partitioned"), wantCount: 2,
+			want: `device.attributes["gpu.amd.com"].type == "amdgpu-partition"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := NewDRAClaimRequest(tt.spec, ResolveProfileResources(tt.spec))
+			if !ok || got.Count != tt.wantCount || got.Selector != tt.want {
+				t.Errorf("NewDRAClaimRequest() = %+v, %v\nwant count %d, selector\n%s", got, ok, tt.wantCount, tt.want)
+			}
+		})
+	}
+
+	for _, spec := range []aimv1alpha2.AIMProfileSpecCommon{
+		gpu("MI999", 1, ""),
+		{AcceleratorType: aimv1alpha1.AcceleratorTypeGPU, AcceleratorVendor: aimv1alpha1.AcceleratorVendorNVIDIA, AcceleratorCount: 1},
+		{AcceleratorType: aimv1alpha1.AcceleratorTypeCPU, AcceleratorModel: "EPYC_9965"},
+	} {
+		if _, ok := NewDRAClaimRequest(spec, nil); ok {
+			t.Errorf("NewDRAClaimRequest(%+v) = ok, want false", spec)
+		}
+	}
+}
+
+func TestDecorateProfileStatusCountsDRANodes(t *testing.T) {
 	spec := aimv1alpha2.AIMProfileSpecCommon{
 		AcceleratorType:  aimv1alpha1.AcceleratorTypeGPU,
 		AcceleratorModel: "MI355X",
 		AcceleratorCount: 8,
+		Image:            "registry.example.com/test-image:1.0.0",
 	}
 	resources := ResolveProfileResources(spec)
 	result := MatchProfileNodes(draTestFleet(), spec, resources)
@@ -228,16 +279,19 @@ func TestDecorateProfileStatusReportsDRAOnlyHardware(t *testing.T) {
 	cm := controllerutils.NewConditionManager(nil)
 	decorateProfileStatus(status, cm, spec, resources, nil, result, true, nil, "", "")
 
-	if status.MatchingNodes != 0 {
-		t.Errorf("MatchingNodes = %d, want 0: DRA nodes cannot serve the profile yet", status.MatchingNodes)
+	if status.MatchingNodes != 1 {
+		t.Errorf("MatchingNodes = %d, want 1: DRA nodes can serve the profile", status.MatchingNodes)
 	}
 	want := aimv1alpha2.AIMProfileMatchingNodes{DevicePlugin: 0, DRA: 1}
 	if status.MatchingNodesByAllocation == nil || *status.MatchingNodesByAllocation != want {
 		t.Errorf("MatchingNodesByAllocation = %v, want %+v", status.MatchingNodesByAllocation, want)
 	}
 	cond := cm.Get(aimv1alpha2.AIMProfileConditionHardwareAvailable)
-	if cond == nil || cond.Status != "False" || cond.Reason != aimv1alpha2.AIMProfileReasonHardwareOnlyOnDRANodes {
-		t.Errorf("HardwareAvailable = %+v, want False with reason %s", cond, aimv1alpha2.AIMProfileReasonHardwareOnlyOnDRANodes)
+	if cond == nil || cond.Status != "True" {
+		t.Errorf("HardwareAvailable = %+v, want True", cond)
+	}
+	if runtimeProjectable(spec, true, result) {
+		t.Error("a profile with only DRA nodes must not project a self-contained runtime")
 	}
 
 	cpu := aimv1alpha2.AIMProfileSpecCommon{AcceleratorType: aimv1alpha1.AcceleratorTypeCPU, AcceleratorModel: "EPYC_9965"}
