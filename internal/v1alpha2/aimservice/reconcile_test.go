@@ -48,6 +48,7 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
+	"github.com/amd-enterprise-ai/aim-engine/internal/aimadapter"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	v1alpha1service "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimservice"
@@ -2384,6 +2385,102 @@ func readyCacheFixture() *aimv1alpha2.AIMProfileCache {
 				},
 			},
 		},
+	}
+}
+
+// TestPlanResources_AddsAdapterDiskToParentArtifact verifies that only an
+// adapter-enabled service with a valid adapter configuration adds the adapter disk
+// to its diskless base model artifact, and that it does so before the profile
+// cache is Ready, so the disk provisions while the model downloads.
+func TestPlanResources_AddsAdapterDiskToParentArtifact(t *testing.T) {
+	dynamic := func() *aimv1alpha1.AIMService {
+		return &aimv1alpha1.AIMService{
+			ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "svc-uid"},
+			Spec:       aimv1alpha1.AIMServiceSpec{AdapterMode: aimv1alpha1.AdapterModeDynamic},
+		}
+	}
+	plain := &aimv1alpha1.AIMService{ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "svc-uid"}}
+	tests := []struct {
+		name          string
+		service       *aimv1alpha1.AIMService
+		parentErr     error
+		wantDiskApply bool
+	}{
+		{name: "dynamic-adapter service", service: dynamic(), wantDiskApply: true},
+		{name: "invalid adapter configuration", service: dynamic(), parentErr: errors.New("ambiguous base model")},
+		{name: "service without adapters", service: plain},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parent := &aimv1alpha1.AIMArtifact{
+				ObjectMeta: metav1.ObjectMeta{Name: "weights", Namespace: "ns", UID: "weights-uid"},
+				Spec:       aimv1alpha1.AIMArtifactSpec{Type: aimv1alpha1.ArtifactTypeModel, ModelID: "org/model"},
+				Status:     aimv1alpha1.AIMArtifactStatus{Status: constants.AIMStatusProgressing},
+			}
+			cache := readyCacheFixture()
+			cache.Status.Status = constants.AIMStatusProgressing
+			fetch := ServiceFetchResult{
+				service:      tt.service,
+				profileCache: controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Value: cache},
+			}
+			if aimadapter.IsActive(tt.service) {
+				fetch.adapterDeps = aimadapter.Dependencies{
+					ParentArtifact:      &controllerutils.FetchResult[*aimv1alpha1.AIMArtifact]{Value: parent},
+					ParentResolutionErr: tt.parentErr,
+				}
+			}
+			obs := ServiceObservation{
+				ServiceFetchResult:  fetch,
+				resolvedProfileSpec: profileSpecWithModelSources(),
+				resolvedProfileStatus: &aimv1alpha2.AIMProfileStatus{
+					Status:     constants.AIMStatusReady,
+					Deployable: true,
+				},
+				profileName:      testProfileA,
+				profileScope:     aimv1alpha1.AIMResolutionScopeNamespace,
+				profileAssembled: true,
+				hasModelSources:  true,
+			}
+			if aimadapter.IsActive(tt.service) {
+				obs.adapterState = aimadapter.Compose(tt.service, fetch.adapterDeps)
+			}
+
+			plan := (&ProfileServiceReconciler{}).PlanResources(context.Background(),
+				controllerutils.ReconcileContext[*aimv1alpha1.AIMService]{Object: tt.service}, obs)
+
+			applies := plan.GetToApplyFields()
+			if !tt.wantDiskApply {
+				if len(applies) != 0 {
+					t.Fatalf("planned %d field applies, want none", len(applies))
+				}
+				return
+			}
+			if len(applies) != 1 || applies[0].Object.GetName() != "weights" || applies[0].Object.GetUID() != "weights-uid" {
+				t.Fatalf("field applies = %#v, want one on weights pinned to weights-uid", applies)
+			}
+		})
+	}
+}
+
+// TestPlanProfileCache_LeavesRequiresAdapterDiskUnset verifies that an
+// adapter-enabled service creates its profile cache like any other service; it
+// adds the adapter disk to the resolved base model artifact instead.
+func TestPlanProfileCache_LeavesRequiresAdapterDiskUnset(t *testing.T) {
+	service := &aimv1alpha1.AIMService{
+		ObjectMeta: metav1.ObjectMeta{Name: testServiceName, Namespace: "ns", UID: "svc-uid"},
+		Spec:       aimv1alpha1.AIMServiceSpec{AdapterMode: aimv1alpha1.AdapterModeDynamic},
+	}
+	obs := ServiceObservation{
+		resolvedProfileSpec: profileSpecWithModelSources(),
+		profileName:         testProfileA,
+		profileScope:        aimv1alpha1.AIMResolutionScopeNamespace,
+	}
+	cache := planProfileCache(service, obs)
+	if cache == nil {
+		t.Fatal("planProfileCache returned nil, want a new cache")
+	}
+	if cache.Spec.RequiresAdapterDisk {
+		t.Error("requiresAdapterDisk = true, want unset")
 	}
 }
 

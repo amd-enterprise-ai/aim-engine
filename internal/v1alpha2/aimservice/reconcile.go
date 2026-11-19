@@ -1210,6 +1210,10 @@ func (r *ProfileServiceReconciler) PlanResources(
 			}
 		}
 
+		// The base model artifact may have been cached for services without
+		// adapters, so it can lack the adapter disk this service mounts.
+		aimadapter.PlanParentAdapterDisk(&planResult, service, obs.adapterDeps, obs.adapterState)
+
 		if !obs.profileCacheReady {
 			logger.V(1).Info("Profile cache not ready, deferring ISVC creation", "profile", obs.profileName)
 			return planResult
@@ -1663,8 +1667,6 @@ func planProfileCache(
 			Mode:             profileCacheModeFor(cachingMode),
 			Env:              cacheEnv,
 			RuntimeConfigRef: service.GetRuntimeConfigRef(),
-			// Adapters need the base artifact to carry a shared RWX adapter disk.
-			RequiresAdapterDisk: service.Spec.AdaptersEnabled(),
 		},
 	}
 }

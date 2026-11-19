@@ -31,11 +31,13 @@ import (
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -88,6 +90,31 @@ func ApplyDesiredStateWithForceFailFast(
 	owner client.Object,
 ) error {
 	return applyDesiredState(ctx, k8sClient, fieldOwner, scheme, desired, owner, true, true)
+}
+
+// ApplyFieldsState force-applies each partial object under
+// "<fieldOwner>-<FieldManagerSuffix>", without owner references, and records
+// each successful apply's event. See PlanResult.ApplyFields.
+func ApplyFieldsState(
+	ctx context.Context,
+	k8sClient client.Client,
+	recorder record.EventRecorder,
+	fieldOwner string,
+	scheme *runtime.Scheme,
+	desired []FieldApply,
+) error {
+	var applyErrs []error
+	for _, fa := range desired {
+		manager := fieldOwner + "-" + fa.FieldManagerSuffix
+		if err := applyDesiredState(ctx, k8sClient, manager, scheme, []client.Object{fa.Object}, nil, true, false); err != nil {
+			applyErrs = append(applyErrs, err)
+			continue
+		}
+		if fa.Event != nil && recorder != nil {
+			recorder.Event(fa.Event.Target, corev1.EventTypeNormal, fa.Event.Reason, fa.Event.Message)
+		}
+	}
+	return errors.Join(applyErrs...)
 }
 
 // CreateDesiredState creates owned objects atomically and never updates an

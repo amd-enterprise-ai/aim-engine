@@ -1,0 +1,12 @@
+# Dynamic adapter mode with no adapters declared: the service still needs the
+# adapter disk mounted, so it reuses the existing Shared cache and adds the
+# adapter disk to the base model artifact that cache resolves.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: adapters-upgrade-lora
+spec:
+  profile:
+    name: adapters-upgrade-profile
+  replicas: 1
+  adapterMode: dynamic

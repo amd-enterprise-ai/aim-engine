@@ -31,6 +31,7 @@ import (
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	v1alpha1utils "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/utils"
 )
@@ -50,6 +51,25 @@ var DefaultAdapterDiskSize = resource.MustParse("50Gi")
 func GenerateAdapterPvcName(mc *aimv1alpha1.AIMArtifact) string {
 	name, _ := utils.GenerateDerivedName([]string{mc.Name, "adapters"}, utils.WithHashSource(mc.UID))
 	return name
+}
+
+// observedAdapterPvcName returns status.adapterPersistentVolumeClaim for mc: the
+// adapter disk PVC while it exists, empty while it is undeclared or missing, and
+// current when the PVC could not be read. A PVC recreated under the same name thus
+// appears as a status change, which wakes the AIMServices that mount it.
+func observedAdapterPvcName(
+	mc *aimv1alpha1.AIMArtifact,
+	adapterPvc *controllerutils.FetchResult[*corev1.PersistentVolumeClaim],
+	current string,
+) string {
+	switch {
+	case mc.Spec.AdapterDisk == nil || adapterPvc == nil || adapterPvc.IsNotFound():
+		return ""
+	case adapterPvc.OK() && adapterPvc.Value != nil:
+		return adapterPvc.Value.Name
+	default:
+		return current
+	}
 }
 
 // buildAdapterPvc builds the shared ReadWriteMany adapter disk PVC for a model

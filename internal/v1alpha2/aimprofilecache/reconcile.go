@@ -312,8 +312,9 @@ type artifactMatch struct {
 }
 
 // matchArtifactForSource picks the artifact this cache should resolve modelSource to:
-// the adoptable candidate with the best status. A terminating candidate is reported
-// separately rather than adopted or treated as missing - see TerminatingArtifactNames.
+// the adoptable candidate betterArtifact ranks highest. A terminating candidate is
+// reported separately rather than adopted or treated as missing - see
+// TerminatingArtifactNames.
 func matchArtifactForSource(
 	profileCache *aimv1alpha2.AIMProfileCache,
 	artifacts []aimv1alpha1.AIMArtifact,
@@ -354,7 +355,7 @@ func matchArtifactForSource(
 			continue
 		}
 
-		if !match.found || constants.CompareAIMStatus(match.best.Status.Status, cached.Status.Status) < 0 {
+		if !match.found || betterArtifact(profileCache, &cached, &match.best) {
 			match.found = true
 			match.best = cached
 		}
@@ -432,6 +433,31 @@ func newArtifactReplacement(
 	return replacement
 }
 
+// betterArtifact reports whether candidate should replace best. Best status wins. On
+// a tie, the artifact this cache already publishes in status.artifacts stays: the
+// KServe ServingRuntime projected for the profile and the InferenceServices mount its
+// PVC, so switching rolls every predictor on the profile. Otherwise the name decides,
+// so the choice never depends on list order.
+func betterArtifact(profileCache *aimv1alpha2.AIMProfileCache, candidate, best *aimv1alpha1.AIMArtifact) bool {
+	if cmp := constants.CompareAIMStatus(candidate.Status.Status, best.Status.Status); cmp != 0 {
+		return cmp > 0
+	}
+	candidatePublished := artifactPublishedBy(profileCache, candidate)
+	if bestPublished := artifactPublishedBy(profileCache, best); candidatePublished != bestPublished {
+		return candidatePublished
+	}
+	return candidate.Name < best.Name
+}
+
+// artifactPublishedBy reports whether profileCache's status.artifacts lists artifact.
+// The UID check keeps an artifact recreated under the same name from counting as
+// published. Candidates are already filtered by sourceUri, so the listed model is not
+// compared.
+func artifactPublishedBy(profileCache *aimv1alpha2.AIMProfileCache, artifact *aimv1alpha1.AIMArtifact) bool {
+	resolved, ok := profileCache.Status.Artifacts[artifact.Name]
+	return ok && resolved.UID == string(artifact.UID)
+}
+
 func (r *ProfileCacheReconciler) PlanResources(
 	ctx context.Context,
 	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha2.AIMProfileCache],
@@ -477,13 +503,11 @@ func (r *ProfileCacheReconciler) PlanResources(
 			artifact.Spec.DownloadFilter = &filter
 		}
 
-		// Provision the shared adapter disk; size/class are left empty so the
-		// AIMArtifact reconciler resolves them from AIMRuntimeConfig.Storage.
-		// A replacement also inherits the disk of the artifact it replaces: a
-		// LoRA-serving cache sharing that artifact resolves to the same replacement
-		// name and will only switch to a disk-bearing one.
-		replacement, replacing := obs.Replacements[model.ModelID]
-		if pc.Spec.RequiresAdapterDisk || (replacing && replacement.serving.Spec.AdapterDisk != nil) {
+		// A replacement inherits the adapter disk of the artifact it replaces, so the
+		// disk already exists when the cache switches to it instead of being added
+		// by the adapter-enabled AIMServices afterwards. Size and class are left
+		// empty for the AIMArtifact reconciler to resolve from AIMRuntimeConfig.Storage.
+		if replacement, replacing := obs.Replacements[model.ModelID]; replacing && replacement.serving.Spec.AdapterDisk != nil {
 			artifact.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
 		}
 
@@ -509,7 +533,8 @@ func (r *ProfileCacheReconciler) DecorateStatus(
 	if !obs.artifacts.OK() || obs.profileUnavailable() {
 		// Keep the last known artifact/PVC projection while the list or the profile is
 		// unavailable. Fetch health records the dependency failure. Clearing it would
-		// also lose the served artifact an in-progress replacement still depends on.
+		// also lose the served artifact an in-progress replacement still depends on,
+		// and the published artifact that ranking keeps on a tie.
 		return
 	}
 
@@ -711,9 +736,10 @@ func generateArtifactName(pc *aimv1alpha2.AIMProfileCache, modelSource aimv1alph
 }
 
 // ArtifactAdoptableBy reports whether profileCache is allowed to use artifact, judged
-// only on the cache's mode, adapter-disk requirement and storage class. Callers that
-// resolve a specific model source must also compare SourceURI; the artifact watch
-// cannot, because the model sources live on the (separately fetched) profile.
+// only on the cache's mode and storage class. Callers that resolve a specific model
+// source must also compare SourceURI; the artifact watch cannot, because the model
+// sources live on the (separately fetched) profile. The adapter disk is not compared:
+// an adapter-enabled AIMService adds it to the artifact the cache resolves.
 //
 // Deliberately ignores deletionTimestamp. The artifact watch filters events through
 // this predicate, so rejecting a terminating artifact here would drop the very wakeups
@@ -732,13 +758,6 @@ func ArtifactAdoptableBy(profileCache *aimv1alpha2.AIMProfileCache, artifact *ai
 		if !hasOwnerReferenceUID(artifact.GetOwnerReferences(), profileCache.UID) {
 			return false
 		}
-	}
-
-	// LoRA-serving caches must only adopt a disk-bearing artifact; a diskless match
-	// would wedge the service. Falling through to MissingCaches makes PlanResources
-	// create one with a disk.
-	if profileCache.Spec.RequiresAdapterDisk && artifact.Spec.AdapterDisk == nil {
-		return false
 	}
 
 	return profileCache.Spec.StorageClassName == "" ||

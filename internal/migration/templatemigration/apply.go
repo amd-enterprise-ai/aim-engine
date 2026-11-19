@@ -2118,11 +2118,11 @@ func validateSharedArtifactSemantics(
 		!semanticEnvEqual(artifact.Spec.Env, targetEnv) {
 		return fmt.Errorf("shared source and target download environments do not exactly match")
 	}
-	requiresAdapterDisk := artifact.Spec.AdapterDisk != nil
-	if targetCache.Spec.RequiresAdapterDisk != requiresAdapterDisk {
-		return fmt.Errorf("shared source and target adapter-disk requirements do not exactly match")
-	}
-	if requiresAdapterDisk && artifact.Status.AdapterPersistentVolumeClaim == "" {
+	// The adapter disk does not decide whether the artifact serves the target
+	// cache: an adapter-enabled AIMService may have added it to a Shared artifact
+	// that services without adapters also use.
+	hasAdapterDisk := artifact.Spec.AdapterDisk != nil
+	if hasAdapterDisk && artifact.Status.AdapterPersistentVolumeClaim == "" {
 		return fmt.Errorf("shared source artifact adapter disk is not Ready")
 	}
 	if len(artifact.Spec.ImagePullSecrets) != 0 {
@@ -2165,7 +2165,7 @@ func validateSharedArtifactSemantics(
 			DownloadFilter:     modelSource.DownloadFilter,
 		},
 	}
-	if requiresAdapterDisk {
+	if hasAdapterDisk {
 		hypothetical.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
 	}
 	if effectiveDownloadImage(artifact, runtimeConfig.Value) !=
@@ -4364,7 +4364,7 @@ func prepareFreshProfileCache(
 func matchFreshProfileCache(existing, desired *aimv1alpha2.AIMProfileCache) error {
 	if existing.Namespace != desired.Namespace ||
 		existing.Name != desired.Name ||
-		!equality.Semantic.DeepEqual(existing.Spec, desired.Spec) ||
+		!profileCacheSpecsMatch(existing.Spec, desired.Spec) ||
 		!freshCacheOwnershipMatches(existing, desired) {
 		return fmt.Errorf(
 			"existing AIMProfileCache %s/%s conflicts with the complete fresh-cache spec or scope",
@@ -4373,6 +4373,15 @@ func matchFreshProfileCache(existing, desired *aimv1alpha2.AIMProfileCache) erro
 		)
 	}
 	return nil
+}
+
+// profileCacheSpecsMatch reports whether two AIMProfileCache specs are equal,
+// ignoring the deprecated requiresAdapterDisk: it has no effect, but caches
+// created before its deprecation may still carry it.
+func profileCacheSpecsMatch(existing, desired aimv1alpha2.AIMProfileCacheSpec) bool {
+	existing.RequiresAdapterDisk = false
+	desired.RequiresAdapterDisk = false
+	return equality.Semantic.DeepEqual(existing, desired)
 }
 
 func freshCacheOwnershipMatches(

@@ -310,6 +310,16 @@ The old artifact and its PVC stay behind after the switch. A shared artifact has
    kubectl delete aimartifact -n <namespace> <old-artifact-name>
    ```
 
+### Deprecated `AIMProfileCache.spec.requiresAdapterDisk`
+
+`AIMProfileCache.spec.requiresAdapterDisk` has no effect. Existing caches and
+manifests that set it remain valid, and no action is needed. An adapter-enabled
+v1alpha2 `AIMService` now adds `spec.adapterDisk` to the base model `AIMArtifact`
+its `AIMProfileCache` resolves, including an `AIMArtifact` that was first cached
+without one. Setting the field on a cache no longer adds an adapter disk to its
+artifacts ahead of an adapter-enabled service. See
+[LoRA adapters](../guides/lora-adapters.md).
+
 ## Migration window
 
 The bridge keeps supported predecessor objects reconciling while native

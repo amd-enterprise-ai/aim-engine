@@ -136,6 +136,10 @@ Common causes:
 - **Verification failure** — Files missing or corrupt after download. The downloader automatically retries with a clean state. Check the download job logs for details on which files failed verification
 - **PVC binding failure** — Storage class doesn't support `ReadWriteMany`
 
+### LoRA Service Waits for an Adapter Disk
+
+A service that serves LoRA adapters (`adapterMode: dynamic`, or any declared `spec.adapters`) reports `AdaptersReady=False` with reason `ParentLacksAdapterDisk` until its base model `AIMArtifact` has an adapter disk PVC, and `AdapterSubtreeProvisioning` while that PVC is `Pending`. See [LoRA adapters — Service stays at `AdaptersReady=False`](../guides/lora-adapters.md#service-stays-at-adaptersreadyfalse).
+
 ### Routing Not Working
 
 ```bash
