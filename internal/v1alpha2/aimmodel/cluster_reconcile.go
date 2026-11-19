@@ -70,7 +70,7 @@ type ClusterModelFetchResult struct {
 	model                   *aimv1alpha2.AIMClusterModel
 	legacyModel             *aimv1alpha1.AIMClusterModel
 	discovery               DiscoveryDecision
-	nodes                   controllerutils.FetchResult[[]corev1.Node]
+	nodes                   controllerutils.FetchResult[aimprofile.NodeInventory]
 	existingClusterProfiles controllerutils.FetchResult[[]managedProfile]
 	childProfileSet         controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfileSet]
 	runtimeConfig           controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
@@ -174,9 +174,8 @@ func (r *ClusterModelReconciler) FetchRemoteState(
 
 	}
 	if model.Spec.Image != "" || model.Spec.ModelID != "" {
-		var nodes corev1.NodeList
-		nodeErr := c.List(ctx, &nodes)
-		result.nodes = controllerutils.FetchResult[[]corev1.Node]{Value: nodes.Items, Error: nodeErr}
+		nodes, nodeErr := aimprofile.ListNodeInventory(ctx, c)
+		result.nodes = controllerutils.FetchResult[aimprofile.NodeInventory]{Value: nodes, Error: nodeErr}
 	}
 	clusterProfiles, err := listManagedClusterProfiles(ctx, c, string(model.UID))
 	result.existingClusterProfiles = controllerutils.FetchResult[[]managedProfile]{Value: clusterProfiles, Error: err}
@@ -456,7 +455,7 @@ func buildClusterModelComponentHealth(obs ClusterModelObservation) []controlleru
 func buildDesiredOfficialClusterModelProfiles(
 	model *aimv1alpha2.AIMClusterModel,
 	catalog aimprofile.DiscoveryCatalog,
-	nodes []corev1.Node,
+	nodes aimprofile.NodeInventory,
 	recommendedDeployments []aimv1alpha1.RecommendedDeployment,
 	existing ...managedProfile,
 ) ([]desiredProfile, error) {

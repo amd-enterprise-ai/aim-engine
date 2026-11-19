@@ -120,7 +120,7 @@ func effectiveModelSource(spec *aimv1alpha1.AIMModelSpec) aimv1alpha1.AIMModelSo
 func buildDesiredGeneratedProfiles(
 	model *aimv1alpha2.AIMModel,
 	fallbacks []aimv1alpha1.AIMProfileGenerationFallback,
-	nodes []corev1.Node,
+	nodes aimprofile.NodeInventory,
 	existing []managedProfile,
 ) (generatedProfiles, error) {
 	resolution, err := generatedCandidates(model.Name, model.Spec, fallbacks, nodes, existing)
@@ -166,7 +166,7 @@ func buildDesiredGeneratedProfiles(
 func buildDesiredGeneratedClusterProfiles(
 	model *aimv1alpha2.AIMClusterModel,
 	fallbacks []aimv1alpha1.AIMProfileGenerationFallback,
-	nodes []corev1.Node,
+	nodes aimprofile.NodeInventory,
 	existing []managedProfile,
 ) (generatedProfiles, error) {
 	resolution, err := generatedCandidates(model.Name, model.Spec, fallbacks, nodes, existing)
@@ -290,7 +290,7 @@ func generatedCandidates(
 	modelName string,
 	spec aimv1alpha1.AIMModelSpec,
 	fallbacks []aimv1alpha1.AIMProfileGenerationFallback,
-	nodes []corev1.Node,
+	nodes aimprofile.NodeInventory,
 	existing []managedProfile,
 ) (generatedCandidateResolution, error) {
 	existingFallbacks := make(map[string]struct{}, len(existing))
@@ -322,7 +322,7 @@ func generatedCandidates(
 		if _, retained := existingFallbacks[fallback.Name]; !available && !retained {
 			resolution.rejections = append(resolution.rejections, generatedProfileRejection{
 				fallbackName: fallback.Name,
-				reason:       nodeMatchRejectionReason(matchResult, len(nodes)),
+				reason:       nodeMatchRejectionReason(matchResult, len(nodes.Nodes)),
 			})
 			continue
 		}

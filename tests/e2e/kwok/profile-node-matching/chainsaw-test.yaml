@@ -1,0 +1,140 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Profile node matching against the fake GPU fleet (hack/fakegpu/fleet.yaml):
+# device-plugin nodes and AMD GPU DRA nodes are counted separately in
+# status.matchingNodesByAllocation, and only device-plugin nodes make a
+# profile available until AIM Engine allocates GPUs through DRA.
+#
+# Needs the KWOK lane with the operator installed. The models used here are on
+# fleet nodes only, not on the labelled kind workers, so the counts are exact.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: kwok-profile-node-matching
+  labels:
+    requires: kwok
+spec:
+  description: GPU profiles count device-plugin and DRA nodes separately, and DRA-only hardware is not available yet.
+  timeouts:
+    assert: 60s
+  steps:
+    - name: MI355X exists only on DRA nodes
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: kwok-mi355x-x8
+              spec:
+                aimId: test/kwok-model
+                modelId: test/kwok-model
+                image: registry.example.com/test-image:1.0.0
+                modelSources:
+                  - modelId: test/kwok-model
+                    sourceUri: hf://test/kwok-model
+                acceleratorVendor: amd
+                acceleratorModel: MI355X
+                acceleratorType: gpu
+                acceleratorCount: 8
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: kwok-mi355x-x8
+              status:
+                matchingNodes: 0
+                matchingNodesByAllocation:
+                  devicePlugin: 0
+                  dra: 2
+                (conditions[?type == 'HardwareAvailable'] | [0]):
+                  status: "False"
+                  reason: HardwareOnlyOnDRANodes
+      finally:
+        - delete:
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              name: kwok-mi355x-x8
+
+    - name: R9700 on device-plugin and DRA nodes, mixed device-plugin node excluded
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: kwok-r9700-x2
+              spec:
+                aimId: test/kwok-model
+                modelId: test/kwok-model
+                image: registry.example.com/test-image:1.0.0
+                modelSources:
+                  - modelId: test/kwok-model
+                    sourceUri: hf://test/kwok-model
+                acceleratorVendor: amd
+                acceleratorModel: R9700
+                acceleratorType: gpu
+                acceleratorCount: 2
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: kwok-r9700-x2
+              status:
+                # dp-r9700; dp-mixed-models carries the mixed-models marker.
+                matchingNodes: 1
+                matchingNodesByAllocation:
+                  devicePlugin: 1
+                  # dra-mixed-models: two R9700 devices.
+                  dra: 1
+                (conditions[?type == 'HardwareAvailable'] | [0]):
+                  status: "True"
+      finally:
+        - delete:
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              name: kwok-r9700-x2
+
+    - name: MI300X CPX-NPS4 partitions on one node of each kind
+      try:
+        - apply:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: kwok-mi300x-cpx-x4
+              spec:
+                aimId: test/kwok-model
+                modelId: test/kwok-model
+                image: registry.example.com/test-image:1.0.0
+                modelSources:
+                  - modelId: test/kwok-model
+                    sourceUri: hf://test/kwok-model
+                acceleratorVendor: amd
+                acceleratorModel: MI300X
+                acceleratorType: gpu
+                acceleratorCount: 4
+                acceleratorPartitioningMode: CPX-NPS4
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: kwok-mi300x-cpx-x4
+              status:
+                # dp-mi300x-cpx and dra-mi300x-cpx; dra-mixed-partitions is
+                # in CPX-NPS1, not CPX-NPS4.
+                matchingNodes: 1
+                matchingNodesByAllocation:
+                  devicePlugin: 1
+                  dra: 1
+      finally:
+        - delete:
+            ref:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              name: kwok-mi300x-cpx-x4

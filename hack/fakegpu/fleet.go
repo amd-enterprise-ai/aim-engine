@@ -61,6 +61,7 @@ const (
 	labelAMDGPU         = "feature.node.kubernetes.io/amd-gpu"
 	aimLabelPrefix      = "feature.node.kubernetes.io/aim-accelerator"
 	aimPartitionPrefix  = aimLabelPrefix + ".partitioning-scheme"
+	aimMixedModelsLabel = aimLabelPrefix + ".mixed-models.GPU"
 	canonicalSPXScheme  = "SPX-NPS1"
 	productNameMaxLen   = validation.LabelValueMaxLength - len("gpu.product-name.")
 	defaultNodeCPU      = "192"
@@ -578,8 +579,9 @@ func gpuFamily(gfx int) string {
 
 // aimLabels returns the labels AIM Engine's AcceleratorDetector publishes. A
 // GPU node gets each model, the GPU family and the AMD vendor with their GPU
-// counts, and the partition schemes with their schedulable units; a node
-// without GPUs gets the CPU detector's labels, if a CPU is given.
+// counts, the partition schemes with their schedulable units, and with more
+// than one GPU model the mixed-models marker; a node without GPUs gets the CPU
+// detector's labels, if a CPU is given.
 func aimLabels(devices []device, cpu *CPU) map[string]string {
 	labels := map[string]string{}
 	if len(devices) == 0 {
@@ -598,6 +600,9 @@ func aimLabels(devices []device, cpu *CPU) map[string]string {
 	}
 	for model, n := range models {
 		labels[aimLabelPrefix+"."+model] = strconv.Itoa(n)
+	}
+	if len(models) > 1 {
+		labels[aimMixedModelsLabel] = strconv.Itoa(len(models))
 	}
 	total := strconv.Itoa(len(devices))
 	labels[aimLabelPrefix+".GPU"] = total

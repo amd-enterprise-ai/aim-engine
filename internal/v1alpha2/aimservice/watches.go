@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -44,6 +45,7 @@ import (
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	servicepolicy "github.com/amd-enterprise-ai/aim-engine/internal/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
 )
@@ -130,6 +132,15 @@ func RegisterWatches(ctx context.Context, mgr manager.Manager, b *builder.Builde
 		return nil, err
 	}
 
+	// Services with resource overrides match nodes themselves; AMD GPU DRA
+	// ResourceSlices change which nodes match, like node changes.
+	if utils.ResourceSliceAPIAvailable(mgr.GetRESTMapper()) {
+		b = b.Watches(
+			&resourcev1.ResourceSlice{},
+			handler.EnqueueRequestsFromMapFunc(findServicesForResourceNodeChange(c)),
+			builder.WithPredicates(utils.AMDGPUResourceSlicePredicate()),
+		)
+	}
 	return b.
 		Watches(
 			&corev1.Node{},
@@ -340,7 +351,9 @@ func acceleratorNodeLabelsChanged(oldLabels, newLabels map[string]string) bool {
 // matching rather than to every AIMService in the cluster.
 func findServicesForResourceNodeChange(c client.Client) handler.MapFunc {
 	return func(ctx context.Context, obj client.Object) []reconcile.Request {
-		if _, ok := obj.(*corev1.Node); !ok {
+		switch obj.(type) {
+		case *corev1.Node, *resourcev1.ResourceSlice:
+		default:
 			return nil
 		}
 		requests := map[types.NamespacedName]struct{}{}
@@ -393,6 +406,11 @@ func profileRelevantChangePredicate() predicate.Predicate {
 				return true
 			}
 			if !equality.Semantic.DeepEqual(oldAff, newAff) {
+				return true
+			}
+			oldCount, oldByAllocation := profileNodeCounts(e.ObjectOld)
+			newCount, newByAllocation := profileNodeCounts(e.ObjectNew)
+			if oldCount != newCount || !equality.Semantic.DeepEqual(oldByAllocation, newByAllocation) {
 				return true
 			}
 			return provenanceLabelsChanged(e.ObjectOld.GetLabels(), e.ObjectNew.GetLabels())
@@ -466,6 +484,21 @@ func profileRelevantFields(obj client.Object) (
 		return p.Status.Status, p.Status.ObservedGeneration, p.Status.Resources, p.Status.ResolvedNodeAffinity
 	default:
 		return "", 0, nil, nil
+	}
+}
+
+// profileNodeCounts extracts the profile's matching-node counts. They can
+// change while the profile stays Ready, for example when DRA nodes join a
+// profile that already has device-plugin nodes, and services read them to
+// check that nodes exist for their GPU allocation mode.
+func profileNodeCounts(obj client.Object) (int32, *aimv1alpha2.AIMProfileMatchingNodes) {
+	switch p := obj.(type) {
+	case *aimv1alpha2.AIMProfile:
+		return p.Status.MatchingNodes, p.Status.MatchingNodesByAllocation
+	case *aimv1alpha2.AIMClusterProfile:
+		return p.Status.MatchingNodes, p.Status.MatchingNodesByAllocation
+	default:
+		return 0, nil
 	}
 }
 

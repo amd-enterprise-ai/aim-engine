@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hand-authored `AIMProfile` and `AIMClusterProfile` resources can declare `spec.baseImageRef`, the supported clean-runtime lineage used when ProfileSets or service overlays replace model weights.
 - **Tolerations for inference pods.** Set `spec.tolerations` in an `AIMRuntimeConfig`, `AIMClusterRuntimeConfig` or `AIMService` to let inference pods onto tainted nodes. An AIMService's list replaces the runtime config's, a namespace runtime config's replaces the cluster's, and an empty list removes the inherited one.
 - **Tolerations for the Jobs that prepare a model.** The size check, download and discovery Jobs get the runtime config's `spec.tolerations`, and the adapter staging Jobs get the same tolerations as the inference pods. A model can now start when every node that can run these Jobs has a taint.
+- **Profiles see nodes with DRA GPUs.** AIM Engine reads the `gpu.amd.com` ResourceSlices of the AMD GPU DRA driver, and profiles report device-plugin and DRA matches separately in `status.matchingNodesByAllocation`. GPUs are not allocated through DRA yet, so a profile whose GPUs exist only on DRA nodes reports `HardwareAvailable=False` with the reason `HardwareOnlyOnDRANodes`. The operator now needs `get`, `list` and `watch` on `resource.k8s.io` ResourceSlices; the chart's ClusterRole includes them.
 
 ### Changed
 - Weight-replacing profile derivations now use the producer's exact `AIM_BASE_IMAGE_REF` or `spec.baseImageRef`. Tags and digests are no longer truncated or synthesized. The operator uses the private producer prefixes found in released images (`docker.io/silogenai` and `ghcr.io/silogen`) as public `docker.io/amdenterpriseai` compatibility fallbacks even when a resource selects a named RuntimeConfig; matching configured mappings remain authoritative for private and air-gapped mirrors. The fallbacks are built into the operator; the Helm chart does not add mappings to its default cluster RuntimeConfig.
@@ -25,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ProfileSet controllers no longer requeue every set for RuntimeConfig status-only updates.
 - Service overlay profiles now record canonical runtime lineage consistently in both `spec.baseImageRef` and the `aim.eai.amd.com/base-image` annotation, while `spec.image` remains the mapped deployment reference.
 - **v1alpha1 MI350P templates match MI350P VF nodes.** The AMD device-ID table now maps `75b8` (MI350P VF) to MI350P, so the `amd.com/gpu.device-id` node affinity of v1alpha1 MI350P templates also accepts these nodes. Services from those templates restart once on upgrade.
+- **DRA nodes no longer count as device-plugin matches.** A node whose GPUs are published through DRA carries the AcceleratorDetector's labels but advertises no `amd.com/gpu`, and the profile matcher used to count it. Profiles then reported `Ready` while their pods could never be scheduled there.
 
 ## [0.2.7] - 2026-10-08
 

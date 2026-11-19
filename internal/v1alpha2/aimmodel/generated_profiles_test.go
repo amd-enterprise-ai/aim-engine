@@ -88,7 +88,7 @@ func TestBuildDesiredGeneratedProfiles_GenericNVIDIA(t *testing.T) {
 		Spec:       aimv1alpha1.AIMModelSpec{ModelID: "Qwen/Qwen3.5-0.8B"},
 	}
 	fallback := testNVIDIAFallback("nvidia-vllm", 0)
-	generated, err := buildDesiredGeneratedProfiles(model, []aimv1alpha1.AIMProfileGenerationFallback{fallback}, []corev1.Node{testNVIDIANode()}, nil)
+	generated, err := buildDesiredGeneratedProfiles(model, []aimv1alpha1.AIMProfileGenerationFallback{fallback}, aimprofile.NodesOnly([]corev1.Node{testNVIDIANode()}), nil)
 	if err != nil {
 		t.Fatalf("buildDesiredGeneratedProfiles() error = %v", err)
 	}
@@ -143,7 +143,7 @@ func TestBuildDesiredGeneratedProfiles_AimIDChangeRekeysChild(t *testing.T) {
 	first, err := buildDesiredGeneratedProfiles(
 		model,
 		[]aimv1alpha1.AIMProfileGenerationFallback{fallback},
-		[]corev1.Node{testNVIDIANode()},
+		aimprofile.NodesOnly([]corev1.Node{testNVIDIANode()}),
 		nil,
 	)
 	if err != nil {
@@ -155,7 +155,7 @@ func TestBuildDesiredGeneratedProfiles_AimIDChangeRekeysChild(t *testing.T) {
 	second, err := buildDesiredGeneratedProfiles(
 		model,
 		[]aimv1alpha1.AIMProfileGenerationFallback{fallback},
-		[]corev1.Node{testNVIDIANode()},
+		aimprofile.NodesOnly([]corev1.Node{testNVIDIANode()}),
 		[]managedProfile{{Object: firstProfile}},
 	)
 	if err != nil {
@@ -183,7 +183,7 @@ func TestBuildDesiredGeneratedProfiles_AMDOnlyNodeSelectsAMDFallback(t *testing.
 			testAMDFallback("amd-vllm", 10),
 			testNVIDIAFallback("nvidia-vllm", 20),
 		},
-		[]corev1.Node{testAMDNode()},
+		aimprofile.NodesOnly([]corev1.Node{testAMDNode()}),
 		nil,
 	)
 	if err != nil {
@@ -225,7 +225,7 @@ func TestBuildDesiredGeneratedProfiles_NoHardwareDoesNotCreate(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "qwen", Namespace: "team-a", UID: "uid-1"},
 		Spec:       aimv1alpha1.AIMModelSpec{ModelID: "Qwen/Qwen3.5-0.8B"},
 	}
-	generated, err := buildDesiredGeneratedProfiles(model, []aimv1alpha1.AIMProfileGenerationFallback{testNVIDIAFallback("nvidia-vllm", 0)}, nil, nil)
+	generated, err := buildDesiredGeneratedProfiles(model, []aimv1alpha1.AIMProfileGenerationFallback{testNVIDIAFallback("nvidia-vllm", 0)}, aimprofile.NodeInventory{}, nil)
 	if err != nil {
 		t.Fatalf("buildDesiredGeneratedProfiles() error = %v", err)
 	}
@@ -257,7 +257,7 @@ func TestBuildDesiredGeneratedProfiles_ExplainsHardwareRejection(t *testing.T) {
 	generated, err := buildDesiredGeneratedProfiles(
 		model,
 		[]aimv1alpha1.AIMProfileGenerationFallback{fallback},
-		[]corev1.Node{node},
+		aimprofile.NodesOnly([]corev1.Node{node}),
 		nil,
 	)
 	if err != nil {
@@ -288,7 +288,7 @@ func TestBuildDesiredGeneratedProfiles_ExplainsModelRequestMismatch(t *testing.T
 	generated, err := buildDesiredGeneratedProfiles(
 		model,
 		[]aimv1alpha1.AIMProfileGenerationFallback{fallback},
-		[]corev1.Node{testNVIDIANode()},
+		aimprofile.NodesOnly([]corev1.Node{testNVIDIANode()}),
 		nil,
 	)
 	if err != nil {
@@ -316,7 +316,7 @@ func TestBuildDesiredGeneratedProfiles_RetainsExistingWithoutHardware(t *testing
 			},
 		}},
 	}}
-	generated, err := buildDesiredGeneratedProfiles(model, []aimv1alpha1.AIMProfileGenerationFallback{testNVIDIAFallback("nvidia-vllm", 0)}, nil, existing)
+	generated, err := buildDesiredGeneratedProfiles(model, []aimv1alpha1.AIMProfileGenerationFallback{testNVIDIAFallback("nvidia-vllm", 0)}, aimprofile.NodeInventory{}, existing)
 	if err != nil {
 		t.Fatalf("buildDesiredGeneratedProfiles() error = %v", err)
 	}
@@ -338,7 +338,7 @@ func TestBuildDesiredGeneratedProfiles_DeterministicPrimary(t *testing.T) {
 		testNVIDIAFallback("preferred", 20),
 		testNVIDIAFallback("preferred-z", 20),
 	}
-	generated, err := buildDesiredGeneratedProfiles(model, fallbacks, []corev1.Node{testNVIDIANode()}, nil)
+	generated, err := buildDesiredGeneratedProfiles(model, fallbacks, aimprofile.NodesOnly([]corev1.Node{testNVIDIANode()}), nil)
 	if err != nil {
 		t.Fatalf("buildDesiredGeneratedProfiles() error = %v", err)
 	}
@@ -382,7 +382,7 @@ func TestBuildDesiredGeneratedProfiles_AvailableFallbackWinsPrimary(t *testing.T
 			unavailable,
 			testNVIDIAFallback("available", 1),
 		},
-		[]corev1.Node{testNVIDIANode()},
+		aimprofile.NodesOnly([]corev1.Node{testNVIDIANode()}),
 		existing,
 	)
 	if err != nil {
@@ -418,7 +418,7 @@ func TestBuildDesiredGeneratedProfiles_SpecificFallbackWinsPriorityTie(t *testin
 			testNVIDIAFallback("generic", 10),
 			specific,
 		},
-		[]corev1.Node{node},
+		aimprofile.NodesOnly([]corev1.Node{node}),
 		nil,
 	)
 	if err != nil {
@@ -440,7 +440,7 @@ func TestBuildDesiredGeneratedClusterProfiles(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "qwen", UID: "uid-1"},
 		Spec:       aimv1alpha1.AIMModelSpec{ModelID: "Qwen/Qwen3.5-0.8B"},
 	}
-	generated, err := buildDesiredGeneratedClusterProfiles(model, []aimv1alpha1.AIMProfileGenerationFallback{testNVIDIAFallback("nvidia-vllm", 0)}, []corev1.Node{testNVIDIANode()}, nil)
+	generated, err := buildDesiredGeneratedClusterProfiles(model, []aimv1alpha1.AIMProfileGenerationFallback{testNVIDIAFallback("nvidia-vllm", 0)}, aimprofile.NodesOnly([]corev1.Node{testNVIDIANode()}), nil)
 	if err != nil {
 		t.Fatalf("buildDesiredGeneratedClusterProfiles() error = %v", err)
 	}
@@ -513,7 +513,7 @@ func TestBuildDesiredGeneratedProfiles_AcceleratorRequest(t *testing.T) {
 	generated, err := buildDesiredGeneratedProfiles(
 		model,
 		fallbacks,
-		[]corev1.Node{nvidiaNode, testAMDNode()},
+		aimprofile.NodesOnly([]corev1.Node{nvidiaNode, testAMDNode()}),
 		nil,
 	)
 	if err != nil {
@@ -544,7 +544,7 @@ func TestBuildDesiredGeneratedProfiles_AcceleratorCountDefaultsToOne(t *testing.
 	generated, err := buildDesiredGeneratedProfiles(
 		model,
 		[]aimv1alpha1.AIMProfileGenerationFallback{testNVIDIAFallback("nvidia-vllm", 0)},
-		[]corev1.Node{testNVIDIANode()},
+		aimprofile.NodesOnly([]corev1.Node{testNVIDIANode()}),
 		nil,
 	)
 	if err != nil {
@@ -574,7 +574,7 @@ func TestBuildDesiredGeneratedProfiles_AcceleratorModelMismatchDropsFallback(t *
 	generated, err := buildDesiredGeneratedProfiles(
 		model,
 		[]aimv1alpha1.AIMProfileGenerationFallback{fallback},
-		[]corev1.Node{testNVIDIANode()},
+		aimprofile.NodesOnly([]corev1.Node{testNVIDIANode()}),
 		nil,
 	)
 	if err != nil {
@@ -596,7 +596,7 @@ func TestBuildDesiredGeneratedProfiles_ProfileType(t *testing.T) {
 	}
 
 	unset := testNVIDIAFallback("nvidia-vllm", 0)
-	generated, err := buildDesiredGeneratedProfiles(model, []aimv1alpha1.AIMProfileGenerationFallback{unset}, []corev1.Node{testNVIDIANode()}, nil)
+	generated, err := buildDesiredGeneratedProfiles(model, []aimv1alpha1.AIMProfileGenerationFallback{unset}, aimprofile.NodesOnly([]corev1.Node{testNVIDIANode()}), nil)
 	if err != nil {
 		t.Fatalf("buildDesiredGeneratedProfiles() error = %v", err)
 	}
@@ -607,7 +607,7 @@ func TestBuildDesiredGeneratedProfiles_ProfileType(t *testing.T) {
 
 	raised := testNVIDIAFallback("nvidia-vllm", 0)
 	raised.Type = aimv1alpha1.AIMProfileTypeGeneral
-	generated, err = buildDesiredGeneratedProfiles(model, []aimv1alpha1.AIMProfileGenerationFallback{raised}, []corev1.Node{testNVIDIANode()}, nil)
+	generated, err = buildDesiredGeneratedProfiles(model, []aimv1alpha1.AIMProfileGenerationFallback{raised}, aimprofile.NodesOnly([]corev1.Node{testNVIDIANode()}), nil)
 	if err != nil {
 		t.Fatalf("buildDesiredGeneratedProfiles() error = %v", err)
 	}
@@ -631,7 +631,7 @@ func TestBuildDesiredGeneratedProfiles_AutoSelectionPolicy(t *testing.T) {
 	generated, err := buildDesiredGeneratedProfiles(
 		model,
 		[]aimv1alpha1.AIMProfileGenerationFallback{optimized, any},
-		[]corev1.Node{testNVIDIANode()},
+		aimprofile.NodesOnly([]corev1.Node{testNVIDIANode()}),
 		nil,
 	)
 	if err != nil {
