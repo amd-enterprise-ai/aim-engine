@@ -62,6 +62,12 @@ const (
 	// key existence via Exists / DoesNotExist.
 	PartitioningSchemeLabelPrefix = AcceleratorLabelPrefix + "partitioning-scheme."
 
+	// MixedModelsLabelPrefix is published by the AcceleratorDetector on nodes
+	// carrying more than one model of an accelerator type; the value is the
+	// number of distinct models:
+	//   feature.node.kubernetes.io/aim-accelerator.mixed-models.GPU=2
+	MixedModelsLabelPrefix = AcceleratorLabelPrefix + "mixed-models."
+
 	// PartitioningSchemeDefault is the hardware-agnostic sentinel key suffix
 	// stamped on canonical-unpartitioned and non-partitionable nodes.
 	PartitioningSchemeDefault = "default"
@@ -436,6 +442,7 @@ func matchNodes(
 	affinity := buildNodeAffinity(accelType, accelVendor, accelModel, partitioningMode)
 	vendorReq := vendorNodeSelectorRequirement(accelType, accelVendor)
 	partitionReq := partitionNodeSelectorRequirement(accelType, partitioningMode)
+	mixedModelsReq := mixedModelsNodeSelectorRequirement(accelType)
 
 	var count int32
 	var resultMismatches []NodeMismatch
@@ -446,6 +453,7 @@ func matchNodes(
 			vendorReq,
 			accelModel,
 			partitionReq,
+			mixedModelsReq,
 			resolvedResources,
 		)
 		if len(reasons) == 0 {
@@ -475,6 +483,7 @@ func nodeMismatchReasons(
 	vendorReq *corev1.NodeSelectorRequirement,
 	accelModel string,
 	partitionReq *corev1.NodeSelectorRequirement,
+	mixedModelsReq *corev1.NodeSelectorRequirement,
 	resolvedResources *corev1.ResourceRequirements,
 ) []string {
 	var reasons []string
@@ -495,6 +504,18 @@ func nodeMismatchReasons(
 		}
 	}
 	reasons = append(reasons, resourceMismatchReasons(node, resolvedResources)...)
+	// Reported only when it is the node's only mismatch, so a node that could
+	// never serve the profile isn't explained by its mix of models.
+	if len(reasons) == 0 && mixedModelsReq != nil {
+		if _, mixed := node.Labels[mixedModelsReq.Key]; mixed {
+			reasons = append(reasons, fmt.Sprintf(
+				"node carries more than one GPU model (label %q): device-plugin scheduling "+
+					"cannot choose which model a pod receives, so GPU workloads are not "+
+					"scheduled onto this node",
+				mixedModelsReq.Key,
+			))
+		}
+	}
 	return reasons
 }
 
@@ -532,9 +553,10 @@ func resourceMismatchReasons(node *corev1.Node, resources *corev1.ResourceRequir
 }
 
 // BuildNodeAffinity constructs a corev1.NodeAffinity from the accelerator model
-// and (for GPU profiles) the partitioning mode. The terms are AND-ed into a
-// single NodeSelectorTerm so the resulting affinity is "model AND partition".
-// Returns nil when no accelerator model is specified.
+// and, for GPU profiles, the partitioning mode and the mixed-models exclusion.
+// The terms are AND-ed into a single NodeSelectorTerm so the resulting affinity
+// is "model AND partition AND not mixed-models". Returns nil when the profile
+// has neither an accelerator model nor the GPU accelerator type.
 func BuildNodeAffinity(accelType aimv1alpha1.AcceleratorType, accelModel, partitioningMode string) *corev1.NodeAffinity {
 	return buildNodeAffinity(accelType, "", accelModel, partitioningMode)
 }
@@ -564,6 +586,9 @@ func buildNodeAffinity(
 			exprs = append(exprs, *req)
 		}
 	}
+	if req := mixedModelsNodeSelectorRequirement(accelType); req != nil {
+		exprs = append(exprs, *req)
+	}
 	if len(exprs) == 0 {
 		return nil
 	}
@@ -574,6 +599,21 @@ func buildNodeAffinity(
 				{MatchExpressions: exprs},
 			},
 		},
+	}
+}
+
+// mixedModelsNodeSelectorRequirement keeps GPU profiles off nodes that carry
+// several GPU models. Device-plugin resources (amd.com/gpu, nvidia.com/gpu) are
+// a single pool per node, so a pod on such a node may receive GPUs of a model
+// other than the one its profile targets, or a mix of models. Only DRA claims
+// can select devices by model within a node.
+func mixedModelsNodeSelectorRequirement(accelType aimv1alpha1.AcceleratorType) *corev1.NodeSelectorRequirement {
+	if accelType != aimv1alpha1.AcceleratorTypeGPU {
+		return nil
+	}
+	return &corev1.NodeSelectorRequirement{
+		Key:      MixedModelsLabelPrefix + strings.ToUpper(string(accelType)),
+		Operator: corev1.NodeSelectorOpDoesNotExist,
 	}
 }
 

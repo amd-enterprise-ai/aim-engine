@@ -21,6 +21,7 @@ GPU vendor:
 | `feature.node.kubernetes.io/aim-accelerator.<model>` | Accelerator model and count | `feature.node.kubernetes.io/aim-accelerator.MI300X=8` |
 | `feature.node.kubernetes.io/aim-accelerator.vendor.GPU.<vendor>` | GPU vendor and count | `feature.node.kubernetes.io/aim-accelerator.vendor.GPU.NVIDIA=8` |
 | `feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.<mode>` | GPU partition state | `feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.default=8` |
+| `feature.node.kubernetes.io/aim-accelerator.mixed-models.GPU` | Number of distinct GPU models, present only when the node has more than one. GPU workloads are not scheduled onto these nodes; see [Nodes with mixed GPU models](../concepts/accelerator-detection.md#nodes-with-mixed-gpu-models) | `feature.node.kubernetes.io/aim-accelerator.mixed-models.GPU=2` |
 
 AMD detection uses `aim-runtime detect-hardware` and `amd-smi`; NVIDIA
 detection uses `nvidia-smi`. Product names are normalized to profile-compatible
