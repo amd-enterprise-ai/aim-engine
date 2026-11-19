@@ -1,0 +1,24 @@
+# Requires role-aware activation support in the installed integration.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: qwen-idle
+  namespace: team-a
+spec:
+  model:
+    name: qwen3-32b
+  composition:
+    mode: PrefillDecode
+    prefill:
+      scaling:
+        minReplicas: 0
+        maxReplicas: 1
+    decode:
+      scaling:
+        minReplicas: 0
+        maxReplicas: 2
+  routing:
+    enabled: true
+    gatewayRef:
+      name: inference-gateway
+      namespace: gateways

@@ -1,0 +1,24 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfileComposition
+metadata:
+  name: team-chat
+  namespace: team-a
+spec:
+  main:
+    profile:
+      ref:
+        kind: AIMProfile
+        name: existing-profile
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: team-chat-service
+  namespace: team-a
+spec:
+  composition:
+    ref:
+      kind: AIMProfileComposition
+      name: team-chat
+    main:
+      replicas: 2

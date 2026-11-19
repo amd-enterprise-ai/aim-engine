@@ -143,6 +143,11 @@ Task-oriented walkthroughs for common workflows:
 - [Naming and Labels](reference/naming-and-labels.md) — Derived naming algorithm and label conventions
 - [Conditions](reference/conditions.md) — Full catalog of conditions across all CRDs
 
+### Contract reviews
+
+- [Composition Contract Review](composition/README.md) — Proposed CRD contract,
+  final-form documentation, and examples for ADR-0012. Not yet implemented.
+
 ### Legacy (v1alpha1)
 
 - [Overview](legacy/index.md) — Deprecation timeline and what changed

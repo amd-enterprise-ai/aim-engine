@@ -1,0 +1,29 @@
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMClusterRuntimeConfig
+metadata:
+  name: default
+spec:
+  composition:
+    selectorDefaults:
+      common:
+        engine: vllm
+      prefill:
+        metric: throughput
+      decode:
+        metric: latency
+    defaultTransportPreset: local-kv
+    transportPresets:
+      - name: local-kv
+        # Site-defined integration identifier, not a shipped connector name.
+        integration: amd-local-kv
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+  namespace: team-a
+spec:
+  composition:
+    selectorDefaults:
+      common:
+        precision: bf16

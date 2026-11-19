@@ -1,0 +1,10 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: qwen-chat
+  namespace: team-a
+spec:
+  model:
+    name: qwen3-32b
+  composition:
+    mode: PrefillDecode

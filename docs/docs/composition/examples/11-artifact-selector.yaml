@@ -1,0 +1,11 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: qwen-by-artifact
+  namespace: team-a
+spec:
+  composition:
+    mode: PrefillDecode
+    profileSelector:
+      modelId: Qwen/Qwen3-32B
+      engine: vllm
