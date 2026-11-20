@@ -80,6 +80,12 @@ const (
 	// operator can own the retry/backoff policy instead.
 	discoveryJobBackoffLimit = 0
 
+	// discoveryJobActiveDeadlineSeconds fails a discovery Job whose pod never
+	// finishes, such as one Pending because no node tolerates it, so it frees
+	// its slot under the global cap. An hour covers pulling a large AIM image
+	// (tens of GB) over a slow link; the profile walk itself takes seconds.
+	discoveryJobActiveDeadlineSeconds = 3600
+
 	// DiscoveryRecordBegin and DiscoveryRecordEnd delimit base64-encoded profile YAML
 	// blocks emitted by the in-image shell script.
 	DiscoveryRecordBegin = "@@BEGIN "
@@ -124,6 +130,7 @@ type DiscoveryJobSpec struct {
 // image (alpine/busybox, distroless variants that ship a shell, etc.).
 func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 	backoffLimit := int32(discoveryJobBackoffLimit)
+	activeDeadline := int64(discoveryJobActiveDeadlineSeconds)
 	ttl := int32(discoveryJobTTLSeconds)
 
 	command := DiscoveryShellCommand()
@@ -151,6 +158,7 @@ func BuildDiscoveryJob(spec DiscoveryJobSpec) *batchv1.Job {
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoffLimit,
+			ActiveDeadlineSeconds:   &activeDeadline,
 			TTLSecondsAfterFinished: &ttl,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
@@ -469,6 +477,9 @@ func ComputeDiscoverySpecHash(image string, pullSecrets []corev1.LocalObjectRefe
 	return fmt.Sprintf("%x", h.Sum(nil)[:16])
 }
 
+// reasonAwaitingDiscovery is the discovery reason while a failed attempt backs off.
+const reasonAwaitingDiscovery = "AwaitingDiscovery"
+
 // ShouldCreateDiscoveryJob returns true if the operator should create (or recreate)
 // a discovery Job now. During backoff it returns false with the time left until
 // the retry, a reason and a message. The message names the absolute retry time
@@ -483,8 +494,11 @@ func ShouldCreateDiscoveryJob(state *aimv1alpha1.ModelDiscoveryState, currentSpe
 	if state.LastAttemptTime != nil && state.Attempts > 0 {
 		next := state.LastAttemptTime.Add(calculateDiscoveryBackoff(state.Attempts))
 		if now.Before(next) {
-			return false, next.Sub(now), "AwaitingDiscovery",
-				fmt.Sprintf("Waiting until %s before retry (attempt %d)", next.UTC().Format(time.RFC3339), state.Attempts+1)
+			message := fmt.Sprintf("Waiting until %s before retry (attempt %d)", next.UTC().Format(time.RFC3339), state.Attempts+1)
+			if state.LastFailureReason != "" {
+				message += "; last attempt failed: " + state.LastFailureReason
+			}
+			return false, next.Sub(now), reasonAwaitingDiscovery, message
 		}
 	}
 	return true, 0, "", ""

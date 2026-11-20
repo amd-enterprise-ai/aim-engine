@@ -804,6 +804,10 @@ const (
 	// AIMServiceReasonRolloutInProgress indicates the predictor is rolling out a
 	// new revision that is not ready yet while the previous revision serves.
 	AIMServiceReasonRolloutInProgress = "RolloutInProgress"
+	// AIMServiceReasonRolloutStalled indicates the new predictor revision
+	// cannot progress (crash loop or exceeded progress deadline) while the
+	// previous revision serves.
+	AIMServiceReasonRolloutStalled = "RolloutStalled"
 	// AIMServiceReasonScaledToZero indicates the deployment is idled to zero
 	// replicas by KEDA under scale-to-zero. Healthy state, not a failure.
 	AIMServiceReasonScaledToZero = "ScaledToZero"

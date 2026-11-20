@@ -25,13 +25,16 @@ SOFTWARE.
 package imagemetadata
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -165,6 +168,45 @@ func TestRegistryError(t *testing.T) {
 				t.Error("classified error must wrap ImageRegistryError so the failure cooldown applies")
 			}
 		})
+	}
+}
+
+func TestInspectImage_RegistryNeverAnswers(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("DOCKER_CONFIG", "")
+	t.Setenv("REGISTRY_AUTH_FILE", "")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+
+	var requests atomic.Int32
+	stop := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+		<-stop
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(stop) })
+	imageURI := strings.TrimPrefix(server.URL, "http://") + "/amdenterpriseai/aim-dummy:0.2.2"
+	t.Cleanup(func() { recordInspectResult(imageURI, nil) })
+
+	timeout := registryReadTimeout
+	registryReadTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { registryReadTimeout = timeout })
+
+	start := time.Now()
+	_, err := inspectImage(context.Background(), imageURI, nil, nil, "")
+	if elapsed := time.Since(start); elapsed > registryReadTimeout+2*time.Second {
+		t.Fatalf("inspectImage returned after %v, want within %v", elapsed, registryReadTimeout)
+	}
+	if got := controllerutils.CategorizeError(err); got.Category() != controllerutils.ErrorCategoryInfrastructure ||
+		got.Reason() != "NetworkTimeout" {
+		t.Fatalf("inspectImage error = %v (category %v, reason %q), want an infrastructure NetworkTimeout",
+			err, got.Category(), got.Reason())
+	}
+
+	seen := requests.Load()
+	if _, err := inspectImage(context.Background(), imageURI, nil, nil, ""); err == nil || requests.Load() != seen {
+		t.Fatalf("second inspect within the cooldown: error %v, registry requests %d -> %d; want the cached error and no request",
+			err, seen, requests.Load())
 	}
 }
 

@@ -59,6 +59,13 @@ import (
 // classifies it as.
 const imageInspectCooldown = 15 * time.Minute
 
+// registryReadTimeout bounds the keychain build and the manifest and config
+// reads of one inspection. A manifest and a config blob take seconds even over
+// a slow link, so a registry that accepts the connection and never answers
+// fails like an unreachable one instead of stalling the reconcile. A variable
+// so tests can shorten it.
+var registryReadTimeout = 30 * time.Second
+
 var (
 	inspectFailureMu sync.Mutex
 	inspectFailures  = map[string]inspectFailure{}
@@ -173,6 +180,8 @@ func inspectImage(
 		logger.V(1).Info("Using image pull secrets for authentication", "secrets", secretNames, "namespace", secretNamespace)
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, registryReadTimeout)
+	defer cancel()
 	keychain, err := utils.BuildKeychain(ctx, clientset, secretNamespace, imagePullSecrets)
 	if err != nil {
 		return nil, err
@@ -231,6 +240,10 @@ func registryError(imageURI string, err error) error {
 			return controllerutils.NewAuthError(constants.ReasonImagePullAuthFailure,
 				fmt.Sprintf("the registry refused access to image %q (%v); check spec.imagePullSecrets and that the repository exists", imageURI, err), regErr)
 		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return controllerutils.NewInfrastructureError("NetworkTimeout",
+			fmt.Sprintf("the registry of image %q did not answer within %v: %v", imageURI, registryReadTimeout, err), regErr)
 	}
 	if network := controllerutils.CategorizeError(err); network.Category() == controllerutils.ErrorCategoryInfrastructure {
 		return controllerutils.NewInfrastructureError(network.Reason(),

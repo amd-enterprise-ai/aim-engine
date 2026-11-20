@@ -1,0 +1,6 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: image-discovery-pull-failure
+spec:
+  image: docker.io/amdenterpriseai/aim-engine-e2e-missing-repository:0.0.0

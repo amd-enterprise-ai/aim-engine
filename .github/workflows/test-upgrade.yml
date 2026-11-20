@@ -633,6 +633,61 @@ jobs:
           kubectl delete aimservice upgrade-custom-service -n "${UPGRADE_NAMESPACE}" --timeout=2m
           kubectl wait --for=delete configmap/upgrade-v1alpha1-owned -n "${UPGRADE_NAMESPACE}" --timeout=1m
 
+      - name: Run the rollback prerequisites
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          set -euo pipefail
+          # On kind the aim-dummy profiles this service selects need an MI300X, so it has no
+          # InferenceService, and the check after the rollback shows v0.2.7 doesn't create one.
+          kubectl apply -n "${UPGRADE_NAMESPACE}" -f - <<'EOF'
+          apiVersion: aim.eai.amd.com/v1alpha2
+          kind: AIMService
+          metadata:
+            name: upgrade-post-upgrade-service
+          spec:
+            model:
+              name: upgrade-image-model
+          EOF
+          kubectl wait aimservice/upgrade-post-upgrade-service -n "${UPGRADE_NAMESPACE}" \
+            --for=jsonpath='{.status.observedGeneration}'=1 --timeout=2m
+          kubectl get inferenceservices -n "${UPGRADE_NAMESPACE}" \
+            -l aim.eai.amd.com/service=upgrade-post-upgrade-service \
+            -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.uid} {.metadata.generation}{"\n"}{end}' \
+            > "${UPGRADE_REPORT_DIR}/post-upgrade-service-before-rollback.txt"
+
+          # The steps at the start of docs/docs/admin/upgrading.md#rollback.
+          kubectl get aimservices --all-namespaces -o json \
+            | jq -r '.items[] | select(.spec.profile == null
+                and .metadata.annotations["aim.eai.amd.com/reconciler-pipeline"] != "profile")
+                | "\(.metadata.namespace) \(.metadata.name)"' \
+            | while read -r namespace name; do
+                kubectl annotate aimservice "${name}" -n "${namespace}" --overwrite \
+                  aim.eai.amd.com/reconciler-pipeline=profile
+              done
+          kubectl get aimmodels --all-namespaces -o json \
+            | jq -r '.items[] | select(.spec.image and .metadata.annotations["aim.eai.amd.com/legacy-auto-custom-spec"] == null)
+                | "\(.metadata.namespace) \(.metadata.name)"' \
+            | while read -r namespace name; do
+                kubectl patch aimmodel "${name}" -n "${namespace}" --type merge \
+                  -p '{"spec":{"discovery":{"createServiceTemplates":false}}}'
+              done
+          kubectl get aimclustermodels -o json \
+            | jq -r '.items[] | select(.spec.image) | .metadata.name' \
+            | while read -r name; do
+                kubectl patch aimclustermodel "${name}" --type merge \
+                  -p '{"spec":{"discovery":{"createServiceTemplates":false}}}'
+              done
+          kubectl get aimservices,aimmodels --all-namespaces -o json \
+            | jq -r '[.items[] | select(.kind == "AIMService" and .spec.model != null)
+                | "\(.metadata.namespace)/\(.metadata.name)"] as $with_model
+              | .items[] | select(.kind == "AIMModel"
+                  and .metadata.annotations["aim.eai.amd.com/legacy-auto-custom-spec"] != null
+                  and ("\(.metadata.namespace)/\(.metadata.labels["aim.eai.amd.com/service"])" | IN($with_model[]) | not))
+              | "\(.metadata.namespace) \(.metadata.name)"' \
+            | while read -r namespace name; do
+                kubectl delete aimmodel "${name}" -n "${namespace}"
+              done
+
       - name: Roll back to v0.2.7
         if: matrix.scenario == 'v0.2.7'
         run: |
@@ -662,6 +717,17 @@ jobs:
             --report-format JSON \
             --report-name rollback \
             --report-path "${UPGRADE_REPORT_DIR}/rollback"
+
+      - name: The post-upgrade service keeps its InferenceService
+        if: matrix.scenario == 'v0.2.7'
+        run: |
+          set -euo pipefail
+          kubectl get inferenceservices -n "${UPGRADE_NAMESPACE}" \
+            -l aim.eai.amd.com/service=upgrade-post-upgrade-service \
+            -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.uid} {.metadata.generation}{"\n"}{end}' \
+            > "${UPGRADE_REPORT_DIR}/post-upgrade-service-after-rollback.txt"
+          diff -u "${UPGRADE_REPORT_DIR}/post-upgrade-service-before-rollback.txt" \
+            "${UPGRADE_REPORT_DIR}/post-upgrade-service-after-rollback.txt"
 
       - name: Capture upgrade diagnostics
         if: always()

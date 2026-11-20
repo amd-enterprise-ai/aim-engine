@@ -7,8 +7,9 @@ metadata:
 spec:
   description: |
     After the upgrade guide's rollback, the v0.2.7 operator replaced the
-    candidate and runs without restarts, and the services moved to the profile
-    pipeline before the upgrade stay on it.
+    candidate and runs without restarts. The services moved to the profile
+    pipeline before the upgrade, and the service created after it with only
+    spec.model.name, stay on it.
   timeouts:
     assert: 300s
   steps:
@@ -26,7 +27,7 @@ spec:
                 exit 1
               fi
 
-    - name: Moved services stay on the profile pipeline
+    - name: Moved and post-upgrade services stay on the profile pipeline
       try:
         - assert:
             resource:
@@ -55,6 +56,14 @@ spec:
               status:
                 reconcilerPipeline: profile
                 status: Running
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: upgrade-post-upgrade-service
+              status:
+                reconcilerPipeline: profile
 
     # A v0.2.7 pod that can't sync its watches exits about every two minutes
     # and reports Ready in between, so readiness alone doesn't show it.

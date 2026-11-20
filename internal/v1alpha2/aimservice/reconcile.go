@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -1431,14 +1432,15 @@ func planLegacyProfileConfigMapCleanup(plan *controllerutils.PlanResult, obs Ser
 
 // planStaleChildCleanup deletes the Dedicated AIMProfileCaches and overlay
 // AIMProfiles this service created for an AIMProfile other than the current
-// one. It waits until neither the InferenceService nor any predictor pod is
-// labeled with that AIMProfile, because those pods mount its cache PVC and its
-// profile ConfigMap.
+// one. It waits until the predictor rollout has finished and neither the
+// InferenceService nor any predictor pod is labeled with that AIMProfile,
+// because those pods mount its cache PVC and its profile ConfigMap, and going
+// back to it before the new revision serves would download its weights again.
 func planStaleChildCleanup(plan *controllerutils.PlanResult, obs ServiceObservation, logger logr.Logger) {
 	isvc, pods := obs.inferenceService.Value, obs.inferenceServicePods
 	caches, overlays := obs.serviceProfileCaches, obs.serviceOverlayProfiles
 	if isvc == nil || pods == nil || pods.HasError() || caches.HasError() || overlays.HasError() ||
-		caches.Value == nil || overlays.Value == nil {
+		caches.Value == nil || overlays.Value == nil || !predictorRolloutFinished(obs) {
 		return
 	}
 	inUse := map[string]bool{isvc.Labels[constants.LabelProfile]: true}
@@ -1461,6 +1463,21 @@ func planStaleChildCleanup(plan *controllerutils.PlanResult, obs ServiceObservat
 			plan.Delete(overlay)
 		}
 	}
+}
+
+// predictorRolloutFinished reports whether the observed InferenceService spec
+// is fully rolled out: the InferenceService is Ready for its generation, and
+// the predictor Deployment has observed its generation with every desired
+// replica updated and available. A Deployment scaled to zero has proven
+// nothing, so it never counts as finished.
+func predictorRolloutFinished(obs ServiceObservation) bool {
+	deployment := obs.predictorDeployment.Value
+	if deployment == nil || !v1alpha1service.InferenceServiceReady(obs.inferenceService) {
+		return false
+	}
+	desired, status := ptr.Deref(deployment.Spec.Replicas, 1), deployment.Status
+	return desired > 0 && status.ObservedGeneration >= deployment.Generation &&
+		status.Replicas == desired && status.UpdatedReplicas == desired && status.AvailableReplicas == desired
 }
 
 // serviceOwnsConfigMap reports whether the ConfigMap carries a controller-style

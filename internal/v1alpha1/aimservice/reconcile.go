@@ -25,6 +25,7 @@ package aimservice
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -103,6 +104,15 @@ func inferenceServiceComponentHealth(
 			// so they keep the service running without proving the rollout ready.
 			if deployment := predictorDeployment.Value; deployment != nil &&
 				deployment.Status.UpdatedReplicas < deployment.Status.Replicas {
+				health.Serving = true
+				if stall, userFixable := rolloutStallDetail(deployment, inferenceServicePods.Value.Items); stall != "" {
+					health.State = constants.AIMStatusDegraded
+					health.Reason = aimv1alpha1.AIMServiceReasonRolloutStalled
+					health.UserFixable = userFixable
+					health.Message = fmt.Sprintf("Predictor rollout of Deployment %s is stalled: %s; %d pod(s) are ready and serving%s",
+						deployment.Name, stall, readyPodCount, podCreationRefusalDetail(isvc))
+					return health
+				}
 				health.State = constants.AIMStatusProgressing
 				health.Reason = aimv1alpha1.AIMServiceReasonRolloutInProgress
 				health.Message = fmt.Sprintf(
@@ -111,19 +121,13 @@ func inferenceServiceComponentHealth(
 					deployment.Status.Replicas,
 					readyPodCount,
 					pendingPodDetail(inferenceServicePods.Value.Items),
-				)
-				if refusal, refused := predictorPodCreationFailure(isvc); refused {
-					health.Message += "; the predictor Deployment cannot create a pod: " + refusal
-				}
-				health.Serving = true
+				) + podCreationRefusalDetail(isvc)
 				return health
 			}
 			health.State = constants.AIMStatusReady
 			health.Reason = aimv1alpha1.AIMServiceReasonRuntimeScaling
-			health.Message = fmt.Sprintf("InferenceService has %d ready pod(s), scaling in progress", readyPodCount)
-			if refusal, refused := predictorPodCreationFailure(isvc); refused {
-				health.Message += "; the predictor Deployment cannot create a pod: " + refusal
-			}
+			health.Message = fmt.Sprintf("InferenceService has %d ready pod(s), scaling in progress", readyPodCount) +
+				podCreationRefusalDetail(isvc)
 			return health
 		}
 	}
@@ -177,6 +181,15 @@ func predictorPodCreationFailure(isvc *servingv1beta1.InferenceService) (string,
 	return cond.Message, true
 }
 
+// podCreationRefusalDetail returns the refusal as a message suffix, or "" when
+// the predictor Deployment can create pods.
+func podCreationRefusalDetail(isvc *servingv1beta1.InferenceService) string {
+	if refusal, refused := predictorPodCreationFailure(isvc); refused {
+		return "; the predictor Deployment cannot create a pod: " + refusal
+	}
+	return ""
+}
+
 // activePodCount counts the pods that a ReplicaSet counts as replicas: not
 // terminating and not in a terminal phase.
 func activePodCount(pods *controllerutils.FetchResult[*corev1.PodList]) int {
@@ -213,6 +226,34 @@ func pendingPodDetail(pods []corev1.Pod) string {
 		}
 	}
 	return fmt.Sprintf("; pod %s is Pending", pending.Name)
+}
+
+// rolloutStallDetail names what stops the predictor rollout: a crash-looping
+// pod (the smallest name, for a stable message), or the Deployment's exceeded
+// progress deadline together with the Pending pod behind it. It returns ""
+// while the rollout can still progress. A stall on a Pending pod is the user's
+// to fix (resources, scheduling, image).
+func rolloutStallDetail(deployment *appsv1.Deployment, pods []corev1.Pod) (string, bool) {
+	crashPod, crashDetail := "", ""
+	for i := range pods {
+		for _, status := range slices.Concat(pods[i].Status.InitContainerStatuses, pods[i].Status.ContainerStatuses) {
+			if waiting := status.State.Waiting; waiting != nil && waiting.Reason == "CrashLoopBackOff" &&
+				(crashPod == "" || pods[i].Name < crashPod) {
+				crashPod, crashDetail = pods[i].Name, waiting.Message
+			}
+		}
+	}
+	if crashPod != "" {
+		return fmt.Sprintf("pod %s is CrashLoopBackOff: %s", crashPod, crashDetail), false
+	}
+	for _, cond := range deployment.Status.Conditions {
+		if cond.Type == appsv1.DeploymentProgressing && cond.Status == corev1.ConditionFalse &&
+			cond.Reason == "ProgressDeadlineExceeded" {
+			pending := pendingPodDetail(pods)
+			return cond.Reason + ": " + cond.Message + pending, pending != ""
+		}
+	}
+	return "", false
 }
 
 // hpaComponentHealth is the HPA health verdict. It takes the observed

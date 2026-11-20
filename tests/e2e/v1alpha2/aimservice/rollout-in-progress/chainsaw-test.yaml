@@ -2,11 +2,13 @@
 #
 # A running service whose new predictor revision cannot start keeps serving from
 # the previous revision. It stays Running but reports Ready=False with reason
-# RolloutInProgress until the rollout completes.
+# RolloutInProgress until the rollout completes, or RolloutStalled with a
+# Warning event once the new revision crash-loops.
 #
-# The new revision requests more memory than any node has. No accelerator is
-# involved and the cache download is simulated, so this runs in the kind lane
-# without a `requires` gate.
+# One new revision requests more memory than any node has; another sets a PATH
+# that hides the image's server binary. No accelerator is involved and the
+# cache download is simulated, so this runs in the kind lane without a
+# `requires` gate.
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -93,6 +95,50 @@ spec:
                     memory: 1Gi
                   limits:
                     memory: 2Gi
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: rollout-in-progress
+              status:
+                status: Running
+                (conditions[?type == 'Ready']):
+                  - status: "True"
+
+    - name: A crash-looping revision stalls the rollout and warns
+      try:
+        - script:
+            content: |
+              kubectl patch aimservices.v1alpha2.aim.eai.amd.com rollout-in-progress -n "$NAMESPACE" --type merge \
+                -p '{"spec":{"profileOverrides":{"containerEnv":[{"name":"PATH","value":"/nonexistent"}]}}}'
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: rollout-in-progress
+              status:
+                status: Running
+                (conditions[?type == 'Ready']):
+                  - status: "False"
+                    reason: RolloutStalled
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Event
+              type: Warning
+              reason: RolloutStalled
+              involvedObject:
+                kind: AIMService
+                name: rollout-in-progress
+
+    - name: Dropping the override completes the rollout and Ready returns
+      try:
+        - script:
+            content: |
+              kubectl patch aimservices.v1alpha2.aim.eai.amd.com rollout-in-progress -n "$NAMESPACE" --type merge \
+                -p '{"spec":{"profileOverrides":null}}'
         - assert:
             resource:
               apiVersion: aim.eai.amd.com/v1alpha2

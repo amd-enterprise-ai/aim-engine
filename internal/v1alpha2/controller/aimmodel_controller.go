@@ -44,6 +44,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/imagemetadata"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimmodel"
@@ -156,8 +157,11 @@ func (r *AIMModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// When the spec sets an image we may create a discovery Job; serialize
 	// the "count + create" with other discovery producers via the shared
-	// Lease-backed lock so the global cap holds.
+	// Lease-backed lock so the global cap holds. The registry is read before
+	// the lock is taken.
 	if model.Spec.Image != "" {
+		ctx := imagemetadata.WithFetchResult(ctx,
+			imagemetadata.Fetch(ctx, r.Clientset, model.Spec, &model.Status, model.Namespace))
 		return runWithDiscoveryLock(ctx, r.Client, func() (ctrl.Result, error) {
 			return r.pipeline.Run(ctx, &model)
 		})

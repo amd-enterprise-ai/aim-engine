@@ -1,0 +1,50 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimmodel-image-discovery-pull-failure
+spec:
+  description: |
+    The image of this AIMModel is a repository that doesn't exist on Docker
+    Hub. Docker Hub answers the operator's label read with 401, which doesn't
+    block discovery, so the discovery Job starts and its pod can't pull the
+    image either. The operator deletes the Job, counts the attempt and backs
+    off, so the model holds no discovery slot and its status names the image.
+  timeouts:
+    assert: 180s
+  steps:
+    - name: Create the AIMModel with an image that doesn't exist
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Wait for the pull failure to end the attempt and free the slot
+      try:
+        - script:
+            timeout: 170s
+            content: |
+              set -eu
+
+              IMAGE=docker.io/amdenterpriseai/aim-engine-e2e-missing-repository:0.0.0
+              i=0
+              while [ "$i" -lt 80 ]; do
+                STATUS_JSON=$(kubectl get aimmodels.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" image-discovery-pull-failure -o json)
+                FAILURE=$(echo "$STATUS_JSON" | jq -r '.status.discovery.lastFailureReason // ""')
+                MESSAGE=$(echo "$STATUS_JSON" | jq -r '[.status.conditions[]? | select(.type == "DiscoveryReady")][0].message // ""')
+                ACTIVE=$(kubectl get jobs -n "$NAMESPACE" -l aim.eai.amd.com/discovery-target=image-discovery-pull-failure -o json \
+                  | jq '[.items[] | select([.status.conditions[]? | select((.type == "Complete" or .type == "Failed") and .status == "True")] | length == 0)] | length')
+
+                if [ "$ACTIVE" = 0 ] && echo "$FAILURE" | grep -qF "cannot pull image $IMAGE" \
+                  && echo "$MESSAGE" | grep -qF "$IMAGE"; then
+                  echo "lastFailureReason: $FAILURE"
+                  echo "DiscoveryReady message: $MESSAGE"
+                  exit 0
+                fi
+
+                sleep 2
+                i=$((i + 1))
+              done
+
+              echo "ERROR: the pull failure never ended the discovery attempt"
+              kubectl get aimmodels.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" image-discovery-pull-failure -o yaml
+              kubectl get jobs,pods -n "$NAMESPACE" -o wide || true
+              exit 1

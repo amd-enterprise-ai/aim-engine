@@ -29,6 +29,7 @@ import (
 	"sort"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -257,7 +258,13 @@ func (r *AIMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		).
 		Watches(
 			&corev1.Pod{},
-			handler.EnqueueRequestsFromMapFunc(r.findServicesForInferenceServicePod),
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForPredictorObject),
+		).
+		// The predictor Deployment's status carries the rollout progress that
+		// stale-child cleanup and the rollout verdict wait on.
+		Watches(
+			&appsv1.Deployment{},
+			handler.EnqueueRequestsFromMapFunc(r.findServicesForPredictorObject),
 		).
 		Watches(
 			&autoscalingv2.HorizontalPodAutoscaler{},
@@ -294,26 +301,23 @@ func (r *AIMServiceReconciler) findServicesForGateway(ctx context.Context, _ cli
 	return requests
 }
 
-func (r *AIMServiceReconciler) findServicesForInferenceServicePod(ctx context.Context, obj client.Object) []reconcile.Request {
-	pod, ok := obj.(*corev1.Pod)
-	if !ok {
-		return nil
-	}
-
-	isvcName, hasLabel := pod.Labels[constants.LabelKServeInferenceService]
+// findServicesForPredictorObject maps a predictor pod or Deployment, through
+// the KServe InferenceService label, to the AIMService that owns it.
+func (r *AIMServiceReconciler) findServicesForPredictorObject(ctx context.Context, obj client.Object) []reconcile.Request {
+	isvcName, hasLabel := obj.GetLabels()[constants.LabelKServeInferenceService]
 	if !hasLabel {
 		return nil
 	}
 
 	isvc := &servingv1beta1.InferenceService{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: isvcName}, isvc); err != nil {
+	if err := r.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: isvcName}, isvc); err != nil {
 		return nil
 	}
 
 	for _, ownerRef := range isvc.OwnerReferences {
 		if ownerRef.Kind == "AIMService" {
 			return []reconcile.Request{{
-				NamespacedName: types.NamespacedName{Name: ownerRef.Name, Namespace: pod.Namespace},
+				NamespacedName: types.NamespacedName{Name: ownerRef.Name, Namespace: obj.GetNamespace()},
 			}}
 		}
 	}

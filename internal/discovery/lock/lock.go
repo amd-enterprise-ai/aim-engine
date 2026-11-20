@@ -305,9 +305,11 @@ func IsJobComplete(job *batchv1.Job) bool {
 // run the body in parallel. Cross-pod exclusion is still provided by the
 // Lease itself. The local mutex is also taken before the timeout-bounded
 // acquire so a single context's cancellation correctly aborts both the
-// in-process wait and the API-level acquire loop.
+// in-process wait and the API-level acquire loop. The in-process wait is
+// bounded by the same timeout as the Lease acquire, so callers queued behind
+// a slow holder requeue instead of piling up.
 func WithDiscoveryLock(ctx context.Context, c client.Client, timeout time.Duration, fn func() error) error {
-	if err := acquireLocalLock(ctx); err != nil {
+	if err := acquireLocalLock(ctx, timeout); err != nil {
 		return err
 	}
 	defer localLock.Unlock()
@@ -330,10 +332,12 @@ func WithDiscoveryLock(ctx context.Context, c client.Client, timeout time.Durati
 	return fn()
 }
 
-// acquireLocalLock blocks until either the in-process mutex is taken or the
-// context is cancelled. sync.Mutex.Lock has no context-aware variant so we
-// poll a Locker through a goroutine and select on ctx.Done().
-func acquireLocalLock(ctx context.Context) error {
+// acquireLocalLock blocks until the in-process mutex is taken, the timeout
+// passes or the context is cancelled. sync.Mutex.Lock has no context-aware
+// variant so we poll a Locker through a goroutine and select on ctx.Done().
+func acquireLocalLock(ctx context.Context, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	acquired := make(chan struct{})
 	go func() {
 		localLock.Lock()

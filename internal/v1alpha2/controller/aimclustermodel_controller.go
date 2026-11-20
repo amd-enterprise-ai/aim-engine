@@ -45,6 +45,7 @@ import (
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/imagemetadata"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimmodel"
@@ -133,6 +134,8 @@ func (r *AIMClusterModelReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	if model.Spec.Image != "" {
+		ctx := imagemetadata.WithFetchResult(ctx,
+			imagemetadata.Fetch(ctx, r.Clientset, model.Spec, &model.Status, constants.GetOperatorNamespace()))
 		return runWithDiscoveryLock(ctx, r.Client, func() (ctrl.Result, error) {
 			return r.pipeline.Run(ctx, &model)
 		})
