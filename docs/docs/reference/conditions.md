@@ -61,7 +61,7 @@ Overall readiness — the aggregate of all other conditions and component health
 | `False` | `ComponentsNotReady` | One or more components are not ready |
 | `False` | `Progressing` | Waiting for components to become ready |
 
-When a component fails, `Ready` takes that component's reason. `AIMService` also reports `Ready=False` with reason `RolloutInProgress` while a new predictor revision is not ready and the previous revision still serves. See [InferenceServiceReady](#inferenceserviceready).
+When a component fails, `Ready` takes that component's reason. `AIMService` also reports `Ready=False` with reason `RolloutInProgress` while a new predictor revision is not ready and the previous revision still serves, or `RolloutStalled` once that revision can't progress. See [InferenceServiceReady](#inferenceserviceready).
 
 ## Template-era fields condition
 
@@ -136,6 +136,7 @@ Tracks the namespaced profile `ServingRuntime` and its same-name ConfigMap befor
 | `True` | `RuntimeScaling` | Predictor pods on the current revision are ready while KServe reports the InferenceService not ready, for example during a scale-up |
 | `False` | `CreatingRuntime` | Creating or updating the InferenceService |
 | `False` | `RolloutInProgress` | A new predictor revision is not ready yet while previous-revision pods keep serving. `status.status` stays `Running` and `Ready` is `False` with this reason. The message names a Pending pod and, when the scheduler reports one, its reason, such as `Unschedulable` |
+| `False` | `RolloutStalled` | The new predictor revision can't progress while previous-revision pods keep serving: one of its pods is in `CrashLoopBackOff`, or the predictor Deployment reports `ProgressDeadlineExceeded`. `status.status` stays `Running` and the service emits a Warning event. The message names the Deployment and the blocking pod with its reason. It returns to `RolloutInProgress` or `True` on its own once the rollout resumes or finishes |
 
 ### InferenceServicePodsReady
 
@@ -216,12 +217,13 @@ Set for image-backed models (`spec.image` set), including models with inline `sp
 | `False` | `LogParseFailed` | Discovery completed but logs could not be parsed |
 | `False` | `CacheParseFailed` | Discovery cache `ConfigMap` could not be parsed |
 | `False` | `DiscoveryFailed` | Discovery Job failed (image pull failure, registry auth, etc.) |
+| `False` | `DiscoveryImagePullFailed` | The discovery pod can't pull the image; the Job is deleted and the attempt backs off |
 | `False` | `DiscoveryCountFailed` | Could not count current attempts |
 | `False` | `DiscoveryCapReached` | Concurrent discovery cap reached; waiting for slot |
 | `False` | `AwaitingDiscovery` | Waiting out the backoff after a failed discovery attempt |
 | `False` | `AwaitingImageMetadata` | A missing image or pull secret, or an invalid reference, holds off discovery; rechecked every minute |
 
-`status.discovery.lastFailureReason` records the most recent failure reason. During backoff the message names the retry time.
+`status.discovery.lastFailureReason` records the most recent failure reason. During backoff the message names the retry time and that failure. A discovery Job that hasn't finished after an hour fails, so a pod that never starts frees its slot.
 
 ### ImageMetadataReady
 

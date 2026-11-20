@@ -135,24 +135,22 @@ check_minimum_version() {
   done <<<"${images}"
 }
 
-# v0.2.7 records the profile pipeline before the profile cache is Ready and
-# before it rewrites the InferenceService, and the old pods keep mounting the
-# PVC of a Dedicated template cache until the rollout ends. Deleting the
-# template cache before then leaves the next pod unable to mount it, so a
-# service has only moved once each predictor Deployment has the profile label,
-# has observed its generation, and has equal desired, current, updated and
-# available replica counts. KServe derives the InferenceService's
-# observedGeneration and Ready from the Deployment, and Ready stays True while
-# an old pod serves, so neither shows the rollout. A service whose
+# v0.2.7 records the profile pipeline before it rewrites the InferenceService,
+# and the old pods keep mounting the PVC of a Dedicated template cache until
+# the rollout ends. Deleting the template cache before then leaves the next pod
+# unable to mount it. So a service on the profile pipeline still has template
+# state while its InferenceService lacks the profile label, or while a
+# predictor pod without that label hasn't finished. A service whose
 # migration-preserve annotations match its generation and its InferenceService's
 # UID keeps that InferenceService and its pods unchanged, without the profile
-# label, so only the rollout counts for it.
+# label, so neither counts for it. An unhealthy service, such as one without an
+# InferenceService or with Pending or crash-looping pods, has no template state
+# and passes.
 check_template_pipeline_services() {
-  local found
+  local found pods
+  pods="$(list pods)"
   found="$(echo "${services}" | problems '. as $service
     | [$isvcs[0].items[] | select(any(.metadata.ownerReferences[]?; .uid == $service.metadata.uid))][0] as $isvc
-    | [$deployments[0].items[] | select(any(.metadata.ownerReferences[]?; .uid == $isvc.metadata.uid))] as $owned
-    | [.status.conditions[]? | select(.type == "ProfileCacheReady") | .status][0] as $cache_ready
     | ($isvc != null
         and .metadata.annotations["aim.eai.amd.com/migration-preserve-inference-service-uid"] == $isvc.metadata.uid
         and .metadata.annotations["aim.eai.amd.com/migration-preserve-inference-service-generation"]
@@ -160,20 +158,19 @@ check_template_pipeline_services() {
     | if (.spec.profile != null or .metadata.annotations["aim.eai.amd.com/reconciler-pipeline"] == "profile")
         and .status.reconcilerPipeline == "profile" | not then
         "is not on the profile pipeline (status.reconcilerPipeline: \(.status.reconcilerPipeline // "unset"))"
-      elif $cache_ready != "True" then
-        "has not finished moving (ProfileCacheReady: \($cache_ready // "unset"))"
-      elif $owned == [] then
-        "has not finished moving (no predictor Deployment)"
-      elif $isvc.metadata.labels["aim.eai.amd.com/profile"] == null and ($pinned | not) then
+      elif $isvc == null or $pinned then empty
+      elif $isvc.metadata.labels["aim.eai.amd.com/profile"] == null then
         "has not finished moving (InferenceService \($isvc.metadata.name) still runs the template)"
-      else $owned[] | select((.metadata.labels["aim.eai.amd.com/profile"] == null and ($pinned | not))
-          or .status.observedGeneration < .metadata.generation
-          or ([.spec.replicas, (.status | .replicas, .updatedReplicas, .availableReplicas)] | map(. // 0) | min < max))
-        | "has not finished moving (predictor Deployment \(.metadata.name) is still rolling out)" end' \
-    --slurpfile isvcs <(list inferenceservices.serving.kserve.io) --slurpfile deployments <(list deployments.apps))"
+      else $pods[0].items[]
+        | select(.metadata.namespace == $isvc.metadata.namespace
+          and .metadata.labels["serving.kserve.io/inferenceservice"] == $isvc.metadata.name
+          and .metadata.labels["aim.eai.amd.com/profile"] == null
+          and (.status.phase | IN("Succeeded", "Failed") | not))
+        | "has not finished moving (predictor pod \(.metadata.name) still runs the template)" end' \
+    --slurpfile isvcs <(list inferenceservices.serving.kserve.io) --slurpfile pods <(echo "${pods}"))"
   report template-pipeline-services move-template-services "${found}"
 
-  found="$(list pods | problems 'select(.status.phase | IN("Succeeded", "Failed") | not)
+  found="$(echo "${pods}" | problems 'select(.status.phase | IN("Succeeded", "Failed") | not)
     | .metadata.namespace as $namespace
     | (.spec.volumes[]?.persistentVolumeClaim.claimName // empty) as $claim
     | $artifacts[0].items[]

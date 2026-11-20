@@ -87,6 +87,10 @@ func TestBuildDiscoveryJob_HasRequiredLabelsAndSpec(t *testing.T) {
 	if job.Spec.TTLSecondsAfterFinished == nil {
 		t.Fatal("TTLSecondsAfterFinished = nil, want set so completed jobs GC")
 	}
+	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != discoveryJobActiveDeadlineSeconds {
+		t.Fatalf("ActiveDeadlineSeconds = %v, want %d so a pod that never finishes frees its slot",
+			job.Spec.ActiveDeadlineSeconds, discoveryJobActiveDeadlineSeconds)
+	}
 
 	podSpec := job.Spec.Template.Spec
 	if podSpec.RestartPolicy != corev1.RestartPolicyNever {

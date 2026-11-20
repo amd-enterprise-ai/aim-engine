@@ -2098,21 +2098,66 @@ func TestGetInferenceServiceHealth_PredictorRollout(t *testing.T) {
 		Reason:  corev1.PodReasonUnschedulable,
 		Message: "0/3 nodes are available: 3 Insufficient memory.",
 	}}
-	deployment := func(replicas, updated int32) controllerutils.FetchResult[*appsv1.Deployment] {
+	crashLoopingPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-predictor-new"},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "kserve-container",
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+					Reason:  "CrashLoopBackOff",
+					Message: "back-off 40s restarting failed container=kserve-container",
+				}},
+			}},
+		},
+	}
+	deployment := func(replicas, updated int32, conditions ...appsv1.DeploymentCondition) controllerutils.FetchResult[*appsv1.Deployment] {
 		return controllerutils.FetchResult[*appsv1.Deployment]{Value: &appsv1.Deployment{
-			Status: appsv1.DeploymentStatus{Replicas: replicas, UpdatedReplicas: updated, ReadyReplicas: 1},
+			ObjectMeta: metav1.ObjectMeta{Name: "svc-predictor"},
+			Status: appsv1.DeploymentStatus{
+				Replicas: replicas, UpdatedReplicas: updated, ReadyReplicas: 1, Conditions: conditions,
+			},
 		}}
+	}
+	deadlineExceeded := appsv1.DeploymentCondition{
+		Type:    appsv1.DeploymentProgressing,
+		Status:  corev1.ConditionFalse,
+		Reason:  "ProgressDeadlineExceeded",
+		Message: `ReplicaSet "svc-predictor-new" has timed out progressing.`,
 	}
 
 	tests := []struct {
-		name        string
-		pods        []corev1.Pod
-		deployment  controllerutils.FetchResult[*appsv1.Deployment]
-		wantState   constants.AIMStatus
-		wantReason  string
-		wantServing bool
-		wantMessage string
+		name            string
+		pods            []corev1.Pod
+		deployment      controllerutils.FetchResult[*appsv1.Deployment]
+		wantState       constants.AIMStatus
+		wantReason      string
+		wantServing     bool
+		wantUserFixable bool
+		wantMessage     string
 	}{
+		{
+			name:            "progress deadline exceeded on an unschedulable new pod",
+			pods:            []corev1.Pod{readyPod, unschedulablePod},
+			deployment:      deployment(2, 1, deadlineExceeded),
+			wantState:       constants.AIMStatusDegraded,
+			wantReason:      aimv1alpha1.AIMServiceReasonRolloutStalled,
+			wantServing:     true,
+			wantUserFixable: true,
+			wantMessage: `Predictor rollout of Deployment svc-predictor is stalled: ProgressDeadlineExceeded: ` +
+				`ReplicaSet "svc-predictor-new" has timed out progressing.; pod svc-predictor-new is Pending: ` +
+				`Unschedulable: 0/3 nodes are available: 3 Insufficient memory.; 1 pod(s) are ready and serving`,
+		},
+		{
+			name:        "new pod crash-loops next to a ready old pod",
+			pods:        []corev1.Pod{readyPod, crashLoopingPod},
+			deployment:  deployment(2, 1),
+			wantState:   constants.AIMStatusDegraded,
+			wantReason:  aimv1alpha1.AIMServiceReasonRolloutStalled,
+			wantServing: true,
+			wantMessage: "Predictor rollout of Deployment svc-predictor is stalled: pod svc-predictor-new is CrashLoopBackOff: " +
+				"back-off 40s restarting failed container=kserve-container; 1 pod(s) are ready and serving",
+		},
 		{
 			name:        "old revision serves while new pod is unschedulable",
 			pods:        []corev1.Pod{readyPod, unschedulablePod},
@@ -2168,9 +2213,11 @@ func TestGetInferenceServiceHealth_PredictorRollout(t *testing.T) {
 			}}
 
 			health := obs.getInferenceServiceHealth()
-			if health.State != tt.wantState || health.Reason != tt.wantReason || health.Serving != tt.wantServing {
-				t.Fatalf("health = %s/%s serving=%t, want %s/%s serving=%t",
-					health.State, health.Reason, health.Serving, tt.wantState, tt.wantReason, tt.wantServing)
+			if health.State != tt.wantState || health.Reason != tt.wantReason || health.Serving != tt.wantServing ||
+				health.UserFixable != tt.wantUserFixable {
+				t.Fatalf("health = %s/%s serving=%t userFixable=%t, want %s/%s serving=%t userFixable=%t",
+					health.State, health.Reason, health.Serving, health.UserFixable,
+					tt.wantState, tt.wantReason, tt.wantServing, tt.wantUserFixable)
 			}
 			if tt.wantMessage != "" && health.Message != tt.wantMessage {
 				t.Errorf("message = %q, want %q", health.Message, tt.wantMessage)
@@ -3230,18 +3277,33 @@ func TestPlanStaleChildCleanup(t *testing.T) {
 		}
 		return &controllerutils.FetchResult[*corev1.PodList]{Value: list}
 	}
+	deployment := func(desired, available int32) *appsv1.Deployment {
+		return &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Generation: 2},
+			Spec:       appsv1.DeploymentSpec{Replicas: ptr.To(desired)},
+			Status: appsv1.DeploymentStatus{
+				ObservedGeneration: 2, Replicas: desired, UpdatedReplicas: desired, AvailableReplicas: available,
+			},
+		}
+	}
+	rolledOut := deployment(1, 1)
 
 	tests := []struct {
 		name        string
 		isvcProfile string
 		pods        *controllerutils.FetchResult[*corev1.PodList]
+		deployment  *appsv1.Deployment
 		want        []string
 	}{
-		{name: "rollout onto profile-b finished", isvcProfile: "profile-b", pods: pods("profile-b"), want: []string{"cache-a", "profile-a"}},
-		{name: "InferenceService still on profile-a", isvcProfile: "profile-a", pods: pods("profile-a")},
-		{name: "pod on profile-a still running", isvcProfile: "profile-b", pods: pods("profile-b", "profile-a")},
-		{name: "pods not observed", isvcProfile: "profile-b"},
-		{name: "pod list failed", isvcProfile: "profile-b", pods: &controllerutils.FetchResult[*corev1.PodList]{Error: errors.New("boom")}},
+		{name: "rollout onto profile-b finished", isvcProfile: "profile-b", pods: pods("profile-b"), deployment: rolledOut, want: []string{"cache-a", "profile-a"}},
+		{name: "InferenceService still on profile-a", isvcProfile: "profile-a", pods: pods("profile-a"), deployment: rolledOut},
+		{name: "InferenceService on profile-a and no pods observed", isvcProfile: "profile-a", pods: pods(), deployment: rolledOut},
+		{name: "pod on profile-a still running", isvcProfile: "profile-b", pods: pods("profile-b", "profile-a"), deployment: rolledOut},
+		{name: "old ReplicaSet scaled to 0 and the new pod Pending", isvcProfile: "profile-b", pods: pods("profile-b"), deployment: deployment(1, 0)},
+		{name: "scaled to zero on profile-b", isvcProfile: "profile-b", pods: pods(), deployment: deployment(0, 0)},
+		{name: "predictor Deployment not observed", isvcProfile: "profile-b", pods: pods("profile-b")},
+		{name: "pods not observed", isvcProfile: "profile-b", deployment: rolledOut},
+		{name: "pod list failed", isvcProfile: "profile-b", pods: &controllerutils.FetchResult[*corev1.PodList]{Error: errors.New("boom")}, deployment: rolledOut},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3252,6 +3314,7 @@ func TestPlanStaleChildCleanup(t *testing.T) {
 					service:              service,
 					inferenceService:     controllerutils.FetchResult[*servingv1beta1.InferenceService]{Value: isvc},
 					inferenceServicePods: tt.pods,
+					predictorDeployment:  controllerutils.FetchResult[*appsv1.Deployment]{Value: tt.deployment},
 					serviceProfileCaches: controllerutils.FetchResult[*aimv1alpha2.AIMProfileCacheList]{Value: &aimv1alpha2.AIMProfileCacheList{
 						Items: []aimv1alpha2.AIMProfileCache{
 							cache("cache-a", "profile-a", owner),

@@ -24,14 +24,134 @@ package aimmodel
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
+
+// runningDiscoveryJob returns inputs after one started attempt and the Job
+// that attempt created for image.
+func runningDiscoveryJob(image string) (DiscoveryInputs, *batchv1.Job) {
+	specHash := ComputeDiscoverySpecHash(image, nil, "", DiscoveryCommandVersion)
+	owner := metav1.OwnerReference{
+		APIVersion: "aim.eai.amd.com/v1alpha2", Kind: "AIMModel", Name: "dummy", UID: "model-uid", Controller: ptr.To(true),
+	}
+	in := DiscoveryInputs{
+		Kind: DiscoveryKindAIMModel, ModelName: "dummy", ModelUID: "model-uid", Namespace: "team-a", Image: image, OwnerRef: owner,
+		CurrentState: &aimv1alpha1.ModelDiscoveryState{
+			Attempts: 1, LastAttemptTime: &metav1.Time{Time: time.Now().Add(-time.Minute)}, SpecHash: specHash,
+		},
+	}
+	job := BuildDiscoveryJob(DiscoveryJobSpec{
+		ModelName: "dummy", ModelUID: "model-uid", Namespace: "team-a", Image: image,
+		SpecHash: specHash, OwnerRef: owner, Kind: DiscoveryKindAIMModel,
+	})
+	return in, job
+}
+
+func TestDecideDiscovery_RunningJobThatCannotPullFailsTheAttempt(t *testing.T) {
+	t.Parallel()
+
+	const image = "docker.io/amdenterpriseai/aim-missing:0.0.0"
+	tests := []struct {
+		name       string
+		waiting    *corev1.ContainerStateWaiting
+		wantDelete bool
+	}{
+		{
+			name:       "ImagePullBackOff",
+			waiting:    &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: `Back-off pulling image "` + image + `"`},
+			wantDelete: true,
+		},
+		{
+			name: "ErrImagePull",
+			waiting: &corev1.ContainerStateWaiting{
+				Reason:  "ErrImagePull",
+				Message: "pull access denied, repository does not exist or may require authorization",
+			},
+			wantDelete: true,
+		},
+		{
+			name:    "container creating keeps waiting",
+			waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in, job := runningDiscoveryJob(image)
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: job.Name + "-x7k2p", Namespace: "team-a", Labels: map[string]string{"job-name": job.Name}},
+				Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+					Name: discoveryContainerName, State: corev1.ContainerState{Waiting: tt.waiting},
+				}}},
+			}
+			c := fake.NewClientBuilder().WithObjects(job, pod).Build()
+
+			got := DecideDiscovery(context.Background(), c, in, FetchDiscoveryState(context.Background(), c, in))
+
+			if !tt.wantDelete {
+				if got.CompletedJobToDelete != nil || got.State.Attempts != 1 || got.Reason != "DiscoveryInProgress" {
+					t.Fatalf("decision = %+v (attempts %d), want to keep waiting on the Job", got, got.State.Attempts)
+				}
+				return
+			}
+			if got.CompletedJobToDelete == nil || got.CompletedJobToDelete.Name != job.Name || got.DesiredJob != nil {
+				t.Fatalf("decision deletes %v and creates %v, want Job %s deleted and none created",
+					got.CompletedJobToDelete, got.DesiredJob, job.Name)
+			}
+			if got.State.Attempts != 2 || got.Reason != "DiscoveryImagePullFailed" {
+				t.Fatalf("attempts = %d, reason = %q; want 2, DiscoveryImagePullFailed", got.State.Attempts, got.Reason)
+			}
+			for _, text := range []string{got.Message, got.State.LastFailureReason} {
+				if !strings.Contains(text, image) || !strings.Contains(text, tt.waiting.Reason) || !strings.Contains(text, tt.waiting.Message) {
+					t.Errorf("%q does not name the image, %s and the kubelet message", text, tt.waiting.Reason)
+				}
+			}
+
+			// The next reconcile, with the Job gone, backs off and still says why.
+			in.CurrentState = got.State
+			next := DecideDiscovery(context.Background(), nil, in, DiscoveryFetch{})
+			if next.DesiredJob != nil || next.Reason != reasonAwaitingDiscovery || !strings.Contains(next.Message, image) {
+				t.Fatalf("next decision = %+v, want AwaitingDiscovery naming %s", next, image)
+			}
+		})
+	}
+}
+
+func TestDecideDiscovery_JobPastItsDeadlineBacksOff(t *testing.T) {
+	t.Parallel()
+
+	in, job := runningDiscoveryJob("docker.io/amdenterpriseai/aim-dummy:0.2.0")
+	const deadlineMessage = "Job was active longer than specified deadline"
+	job.Status.Conditions = []batchv1.JobCondition{{
+		Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: batchv1.JobReasonDeadlineExceeded, Message: deadlineMessage,
+	}}
+
+	got := DecideDiscovery(context.Background(), nil, in, DiscoveryFetch{Job: controllerutils.FetchResult[*batchv1.Job]{Value: job}})
+	if got.CompletedJobToDelete != job || got.Reason != "DiscoveryFailed" || got.State.Attempts != 2 ||
+		got.State.LastFailureReason != deadlineMessage {
+		t.Fatalf("decision = %+v (state %+v), want the failed Job deleted, attempt counted, reason DiscoveryFailed", got, got.State)
+	}
+
+	in.CurrentState = got.State
+	next := DecideDiscovery(context.Background(), nil, in, DiscoveryFetch{})
+	backoff := calculateDiscoveryBackoff(got.State.Attempts)
+	if next.DesiredJob != nil || next.Reason != reasonAwaitingDiscovery ||
+		next.RequeueAfter > backoff || next.RequeueAfter < backoff-time.Second || !strings.Contains(next.Message, deadlineMessage) {
+		t.Fatalf("next decision = %+v, want AwaitingDiscovery for about %v naming the deadline", next, backoff)
+	}
+}
 
 func TestDecideDiscovery_WaitingRequeuesWithoutCountingAnAttempt(t *testing.T) {
 	t.Parallel()

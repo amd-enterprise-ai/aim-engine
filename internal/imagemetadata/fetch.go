@@ -35,8 +35,17 @@ import (
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 )
 
-// Fetch determines how to obtain image metadata for a model.
-// It handles these cases:
+type fetchResultKey struct{}
+
+// WithFetchResult returns a context in which Fetch returns result instead of
+// reading the registry. The image-model controllers fetch before they take the
+// discovery lock, so a slow registry never holds it.
+func WithFetchResult(ctx context.Context, result controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]) context.Context {
+	return context.WithValue(ctx, fetchResultKey{}, result)
+}
+
+// Fetch determines how to obtain image metadata for a model. A result set by
+// WithFetchResult takes precedence. Otherwise it handles these cases:
 //  1. Extraction explicitly disabled - skip fetch entirely
 //  2. Spec-provided metadata (air-gapped environments) - returns the spec value directly
 //  3. Fine-tuned model - deployments come from the base model matched by aimId, skip fetch
@@ -49,6 +58,10 @@ func Fetch(
 	status *aimv1alpha1.AIMModelStatus,
 	secretNamespace string,
 ) controllerutils.FetchResult[*aimv1alpha1.ImageMetadata] {
+	if result, ok := ctx.Value(fetchResultKey{}).(controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]); ok {
+		return result
+	}
+
 	// Case 1: Extraction explicitly disabled - skip fetch entirely
 	if !spec.Discovery.IsExtractMetadataEnabled() {
 		log.FromContext(ctx).V(1).Info("metadata extraction disabled in spec")

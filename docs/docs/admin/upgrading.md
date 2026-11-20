@@ -236,7 +236,66 @@ resources while runtime-image lineage is unresolved.
 
 ## Rollback
 
-Roll back both Helm releases, the CRDs first:
+Before you roll back, while the current operator still runs:
+
+1. Annotate every AIMService that has neither `spec.profile` nor the
+   `aim.eai.amd.com/reconciler-pipeline: profile` annotation, including
+   services created after the upgrade with only `spec.model.name`. v0.2.7
+   moves such a service back to the template pipeline. Without a matching
+   template it reports `Pending` or `Failed`; with one, including a template
+   that v0.2.7 creates again for an image model, v0.2.7 can rewrite its
+   InferenceService and roll its pods.
+
+   ```bash
+   kubectl get aimservices --all-namespaces -o json \
+     | jq -r '.items[] | select(.spec.profile == null
+         and .metadata.annotations["aim.eai.amd.com/reconciler-pipeline"] != "profile")
+         | "\(.metadata.namespace) \(.metadata.name)"' \
+     | while read -r namespace name; do
+         kubectl annotate aimservice "${name}" -n "${namespace}" --overwrite \
+           aim.eai.amd.com/reconciler-pipeline=profile
+       done
+   ```
+
+2. Set `discovery.createServiceTemplates: false` on every AIMModel and
+   AIMClusterModel with `spec.image`, including models created after the
+   upgrade and models you removed the field from. It defaults to `true`, so
+   v0.2.7 otherwise creates AIMServiceTemplates for them again:
+
+   ```bash
+   kubectl get aimmodels --all-namespaces -o json \
+     | jq -r '.items[] | select(.spec.image and .metadata.annotations["aim.eai.amd.com/legacy-auto-custom-spec"] == null)
+         | "\(.metadata.namespace) \(.metadata.name)"' \
+     | while read -r namespace name; do
+         kubectl patch aimmodel "${name}" -n "${namespace}" --type merge \
+           -p '{"spec":{"discovery":{"createServiceTemplates":false}}}'
+       done
+   kubectl get aimclustermodels -o json \
+     | jq -r '.items[] | select(.spec.image) | .metadata.name' \
+     | while read -r name; do
+         kubectl patch aimclustermodel "${name}" --type merge \
+           -p '{"spec":{"discovery":{"createServiceTemplates":false}}}'
+       done
+   ```
+
+3. Delete each AIMModel with the `aim.eai.amd.com/legacy-auto-custom-spec`
+   annotation whose AIMService no longer has `spec.model`. v0.2.7 panics, and
+   recovers, on every reconcile of such a model, and never reconciles it:
+
+   ```bash
+   kubectl get aimservices,aimmodels --all-namespaces -o json \
+     | jq -r '[.items[] | select(.kind == "AIMService" and .spec.model != null)
+         | "\(.metadata.namespace)/\(.metadata.name)"] as $with_model
+       | .items[] | select(.kind == "AIMModel"
+           and .metadata.annotations["aim.eai.amd.com/legacy-auto-custom-spec"] != null
+           and ("\(.metadata.namespace)/\(.metadata.labels["aim.eai.amd.com/service"])" | IN($with_model[]) | not))
+       | "\(.metadata.namespace) \(.metadata.name)"' \
+     | while read -r namespace name; do
+         kubectl delete aimmodel "${name}" -n "${namespace}"
+       done
+   ```
+
+Then roll back both Helm releases, the CRDs first:
 
 ```bash
 helm rollback aim-engine-crds -n aim-system
@@ -424,7 +483,7 @@ section of this guide that fixes it:
 | Check | Fails when | Section |
 |---|---|---|
 | `minimum-version` | The operator is older than v0.2.7, or an AIMService has no `status.reconcilerPipeline` | [Minimum version](#minimum-version) |
-| `template-pipeline-services` | An AIMService is not on the profile pipeline, or hasn't finished moving: its `ProfileCacheReady` condition isn't `True`, its InferenceService lacks the `aim.eai.amd.com/profile` label, or a predictor Deployment lacks that label or is still rolling out (the same wait as `kubectl rollout status`). A service whose `aim.eai.amd.com/migration-preserve-inference-service-uid` and `aim.eai.amd.com/migration-preserve-inference-service-generation` annotations match its InferenceService's UID and its own generation keeps that InferenceService unchanged, so only its rollout counts. Also fails for each pod that still mounts the PVC of an AIMArtifact owned by an AIMTemplateCache | [Move template services](#move-template-services) |
+| `template-pipeline-services` | An AIMService is not on the profile pipeline, or hasn't finished moving: its InferenceService lacks the `aim.eai.amd.com/profile` label, or one of its predictor pods without that label hasn't finished. A service whose `aim.eai.amd.com/migration-preserve-inference-service-uid` and `aim.eai.amd.com/migration-preserve-inference-service-generation` annotations match its InferenceService's UID and its own generation keeps that InferenceService and its pods unchanged, so neither counts. A service that is only unhealthy, for example with no InferenceService or with Pending or crash-looping pods, passes. Also fails for each pod that still mounts the PVC of an AIMArtifact owned by an AIMTemplateCache | [Move template services](#move-template-services) |
 | `unservable-services` | An AIMService uses `spec.model.custom`, or `spec.template` without `spec.model` or `spec.profile` | [Replace unservable services](#replace-unservable-services) |
 | `models-without-native-path` | An AIMModel or AIMClusterModel uses `spec.custom`, `spec.customTemplates` or `spec.modelSources`; is an image model with `spec.aimId` or `spec.discovery.extractMetadata: false`; or was generated for an inline custom service | [Replace models without a native path](#replace-models-without-a-native-path) |
 | `template-objects` | An AIMServiceTemplate, AIMClusterServiceTemplate or AIMTemplateCache exists | [Delete template objects](#delete-template-objects) |
@@ -674,7 +733,9 @@ first, or the tool recreates them.
 
 After the upgrade `discovery.createServiceTemplates` has no effect. The models
 report it in a `TemplateFieldsIgnored` condition, which doesn't affect
-readiness, until you remove it:
+readiness. Keep it as long as you might [roll back](#rollback): v0.2.7 creates
+templates for image models without it. Remove it only once you've decided not
+to roll back:
 
 ```bash
 kubectl patch aimmodel <model> -n <namespace> --type json \
@@ -845,25 +906,9 @@ After the upgrade, rolling the CRDs and operator back to v0.2.7, as in
 [Rollback](#rollback), restores the template pipeline and v1alpha1 serving. It
 doesn't restore the template objects or the Dedicated weights you deleted
 before the upgrade: recreate the templates from your own manifests if you need
-them, and expect Dedicated caches to download again.
-
-After the rollback, v0.2.7 also:
-
-- Moves every AIMService with neither `spec.profile` nor the
-  `aim.eai.amd.com/reconciler-pipeline: profile` annotation back to the
-  template pipeline, including services created after the upgrade with only
-  `spec.model.name`. Without a matching template, they report `Pending` or
-  `Failed`, and v0.2.7 leaves their InferenceService unchanged. Add the
-  annotation to them before you roll back.
-- Creates AIMServiceTemplates for image models again, because
-  `discovery.createServiceTemplates` defaults to `true`. That includes models
-  created after the upgrade and models you removed the field from. Set it to
-  `false` on them before you roll back, as in
-  [Delete template objects](#delete-template-objects).
-- Panics, and recovers, on every reconcile of an AIMModel with the
-  `aim.eai.amd.com/legacy-auto-custom-spec` annotation whose AIMService no
-  longer has `spec.model`, and never reconciles that model. Delete these
-  models before you roll back.
+them, and expect Dedicated caches to download again. Do the steps at the start
+of [Rollback](#rollback) first; v0.2.7 otherwise moves services back to the
+template pipeline, creates templates again and stops reconciling some models.
 
 ## Next Steps
 

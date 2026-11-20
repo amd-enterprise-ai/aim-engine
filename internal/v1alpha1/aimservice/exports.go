@@ -129,7 +129,9 @@ func InferenceServicePodsComponentHealth(
 // A current Ready condition is authoritative, while Ready predictor pods prove
 // the service is still running during status-generation lag or active scaling.
 // While predictorDeployment still runs previous-revision pods, Ready pods keep
-// the service running but report RolloutInProgress instead of Ready.
+// the service running but report RolloutInProgress instead of Ready, or a
+// Degraded RolloutStalled once the new revision crash-loops or the Deployment
+// exceeds its progress deadline.
 func InferenceServiceComponentHealth(
 	inferenceService controllerutils.FetchResult[*servingv1beta1.InferenceService],
 	inferenceServicePods *controllerutils.FetchResult[*corev1.PodList],

@@ -26,6 +26,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -506,28 +507,60 @@ func TestPipeline_processStateEngine_ServingComponentKeepsStatus(t *testing.T) {
 		Message:   "new revision is pending",
 		Serving:   true,
 	}
+	stalled := ComponentHealth{
+		Component: "Runtime",
+		State:     constants.AIMStatusDegraded,
+		Reason:    "RolloutStalled",
+		Message:   "new revision is crash-looping",
+		Serving:   true,
+	}
+	userFixableStall := stalled
+	userFixableStall.UserFixable = true
+	routeReady := ComponentHealth{Component: "Route", State: constants.AIMStatusReady, Reason: "RouteReady"}
 	tests := []struct {
 		name       string
+		serving    ComponentHealth
 		other      ComponentHealth
 		wantStatus constants.AIMStatus
 		wantReason string
+		wantEvent  string
 	}{
 		{
 			name:       "serving component alone keeps status and explains Ready",
-			other:      ComponentHealth{Component: "Route", State: constants.AIMStatusReady, Reason: "RouteReady"},
+			serving:    rollout,
+			other:      routeReady,
 			wantStatus: constants.AIMStatusReady,
 			wantReason: "RolloutInProgress",
+			wantEvent:  "Normal RolloutInProgress",
 		},
 		{
 			name:       "failed component still lowers status and explains Ready",
+			serving:    rollout,
 			other:      ComponentHealth{Component: "Route", State: constants.AIMStatusFailed, Reason: "RouteFailed"},
 			wantStatus: constants.AIMStatusFailed,
 			wantReason: "RouteFailed",
+			wantEvent:  "Normal RolloutInProgress",
+		},
+		{
+			name:       "stalled serving component keeps status and warns",
+			serving:    stalled,
+			other:      routeReady,
+			wantStatus: constants.AIMStatusReady,
+			wantReason: "RolloutStalled",
+			wantEvent:  "Warning RolloutStalled",
+		},
+		{
+			name:       "user-fixable stall keeps status and warns",
+			serving:    userFixableStall,
+			other:      routeReady,
+			wantStatus: constants.AIMStatusReady,
+			wantReason: "RolloutStalled",
+			wantEvent:  "Warning RolloutStalled",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			obs := testObservationCustomHealth{health: []ComponentHealth{rollout, tt.other}}
+			obs := testObservationCustomHealth{health: []ComponentHealth{tt.serving, tt.other}}
 			cm := NewConditionManager(nil)
 			status := &testStatus{}
 			p := &Pipeline[*testObject, *testStatus, testFetch, testObservationCustomHealth]{
@@ -546,6 +579,18 @@ func TestPipeline_processStateEngine_ServingComponentKeepsStatus(t *testing.T) {
 			ready := cm.Get(ConditionTypeReady)
 			if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != tt.wantReason {
 				t.Errorf("Ready = %#v, want False with reason %q", ready, tt.wantReason)
+			}
+
+			recorder := record.NewFakeRecorder(10)
+			EmitConditionTransitions(recorder, &testObject{}, DiffConditionTransitions(nil, cm.Conditions()), cm)
+			EmitRecurringEvents(recorder, &testObject{}, cm)
+			close(recorder.Events)
+			var events []string
+			for event := range recorder.Events {
+				events = append(events, event)
+			}
+			if !slices.ContainsFunc(events, func(event string) bool { return strings.HasPrefix(event, tt.wantEvent) }) {
+				t.Errorf("events = %q, want one starting with %q", events, tt.wantEvent)
 			}
 		})
 	}

@@ -317,7 +317,7 @@ Some fields only configured the service templates that models created in earlier
 
 | Field | Profile-based equivalent |
 |---|---|
-| `spec.discovery.createServiceTemplates: false` | Remove it. |
+| `spec.discovery.createServiceTemplates: false` | Keep it as long as you might [roll back](../admin/upgrading.md#rollback) to v0.2.7, which creates templates without it. Remove it once you've decided not to roll back. |
 | `spec.defaultServiceTemplate` | Name the profile on the service with `AIMService.spec.profile.name`, or rely on the `primary` flag set from the image's recommended deployments. |
 | `spec.env` | `profiles.overrides.containerEnv` on a derived model or profile set, or `spec.profileOverrides.containerEnv` on one service. |
 | `spec.resources` | `AIMService.spec.resources`. |

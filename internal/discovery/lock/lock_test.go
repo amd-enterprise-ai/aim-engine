@@ -79,6 +79,44 @@ func TestWithDiscoveryLock_IntraPodExclusion(t *testing.T) {
 	}
 }
 
+// TestWithDiscoveryLock_WaiterTimesOut ensures a caller queued behind a holder
+// that never finishes gives up after its timeout instead of blocking.
+func TestWithDiscoveryLock_WaiterTimesOut(t *testing.T) {
+	t.Parallel()
+
+	c := fake.NewClientBuilder().Build()
+	holderRunning := make(chan struct{})
+	holderRelease := make(chan struct{})
+	holderDone := make(chan struct{})
+	go func() {
+		defer close(holderDone)
+		_ = WithDiscoveryLock(context.Background(), c, 5*time.Second, func() error {
+			close(holderRunning)
+			<-holderRelease
+			return nil
+		})
+	}()
+	<-holderRunning
+	t.Cleanup(func() {
+		close(holderRelease)
+		<-holderDone
+	})
+
+	const timeout = 100 * time.Millisecond
+	errc := make(chan error, 1)
+	go func() {
+		errc <- WithDiscoveryLock(context.Background(), c, timeout, func() error { return nil })
+	}()
+	select {
+	case err := <-errc:
+		if err == nil {
+			t.Fatal("WithDiscoveryLock() ran its body while another goroutine held the lock")
+		}
+	case <-time.After(timeout + time.Second):
+		t.Fatalf("WithDiscoveryLock() still waiting after %v, want an error within its %v timeout", timeout+time.Second, timeout)
+	}
+}
+
 // TestWithDiscoveryLock_ContextCancel ensures that a cancelled context while
 // waiting for the in-process mutex returns the context error rather than
 // blocking forever, and that the lock is eventually released so future

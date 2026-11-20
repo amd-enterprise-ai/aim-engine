@@ -39,6 +39,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	discoverylock "github.com/amd-enterprise-ai/aim-engine/internal/discovery/lock"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 )
 
@@ -47,6 +48,8 @@ import (
 type DiscoveryFetch struct {
 	Cache controllerutils.FetchResult[*corev1.ConfigMap]
 	Job   controllerutils.FetchResult[*batchv1.Job]
+	// PullError is the image pull error of a running Job's pod, if any.
+	PullError controllerutils.FetchResult[*utils.ImagePullError]
 }
 
 // DiscoveryDecision is the composed output of the discovery state machine. Exactly
@@ -119,7 +122,12 @@ func FetchDiscoveryState(ctx context.Context, c client.Client, in DiscoveryInput
 	}
 	cache := controllerutils.Fetch(ctx, c, client.ObjectKey{Name: cacheName, Namespace: in.Namespace}, &corev1.ConfigMap{})
 	job := FetchDiscoveryJob(ctx, c, in.Kind, in.Namespace, in.ModelName)
-	return DiscoveryFetch{Cache: cache, Job: job}
+	fetch := DiscoveryFetch{Cache: cache, Job: job}
+	if job.Value != nil && !IsDiscoveryJobComplete(job.Value) {
+		pullErr, err := utils.CheckJobPodImagePullStatus(ctx, c, job.Value, job.Value.Namespace)
+		fetch.PullError = controllerutils.FetchResult[*utils.ImagePullError]{Value: pullErr, Error: err}
+	}
+	return fetch
 }
 
 // DecideDiscovery evaluates the current cache / Job / state tuple and returns
@@ -170,6 +178,26 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 			}
 		}
 		if !IsDiscoveryJobComplete(job) {
+			// A pod that can't pull its image never fails on its own. Deleting
+			// the Job frees its slot under the global cap without waiting for
+			// the Job deadline.
+			if pullErr := fetch.PullError.Value; pullErr != nil {
+				failure := fmt.Sprintf("cannot pull image %s (%s)", in.Image, pullErr.Reason)
+				if pullErr.Message != "" {
+					failure += ": " + pullErr.Message
+				}
+				nextState.Attempts++
+				nextState.LastAttemptTime = nowPtr()
+				nextState.LastFailureReason = failure
+				return DiscoveryDecision{
+					State:                nextState,
+					CompletedJobToDelete: job,
+					Progressing:          true,
+					RequeueAfter:         5 * time.Second,
+					Reason:               "DiscoveryImagePullFailed",
+					Message:              fmt.Sprintf("Deleting discovery Job %s: %s", job.Name, failure),
+				}
+			}
 			// Job is still running; just wait.
 			return DiscoveryDecision{
 				State:        nextState,

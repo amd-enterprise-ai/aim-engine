@@ -82,9 +82,6 @@ TEMPLATE_CACHES = "aimtemplatecaches.aim.eai.amd.com"
 TEMPLATE_CRDS = ["aimservicetemplates.aim.eai.amd.com", "aimclusterservicetemplates.aim.eai.amd.com", TEMPLATE_CACHES]
 ARTIFACTS = "aimartifacts.aim.eai.amd.com"
 INFERENCE_SERVICES = "inferenceservices.serving.kserve.io"
-# The minimum-version check gets the operator as "deployments", and the move
-# check lists "deployments.apps", so the fake serves them from separate files.
-DEPLOYMENTS = "deployments.apps"
 PODS = "pods"
 CRDS = "customresourcedefinitions"
 KEEP = {"helm.sh/resource-policy": "keep"}
@@ -111,8 +108,9 @@ def item(kind, name, namespace="team", **fields):
 
 
 def service(name, spec, pipeline="profile", profile_cache_ready="True", **metadata):
-    status = {"reconcilerPipeline": pipeline,
-              "conditions": [{"type": "ProfileCacheReady", "status": profile_cache_ready}]}
+    # v0.2.7 reports ProfileCacheReady only when the profile has model sources.
+    conditions = [] if profile_cache_ready is None else [{"type": "ProfileCacheReady", "status": profile_cache_ready}]
+    status = {"reconcilerPipeline": pipeline, "conditions": conditions}
     return item("AIMService", name, spec=spec, status=status, metadata=metadata)
 
 
@@ -127,15 +125,12 @@ def inference_service(service_name, profile_label=True):
     return item("InferenceService", service_name + "-isvc", metadata=metadata)
 
 
-def predictor(service_name, scale=1, profile_label=True, **status):
-    metadata = {"generation": 2, **owned_by("serving.kserve.io/v1beta1", "InferenceService", service_name + "-isvc")}
+def predictor_pod(service_name, revision="new", profile_label=True, phase="Running", **status):
+    labels = {"serving.kserve.io/inferenceservice": service_name + "-isvc"}
     if profile_label:
-        metadata["labels"] = {"aim.eai.amd.com/profile": "profile"}
-    status = {"observedGeneration": 2, **dict.fromkeys(("replicas", "updatedReplicas", "availableReplicas"), scale),
-              **status}
-    # Like the API server, omit zero counts.
-    return item("Deployment", service_name + "-isvc-predictor", metadata=metadata, spec={"replicas": scale},
-                status={key: value for key, value in status.items() if value})
+        labels["aim.eai.amd.com/profile"] = "profile"
+    return item("Pod", f"{service_name}-isvc-predictor-{revision}", metadata={"labels": labels},
+                status={"phase": phase, **status})
 
 
 def crd(name, served=("v1alpha1",), annotations=None):
@@ -157,7 +152,7 @@ class UpgradePreflightTest(unittest.TestCase):
             "deployments": [operator("docker.io/amdenterpriseai/aim-engine:v0.2.7")],
             SERVICES: [service("ready", {"profile": {"name": "ready-profile"}})],
             INFERENCE_SERVICES: [inference_service("ready")],
-            DEPLOYMENTS: [predictor("ready")],
+            PODS: [predictor_pod("ready")],
             MODELS: [item("AIMModel", "image-model", spec={"image": "aim:1.0.0"})],
         }
         objects.update(resources or {})
@@ -259,25 +254,19 @@ class UpgradePreflightTest(unittest.TestCase):
 
         moved = service("svc", {"model": {"name": "m"}, "template": {"name": "t"}}, **annotation)
         result = self.run_preflight({SERVICES: [moved], INFERENCE_SERVICES: [inference_service("svc")],
-                                     DEPLOYMENTS: [predictor("svc")]})
+                                     PODS: [predictor_pod("svc")]})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_template_pipeline_services_waits_until_the_move_finishes(self):
         annotation = {"annotations": {"aim.eai.amd.com/reconciler-pipeline": "profile"}}
         moved = {SERVICES: [service("svc", {"model": {"name": "m"}}, **annotation)],
-                 INFERENCE_SERVICES: [inference_service("svc")], DEPLOYMENTS: [predictor("svc")]}
-        rolling = "(predictor Deployment svc-isvc-predictor is still rolling out)"
+                 INFERENCE_SERVICES: [inference_service("svc")], PODS: [predictor_pod("svc")]}
+        old_pod = predictor_pod("svc", "old", profile_label=False)
         cases = {
-            "profile cache not Ready": ("(ProfileCacheReady: False)", {SERVICES: [
-                service("svc", {"model": {"name": "m"}}, profile_cache_ready="False", **annotation)]}),
-            "no InferenceService": ("(no predictor Deployment)", {INFERENCE_SERVICES: []}),
-            "no Deployment": ("(no predictor Deployment)", {DEPLOYMENTS: []}),
             "InferenceService not rewritten": ("(InferenceService svc-isvc still runs the template)",
                                                {INFERENCE_SERVICES: [inference_service("svc", profile_label=False)]}),
-            "rewrite not applied to the Deployment": (rolling, {DEPLOYMENTS: [predictor("svc", profile_label=False)]}),
-            "generation not observed": (rolling, {DEPLOYMENTS: [predictor("svc", observedGeneration=1)]}),
-            "old pod serving, new pod Pending": (rolling, {DEPLOYMENTS: [predictor("svc", replicas=2)]}),
-            "new pod not available": (rolling, {DEPLOYMENTS: [predictor("svc", availableReplicas=0)]}),
+            "old pod serving, new pod Pending": ("(predictor pod svc-isvc-predictor-old still runs the template)",
+                                                 {PODS: [old_pod, predictor_pod("svc", phase="Pending")]}),
         }
         for name, (problem, resources) in cases.items():
             with self.subTest(name):
@@ -285,10 +274,34 @@ class UpgradePreflightTest(unittest.TestCase):
                 self.assert_fails(result, "template-pipeline-services", "AIMService team/svc", "move-template-services")
                 self.assertIn(f"AIMService team/svc: has not finished moving {problem}.", result.stdout)
 
-        for name, deployment in {"rolled out": predictor("svc"), "scaled to zero": predictor("svc", scale=0)}.items():
+        for name, pods in {"rolled out": [predictor_pod("svc")], "scaled to zero": [],
+                           "old pod finished": [predictor_pod("svc", "old", profile_label=False, phase="Failed")],
+                           "pod of another InferenceService": [predictor_pod("other", "old", profile_label=False)],
+                           }.items():
             with self.subTest(name):
-                result = self.run_preflight({**moved, DEPLOYMENTS: [deployment]})
+                result = self.run_preflight({**moved, PODS: pods})
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_template_pipeline_services_passes_unhealthy_profile_services(self):
+        crash_looping = {"containerStatuses": [{"name": "kserve-container", "ready": False,
+                                                "state": {"waiting": {"reason": "CrashLoopBackOff"}}}]}
+        cases = {
+            "ProfileNotFound, no InferenceService": (
+                {SERVICES: [service("svc", {"profile": {"name": "missing"}}, profile_cache_ready=None)], PODS: []}, False),
+            "Pending on GPUs": ({PODS: [predictor_pod("svc", phase="Pending")]}, True),
+            "crash-looping": ({PODS: [predictor_pod("svc", **crash_looping)]}, True),
+            "healthy, profile without model sources": (
+                {SERVICES: [service("svc", {"profile": {"name": "p"}}, profile_cache_ready=None)]}, True),
+            "profile cache not Ready": (
+                {SERVICES: [service("svc", {"profile": {"name": "p"}}, profile_cache_ready="False")], PODS: []}, True),
+        }
+        for name, (resources, has_isvc) in cases.items():
+            with self.subTest(name):
+                base = {SERVICES: [service("svc", {"profile": {"name": "p"}})], PODS: [predictor_pod("svc")],
+                        INFERENCE_SERVICES: [inference_service("svc")] if has_isvc else []}
+                result = self.run_preflight({**base, **resources})
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("ok   [template-pipeline-services]", result.stdout)
 
     def test_template_pipeline_services_accepts_an_inference_service_the_migration_tool_preserved(self):
         def preserved(generation="3"):
@@ -296,24 +309,19 @@ class UpgradePreflightTest(unittest.TestCase):
                 "aim.eai.amd.com/reconciler-pipeline": "profile",
                 "aim.eai.amd.com/migration-preserve-inference-service-uid": "uid-svc-isvc",
                 "aim.eai.amd.com/migration-preserve-inference-service-generation": generation})
-        unlabelled = {INFERENCE_SERVICES: [inference_service("svc", profile_label=False)],
-                      DEPLOYMENTS: [predictor("svc", profile_label=False)]}
+        old_pod = predictor_pod("svc", "old", profile_label=False)
+        unlabelled = {INFERENCE_SERVICES: [inference_service("svc", profile_label=False)], PODS: [old_pod]}
 
-        result = self.run_preflight({SERVICES: [preserved()], **unlabelled})
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-        cases = {
-            "preserved for an older generation": ("(InferenceService svc-isvc still runs the template)",
-                                                  {SERVICES: [preserved("2")]}),
-            "preserved but rolling out": ("(predictor Deployment svc-isvc-predictor is still rolling out)",
-                                          {SERVICES: [preserved()],
-                                           DEPLOYMENTS: [predictor("svc", profile_label=False, replicas=2)]}),
-        }
-        for name, (problem, resources) in cases.items():
+        rolling_out = [old_pod, predictor_pod("svc", "next", profile_label=False, phase="Pending")]
+        for name, pods in {"serving": [old_pod], "rolling out": rolling_out}.items():
             with self.subTest(name):
-                result = self.run_preflight({**unlabelled, **resources})
-                self.assert_fails(result, "template-pipeline-services", "AIMService team/svc", "move-template-services")
-                self.assertIn(f"AIMService team/svc: has not finished moving {problem}.", result.stdout)
+                result = self.run_preflight({SERVICES: [preserved()], **unlabelled, PODS: pods})
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        result = self.run_preflight({**unlabelled, SERVICES: [preserved("2")]})
+        self.assert_fails(result, "template-pipeline-services", "AIMService team/svc", "move-template-services")
+        self.assertIn("AIMService team/svc: has not finished moving (InferenceService svc-isvc still runs the template).",
+                      result.stdout)
 
     def test_template_pipeline_services_fails_while_a_pod_mounts_a_template_cache_pvc(self):
         resources = {
@@ -446,7 +454,6 @@ class UpgradePreflightTest(unittest.TestCase):
             "aimservicetemplates.aim.eai.amd.com": ["template-objects"],
             TEMPLATE_CACHES: ["template-objects", "template-finalizers", "dedicated-template-caches"],
             INFERENCE_SERVICES: ["template-pipeline-services", "stale-owner-references"],
-            DEPLOYMENTS: ["template-pipeline-services"],
             "jobs.batch": ["stale-owner-references"],
             PODS: ["template-pipeline-services"],
             ARTIFACTS: ["template-pipeline-services", "stale-owner-references", "dedicated-template-caches"],
