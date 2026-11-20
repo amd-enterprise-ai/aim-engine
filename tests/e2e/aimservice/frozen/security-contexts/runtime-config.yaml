@@ -1,0 +1,20 @@
+# Namespace-local runtime config whose security contexts the service inherits
+# until it sets its own. Kept namespaced so the test does not touch the
+# cluster-scoped defaults other tests run against.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+spec:
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    supplementalGroups: [44, 110]
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]

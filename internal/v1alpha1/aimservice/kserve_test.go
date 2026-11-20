@@ -579,6 +579,46 @@ func TestBuildInferenceService_Tolerations(t *testing.T) {
 }
 
 // ============================================================================
+// SECURITY CONTEXT TESTS
+// ============================================================================
+
+func TestBuildInferenceService_SecurityContexts(t *testing.T) {
+	configPod := &corev1.PodSecurityContext{RunAsNonRoot: ptr.To(true), SupplementalGroups: []int64{44, 110}}
+	configContainer := &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false)}
+	servicePod := &corev1.PodSecurityContext{RunAsUser: ptr.To(int64(2000))}
+
+	service := NewService("svc").WithModelImage("test-image:v1").Build()
+	obs := ServiceObservation{ServiceFetchResult: ServiceFetchResult{service: service}}
+	templateSpec := &aimv1alpha1.AIMServiceTemplateSpecCommon{ModelName: testModelName}
+
+	isvc := buildInferenceService(service, "test-template", templateSpec, nil, obs)
+	if got := isvc.Spec.Predictor.SecurityContext; got != nil {
+		t.Fatalf("pod security context without configuration = %v, want none", got)
+	}
+	if got := isvc.Spec.Predictor.Containers[0].SecurityContext; got != nil {
+		t.Fatalf("container security context without configuration = %v, want none", got)
+	}
+
+	runtimeConfig := &aimv1alpha1.AIMRuntimeConfigCommon{}
+	runtimeConfig.PodSecurityContext = configPod
+	runtimeConfig.SecurityContext = configContainer
+	obs.mergedRuntimeConfig = controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]{Value: runtimeConfig}
+	isvc = buildInferenceService(service, "test-template", templateSpec, nil, obs)
+	if got := isvc.Spec.Predictor.SecurityContext; !reflect.DeepEqual(got, configPod) {
+		t.Fatalf("pod security context from the runtime config = %v, want %v", got, configPod)
+	}
+	if got := isvc.Spec.Predictor.Containers[0].SecurityContext; !reflect.DeepEqual(got, configContainer) {
+		t.Fatalf("container security context from the runtime config = %v, want %v", got, configContainer)
+	}
+
+	service.Spec.PodSecurityContext = servicePod
+	isvc = buildInferenceService(service, "test-template", templateSpec, nil, obs)
+	if got := isvc.Spec.Predictor.SecurityContext; !reflect.DeepEqual(got, servicePod) {
+		t.Fatalf("service pod security context = %v, want %v", got, servicePod)
+	}
+}
+
+// ============================================================================
 // PRIORITY CLASS NAME TESTS
 // ============================================================================
 

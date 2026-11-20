@@ -106,6 +106,8 @@ kubectl create rolebinding team-a-aimservice \
   --namespace=ml-team-a
 ```
 
+AIMService authors control the security context of their inference pods, so enforce Pod Security `baseline` or `restricted` in such namespaces. See [Security](../admin/security.md#example-team-rbac).
+
 ## Next Steps
 
 - [Runtime Configuration](../concepts/runtime-config.md) — Configuration resolution details

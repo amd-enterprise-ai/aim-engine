@@ -174,6 +174,18 @@ type AIMServiceRuntimeConfig struct {
 	// +listType=atomic
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
 
+	// PodSecurityContext for inference pods. An AIMService's value replaces
+	// the runtime config's, and a namespace config's replaces the cluster's.
+	// A set value, also {}, replaces the inherited one as a whole.
+	// +optional
+	PodSecurityContext *corev1.PodSecurityContext `json:"podSecurityContext,omitempty"`
+
+	// SecurityContext for the inference container. An AIMService's value
+	// replaces the runtime config's, and a namespace config's replaces the
+	// cluster's. A set value, also {}, replaces the inherited one as a whole.
+	// +optional
+	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
+
 	// Env specifies environment variables for inference containers.
 	// When set on AIMService, these take highest precedence in the merge hierarchy.
 	// When set on RuntimeConfig, these provide namespace/cluster-level defaults.
