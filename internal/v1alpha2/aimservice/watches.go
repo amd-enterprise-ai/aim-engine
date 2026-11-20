@@ -29,6 +29,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -44,7 +46,9 @@ import (
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	servicepolicy "github.com/amd-enterprise-ai/aim-engine/internal/aimservice"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
+	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
+	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profilecache"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
 )
 
@@ -402,11 +406,12 @@ func profileRelevantChangePredicate() predicate.Predicate {
 
 // profileCacheRelevantChangePredicate fires when any field the AIMService
 // consumes from the cache changes: high-level Status (Ready / Progressing /
-// Failed), ObservedGeneration (the cache controller has reprocessed a spec
-// change), or the resolved Artifacts list (PVC names or mount points that
-// feed the InferenceService volume mounts). Cosmetic status writes that
-// don't move any of these fields are filtered out to avoid reconcile
-// hot-loops.
+// Failed), metadata.generation and ObservedGeneration (a spec change and its
+// reprocessing), the resolved Artifacts list (PVC names or mount points that
+// feed the InferenceService volume mounts), the error conditions and the
+// reconciliation-paused annotation that the service reports. Cosmetic status
+// writes that don't move any of these fields are filtered out to avoid
+// reconcile hot-loops.
 func profileCacheRelevantChangePredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc:  func(_ event.CreateEvent) bool { return true },
@@ -421,12 +426,33 @@ func profileCacheRelevantChangePredicate() predicate.Predicate {
 			if oldCache.Status.Status != newCache.Status.Status {
 				return true
 			}
-			if oldCache.Status.ObservedGeneration != newCache.Status.ObservedGeneration {
+			if oldCache.Generation != newCache.Generation ||
+				oldCache.Status.ObservedGeneration != newCache.Status.ObservedGeneration {
 				return true
+			}
+			if controllerutils.IsReconciliationPaused(oldCache) != controllerutils.IsReconciliationPaused(newCache) {
+				return true
+			}
+			for _, conditionType := range profilecache.ErrorConditionTypes {
+				if conditionChanged(oldCache.Status.Conditions, newCache.Status.Conditions, conditionType) {
+					return true
+				}
 			}
 			return !equality.Semantic.DeepEqual(oldCache.Status.Artifacts, newCache.Status.Artifacts)
 		},
 	}
+}
+
+// conditionChanged reports whether the condition's presence, status or message
+// differs. lastTransitionTime is ignored: the framework rewrites it on every
+// failed retry.
+func conditionChanged(oldConds, newConds []metav1.Condition, conditionType string) bool {
+	oldCond := meta.FindStatusCondition(oldConds, conditionType)
+	newCond := meta.FindStatusCondition(newConds, conditionType)
+	if oldCond == nil || newCond == nil {
+		return (oldCond == nil) != (newCond == nil)
+	}
+	return oldCond.Status != newCond.Status || oldCond.Message != newCond.Message
 }
 
 // modelRelevantChangePredicate fires when an AIMModel / AIMClusterModel's

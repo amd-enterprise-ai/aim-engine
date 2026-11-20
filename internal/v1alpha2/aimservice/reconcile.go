@@ -418,6 +418,7 @@ func (obs ServiceObservation) getProfileCacheHealth() controllerutils.ComponentH
 			break
 		}
 	}
+	health.Message += profilecache.PausedNote(pc)
 	return health
 }
 

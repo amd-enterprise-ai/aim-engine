@@ -3094,3 +3094,29 @@ func legacyConfigMapDeleteCount(
 	}
 	return count
 }
+
+func TestProfileCacheHealthNamesPausedCache(t *testing.T) {
+	pc := &aimv1alpha2.AIMProfileCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "cache-a",
+			Namespace:   "ns",
+			Annotations: map[string]string{constants.AnnotationReconciliationPaused: "true"},
+		},
+		Status: aimv1alpha2.AIMProfileCacheStatus{
+			Status: constants.AIMStatusProgressing,
+			Conditions: []metav1.Condition{{
+				Type: controllerutils.ConditionTypeReady, Status: metav1.ConditionFalse, Message: "Downloading",
+			}},
+		},
+	}
+	obs := ServiceObservation{ServiceFetchResult: ServiceFetchResult{
+		profileCache: controllerutils.FetchResult[*aimv1alpha2.AIMProfileCache]{Value: pc},
+	}}
+
+	health := obs.getProfileCacheHealth()
+	want := "Profile cache cache-a is Progressing: Downloading; reconciliation is paused by the " +
+		constants.AnnotationReconciliationPaused + " annotation"
+	if health.Reason != "ProfileCacheNotReady" || health.Message != want {
+		t.Errorf("health = %s: %q, want ProfileCacheNotReady: %q", health.Reason, health.Message, want)
+	}
+}
