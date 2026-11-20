@@ -178,8 +178,13 @@ declared set and resolved adapter-disk PVC, and
 `status.adapterSubtreeSyncKey` records the last synced binding. Editing
 `spec.adapters` re-runs the sync to prune removed adapters; replacing a base
 artifact with a new UID-derived adapter PVC re-runs the sync and staging on the
-new disk. Staging Jobs run asynchronously and the runtime hot-loads each
-adapter as it lands. The controller sets `AIM_ADAPTER_SOURCE` to the mount path
+new disk. The InferenceService keeps mounting the previous disk until every
+adapter whose `AIMArtifact` is `Ready` is staged on the new one, unless the
+previous PVC is gone; until then the `AdaptersReady` message names both PVCs and
+`status.adapters` describes the new disk. Staging Jobs run asynchronously and
+the runtime hot-loads each adapter as it lands. A staged adapter stays
+`Downloaded` after its finished staging Job is cleaned up, so it is not staged
+again. The controller sets `AIM_ADAPTER_SOURCE` to the mount path
 so the image finds the subtree.
 
 ## Storage and compatibility contract

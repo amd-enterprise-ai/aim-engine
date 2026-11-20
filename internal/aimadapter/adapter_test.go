@@ -25,18 +25,22 @@ package aimadapter
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
@@ -50,7 +54,9 @@ import (
 const (
 	testAdapterPVC       = "base-adapters-pvc"
 	testAdapterPVCUID    = "base-adapters-pvc-uid"
+	testOldAdapterPVC    = "old-pvc"
 	testOldAdapterPVCUID = "old-uid"
+	testNewAdapterPVC    = "new-pvc"
 	testNewAdapterPVCUID = "new-uid"
 )
 
@@ -1135,24 +1141,24 @@ func TestStagingJobNameDeterministicAndScoped(t *testing.T) {
 func TestStorageBindingChangesSyncGeneration(t *testing.T) {
 	svc := serviceWithAdapters("lora-a")
 
-	oldKey := desiredAdapterKey(svc, "old-pvc", testOldAdapterPVCUID)
-	newKey := desiredAdapterKey(svc, "new-pvc", testNewAdapterPVCUID)
+	oldKey := desiredAdapterKey(svc, testOldAdapterPVC, testOldAdapterPVCUID)
+	newKey := desiredAdapterKey(svc, testNewAdapterPVC, testNewAdapterPVCUID)
 	if oldKey == newKey {
 		t.Fatal("different adapter-disk PVCs must produce different desired keys")
 	}
-	if SubtreeSyncJobName(svc, "old-pvc", testOldAdapterPVCUID) ==
-		SubtreeSyncJobName(svc, "new-pvc", testNewAdapterPVCUID) {
+	if SubtreeSyncJobName(svc, testOldAdapterPVC, testOldAdapterPVCUID) ==
+		SubtreeSyncJobName(svc, testNewAdapterPVC, testNewAdapterPVCUID) {
 		t.Error("different adapter-disk PVCs must produce different subtree-sync jobs")
 	}
-	if StagingJobName(svc, "lora-a", "old-pvc", testOldAdapterPVCUID) ==
-		StagingJobName(svc, "lora-a", "new-pvc", testNewAdapterPVCUID) {
+	if StagingJobName(svc, "lora-a", testOldAdapterPVC, testOldAdapterPVCUID) ==
+		StagingJobName(svc, "lora-a", testNewAdapterPVC, testNewAdapterPVCUID) {
 		t.Error("different adapter-disk PVCs must produce different staging jobs")
 	}
 
 	svc.Status.AdapterSubtreeSyncKey = oldKey
-	svc.Status.AdapterDiskPersistentVolumeClaim = "old-pvc"
+	svc.Status.AdapterDiskPersistentVolumeClaim = testOldAdapterPVC
 	svc.Status.AdapterDiskPersistentVolumeClaimUID = testOldAdapterPVCUID
-	deps := depsWith(modelParent("new-pvc"), map[string]*aimv1alpha1.AIMArtifact{
+	deps := depsWith(modelParent(testNewAdapterPVC), map[string]*aimv1alpha1.AIMArtifact{
 		"lora-a": logicalAdapterArtifact("org/base"),
 	})
 	deps.AdapterDiskPVCUID = testNewAdapterPVCUID
@@ -1169,8 +1175,9 @@ func TestStorageBindingChangesSyncGeneration(t *testing.T) {
 	if st.SubtreeReady {
 		t.Error("a sync from the old PVC must not mark the replacement PVC subtree ready")
 	}
-	if !PreserveExistingMount(svc, st) {
-		t.Error("the existing mount must be preserved until the replacement subtree sync succeeds")
+	if st.BindingSwitchable || st.MountedAdapterDiskPVC() != testOldAdapterPVC || PreserveExistingMount(svc, st) {
+		t.Errorf("switchable = %v, mounted = %q, preserve = %v; want the ISVC to keep mounting old-pvc",
+			st.BindingSwitchable, st.MountedAdapterDiskPVC(), PreserveExistingMount(svc, st))
 	}
 }
 
@@ -1219,17 +1226,17 @@ func TestFetchSelectsJobsForFreshStorageBinding(t *testing.T) {
 	}
 
 	svc := serviceWithAdapters("lora-a")
-	svc.Status.AdapterDiskPersistentVolumeClaim = "old-pvc"
+	svc.Status.AdapterDiskPersistentVolumeClaim = testOldAdapterPVC
 	svc.Status.AdapterDiskPersistentVolumeClaimUID = testOldAdapterPVCUID
-	parent := modelParent("new-pvc")
+	parent := modelParent(testNewAdapterPVC)
 	adapter := logicalAdapterArtifact("org/base")
 	newPVC := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "new-pvc", Namespace: "default", UID: types.UID(testNewAdapterPVCUID)},
+		ObjectMeta: metav1.ObjectMeta{Name: testNewAdapterPVC, Namespace: "default", UID: types.UID(testNewAdapterPVCUID)},
 	}
-	oldStage := succeededJob(StagingJobName(svc, adapter.Name, "old-pvc", testOldAdapterPVCUID))
-	newStage := succeededJob(StagingJobName(svc, adapter.Name, "new-pvc", testNewAdapterPVCUID))
-	oldSync := succeededJob(SubtreeSyncJobName(svc, "old-pvc", testOldAdapterPVCUID))
-	newSync := succeededJob(SubtreeSyncJobName(svc, "new-pvc", testNewAdapterPVCUID))
+	oldStage := succeededJob(StagingJobName(svc, adapter.Name, testOldAdapterPVC, testOldAdapterPVCUID))
+	newStage := succeededJob(StagingJobName(svc, adapter.Name, testNewAdapterPVC, testNewAdapterPVCUID))
+	oldSync := succeededJob(SubtreeSyncJobName(svc, testOldAdapterPVC, testOldAdapterPVCUID))
+	newSync := succeededJob(SubtreeSyncJobName(svc, testNewAdapterPVC, testNewAdapterPVCUID))
 
 	c := fakeclient.NewClientBuilder().
 		WithScheme(scheme).
@@ -1299,6 +1306,180 @@ func TestFetchAndComposeReportAdapterDiskBlockers(t *testing.T) {
 			if st.ParentBlocker != tt.wantBlocker || st.AdapterDiskPVCPending != tt.wantPending {
 				t.Errorf("ParentBlocker=%q AdapterDiskPVCPending=%v, want %q and %v",
 					st.ParentBlocker, st.AdapterDiskPVCPending, tt.wantBlocker, tt.wantPending)
+			}
+		})
+	}
+}
+
+// A staged adapter stays Downloaded after its finished staging Job is
+// garbage-collected, so it is not staged again; a new disk has no such record.
+func TestComposeKeepsStagedAdapterAfterStagingJobCleanup(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		recordedPVC string
+		recorded    bool
+		wantState   aimv1alpha1.AIMAdapterState
+	}{
+		{name: "staged on the current disk", recordedPVC: testAdapterPVC, recorded: true, wantState: aimv1alpha1.AdapterStateDownloaded},
+		{name: "staged on the previous disk", recordedPVC: testOldAdapterPVC, recorded: true, wantState: aimv1alpha1.AdapterStatePending},
+		{name: "never staged", recordedPVC: testAdapterPVC, wantState: aimv1alpha1.AdapterStatePending},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := serviceWithAdapters("lora-a")
+			svc.Status.AdapterDiskPersistentVolumeClaim = tt.recordedPVC
+			svc.Status.AdapterDiskPersistentVolumeClaimUID = testAdapterPVCUID
+			svc.Status.AdapterSubtreeSyncKey = desiredAdapterKey(svc, tt.recordedPVC, testAdapterPVCUID)
+			if tt.recorded {
+				svc.Status.Adapters = []aimv1alpha1.AIMServiceAdapterStatus{statusAdapter("lora-a")}
+			}
+			deps := depsWith(modelParent(testAdapterPVC), map[string]*aimv1alpha1.AIMArtifact{
+				"lora-a": adapterArtifact("lora-a", "base"),
+			})
+			deps.StagingJobs["lora-a"] = controllerutils.FetchResult[*batchv1.Job]{
+				Error: apierrors.NewNotFound(batchv1.Resource("jobs"), "stage"),
+			}
+
+			st := Compose(svc, deps)
+			if got := st.Adapters[0].State; got != tt.wantState {
+				t.Fatalf("adapter state = %q, want %q", got, tt.wantState)
+			}
+			var plan controllerutils.PlanResult
+			Plan(&plan, svc, deps, st, nil)
+			staging := StagingJobName(svc, "lora-a", testAdapterPVC, testAdapterPVCUID)
+			planned := slices.ContainsFunc(plan.GetToApply(), func(obj client.Object) bool { return obj.GetName() == staging })
+			if wantPlanned := tt.wantState != aimv1alpha1.AdapterStateDownloaded; planned != wantPlanned {
+				t.Errorf("staging Job planned = %v, want %v", planned, wantPlanned)
+			}
+		})
+	}
+}
+
+// A move to another adapter disk keeps the InferenceService on the recorded disk
+// until every adapter that can be staged is Downloaded on the new one, unless
+// the recorded disk is gone.
+func TestComposeHoldsAdapterDiskMoveUntilStaged(t *testing.T) {
+	running := func(name string) *batchv1.Job {
+		return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
+	}
+	for _, tt := range []struct {
+		name         string
+		service      *aimv1alpha2.AIMService
+		jobs         map[string]*batchv1.Job
+		unreadyB     bool
+		recordedGone bool
+		syncing      bool
+		wantHeld     bool
+	}{
+		{name: "subtree sync on the new disk running", service: serviceWithAdapters("lora-a", "lora-b"), syncing: true, wantHeld: true},
+		{name: "nothing staged on the new disk", service: serviceWithAdapters("lora-a", "lora-b"), wantHeld: true},
+		{
+			name: "one adapter still downloading", service: serviceWithAdapters("lora-a", "lora-b"),
+			jobs: map[string]*batchv1.Job{"lora-a": succeededJob("a"), "lora-b": running("b")}, wantHeld: true,
+		},
+		{
+			name: "staging failed on the new disk", service: serviceWithAdapters("lora-a", "lora-b"),
+			jobs: map[string]*batchv1.Job{"lora-a": succeededJob("a"), "lora-b": failedJob("b", "BackoffLimitExceeded", "")}, wantHeld: true,
+		},
+		{
+			name: "every adapter staged", service: serviceWithAdapters("lora-a", "lora-b"),
+			jobs: map[string]*batchv1.Job{"lora-a": succeededJob("a"), "lora-b": succeededJob("b")},
+		},
+		{
+			name: "an adapter whose artifact is not Ready does not hold the move", service: serviceWithAdapters("lora-a", "lora-b"),
+			jobs: map[string]*batchv1.Job{"lora-a": succeededJob("a")}, unreadyB: true,
+		},
+		{name: "dynamic service without adapters", service: dynamicService()},
+		{name: "recorded disk gone", service: serviceWithAdapters("lora-a", "lora-b"), recordedGone: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := tt.service
+			svc.Status.AdapterDiskPersistentVolumeClaim = testOldAdapterPVC
+			svc.Status.AdapterDiskPersistentVolumeClaimUID = testOldAdapterPVCUID
+			svc.Status.AdapterSubtreeSyncKey = desiredAdapterKey(svc, testOldAdapterPVC, testOldAdapterPVCUID)
+			for i := range svc.Spec.Adapters {
+				svc.Status.Adapters = append(svc.Status.Adapters, statusAdapter(svc.Spec.Adapters[i].Name))
+			}
+			artifacts := map[string]*aimv1alpha1.AIMArtifact{}
+			for i := range svc.Spec.Adapters {
+				name := svc.Spec.Adapters[i].Name
+				artifacts[name] = adapterArtifact(name, "base")
+			}
+			if tt.unreadyB {
+				artifacts["lora-b"].Status.Status = constants.AIMStatusProgressing
+			}
+			deps := depsWith(modelParent(testNewAdapterPVC), artifacts)
+			deps.AdapterDiskPVCUID = testNewAdapterPVCUID
+			deps.RecordedAdapterDiskGone = tt.recordedGone
+			if !tt.syncing {
+				deps = withSyncedSubtree(deps, svc)
+			}
+			for name, job := range tt.jobs {
+				deps.StagingJobs[name] = controllerutils.FetchResult[*batchv1.Job]{Value: job}
+			}
+
+			st := Compose(svc, deps)
+			wantMounted := testNewAdapterPVC
+			if tt.wantHeld {
+				wantMounted = testOldAdapterPVC
+			}
+			if st.BindingSwitchable == tt.wantHeld || st.MountedAdapterDiskPVC() != wantMounted || PreserveExistingMount(svc, st) {
+				t.Fatalf("switchable = %v, mounted = %q, preserve = %v; want switchable %v and the ISVC on %s",
+					st.BindingSwitchable, st.MountedAdapterDiskPVC(), PreserveExistingMount(svc, st), !tt.wantHeld, wantMounted)
+			}
+			status := svc.Status.DeepCopy()
+			DecorateStatus(status, st)
+			if status.AdapterDiskPersistentVolumeClaim != wantMounted {
+				t.Errorf("recorded adapter disk = %q, want %s", status.AdapterDiskPersistentVolumeClaim, wantMounted)
+			}
+			if health := Health(st, len(svc.Spec.Adapters)); tt.wantHeld && (health.State != constants.AIMStatusReady ||
+				health.Reason != ReasonStaging || !strings.Contains(health.Message, "serving adapters from PVC old-pvc")) {
+				t.Errorf("health = %s/%s: %q, want Ready/%s naming old-pvc", health.State, health.Reason, health.Message, ReasonStaging)
+			}
+		})
+	}
+}
+
+func TestFetchDetectsRecordedAdapterDiskGone(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register core API: %v", err)
+	}
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register batch API: %v", err)
+	}
+	if err := aimv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register AIM API: %v", err)
+	}
+	pvc := func(name, uid string) *corev1.PersistentVolumeClaim {
+		return &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", UID: types.UID(uid)}}
+	}
+	deleting := pvc(testOldAdapterPVC, testOldAdapterPVCUID)
+	deleting.Finalizers = []string{"kubernetes.io/pvc-protection"}
+	deleting.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+
+	for _, tt := range []struct {
+		name     string
+		recorded *corev1.PersistentVolumeClaim
+		want     bool
+	}{
+		{name: "recorded disk exists", recorded: pvc(testOldAdapterPVC, testOldAdapterPVCUID)},
+		{name: "recorded disk deleted", want: true},
+		{name: "recorded disk being deleted", recorded: deleting, want: true},
+		{name: "recorded disk recreated", recorded: pvc(testOldAdapterPVC, "recreated-uid"), want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := serviceWithAdapters("lora-a")
+			svc.Status.AdapterDiskPersistentVolumeClaim = testOldAdapterPVC
+			svc.Status.AdapterDiskPersistentVolumeClaimUID = testOldAdapterPVCUID
+			parent := modelParent(testNewAdapterPVC)
+			objects := []client.Object{parent, pvc(testNewAdapterPVC, testNewAdapterPVCUID)}
+			if tt.recorded != nil {
+				objects = append(objects, tt.recorded)
+			}
+			c := fakeclient.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+
+			if got := Fetch(context.Background(), c, svc, ParentRef{Name: parent.Name}).RecordedAdapterDiskGone; got != tt.want {
+				t.Errorf("RecordedAdapterDiskGone = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -1835,15 +2016,15 @@ func TestComposeFreshPVCWinsOverSticky(t *testing.T) {
 	}
 }
 
-// DecorateStatus advances the persisted binding only after its subtree sync
-// succeeds and never clears the previous mountable generation on a transient gap.
+// DecorateStatus advances the persisted binding only once it is switchable and
+// never clears the previous mountable generation on a transient gap.
 func TestDecorateStatusPersistsAdapterDiskPVC(t *testing.T) {
 	status := &aimv1alpha1.AIMServiceStatus{}
 	DecorateStatus(status, State{
-		AdapterDiskPVC:       "pvc-1",
-		AdapterDiskPVCUID:    "uid-1",
-		DesiredKey:           "key-1",
-		CurrentSyncSucceeded: true,
+		AdapterDiskPVC:    "pvc-1",
+		AdapterDiskPVCUID: "uid-1",
+		DesiredKey:        "key-1",
+		BindingSwitchable: true,
 	})
 	if status.AdapterDiskPersistentVolumeClaim != "pvc-1" {
 		t.Errorf("AdapterDiskPersistentVolumeClaim = %q, want pvc-1", status.AdapterDiskPersistentVolumeClaim)
@@ -1853,7 +2034,7 @@ func TestDecorateStatusPersistsAdapterDiskPVC(t *testing.T) {
 			status.AdapterDiskPersistentVolumeClaimUID)
 	}
 
-	// An unsynchronized replacement must not advance or clear the binding.
+	// A replacement that is not switchable must not advance or clear the binding.
 	DecorateStatus(status, State{AdapterDiskPVC: "pvc-2", AdapterDiskPVCUID: "uid-2"})
 	if status.AdapterDiskPersistentVolumeClaim != "pvc-1" {
 		t.Errorf("sticky PVC must not be cleared on an empty cycle, got %q", status.AdapterDiskPersistentVolumeClaim)
@@ -1867,20 +2048,22 @@ func TestDecorateStatusPersistsAdapterDiskPVC(t *testing.T) {
 // cycle, so callers skip re-applying an ISVC that would drop the mount.
 func TestPreserveExistingMount(t *testing.T) {
 	tests := []struct {
-		name     string
-		mode     aimv1alpha1.AIMAdapterMode
-		adapters []string
-		pvc      string
-		pvcUID   string
-		changed  bool
-		synced   bool
-		want     bool
+		name       string
+		mode       aimv1alpha1.AIMAdapterMode
+		adapters   []string
+		pvc        string
+		pvcUID     string
+		changed    bool
+		switchable bool
+		held       string
+		want       bool
 	}{
 		{name: "enabled but PVC unresolved", adapters: []string{"a"}, pvc: "", want: true},
 		{name: "enabled but PVC UID unresolved", adapters: []string{"a"}, pvc: "pvc", want: true},
 		{name: "enabled and PVC resolved", adapters: []string{"a"}, pvc: "pvc", pvcUID: "uid", want: false},
-		{name: "replacement sync pending", adapters: []string{"a"}, pvc: "pvc", pvcUID: "new", changed: true, want: true},
-		{name: "replacement sync succeeded", adapters: []string{"a"}, pvc: "pvc", pvcUID: "new", changed: true, synced: true, want: false},
+		{name: "replacement not switchable", adapters: []string{"a"}, pvc: "pvc", pvcUID: "new", changed: true, want: true},
+		{name: "replacement switchable", adapters: []string{"a"}, pvc: "pvc", pvcUID: "new", changed: true, switchable: true, want: false},
+		{name: "replacement held on the recorded disk", adapters: []string{"a"}, pvc: "pvc", pvcUID: "new", changed: true, held: testOldAdapterPVC, want: false},
 		{name: "not enabled (static, no adapters)", adapters: nil, pvc: "", want: false},
 		{name: "dynamic at zero adapters, PVC unresolved", mode: aimv1alpha1.AdapterModeDynamic, adapters: nil, pvc: "", want: true},
 	}
@@ -1894,7 +2077,8 @@ func TestPreserveExistingMount(t *testing.T) {
 				AdapterDiskPVC:        tt.pvc,
 				AdapterDiskPVCUID:     tt.pvcUID,
 				StorageBindingChanged: tt.changed,
-				CurrentSyncSucceeded:  tt.synced,
+				BindingSwitchable:     tt.switchable,
+				HeldAdapterDiskPVC:    tt.held,
 			}
 			if got := PreserveExistingMount(svc, state); got != tt.want {
 				t.Errorf("PreserveExistingMount() = %v, want %v", got, tt.want)
