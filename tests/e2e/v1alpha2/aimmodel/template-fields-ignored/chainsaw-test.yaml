@@ -1,0 +1,118 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimmodel-template-fields-ignored
+spec:
+  description: |
+    Spec fields that only configured the AIMServiceTemplates a model used to
+    create are reported, not acted on. A model that sets them gets a
+    TemplateFieldsIgnored condition naming exactly those fields and a Warning
+    event, and still reaches Ready. A model whose spec.discovery only sets
+    extractMetadata (createServiceTemplates defaults to true) gets no warning.
+    Removing the fields clears the warning. Extraction is disabled so no
+    discovery Job runs, and both models report ProfilesAvailable=False with a
+    Warning event naming extractMetadata while staying Ready.
+  timeouts:
+    assert: 90s
+  steps:
+    - name: Both models reach Ready
+      try:
+        - apply:
+            file: models.yaml
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: with-template-fields
+              status:
+                status: Ready
+                (length(conditions[?type == 'MigrationRequired'])): 0
+                (conditions[?type == 'ProfilesAvailable']):
+                  - status: "False"
+                    reason: NoDeployableProfiles
+                    message: "spec.discovery.extractMetadata is false, so the image is not inspected; set it to true to discover AIMProfiles"
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: without-template-fields
+              status:
+                status: Ready
+                (conditions[?type == 'ProfilesAvailable']):
+                  - status: "False"
+                    reason: NoDeployableProfiles
+                    message: "spec.discovery.extractMetadata is false, so the image is not inspected; set it to true to discover AIMProfiles"
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Event
+              type: Warning
+              reason: NoDeployableProfiles
+              involvedObject:
+                kind: AIMModel
+                name: without-template-fields
+
+    - name: Only the model with template-only fields is warned
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: with-template-fields
+              status:
+                (conditions[?type == 'TemplateFieldsIgnored']):
+                  - status: "True"
+                    reason: TemplateFieldsSet
+                    message: "These fields have no effect on profile-based serving and can be removed: spec.discovery.createServiceTemplates, spec.defaultServiceTemplate, spec.env, spec.resources"
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Event
+              type: Warning
+              reason: TemplateFieldsSet
+              involvedObject:
+                kind: AIMModel
+                name: with-template-fields
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: without-template-fields
+              status:
+                (length(conditions[?type == 'TemplateFieldsIgnored'])): 0
+        - error:
+            resource:
+              apiVersion: v1
+              kind: Event
+              reason: TemplateFieldsSet
+              involvedObject:
+                kind: AIMModel
+                name: without-template-fields
+
+    - name: Removing the fields clears the warning
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              kubectl patch aimmodels.v1alpha2.aim.eai.amd.com with-template-fields -n "$NAMESPACE" \
+                --type=json -p '[
+                  {"op": "remove", "path": "/spec/discovery/createServiceTemplates"},
+                  {"op": "remove", "path": "/spec/defaultServiceTemplate"},
+                  {"op": "remove", "path": "/spec/env"},
+                  {"op": "remove", "path": "/spec/resources"}
+                ]'
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: with-template-fields
+              status:
+                status: Ready
+                (length(conditions[?type == 'TemplateFieldsIgnored'])): 0

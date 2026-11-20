@@ -1,0 +1,24 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: profile-id-propagation
+spec:
+  model:
+    image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  profile:
+    selector:
+      metric: latency
+      precision: bf16
+      minimumType: unoptimized
+  replicas: 1
+  caching:
+    env:
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: huggingface-creds
+            key: token
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "2"

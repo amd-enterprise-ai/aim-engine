@@ -54,11 +54,16 @@ type ProfileCacheReconciler struct {
 	Scheme *runtime.Scheme
 }
 
+func (r *ProfileCacheReconciler) GetApplyOptions(obs ProfileCacheObservation) controllerutils.ApplyOptions {
+	return aimruntimeconfig.GetApplyOptions(obs.mergedRuntimeConfig.Value)
+}
+
 type ProfileCacheFetchResult struct {
 	profileCache *aimv1alpha2.AIMProfileCache
 
-	profile        controllerutils.FetchResult[*aimv1alpha2.AIMProfile]
-	clusterProfile controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]
+	mergedRuntimeConfig controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
+	profile             controllerutils.FetchResult[*aimv1alpha2.AIMProfile]
+	clusterProfile      controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]
 
 	artifacts controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]
 }
@@ -70,7 +75,10 @@ func (r *ProfileCacheReconciler) FetchRemoteState(
 ) ProfileCacheFetchResult {
 	pc := reconcileCtx.Object
 
-	result := ProfileCacheFetchResult{profileCache: pc}
+	result := ProfileCacheFetchResult{
+		profileCache:        pc,
+		mergedRuntimeConfig: aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, pc.Spec.Name, pc.Namespace),
+	}
 
 	switch pc.Spec.ProfileScope {
 	case aimv1alpha1.AIMResolutionScopeCluster:
@@ -102,7 +110,9 @@ func (r *ProfileCacheReconciler) FetchRemoteState(
 
 // GetComponentHealth reports fetch-level health for the framework's status computation.
 func (result ProfileCacheFetchResult) GetComponentHealth() []controllerutils.ComponentHealth {
-	var health []controllerutils.ComponentHealth
+	health := []controllerutils.ComponentHealth{
+		result.mergedRuntimeConfig.ToUpstreamComponentHealth("RuntimeConfig", aimruntimeconfig.GetRuntimeConfigHealth),
+	}
 
 	// Profile is an upstream dependency
 	if result.clusterProfile.Value != nil || result.clusterProfile.Error != nil {

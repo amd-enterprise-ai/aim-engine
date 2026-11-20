@@ -1,0 +1,19 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: label-propagation
+  labels:
+    team-alpha: frontend
+    cost-center: cc-12345
+    env: test
+spec:
+  profile:
+    name: label-propagation
+  replicas: 1
+  caching:
+    mode: Shared
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "2"

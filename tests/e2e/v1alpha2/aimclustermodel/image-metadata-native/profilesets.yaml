@@ -1,0 +1,21 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterProfileSet
+metadata:
+  name: image-metadata-native-recommended
+spec:
+  selector:
+    modelRef:
+      name: image-metadata-native
+    profileId: mi300x-fp16-latency-unopt
+  versionPolicy: all
+---
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMClusterProfileSet
+metadata:
+  name: image-metadata-native-other
+spec:
+  selector:
+    modelRef:
+      name: image-metadata-native
+    profileId: mi300x-fp8-tp2-throughput
+  versionPolicy: all

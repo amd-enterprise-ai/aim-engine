@@ -5,7 +5,7 @@ A **custom model** lets you deploy a model whose architecture isn't published in
 :::{admonition} v1alpha2
 :class: note
 
-Custom models use the `aim.eai.amd.com/v1alpha2` API. The v1alpha1 `spec.custom` / `spec.modelSources` flow on `AIMModel` is deprecated and removed from v1alpha2.
+Custom models use the `aim.eai.amd.com/v1alpha2` API.
 :::
 ## When to use this flow
 
@@ -143,14 +143,12 @@ kind: AIMService
 metadata:
   name: acme-custom-transformer-service
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: acme-custom-transformer
 ```
 
-The AIMService resolver treats `spec.model.name` as a shortcut for "every deployable profile produced by this model" and applies the shared deterministic profile ranking. The annotation selects the profile pipeline during the v1alpha1 → v1alpha2 migration window. See [Deploying Services](deploying-services.md) for the ranking order and other resolution shapes (by-profile-name, by-selector, with profile overlay).
+The AIMService resolver treats `spec.model.name` as a shortcut for "every deployable profile produced by this model" and applies the shared deterministic profile ranking. See [Deploying Services](deploying-services.md) for the ranking order and other resolution shapes (by-profile-name, by-selector, with profile overlay).
 
 ## Identity stamping
 

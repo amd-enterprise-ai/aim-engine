@@ -44,6 +44,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -107,7 +108,6 @@ type ArtifactFetchResult struct {
 	clusterConfig      *controllerutils.FetchResult[*aimv1alpha1.AIMClusterRuntimeConfig]
 	namespaceArtifacts *controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]
 	clusterArtifacts   *controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]
-	templateCaches     *controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCacheList]
 	profileCaches      *controllerutils.FetchResult[*aimv1alpha2.AIMProfileCacheList]
 }
 
@@ -360,15 +360,13 @@ func (r *ArtifactReconciler) FetchRemoteState(
 			result.clusterArtifacts = &clArtifacts
 		}
 
-		// Fetch template and profile caches to identify in-use artifacts (whose PVCs
-		// may be mounted). When cluster quota is active, eviction can span namespaces,
+		// Fetch profile caches to identify in-use artifacts (whose PVCs may be
+		// mounted). When cluster quota is active, eviction can span namespaces,
 		// so we need caches from all namespaces to protect in-use artifacts everywhere.
 		var cacheListOpts []client.ListOption
 		if result.clusterArtifacts == nil {
 			cacheListOpts = append(cacheListOpts, client.InNamespace(mc.Namespace))
 		}
-		tcFetch := controllerutils.FetchListDirect(ctx, ar, &aimv1alpha1.AIMTemplateCacheList{}, cacheListOpts...)
-		result.templateCaches = &tcFetch
 		pcFetch := controllerutils.FetchListDirect(ctx, ar, &aimv1alpha2.AIMProfileCacheList{}, cacheListOpts...)
 		result.profileCaches = &pcFetch
 	}
@@ -509,6 +507,19 @@ func (result ArtifactFetchResult) DownloadJobSucceeded() bool {
 	return utils.IsJobSucceeded(result.downloadJob.Value)
 }
 
+// inUseArtifactUIDs returns the UIDs of artifacts listed by the fetched
+// AIMProfileCaches, or the error if the list failed.
+func (result ArtifactFetchResult) inUseArtifactUIDs() (map[types.UID]bool, error) {
+	var profileCaches []aimv1alpha2.AIMProfileCache
+	if result.profileCaches != nil {
+		if result.profileCaches.HasError() {
+			return nil, result.profileCaches.Error
+		}
+		profileCaches = result.profileCaches.Value.Items
+	}
+	return BuildInUseArtifactUIDs(profileCaches), nil
+}
+
 // Observe (thin wrapper for now, may be removed later)
 
 type ArtifactObservation struct {
@@ -605,15 +616,7 @@ func (r *ArtifactReconciler) ComposeState(
 				clusterArtifacts = fetch.clusterArtifacts.Value.Items
 			}
 
-			var templateCaches []aimv1alpha1.AIMTemplateCache
-			if fetch.templateCaches != nil && !fetch.templateCaches.HasError() {
-				templateCaches = fetch.templateCaches.Value.Items
-			}
-			var profileCaches []aimv1alpha2.AIMProfileCache
-			if fetch.profileCaches != nil && !fetch.profileCaches.HasError() {
-				profileCaches = fetch.profileCaches.Value.Items
-			}
-			inUseUIDs := BuildInUseArtifactUIDs(templateCaches, profileCaches)
+			inUseUIDs, cacheListErr := fetch.inUseArtifactUIDs()
 
 			var defaultRetentionPriority *int32
 			if runtimeConfig != nil && runtimeConfig.Artifact != nil {
@@ -631,6 +634,15 @@ func (r *ArtifactReconciler) ComposeState(
 				defaultRetentionPriority,
 				inUseUIDs,
 			)
+
+			// A failed cache list leaves the in-use artifacts unknown, and evicting one
+			// could delete weights that running inference pods still mount.
+			if cacheListErr != nil && len(dec.ToEvict) > 0 {
+				dec.ToEvict = nil
+				dec.Blocked = true
+				dec.BlockReason = "Quota exceeded; eviction skipped because in-use artifacts could not be determined: " +
+					cacheListErr.Error()
+			}
 			obs.quotaDecision = &dec
 		}
 	}

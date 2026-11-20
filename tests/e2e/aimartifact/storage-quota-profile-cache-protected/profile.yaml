@@ -1,0 +1,29 @@
+# A caching profile without accelerator requirements, so it reaches Ready anywhere
+# and materialises a Shared AIMProfileCache of the same name. The download is
+# simulated; size=1Mi rounds up to a 1Gi PVC.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: cached-weights
+spec:
+  aimId: test/cached-weights
+  modelId: test/cached-weights-fp8
+  engine: vllm
+  metric: latency
+  precision: fp8
+  type: general
+  primary: true
+  image: registry.example.com/test-image:1.0.0
+  modelSources:
+    - modelId: test/cached-weights-fp8
+      sourceUri: hf://test-org/cached-weights
+      size: 1Mi
+  caching:
+    enabled: true
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "1"
+      - name: EXPECTED_SIZE_BYTES
+        value: "1048576"

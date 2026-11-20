@@ -22,16 +22,11 @@ the mounted subtree at will. In `static` mode the set is fixed at creation and t
 disk is mounted only when at least one adapter is declared (a static service with
 no adapters serves nothing and needs no mount).
 
-:::{admonition} Both pipelines
+:::{admonition} Adapters require a profile
 :class: note
 
-`spec.adapters` is supported on both the **profile** pipeline
-(`aim.eai.amd.com/v1alpha2`, via `spec.profile`) and the **template**
-pipeline (`aim.eai.amd.com/v1alpha1`, via `spec.template` / `spec.model`).
-The staging mechanics are identical; only base-model resolution differs —
-the profile pipeline resolves the parent through the `AIMProfileCache`, the
-template pipeline through the `AIMTemplateCache`. On `v1alpha2`, adapters
-still require `spec.profile`.
+`spec.adapters` requires `spec.profile`. The service resolves the parent base
+model through its `AIMProfileCache`.
 :::
 
 :::{admonition} The resolved profile must advertise adapter capability
@@ -198,11 +193,10 @@ Before a service can serve adapters:
    The storage class must support `ReadWriteMany`.
 2. **Use `Shared` caching and an exact `sourceUri` match.** The service resolves
    its parent base model by matching the resolved base model id against the
-   cache's resolved artifacts — the `AIMProfileCache` on the profile pipeline,
-   the `AIMTemplateCache` on the template pipeline. `Dedicated` caching mints a
-   per-service parent and is not supported with adapters.
+   resolved artifacts of the service's `AIMProfileCache`. `Dedicated` caching
+   mints a per-service parent and is not supported with adapters.
 3. **Use a single model source.** Adapters bind to one resolved base model.
-   Profiles or templates with multiple model sources are rejected as ambiguous.
+   Profiles with multiple model sources are rejected as ambiguous.
 4. **Choose exactly one compatibility mode per adapter.**
    `compatibleWith` is the recommended logical mode: the resolved base
    artifact's canonical `modelId` must appear in the list. `parentArtifact` is
@@ -261,24 +255,6 @@ spec:
 
 The full set of objects is also available under
 [`config/samples/aim_v1alpha2_lora_adapters.yaml`](https://github.com/amd-enterprise-ai/aim-engine/blob/main/config/samples/aim_v1alpha2_lora_adapters.yaml).
-
-The same adapters can be served from the **template pipeline** by declaring
-`spec.adapters` on a `v1alpha1` service (the parent base model is then resolved
-through the `AIMTemplateCache`):
-
-```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
-kind: AIMService
-metadata:
-  name: gemma-cs
-spec:
-  model:
-    name: gemma-3-27b-it
-  adapterMode: dynamic
-  adapters:
-    - name: cs-tone-v3
-      kind: AIMArtifact
-```
 
 ## Lifecycle and status
 

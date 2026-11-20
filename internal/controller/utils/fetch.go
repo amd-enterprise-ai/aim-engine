@@ -58,14 +58,14 @@ func (fr FetchResult[T]) HasError() bool {
 // Example:
 //
 //	type MyFetch struct {
-//	    Model    FetchResult[*aimv1.AIMModel]
-//	    Template FetchResult[*aimv1.AIMServiceTemplate]
+//	    Model   FetchResult[*aimv1.AIMModel]
+//	    Profile FetchResult[*aimv1.AIMProfile]
 //	}
 //
 //	func FetchRemoteState(ctx, client, obj) (MyFetch, error) {
 //	    return MyFetch{
-//	        Model:    Fetch(ctx, client, modelKey, &aimv1.AIMModel{}),
-//	        Template: Fetch(ctx, client, templateKey, &aimv1.AIMServiceTemplate{}),
+//	        Model:   Fetch(ctx, client, modelKey, &aimv1.AIMModel{}),
+//	        Profile: Fetch(ctx, client, profileKey, &aimv1.AIMProfile{}),
 //	    }, nil
 //	}
 func Fetch[T client.Object](ctx context.Context, c client.Client, key client.ObjectKey, obj T) FetchResult[T] {
@@ -174,7 +174,7 @@ func (fr FetchResult[T]) ToComponentHealthWithContext(
 }
 
 // ToUpstreamComponentHealth converts a FetchResult for an upstream dependency into ComponentHealth.
-// Upstream dependencies are resources that this controller depends on (templates, configs, secrets, etc.).
+// Upstream dependencies are resources that this controller depends on (profiles, configs, secrets, etc.).
 // NotFound errors for upstream dependencies are categorized as MissingUpstreamDependency (non-retriable, but can be
 // resolved when they are created via external actions).
 func (fr FetchResult[T]) ToUpstreamComponentHealth(component string, inspector func(T) ComponentHealth) ComponentHealth {

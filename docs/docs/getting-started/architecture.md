@@ -26,7 +26,7 @@ An `AIMService` resolves one of those profiles, and the Service controller creat
 
 ## CRDs and their roles
 
-v1alpha2 is the current API. v1alpha1 resources remain supported during the deprecation window — see [Legacy v1alpha1](../legacy/index.md).
+v1alpha2 is the current API.
 
 | CRD | Scope | Role |
 |---|---|---|
@@ -36,7 +36,7 @@ v1alpha2 is the current API. v1alpha1 resources remain supported during the depr
 | `AIMProfileSet` / `AIMClusterProfileSet` | Namespace / Cluster | Selects across model definitions and copyable profile resources, applies overrides, and materialises derived profiles. Also synthesised by `AIMModel.spec.profiles`. |
 | `AIMProfileCache` | Namespace | Pre-warms a profile's `modelSources` to a PVC for fast service start. |
 | `AIMArtifact` | Namespace | Manages a single model artifact download to a PVC. |
-| `AIMClusterModelSource` | Cluster | Auto-discovers AIM images from a registry (`spec.filters`/`spec.images`) or materializes declared model IDs (`spec.models`). Declared models are created as v1alpha2 `AIMClusterModel`, since `spec.modelId` is a v1alpha2-only field; discovered images are created as v1alpha1. Both are the same stored object — v1alpha2 is the storage version. |
+| `AIMClusterModelSource` | Cluster | Auto-discovers AIM images from a registry (`spec.filters`/`spec.images`) or materializes declared model IDs (`spec.models`). Both discovered images and declared models are created as v1alpha2 `AIMClusterModel`. |
 | `AIMRuntimeConfig` / `AIMClusterRuntimeConfig` | Namespace / Cluster | Storage defaults, routing defaults, environment defaults. |
 
 ## Four model flows
@@ -63,7 +63,7 @@ When you apply an `AIMService`, the controller reaches a single `AIMProfile` thr
   <img alt="AIMService resolution shapes converging on a single resolved AIMProfile, then an optional overlay before deployment." src="../assets/diagrams/service-resolution.svg">
 </picture>
 
-The image shape requires the `aim.eai.amd.com/reconciler-pipeline: profile` annotation during the migration window — see [Migration window](../admin/upgrading.md#migration-window). See [Services](../concepts/services.md#resolution-shapes) for the canonical resolution table and mechanics.
+See [Services](../concepts/services.md#resolution-shapes) for the canonical resolution table and mechanics.
 
 ## Cluster vs namespace scope
 

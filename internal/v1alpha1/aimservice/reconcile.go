@@ -25,519 +25,27 @@ package aimservice
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	servingv1beta1 "github.com/kserve/kserve/pkg/apis/serving/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
-	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
-	"github.com/amd-enterprise-ai/aim-engine/internal/aimadapter"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
-	"github.com/amd-enterprise-ai/aim-engine/internal/trust"
-	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
-	v1alpha1utils "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/utils"
 )
-
-// ServiceReconciler implements the domain logic for AIMService reconciliation.
-type ServiceReconciler struct {
-	Clientset kubernetes.Interface
-	Scheme    *runtime.Scheme
-	APIReader client.Reader
-}
-
-func (r *ServiceReconciler) GetApplyOptions(obs ServiceObservation) controllerutils.ApplyOptions {
-	return aimruntimeconfig.GetApplyOptions(obs.mergedRuntimeConfig.Value)
-}
-
-// ============================================================================
-// FETCH
-// ============================================================================
-
-// ServiceFetchResult holds all fetched resources needed for AIMService reconciliation.
-type ServiceFetchResult struct {
-	service *aimv1alpha1.AIMService
-
-	// Merged runtime config (provided by reconcile context)
-	mergedRuntimeConfig controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
-	additionalCABundle  controllerutils.FetchResult[*corev1.ConfigMap]
-
-	// Model resolution result (includes existing model or signals creation needed)
-	modelResult ModelFetchResult
-
-	// Template resolution
-	template        controllerutils.FetchResult[*aimv1alpha1.AIMServiceTemplate]
-	clusterTemplate controllerutils.FetchResult[*aimv1alpha1.AIMClusterServiceTemplate]
-
-	// Template selection results (when auto-selecting)
-	templateSelection *TemplateSelectionResult
-
-	// Existing downstream resources
-	inferenceService       controllerutils.FetchResult[*servingv1beta1.InferenceService]
-	inferenceServiceEvents controllerutils.FetchResult[*corev1.EventList]
-	inferenceServicePods   *controllerutils.FetchResult[*corev1.PodList]
-	hpa                    controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler]
-	httpRoute              controllerutils.FetchResult[*gatewayapiv1.HTTPRoute]
-	gateway                controllerutils.FetchResult[*gatewayapiv1.Gateway]
-	templateCache          controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCache]
-
-	// adapterDeps holds the per-adapter artifacts, staging Jobs, and resolved
-	// base-model artifact for spec.adapters. Populated only when the service
-	// declares adapters. See internal/aimadapter.
-	adapterDeps aimadapter.Dependencies
-}
-
-// FetchRemoteState fetches all resources needed for AIMService reconciliation.
-// - Always fetch: InferenceService, HTTPRoute, TemplateCache (for health visibility)
-// - Fetch when ISVC not found OR successfully fetched: Model, Template (for both creation and update)
-// - Skip on transient ISVC fetch errors: Model, Template (to avoid accidental SSA re-applies)
-func (r *ServiceReconciler) FetchRemoteState(
-	ctx context.Context,
-	c client.Client,
-	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha1.AIMService],
-) ServiceFetchResult {
-	service := reconcileCtx.Object
-	logger := log.FromContext(ctx).WithValues(
-		"phase", "fetch",
-		"service", service.Name,
-		"namespace", service.Namespace,
-	)
-	ctx = log.IntoContext(ctx, logger)
-
-	runtimeConfigRef := service.GetRuntimeConfigRef()
-	result := ServiceFetchResult{
-		service:             service,
-		mergedRuntimeConfig: aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, runtimeConfigRef.Name, service.Namespace),
-	}
-	bundleReader := client.Reader(c)
-	if r.APIReader != nil {
-		bundleReader = r.APIReader
-	}
-	result.additionalCABundle = trust.FetchAdditionalCABundle(
-		ctx,
-		bundleReader,
-		service.Namespace,
-		result.mergedRuntimeConfig.Value,
-	)
-
-	// 1. Fetch existing InferenceService first (gates other fetches)
-	result.inferenceService = fetchInferenceService(ctx, c, service)
-
-	// 1b. Fetch events and pods for InferenceService to detect configuration errors
-	if result.inferenceService.OK() && result.inferenceService.Value != nil {
-		result.inferenceServiceEvents = fetchInferenceServiceEvents(ctx, c, result.inferenceService.Value)
-
-		// Fetch predictor pods to detect ImagePull errors, pending states, etc.
-		isvc := result.inferenceService.Value
-		podsFetchResult := controllerutils.FetchList(ctx, c, &corev1.PodList{},
-			client.InNamespace(isvc.Namespace),
-			client.MatchingLabels{constants.LabelKServeInferenceService: isvc.Name},
-		)
-		result.inferenceServicePods = &podsFetchResult
-
-		// Fetch HPA to get replica status (KEDA creates HPA with name: keda-hpa-{isvc-name}-predictor)
-		result.hpa = fetchHPA(ctx, c, isvc)
-	}
-
-	// 2. Fetch HTTPRoute if routing might be enabled (we own this, always check)
-	result.httpRoute = fetchHTTPRoute(ctx, c, service, result.mergedRuntimeConfig.Value)
-
-	// 2b. Fetch the parent Gateway so the host-pinning guard can see how many
-	// listeners it exposes (a multi-listener gateway requires a hostname pin).
-	result.gateway = fetchGateway(ctx, c, service, result.mergedRuntimeConfig.Value)
-
-	// 3. Fetch TemplateCache (always fetch - cascades health from Artifact/PVC)
-	// artifact status is resolved through TemplateCache.Status.Artifacts
-	result.templateCache = fetchTemplateCache(ctx, c, service)
-
-	// 4. Fetch Model and Template for both creation and update of the InferenceService.
-	// Mutable fields (replicas, autoscaling, env, resources, etc.) must propagate to an
-	// existing ISVC via SSA, so we always resolve upstream resources when the ISVC fetch
-	// succeeded (OK) or when the ISVC doesn't exist yet (NotFound).
-	// Skip only on transient fetch errors to avoid re-resolving with stale data, which
-	// could cause SSA to update an existing resource unintentionally.
-	if result.inferenceService.IsNotFound() || result.inferenceService.OK() {
-		logger.V(1).Info("Fetching upstream resources",
-			"isvcExists", result.inferenceService.OK(),
-			"isvcNotFound", result.inferenceService.IsNotFound(),
-		)
-
-		// Resolve model (handles ref, image, and custom modes)
-		result.modelResult = fetchModel(ctx, c, service)
-
-		// Resolve template (explicit or auto-select)
-		result.template, result.clusterTemplate, result.templateSelection = fetchTemplate(
-			ctx, c, service, result.modelResult.Model, result.modelResult.ClusterModel,
-		)
-	} else {
-		logger.V(1).Info("Transient error fetching InferenceService, skipping upstream fetch to avoid accidental changes")
-	}
-
-	// Adapter staging dependencies (spec.adapters). The parent model artifact is
-	// resolved via the template cache's resolved artifacts (keyed on the
-	// template's first model id); the remaining staging mechanics are shared via
-	// internal/aimadapter.
-	if aimadapter.IsActive(service) {
-		parentName, parentErr := resolveAdapterParentName(result)
-		result.adapterDeps = aimadapter.Fetch(ctx, c, service, parentName)
-		result.adapterDeps.ParentResolutionErr = parentErr
-	}
-
-	return result
-}
-
-// GetComponentHealth returns health status for each component.
-// NOTE: Unlike other controllers where this is on FetchResult, AIMService defines it on
-// ServiceObservation because model health depends on derived state (needsModelCreation)
-// computed in ComposeState. The template/isvc/cache health helpers remain on ServiceFetchResult
-// and are accessible via embedding.
-func (obs ServiceObservation) GetComponentHealth(ctx context.Context, clientset kubernetes.Interface) []controllerutils.ComponentHealth {
-	var health []controllerutils.ComponentHealth
-
-	// Model health (on ServiceObservation - needs needsModelCreation)
-	health = append(health, obs.getModelHealth())
-
-	// Template health
-	health = append(health, obs.getTemplateHealth())
-
-	// Runtime config health (optional upstream dependency)
-	if obs.mergedRuntimeConfig.Value != nil || obs.mergedRuntimeConfig.Error != nil {
-		health = append(health, obs.mergedRuntimeConfig.ToUpstreamComponentHealth(
-			"RuntimeConfig",
-			func(cfg *aimv1alpha1.AIMRuntimeConfigCommon) controllerutils.ComponentHealth {
-				return controllerutils.ComponentHealth{
-					State:  constants.AIMStatusReady,
-					Reason: "RuntimeConfigResolved",
-				}
-			},
-		))
-	}
-	if obs.mergedRuntimeConfig.Value != nil &&
-		obs.mergedRuntimeConfig.Value.AdditionalCABundleRef != nil {
-		health = append(health, obs.additionalCABundle.ToUpstreamComponentHealth(
-			"AdditionalCABundle",
-			func(bundle *corev1.ConfigMap) controllerutils.ComponentHealth {
-				if bundle == nil {
-					return controllerutils.ComponentHealth{
-						State:   constants.AIMStatusReady,
-						Reason:  "AdditionalCABundleSkipped",
-						Message: "Configured CA bundle was unavailable during reconciliation; using public roots only",
-					}
-				}
-				return controllerutils.ComponentHealth{
-					State:  constants.AIMStatusReady,
-					Reason: "AdditionalCABundleResolved",
-				}
-			},
-		))
-	}
-
-	// InferenceService health (downstream)
-	if obs.inferenceService.Value != nil || obs.inferenceService.Error != nil {
-		health = append(health, obs.getInferenceServiceHealth())
-	}
-
-	// InferenceService pod health (downstream). Under scale-to-zero an
-	// empty pod list is the desired state, so we report Ready instead of
-	// the default "no pods is a failure" verdict.
-	if podsHealth, ok := inferenceServicePodsHealth(
-		ctx, clientset, obs.service, obs.hpa, obs.inferenceServicePods,
-	); ok {
-		health = append(health, podsHealth)
-	}
-
-	// Cache health (if caching is enabled)
-	health = append(health, obs.getCacheHealth())
-
-	// HTTPRoute health (if routing is enabled)
-	health = append(health, obs.getHTTPRouteHealth())
-
-	// HPA health (if autoscaling is configured)
-	health = append(health, obs.getHPAHealth())
-
-	// Adapter staging health (if the service declares adapters)
-	if aimadapter.IsActive(obs.service) {
-		health = append(health, aimadapter.Health(obs.adapterState, len(obs.service.Spec.Adapters)))
-	}
-
-	// Scale-from-zero requires routing; surface the invalid combination as
-	// ConfigValid=False instead of letting the service idle to a state it can
-	// never wake from.
-	if cfg := ScaleToZeroRoutingComponentHealth(obs.service, obs.mergedRuntimeConfig.Value); cfg.Component != "" {
-		health = append(health, cfg)
-	}
-	if cfg := ScaleToZeroActivationMetricComponentHealth(obs.service, obs.mergedRuntimeConfig.Value); cfg.Component != "" {
-		health = append(health, cfg)
-	}
-
-	// Routing on a multi-listener gateway requires a hostname pin; otherwise
-	// the route attaches to every listener and can bypass authentication.
-	// Surface as ConfigValid=False (the route is also not created).
-	if cfg := RoutingHostnameComponentHealth(obs.service, obs.mergedRuntimeConfig.Value, obs.gateway); cfg.Component != "" {
-		health = append(health, cfg)
-	}
-
-	// Autoscaling configured but no trigger resolves -> ConfigValid=False,
-	// rather than stamping autoscalerClass=external with no ScaledObject to
-	// enforce the declared bounds.
-	if cfg := AutoscalingTriggerComponentHealth(obs.service); cfg.Component != "" {
-		health = append(health, cfg)
-	}
-
-	return health
-}
-
-func (obs ServiceObservation) getModelHealth() controllerutils.ComponentHealth {
-	mr := obs.modelResult
-
-	// Check if model needs to be created (downstream dependency - pending state)
-	if obs.needsModelCreation {
-		message := "Model will be created"
-		if mr.ImageURI != "" {
-			message = "Model will be created for image " + mr.ImageURI
-		} else if mr.CustomSpec != nil && len(mr.CustomSpec.ModelSources) > 0 {
-			message = "Custom model will be created for " + mr.CustomSpec.ModelSources[0].ModelID
-		}
-		return controllerutils.ComponentHealth{
-			Component:      "Model",
-			State:          constants.AIMStatusPending,
-			Reason:         aimv1alpha1.AIMServiceReasonCreatingModel,
-			Message:        message,
-			DependencyType: controllerutils.DependencyTypeDownstream,
-		}
-	}
-
-	// Check namespace-scoped model first (check errors before value since Fetch always sets Value)
-	// State is explicitly set to Failed for upstream dependency errors (requires user action).
-	// Reason/Message are derived from the error via CategorizeError if already wrapped.
-	if mr.Model.Error != nil {
-		return controllerutils.ComponentHealth{
-			Component:      "Model",
-			State:          constants.AIMStatusFailed,
-			Errors:         []error{mr.Model.Error},
-			DependencyType: controllerutils.DependencyTypeUpstream,
-		}
-	}
-	// Check OK() and that model was actually populated (Name != "" guards against empty Fetch result)
-	if mr.Model.OK() && mr.Model.Value != nil && mr.Model.Value.Name != "" {
-		return evaluateModelStatus(mr.Model.Value.Status.Status, "AIMModel", mr.Model.Value.Name)
-	}
-
-	// Check cluster-scoped model
-	// State is explicitly set to Failed for upstream dependency errors (requires user action).
-	// Reason/Message are derived from the error via CategorizeError if already wrapped.
-	if mr.ClusterModel.Error != nil {
-		return controllerutils.ComponentHealth{
-			Component:      "Model",
-			State:          constants.AIMStatusFailed,
-			Errors:         []error{mr.ClusterModel.Error},
-			DependencyType: controllerutils.DependencyTypeUpstream,
-		}
-	}
-	// Check OK() and that model was actually populated (Name != "" guards against empty Fetch result)
-	if mr.ClusterModel.OK() && mr.ClusterModel.Value != nil && mr.ClusterModel.Value.Name != "" {
-		return evaluateModelStatus(mr.ClusterModel.Value.Status.Status, "AIMClusterModel", mr.ClusterModel.Value.Name)
-	}
-
-	// If InferenceService exists and model was previously resolved, report as ready.
-	// When ISVC exists, we skip fetching upstream resources (optimization), so
-	// we rely on the resolved reference in status.
-	if obs.inferenceService.OK() && obs.service.Status.ResolvedModel != nil {
-		return controllerutils.ComponentHealth{
-			Component:      "Model",
-			State:          constants.AIMStatusReady,
-			Reason:         aimv1alpha1.AIMServiceReasonModelResolved,
-			Message:        fmt.Sprintf("%s %s is ready", obs.service.Status.ResolvedModel.Scope, obs.service.Status.ResolvedModel.Name),
-			DependencyType: controllerutils.DependencyTypeUpstream,
-		}
-	}
-
-	// No model found
-	return controllerutils.ComponentHealth{
-		Component:      "Model",
-		State:          constants.AIMStatusPending,
-		Reason:         aimv1alpha1.AIMServiceReasonModelNotFound,
-		Message:        "No model found for service",
-		DependencyType: controllerutils.DependencyTypeUpstream,
-	}
-}
-
-func evaluateModelStatus(status constants.AIMStatus, kind, name string) controllerutils.ComponentHealth {
-	health := controllerutils.ComponentHealth{
-		Component:      "Model",
-		DependencyType: controllerutils.DependencyTypeUpstream,
-	}
-
-	switch status {
-	case constants.AIMStatusReady:
-		health.State = constants.AIMStatusReady
-		health.Reason = aimv1alpha1.AIMServiceReasonModelResolved
-		health.Message = kind + " " + name + " is ready"
-	case constants.AIMStatusPending, constants.AIMStatusProgressing:
-		health.State = constants.AIMStatusProgressing
-		health.Reason = aimv1alpha1.AIMServiceReasonModelNotReady
-		health.Message = kind + " " + name + " is not ready yet"
-	case constants.AIMStatusFailed, constants.AIMStatusDegraded:
-		health.State = constants.AIMStatusFailed
-		health.Reason = aimv1alpha1.AIMServiceReasonModelNotReady
-		health.Message = kind + " " + name + " is in failed state"
-	default:
-		health.State = constants.AIMStatusProgressing
-		health.Reason = aimv1alpha1.AIMServiceReasonModelNotReady
-		health.Message = kind + " " + name + " status: " + string(status)
-	}
-
-	return health
-}
-
-func (obs ServiceObservation) getTemplateHealth() controllerutils.ComponentHealth {
-	health := controllerutils.ComponentHealth{
-		Component:      "Template",
-		DependencyType: controllerutils.DependencyTypeUpstream,
-	}
-
-	// Check for fetch errors first (Fetch always sets Value, so check errors before OK)
-	// State is explicitly set to Failed for upstream dependency errors (requires user action).
-	// Reason/Message are derived from the error via CategorizeError if already wrapped.
-	if obs.template.Error != nil {
-		health.State = constants.AIMStatusFailed
-		health.Errors = []error{obs.template.Error}
-		return health
-	}
-
-	// Check namespace-scoped template (OK() means no error, Name != "" guards against empty Fetch result)
-	if obs.template.OK() && obs.template.Value != nil && obs.template.Value.Name != "" {
-		return evaluateTemplateStatus(obs.template.Value.Status.Status, "AIMServiceTemplate", obs.template.Value.Name)
-	}
-
-	// Check cluster-scoped template (same guards for empty Fetch result)
-	if obs.clusterTemplate.OK() && obs.clusterTemplate.Value != nil && obs.clusterTemplate.Value.Name != "" {
-		return evaluateTemplateStatus(obs.clusterTemplate.Value.Status.Status, "AIMClusterServiceTemplate", obs.clusterTemplate.Value.Name)
-	}
-
-	// Check for selection errors
-	// State is explicitly set to Failed for selection errors (requires user action).
-	// Reason/Message are derived from the error via CategorizeError.
-	if obs.templateSelection != nil {
-		if obs.templateSelection.Error != nil {
-			health.State = constants.AIMStatusFailed
-			health.Errors = []error{obs.templateSelection.Error}
-			return health
-		}
-		if obs.templateSelection.TemplatesExistButNotReady {
-			health.State = constants.AIMStatusProgressing
-			health.Reason = aimv1alpha1.AIMServiceReasonTemplateNotReady
-			health.Message = "Templates exist but are not ready yet"
-			return health
-		}
-		if obs.templateSelection.SelectionReason != "" || obs.templateSelection.SelectionMessage != "" {
-			health.State = constants.AIMStatusPending
-			health.Reason = obs.templateSelection.SelectionReason
-			if health.Reason == "" {
-				health.Reason = aimv1alpha1.AIMServiceReasonTemplateNotFound
-			}
-			health.Message = obs.templateSelection.SelectionMessage
-			if health.Message == "" {
-				health.Message = "No template found for service"
-			}
-			return health
-		}
-	}
-
-	// If InferenceService exists and template was previously resolved, report as ready.
-	// When ISVC exists, we skip fetching upstream resources (optimization), so
-	// we rely on the resolved reference in status.
-	if obs.inferenceService.OK() && obs.service.Status.ResolvedTemplate != nil {
-		return controllerutils.ComponentHealth{
-			Component:      "Template",
-			State:          constants.AIMStatusReady,
-			Reason:         aimv1alpha1.AIMServiceReasonResolved,
-			Message:        fmt.Sprintf("%s %s is ready", obs.service.Status.ResolvedTemplate.Scope, obs.service.Status.ResolvedTemplate.Name),
-			DependencyType: controllerutils.DependencyTypeUpstream,
-		}
-	}
-
-	// No template found
-	health.State = constants.AIMStatusPending
-	health.Reason = aimv1alpha1.AIMServiceReasonTemplateNotFound
-	health.Message = "No template found for service"
-	return health
-}
-
-func evaluateTemplateStatus(status constants.AIMStatus, kind, name string) controllerutils.ComponentHealth {
-	health := controllerutils.ComponentHealth{
-		Component:      "Template",
-		DependencyType: controllerutils.DependencyTypeUpstream,
-	}
-
-	switch status {
-	case constants.AIMStatusReady:
-		health.State = constants.AIMStatusReady
-		health.Reason = aimv1alpha1.AIMServiceReasonResolved
-		health.Message = kind + " " + name + " is ready"
-	case constants.AIMStatusPending, constants.AIMStatusProgressing:
-		health.State = constants.AIMStatusProgressing
-		health.Reason = aimv1alpha1.AIMServiceReasonTemplateNotReady
-		health.Message = kind + " " + name + " is not ready yet"
-	case constants.AIMStatusNotAvailable:
-		health.State = constants.AIMStatusNotAvailable
-		health.Reason = aimv1alpha1.AIMServiceReasonTemplateNotReady
-		health.Message = kind + " " + name + " is not available (no matching GPUs)"
-	case constants.AIMStatusFailed, constants.AIMStatusDegraded:
-		health.State = constants.AIMStatusFailed
-		health.Reason = aimv1alpha1.AIMServiceReasonTemplateNotReady
-		health.Message = kind + " " + name + " is in failed state"
-	default:
-		health.State = constants.AIMStatusProgressing
-		health.Reason = aimv1alpha1.AIMServiceReasonTemplateNotReady
-		health.Message = kind + " " + name + " status: " + string(status)
-	}
-
-	return health
-}
-
-func (f ServiceFetchResult) getInferenceServiceHealth() controllerutils.ComponentHealth {
-	health := inferenceServiceComponentHealth(f.inferenceService, f.inferenceServicePods)
-	if !f.inferenceService.OK() || f.inferenceService.Value == nil {
-		return health
-	}
-
-	// Check for fatal configuration errors in events (e.g., ServerlessModeRejected, InternalError)
-	if f.inferenceServiceEvents.OK() && f.inferenceServiceEvents.Value != nil {
-		for _, event := range f.inferenceServiceEvents.Value.Items {
-			if event.Reason == "ServerlessModeRejected" {
-				health.State = constants.AIMStatusFailed
-				health.Reason = "ServerlessModeRejected"
-				health.Message = "Knative is not available. Configure KServe to use RawDeployment mode."
-				return health
-			}
-			if event.Reason == "InternalError" && event.Type == "Warning" {
-				// Skip transient conflict errors - KServe will retry these automatically
-				if isTransientKServeError(event.Message) {
-					continue
-				}
-				health.State = constants.AIMStatusFailed
-				health.Reason = "InternalError"
-				health.Message = event.Message
-				return health
-			}
-		}
-	}
-
-	return health
-}
 
 func inferenceServiceComponentHealth(
 	inferenceService controllerutils.FetchResult[*servingv1beta1.InferenceService],
 	inferenceServicePods *controllerutils.FetchResult[*corev1.PodList],
+	predictorDeployment controllerutils.FetchResult[*appsv1.Deployment],
 ) controllerutils.ComponentHealth {
 	health := controllerutils.ComponentHealth{
 		Component:      "InferenceService",
@@ -585,6 +93,37 @@ func inferenceServiceComponentHealth(
 			}
 		}
 		if readyPodCount > 0 {
+			if predictorDeployment.HasError() && !predictorDeployment.IsNotFound() {
+				health.State = constants.AIMStatusFailed
+				health.Reason = "FetchError"
+				health.Message = predictorDeployment.Error.Error()
+				health.Errors = []error{predictorDeployment.Error}
+				return health
+			}
+			// While previous-revision pods remain, ready pods may all be old ones,
+			// so they keep the service running without proving the rollout ready.
+			if deployment := predictorDeployment.Value; deployment != nil &&
+				deployment.Status.UpdatedReplicas < deployment.Status.Replicas {
+				health.Serving = true
+				if stall, userFixable := rolloutStallDetail(deployment, inferenceServicePods.Value.Items); stall != "" {
+					health.State = constants.AIMStatusDegraded
+					health.Reason = aimv1alpha1.AIMServiceReasonRolloutStalled
+					health.UserFixable = userFixable
+					health.Message = fmt.Sprintf("Predictor rollout of Deployment %s is stalled: %s; %d pod(s) are ready and serving",
+						deployment.Name, stall, readyPodCount)
+					return health
+				}
+				health.State = constants.AIMStatusProgressing
+				health.Reason = aimv1alpha1.AIMServiceReasonRolloutInProgress
+				health.Message = fmt.Sprintf(
+					"Predictor rollout in progress: %d of %d pods are on the new revision, %d pod(s) are ready and serving%s",
+					deployment.Status.UpdatedReplicas,
+					deployment.Status.Replicas,
+					readyPodCount,
+					pendingPodDetail(inferenceServicePods.Value.Items),
+				)
+				return health
+			}
 			health.State = constants.AIMStatusReady
 			health.Reason = aimv1alpha1.AIMServiceReasonRuntimeScaling
 			health.Message = fmt.Sprintf("InferenceService has %d ready pod(s), scaling in progress", readyPodCount)
@@ -605,36 +144,62 @@ func inferenceServiceComponentHealth(
 	return health
 }
 
-// isTransientKServeError checks if a KServe error message indicates a transient condition
-// that will be automatically retried. These should not cause AIMService to fail.
-func isTransientKServeError(message string) bool {
-	// Conflict errors from optimistic locking during status updates
-	// Example: "Operation cannot be fulfilled on inferenceservices.serving.kserve.io: the object has been modified"
-	if strings.Contains(message, "the object has been modified") {
-		return true
+// pendingPodDetail names a Pending pod and, when the scheduler reported one,
+// why it cannot be scheduled. The pod with the smallest name is chosen so the
+// message is stable across reconciles of an unordered pod list.
+func pendingPodDetail(pods []corev1.Pod) string {
+	var pending *corev1.Pod
+	for i := range pods {
+		if pods[i].Status.Phase == corev1.PodPending && (pending == nil || pods[i].Name < pending.Name) {
+			pending = &pods[i]
+		}
 	}
-	if strings.Contains(message, "Operation cannot be fulfilled") {
-		return true
+	if pending == nil {
+		return ""
 	}
-	return false
+	for _, cond := range pending.Status.Conditions {
+		if cond.Type == corev1.PodScheduled && cond.Status == corev1.ConditionFalse {
+			return fmt.Sprintf("; pod %s is Pending: %s: %s", pending.Name, cond.Reason, cond.Message)
+		}
+	}
+	return fmt.Sprintf("; pod %s is Pending", pending.Name)
 }
 
-func (obs ServiceObservation) getHTTPRouteHealth() controllerutils.ComponentHealth {
-	return HTTPRouteComponentHealth(obs.service, obs.mergedRuntimeConfig.Value, obs.httpRoute)
+// rolloutStallDetail names what stops the predictor rollout: a crash-looping
+// pod (the smallest name, for a stable message), or the Deployment's exceeded
+// progress deadline together with the Pending pod behind it. It returns ""
+// while the rollout can still progress. A stall on a Pending pod is the user's
+// to fix (resources, scheduling, image).
+func rolloutStallDetail(deployment *appsv1.Deployment, pods []corev1.Pod) (string, bool) {
+	crashPod, crashDetail := "", ""
+	for i := range pods {
+		for _, status := range slices.Concat(pods[i].Status.InitContainerStatuses, pods[i].Status.ContainerStatuses) {
+			if waiting := status.State.Waiting; waiting != nil && waiting.Reason == "CrashLoopBackOff" &&
+				(crashPod == "" || pods[i].Name < crashPod) {
+				crashPod, crashDetail = pods[i].Name, waiting.Message
+			}
+		}
+	}
+	if crashPod != "" {
+		return fmt.Sprintf("pod %s is CrashLoopBackOff: %s", crashPod, crashDetail), false
+	}
+	for _, cond := range deployment.Status.Conditions {
+		if cond.Type == appsv1.DeploymentProgressing && cond.Status == corev1.ConditionFalse &&
+			cond.Reason == "ProgressDeadlineExceeded" {
+			pending := pendingPodDetail(pods)
+			return cond.Reason + ": " + cond.Message + pending, pending != ""
+		}
+	}
+	return "", false
 }
 
-func (obs ServiceObservation) getHPAHealth() controllerutils.ComponentHealth {
-	return hpaComponentHealth(obs.service, obs.hpa, obs.observedPodCount(), obs.isInferenceServiceReady())
-}
-
-// hpaComponentHealth is the pipeline-agnostic HPA health verdict shared by the
-// template (v1alpha1) and profile (v1alpha2) pipelines. It takes the observed
+// hpaComponentHealth is the HPA health verdict. It takes the observed
 // predictor pod count and the InferenceService readiness as explicit inputs so
 // callers that model their observations differently can reuse the identical
 // scale-to-zero semantics. HPAComponentHealth (exports.go) is the exported
 // wrapper.
 func hpaComponentHealth(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	hpa controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler],
 	podCount int,
 	isvcReady bool,
@@ -773,12 +338,11 @@ func hpaComponentHealth(
 // Under scale-to-zero an empty pod list is the desired state, so it reports
 // Ready (ScaledToZero) instead of the default "no pods is a failure" verdict;
 // otherwise it defers to the standard pod health inspector. Returns ok=false
-// when there is nothing to report (pods were never fetched). Pipeline-agnostic
-// so the profile pipeline produces identical pod health.
+// when there is nothing to report (pods were never fetched).
 func inferenceServicePodsHealth(
 	ctx context.Context,
 	clientset kubernetes.Interface,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	hpa controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler],
 	pods *controllerutils.FetchResult[*corev1.PodList],
 ) (controllerutils.ComponentHealth, bool) {
@@ -810,14 +374,8 @@ func inferenceServicePodsHealth(
 	)), true
 }
 
-// isInferenceServiceReady checks if the InferenceService has Ready=True condition.
-func (obs ServiceObservation) isInferenceServiceReady() bool {
-	return inferenceServiceReady(obs.inferenceService)
-}
-
 // inferenceServiceReady reports whether the fetched InferenceService has
-// Ready=True. Pipeline-agnostic so the profile pipeline can contextualize HPA
-// health identically.
+// Ready=True.
 func inferenceServiceReady(
 	isvc controllerutils.FetchResult[*servingv1beta1.InferenceService],
 ) bool {
@@ -852,25 +410,15 @@ func getHPACondition(hpa *autoscalingv2.HorizontalPodAutoscaler, condType autosc
 const hpaReasonScalingDisabled = "ScalingDisabled"
 
 // isScaleToZero reports whether the user opted into scale-to-zero.
-func isScaleToZero(service *aimv1alpha1.AIMService) bool {
+func isScaleToZero(service *aimv1alpha2.AIMService) bool {
 	if service == nil || service.Spec.MinReplicas == nil {
 		return false
 	}
 	return *service.Spec.MinReplicas == 0
 }
 
-// observedPodCount returns the number of predictor pods observed in the
-// last fetch. Returns 0 when pods were not fetched or the fetch failed;
-// callers that need to distinguish "no pods" from "unknown" should
-// inspect obs.inferenceServicePods directly. Used by getHPAHealth to
-// discriminate idle vs. 0->1 warmup under scale-to-zero.
-func (obs ServiceObservation) observedPodCount() int {
-	return podItemCount(obs.inferenceServicePods)
-}
-
 // podItemCount returns the number of pods in a (possibly nil) pod-list fetch
-// result, treating a missing or failed fetch as zero. Pipeline-agnostic so the
-// profile pipeline can derive the same idle verdict.
+// result, treating a missing or failed fetch as zero.
 func podItemCount(pods *controllerutils.FetchResult[*corev1.PodList]) int {
 	if pods == nil || !pods.OK() || pods.Value == nil {
 		return 0
@@ -878,20 +426,13 @@ func podItemCount(pods *controllerutils.FetchResult[*corev1.PodList]) int {
 	return len(pods.Value.Items)
 }
 
-// isScaledToZero reports whether the service is currently idled under
-// scale-to-zero. Thin wrapper over scaledToZeroNow using this observation's
-// fetched HPA and pod count.
-func (obs ServiceObservation) isScaledToZero() bool {
-	return scaledToZeroNow(obs.service, obs.hpa, obs.observedPodCount())
-}
-
 // scaledToZeroNow reports whether the service is currently idled under
 // scale-to-zero -- scale-to-zero is enabled, the HPA is observable, it is not
 // actively scaling a running deployment (ScalingActive!=True), and the shared
 // isScaleToZeroIdle predicate considers it idle. Used to treat empty pod lists
-// as the healthy desired state. Pipeline-agnostic (shared with v1alpha2).
+// as the healthy desired state.
 func scaledToZeroNow(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	hpa controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler],
 	podCount int,
 ) bool {
@@ -1090,7 +631,7 @@ const activationMetricGracePeriod = 3 * time.Minute
 //
 // Returns ok=false when the condition does not apply and should be removed.
 func activationMetricCondition(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	hpa controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler],
 	podCount int,
@@ -1180,7 +721,7 @@ func withinActivationGracePeriod(existing *metav1.Condition, now time.Time) bool
 // Reconciliation at this deadline lets the condition become False even when no
 // Kubernetes object changes after the first unreadable observation.
 func activationMetricRequeueAfter(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	hpa controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler],
 	podCount int,
@@ -1234,7 +775,7 @@ func activationMetricRequeueAfter(
 // quiet.
 func setActivationMetricCondition(
 	cm *controllerutils.ConditionManager,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	hpa controllerutils.FetchResult[*autoscalingv2.HorizontalPodAutoscaler],
 	podCount int,
@@ -1255,457 +796,4 @@ func setActivationMetricCondition(
 		opts = controllerutils.AsWarning()
 	}
 	cm.Set(condType, status, reason, message, opts)
-}
-
-func (obs ServiceObservation) getCacheHealth() controllerutils.ComponentHealth {
-	health := controllerutils.ComponentHealth{
-		Component:      "Cache",
-		DependencyType: controllerutils.DependencyTypeDownstream,
-	}
-
-	// All caching now goes through template cache (both Shared and Dedicated modes)
-	if obs.templateCache.Value != nil {
-		readyMsg := getCacheReadyMessage(obs.templateCache.Value)
-		switch obs.templateCache.Value.Status.Status {
-		case constants.AIMStatusReady:
-			health.State = constants.AIMStatusReady
-			health.Reason = aimv1alpha1.AIMServiceReasonCacheReady
-			health.Message = "Template cache is ready"
-		case constants.AIMStatusProgressing:
-			health.State = constants.AIMStatusProgressing
-			health.Reason = aimv1alpha1.AIMServiceReasonCacheNotReady
-			health.Message = readyMsg
-		case constants.AIMStatusFailed:
-			health.State = constants.AIMStatusFailed
-			health.Reason = aimv1alpha1.AIMServiceReasonCacheFailed
-			health.Message = readyMsg
-		default:
-			health.State = constants.AIMStatusProgressing
-			health.Reason = aimv1alpha1.AIMServiceReasonCacheCreating
-			health.Message = readyMsg
-		}
-		return health
-	}
-
-	// Template cache doesn't exist - behavior depends on caching mode and ISVC state.
-	if hasExistingCacheVolumes(obs) {
-		cachingMode := obs.service.Spec.GetCachingMode()
-		switch cachingMode {
-		case aimv1alpha1.CachingModeShared:
-			// Shared caches are not owned by the service; deletion is a true loss.
-			// The service cannot recreate them - operator or user intervention is needed.
-			health.State = constants.AIMStatusDegraded
-			health.Reason = aimv1alpha1.AIMServiceReasonCacheLost
-			health.Message = "Shared template cache was deleted but InferenceService still references cached storage volumes"
-		default:
-			// Dedicated caches are owned by the service and will be recreated
-			// by the reconciler on the next planning cycle.
-			health.State = constants.AIMStatusDegraded
-			health.Reason = aimv1alpha1.AIMServiceReasonCacheCreating
-			health.Message = "Dedicated template cache is being recreated"
-		}
-		return health
-	}
-
-	// Template cache doesn't exist yet - being created
-	health.State = constants.AIMStatusProgressing
-	health.Reason = aimv1alpha1.AIMServiceReasonCacheCreating
-	health.Message = "Creating template cache"
-	return health
-}
-
-// getCacheReadyMessage extracts the message from the template cache's Ready
-// condition. This propagates the root cause (e.g., quota-blocked artifact)
-// up to the AIMService status instead of using generic strings.
-func getCacheReadyMessage(cache *aimv1alpha1.AIMTemplateCache) string {
-	for _, cond := range cache.Status.Conditions {
-		if cond.Type == controllerutils.ConditionTypeReady && cond.Message != "" {
-			return cond.Message
-		}
-	}
-	return "Template cache status: " + string(cache.Status.Status)
-}
-
-// hasExistingCacheVolumes checks whether the existing InferenceService has
-// storage volumes beyond the base shared-memory volume, indicating it was
-// configured with cache PVC mounts that may now be orphaned.
-func hasExistingCacheVolumes(obs ServiceObservation) bool {
-	if obs.inferenceService.Value == nil {
-		return false
-	}
-	for _, v := range obs.inferenceService.Value.Spec.Predictor.Volumes {
-		if v.Name != constants.VolumeSharedMemory && v.PersistentVolumeClaim != nil {
-			return true
-		}
-	}
-	return false
-}
-
-// ============================================================================
-// OBSERVATION
-// ============================================================================
-
-// ServiceObservation embeds the fetch result and adds derived state.
-type ServiceObservation struct {
-	ServiceFetchResult
-
-	// needsModelCreation is true when Model.Image is specified but no existing model matches.
-	// Derived in ComposeState from the fetch result.
-	needsModelCreation bool
-
-	// pendingModelName is the validated model name to create (set when needsModelCreation is true).
-	pendingModelName string
-
-	// runtimeStatus captures the computed runtime status including replica counts and resource usage.
-	// Derived in ComposeState from the InferenceService and pods.
-	runtimeStatus *aimv1alpha1.AIMServiceRuntimeStatus
-
-	// adapterState is the computed adapter staging state (spec.adapters),
-	// produced in ComposeState by the shared internal/aimadapter engine.
-	adapterState aimadapter.State
-}
-
-// ComposeState creates the observation from fetched data, deriving semantic state.
-func (r *ServiceReconciler) ComposeState(
-	_ context.Context,
-	_ controllerutils.ReconcileContext[*aimv1alpha1.AIMService],
-	fetch ServiceFetchResult,
-) ServiceObservation {
-	obs := ServiceObservation{ServiceFetchResult: fetch}
-
-	mr := fetch.modelResult
-
-	// Derive needsModelCreation for Image-based models:
-	// When a service specifies Model.Image (image URI) instead of Model.Name (reference),
-	// we search for existing models with that image. If no model is found AND no error occurred
-	// during search, then we need to create a new AIMModel for this image.
-	// The model is created without owner references so it can be shared across services.
-	if mr.ImageURI != "" && mr.Model.Value == nil && mr.ClusterModel.Value == nil && mr.Model.Error == nil && mr.ClusterModel.Error == nil {
-		// Validate the image URI can generate a valid model name
-		modelName, err := GenerateModelName(mr.ImageURI)
-		if err != nil {
-			// Set validation error on the model result
-			obs.modelResult.Model.Error = controllerutils.NewInvalidSpecError(
-				aimv1alpha1.AIMServiceReasonInvalidImageReference,
-				err.Error(),
-				err,
-			)
-		} else {
-			obs.needsModelCreation = true
-			obs.pendingModelName = modelName
-		}
-	}
-
-	// Derive needsModelCreation for Custom models:
-	// When a service specifies Model.Custom, we search for existing models matching the spec.
-	// If no model is found AND no error occurred during search, create a new AIMModel.
-	// Custom models are created with owner references to the AIMService.
-	if mr.CustomSpec != nil && mr.Model.Value == nil && mr.ClusterModel.Value == nil && mr.Model.Error == nil && mr.ClusterModel.Error == nil {
-		modelName := GenerateCustomModelName(fetch.service, mr.CustomSpec)
-		obs.needsModelCreation = true
-		obs.pendingModelName = modelName
-	}
-
-	// Compute runtime status from InferenceService and pods
-	obs.runtimeStatus = ComputeRuntimeStatus(fetch.service, fetch.hpa)
-
-	// Validate and interpret declared adapters (spec.adapters), and keep computing
-	// while removed adapters are still being reclaimed (status carries Deleting).
-	if aimadapter.IsActive(fetch.service) {
-		obs.adapterState = aimadapter.ComposeWithRuntimeConfig(
-			fetch.service,
-			fetch.adapterDeps,
-			fetch.mergedRuntimeConfig.Value,
-			fetch.mergedRuntimeConfig.Error,
-		)
-	}
-
-	return obs
-}
-
-// ============================================================================
-// PLAN
-// ============================================================================
-
-// PlanResources determines what resources need to be created or updated.
-func (r *ServiceReconciler) PlanResources(
-	ctx context.Context,
-	_ controllerutils.ReconcileContext[*aimv1alpha1.AIMService],
-	obs ServiceObservation,
-) controllerutils.PlanResult {
-	logger := log.FromContext(ctx).WithName("plan")
-	service := obs.service
-
-	planResult := controllerutils.PlanResult{}
-	if requeueAfter := activationMetricRequeueAfter(
-		service,
-		obs.mergedRuntimeConfig.Value,
-		obs.hpa,
-		obs.observedPodCount(),
-		time.Now(),
-	); requeueAfter > 0 {
-		planResult.RequestRequeueAfter(requeueAfter)
-	}
-
-	// 0. Plan model creation if needed (before template check - model can be created independently).
-	// Image-based models are shared. Inline-custom compatibility models carry
-	// a prebuilt controller reference to their single authoritative service and
-	// use create-only semantics so a concurrent occupant cannot be overwritten.
-	if model := planModel(service, obs); model != nil {
-		if obs.modelResult.CustomSpec != nil {
-			planResult.Create(model)
-		} else {
-			planResult.ApplyWithoutOwnerRef(model)
-		}
-	}
-
-	// 1. Plan HTTPRoute if routing is enabled (independent of template resolution)
-	// HTTPRoute only needs service + runtime config, not the template
-	if route := planHTTPRoute(ctx, service, obs); route != nil {
-		planResult.Apply(route)
-	}
-
-	// Resolve template up front so planScaledObject can read the merged
-	// predictor resources for the memory-aware cooldown. Template-dependent
-	// planning below still gates on AIMStatusReady.
-	templateName, templateNamespace, templateSpec, templateStatus := obs.getResolvedTemplate()
-	_ = templateNamespace // Used for future enhancements
-
-	// 1c. Plan the KEDA ScaledObject. effectiveResources may be nil while
-	// the template is still resolving; planScaledObject falls back to a
-	// flat cooldown and the next reconcile re-plans idempotently.
-	effectiveResources := resolveEffectiveResources(service, templateSpec, templateStatus)
-	if so := planScaledObject(ctx, service, effectiveResources, obs.mergedRuntimeConfig.Value); so != nil {
-		planResult.Apply(so)
-	}
-
-	if templateName == "" {
-		logger.V(1).Info("no template resolved, skipping template-dependent resource planning")
-		return planResult
-	}
-
-	// Check if template is ready
-	if templateStatus == nil || templateStatus.Status != constants.AIMStatusReady {
-		logger.V(1).Info("template not ready, skipping template-dependent resource planning", "template", templateName)
-		return planResult
-	}
-
-	// 2. Plan derived template if service has overrides (only for namespace-scoped templates)
-	if obs.template.Value != nil {
-		if derivedTemplate := planDerivedTemplate(service, templateName, &obs.template.Value.Spec, obs); derivedTemplate != nil {
-			planResult.Apply(derivedTemplate)
-		}
-	}
-
-	// 3. Plan template cache for all caching modes
-	// Ownership depends on caching mode:
-	// - Shared: no owner reference, cache persists independently
-	// - Dedicated: owned by service, garbage collected with it
-	if templateCache := planTemplateCache(service, templateName, templateSpec, templateStatus, obs); templateCache != nil {
-		cachingMode := service.Spec.GetCachingMode()
-		if cachingMode == aimv1alpha1.CachingModeShared {
-			// Shared mode: cache persists independently
-			planResult.ApplyWithoutOwnerRef(templateCache)
-		} else {
-			// Dedicated mode: cache is owned by service
-			planResult.Apply(templateCache)
-		}
-	}
-
-	// 4. Plan custom profile ConfigMap (owned by AIMService)
-	if v1alpha1utils.HasCustomProfile(templateSpec) {
-		yamlBytes, filename, err := v1alpha1utils.AssembleProfileYAML(templateSpec)
-		if err != nil {
-			logger.Error(err, "failed to assemble custom profile YAML for service")
-			// Avoid planning partially-configured runtime resources when profile assembly fails.
-			return planResult
-		}
-
-		cmName := v1alpha1utils.ServiceCustomProfileConfigMapName(service.Name)
-		cm := v1alpha1utils.BuildCustomProfileConfigMap(cmName, service.Namespace, yamlBytes, filename, map[string]string{
-			constants.LabelService:      service.Name,
-			constants.LabelK8sManagedBy: constants.LabelValueManagedBy,
-			constants.LabelK8sComponent: constants.ComponentInference,
-		})
-		planResult.Apply(cm)
-	}
-
-	// 4b. Adapter staging (spec.adapters). Adapters load dynamically, so the ISVC
-	// is never gated on downloads: we ensure the per-service subtree exists and
-	// stage adapters asynchronously (the aim-runtime hot-loads each as it lands).
-	// ISVC *creation* is gated only on the subtree being mountable (config valid
-	// + adapter disk resolved + subtree dir present); a config error keeps the
-	// ISVC from being created and surfaces via the Adapters component health.
-	// Once the ISVC exists, adapter add/remove never blocks its updates.
-	// Run the adapter engine while adapters are declared OR still being reclaimed
-	// (a removal — including dropping the last adapter — drives its prune Job to
-	// completion via status-carried Deleting entries).
-	if aimadapter.IsActive(service) {
-		aimadapter.Plan(
-			&planResult,
-			service,
-			obs.adapterDeps,
-			obs.adapterState,
-			obs.mergedRuntimeConfig.Value,
-			obs.additionalCABundle.Value != nil,
-		)
-	}
-	// ISVC creation is gated whenever the service needs the adapter disk —
-	// adapters declared, or dynamic mode (which mounts even at zero adapters) —
-	// because the read-only subPath mount requires the subtree directory to exist
-	// before the pod starts (the aim-runtime errors on a missing subPath). This
-	// gate is on the subtree being mountable, never on downloads.
-	isvcExists := obs.inferenceService.OK() && obs.inferenceService.Value != nil
-	if service.Spec.AdaptersEnabled() {
-		if !isvcExists && !obs.adapterState.Ready {
-			logger.V(1).Info("Adapter subtree not mountable yet; deferring ISVC creation",
-				"configErr", obs.adapterState.ConfigErr,
-				"adapterDiskPVC", obs.adapterState.AdapterDiskPVC,
-				"subtreeReady", obs.adapterState.SubtreeReady)
-			return planResult
-		}
-	}
-
-	// 5. Plan InferenceService. When the service needs the adapter disk, mount the
-	// service's adapter subtree read-only at /adapters — present even at zero
-	// adapters in dynamic mode, so add/remove never restarts the pod.
-	if isvc := planInferenceService(ctx, service, templateName, templateSpec, templateStatus, obs); isvc != nil {
-		switch {
-		case aimadapter.PreserveExistingMount(service, obs.adapterState) && isvcExists:
-			// Preserve the current mount while the next PVC generation is unknown
-			// or its service subtree has not finished synchronizing.
-			logger.V(1).Info("Adapter disk binding not mountable yet; preserving running ISVC adapter wiring")
-			planResult.RequestRequeueAfter(5 * time.Second)
-		default:
-			if service.Spec.AdaptersEnabled() {
-				if isvcObj, ok := isvc.(*servingv1beta1.InferenceService); ok {
-					aimadapter.AddVolumeMount(
-						isvcObj,
-						service,
-						obs.adapterState.AdapterDiskPVC,
-						obs.adapterState.MaxRank,
-					)
-				}
-			}
-			planResult.Apply(isvc)
-		}
-	}
-
-	return planResult
-}
-
-// getResolvedTemplate returns the resolved template info from the observation.
-// Returns the template name, namespace (empty for cluster templates),
-// common spec (works for both namespace and cluster templates), and status.
-func (obs ServiceObservation) getResolvedTemplate() (name, namespace string, spec *aimv1alpha1.AIMServiceTemplateSpecCommon, status *aimv1alpha1.AIMServiceTemplateStatus) {
-	if obs.template.Value != nil {
-		t := obs.template.Value
-		return t.Name, t.Namespace, &t.Spec.AIMServiceTemplateSpecCommon, &t.Status
-	}
-	if obs.clusterTemplate.Value != nil {
-		t := obs.clusterTemplate.Value
-		return t.Name, "", &t.Spec.AIMServiceTemplateSpecCommon, &t.Status
-	}
-	return "", "", nil, nil
-}
-
-// getResolvedModel returns the resolved model from the observation.
-func (obs ServiceObservation) getResolvedModel() (name string, status *aimv1alpha1.AIMModelStatus, isClusterScoped bool) {
-	if obs.modelResult.Model.Value != nil {
-		return obs.modelResult.Model.Value.Name, &obs.modelResult.Model.Value.Status, false
-	}
-	if obs.modelResult.ClusterModel.Value != nil {
-		return obs.modelResult.ClusterModel.Value.Name, &obs.modelResult.ClusterModel.Value.Status, true
-	}
-	return "", nil, false
-}
-
-// ============================================================================
-// STATUS
-// ============================================================================
-
-// DecorateStatus sets domain-specific status fields.
-// Resolved references are only set when the upstream resource is Ready.
-// This ensures we don't "lock in" a reference until it's actually usable,
-// allowing the fetch logic to re-search for better alternatives on subsequent reconciles.
-func (r *ServiceReconciler) DecorateStatus(
-	status *aimv1alpha1.AIMServiceStatus,
-	cm *controllerutils.ConditionManager,
-	obs ServiceObservation,
-) {
-	controllerutils.SetTemplateMigrationRequired(cm, true)
-
-	// Report-only: whether KEDA can read the scale-from-zero activation
-	// trigger. Never gates readiness.
-	setActivationMetricCondition(
-		cm,
-		obs.service,
-		obs.mergedRuntimeConfig.Value,
-		obs.hpa,
-		obs.observedPodCount(),
-	)
-
-	// Set resolved model reference (only if Ready)
-	modelName, modelStatus, isClusterScoped := obs.getResolvedModel()
-	if modelName != "" && modelStatus != nil && modelStatus.Status == constants.AIMStatusReady {
-		scope := aimv1alpha1.AIMResolutionScopeNamespace
-		if isClusterScoped {
-			scope = aimv1alpha1.AIMResolutionScopeCluster
-		}
-		status.ResolvedModel = &aimv1alpha1.AIMResolvedReference{
-			Name:  modelName,
-			Scope: scope,
-		}
-		if obs.modelResult.Model.Value != nil {
-			status.ResolvedModel.UID = obs.modelResult.Model.Value.UID
-		} else if obs.modelResult.ClusterModel.Value != nil {
-			status.ResolvedModel.UID = obs.modelResult.ClusterModel.Value.UID
-		}
-	}
-
-	// Set resolved template reference (only if Ready)
-	templateName, templateNamespace, _, templateStatus := obs.getResolvedTemplate()
-	if templateName != "" && templateStatus != nil && templateStatus.Status == constants.AIMStatusReady {
-		scope := aimv1alpha1.AIMResolutionScopeCluster
-		if templateNamespace != "" {
-			scope = aimv1alpha1.AIMResolutionScopeNamespace
-		}
-		status.ResolvedTemplate = &aimv1alpha1.AIMResolvedReference{
-			Name:      templateName,
-			Namespace: templateNamespace,
-			Scope:     scope,
-		}
-		if obs.template.Value != nil {
-			status.ResolvedTemplate.UID = obs.template.Value.UID
-		} else if obs.clusterTemplate.Value != nil {
-			status.ResolvedTemplate.UID = obs.clusterTemplate.Value.UID
-		}
-	}
-
-	// Set cache status (only if Ready)
-	if obs.templateCache.Value != nil && obs.templateCache.Value.Status.Status == constants.AIMStatusReady {
-		status.Cache = &aimv1alpha1.AIMServiceCacheStatus{
-			TemplateCacheRef: &aimv1alpha1.AIMResolvedReference{
-				Name:      obs.templateCache.Value.Name,
-				Namespace: obs.templateCache.Value.Namespace,
-				UID:       obs.templateCache.Value.UID,
-			},
-		}
-	}
-
-	// Set routing status
-	if obs.httpRoute.Value != nil {
-		// TODO: Extract path from HTTPRoute
-		status.Routing = &aimv1alpha1.AIMServiceRoutingStatus{}
-	}
-
-	// Set runtime status (replica counts and resource usage)
-	if obs.runtimeStatus != nil {
-		status.Runtime = obs.runtimeStatus
-	}
-
-	// Mirror adapter staging state (spec.adapters) and any in-flight removals.
-	if aimadapter.IsActive(obs.service) {
-		aimadapter.DecorateStatus(status, obs.adapterState)
-	}
 }

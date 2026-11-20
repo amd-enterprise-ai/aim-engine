@@ -7,7 +7,7 @@
 # in the chainsaw config). The image is templated too: the source derives the
 # auto-generated model name from the image, so a unique image keeps that name
 # from colliding with parallel runs.
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterModel
 metadata:
   name: (join('-', ['test-respect-preexisting', $namespace]))

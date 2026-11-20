@@ -48,8 +48,6 @@ kind: AIMService
 metadata:
   name: qwen-chat
   namespace: default
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: qwen3-32b
@@ -65,10 +63,6 @@ AIM Engine then:
 2. Pre-warms the cache by creating an `AIMProfileCache` and downloading model artifacts to a PVC.
 3. Creates a KServe `InferenceService` mounting the cache and the profile's container image.
 4. Optionally creates an `HTTPRoute` if routing is enabled.
-
-The `reconciler-pipeline: profile` annotation is required for model-shaped
-services during the v1alpha1 → v1alpha2 migration window. See
-[Spec-shape dispatch](../admin/upgrading.md#spec-shape-dispatch).
 
 ## Step 3: Monitor progress
 
@@ -87,7 +81,7 @@ kubectl get aimservice qwen-chat -o jsonpath='{.status.conditions}' | jq
 The key conditions to watch:
 
 - `ProfileReady` → `ProfileResolved`
-- `ProfileCacheReady` → `CacheReady`
+- `ProfileCacheReady` → `ProfileCacheReady`
 - `InferenceServiceReady` → `RuntimeReady`
 - `Ready` → `AllComponentsReady`
 

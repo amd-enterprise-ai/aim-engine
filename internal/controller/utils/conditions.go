@@ -31,12 +31,15 @@ import (
 )
 
 const (
-	// ConditionTypeMigrationRequired identifies resources that still depend on
-	// the deprecated template API or pipeline. It deliberately does not end in
-	// ComponentConditionSuffix, so it never participates in readiness rollup.
+	// ConditionTypeMigrationRequired is set only by earlier releases;
+	// reconcilers remove it from status.
 	ConditionTypeMigrationRequired = "MigrationRequired"
-	ReasonTemplateAPIDeprecated    = "TemplateAPIDeprecated"
-	MessageTemplateAPIDeprecated   = "This resource depends on deprecated template APIs; inventory affected or dependent AIMServices and review the bounded template migration runbook before API removal"
+
+	// ConditionTypeTemplateFieldsIgnored names template-era spec fields that are
+	// set but have no effect on how the resource is reconciled. It does not end
+	// in ComponentConditionSuffix, so it never participates in readiness rollup.
+	ConditionTypeTemplateFieldsIgnored = "TemplateFieldsIgnored"
+	ReasonTemplateFieldsSet            = "TemplateFieldsSet"
 )
 
 // ConfiguredCondition extends the metav1.Condition with observability configuration that
@@ -134,24 +137,6 @@ func (m *ConditionManager) MarkUnknown(condType, reason, message string, opts ..
 		Reason:  reason,
 		Message: message,
 	}, opts...)
-}
-
-// SetTemplateMigrationRequired publishes the template-migration signal while
-// the legacy shape applies and removes stale signal after an overlapping
-// resource moves to its native profile shape.
-func SetTemplateMigrationRequired(m *ConditionManager, required bool) {
-	if m == nil {
-		return
-	}
-	if required {
-		m.MarkTrue(
-			ConditionTypeMigrationRequired,
-			ReasonTemplateAPIDeprecated,
-			MessageTemplateAPIDeprecated,
-		)
-		return
-	}
-	m.Delete(ConditionTypeMigrationRequired)
 }
 
 // Delete removes a condition by type if it exists.

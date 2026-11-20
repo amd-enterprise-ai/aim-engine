@@ -40,23 +40,18 @@ const (
 	// AIMModelReasonMetadataExtractionFailed indicates metadata extraction failed (non-blocking, prevents retries).
 	AIMModelReasonMetadataExtractionFailed = "MetadataExtractionFailed"
 
+	// AIMModelConditionProfilesAvailable is False when the model's spec
+	// produces no AIMProfiles. It does not take part in the Ready rollup.
+	AIMModelConditionProfilesAvailable = "ProfilesAvailable"
+
+	// AIMModelReasonNoDeployableProfiles indicates the spec produces no AIMProfiles; the message names the cause.
+	AIMModelReasonNoDeployableProfiles = "NoDeployableProfiles"
+
 	// Runtime config resolution reasons
 	AIMModelReasonConfigNotFound     = "ConfigNotFound"
 	AIMModelReasonRuntimeConfigError = "RuntimeConfigError"
 	AIMModelReasonUsingDefaults      = "UsingDefaults"
 	AIMModelReasonResolved           = "Resolved"
-
-	// Template status reasons
-	AIMModelReasonAllTemplatesFailed                    = "AllTemplatesFailed"
-	AIMModelReasonNoTemplatesAvailable                  = "NoTemplatesAvailable"
-	AIMModelReasonSomeTemplatesDegraded                 = "SomeTemplatesDegraded"
-	AIMModelReasonTemplatesProgressing                  = "TemplatesProgressing"
-	AIMModelReasonAllTemplatesReady                     = "AllTemplatesReady"
-	AIMModelReasonSomeTemplatesReady                    = "SomeTemplatesReady"
-	AIMModelReasonNoTemplatesExpected                   = "NoTemplatesExpected"
-	AIMModelReasonAwaitingMetadata                      = "AwaitingMetadata"
-	AIMModelReasonCreatingTemplates                     = "CreatingTemplates"
-	AIMModelReasonMetadataMissingRecommendedDeployments = "MetadataMissingRecommendedDeployments"
 )
 
 // AIMModelSourceType indicates how a model's artifacts are sourced.
@@ -722,89 +717,8 @@ func (s *AIMModelSpec) GetBaseImageRef(status *AIMModelStatus) string {
 	return md.BaseImageRef
 }
 
-// HasLegacyFields reports whether any deprecated v1alpha1 compatibility fields are populated.
-// Used by the v1alpha2 reconciler to choose between the legacy translator path and the
-// native ProfileCopy path.
-func (s *AIMModelSpec) HasLegacyFields() bool {
-	if s == nil {
-		return false
-	}
-	return s.Discovery != nil ||
-		s.DefaultServiceTemplate != "" ||
-		s.Custom != nil ||
-		len(s.CustomTemplates) > 0 ||
-		len(s.ModelSources) > 0 ||
-		s.Name != "" ||
-		len(s.Env) > 0 ||
-		!resourceRequirementsEmpty(s.Resources) ||
-		s.ImageMetadata != nil
-}
-
-func resourceRequirementsEmpty(resources corev1.ResourceRequirements) bool {
-	return len(resources.Limits) == 0 &&
-		len(resources.Requests) == 0 &&
-		len(resources.Claims) == 0
-}
-
 // IsFineTunedModel returns true if the model uses aimId-based template matching.
 // A fine-tuned model has spec.aimId set together with spec.modelSources.
 func (s *AIMModelSpec) IsFineTunedModel() bool {
 	return s.AimId != "" && len(s.ModelSources) > 0
-}
-
-// ShouldCreateTemplates returns whether template creation is enabled for this model.
-// Returns true if discovery.createServiceTemplates is unset or true.
-func (s *AIMModelSpec) ShouldCreateTemplates() bool {
-	return s.Discovery.IsCreateServiceTemplatesEnabled()
-}
-
-// ExpectsTemplates returns whether this model should have auto-created templates.
-// Returns:
-//   - ptr to true: templates expected (has recommendedDeployments, creation enabled, customTemplates, or is custom model)
-//   - ptr to false: no templates expected (no recommendedDeployments or creation disabled)
-//   - nil: unknown (metadata not yet available for image-based models)
-func (s *AIMModelSpec) ExpectsTemplates(status *AIMModelStatus) *bool {
-	// Check if template creation is disabled
-	if !s.ShouldCreateTemplates() {
-		result := false
-		return &result
-	}
-
-	// Fine-tuned models (aimId + modelSources) expect templates from matched official templates
-	if s.IsFineTunedModel() {
-		result := true
-		return &result
-	}
-
-	// Custom models (with modelSources) always expect templates to be created
-	// from customTemplates or auto-generated from hardware
-	if len(s.ModelSources) > 0 {
-		result := true
-		return &result
-	}
-
-	// For image-based models, check metadata for recommended deployments
-	// customTemplates are additive to discovered templates, so we still need metadata
-	metadata := s.GetEffectiveImageMetadata(status)
-	if metadata == nil {
-		return nil // Unknown - still fetching
-	}
-
-	// Only GPU-shaped deployments materialise into AIMServiceTemplates in the
-	// v1alpha1 path; CPU entries (RecommendedDeployment.IsGPUDeployment()==false)
-	// are handled by the v1alpha2 native discovery pipeline as AIMProfiles.
-	hasGPUDeployments := false
-	if metadata.Model != nil {
-		for i := range metadata.Model.RecommendedDeployments {
-			if metadata.Model.RecommendedDeployments[i].IsGPUDeployment() {
-				hasGPUDeployments = true
-				break
-			}
-		}
-	}
-	hasCustomTemplates := len(s.CustomTemplates) > 0
-
-	// Expect templates if we have discovered GPU deployments OR customTemplates
-	result := hasGPUDeployments || hasCustomTemplates
-	return &result
 }

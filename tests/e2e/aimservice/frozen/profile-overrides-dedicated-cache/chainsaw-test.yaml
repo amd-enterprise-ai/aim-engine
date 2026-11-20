@@ -14,9 +14,8 @@
 #
 #   2. spec.caching.mode=Dedicated routes the AIMProfileCache through the
 #      service-driven path with a per-service Dedicated cache that is
-#      owner-ref'd by the AIMService. This mirrors v1alpha1's AIMService ->
-#      AIMTemplateCache (mode=Dedicated, owned by service) pattern so the
-#      cache and its dedicated artifacts GC with the service.
+#      owner-ref'd by the AIMService, so the cache and its dedicated
+#      artifacts GC with the service.
 #
 # The test runs against a frozen seed profile (status patched directly in
 # the manifest) so it does not depend on a real AIMProfile reconciler run or

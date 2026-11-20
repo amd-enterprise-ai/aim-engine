@@ -37,7 +37,7 @@ With `spec.sourceRef` omitted, a selector evaluates a combined logical pool:
 
 | Source | Available definitions |
 |---|---|
-| Image-backed `AIMModel` / `AIMClusterModel` | All definitions in the current discovered catalog, including hardware-unsupported entries. Discovery-disabled and legacy custom/derivation models continue to use resource-backed sources. |
+| Image-backed `AIMModel` / `AIMClusterModel` | All definitions in the current discovered catalog, including hardware-unsupported entries. Discovery-disabled and derivation models continue to use resource-backed sources. |
 | Direct `AIMProfile` / `AIMClusterProfile` | Existing resources marked `aim.eai.amd.com/profile-copyable: "true"`, including hand-authored profiles. |
 | Generated or other derived profiles | Existing copyable resources, subject to the same selector and eligibility rules. Profile-set outputs are copyable when their producer sets `outputPolicy.copyable: true`. |
 

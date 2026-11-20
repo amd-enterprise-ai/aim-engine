@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 )
 
@@ -47,24 +48,24 @@ func TestPlanScaledObject_GatedByAutoscalingFields(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		mutate    func(*aimv1alpha1.AIMService)
+		mutate    func(*aimv1alpha2.AIMService)
 		expectObj bool
 	}{
 		{
 			name:      "no autoscaling fields: returns nil",
-			mutate:    func(s *aimv1alpha1.AIMService) {},
+			mutate:    func(s *aimv1alpha2.AIMService) {},
 			expectObj: false,
 		},
 		{
 			name: "spec.replicas only (legacy fixed): returns nil",
-			mutate: func(s *aimv1alpha1.AIMService) {
+			mutate: func(s *aimv1alpha2.AIMService) {
 				s.Spec.Replicas = ptr.To(int32(2))
 			},
 			expectObj: false,
 		},
 		{
 			name: "minReplicas set: returns ScaledObject",
-			mutate: func(s *aimv1alpha1.AIMService) {
+			mutate: func(s *aimv1alpha2.AIMService) {
 				s.Spec.MinReplicas = ptr.To(int32(1))
 				s.Spec.AutoScaling = &aimv1alpha1.AIMServiceAutoScaling{
 					Metrics: []aimv1alpha1.AIMServiceMetricsSpec{validVLLMMetric()},
@@ -74,7 +75,7 @@ func TestPlanScaledObject_GatedByAutoscalingFields(t *testing.T) {
 		},
 		{
 			name: "minReplicas=0 + autoScaling: returns ScaledObject",
-			mutate: func(s *aimv1alpha1.AIMService) {
+			mutate: func(s *aimv1alpha2.AIMService) {
 				s.Spec.MinReplicas = ptr.To(int32(0))
 				s.Spec.MaxReplicas = ptr.To(int32(3))
 				s.Spec.AutoScaling = &aimv1alpha1.AIMServiceAutoScaling{
@@ -87,7 +88,7 @@ func TestPlanScaledObject_GatedByAutoscalingFields(t *testing.T) {
 			// minReplicas>=1 has no gateway trigger, so an empty
 			// trigger list -> skipped (KEDA rejects empty triggers).
 			name: "autoscaling requested but no user triggers and minReplicas>=1: returns nil",
-			mutate: func(s *aimv1alpha1.AIMService) {
+			mutate: func(s *aimv1alpha2.AIMService) {
 				s.Spec.MinReplicas = ptr.To(int32(1))
 			},
 			expectObj: false,
@@ -786,7 +787,7 @@ func TestComputePredictorCooldown_PerGiBOverride(t *testing.T) {
 
 // TestComputePredictorCooldown_EffectiveResourcesPriority pins the
 // memory-source precedence: effectiveResources wins over
-// service.Spec.Resources; the latter is the fallback when the template
+// service.Spec.Resources; the latter is the fallback when the profile
 // hasn't resolved yet.
 func TestComputePredictorCooldown_EffectiveResourcesPriority(t *testing.T) {
 	t.Setenv(constants.EnvAIMCooldownSecondsPerGiMemory, "") // default 5 s/GiB
@@ -799,7 +800,7 @@ func TestComputePredictorCooldown_EffectiveResourcesPriority(t *testing.T) {
 	}{
 		{
 			// The canonical real-world case from kaiwo-tw-1: no
-			// service override, template+GPU default merges to
+			// service override, profile+GPU default merges to
 			// 48 GiB. Effective resources MUST be the source.
 			name:                "no override, template-merged 48Gi -> formula on 48Gi",
 			effectiveMemory:     "48Gi",
@@ -833,7 +834,7 @@ func TestComputePredictorCooldown_EffectiveResourcesPriority(t *testing.T) {
 		{
 			// Both unset: the genuine "we have no information"
 			// case. Returns flat default; the reconciler is
-			// expected to re-plan once the template resolves.
+			// expected to re-plan once the profile resolves.
 			name:                "both unset -> flat default",
 			wantCooldownSeconds: defaultCooldownPeriodScaleToZero,
 		},

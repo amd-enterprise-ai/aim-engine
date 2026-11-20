@@ -1,0 +1,8 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: missing-image-pull-secret
+spec:
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.2
+  imagePullSecrets:
+    - name: this-secret-does-not-exist

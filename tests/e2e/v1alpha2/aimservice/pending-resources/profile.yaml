@@ -1,0 +1,22 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: pending-resources
+spec:
+  aimId: test/pending-resources
+  modelId: Qwen/Qwen3-0.6B
+  engine: vllm
+  metric: latency
+  precision: fp16
+  type: general
+  resources:
+    requests:
+      amd.com/gpu: "20"
+    limits:
+      amd.com/gpu: "20"
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  modelSources:
+    - modelId: Qwen/Qwen3-0.6B
+      sourceUri: hf://Qwen/Qwen3-0.6B
+      # The download is simulated, so the PVC only needs to provision.
+      size: 1Gi

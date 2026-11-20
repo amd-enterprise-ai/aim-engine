@@ -46,7 +46,8 @@ const (
 
 // Label keys for AIM resources
 const (
-	// LabelTemplate is the label key for the template name
+	// LabelTemplate is the template-name label that earlier releases set on
+	// InferenceServices created from a service template.
 	LabelTemplate = AimLabelDomain + "/template"
 	// LabelProfile is the label key for the profile name (v1alpha2 path)
 	LabelProfile = AimLabelDomain + "/profile"
@@ -60,8 +61,6 @@ const (
 	LabelPrecision = AimLabelDomain + "/precision"
 	// LabelCacheType indicates the type of cache (temp or persistent)
 	LabelCacheType = AimLabelDomain + "/cache-type"
-	// LabelTemplateCacheName is the label key for the template cache name (used on artifacts)
-	LabelTemplateCacheName = AimLabelDomain + "/template-cache.name"
 	// LabelProfileCacheName is the label key for the profile cache name (used on artifacts)
 	LabelProfileCacheName = AimLabelDomain + "/profile-cache.name"
 
@@ -156,7 +155,7 @@ const (
 
 // Shared condition reasons used across multiple resource types
 const (
-	// Image-related reasons (used by AIMModel, AIMService, AIMServiceTemplate)
+	// Image-related reasons (used by AIMModel, AIMService)
 	ReasonImagePullAuthFailure = "ImagePullAuthFailure"
 	ReasonImageNotFound        = "ImageNotFound"
 	ReasonImagePullBackOff     = "ImagePullBackOff"
@@ -499,24 +498,14 @@ const (
 	// This is useful for testing or debugging purposes.
 	AnnotationReconciliationPaused = AimLabelDomain + "/reconciliation-paused"
 
-	// AnnotationDeploymentImageRef records the container image to deploy for a
-	// given AIM(Cluster)ServiceTemplate copy. Stamped by the AIMModel controller
-	// onto fine-tuned template copies at build time so each copy carries the
-	// exact image it inherited from its specific source owner — which may differ
-	// from sibling copies when matched templates span owners with different base
-	// images (e.g. aim-base vs aim-epyc-base) or different versions
-	// (versionPolicy=any). When present, AIMService prefers this annotation
-	// over the resolved AIMModel's spec.image.
-	AnnotationDeploymentImageRef = AimLabelDomain + "/deployment-image-ref"
-
 	// AnnotationPrefixClusterAuth is the key prefix for auth annotations (e.g.
 	// cluster-auth/allowed-group) propagated from an AIMService to its InferenceService.
 	AnnotationPrefixClusterAuth = "cluster-auth/"
 
 	// AnnotationModelId records the model id the user intends to serve, stamped
-	// on every InferenceService the controller creates from the resolved profile/
-	// template. It equals the name the runtime serves under (vLLM
-	// --served-model-name, exposed at /v1/models).
+	// on every InferenceService the controller creates from the resolved profile.
+	// It equals the name the runtime serves under (vLLM --served-model-name,
+	// exposed at /v1/models).
 	AnnotationModelId = AimLabelDomain + "/model-id"
 
 	// AnnotationRuntimeProfile records the profile (AIMClusterProfile or namespace
@@ -575,24 +564,6 @@ const (
 	// siblings represent the current profile and cache state.
 	AnnotationRuntimeProjectionContentHash = AimLabelDomain + "/runtime-projection-content-hash"
 
-	// AnnotationReconcilerPipeline forces an AIMService onto a specific
-	// reconciliation pipeline, bypassing the default spec-shape dispatch.
-	// Recognised values are ReconcilerPipelineTemplate (v1alpha1 template
-	// pipeline) and ReconcilerPipelineProfile (v1alpha2 profile pipeline).
-	// Unknown values and the absence of the annotation both fall through
-	// to spec-shape dispatch. Used as an escape hatch for users that want
-	// the v1alpha2 model→profile resolver shortcut on a service whose spec
-	// shape would otherwise route to the v1alpha1 pipeline, and vice versa.
-	AnnotationReconcilerPipeline = AimLabelDomain + "/reconciler-pipeline"
-
-	// ReconcilerPipelineTemplate is the AnnotationReconcilerPipeline value
-	// that forces the v1alpha1 template-based pipeline.
-	ReconcilerPipelineTemplate = "template"
-
-	// ReconcilerPipelineProfile is the AnnotationReconcilerPipeline value
-	// that forces the v1alpha2 profile-based pipeline.
-	ReconcilerPipelineProfile = "profile"
-
 	// AnnotationMigrationPreserveInferenceServiceGeneration pins the legacy
 	// inline InferenceService during a no-rollout template-to-profile migration.
 	// The profile pipeline honors it only when its decimal value equals the
@@ -637,12 +608,8 @@ const (
 	AnnotationForceRebind = AimLabelDomain + "/force-rebind"
 )
 
-// Template-related constants
+// InferenceService naming
 const (
-	// TemplateNameMaxLength is the maximum length for template names (Kubernetes name limit)
-	TemplateNameMaxLength = 63
-	// DerivedTemplateSuffix is the suffix used for derived templates
-	DerivedTemplateSuffix = "-ovr-"
 	// PredictorServiceSuffix is the suffix added to InferenceService names for predictor services
 	PredictorServiceSuffix = "-predictor"
 )

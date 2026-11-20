@@ -1,0 +1,124 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Deleting a running service's shared AIMProfileCache and its artifacts is
+# noticed and repaired: the service leaves Running while the cache is gone,
+# the cache is recreated, and the service references the new cache and
+# returns to Running. The predictor keeps its cache PVC mount throughout.
+#
+# No accelerator is involved and the cache download is simulated, so this runs
+# in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-cache-deleted-shared
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the profile and a service with shared caching
+      try:
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: cache-deleted-shared
+              status:
+                status: Running
+                (conditions[?type == 'ProfileCacheReady']):
+                  - status: "True"
+                    reason: ProfileCacheReady
+
+    - name: The predictor mounts the cache PVC
+      try:
+        - assert:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: cache-deleted-shared
+                  component: predictor
+              spec:
+                template:
+                  spec:
+                    (length(volumes[?persistentVolumeClaim]) >= `1`): true
+
+    - name: The service notices the deleted cache and recovers on a new one
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              kubectl get aimprofilecaches.aim.eai.amd.com -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service.name=cache-deleted-shared \
+                -o jsonpath='{.items[0].metadata.uid}'
+            outputs:
+              - name: oldCacheUID
+                value: ($stdout)
+        - script:
+            timeout: 90s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              kubectl delete aimartifacts.aim.eai.amd.com -n "$NAMESPACE" --wait=false \
+                -l aim.eai.amd.com/service.name=cache-deleted-shared
+              kubectl delete aimprofilecaches.aim.eai.amd.com -n "$NAMESPACE" --wait=false \
+                -l aim.eai.amd.com/service.name=cache-deleted-shared
+              for _ in $(seq 1 60); do
+                STATUS=$(kubectl get aimservices.v1alpha2.aim.eai.amd.com cache-deleted-shared \
+                  -n "$NAMESPACE" -o jsonpath='{.status.status}')
+                echo "service status: $STATUS"
+                if [ "$STATUS" != "Running" ]; then
+                  exit 0
+                fi
+                sleep 1
+              done
+              echo "ERROR: the service stayed Running after its cache was deleted" >&2
+              exit 1
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: cache-deleted-shared
+                (uid != $oldCacheUID): true
+              status:
+                status: Ready
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: cache-deleted-shared
+              status:
+                status: Running
+                cache:
+                  profileCacheRef:
+                    (uid != $oldCacheUID): true
+                (conditions[?type == 'ProfileCacheReady']):
+                  - status: "True"
+                    reason: ProfileCacheReady
+        - assert:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: cache-deleted-shared
+                  component: predictor
+              spec:
+                template:
+                  spec:
+                    (length(volumes[?persistentVolumeClaim]) >= `1`): true

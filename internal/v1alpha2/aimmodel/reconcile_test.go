@@ -30,7 +30,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
@@ -42,62 +41,6 @@ import (
 )
 
 var errListNodesFailed = errors.New("list nodes failed")
-
-const testBaseImageRef = "ghcr.io/amdenterpriseai/aim-base:0.8.5"
-
-func TestHasLegacyFields_DetectsLegacyCompatibilityFields(t *testing.T) {
-	t.Parallel()
-
-	spec := aimv1alpha1.AIMModelSpec{
-		Image:                  "quay.io/amd/aim-qwen:0.10.0",
-		RuntimeConfigRef:       aimv1alpha1.RuntimeConfigRef{Name: "fast"},
-		DefaultServiceTemplate: "default-template",
-		Discovery:              &aimv1alpha1.AIMModelDiscoveryConfig{ExtractMetadata: ptr.To(true)},
-		ModelSources: []aimv1alpha1.AIMModelSource{{
-			ModelID:   "org/model",
-			SourceURI: "hf://org/model",
-		}},
-		ImageMetadata: &aimv1alpha1.ImageMetadata{
-			Model: &aimv1alpha1.ModelMetadata{CanonicalName: "org/model"},
-		},
-	}
-
-	if !spec.HasLegacyFields() {
-		t.Fatalf("HasLegacyFields() = false, want true for spec with legacy fields populated")
-	}
-
-	nativeSpec := aimv1alpha1.AIMModelSpec{
-		Image: "quay.io/amd/aim-qwen:0.10.0",
-		ProfileCopy: &aimv1alpha1.AIMProfileSetSpec{
-			Selector: aimv1alpha1.ProfileSelector{AimId: "qwen/qwen3-32b"},
-		},
-	}
-	if nativeSpec.HasLegacyFields() {
-		t.Fatalf("HasLegacyFields() = true, want false for image+profileCopy spec")
-	}
-}
-
-func TestEnsureBaseImageBridge_PopulatesBothSides(t *testing.T) {
-	t.Parallel()
-
-	specWithBaseImageMetadata := aimv1alpha1.AIMModelSpec{
-		ImageMetadata: &aimv1alpha1.ImageMetadata{BaseImageRef: testBaseImageRef},
-	}
-	status := &aimv1alpha1.AIMModelStatus{}
-	EnsureBaseImageBridge(&specWithBaseImageMetadata, status)
-	if status.BaseImage != testBaseImageRef {
-		t.Fatalf("status.BaseImage = %q, want %q", status.BaseImage, testBaseImageRef)
-	}
-	if status.ImageMetadata == nil || status.ImageMetadata.BaseImageRef != testBaseImageRef {
-		t.Fatalf("status.ImageMetadata.BaseImageRef = %#v, want carried through", status.ImageMetadata)
-	}
-
-	statusOnly := &aimv1alpha1.AIMModelStatus{BaseImage: testBaseImageRef}
-	EnsureBaseImageBridge(&aimv1alpha1.AIMModelSpec{}, statusOnly)
-	if statusOnly.ImageMetadata == nil || statusOnly.ImageMetadata.BaseImageRef != testBaseImageRef {
-		t.Fatalf("status.ImageMetadata.BaseImageRef should mirror status.BaseImage, got %#v", statusOnly.ImageMetadata)
-	}
-}
 
 func TestBuildDesiredProfileSet_UsesDiscoveryCacheForImageBackedCopy(t *testing.T) {
 	t.Parallel()
@@ -317,24 +260,33 @@ func TestBuildDesiredOfficialProfiles_PrimaryFallbackFromRecommendedDeployments(
 	if err != nil {
 		t.Fatalf("buildDesiredOfficialProfiles() error = %v", err)
 	}
-	if len(desired) != 4 {
-		t.Fatalf("len(desired) = %d, want 4", len(desired))
+	clusterModel := &aimv1alpha2.AIMClusterModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "qwen", UID: "model-uid"},
+	}
+	clusterDesired, err := buildDesiredOfficialClusterModelProfiles(clusterModel, catalog, nodes, rds)
+	if err != nil {
+		t.Fatalf("buildDesiredOfficialClusterModelProfiles() error = %v", err)
 	}
 
-	got := map[string]bool{}
-	for _, d := range desired {
-		profile := d.Object.(*aimv1alpha2.AIMProfile)
-		got[profile.Spec.ProfileId] = profile.Spec.Primary
-	}
 	want := map[string]bool{
 		"vllm-mi300x-fp16-tp1-latency":    true,
 		"vllm-mi300x-fp8-tp1-latency":     false,
 		"vllm-mi300x-fp16-tp1-throughput": false,
 		"vllm-mi300x-named-special":       true,
 	}
-	for id, wantPrimary := range want {
-		if got[id] != wantPrimary {
-			t.Errorf("profile %q: Primary = %v, want %v", id, got[id], wantPrimary)
+	for scope, desired := range map[string][]desiredProfile{"AIMModel": desired, "AIMClusterModel": clusterDesired} {
+		if len(desired) != 4 {
+			t.Fatalf("%s: len(desired) = %d, want 4", scope, len(desired))
+		}
+		got := map[string]bool{}
+		for _, d := range desired {
+			spec, _ := profileSpecCommon(d.Object)
+			got[spec.ProfileId] = spec.Primary
+		}
+		for id, wantPrimary := range want {
+			if got[id] != wantPrimary {
+				t.Errorf("%s profile %q: Primary = %v, want %v", scope, id, got[id], wantPrimary)
+			}
 		}
 	}
 }
@@ -1054,5 +1006,17 @@ func TestSummarizeManagedProfiles_CountsDeployableEntries(t *testing.T) {
 	}
 	if summary.Base != 0 {
 		t.Fatalf("summary.Base = %d, want 0 for deployable-only desired set", summary.Base)
+	}
+}
+
+func generatedProfileRuntimeConfig() *aimv1alpha1.AIMRuntimeConfigCommon {
+	return &aimv1alpha1.AIMRuntimeConfigCommon{
+		Model: &aimv1alpha1.AIMModelConfig{
+			ProfileGeneration: &aimv1alpha1.AIMProfileGenerationConfig{
+				Fallbacks: []aimv1alpha1.AIMProfileGenerationFallback{
+					testNVIDIAFallback("nvidia-vllm", 0),
+				},
+			},
+		},
 	}
 }

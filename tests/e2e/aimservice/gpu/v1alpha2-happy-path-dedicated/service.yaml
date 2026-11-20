@@ -1,0 +1,17 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: gpu-happy-path-dedicated
+spec:
+  runtimeConfigName: gpu-happy-path-dedicated
+  model:
+    image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
+  replicas: 1
+  caching:
+    mode: Dedicated
+    env:
+      - name: HF_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: huggingface-creds
+            key: token

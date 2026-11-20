@@ -371,7 +371,7 @@ func TestVClusterCatalogUpgrade(t *testing.T) {
 					output = converge()
 				}
 				actual := snapshot{output.GetName(), output.GetUID(), output.GetOwnerReferences()}
-				service := &aimv1alpha1.AIMService{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}}
+				service := &aimv1alpha2.AIMService{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}}
 				if phase == upgradePhaseSeed {
 					snapshots[name] = actual
 					service.Spec.Profile = &aimv1alpha1.AIMServiceProfileConfig{Name: actual.Name}

@@ -1,0 +1,248 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# A service with minReplicas 0 idles down to zero replicas and an HTTP request
+# through the gateway scales it back up.
+#
+# The service reaches Running and serves a warm-up request. KEDA then idles it
+# to zero, a restart of the Envoy activation collector must not wake it, and a
+# cold request brings it back. Routing is required because the activation
+# trigger counts requests at the gateway. AIM Engine does not retry the first
+# cold request on the gateway; validate-http.sh retries like a client would.
+#
+# aim-dummy 0.2.1 serves the vllm:num_requests_running metric the ScaledObject
+# queries. No accelerator is involved and the cache download is simulated, so
+# this runs in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-scale-from-zero
+spec:
+  timeouts:
+    # KEDA cooldown, HPA reconciliation and the gateway metrics pipeline make
+    # the idle and wake-up legs slow.
+    assert: 300s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the routing runtime config, profile and service
+      try:
+        - apply:
+            file: runtime-config.yaml
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+
+    - name: AIM Engine owns autoscaling with a gateway activation trigger
+      try:
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: scale-from-zero
+                annotations:
+                  serving.kserve.io/autoscalerClass: external
+                  prometheus.kserve.io/port: "8000"
+              spec:
+                predictor:
+                  minReplicas: 0
+                  maxReplicas: 3
+        - assert:
+            resource:
+              apiVersion: keda.sh/v1alpha1
+              kind: ScaledObject
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: scale-from-zero
+                  app.kubernetes.io/component: autoscaling
+                  app.kubernetes.io/managed-by: aim-engine
+              spec:
+                minReplicaCount: 0
+                maxReplicaCount: 3
+                cooldownPeriod: 30
+                pollingInterval: 5
+                (length(triggers[?contains(metadata.metricQuery, 'envoy_http_lua_aim_activation_requests_')]) >= `1`): true
+                (length(triggers[?contains(metadata.metricQuery, 'vllm:num_requests_running')]) >= `1`): true
+        - assert:
+            resource:
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: scale-from-zero
+
+    - name: The service reaches Running
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: scale-from-zero
+              status:
+                status: Running
+                runtime:
+                  minReplicas: 0
+                  maxReplicas: 3
+
+    - name: A warm-up request is served and the predictor is up
+      description: |
+        Bringing the predictor up first makes the idle step below observe a
+        real 1 -> 0 transition. Readiness is read from the Deployment because
+        status.runtime.currentReplicas lags during KEDA's 0 -> 1 activation.
+      try:
+        - script:
+            timeout: 360s
+            env:
+              - name: HTTP_BASE_PATH
+                value: (join('', ['/integration/v1alpha2-scale-from-zero/', $namespace, '/scale-from-zero/v1']))
+              - name: HTTP_RETRY_DEADLINE
+                value: "300"
+            content: bash ../../../aimservice/gpu/_shared/validate-http.sh
+        - assert:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: scale-from-zero
+                  component: predictor
+              status:
+                (readyReplicas >= `1`): true
+
+    - name: Without traffic KEDA idles the service to zero
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: scale-from-zero
+              status:
+                status: Running
+                runtime:
+                  currentReplicas: 0
+                  desiredReplicas: 0
+                  minReplicas: 0
+                  maxReplicas: 3
+        - assert:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: scale-from-zero
+                  component: predictor
+              status:
+                (replicas || `0`): 0
+                (readyReplicas || `0`): 0
+      catch:
+        - describe:
+            apiVersion: keda.sh/v1alpha1
+            kind: ScaledObject
+        - describe:
+            apiVersion: autoscaling/v2
+            kind: HorizontalPodAutoscaler
+
+    - name: Restarting the Envoy activation collector does not wake the service
+      description: |
+        The collector keeps no state, so a restart while the gateway proxy
+        keeps running must not replay old requests as new traffic. The target
+        is checked every second because a short false wake would be missed by
+        an eventual assertion.
+      try:
+        - script:
+            timeout: 300s
+            env:
+              - name: TEST_NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+
+              CANDIDATES=$(kubectl get deployment --all-namespaces -o json \
+                | jq -r '.items[]
+                    | select(
+                        .metadata.name == "envoy-gateway-metrics-collector"
+                        or .metadata.name == "aim-engine-envoy-gateway-metrics-collector"
+                      )
+                    | [.metadata.namespace, .metadata.name]
+                    | @tsv')
+              COUNT=$(printf '%s\n' "$CANDIDATES" \
+                | awk 'NF { count++ } END { print count + 0 }')
+              if [ "$COUNT" -ne 1 ]; then
+                echo "ERROR: expected exactly one Envoy activation collector, got $COUNT" >&2
+                printf '%s\n' "$CANDIDATES" >&2
+                exit 1
+              fi
+              COLLECTOR_NAMESPACE=$(printf '%s\n' "$CANDIDATES" | awk 'NR == 1 { print $1 }')
+              COLLECTOR_NAME=$(printf '%s\n' "$CANDIDATES" | awk 'NR == 1 { print $2 }')
+
+              TARGET=$(kubectl get deployment -n "$TEST_NAMESPACE" \
+                -l 'aim.eai.amd.com/service=scale-from-zero,component=predictor' \
+                -o jsonpath='{.items[0].metadata.name}')
+
+              PROXY_UID_BEFORE=$(kubectl get pod -n envoy-gateway-system \
+                -l 'app.kubernetes.io/component=proxy,app.kubernetes.io/managed-by=envoy-gateway' \
+                -o jsonpath='{.items[0].metadata.uid}')
+              kubectl rollout restart deployment/"$COLLECTOR_NAME" -n "$COLLECTOR_NAMESPACE"
+              kubectl rollout status deployment/"$COLLECTOR_NAME" -n "$COLLECTOR_NAMESPACE" --timeout=120s
+              PROXY_UID_AFTER=$(kubectl get pod -n envoy-gateway-system \
+                -l 'app.kubernetes.io/component=proxy,app.kubernetes.io/managed-by=envoy-gateway' \
+                -o jsonpath='{.items[0].metadata.uid}')
+              if [ "$PROXY_UID_BEFORE" != "$PROXY_UID_AFTER" ]; then
+                echo "ERROR: proxy changed during collector-only restart" >&2
+                exit 1
+              fi
+
+              for _ in $(seq 1 30); do
+                REPLICAS=$(kubectl get deployment "$TARGET" -n "$TEST_NAMESPACE" -o jsonpath='{.spec.replicas}')
+                READY=$(kubectl get deployment "$TARGET" -n "$TEST_NAMESPACE" -o jsonpath='{.status.readyReplicas}')
+                READY=${READY:-0}
+                if [ "$REPLICAS" != "0" ] || [ "$READY" != "0" ]; then
+                  echo "ERROR: collector restart falsely woke $TARGET: replicas=$REPLICAS ready=$READY" >&2
+                  exit 1
+                fi
+                sleep 1
+              done
+
+    - name: A cold request scales the service up from zero
+      try:
+        - script:
+            timeout: 360s
+            env:
+              - name: HTTP_BASE_PATH
+                value: (join('', ['/integration/v1alpha2-scale-from-zero/', $namespace, '/scale-from-zero/v1']))
+              - name: HTTP_RETRY_DEADLINE
+                value: "300"
+            content: bash ../../../aimservice/gpu/_shared/validate-http.sh
+        - assert:
+            resource:
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: scale-from-zero
+                  component: predictor
+              status:
+                (readyReplicas >= `1`): true
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: scale-from-zero
+              status:
+                status: Running
+                runtime:
+                  minReplicas: 0
+                  maxReplicas: 3
+      catch:
+        - describe:
+            apiVersion: keda.sh/v1alpha1
+            kind: ScaledObject
+        - describe:
+            apiVersion: autoscaling/v2
+            kind: HorizontalPodAutoscaler

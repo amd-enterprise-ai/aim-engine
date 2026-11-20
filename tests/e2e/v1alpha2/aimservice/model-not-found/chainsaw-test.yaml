@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# A service naming a model that does not exist fails with ProfileNotFound
+# instead of waiting forever.
+#
+# Nothing is deployed, so this runs in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-model-not-found
+spec:
+  steps:
+    - name: Create a service referencing a model that does not exist
+      try:
+        - apply:
+            file: service.yaml
+
+    - name: The service fails because no profile can be resolved
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: model-not-found
+              status:
+                status: Failed
+                (conditions[?type == 'ProfileReady']):
+                  - status: "False"
+                    reason: ProfileNotFound

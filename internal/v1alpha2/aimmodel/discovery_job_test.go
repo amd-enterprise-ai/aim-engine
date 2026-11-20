@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	discoverylock "github.com/amd-enterprise-ai/aim-engine/internal/discovery/lock"
 )
@@ -85,6 +86,10 @@ func TestBuildDiscoveryJob_HasRequiredLabelsAndSpec(t *testing.T) {
 	}
 	if job.Spec.TTLSecondsAfterFinished == nil {
 		t.Fatal("TTLSecondsAfterFinished = nil, want set so completed jobs GC")
+	}
+	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != discoveryJobActiveDeadlineSeconds {
+		t.Fatalf("ActiveDeadlineSeconds = %v, want %d so a pod that never finishes frees its slot",
+			job.Spec.ActiveDeadlineSeconds, discoveryJobActiveDeadlineSeconds)
 	}
 
 	podSpec := job.Spec.Template.Spec
@@ -263,7 +268,7 @@ func TestShouldCreateDiscoveryJob_BackoffAndSpecHashInvalidation(t *testing.T) {
 	now := time.Now()
 
 	// First attempt: always proceed.
-	ok, reason, _ := ShouldCreateDiscoveryJob(nil, hash, now)
+	ok, _, reason, _ := ShouldCreateDiscoveryJob(nil, hash, now)
 	if !ok || reason != "" {
 		t.Fatalf("first attempt: ok=%v reason=%q, want true/empty", ok, reason)
 	}
@@ -274,23 +279,27 @@ func TestShouldCreateDiscoveryJob_BackoffAndSpecHashInvalidation(t *testing.T) {
 		LastAttemptTime: &metav1.Time{Time: now.Add(-5 * time.Second)},
 		SpecHash:        "previous",
 	}
-	ok, _, _ = ShouldCreateDiscoveryJob(state, hash, now)
+	ok, _, _, _ = ShouldCreateDiscoveryJob(state, hash, now)
 	if !ok {
 		t.Fatal("spec hash change must override backoff and force retry")
 	}
 
-	// Inside backoff, same hash: do not proceed, return reason.
+	// Inside backoff, same hash: wait until the retry time, with a message
+	// that names it and stays the same while waiting.
 	state = &aimv1alpha1.ModelDiscoveryState{
 		Attempts:        1,
 		LastAttemptTime: &metav1.Time{Time: now.Add(-5 * time.Second)},
 		SpecHash:        hash,
 	}
-	ok, reason, msg := ShouldCreateDiscoveryJob(state, hash, now)
-	if ok {
-		t.Fatal("inside backoff window, must wait")
+	retryAt := state.LastAttemptTime.Add(time.Duration(constants.DiscoveryBaseBackoffSeconds) * time.Second)
+	ok, retryIn, reason, msg := ShouldCreateDiscoveryJob(state, hash, now)
+	if ok || retryIn != retryAt.Sub(now) || reason != "AwaitingDiscovery" ||
+		!strings.HasPrefix(msg, "Waiting ") || !strings.Contains(msg, retryAt.UTC().Format(time.RFC3339)) {
+		t.Fatalf("inside backoff: ok=%v retryIn=%v reason=%q msg=%q, want wait %v naming %s",
+			ok, retryIn, reason, msg, retryAt.Sub(now), retryAt.UTC().Format(time.RFC3339))
 	}
-	if reason == "" || !strings.Contains(msg, "attempt") {
-		t.Fatalf("reason/msg = %q/%q, want populated", reason, msg)
+	if _, _, _, later := ShouldCreateDiscoveryJob(state, hash, now.Add(20*time.Second)); later != msg {
+		t.Fatalf("message changed while waiting: %q, then %q", msg, later)
 	}
 
 	// Past the first backoff window (60s base * 2^0), proceed.
@@ -299,7 +308,7 @@ func TestShouldCreateDiscoveryJob_BackoffAndSpecHashInvalidation(t *testing.T) {
 		LastAttemptTime: &metav1.Time{Time: now.Add(-time.Duration(constants.DiscoveryBaseBackoffSeconds+5) * time.Second)},
 		SpecHash:        hash,
 	}
-	ok, _, _ = ShouldCreateDiscoveryJob(state, hash, now)
+	ok, _, _, _ = ShouldCreateDiscoveryJob(state, hash, now)
 	if !ok {
 		t.Fatal("past first backoff window, must retry")
 	}
@@ -394,5 +403,56 @@ func TestDecideDiscovery_NewJobGetsTolerations(t *testing.T) {
 	got := decision.DesiredJob.Spec.Template.Spec.Tolerations
 	if len(got) != 1 || got[0] != gpu {
 		t.Errorf("discovery Job tolerations = %v, want [%v]", got, gpu)
+	}
+}
+
+func TestModelDiscoveryOwnerReferences_UseProductionIdentityAndDeletionProtection(t *testing.T) {
+	t.Parallel()
+
+	namespaceModel := &aimv1alpha2.AIMModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "namespace-model", Namespace: "team-a", UID: "namespace-uid"},
+	}
+	clusterModel := &aimv1alpha2.AIMClusterModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-model", UID: "cluster-uid"},
+	}
+
+	tests := []struct {
+		name    string
+		ref     metav1.OwnerReference
+		kind    string
+		uid     string
+		objName string
+	}{
+		{
+			name:    "namespace model",
+			ref:     ownerReferenceForModel(namespaceModel),
+			kind:    "AIMModel",
+			uid:     "namespace-uid",
+			objName: namespaceModel.Name,
+		},
+		{
+			name:    "cluster model",
+			ref:     ownerReferenceForClusterModel(clusterModel),
+			kind:    "AIMClusterModel",
+			uid:     "cluster-uid",
+			objName: clusterModel.Name,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.ref.APIVersion != aimv1alpha2.GroupVersion.String() ||
+				tt.ref.Kind != tt.kind ||
+				tt.ref.Name != tt.objName ||
+				string(tt.ref.UID) != tt.uid {
+				t.Fatalf("owner reference identity = %#v", tt.ref)
+			}
+			if tt.ref.Controller == nil || !*tt.ref.Controller {
+				t.Fatalf("owner reference controller = %v, want true", tt.ref.Controller)
+			}
+			if tt.ref.BlockOwnerDeletion == nil || !*tt.ref.BlockOwnerDeletion {
+				t.Fatalf("owner reference blockOwnerDeletion = %v, want true", tt.ref.BlockOwnerDeletion)
+			}
+		})
 	}
 }

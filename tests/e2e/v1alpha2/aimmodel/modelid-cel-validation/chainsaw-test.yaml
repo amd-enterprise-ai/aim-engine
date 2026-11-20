@@ -91,22 +91,6 @@ spec:
                 accelerator:
                   count: 4
 
-    - name: Reject accelerator on v1alpha1
-      try:
-        - apply:
-            expect:
-              - check:
-                  ($error != null): true
-            resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
-              kind: AIMModel
-              metadata:
-                name: invalid-accelerator-v1alpha1
-              spec:
-                image: example.invalid/aim:test
-                accelerator:
-                  count: 4
-
     - name: Reject fallback without image
       try:
         - apply:

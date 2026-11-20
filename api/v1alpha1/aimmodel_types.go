@@ -32,16 +32,13 @@ const (
 
 	// ModelRuntimeConfigIndexKey is the field index key for AIMModel.Spec.Name (runtimeConfigName)
 	ModelRuntimeConfigIndexKey = ".spec.runtimeConfigName"
-
-	// ModelAimIdIndexKey is the field index key for AIMModel.Spec.AimId.
-	// Used to find fine-tuned models that match a given aimId when official templates change.
-	ModelAimIdIndexKey = ".spec.aimId"
 )
 
 // AIMModel is the Schema for namespace-scoped AIM model catalog entries.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:deprecatedversion:warning="v1alpha1 AIMModel is deprecated; use v1alpha2 AIMModel"
+// +kubebuilder:unservedversion
 // +kubebuilder:resource:shortName=aimmdl,categories=aim;all
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`
 // +kubebuilder:printcolumn:name="Source",type=string,JSONPath=`.status.sourceType`

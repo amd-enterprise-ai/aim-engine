@@ -1,0 +1,121 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Runtime config edits reach running profile-pipeline services.
+#
+# Two v1alpha2 AIMServices run on the same cluster profile. One names a
+# namespaced AIMRuntimeConfig, the other an AIMClusterRuntimeConfig. Both
+# configs start with label propagation disabled. Once both services are Running,
+# each config is edited to enable label propagation, and the service's
+# InferenceService must pick up the propagated label. The services themselves
+# are never edited, so only the runtime config watches can trigger the
+# reconcile that applies the label.
+#
+# No accelerator is involved and the cache download is simulated, so this runs
+# in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: aimservice-runtime-config-edit
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the backing cluster profile
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMClusterProfile
+              metadata:
+                name: test-runtime-config-edit
+              status:
+                status: Ready
+
+    - name: Create both runtime configs and the services that use them
+      try:
+        - apply:
+            file: runtime-configs.yaml
+        - apply:
+            file: services.yaml
+
+    - name: Wait until both services are Running without the propagated label
+      description: |
+        InferenceService and predictor Pod status keep changing for a few
+        seconds after a service first reports Running, and each change
+        re-reconciles the service. The sleep lets them settle so that only the
+        runtime config watches can apply the label in the next steps.
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: namespace-config-consumer
+              status:
+                status: Running
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: cluster-config-consumer
+              status:
+                status: Running
+        - sleep:
+            duration: 15s
+        - error:
+            timeout: 5s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  team-alpha: frontend
+
+    - name: Enable label propagation on the AIMRuntimeConfig
+      try:
+        - patch:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMRuntimeConfig
+              metadata:
+                name: runtime-config-edit
+              spec:
+                labelPropagation:
+                  enabled: true
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: namespace-config-consumer
+                  team-alpha: frontend
+
+    - name: Enable label propagation on the AIMClusterRuntimeConfig
+      try:
+        - patch:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMClusterRuntimeConfig
+              metadata:
+                name: test-runtime-config-edit
+              spec:
+                labelPropagation:
+                  enabled: true
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: cluster-config-consumer
+                  team-alpha: frontend

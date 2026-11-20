@@ -1,0 +1,23 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMProfile
+metadata:
+  name: model-only-shapes-seed
+  annotations:
+    aim.eai.amd.com/base-image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+    aim.eai.amd.com/profile-copyable: "true"
+spec:
+  aimId: test/model-only-shapes
+  modelId: Qwen/Qwen3-0.6B
+  profileId: cpu-latency
+  engine: vllm
+  metric: latency
+  precision: bf16
+  # A service without a selector only auto-selects optimized profiles.
+  type: optimized
+  primary: true
+  image: docker.io/amdenterpriseai/aim-dummy:0.2.0
+  modelSources:
+    - modelId: Qwen/Qwen3-0.6B
+      sourceUri: hf://Qwen/Qwen3-0.6B
+      # The download is simulated, so the PVC only needs to provision.
+      size: 1Gi

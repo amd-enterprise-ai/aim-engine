@@ -1032,7 +1032,8 @@ spec:
                 - message: exactly one of name, image, or custom must be specified
                   rule: '(has(self.name) ? 1 : 0) + (has(self.image) ? 1 : 0) + (has(self.custom)
                     ? 1 : 0) == 1'
-                - message: model selection is immutable after creation
+                - message: spec.model can't be edited in place; to change the model,
+                    remove spec.model and set spec.profile in the same update
                   rule: self == oldSelf
               overrides:
                 description: |-
@@ -2538,7 +2539,7 @@ spec:
           rule: self.spec.adapterMode == 'dynamic' || (has(self.spec.adapters) ==
             has(oldSelf.spec.adapters) && (!has(self.spec.adapters) || self.spec.adapters
             == oldSelf.spec.adapters))
-    served: true
+    served: false
     storage: false
     subresources:
       status: {}
@@ -3547,7 +3548,8 @@ spec:
                 - message: exactly one of name, image, or custom must be specified
                   rule: '(has(self.name) ? 1 : 0) + (has(self.image) ? 1 : 0) + (has(self.custom)
                     ? 1 : 0) == 1'
-                - message: model selection is immutable after creation
+                - message: spec.model can't be edited in place; to change the model,
+                    remove spec.model and set spec.profile in the same update
                   rule: self == oldSelf
               overrides:
                 description: |-
@@ -5044,6 +5046,11 @@ spec:
         - message: spec.overrides is not supported on v1alpha2; use spec.profileOverrides
           optionalOldSelf: true
           rule: '!has(self.spec.overrides) || (oldSelf.hasValue() && has(oldSelf.value().spec.overrides))'
+        - message: spec.model.custom is not supported on v1alpha2; create an AIMModel
+            and reference it with spec.model.name
+          optionalOldSelf: true
+          rule: '!has(self.spec.model) || !has(self.spec.model.custom) || (oldSelf.hasValue()
+            && has(oldSelf.value().spec.model) && has(oldSelf.value().spec.model.custom))'
         - message: one of spec.model or spec.profile must be specified
           rule: has(self.spec.model) || has(self.spec.profile)
         - message: spec.profile.selector.role on v1alpha2 may only be omitted or set

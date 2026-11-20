@@ -31,7 +31,7 @@ import (
 
 func TestServiceAndArtifactControllersDoNotWatchCABundleObjects(t *testing.T) {
 	for _, path := range []string{
-		"../aimservice/watches.go",
+		"../../v1alpha2/aimservice/watches.go",
 		"aimartifact_controller.go",
 	} {
 		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)

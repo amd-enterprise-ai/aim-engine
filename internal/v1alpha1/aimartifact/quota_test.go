@@ -24,14 +24,23 @@ package aimartifact
 
 import (
 	"context"
+	"errors"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
@@ -111,6 +120,23 @@ func withEvictionProtected() func(*aimv1alpha1.AIMArtifact) {
 			a.Annotations = make(map[string]string)
 		}
 		a.Annotations[aimv1alpha1.ArtifactEvictionProtectedAnnotation] = aimv1alpha1.ArtifactEvictionProtectedValue
+	}
+}
+
+func withNamespace(namespace string) func(*aimv1alpha1.AIMArtifact) {
+	return func(a *aimv1alpha1.AIMArtifact) {
+		a.Namespace = namespace
+	}
+}
+
+func makeProfileCacheListing(namespace, artifactName string, artifactUID types.UID) *aimv1alpha2.AIMProfileCache {
+	return &aimv1alpha2.AIMProfileCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "profile-cache", Namespace: namespace},
+		Status: aimv1alpha2.AIMProfileCacheStatus{
+			Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
+				artifactName: {UID: string(artifactUID), Name: artifactName},
+			},
+		},
 	}
 }
 
@@ -365,9 +391,9 @@ func TestFindEvictable_EvictionProtectedWithDefaultPriority(t *testing.T) {
 }
 
 func TestBuildInUseArtifactUIDs(t *testing.T) {
-	templateCaches := []aimv1alpha1.AIMTemplateCache{
+	caches := []aimv1alpha2.AIMProfileCache{
 		{
-			Status: aimv1alpha1.AIMTemplateCacheStatus{
+			Status: aimv1alpha2.AIMProfileCacheStatus{
 				Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
 					"art-a": {UID: "uid-a", Name: "art-a"},
 					"art-b": {UID: "uid-b", Name: "art-b"},
@@ -375,7 +401,7 @@ func TestBuildInUseArtifactUIDs(t *testing.T) {
 			},
 		},
 		{
-			Status: aimv1alpha1.AIMTemplateCacheStatus{
+			Status: aimv1alpha2.AIMProfileCacheStatus{
 				Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
 					"art-a": {UID: "uid-a", Name: "art-a"},
 					"art-c": {UID: "uid-c", Name: "art-c"},
@@ -384,22 +410,11 @@ func TestBuildInUseArtifactUIDs(t *testing.T) {
 		},
 	}
 
-	profileCaches := []aimv1alpha2.AIMProfileCache{
-		{
-			Status: aimv1alpha2.AIMProfileCacheStatus{
-				Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
-					"art-c": {UID: "uid-c", Name: "art-c"},
-					"art-d": {UID: "uid-d", Name: "art-d"},
-				},
-			},
-		},
+	inUse := BuildInUseArtifactUIDs(caches)
+	if len(inUse) != 3 {
+		t.Fatalf("expected 3 in-use UIDs, got %d", len(inUse))
 	}
-
-	inUse := BuildInUseArtifactUIDs(templateCaches, profileCaches)
-	if len(inUse) != 4 {
-		t.Fatalf("expected 4 in-use UIDs, got %d", len(inUse))
-	}
-	for _, uid := range []types.UID{"uid-a", "uid-b", "uid-c", "uid-d"} {
+	for _, uid := range []types.UID{"uid-a", "uid-b", "uid-c"} {
 		if !inUse[uid] {
 			t.Errorf("expected %s to be in use", uid)
 		}
@@ -436,9 +451,6 @@ func TestComposeState_ArtifactServedByProfileCacheIsNotEvicted(t *testing.T) {
 			namespace: &controllerutils.FetchResult[*corev1.Namespace]{Value: ns},
 			namespaceArtifacts: &controllerutils.FetchResult[*aimv1alpha1.AIMArtifactList]{
 				Value: &aimv1alpha1.AIMArtifactList{Items: []aimv1alpha1.AIMArtifact{served, replacement}},
-			},
-			templateCaches: &controllerutils.FetchResult[*aimv1alpha1.AIMTemplateCacheList]{
-				Value: &aimv1alpha1.AIMTemplateCacheList{},
 			},
 			profileCaches: &controllerutils.FetchResult[*aimv1alpha2.AIMProfileCacheList]{
 				Value: &aimv1alpha2.AIMProfileCacheList{Items: profileCaches},
@@ -766,5 +778,144 @@ func TestEvaluateQuota_DefaultRetentionPriority_EnablesEviction(t *testing.T) {
 	}
 	if len(dec.ToEvict) != 1 || dec.ToEvict[0].Name != "a" {
 		t.Errorf("should evict a, got %v", dec.ToEvict)
+	}
+}
+
+// TestPlanResources_EvictionProtectsInUseArtifacts runs the reconciler from
+// FetchRemoteState to PlanResources against a fake API server and checks which
+// artifact it deletes to make room for a new 10Gi artifact (11Gi with headroom).
+// Existing artifacts use 90Gi of a 100Gi quota, so evicting any one of them is
+// enough; "priority-0" goes first unless a cache lists it. failList makes listing
+// that kind fail, which leaves the in-use artifacts unknown.
+func TestPlanResources_EvictionProtectsInUseArtifacts(t *testing.T) {
+	tests := []struct {
+		name               string
+		clusterQuota       bool
+		priority0Namespace string
+		cache              client.Object
+		failList           client.ObjectList
+		wantEvicted        []string
+		wantReason         string
+	}{
+		{
+			name:               "namespace quota evicts unlisted artifacts lowest priority first",
+			priority0Namespace: "team-a",
+			wantEvicted:        []string{"priority-0"},
+			wantReason:         aimv1alpha1.ArtifactReasonEvicting,
+		},
+		{
+			name:               "namespace quota skips artifact listed by AIMProfileCache",
+			priority0Namespace: "team-a",
+			cache:              makeProfileCacheListing("team-a", "priority-0", "uid-priority-0"),
+			wantEvicted:        []string{"priority-1"},
+			wantReason:         aimv1alpha1.ArtifactReasonEvicting,
+		},
+		{
+			name:               "cluster quota evicts unlisted artifact in another namespace",
+			clusterQuota:       true,
+			priority0Namespace: "team-b",
+			wantEvicted:        []string{"priority-0"},
+			wantReason:         aimv1alpha1.ArtifactReasonEvicting,
+		},
+		{
+			name:               "cluster quota skips artifact listed by AIMProfileCache in another namespace",
+			clusterQuota:       true,
+			priority0Namespace: "team-b",
+			cache:              makeProfileCacheListing("team-b", "priority-0", "uid-priority-0"),
+			wantEvicted:        []string{"priority-1"},
+			wantReason:         aimv1alpha1.ArtifactReasonEvicting,
+		},
+		{
+			name:               "namespace quota evicts nothing when listing AIMProfileCaches fails",
+			priority0Namespace: "team-a",
+			failList:           &aimv1alpha2.AIMProfileCacheList{},
+			wantReason:         aimv1alpha1.ArtifactReasonNamespaceQuotaExceeded,
+		},
+		{
+			name:               "cluster quota evicts nothing when listing AIMProfileCaches fails",
+			clusterQuota:       true,
+			priority0Namespace: "team-b",
+			failList:           &aimv1alpha2.AIMProfileCacheList{},
+			wantReason:         aimv1alpha1.ArtifactReasonClusterQuotaExceeded,
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	for _, addToScheme := range []func(*runtime.Scheme) error{
+		corev1.AddToScheme, batchv1.AddToScheme, rbacv1.AddToScheme,
+		aimv1alpha1.AddToScheme, aimv1alpha2.AddToScheme,
+	} {
+		if err := addToScheme(scheme); err != nil {
+			t.Fatalf("add to scheme: %v", err)
+		}
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			newArtifact := makeArtifact("new", "uid-new", withNamespace("team-a"), withSpecSize(10*gi))
+			newArtifact.Spec.SourceURI = "hf://org/model"
+			priority0 := makeArtifact("priority-0", "uid-priority-0", withNamespace(tt.priority0Namespace),
+				withReady(), withRetentionPriority(0), withAllocatedSize(40*gi))
+			priority1 := makeArtifact("priority-1", "uid-priority-1", withNamespace("team-a"),
+				withReady(), withRetentionPriority(1), withAllocatedSize(30*gi))
+			priority2 := makeArtifact("priority-2", "uid-priority-2", withNamespace("team-a"),
+				withReady(), withRetentionPriority(2), withAllocatedSize(20*gi))
+
+			teamA := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-a"}}
+			teamB := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-b"}}
+			objects := []client.Object{teamA, teamB, &newArtifact, &priority0, &priority1, &priority2}
+			if tt.clusterQuota {
+				objects = append(objects, &aimv1alpha1.AIMClusterRuntimeConfig{
+					ObjectMeta: metav1.ObjectMeta{Name: constants.DefaultRuntimeConfigName},
+					Spec: aimv1alpha1.AIMClusterRuntimeConfigSpec{
+						ArtifactStorageQuota: &aimv1alpha1.AIMArtifactStorageQuota{
+							ClusterLimit: ptr.To(resource.MustParse("100Gi")),
+						},
+					},
+				})
+			} else {
+				teamA.Annotations = map[string]string{aimv1alpha1.ArtifactStorageQuotaAnnotation: "100Gi"}
+			}
+			if tt.cache != nil {
+				objects = append(objects, tt.cache)
+			}
+
+			builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...)
+			if tt.failList != nil {
+				builder = builder.WithInterceptorFuncs(interceptor.Funcs{
+					List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+						if reflect.TypeOf(list) == reflect.TypeOf(tt.failList) {
+							return errors.New("list failed")
+						}
+						return c.List(ctx, list, opts...)
+					},
+				})
+			}
+			c := builder.Build()
+			r := &ArtifactReconciler{APIReader: c}
+			ctx := context.Background()
+			reconcileCtx := controllerutils.ReconcileContext[*aimv1alpha1.AIMArtifact]{Object: &newArtifact}
+
+			obs := r.ComposeState(ctx, reconcileCtx, r.FetchRemoteState(ctx, c, reconcileCtx))
+			plan := r.PlanResources(ctx, reconcileCtx, obs)
+
+			var evicted []string
+			for _, obj := range plan.GetToDelete() {
+				evicted = append(evicted, obj.GetName())
+			}
+			if !slices.Equal(evicted, tt.wantEvicted) {
+				t.Errorf("evicted = %v, want %v", evicted, tt.wantEvicted)
+			}
+			if plan.RequeueAfter == 0 {
+				t.Error("RequeueAfter = 0, want a requeue so quota is evaluated again")
+			}
+
+			cm := controllerutils.NewConditionManager(nil)
+			r.DecorateStatus(&aimv1alpha1.AIMArtifactStatus{}, cm, obs)
+			cond := cm.Get(aimv1alpha1.ArtifactConditionStorageQuotaExceeded)
+			if cond == nil || cond.Status != metav1.ConditionTrue || cond.Reason != tt.wantReason {
+				t.Errorf("StorageQuotaExceeded condition = %+v, want True with reason %s", cond, tt.wantReason)
+			}
+		})
 	}
 }

@@ -5,7 +5,7 @@
 :::{admonition} v1alpha2
 :class: note
 
-This page documents the `aim.eai.amd.com/v1alpha2` API. For the v1alpha1 `AIMModel` shape (with `spec.custom`, `spec.modelSources`, `spec.discovery`, etc.) see [Legacy AIMModel](../legacy/aimmodel-v1alpha1.md).
+This page documents the `aim.eai.amd.com/v1alpha2` API.
 :::
 ## Four flows
 
@@ -63,11 +63,14 @@ spec:
 
 The controller:
 
-1. Runs an in-cluster **discovery Job** that inspects the image's profile YAMLs (`/workspace/aim-runtime/profiles/<aim_id>/*.yaml`) and writes the raw documents and discovery metadata into a `ConfigMap` (`status.discoveryCacheRef`).
-2. Normalises the complete catalog into profile definitions available to profile-set selectors.
-3. Evaluates each discovered profile against the cluster's nodes — GPU model, partitioning mode, accelerator count, and resource capacity.
-4. Materialises one `AIMProfile` per supported entry. Unsupported entries are counted in `status.discoveredProfiles.unsupported` and remain available as derivation sources.
-5. Watches node events and re-evaluates hardware support when nodes are added or removed.
+1. Reads the image's OCI labels into `status.imageMetadata`, records the image tag as `status.version` (the `VERSION` column) and sets `status.sourceType: Image`. A model with `spec.imageMetadata` uses that instead of reading the registry, which suits air-gapped installs.
+2. Runs an in-cluster **discovery Job** that inspects the image's profile YAMLs (`/workspace/aim-runtime/profiles/<aim_id>/*.yaml`) and writes the raw documents and discovery metadata into a `ConfigMap` (`status.discoveryCacheRef`).
+3. Normalises the complete catalog into profile definitions available to profile-set selectors.
+4. Evaluates each discovered profile against the cluster's nodes — GPU model, partitioning mode, accelerator count, and resource capacity.
+5. Materialises one `AIMProfile` per supported entry and marks the entries listed in the image's recommended deployments `spec.primary`. Unsupported entries are counted in `status.discoveredProfiles.unsupported` and remain available as derivation sources.
+6. Watches node events and re-evaluates hardware support when nodes are added or removed.
+
+`spec.discovery.extractMetadata: false` skips both the label read and the discovery Job. Without `spec.profiles`, such a model produces no `AIMProfiles`: it stays `Ready` and reports [`ProfilesAvailable=False`](../reference/conditions.md#profilesavailable), and an `AIMService` that uses it fails with `ModelHasNoProfiles`.
 
 The resulting profiles are **deployable** (carry `aimId` and `modelSources`) and labelled `aim.eai.amd.com/profile-role=deployable`, `aim.eai.amd.com/profile-origin=discovered`.
 
@@ -105,6 +108,8 @@ kubectl get aimmodel llama-3-8b-official -o jsonpath='{.status}' | jq
 ```json
 {
   "status": "Ready",
+  "sourceType": "Image",
+  "version": "0.9.0",
   "aimId": "meta-llama/Llama-3-8B-Instruct",
   "baseImage": "docker.io/amdenterpriseai/aim-base:0.11",
   "discoveryCacheRef": { "name": "llama-3-8b-official-discovery-5e8ad928" },
@@ -297,12 +302,59 @@ The unified `spec` shape used by all four flows:
 | `aimId` | Generated | Optional architecture identity override; defaults to `modelId`. |
 | `source` | Generated | Optional source URI and metadata override; URI defaults to `hf://<modelId>`. |
 | `accelerator` | Generated | Optional hardware request — `count` (default 1), `vendor`, `model`, `partitioningMode`. Narrows which RuntimeConfig fallback applies and is stamped on the generated profile. Rejected without `modelId`. |
-| `runtimeConfigName` | Generated | Optional RuntimeConfig name; defaults to `default`. |
+| `runtimeConfigName` | Image-backed, Generated | Optional RuntimeConfig name; defaults to `default`. |
+| `imageMetadata` | Image-backed | Optional image metadata used instead of reading the image's OCI labels from the registry. |
+| `discovery.extractMetadata` | Image-backed | `false` skips the label read and the discovery Job. Defaults to `true`. |
 | `profiles` | Image-backed, Fine-tuned, Custom | Profile selection and overrides. With `image`, `derivedFrom` is optional and selection is local to the image. Without `image`, `derivedFrom` is required and selects external sources using the version policy. Exclusive with `modelId`. |
 | `imagePullSecrets` | Official, Fine-tuned, Custom | Secrets used for image inspection and propagated to derived runtime profiles. `AIMModel` discovery resolves them in the model namespace; `AIMClusterModel` discovery resolves them in the operator namespace. Consumers of a cluster profile need corresponding credentials in their service namespace. Generated-flow pull secrets belong on the RuntimeConfig fallback. See [Private Registries](../guides/private-registries.md). |
 | `serviceAccountName` | Official, Fine-tuned, Custom | Service account propagated to managed child resources. Generated-flow service accounts belong on the RuntimeConfig fallback. |
 
 The v1alpha2 CRD explicitly forbids legacy fields such as `spec.modelSources`, `spec.custom`, `spec.customTemplates`, and `spec.profileCopy`. `spec.aimId`, `spec.source`, and `spec.runtimeConfigName` are valid for the generated flow.
+
+### Template-era fields
+
+Some fields only configured the service templates that models created in earlier releases. They remain in the schema but have no effect. A model that sets any of them reports `TemplateFieldsIgnored=True` (reason `TemplateFieldsSet`) naming the fields, with a `Warning` event when the condition appears. The condition never affects readiness and clears once the fields are removed.
+
+| Field | Profile-based equivalent |
+|---|---|
+| `spec.discovery.createServiceTemplates: false` | Keep it as long as you might [roll back](../admin/upgrading.md#rollback) to v0.2.7, which creates templates without it. Remove it once you've decided not to roll back. |
+| `spec.defaultServiceTemplate` | Name the profile on the service with `AIMService.spec.profile.name`, or rely on the `primary` flag set from the image's recommended deployments. |
+| `spec.env` | `profiles.overrides.containerEnv` on a derived model or profile set, or `spec.profileOverrides.containerEnv` on one service. |
+| `spec.resources` | `AIMService.spec.resources`. |
+| `spec.custom` | A base-image model plus a custom-model AIMModel ([Flow 4](#flow-4-custom-model)). |
+| `spec.customTemplates` | Selector fields on the custom model's `profiles.derivedFrom.selector`, as below. |
+
+Each `customTemplates` entry named a hardware shape for a custom model. Select the matching base definitions instead, and keep per-template settings in `overrides`:
+
+```yaml
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMModel
+metadata:
+  name: acme-transformer
+  namespace: ml-team
+spec:
+  profiles:
+    derivedFrom:
+      selector:
+        role: base
+        modelRef:
+          name: aim-base-vllm
+        acceleratorModel: MI300X
+        precision: fp16
+        metric: throughput
+    versionPolicy: all
+    overrides:
+      aimId: acme/custom-transformer
+      modelId: acme/custom-transformer
+      modelSources:
+        - modelId: acme/custom-transformer
+          sourceUri: s3://acme-models/custom-transformer
+      containerEnv:
+        - name: VLLM_LOGGING_LEVEL
+          value: DEBUG
+```
+
+A model that set `spec.aimId` with `spec.modelSources` reused the official templates of that `aimId`. Its equivalent is a fine-tuned model ([Flow 3](#flow-3-fine-tuned-model)): `profiles.derivedFrom.selector.aimId` selects the official profiles and `overrides.modelSources` points them at your weights.
 
 ## Status fields
 
@@ -311,6 +363,9 @@ The v1alpha2 CRD explicitly forbids legacy fields such as `spec.modelSources`, `
 | `status` | Overall status (`Pending`, `Progressing`, `Ready`, `Degraded`, `Failed`, `NotAvailable`) |
 | `conditions` | Detailed reconciliation conditions (see [Conditions Reference](../reference/conditions.md)) |
 | `kind` | Discriminator for the onboarding flow: `Image`, `Generated`, `Derived`, or `Custom`. |
+| `sourceType` | `Image` for image-backed models |
+| `version` | Image tag of an image-backed model, shown in the `VERSION` column |
+| `imageMetadata` | Metadata read from the image's OCI labels, or copied from `spec.imageMetadata` |
 | `profileGeneration` | `Generated` models only: `strategy` (the resolution mechanism that ran — `RuntimeFallback` today) and `matchedFallbacks` (the RuntimeConfig fallbacks that produced a profile). |
 | `aimId` | Resolved architecture identifier — populated by discovery for `Image` models, defaulted from `modelId` for `Generated` models, and inherited or overridden for `Custom`/`Derived` models |
 | `baseImage` | Extracted `AIM_BASE_IMAGE_REF` when available |
@@ -394,4 +449,3 @@ kubectl get aimprofileset $(kubectl get aimmodel <name> \
 - [AIM Profile Sets](profilesets.md) — Derivation machinery underneath `spec.profiles`
 - [Services](services.md) — How `AIMService` resolves models and profiles
 - [CRD API Reference (v1alpha2)](../reference/api/v1alpha2.md) — Full schema
-- [Legacy AIMModel (v1alpha1)](../legacy/aimmodel-v1alpha1.md) — The deprecated v1alpha1 shape

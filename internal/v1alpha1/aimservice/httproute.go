@@ -34,6 +34,7 @@ import (
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 )
@@ -54,7 +55,7 @@ func GenerateHTTPRouteName(serviceName, namespace string) (string, error) {
 func fetchHTTPRoute(
 	ctx context.Context,
 	c client.Client,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) controllerutils.FetchResult[*gatewayapiv1.HTTPRoute] {
 	// Check if routing is enabled
@@ -84,7 +85,7 @@ func fetchHTTPRoute(
 func fetchGateway(
 	ctx context.Context,
 	c client.Client,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 ) controllerutils.FetchResult[*gatewayapiv1.Gateway] {
 	if !isRoutingEnabled(service, runtimeConfig) {
@@ -107,18 +108,7 @@ func fetchGateway(
 	}, &gatewayapiv1.Gateway{})
 }
 
-// planHTTPRoute creates the HTTPRoute if routing is enabled.
-func planHTTPRoute(
-	ctx context.Context,
-	service *aimv1alpha1.AIMService,
-	obs ServiceObservation,
-) client.Object {
-	return PlanHTTPRoute(ctx, service, obs.mergedRuntimeConfig.Value, obs.gateway.Value)
-}
-
-// PlanHTTPRoute is an exported variant of planHTTPRoute usable from other
-// packages (e.g. the v1alpha2 profile-based reconciler) that don't carry the
-// full ServiceObservation.
+// PlanHTTPRoute builds the HTTPRoute for the service when routing is enabled.
 //
 // gateway is the resolved parent Gateway (may be nil when it could not be
 // fetched). When it exposes more than one listener and no hostnames are
@@ -127,7 +117,7 @@ func planHTTPRoute(
 // ConfigValid=False condition is surfaced via HTTPRouteComponentHealth.
 func PlanHTTPRoute(
 	ctx context.Context,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	gateway *gatewayapiv1.Gateway,
 ) client.Object {
@@ -172,7 +162,7 @@ func requiresHostname(gateway *gatewayapiv1.Gateway) bool {
 // resolveHostnames returns the hostnames to pin the route to, with the
 // service-level list overriding the runtime config list as a whole (mirroring
 // resolveGatewayRef rather than merging).
-func resolveHostnames(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) []gatewayapiv1.Hostname {
+func resolveHostnames(service *aimv1alpha2.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) []gatewayapiv1.Hostname {
 	if service.Spec.Routing != nil && len(service.Spec.Routing.Hostnames) > 0 {
 		return service.Spec.Routing.Hostnames
 	}
@@ -185,7 +175,7 @@ func resolveHostnames(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha
 }
 
 // resolveGatewayRef gets the gateway reference from service or runtime config.
-func resolveGatewayRef(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) *gatewayapiv1.ParentReference {
+func resolveGatewayRef(service *aimv1alpha2.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) *gatewayapiv1.ParentReference {
 	// Service-level override
 	if service.Spec.Routing != nil && service.Spec.Routing.GatewayRef != nil {
 		return service.Spec.Routing.GatewayRef
@@ -203,7 +193,7 @@ func resolveGatewayRef(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alph
 // non-empty, pins the route to those hostnames so it only attaches to the
 // matching Gateway listener.
 func buildHTTPRoute(
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	gatewayRef *gatewayapiv1.ParentReference,
 	runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon,
 	hostnames []gatewayapiv1.Hostname,
@@ -353,7 +343,7 @@ func buildHTTPRoute(
 }
 
 // isRoutingEnabled checks if routing is enabled for the service.
-func isRoutingEnabled(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) bool {
+func isRoutingEnabled(service *aimv1alpha2.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) bool {
 	// Service-level routing override takes precedence
 	if service.Spec.Routing != nil && service.Spec.Routing.Enabled != nil {
 		return *service.Spec.Routing.Enabled
@@ -370,7 +360,7 @@ func isRoutingEnabled(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha
 // mergeRouteAnnotations merges annotations from runtime config and service.
 // Runtime config annotations are applied first, then service annotations overlay on top,
 // so service annotations take precedence for conflicting keys.
-func mergeRouteAnnotations(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) map[string]string {
+func mergeRouteAnnotations(service *aimv1alpha2.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) map[string]string {
 	annotations := make(map[string]string)
 
 	// Start with runtime config annotations as the base
@@ -391,7 +381,7 @@ func mergeRouteAnnotations(service *aimv1alpha1.AIMService, runtimeConfig *aimv1
 }
 
 // resolveRequestTimeout gets the request timeout to use.
-func resolveRequestTimeout(service *aimv1alpha1.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) *metav1.Duration {
+func resolveRequestTimeout(service *aimv1alpha2.AIMService, runtimeConfig *aimv1alpha1.AIMRuntimeConfigCommon) *metav1.Duration {
 	// Service-level override
 	if service.Spec.Routing != nil && service.Spec.Routing.RequestTimeout != nil {
 		return service.Spec.Routing.RequestTimeout

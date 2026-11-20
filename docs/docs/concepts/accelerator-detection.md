@@ -2,10 +2,7 @@
 
 The AcceleratorDetector automatically detects hardware accelerators on cluster nodes and publishes the results as Kubernetes node labels via [Node Feature Discovery (NFD)](https://nfd.sigs.k8s.io/). AIM Engine uses these labels to schedule inference workloads onto appropriate hardware. The AcceleratorDetector is enabled by default.
 
-The labels feed two different consumers depending on API version:
-
-- **v1alpha2** — `AIMProfile.spec.acceleratorModel` is matched against the `feature.node.kubernetes.io/aim-accelerator.<model>` labels using the `Exists` operator. The match drives both profile `HardwareAvailable` reporting and inference-pod node affinity.
-- **v1alpha1** — `AIMServiceTemplate.spec.hardware.gpu.model` feeds the same label system. Existing templates continue to work.
+`AIMProfile.spec.acceleratorModel` is matched against the `feature.node.kubernetes.io/aim-accelerator.<model>` labels using the `Exists` operator. The match drives both profile `HardwareAvailable` reporting and inference-pod node affinity.
 
 ## How It Works
 
@@ -20,7 +17,7 @@ Node boots
   → NFD publishes node labels:
       feature.node.kubernetes.io/aim-accelerator.MI300X=8
       feature.node.kubernetes.io/aim-accelerator.partitioning-scheme.CPX-NPS4=64
-  → AIM Engine matches profiles (or v1alpha1 templates) to nodes via label affinity
+  → AIM Engine matches profiles to nodes via label affinity
 ```
 
 Detection runs periodically (Helm default `detectInterval: 10` seconds) to keep labels — including GPU partition state — current. The end-to-end latency floor is NFD's own scan interval, not `detectInterval`. (The bare `kustomize` manifests under `config/accelerator-detector/` ship a more conservative `300`s default; the Helm chart is the supported install path.)
@@ -58,7 +55,7 @@ NVIDIA product names reported by `nvidia-smi` (e.g. `NVIDIA H100 80GB HBM3`, `NV
 Consumer/workstation NVIDIA cards are detected and labelled (model, `GPU` family, and `vendor.GPU.NVIDIA`) so you can try AIM Engine on them, but detection does not imply every profile will run: consumer cards differ from datacenter parts in VRAM, interconnect (no NVLink), and features (e.g. no FP8 on Ampere consumer). Whether a given model serves is governed by the profile's own requirements, not the detector. Consumer cards have no MIG, so they report `partitioning-scheme.default`.
 :::
 
-AIM Engine constructs node affinity from `AIMProfile.spec.acceleratorModel` (or v1alpha1 `AIMServiceTemplate.spec.hardware.gpu.model`) using the `Exists` operator, without requiring any knowledge of hardware specifics. The label value (accelerator count) is informational only; actual capacity is enforced via the computed device resource request — see [Profiles — Accelerator and node affinity](profiles.md#accelerator-and-node-affinity).
+AIM Engine constructs node affinity from `AIMProfile.spec.acceleratorModel` using the `Exists` operator, without requiring any knowledge of hardware specifics. The label value (accelerator count) is informational only; actual capacity is enforced via the computed device resource request — see [Profiles — Accelerator and node affinity](profiles.md#accelerator-and-node-affinity).
 
 :::{note}
 Architecture-level labels for fallback profile matching (e.g. `aim-accelerator.CDNA3`, `aim-accelerator.EPYC_ZEN5`) will be supported once `aim-runtime` returns the full identifier hierarchy.
@@ -231,6 +228,5 @@ kubectl get nodes --show-labels | grep aim-accelerator
 ## See Also
 
 - [Profiles — Accelerator and node affinity](profiles.md#accelerator-and-node-affinity) — How profiles consume detector labels
-- [Service Templates (v1alpha1)](../legacy/service-templates.md) — Hardware-resolution path for legacy templates
 - [Naming and Labels](../reference/naming-and-labels.md) — Label reference
 - [GPU Management](../admin/gpu-management.md) — Existing GPU label system

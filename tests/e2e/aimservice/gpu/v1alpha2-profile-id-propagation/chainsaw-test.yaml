@@ -1,0 +1,63 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# The ID of the image profile a GPU service resolves to reaches the inference
+# container as AIM_PROFILE_ID, and the service serves chat completions.
+#
+# The service selects Llama 3.2 1B's MI300X fp16 latency profile. The runtime
+# loads an operator-projected copy of that profile, so the value has the form
+# custom/<aimId>/<profileId>. The model is downloaded for real because the chat
+# request needs real weights.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-gpu-profile-id-propagation
+  labels:
+    requires: gpu
+    # This gated model remains in the dedicated authenticated lane.
+    needs-secret: hf_token
+    hf-access: live
+spec:
+  timeouts:
+    assert: 600s
+  steps:
+    - use:
+        template: ../../../_shared/hf-token-step.yaml
+
+    - name: Create the routing runtime config and the service
+      try:
+        - apply:
+            file: runtime-config.yaml
+        - apply:
+            file: service.yaml
+
+    - name: The inference container gets the profile's ID
+      try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                labels:
+                  aim.eai.amd.com/service.name: gpu-profile-id-propagation
+                  app.kubernetes.io/component: inference
+              spec:
+                (containers[?name == 'kserve-container']):
+                  - (env[?name == 'AIM_PROFILE_ID']):
+                      - value: custom/meta-llama/Llama-3.2-1B-Instruct/vllm-mi300x-fp16-tp1-latency
+
+    - name: The service reaches Running and serves chat completions
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: gpu-profile-id-propagation
+              status:
+                status: Running
+        - script:
+            timeout: 3m
+            env:
+              - name: HTTP_BASE_PATH
+                value: (join('', ['/integration/v1alpha2-gpu-profile-id/', $namespace, '/gpu-profile-id-propagation/v1']))
+            content: bash ../_shared/validate-http.sh

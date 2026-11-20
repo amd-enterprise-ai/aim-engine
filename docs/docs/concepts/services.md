@@ -5,7 +5,7 @@
 :::{admonition} v1alpha2
 :class: note
 
-This page documents the `aim.eai.amd.com/v1alpha2` API. For the v1alpha1 `spec.template` shape see [Legacy AIMService](../legacy/aimservice-v1alpha1.md).
+This page documents the `aim.eai.amd.com/v1alpha2` API.
 :::
 ## Lifecycle
 
@@ -30,10 +30,10 @@ A v1alpha2 `AIMService` reaches a deployable `AIMProfile` through one of five sh
 | Shape | Spec | Use case |
 |---|---|---|
 | [**By name**](#by-name) | `spec.profile.name` | You know exactly which profile to deploy |
-| [**By model**](#by-model) | `spec.model.name` + migration annotation | You know the model; let the controller pick the best deployable profile |
+| [**By model**](#by-model) | `spec.model.name` | You know the model; let the controller pick the best deployable profile |
 | [**Model + selector**](#model--selector) | `spec.model.name` + `spec.profile.selector` | Narrow a model's profile pool by precision / accelerator / engine |
 | [**Global selector**](#global-selector) | `spec.profile.selector` (no `spec.model`) | Reach profiles via labels — `aimId` or `modelRef` required |
-| [**By image**](#by-image) | `spec.model.image` + `aim.eai.amd.com/reconciler-pipeline: profile` annotation | One-shot deploy straight from a container image; the controller looks up or auto-creates an `AIMModel` for that image |
+| [**By image**](#by-image) | `spec.model.image` | One-shot deploy straight from a container image; the controller looks up or auto-creates an `AIMModel` for that image |
 
 In all shapes except explicit profile name, the controller applies the shared deterministic [profile ranking](../guides/deploying-services.md#ranking) and resolves to a single profile. The resolved profile is recorded in `status.resolvedProfile` (name, scope, kind, uid).
 
@@ -65,10 +65,6 @@ spec:
 ```
 
 `spec.model.name` is shorthand for `spec.profile.selector.modelRef.name` plus the implicit `role=Deployable` filter. The candidate pool is every deployable profile owned by that AIMModel (or AIMClusterModel of the same name). Ranking selects the best.
-
-During the v1alpha1 → v1alpha2 migration window, a model-only shape must also
-set `aim.eai.amd.com/reconciler-pipeline: profile`. Adding any
-`spec.profile.*` selector selects the profile pipeline by spec shape.
 
 ### Model + selector
 
@@ -104,7 +100,7 @@ The CRD requires at least one of `selector.aimId` or `selector.modelRef.name` so
 
 ### By image
 
-For one-shot deploys when you only have an AIM container image. Requires the migration-window annotation to opt into the v1alpha2 profile pipeline (the legacy v1alpha1 template pipeline is the default for image-only services until v1alpha1 is removed — see [Migration window](../admin/upgrading.md#migration-window)).
+For one-shot deploys when you only have an AIM container image.
 
 ```yaml
 apiVersion: aim.eai.amd.com/v1alpha2
@@ -112,8 +108,6 @@ kind: AIMService
 metadata:
   name: qwen-chat
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     image: amdenterpriseai/aim-qwen-qwen3-32b:0.8.5
@@ -148,7 +142,7 @@ A natural rebind happens when the existing binding is no longer usable:
 | Trigger | Mechanism |
 |---|---|
 | Bound profile deleted | The `Get` for `status.resolvedProfile` returns NotFound → re-rank against remaining candidates. |
-| Bound profile no longer matches the current selector | The user narrowed `spec.profile.selector` (or `spec.model.name` changed) and the bound profile no longer passes the filter → re-rank with the new intent. |
+| Bound profile no longer matches the current selector | The user narrowed `spec.profile.selector` (or [changed the model](#change-a-services-model)) and the bound profile no longer passes the filter → re-rank with the new intent. |
 | Bound profile drops below the `minimumType` floor | The bound profile's `type` is now below the selector's `minimumType` (e.g. retyped to `unoptimized` while the floor is `optimized`) → re-rank. |
 | Transient infrastructure error fetching the bound profile | Re-rank rather than risk serving a stale binding through an outage. |
 
@@ -177,6 +171,22 @@ Leaving the annotation in place is safe — the ranker is deterministic and `Pro
 
 Stickiness is a default-on protection, not a guarantee. The strongest guarantee is `spec.profile.name`: by name there's no ranking at all, so the binding is fixed for the lifetime of the spec.
 
+### Change a service's model
+
+`spec.model` can't be edited in place. To move a service to another AIMModel, remove `spec.model` and set `spec.profile.name` to one of the new AIMModel's AIMProfiles in one update. To select by model again, add `spec.model.name` back and remove `spec.profile` in a second update:
+
+```bash
+kubectl get aimprofile -n <namespace> -l aim.eai.amd.com/source-model=<new-model>
+kubectl patch aimservice <service> -n <namespace> --type merge \
+  -p '{"spec":{"model":null,"profile":{"name":"<AIMProfile of the new model>"}}}'
+kubectl patch aimservice <service> -n <namespace> --type merge \
+  -p '{"spec":{"model":{"name":"<new-model>"},"profile":null}}'
+```
+
+The first update rolls the service's InferenceService onto the new AIMProfile in place. The second keeps that binding, because the AIMProfile belongs to the new model. A service that already uses `spec.profile.name` changes model by pointing it at another AIMProfile. When both `spec.profile.name` and `spec.model` are set, `spec.profile.name` wins and `spec.model` is ignored.
+
+Once the predictor rollout finishes, the controller deletes the Dedicated AIMProfileCache and the overlay AIMProfile the service used for the old AIMProfile. Shared AIMProfileCaches stay; they belong to their AIMProfile.
+
 ## Profile overlays
 
 Sometimes you want to tweak a published profile for one service without forking it. `spec.profileOverrides` creates a service-owned **overlay AIMProfile** derived from `spec.profile.name`:
@@ -199,7 +209,7 @@ What happens:
 1. The controller materialises an `AIMProfile` named `<seed>-<service>-overlay-<hash>` in the service's namespace.
 2. The overlay carries `profile-role: deployable`, `profile-origin: derived`, and an annotation pointing back at the service.
 3. Downstream (cache, ConfigMap, KServe wiring) keys off the overlay — so the override participates in cache-key computation, not just runtime env wiring.
-4. The overlay is owner-referenced by the service and garbage-collected on service deletion.
+4. The overlay is owner-referenced by the service and garbage-collected on service deletion, or once the service has rolled out on another AIMProfile.
 
 The override field set mirrors [`ProfileOverrides`](profilesets.md#overrides)
 used by AIMProfileSet derivation — the same internal primitive applies both.
@@ -225,7 +235,7 @@ When the resolved profile has `spec.caching.enabled: true` (namespace-scoped pro
 | Mode | Behavior |
 |---|---|
 | `Shared` (default) | The cache PVC is shared across services using the same profile. Reused indefinitely; outlives any single service. |
-| `Dedicated` | Each service gets its own cache PVC, garbage-collected with the service. |
+| `Dedicated` | Each service gets its own cache PVC, deleted with the service or once the service has rolled out on another AIMProfile. |
 
 ```yaml
 spec:
@@ -296,7 +306,7 @@ The controller creates an `HTTPRoute` that attaches to the referenced Gateway. T
 |---|---|
 | `resolvedProfile` | The profile that was resolved (`name`, `scope`, `kind`, `uid`). The single source of truth for which profile is backing this service. |
 | `resolvedRuntimeConfig` | The runtime config (if any) that contributed defaults |
-| `cache` | Cache state — `profileCacheRef` (v1alpha2 profile pipeline) or `templateCacheRef` (v1alpha1 template pipeline), `retryAttempts` |
+| `cache` | Cache state — `profileCacheRef`, `retryAttempts` |
 | `runtime` | Replica counts when autoscaling is active (`currentReplicas`, `desiredReplicas`, `minReplicas`, `maxReplicas`) |
 | `routing` | Observed routing including the rendered HTTP path |
 | `conditions` | Per-component conditions — see below |
@@ -320,16 +330,19 @@ See [Conditions Reference](../reference/conditions.md) for the full reason catal
 
 ## Validation
 
-CEL admission rules reject a handful of v1alpha1-isms outright:
+CEL admission rules reject these spec shapes:
 
 | Rejected on v1alpha2 | Use instead |
 |---|---|
 | `spec.template` (any value) | `spec.profile` (or `spec.model`) |
 | `spec.overrides` | `spec.profileOverrides` |
+| `spec.model.custom` | An `AIMModel` referenced with `spec.model.name` |
 | Neither `spec.model` nor `spec.profile` | Set at least one |
 | `spec.profileOverrides` without `spec.profile.name` | Provide `spec.profile.name` |
 | `spec.profile.selector.role: base` | Omit `role` or set `deployable` |
 | `spec.profile.selector` without `aimId`, `modelRef`, or paired `spec.model` | Add one of those anchor fields |
+
+The `spec.template`, `spec.overrides` and `spec.model.custom` rules reject the field on create and on updates that add it. An existing service that already has the field stays updatable and reports it in a [`TemplateFieldsIgnored`](../reference/conditions.md#templatefieldsignored) warning.
 
 See [Resource lifecycle → validation](resource-lifecycle.md#validation) for the canonical list of validation rules across all v1alpha2 CRDs.
 
@@ -356,8 +369,6 @@ kind: AIMService
 metadata:
   name: qwen-chat
   namespace: ml-team
-  annotations:
-    aim.eai.amd.com/reconciler-pipeline: profile
 spec:
   model:
     name: qwen-qwen3-32b

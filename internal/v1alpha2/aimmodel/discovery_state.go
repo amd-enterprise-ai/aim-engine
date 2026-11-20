@@ -39,6 +39,7 @@ import (
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
 	discoverylock "github.com/amd-enterprise-ai/aim-engine/internal/discovery/lock"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 )
 
@@ -47,6 +48,8 @@ import (
 type DiscoveryFetch struct {
 	Cache controllerutils.FetchResult[*corev1.ConfigMap]
 	Job   controllerutils.FetchResult[*batchv1.Job]
+	// PullError is the image pull error of a running Job's pod, if any.
+	PullError controllerutils.FetchResult[*utils.ImagePullError]
 }
 
 // DiscoveryDecision is the composed output of the discovery state machine. Exactly
@@ -103,6 +106,10 @@ type DiscoveryInputs struct {
 	OwnerRef         metav1.OwnerReference
 	CurrentState     *aimv1alpha1.ModelDiscoveryState
 	Clientset        kubernetes.Interface
+
+	// BlockedByImageMetadata holds off new discovery Jobs while a missing image
+	// or pull secret, or an invalid reference, blocks the model.
+	BlockedByImageMetadata bool
 }
 
 // FetchDiscoveryState pulls the latest cache + Job for the model. It never returns
@@ -115,7 +122,12 @@ func FetchDiscoveryState(ctx context.Context, c client.Client, in DiscoveryInput
 	}
 	cache := controllerutils.Fetch(ctx, c, client.ObjectKey{Name: cacheName, Namespace: in.Namespace}, &corev1.ConfigMap{})
 	job := FetchDiscoveryJob(ctx, c, in.Kind, in.Namespace, in.ModelName)
-	return DiscoveryFetch{Cache: cache, Job: job}
+	fetch := DiscoveryFetch{Cache: cache, Job: job}
+	if job.Value != nil && !IsDiscoveryJobComplete(job.Value) {
+		pullErr, err := utils.CheckJobPodImagePullStatus(ctx, c, job.Value, job.Value.Namespace)
+		fetch.PullError = controllerutils.FetchResult[*utils.ImagePullError]{Value: pullErr, Error: err}
+	}
+	return fetch
 }
 
 // DecideDiscovery evaluates the current cache / Job / state tuple and returns
@@ -166,6 +178,26 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 			}
 		}
 		if !IsDiscoveryJobComplete(job) {
+			// A pod that can't pull its image never fails on its own. Deleting
+			// the Job frees its slot under the global cap without waiting for
+			// the Job deadline.
+			if pullErr := fetch.PullError.Value; pullErr != nil {
+				failure := fmt.Sprintf("cannot pull image %s (%s)", in.Image, pullErr.Reason)
+				if pullErr.Message != "" {
+					failure += ": " + pullErr.Message
+				}
+				nextState.Attempts++
+				nextState.LastAttemptTime = nowPtr()
+				nextState.LastFailureReason = failure
+				return DiscoveryDecision{
+					State:                nextState,
+					CompletedJobToDelete: job,
+					Progressing:          true,
+					RequeueAfter:         5 * time.Second,
+					Reason:               "DiscoveryImagePullFailed",
+					Message:              fmt.Sprintf("Deleting discovery Job %s: %s", job.Name, failure),
+				}
+			}
 			// Job is still running; just wait.
 			return DiscoveryDecision{
 				State:        nextState,
@@ -233,13 +265,25 @@ func DecideDiscovery(ctx context.Context, c client.Client, in DiscoveryInputs, f
 		}
 	}
 
+	// The model's blocked apply would drop a new Job, so no attempt is counted.
+	// The requeue re-reads the image: neither the registry nor pull secrets are watched.
+	if in.BlockedByImageMetadata {
+		return DiscoveryDecision{
+			State:        nextState,
+			Progressing:  true,
+			RequeueAfter: time.Duration(constants.DiscoveryBaseBackoffSeconds) * time.Second,
+			Reason:       "AwaitingImageMetadata",
+			Message:      "Waiting for ImageMetadataReady before starting a discovery Job",
+		}
+	}
+
 	// No valid cache and no Job: decide whether to create one now (respecting backoff + cap).
-	shouldCreate, backoffReason, backoffMsg := ShouldCreateDiscoveryJob(in.CurrentState, specHash, time.Now())
+	shouldCreate, retryIn, backoffReason, backoffMsg := ShouldCreateDiscoveryJob(in.CurrentState, specHash, time.Now())
 	if !shouldCreate {
 		return DiscoveryDecision{
 			State:        nextState,
 			Progressing:  true,
-			RequeueAfter: 5 * time.Second,
+			RequeueAfter: retryIn,
 			Reason:       backoffReason,
 			Message:      backoffMsg,
 		}

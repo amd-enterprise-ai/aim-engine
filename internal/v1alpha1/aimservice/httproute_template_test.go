@@ -31,6 +31,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
+	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 )
 
 func TestResolveServiceRoutePath_ServiceOverride(t *testing.T) {
@@ -157,8 +158,8 @@ func TestResolveServiceRoutePath_InvalidExpression(t *testing.T) {
 	}
 }
 
-func newRouteTestService() *aimv1alpha1.AIMService {
-	return &aimv1alpha1.AIMService{
+func newRouteTestService() *aimv1alpha2.AIMService {
+	return &aimv1alpha2.AIMService{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "demo",
 			Namespace: "Testing",

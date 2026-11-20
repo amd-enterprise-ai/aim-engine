@@ -85,6 +85,10 @@ jobs:
         run: |
           set -o pipefail
           make test-artifact-downloader
+          make test-upgrade-preflight
+          # The operator-start test in cmd/ runs against an envtest control plane.
+          KUBEBUILDER_ASSETS="$(make -s envtest)"
+          export KUBEBUILDER_ASSETS
           # Self-heal for a corrupt Go build cache.
           if ! go test ./... 2>&1 | tee /tmp/go-test.log; then
             if grep -q "reference to nonexistent package" /tmp/go-test.log; then
@@ -534,7 +538,7 @@ jobs:
           echo "=== Operator Logs (full) ==="
           kubectl logs -n aim-system -l control-plane=controller-manager --tail=200 || true
           echo "=== All AIM resources ==="
-          kubectl get aimservice,aimmodel,aimtemplatecache,aimartifact -A || true
+          kubectl get aimservice,aimmodel,aimprofilecache,aimartifact -A || true
           echo "=== Pods across all namespaces ==="
           kubectl get pods -A || true
           echo "=== Non-running pods ==="

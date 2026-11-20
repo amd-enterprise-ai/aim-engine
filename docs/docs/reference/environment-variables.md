@@ -76,26 +76,26 @@ package logs; AWS SDK and HTTP wire loggers remain at `WARNING`.
 
 ## Inference Container Variables
 
-These are set on inference containers by the operator. The "Source" column lists where the value comes from in v1alpha2 (`AIMProfile`) and v1alpha1 (`AIMServiceTemplate`).
+These are set on inference containers by the operator. The "Source" column lists where the value comes from; "Profile" is the resolved `AIMProfile` or `AIMClusterProfile`.
 
 | Variable | Source | Description |
 |----------|--------|-------------|
 | `AIM_CACHE_PATH` | Constant | Base path for cached model artifacts. |
 | `VLLM_ENABLE_METRICS` | Constant | Always `true` — enables vLLM Prometheus metrics. |
-| `AIM_ID` | Profile (v1alpha2) / Template (v1alpha1) | AIM product family identifier (e.g., `meta-llama/Llama-3-8B`). Determines the model-specific profile search path and serves as a fallback model identifier. Mutually exclusive with `AIM_MODEL_ID`. |
-| `AIM_ENGINE` | Profile (v1alpha2) | Runtime engine selected from the resolved profile's `spec.engine` (for example `vllm` or `vllm_omni`). |
-| `AIM_PROFILE_ID` | Profile (v1alpha2) / Template (v1alpha1) | Active profile identifier. For custom-profile templates (v1alpha1), set to `custom/{aimId}/{profileName}` to bypass the runtime's normal profile selection logic. In v1alpha2, discovered profiles preserve `spec.profileId` as the projected filename; hand-authored profiles without it receive an engine-aware generated filename. |
-| `AIM_METRIC` | Profile / Template | Optimization metric (`latency` or `throughput`). |
-| `AIM_PRECISION` | Profile / Template | Model precision (e.g., `fp16`, `fp8`). |
-| `AIM_MODEL_ID` | Profile / Template | Model identifier for custom models (base container deployments). Mutually exclusive with `AIM_ID`. |
-| `AIM_ENGINE_ARGS` | Merged | JSON-encoded engine arguments. v1alpha2: merged from service `profileOverrides.engineArgs`, profile `engineArgs`, runtime config, and profile defaults. v1alpha1: merged from service, template, runtime config, and profile. |
+| `AIM_ID` | Profile | AIM product family identifier (e.g., `meta-llama/Llama-3-8B`). Determines the model-specific profile search path and serves as a fallback model identifier. Mutually exclusive with `AIM_MODEL_ID`. |
+| `AIM_ENGINE` | Profile | Runtime engine selected from the resolved profile's `spec.engine` (for example `vllm` or `vllm_omni`). |
+| `AIM_PROFILE_ID` | Profile | Active profile identifier, `custom/{aimId}/{filename}`, naming the profile file the operator projects for the runtime so the runtime skips its own profile selection. Discovered profiles preserve `spec.profileId` as the filename; hand-authored profiles without it receive an engine-aware generated filename. |
+| `AIM_METRIC` | Profile | Optimization metric (`latency` or `throughput`). |
+| `AIM_PRECISION` | Profile | Model precision (e.g., `fp16`, `fp8`). |
+| `AIM_MODEL_ID` | Profile | Model identifier for custom models (base container deployments). Mutually exclusive with `AIM_ID`. |
+| `AIM_ENGINE_ARGS` | Merged | JSON-encoded engine arguments, merged from service `profileOverrides.engineArgs`, profile `engineArgs`, runtime config, and profile defaults. |
 | `AIM_ADAPTER_MAX_RANK` | Adapter controller | Static mode: inferred from the largest declared adapter rank. Dynamic mode: `AIMService.spec.adapterRuntime.maxRank`, then namespace/cluster RuntimeConfig, then default `32`. |
 
 ### Environment Variable Merge Order
 
 For variables that are not framework-owned, the most specific value wins:
 
-:::{admonition} Framework-owned v1alpha2 variables
+:::{admonition} Framework-owned variables
 :class: important
 
 `AIM_ENGINE`, `AIM_PROFILE_ID`, `AIM_ID`, `AIM_MODEL_ID`, and
@@ -105,22 +105,11 @@ normal environment merging. Values with those names in service or profile
 corresponding profile fields instead.
 :::
 
-::::{tab-set}
-:::{tab-item} v1alpha2
 1. `AIMService.spec.env` (highest priority)
 2. `AIMService.spec.profileOverrides.engineEnv` / `containerEnv` (overlay on top of the resolved profile)
 3. Resolved `AIMProfile` / `AIMClusterProfile` env (`spec.engineEnv`, `spec.containerEnv`, plus profile-derived vars such as metric/precision)
 4. Merged runtime config env (`AIMRuntimeConfig.spec.env` overriding `AIMClusterRuntimeConfig.spec.env`)
 5. Operator defaults (lowest priority)
-:::
-
-:::{tab-item} v1alpha1 (legacy)
-1. `AIMService.spec.env` (highest priority)
-2. `AIMServiceTemplate.spec.env` (plus template-derived vars such as metric/precision/profile)
-3. Merged runtime config env (`AIMRuntimeConfig.spec.env` overriding `AIMClusterRuntimeConfig.spec.env`)
-4. Operator defaults (lowest priority)
-:::
-::::
 
 ## Next Steps
 

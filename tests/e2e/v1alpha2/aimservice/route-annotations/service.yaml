@@ -1,0 +1,18 @@
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: route-annotations
+spec:
+  profile:
+    name: route-annotations
+  replicas: 1
+  routing:
+    annotations:
+      service-key: service-value
+      shared-key: from-service
+  caching:
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "2"

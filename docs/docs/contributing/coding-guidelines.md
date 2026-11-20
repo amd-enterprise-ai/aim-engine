@@ -69,7 +69,7 @@ Use **verb phrases** that state the action and, when helpful, the subject:
 | `fetch`    | Read from the Kubernetes API or another remote source |
 | `build`    | Construct a spec or object in memory (no API calls)   |
 | `plan`     | Decide desired state (pure; no side effects)          |
-| `resolve`  | Choose among alternatives (profile, template, image)  |
+| `resolve`  | Choose among alternatives (profile, model, image)     |
 | `match`    | Compare user intent against cluster state             |
 | `validate` | Check inputs; return error if invalid                 |
 
@@ -121,7 +121,7 @@ Qualify on first use and whenever the referent changes:
 | "profile" | `AIMProfile` / `AIMClusterProfile`, or "hardware profile" only when that is the intent |
 | "model" | `AIMModel` / `AIMClusterModel`, model image, or HuggingFace model ID |
 | "cache" | `AIMProfileCache`, `AIMArtifact` cache PVC, or HTTP cache — never just "the cache" |
-| "template" | `AIMServiceTemplate` (v1alpha1) vs profile derivation / `profileCopy` (v1alpha2) |
+| "template" | Pod template, routing path template (`spec.routing.pathTemplate`), or Helm template |
 
 The same rule applies to comments, commit messages, PR descriptions, and docs.
 
@@ -228,7 +228,7 @@ Prioritize behavior that affects production clusters:
 
 | Area                  | Test focus                                                        |
 | --------------------- | ----------------------------------------------------------------- |
-| Matching / resolution | Profile→node affinity, template selection, image resolution      |
+| Matching / resolution | Profile→node affinity, profile selection, image resolution       |
 | Planning              | Correct objects created, skipped, or deleted given observation    |
 | Failure modes         | API errors, missing dependencies, invalid spec, partial readiness |
 | Edge cases            | Empty lists, stale status, version transitions, mixed hardware    |

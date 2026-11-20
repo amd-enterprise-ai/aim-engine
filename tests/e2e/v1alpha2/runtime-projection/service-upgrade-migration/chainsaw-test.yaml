@@ -134,7 +134,7 @@ spec:
       try:
         - assert:
             resource:
-              apiVersion: aim.eai.amd.com/v1alpha1
+              apiVersion: aim.eai.amd.com/v1alpha2
               kind: AIMService
               metadata:
                 name: mig-svc
@@ -197,7 +197,7 @@ spec:
                   app.kubernetes.io/component: inference
                   aim.eai.amd.com/service: mig-svc
                 ownerReferences:
-                  - apiVersion: aim.eai.amd.com/v1alpha1
+                  - apiVersion: aim.eai.amd.com/v1alpha2
                     kind: AIMService
                     name: mig-svc
                     uid: $UID

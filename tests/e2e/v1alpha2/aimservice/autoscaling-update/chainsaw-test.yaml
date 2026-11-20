@@ -1,0 +1,85 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# Editing minReplicas/maxReplicas on a running autoscaled service reaches the
+# InferenceService and the reported replica bounds.
+#
+# aim-dummy 0.2.1 serves the vllm:num_requests_running metric the ScaledObject
+# queries. No accelerator is involved and the cache download is simulated, so
+# this runs in the kind lane without a `requires` gate.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimservice-autoscaling-update
+spec:
+  timeouts:
+    assert: 180s
+    # The AIMProfileCache -> AIMArtifact -> PVC finalizer chain makes namespace
+    # teardown slow on a loaded cluster.
+    cleanup: 240s
+  steps:
+    - name: Create the profile and a service scaling between 1 and 3
+      try:
+        - apply:
+            file: profile.yaml
+        - apply:
+            file: service.yaml
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: autoscaling-update
+              spec:
+                predictor:
+                  minReplicas: 1
+                  maxReplicas: 3
+        - assert:
+            # KEDA and the HPA reconcile after the predictor is ready, and
+            # status.runtime mirrors the live HPA.
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: autoscaling-update
+              status:
+                status: Running
+                runtime:
+                  minReplicas: 1
+                  maxReplicas: 3
+
+    - name: Change the bounds to 2 and 5
+      try:
+        - patch:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: autoscaling-update
+              spec:
+                minReplicas: 2
+                maxReplicas: 5
+        - assert:
+            resource:
+              apiVersion: serving.kserve.io/v1beta1
+              kind: InferenceService
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: autoscaling-update
+              spec:
+                predictor:
+                  minReplicas: 2
+                  maxReplicas: 5
+        - assert:
+            timeout: 300s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMService
+              metadata:
+                name: autoscaling-update
+              status:
+                status: Running
+                runtime:
+                  minReplicas: 2
+                  maxReplicas: 5

@@ -1,0 +1,59 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: v1alpha2-aimmodel-runtime-config-recovery
+spec:
+  description: |
+    An image-backed AIMModel that names a runtime config which does not exist
+    is Failed with ConfigValid=False/ReferenceNotFound. Creating the
+    AIMClusterRuntimeConfig recovers it to Ready without touching the model.
+    Extraction is disabled so the runtime config is the only failing input.
+  timeouts:
+    assert: 60s
+  steps:
+    - name: Create the model with a missing runtime config
+      try:
+        - apply:
+            file: model.yaml
+
+    - name: Assert the model is Failed on the missing reference
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: runtime-config-recovery
+              status:
+                status: Failed
+                (conditions[?type == 'RuntimeConfigReady']):
+                  - status: "False"
+                    reason: ConfigNotFound
+                (conditions[?type == 'ConfigValid']):
+                  - status: "False"
+                    reason: ReferenceNotFound
+                (conditions[?type == 'Ready']):
+                  - status: "False"
+
+    - name: Create the missing runtime config
+      try:
+        - apply:
+            file: runtimeconfig.yaml
+
+    - name: Assert the model recovers to Ready
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMModel
+              metadata:
+                name: runtime-config-recovery
+              status:
+                status: Ready
+                (conditions[?type == 'RuntimeConfigReady']):
+                  - status: "True"
+                    reason: ConfigFound
+                (conditions[?type == 'ConfigValid']):
+                  - status: "True"
+                (conditions[?type == 'Ready']):
+                  - status: "True"

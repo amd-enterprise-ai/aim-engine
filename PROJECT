@@ -37,15 +37,6 @@ resources:
   controller: true
   domain: eai.amd.com
   group: aim
-  kind: AIMClusterServiceTemplate
-  path: eai.amd.com/aim/api/v1alpha1
-  version: v1alpha1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: eai.amd.com
-  group: aim
   kind: AIMArtifact
   path: eai.amd.com/aim/api/v1alpha1
   version: v1alpha1
@@ -74,24 +65,6 @@ resources:
   domain: eai.amd.com
   group: aim
   kind: AIMService
-  path: eai.amd.com/aim/api/v1alpha1
-  version: v1alpha1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: eai.amd.com
-  group: aim
-  kind: AIMServiceTemplate
-  path: eai.amd.com/aim/api/v1alpha1
-  version: v1alpha1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: eai.amd.com
-  group: aim
-  kind: AIMTemplateCache
   path: eai.amd.com/aim/api/v1alpha1
   version: v1alpha1
 version: "3"

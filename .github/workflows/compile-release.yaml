@@ -145,8 +145,8 @@ jobs:
       - name: Verify generated CRD and RBAC are current
         run: git diff --exit-code -- config/crd/bases config/rbac/role.yaml
 
-      - name: Verify minimal v1alpha1 bridge contract
-        run: make test-bridge-contract
+      - name: Verify least-privilege operator RBAC
+        run: make test-rbac-contract
 
       - name: Log in to DockerHub
         uses: docker/login-action@v3
@@ -346,6 +346,7 @@ jobs:
             config/prereqs/scale-from-zero/envoy-gateway-route-metrics.yaml
             config/prereqs/scale-from-zero/envoy-gateway-metrics-collector.yaml
             config/prereqs/scale-from-zero/kgateway-metrics-collector.yaml
+            hack/upgrade-preflight.sh
           token: '${{ secrets.GITHUB_TOKEN }}'
           draft: true
           prerelease: false
@@ -635,7 +636,7 @@ jobs:
           kubectl create namespace "${NS}"
           trap 'kubectl delete namespace "${NS}" --ignore-not-found --wait=false 2>/dev/null || true' EXIT
           cat <<EOF | kubectl apply -n "${NS}" -f -
-          apiVersion: aim.eai.amd.com/v1alpha1
+          apiVersion: aim.eai.amd.com/v1alpha2
           kind: AIMModel
           metadata:
             name: reconcile-smoke-model
@@ -643,7 +644,6 @@ jobs:
             image: docker.io/amdenterpriseai/aim-dummy:${AIM_DUMMY_TAG}
             discovery:
               extractMetadata: false
-              createServiceTemplates: false
           EOF
           echo "Waiting for AIMModel status (proves manager RBAC + reconciliation)..."
           ok=
@@ -697,7 +697,7 @@ jobs:
           echo "=== Operator Logs (full) ==="
           kubectl logs -n aim-system -l control-plane=controller-manager --tail=200 || true
           echo "=== All AIM resources ==="
-          kubectl get aimservice,aimmodel,aimtemplatecache,aimartifact -A || true
+          kubectl get aimservice,aimmodel,aimprofilecache,aimartifact -A || true
           echo "=== Pods across all namespaces ==="
           kubectl get pods -A || true
           echo "=== Non-running pods ==="

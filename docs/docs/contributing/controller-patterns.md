@@ -77,7 +77,7 @@ func (r *Reconciler) PlanResources(
 
 When you implement `GetComponentHealth()`, the state engine automatically:
 
-- ✅ Creates component conditions (ModelReady, TemplateReady, etc.)
+- ✅ Creates component conditions (ProfileReady, ProfileCacheReady, etc.)
 - ✅ Creates parent conditions when needed (AuthValid, ConfigValid, DependenciesReachable) based on any errors encountered
 - ✅ Sets Ready condition and status field
 - ✅ Categorizes errors and decides requeue behavior
@@ -100,14 +100,14 @@ Just implement `GetComponentHealth()`.
 
 Implement `GetComponentHealth()` + `DecorateStatus()` to add custom fields.
 
-**Use when**: You need automatic state management but want to add domain-specific status fields like `ResolvedTemplate`.
+**Use when**: You need automatic state management but want to add domain-specific status fields like `ResolvedProfile`.
 
 ```go
 func (r *Reconciler) DecorateStatus(status *MyStatus, cm *ConditionManager, obs MyObservation) {
-    // State engine already set ModelReady, Ready, status.Status
+    // State engine already set ProfileReady, Ready, status.Status
     // Just add your custom fields
-    if obs.template != nil {
-        status.ResolvedTemplate = &ResolvedReference{Name: obs.template.Name}
+    if obs.profile != nil {
+        status.ResolvedProfile = &ResolvedReference{Name: obs.profile.Name}
     }
 }
 ```
@@ -139,9 +139,9 @@ Fetch resources from Kubernetes. Use `FetchResult[T]` wrapper:
 
 ```go
 type MyFetch struct {
-    Model    controllerutils.FetchResult[*aimv1.AIMModel]
-    Template controllerutils.FetchResult[*aimv1.AIMServiceTemplate]
-    Pods     controllerutils.FetchResult[*corev1.PodList]
+    Model   controllerutils.FetchResult[*aimv1.AIMModel]
+    Profile controllerutils.FetchResult[*aimv1.AIMProfile]
+    Pods    controllerutils.FetchResult[*corev1.PodList]
 }
 
 func (r *Reconciler) FetchRemoteState(
@@ -150,9 +150,9 @@ func (r *Reconciler) FetchRemoteState(
     reconcileCtx controllerutils.ReconcileContext[*aimv1.MyResource],
 ) MyFetch {
     return MyFetch{
-        Model:    controllerutils.Fetch(ctx, c, modelKey, &aimv1.AIMModel{}),
-        Template: controllerutils.Fetch(ctx, c, templateKey, &aimv1.AIMServiceTemplate{}),
-        Pods:     controllerutils.FetchList(ctx, c, &corev1.PodList{}, client.InNamespace(reconcileCtx.Object.Namespace)),
+        Model:   controllerutils.Fetch(ctx, c, modelKey, &aimv1.AIMModel{}),
+        Profile: controllerutils.Fetch(ctx, c, profileKey, &aimv1.AIMProfile{}),
+        Pods:    controllerutils.FetchList(ctx, c, &corev1.PodList{}, client.InNamespace(reconcileCtx.Object.Namespace)),
     }
 }
 ```
@@ -369,6 +369,9 @@ cm.MarkTrue(condType, reason, msg, controllerutils.Silent())
 // Error log + Warning event on transition
 cm.MarkFalse(condType, reason, msg, controllerutils.AsWarning())
 
+// Info log + Warning event on transition (for states the user fixes in a spec)
+cm.MarkFalse(condType, reason, msg, controllerutils.AsUserWarning())
+
 // Error log + Warning event EVERY reconcile (for critical errors)
 cm.MarkFalse(condType, reason, msg, controllerutils.AsError())
 ```
@@ -415,7 +418,7 @@ type ManualStatusController[T, S, Obs] interface {
 
 ## Resolved Reference Pattern
 
-When a controller depends on upstream resources (e.g., AIMService → AIMModel → AIMServiceTemplate → AIMTemplateCache), use the **resolved reference pattern** to optimize fetching while maintaining health visibility.
+When a controller depends on upstream resources (e.g., AIMService → AIMProfile → AIMProfileCache), use the **resolved reference pattern** to optimize fetching while maintaining health visibility.
 
 ### Core Principles
 
@@ -425,7 +428,7 @@ When a controller depends on upstream resources (e.g., AIMService → AIMModel �
 
 3. **Always return something for health visibility**: Even if no Ready resource is found, return the best available match so component health can reflect the current state.
 
-4. **Gate fetching on downstream existence**: For resources only needed during initial creation (e.g., Model/Template for InferenceService), skip fetching if the downstream resource already exists.
+4. **Gate fetching on downstream existence**: For resources only needed during initial creation (e.g., inputs baked into an InferenceService when it is created), skip fetching if the downstream resource already exists.
 
 ### Implementation Pattern
 
@@ -482,10 +485,10 @@ func (r *Reconciler) DecorateStatus(status *MyStatus, cm *ConditionManager, obs 
 
 | Scenario | Behavior |
 |----------|----------|
-| Multiple caches exist for same template | Select the healthiest (Ready) one |
+| Multiple caches exist for the same upstream | Select the healthiest (Ready) one |
 | Resolved cache becomes Failed | Re-search for a Ready alternative |
-| Resolved template deleted | Fall through to re-select |
-| ISVC exists, template deleted | Don't fetch template (config baked into ISVC) |
+| Resolved upstream deleted | Fall through to re-select |
+| ISVC exists, upstream deleted | Don't fetch the upstream (config baked into ISVC) |
 | ISVC deleted, need to recreate | Fetch and resolve dependencies again |
 
 ### Gating Fetch on Downstream Existence
@@ -501,12 +504,11 @@ func (r *Reconciler) FetchRemoteState(ctx, c, reconcileCtx) FetchResult {
     result.httpRoute = fetchHTTPRoute(ctx, c, service)
 
     // Always fetch resources that cascade health (e.g., cache chain)
-    result.templateCache = fetchTemplateCache(ctx, c, service)
+    result.cache = fetchCache(ctx, c, service)
 
     // Only fetch upstream if downstream needs (re)creation
     if !result.inferenceService.OK() {
-        result.model = fetchModel(ctx, c, service)
-        result.template = fetchTemplate(ctx, c, service, result.model)
+        result.upstream = fetchUpstream(ctx, c, service)
     }
 
     return result
@@ -516,4 +518,4 @@ func (r *Reconciler) FetchRemoteState(ctx, c, reconcileCtx) FetchResult {
 This optimization:
 - Avoids false errors when upstream resources are deleted after successful creation
 - Reduces API calls for running services
-- Still catches cache health issues proactively (TemplateCache → Artifact → PVC chain)
+- Still catches cache health issues proactively (AIMProfileCache → AIMArtifact → PVC chain)

@@ -30,7 +30,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -39,42 +38,25 @@ import (
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/imagemetadata"
 	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
-	legacyaimmodel "github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimmodel"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha1/aimruntimeconfig"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
 )
 
 type ClusterModelReconciler struct {
-	// Client is forwarded into the legacy v1alpha1 ClusterModelReconciler we
-	// wrap (see legacy()). The legacy reconciler needs it to resolve
-	// fine-tuned template deployment images per-match: each copy fetches its
-	// source owner's baseImageRef on demand.
-	Client    client.Client
 	Clientset kubernetes.Interface
-	Scheme    *runtime.Scheme
-}
-
-// legacy returns a fresh v1alpha1 ClusterModelReconciler with the same
-// dependencies we hold. See ModelReconciler.legacy() for rationale.
-func (r *ClusterModelReconciler) legacy() *legacyaimmodel.ClusterModelReconciler {
-	return &legacyaimmodel.ClusterModelReconciler{
-		Client:    r.Client,
-		Clientset: r.Clientset,
-		Scheme:    r.Scheme,
-	}
 }
 
 type ClusterModelFetchResult struct {
 	model                   *aimv1alpha2.AIMClusterModel
-	legacyModel             *aimv1alpha1.AIMClusterModel
 	discovery               DiscoveryDecision
 	nodes                   controllerutils.FetchResult[[]corev1.Node]
 	existingClusterProfiles controllerutils.FetchResult[[]managedProfile]
 	childProfileSet         controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfileSet]
 	runtimeConfig           controllerutils.FetchResult[*aimv1alpha1.AIMRuntimeConfigCommon]
-	legacyFetch             *legacyaimmodel.ClusterModelFetchResult
+	imageMetadata           controllerutils.FetchResult[*aimv1alpha1.ImageMetadata]
 }
 
 type ClusterModelObservation struct {
@@ -106,21 +88,16 @@ type ClusterModelObservation struct {
 	pruneSafe                       bool
 	BuildErr                        error
 	componentHealth                 []controllerutils.ComponentHealth
-	legacyObservation               *legacyaimmodel.ClusterModelObservation
 }
 
 func (obs ClusterModelObservation) GetComponentHealth(_ context.Context, _ kubernetes.Interface) []controllerutils.ComponentHealth {
 	return obs.componentHealth
 }
 
-// GetApplyOptions delegates to the legacy reconciler because RuntimeConfig
-// (the only current driver of ApplyOptions) is a v1alpha1-shaped concept and
-// is fetched on the legacy side.
+// GetApplyOptions uses the runtime config fetched for image and modelId
+// models; RuntimeConfig is the only current driver of ApplyOptions.
 func (r *ClusterModelReconciler) GetApplyOptions(obs ClusterModelObservation) controllerutils.ApplyOptions {
-	if obs.legacyObservation != nil {
-		return r.legacy().GetApplyOptions(*obs.legacyObservation)
-	}
-	if obs.model != nil && obs.model.Spec.ModelID != "" {
+	if obs.model != nil && (obs.model.Spec.ModelID != "" || obs.model.Spec.Image != "") {
 		return aimruntimeconfig.GetApplyOptions(obs.runtimeConfig.Value)
 	}
 	return controllerutils.ApplyOptions{}
@@ -132,30 +109,19 @@ func (r *ClusterModelReconciler) FetchRemoteState(
 	reconcileCtx controllerutils.ReconcileContext[*aimv1alpha2.AIMClusterModel],
 ) ClusterModelFetchResult {
 	model := reconcileCtx.Object
-
-	// Run the legacy fetch in parallel with the native one only when the
-	// spec carries any v1alpha1-shaped inputs. See the package-level docs
-	// in legacy_mode.go for why the two pipelines co-execute when both
-	// have work to do, and why the legacy side must be skipped for pure
-	// v1alpha2 specs (profileCopy-only) — otherwise the legacy ImageMetadata
-	// fetch tries to parse an empty image reference and surfaces spurious
-	// failures.
 	result := ClusterModelFetchResult{
 		model: model,
 	}
-	if hasLegacyInputs(model.Spec) {
-		result.legacyModel = asLegacyClusterModel(model)
-		legacyFetch := r.legacy().FetchRemoteState(ctx, c, controllerutils.ReconcileContext[*aimv1alpha1.AIMClusterModel]{Object: result.legacyModel})
-		result.legacyFetch = &legacyFetch
+	if model.Spec.Image != "" {
+		result.imageMetadata = imagemetadata.Fetch(ctx, r.Clientset, model.Spec, &model.Status, constants.GetOperatorNamespace())
 	}
 	// Profile generation and the discovery Job tolerations use the runtime config.
 	result.runtimeConfig = aimruntimeconfig.FetchMergedRuntimeConfig(ctx, c, model.Spec.Name, "")
-	// See ModelReconciler.FetchRemoteState for why custom / fine-tuned models
-	// skip native discovery — their image is typically a base image without
-	// AIM_ID / model-specific profiles, and readiness is owned by the legacy
-	// AIMServiceTemplate path. Also honour spec.discovery.extractMetadata=false
-	// (see shouldRunNativeDiscovery).
-	if model.Spec.Image != "" && !legacyaimmodel.IsCustomModel(&model.Spec) && shouldRunNativeDiscovery(&model.Spec) {
+	// See ModelReconciler.FetchRemoteState for why models with
+	// spec.modelSources skip discovery — their image is typically a base
+	// image without AIM_ID / model-specific profiles. Also honour
+	// spec.discovery.extractMetadata=false (see shouldRunNativeDiscovery).
+	if nativeDiscoveryApplicable(&model.Spec) {
 		inputs := DiscoveryInputs{
 			Kind:             DiscoveryKindAIMClusterModel,
 			ModelName:        model.Name,
@@ -168,6 +134,8 @@ func (r *ClusterModelReconciler) FetchRemoteState(
 			OwnerRef:         ownerReferenceForClusterModel(model),
 			CurrentState:     model.Status.Discovery,
 			Clientset:        r.Clientset,
+			BlockedByImageMetadata: imageMetadataBlocks(
+				imagemetadata.ResultForHealth(result.imageMetadata, &model.Status).Error),
 		}
 		fetch := FetchDiscoveryState(ctx, c, inputs)
 		result.discovery = DecideDiscovery(ctx, c, inputs, fetch)
@@ -197,11 +165,6 @@ func (r *ClusterModelReconciler) ComposeState(
 	fetch ClusterModelFetchResult,
 ) ClusterModelObservation {
 	obs := ClusterModelObservation{ClusterModelFetchResult: fetch}
-
-	if fetch.legacyFetch != nil {
-		legacyObs := r.legacy().ComposeState(ctx, controllerutils.ReconcileContext[*aimv1alpha1.AIMClusterModel]{Object: fetch.legacyModel}, *fetch.legacyFetch)
-		obs.legacyObservation = &legacyObs
-	}
 	obs.Kind = classifyModelKind(&fetch.model.Spec)
 	derivation := derivationSpec(&fetch.model.Spec)
 	desiredProfilesKnown := derivation != nil
@@ -256,13 +219,9 @@ func (r *ClusterModelReconciler) ComposeState(
 				if fetch.nodes.Error != nil {
 					obs.BuildErr = controllerutils.NewInfrastructureError("NodeListFailed", "failed to list cluster nodes", fetch.nodes.Error)
 				} else {
-					var legacyMetadata *aimv1alpha1.ImageMetadata
-					if fetch.legacyFetch != nil {
-						legacyMetadata = fetch.legacyFetch.ImageMetadata()
-					}
 					obs.DesiredProfiles, obs.BuildErr = buildDesiredOfficialClusterModelProfiles(
 						fetch.model, catalog, fetch.nodes.Value,
-						recommendedDeploymentsFrom(legacyMetadata),
+						recommendedDeploymentsFrom(resolveImageMetadata(fetch.imageMetadata, &fetch.model.Status)),
 						fetch.existingClusterProfiles.Value...,
 					)
 					desiredProfilesKnown = obs.BuildErr == nil
@@ -323,15 +282,14 @@ func (r *ClusterModelReconciler) ComposeState(
 	)
 	preserveCopyability(obs.DesiredProfiles, fetch.existingClusterProfiles.Value)
 	obs.componentHealth = buildClusterModelComponentHealth(obs)
-	if obs.legacyObservation != nil {
-		obs.componentHealth = append(obs.componentHealth, obs.legacyObservation.GetComponentHealth()...)
+	if fetch.model.Spec.Image != "" {
+		obs.componentHealth = append(obs.componentHealth,
+			fetch.runtimeConfig.ToUpstreamComponentHealth(componentRuntimeConfig, aimruntimeconfig.GetRuntimeConfigHealth),
+			imageMetadataHealth(&fetch.model.Spec, imagemetadata.ResultForHealth(fetch.imageMetadata, &fetch.model.Status).
+				ToUpstreamComponentHealth(componentImageMetadata, imagemetadata.GetHealth)),
+		)
 	}
-	applyModelServingPathPolicy(
-		&fetch.model.Spec,
-		obs.legacyObservation != nil,
-		componentClusterServiceTemplates,
-		obs.componentHealth,
-	)
+	applyModelServingPathPolicy(&fetch.model.Spec, obs.componentHealth)
 	return obs
 }
 
@@ -347,17 +305,6 @@ func (r *ClusterModelReconciler) PlanResources(
 	if obs.CompletedJobToDelete != nil {
 		plan.Delete(obs.CompletedJobToDelete)
 	}
-
-	// Always merge the legacy plan first; see ModelReconciler.PlanResources
-	// for the full rationale. In short, the legacy plan emits independent
-	// outputs (cluster-scoped AIMServiceTemplates from RecommendedDeployments
-	// / customTemplates / aimId-matching) that must not be gated on native
-	// discovery progress or pruneSafe.
-	if obs.legacyObservation != nil {
-		legacyPlan := r.legacy().PlanResources(ctx, controllerutils.ReconcileContext[*aimv1alpha1.AIMClusterModel]{Object: obs.legacyModel}, *obs.legacyObservation)
-		plan.Merge(legacyPlan)
-	}
-
 	if obs.BuildErr != nil {
 		return plan
 	}
@@ -401,9 +348,6 @@ func (r *ClusterModelReconciler) DecorateStatus(
 	cm *controllerutils.ConditionManager,
 	obs ClusterModelObservation,
 ) {
-	if obs.legacyObservation != nil {
-		r.legacy().DecorateStatus(status, cm, *obs.legacyObservation)
-	}
 	status.Kind = obs.Kind
 	status.AimId = obs.ResolvedAimID
 	status.BaseImage = obs.ResolvedBaseImage
@@ -415,15 +359,13 @@ func (r *ClusterModelReconciler) DecorateStatus(
 	if obs.DiscoveryState != nil {
 		status.Discovery = obs.DiscoveryState
 	}
-	controllerutils.SetTemplateMigrationRequired(cm, requiresTemplateMigration(&obs.model.Spec))
-	retireRemovedModelPathState(
-		status,
-		cm,
-		&obs.model.Spec,
-		obs.legacyObservation != nil,
-		componentClusterServiceTemplates,
-		obs.componentHealth,
-	)
+	if obs.model.Spec.Image != "" {
+		decorateImageModelStatus(status, cm, &obs.model.Spec, obs.imageMetadata)
+	}
+	clearTemplateEraStatus(cm)
+	setTemplateFieldsIgnoredCondition(cm, &obs.model.Spec)
+	setProfilesAvailableCondition(cm, &obs.model.Spec, obs.existingClusterProfiles)
+	retireRemovedModelPathState(status, cm, &obs.model.Spec, obs.componentHealth)
 	EnsureBaseImageBridge(&obs.model.Spec, status)
 }
 

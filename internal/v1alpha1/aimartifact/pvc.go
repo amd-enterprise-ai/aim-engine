@@ -114,7 +114,7 @@ func buildCachePvc(mc *aimv1alpha1.AIMArtifact, pvcSize resource.Quantity, stora
 		sc = &storageClassName
 	}
 
-	// Determine cache type based on whether this was created by a template cache
+	// Determine cache type based on whether an AIMTemplateCache of an earlier release created this artifact
 	cacheType := constants.LabelValueCacheTypeTemplateCache
 	if mc.Labels == nil || mc.Labels["template-created"] != "true" {
 		cacheType = "" // Standalone artifact (not template or service cache)

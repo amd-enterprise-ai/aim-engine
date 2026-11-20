@@ -30,6 +30,8 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -139,7 +141,7 @@ func resolveProfileCandidates(
 	ctx context.Context,
 	c client.Client,
 	recorder record.EventRecorder,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 ) (
 	controllerutils.FetchResult[*aimv1alpha2.AIMProfile],
 	controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile],
@@ -169,7 +171,7 @@ func resolveProfileCandidates(
 // resolutionShapeFor maps an AIMService spec to its resolution shape.
 // Shape detection runs ahead of any cluster I/O so the caller can short-
 // circuit on `resolutionShapeNone` without burning a List.
-func resolutionShapeFor(service *aimv1alpha1.AIMService) profileResolutionShape {
+func resolutionShapeFor(service *aimv1alpha2.AIMService) profileResolutionShape {
 	if service == nil {
 		return resolutionShapeNone
 	}
@@ -203,12 +205,11 @@ func resolutionShapeFor(service *aimv1alpha1.AIMService) profileResolutionShape 
 // the AIMService spec carries a model shortcut. Callers that only care
 // about the name shape can use serviceModelName.
 //
-// The image shape is what makes the v1alpha2 quick-start docs work: a
-// service authored with `spec.model.image` is dispatched onto the profile
-// pipeline via the `aim.eai.amd.com/reconciler-pipeline: profile`
-// annotation, the resolver looks up an AIMModel by spec.image, and falls
-// through to the model-selector path once a match exists.
-func serviceModelAnchor(service *aimv1alpha1.AIMService) (name, image string) {
+// The image shape is what makes the v1alpha2 quick-start docs work: for a
+// service authored with `spec.model.image`, the resolver looks up an
+// AIMModel by spec.image, and falls through to the model-selector path once
+// a match exists.
+func serviceModelAnchor(service *aimv1alpha2.AIMService) (name, image string) {
 	if service == nil || service.Spec.Model == nil {
 		return "", ""
 	}
@@ -226,7 +227,7 @@ func serviceModelAnchor(service *aimv1alpha1.AIMService) (name, image string) {
 // watch fan-out only care about the named-anchor case (the image anchor
 // is desugared via auto-created AIMModels before reaching the selector
 // composition step).
-func serviceModelName(service *aimv1alpha1.AIMService) string {
+func serviceModelName(service *aimv1alpha2.AIMService) string {
 	name, _ := serviceModelAnchor(service)
 	return name
 }
@@ -237,7 +238,7 @@ func serviceModelName(service *aimv1alpha1.AIMService) string {
 func resolveByName(
 	ctx context.Context,
 	c client.Client,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 ) (
 	controllerutils.FetchResult[*aimv1alpha2.AIMProfile],
 	controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile],
@@ -286,8 +287,7 @@ func resolveByName(
 //     the AIMService. Surfaces ProfileNotFound with a "creating model;
 //     waiting for discovery" message so users see the progress.
 //   - Multiple matches: ProfileNotFound with a clear "pin via
-//     spec.model.name" message. This mirrors the v1alpha1
-//     ErrMultipleModelsFound shape — we never guess which of N models
+//     spec.model.name" message — we never guess which of N models
 //     the user intended.
 //
 // Namespace AIMModel wins over AIMClusterModel of the same image (mirrors
@@ -298,7 +298,7 @@ func resolveByImage(
 	ctx context.Context,
 	c client.Client,
 	recorder record.EventRecorder,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	res profileResolution,
 ) (
 	controllerutils.FetchResult[*aimv1alpha2.AIMProfile],
@@ -359,8 +359,7 @@ func resolveByImage(
 		finalRes.shape = resolutionShapeModelImage
 		return nsRes, clusterRes, finalRes
 	default:
-		// Multiple matches: don't guess. Mirror the v1alpha1
-		// ErrMultipleModelsFound posture and tell the user how to
+		// Multiple matches: don't guess. Tell the user how to
 		// disambiguate (author the spec.model.name explicitly).
 		names := make([]string, len(matches))
 		for i, m := range matches {
@@ -463,7 +462,7 @@ func resolveBySelector(
 	ctx context.Context,
 	c client.Client,
 	recorder record.EventRecorder,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	res profileResolution,
 ) (
 	controllerutils.FetchResult[*aimv1alpha2.AIMProfile],
@@ -630,15 +629,57 @@ func resolveBySelector(
 	// confusing case under the default optimized floor (e.g. a catalog of only
 	// general/unoptimized CPU profiles), so surface an actionable message that
 	// names the floor and the opt-out knob instead of a bare "no match".
+	res.notFoundMessage = "no AIMProfile or AIMClusterProfile matched the selector"
 	if excluded := countFloorExcluded(selector, nsRaw, clusterRaw); excluded > 0 {
 		res.notFoundMessage = fmt.Sprintf(
 			"no AIMProfile or AIMClusterProfile met the minimumType=%s floor: %d candidate(s) matched the selector but rank below it; set spec.profile.selector.minimumType (e.g. \"any\" or \"unoptimized\") to include lower tiers",
 			selector.MinimumType, excluded)
-	} else {
-		res.notFoundMessage = "no AIMProfile or AIMClusterProfile matched the selector"
+	} else if len(nsRaw)+len(clusterRaw) == 0 {
+		if msg := modelWithoutProfilesMessage(ctx, c, service.Namespace, selector, scope); msg != "" {
+			res.notFoundReason = aimv1alpha1.AIMServiceReasonModelHasNoProfiles
+			res.notFoundMessage = msg
+		}
 	}
 	return controllerutils.FetchResult[*aimv1alpha2.AIMProfile]{},
 		controllerutils.FetchResult[*aimv1alpha2.AIMClusterProfile]{}, res
+}
+
+// modelWithoutProfilesMessage names the AIMModel or AIMClusterModel in
+// selector.modelRef when it reports ProfilesAvailable=False, or returns "".
+// The namespace model shadows the cluster model, as in profile resolution.
+// Get errors fall back to the generic not-found message.
+func modelWithoutProfilesMessage(
+	ctx context.Context,
+	c client.Client,
+	namespace string,
+	selector aimv1alpha1.ProfileSelector,
+	scope aimprofile.SelectorScope,
+) string {
+	if selector.ModelRef == nil {
+		return ""
+	}
+	name := selector.ModelRef.Name
+	var (
+		kind         string
+		status       *aimv1alpha1.AIMModelStatus
+		model        aimv1alpha2.AIMModel
+		clusterModel aimv1alpha2.AIMClusterModel
+	)
+	switch {
+	case scope != aimprofile.SelectorScopeCluster &&
+		c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &model) == nil:
+		kind, status = "AIMModel", model.GetStatus()
+	case scope != aimprofile.SelectorScopeNamespace &&
+		c.Get(ctx, client.ObjectKey{Name: name}, &clusterModel) == nil:
+		kind, status = "AIMClusterModel", clusterModel.GetStatus()
+	default:
+		return ""
+	}
+	cond := meta.FindStatusCondition(status.Conditions, aimv1alpha1.AIMModelConditionProfilesAvailable)
+	if cond == nil || cond.Status != metav1.ConditionFalse {
+		return ""
+	}
+	return fmt.Sprintf("%s %q produces no AIMProfiles: %s", kind, name, cond.Message)
 }
 
 // countFloorExcluded returns how many listed candidates satisfied every
@@ -701,7 +742,7 @@ func countFloorExcluded(
 //   - spec.model.name desugars to selector.modelRef.name when the user did
 //     not explicitly author a modelRef. Scope defaults to Auto so the
 //     resolver tries namespace then cluster, just like AIMProfileSet.
-func composeServiceSelector(service *aimv1alpha1.AIMService) aimv1alpha1.ProfileSelector {
+func composeServiceSelector(service *aimv1alpha2.AIMService) aimv1alpha1.ProfileSelector {
 	var selector aimv1alpha1.ProfileSelector
 	if service.Spec.Profile != nil && service.Spec.Profile.Selector != nil {
 		selector = *service.Spec.Profile.Selector.DeepCopy()
@@ -730,7 +771,7 @@ func composeServiceSelector(service *aimv1alpha1.AIMService) aimv1alpha1.Profile
 // serviceHasExplicitMinimumType distinguishes an authored selection contract
 // from the resolver's implicit optimized default. Fallback-policy profiles may
 // bypass only the implicit floor; an explicit floor is always authoritative.
-func serviceHasExplicitMinimumType(service *aimv1alpha1.AIMService) bool {
+func serviceHasExplicitMinimumType(service *aimv1alpha2.AIMService) bool {
 	return service != nil &&
 		service.Spec.Profile != nil &&
 		service.Spec.Profile.Selector != nil &&
@@ -855,11 +896,11 @@ func sortClusterCandidates(profiles []aimv1alpha2.AIMClusterProfile) {
 //  3. AcceleratorModel  — well-known order from
 //     utils.AcceleratorModelPreferenceOrder (MI325X > MI300X > ... ,
 //     R9700 > W7900). Unknown / empty ties at the bottom.
-//  4. Metric            — latency > throughput. Mirrors v1alpha1's
-//     long-standing default; opinionated but stable.
+//  4. Metric            — latency > throughput. Long-standing default;
+//     opinionated but stable.
 //  5. Precision         — fp4 > int4 > fp8 > int8 > fp16 > bf16 > fp32.
 //     Smaller bit-width preferred for performance; fp > bf > int for
-//     accuracy. Mirrors v1alpha1.
+//     accuracy.
 //  6. AcceleratorCount  — smaller count wins. Resource-conservation
 //     default: when tp1 and tp2 both ship and both are Ready, tp1
 //     leaves more cluster capacity for other workloads. A zero count
@@ -968,7 +1009,7 @@ func clusterCandidatesTiedWith(winner *aimv1alpha2.AIMClusterProfile, profiles [
 // are about to use, even when status priority promotes a candidate
 // above the alphabetically-first one. Safe on a nil recorder (covers
 // tests that don't wire one in).
-func maybeEmitAmbiguous(recorder record.EventRecorder, service *aimv1alpha1.AIMService, logger logr.Logger, winner string, candidates []candidateRef) {
+func maybeEmitAmbiguous(recorder record.EventRecorder, service *aimv1alpha2.AIMService, logger logr.Logger, winner string, candidates []candidateRef) {
 	names := make([]string, len(candidates))
 	for i, c := range candidates {
 		names[i] = c.name
@@ -1017,7 +1058,7 @@ type stickyBindingDecision struct {
 func evaluateStickyBinding(
 	ctx context.Context,
 	c client.Client,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	selector aimv1alpha1.ProfileSelector,
 	allowAnyAutoSelection bool,
 ) (*aimv1alpha2.AIMProfile, *aimv1alpha2.AIMClusterProfile, stickyBindingDecision) {
@@ -1151,7 +1192,7 @@ func boundClusterStillMatches(
 //     glitch on the sticky-fetch path)
 func maybeEmitRebound(
 	recorder record.EventRecorder,
-	service *aimv1alpha1.AIMService,
+	service *aimv1alpha2.AIMService,
 	logger logr.Logger,
 	sticky stickyBindingDecision,
 	winnerName string,

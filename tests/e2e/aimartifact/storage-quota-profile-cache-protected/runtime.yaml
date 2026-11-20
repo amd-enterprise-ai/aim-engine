@@ -1,0 +1,10 @@
+# Every artifact without an explicit retentionPriority is evictable at priority 0,
+# including the one the AIMProfileCache creates.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMRuntimeConfig
+metadata:
+  name: default
+spec:
+  pvcHeadroomPercent: 10
+  artifact:
+    defaultRetentionPriority: 0
