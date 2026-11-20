@@ -40,6 +40,7 @@ import (
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/testutil"
 )
 
 const (
@@ -1692,6 +1693,27 @@ func TestDecorateStatusMirrorsObservations(t *testing.T) {
 	}
 	if status.Adapters[1].LastError != ReasonNotFound {
 		t.Errorf("adapter b lastError = %q, want %s", status.Adapters[1].LastError, ReasonNotFound)
+	}
+}
+
+func TestAdapterJobsPassRestrictedPodSecurity(t *testing.T) {
+	// The CA bundle adds the trust init container to the staging Job.
+	config := &aimv1alpha1.AIMRuntimeConfigCommon{
+		AdditionalCABundleRef: &aimv1alpha1.AdditionalCABundleReference{Name: "company-ca", Key: "ca.crt"},
+	}
+	ad := Observation{
+		Name: "lora-a", AdapterPath: "lora-a", ModelID: "org/adapter",
+		BaseModelID: "org/base", SourceURI: "hf://org/lora-a",
+	}
+	svc := serviceWithAdapters("lora-a")
+
+	for name, job := range map[string]*batchv1.Job{
+		"staging":      BuildStagingJob(svc, adapterArtifact("lora-a", "base"), testAdapterPVC, testAdapterPVCUID, ad, config, true),
+		"subtree-sync": BuildSubtreeSyncJob(svc, modelParent(testAdapterPVC), testAdapterPVC, testAdapterPVCUID, config),
+	} {
+		if violations := testutil.RestrictedPodSecurityViolations(t, job.Spec.Template.Spec); len(violations) > 0 {
+			t.Errorf("%s Job breaks Pod Security restricted: %q", name, violations)
+		}
 	}
 }
 
