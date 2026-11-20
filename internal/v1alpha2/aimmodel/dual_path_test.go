@@ -24,19 +24,29 @@ package aimmodel
 
 import (
 	"context"
+	"errors"
+	"net"
+	"net/url"
 	"testing"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	kubernetesfake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	aimv1alpha1 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha1"
 	aimv1alpha2 "github.com/amd-enterprise-ai/aim-engine/api/v1alpha2"
 	"github.com/amd-enterprise-ai/aim-engine/internal/constants"
 	controllerutils "github.com/amd-enterprise-ai/aim-engine/internal/controller/utils"
+	"github.com/amd-enterprise-ai/aim-engine/internal/utils"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/aimprofile"
 	"github.com/amd-enterprise-ai/aim-engine/internal/v1alpha2/profileyaml"
 )
@@ -236,6 +246,48 @@ func TestApplyModelServingPathPolicy(t *testing.T) {
 				{Component: componentProfiles, State: constants.AIMStatusNotAvailable},
 			},
 		},
+		{
+			name:           "unreachable registry cannot block pending native discovery",
+			spec:           aimv1alpha1.AIMModelSpec{Image: "registry.example/native:1.0"},
+			legacyObserved: true,
+			health: []controllerutils.ComponentHealth{
+				{Component: componentRuntimeConfig, State: constants.AIMStatusReady},
+				{Component: componentImageMetadata, Errors: []error{registryUnreachableError()}},
+				{Component: componentServiceTemplates, State: constants.AIMStatusProgressing},
+				{Component: componentDiscovery, State: constants.AIMStatusProgressing},
+				{Component: componentNodeInventory, State: constants.AIMStatusReady},
+			},
+			wantNonBlocking: []string{componentImageMetadata},
+		},
+		{
+			name:           "registry auth failure keeps blocking pending native discovery",
+			spec:           aimv1alpha1.AIMModelSpec{Image: "registry.example/native:1.0"},
+			legacyObserved: true,
+			health: []controllerutils.ComponentHealth{
+				{Component: componentRuntimeConfig, State: constants.AIMStatusReady},
+				{Component: componentImageMetadata, Errors: []error{
+					controllerutils.NewAuthError("Unauthorized", "registry rejected credentials", nil),
+				}},
+				{Component: componentServiceTemplates, State: constants.AIMStatusProgressing},
+				{Component: componentDiscovery, State: constants.AIMStatusProgressing},
+				{Component: componentNodeInventory, State: constants.AIMStatusReady},
+			},
+		},
+		{
+			name:           "runtime config read failure keeps blocking pending native discovery",
+			spec:           aimv1alpha1.AIMModelSpec{Image: "registry.example/native:1.0"},
+			legacyObserved: true,
+			health: []controllerutils.ComponentHealth{
+				{Component: componentRuntimeConfig, Errors: []error{
+					controllerutils.NewInfrastructureError("Timeout", "request timed out", nil),
+				}},
+				{Component: componentImageMetadata, Errors: []error{registryUnreachableError()}},
+				{Component: componentServiceTemplates, State: constants.AIMStatusProgressing},
+				{Component: componentDiscovery, State: constants.AIMStatusProgressing},
+				{Component: componentNodeInventory, State: constants.AIMStatusReady},
+			},
+			wantNonBlocking: []string{componentImageMetadata},
+		},
 	}
 
 	for _, templateComponent := range []string{componentServiceTemplates, componentClusterServiceTemplates} {
@@ -279,6 +331,89 @@ func TestApplyModelServingPathPolicy(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// The controller Pod and the cluster nodes can have different routes to a
+// registry. A registry that only the controller cannot reach must not stop
+// the in-cluster discovery Job, because that Job is the native path.
+func TestModelPipeline_UnreachableRegistryStillStartsDiscoveryJob(t *testing.T) {
+	t.Parallel()
+
+	model := &aimv1alpha2.AIMModel{
+		ObjectMeta: metav1.ObjectMeta{Name: "qwen", Namespace: "team-a", UID: "model-uid"},
+		Spec:       aimv1alpha1.AIMModelSpec{Image: closedRegistryHost(t) + "/aim-qwen:1.0"},
+	}
+	scheme := dualPathScheme(t)
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add batch scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	var appliedJobs []string
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(model).
+		WithStatusSubresource(model).
+		WithIndex(
+			&aimv1alpha1.AIMServiceTemplate{},
+			aimv1alpha1.ServiceTemplateModelNameIndexKey,
+			func(obj client.Object) []string {
+				return []string{obj.(*aimv1alpha1.AIMServiceTemplate).Spec.ModelName}
+			},
+		).
+		WithIndex(&aimv1alpha2.AIMProfile{}, ManagedModelUIDIndexKey, func(obj client.Object) []string {
+			return []string{obj.GetAnnotations()[annotationModelUID]}
+		}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				if patch.Type() != types.ApplyPatchType {
+					return c.Patch(ctx, obj, patch, opts...)
+				}
+				// The fake client does not support server-side apply, so
+				// record the applied discovery Job instead.
+				if job, ok := obj.(*batchv1.Job); ok {
+					appliedJobs = append(appliedJobs, job.Name)
+				}
+				return nil
+			},
+		}).
+		Build()
+	reconciler := &ModelReconciler{Client: k8sClient, Scheme: scheme}
+	pipeline := &controllerutils.Pipeline[
+		*aimv1alpha2.AIMModel,
+		*aimv1alpha1.AIMModelStatus,
+		ModelFetchResult,
+		ModelObservation,
+	]{
+		Client:         k8sClient,
+		StatusClient:   k8sClient.Status(),
+		Clientset:      kubernetesfake.NewClientset(),
+		Recorder:       record.NewFakeRecorder(50),
+		Reconciler:     reconciler,
+		Scheme:         scheme,
+		ControllerName: "model",
+	}
+
+	if _, err := pipeline.Run(context.Background(), model); err != nil {
+		t.Fatalf("Pipeline.Run() error = %v, want no requeue for a registry only the controller cannot reach", err)
+	}
+	if len(appliedJobs) != 1 {
+		t.Fatalf("applied discovery Jobs = %v, want exactly one", appliedJobs)
+	}
+
+	persisted := &aimv1alpha2.AIMModel{}
+	if err := k8sClient.Get(context.Background(), client.ObjectKeyFromObject(model), persisted); err != nil {
+		t.Fatalf("get model: %v", err)
+	}
+	conditions := persisted.Status.Conditions
+	imageMetadata := meta.FindStatusCondition(conditions, componentImageMetadata+controllerutils.ComponentConditionSuffix)
+	if imageMetadata == nil || imageMetadata.Status != metav1.ConditionFalse || imageMetadata.Reason != "ConnectionRefused" {
+		t.Fatalf("ImageMetadataReady = %#v, want visible False/ConnectionRefused", imageMetadata)
+	}
+	if ready := meta.FindStatusCondition(conditions, controllerutils.ConditionTypeReady); ready == nil || ready.Status != metav1.ConditionFalse {
+		t.Fatalf("Ready = %#v, want False until discovery completes", ready)
 	}
 }
 
@@ -634,6 +769,35 @@ func dualPathScheme(t *testing.T) *runtime.Scheme {
 		t.Fatalf("add v1alpha2 scheme: %v", err)
 	}
 	return scheme
+}
+
+// registryUnreachableError has the shape that inspectImage returns when the
+// controller Pod cannot dial the registry.
+func registryUnreachableError() error {
+	return &utils.ImageRegistryError{
+		Type:    utils.ImagePullErrorGeneric,
+		Message: `failed to fetch image "registry.example/native:1.0": dial tcp: i/o timeout`,
+		Cause: &url.Error{
+			Op:  "Get",
+			URL: "https://registry.example/v2/",
+			Err: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("i/o timeout")},
+		},
+	}
+}
+
+// closedRegistryHost returns a loopback address that refuses connections, so
+// a registry request fails at once with a real network error.
+func closedRegistryHost(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve loopback port: %v", err)
+	}
+	host := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("release loopback port: %v", err)
+	}
+	return host
 }
 
 func legacyServingSpec() aimv1alpha1.AIMModelSpec {

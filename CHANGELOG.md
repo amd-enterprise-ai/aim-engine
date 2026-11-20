@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Missing runtime lineage now reports `BaseImageUnresolved` instead of the misleading `InvalidProfileOverrides`, while existing ProfileSet and AIMService resources remain untouched.
 - ProfileSet controllers no longer requeue every set for RuntimeConfig status-only updates.
 - Service overlay profiles now record canonical runtime lineage consistently in both `spec.baseImageRef` and the `aim.eai.amd.com/base-image` annotation, while `spec.image` remains the mapped deployment reference.
+- An image-backed v1alpha2 `AIMModel` or `AIMClusterModel` no longer stalls without profiles when the operator Pod cannot reach the image registry but the nodes can. The discovery Job now starts. Until it has read the image metadata, the `ImageMetadataReady` condition shows the registry failure.
 
 ## [0.2.7] - 2026-10-08
 
