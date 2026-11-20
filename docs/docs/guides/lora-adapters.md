@@ -191,16 +191,47 @@ so the image finds the subtree.
 
 Before a service can serve adapters:
 
-1. **Configure RWX adapter storage.** An adapter-enabled profile cache
-   automatically requests an adapter disk on the base model artifact. Its size
-   and storage class resolve through `AIMRuntimeConfig.spec.storage` /
-   `AIMClusterRuntimeConfig.spec.storage` unless explicitly set on the artifact.
-   The storage class must support `ReadWriteMany`.
-2. **Use `Shared` caching and an exact `sourceUri` match.** The service resolves
-   its parent base model by matching the resolved base model id against the
-   cache's resolved artifacts — the `AIMProfileCache` on the profile pipeline,
-   the `AIMTemplateCache` on the template pipeline. `Dedicated` caching mints a
-   per-service parent and is not supported with adapters.
+1. **Configure RWX adapter storage.** On the profile pipeline (v1alpha2), an
+   adapter-enabled `AIMService` adds `spec.adapterDisk` to the base model
+   `AIMArtifact` that its `AIMProfileCache` resolves, once its adapter
+   configuration is valid. This also applies to an `AIMArtifact` first cached for
+   services without adapters: the model is not downloaded again, the
+   `AIMProfileCache` is not changed, and services already mounting the model PVC
+   are not restarted. A Normal `AdapterDiskRequested` event on the `AIMArtifact`
+   names the service.
+
+   The disk's size and storage class come from `spec.adapterDisk` when set there,
+   otherwise from `spec.storage.adapterDiskSize` and
+   `spec.storage.adapterDiskStorageClassName` of the runtime config the
+   `AIMArtifact` uses (its `spec.runtimeConfigName`, merged with the
+   `AIMClusterRuntimeConfig`), not of the service that added the disk. Without an
+   adapter disk storage class, the runtime config's
+   `spec.storage.defaultStorageClassName` is used, then the cluster's default
+   storage class; the model's own storage class is not considered. The class must
+   support `ReadWriteMany`, so set `adapterDiskStorageClassName` on the
+   `AIMClusterRuntimeConfig` when the default class does not. The PVC is 50Gi by
+   default, including for a `dynamic` service with no adapters, so budget for it
+   on any `AIMArtifact` an adapter-enabled service may share. While the disk
+   exists, the `AIMArtifact` runs a short [reaper Job](#reclaim) every 15
+   minutes.
+
+   The disk stays for the `AIMArtifact`'s lifetime; see
+   [Removing the adapter disk](#removing-the-adapter-disk). The field is owned by
+   the `aim-service-controller-adapter-disk` field manager. GitOps tools that apply
+   the `AIMArtifact` with server-side or client-side apply leave it in place; with
+   replace-style syncs, ignore `/spec/adapterDisk` (for example through Argo CD
+   `ignoreDifferences` with `managedFieldsManagers` and
+   `RespectIgnoreDifferences=true`).
+
+   The template pipeline (v1alpha1) does not add the disk: its base model
+   `AIMArtifact` must already carry one, as in the worked example below.
+2. **Use an exact `sourceUri` match.** The service resolves its parent base model
+   by matching the resolved base model id against the cache's resolved artifacts:
+   the `AIMProfileCache` on the profile pipeline, the `AIMTemplateCache` on the
+   template pipeline. With `Shared` caching, the adapter disk is shared by every
+   adapter-enabled service on that `AIMArtifact`. With `Dedicated` caching, the
+   service gets its own base model `AIMArtifact`, and the adapter disk is deleted
+   with it.
 3. **Use a single model source.** Adapters bind to one resolved base model.
    Profiles or templates with multiple model sources are rejected as ambiguous.
 4. **Choose exactly one compatibility mode per adapter.**
@@ -217,9 +248,9 @@ of compatible base artifacts. Compatibility is evaluated only when an
 ## Worked example
 
 ```yaml
-# 1. Optional pre-created parent base model with an adapter disk. Normally the
-#    adapter-enabled profile cache requests this disk automatically; it is shown
-#    explicitly so the example is standalone.
+# 1. Optional pre-created parent base model with an adapter disk. On the profile
+#    pipeline the adapter-enabled service adds this disk automatically; it is
+#    shown explicitly so the example is standalone.
 apiVersion: aim.eai.amd.com/v1alpha1
 kind: AIMArtifact
 metadata:
@@ -308,11 +339,42 @@ status:
 
 | Reason | Meaning |
 |--------|---------|
-| `ParentLacksAdapterDisk` | The resolved base model has no adapter disk yet (`Progressing`). |
-| `AdapterSubtreeProvisioning` | The per-service subtree is being created; the ISVC is gated on this (`Progressing`). |
+| `ParentLacksAdapterDisk` | The base model `AIMArtifact` has not resolved yet, has no `spec.adapterDisk` yet, or has not created its adapter disk PVC yet. Once the `AIMArtifact` resolves, the message names it and includes its `DependenciesReachable` message when that is `False` (`Progressing`). |
+| `AdapterSubtreeProvisioning` | The per-service subtree is being created; the ISVC is gated on this. The message says when the adapter disk PVC is still `Pending` (`Progressing`). |
 | `AdapterConfigInvalid` | Multiple model sources, an incompatible model ID, an exact-parent mismatch, a duplicate adapter path, or a non-adapter artifact was referenced (`Failed`, blocks the ISVC). |
 | `AdaptersStaging` | The subtree is ready but one or more adapters are not `Downloaded` (`Ready` aggregate condition). Dynamic serving continues; static ISVC creation remains gated. |
 | `AdaptersStaged` | All declared adapters are staged (`Ready`). |
+
+### Service stays at `AdaptersReady=False`
+
+Follow the chain from the service to the adapter disk PVC:
+
+```bash
+# The AIMProfileCache the service uses (set once that cache is Ready).
+kubectl get aimservice <service-name> -n <namespace> -o jsonpath='{.status.cache.profileCacheRef.name}'
+# The base model AIMArtifact the service's AIMProfileCache resolved (v1alpha2).
+kubectl get aimprofilecache <cache-name> -n <namespace> -o jsonpath='{.status.artifacts}'
+# Its adapter disk, the PVC it created, and why it could not apply resources.
+kubectl get aimartifact <artifact-name> -n <namespace> \
+  -o jsonpath='{.spec.adapterDisk}{"\n"}{.status.adapterPersistentVolumeClaim}{"\n"}'
+kubectl describe aimartifact <artifact-name> -n <namespace>
+kubectl get pvc <adapter-pvc-name> -n <namespace>
+```
+
+- **`ParentLacksAdapterDisk`, and the `AIMArtifact` has no `spec.adapterDisk`:**
+  the service has not added it. Check the service's `ConfigValid` and
+  `DependenciesReachable` conditions; a failed apply shows on the latter.
+- **`ParentLacksAdapterDisk`, and the `AIMArtifact` has `spec.adapterDisk` but no
+  `status.adapterPersistentVolumeClaim`:** the adapter disk PVC could not be
+  created, for example because a `ResourceQuota` rejects it. The service's message
+  includes the `AIMArtifact`'s `DependenciesReachable` message; check the
+  `AIMArtifact`'s events.
+- **`AdapterSubtreeProvisioning` with a `Pending` PVC:** the storage class cannot
+  provision `ReadWriteMany` volumes, so the Job that creates the service's
+  subtree cannot start. Set `spec.storage.adapterDiskStorageClassName` to a class
+  that supports `ReadWriteMany` on the runtime config the `AIMArtifact` uses,
+  then delete the `Pending` PVC. The `AIMArtifact` recreates it with the new
+  class; the base model is not downloaded again.
 
 ## Reclaim
 
@@ -336,6 +398,40 @@ collection cannot reclaim them. Cleanup is two-tier, split by ownership:
   the service — and its subtree-sync Job — are gone. Deleting an adapter-serving
   service tears down its pods immediately; its on-disk subtree is reclaimed by
   the next sweep.
+
+### Removing the adapter disk
+
+With `Shared` caching, the adapter disk stays on the base model `AIMArtifact`
+after its last adapter-enabled service is deleted. With `Dedicated` caching, it
+is deleted with the service. To reclaim a shared disk without downloading the
+model again:
+
+1. Find the PVC and check that nothing still uses it. Any adapter-enabled
+   `AIMService` whose base model resolves to this `AIMArtifact` mounts it,
+   whichever profile it uses, including v1alpha1 services through an
+   `AIMTemplateCache`. A v1alpha2 service adds the disk back; a v1alpha1 service
+   stays at `ParentLacksAdapterDisk`.
+
+   ```bash
+   PVC=$(kubectl get aimartifact <artifact> -n <namespace> \
+     -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+   kubectl get aimservices -n <namespace> \
+     -o jsonpath="{range .items[?(@.status.adapterDiskPersistentVolumeClaim==\"$PVC\")]}{.metadata.name}{'\n'}{end}"
+   ```
+
+2. Remove the disk from the `AIMArtifact`, then delete its reaper Job and the
+   PVC. The reaper Job's finished pod is kept for 5 minutes and holds the PVC
+   until it is deleted:
+
+   ```bash
+   kubectl patch aimartifact <artifact> -n <namespace> --type json \
+     -p '[{"op":"remove","path":"/spec/adapterDisk"}]'
+   kubectl delete job -n <namespace> \
+     -l aim.eai.amd.com/component=adapter-reap,aim.eai.amd.com/cache.name=<artifact>
+   kubectl delete pvc -n <namespace> "$PVC"
+   ```
+
+An adapter-enabled v1alpha2 service that arrives later adds the disk back.
 
 ## Serving contract
 

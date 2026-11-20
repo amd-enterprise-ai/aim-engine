@@ -1185,3 +1185,67 @@ func (reader *failingReader) Get(
 	}
 	return reader.Reader.Get(ctx, key, object, options...)
 }
+
+// TestBuildControllerCompatibleProfileCache_LeavesAdapterDiskFlagUnset verifies
+// the target cache mirrors the AIMService controller, which no longer sets the
+// deprecated requiresAdapterDisk.
+func TestBuildControllerCompatibleProfileCache_LeavesAdapterDiskFlagUnset(t *testing.T) {
+	profile := &aimv1alpha2.AIMProfile{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: testNamespace}}
+	profile.Spec.ModelSources = []aimv1alpha1.AIMModelSource{{ModelID: "org/model", SourceURI: "hf://org/model"}}
+	spec := &aimv1alpha1.AIMServiceSpec{AdapterMode: aimv1alpha1.AdapterModeDynamic}
+	cache, err := buildControllerCompatibleProfileCacheFromSpec(
+		testNamespace, "svc", types.UID("svc-uid"), spec,
+		ResourceIdentity{Kind: testAIMProfileKind, Namespace: testNamespace, Name: "target"},
+		profile,
+	)
+	if err != nil {
+		t.Fatalf("build target cache: %v", err)
+	}
+	if cache.Spec.RequiresAdapterDisk {
+		t.Error("requiresAdapterDisk = true, want unset")
+	}
+}
+
+// TestPlan_SharedTargetCacheWithAdapterDiskIsReused covers a service migrating
+// to a profile whose Shared cache was created before requiresAdapterDisk was
+// deprecated and still carries it.
+func TestPlan_SharedTargetCacheWithAdapterDiskIsReused(t *testing.T) {
+	fixture := newPlanFixture("adapter-disk-cache")
+	first := runFixturePlan(t, fixture)
+	create := findKindOperation(first.Document.Units[0], resourceKindProfileCache, OperationCreate)
+	if create == nil {
+		t.Fatalf("initial plan has no AIMProfileCache create: %#v", first.Document.Units[0])
+	}
+	encoded, err := json.Marshal(create.Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing := &aimv1alpha2.AIMProfileCache{}
+	if err := json.Unmarshal(encoded, existing); err != nil {
+		t.Fatal(err)
+	}
+	existing.UID = types.UID("profile-cache-uid")
+	existing.ResourceVersion = "7"
+	existing.Generation = 2
+	existing.Spec.RequiresAdapterDisk = true
+	existing.Status = aimv1alpha2.AIMProfileCacheStatus{
+		ObservedGeneration: 2,
+		Status:             constants.AIMStatusReady,
+		Artifacts: map[string]aimv1alpha1.AIMResolvedArtifact{
+			fixture.artifact.Name: {
+				UID:                   string(fixture.artifact.UID),
+				Name:                  fixture.artifact.Name,
+				Model:                 fixture.artifact.Spec.ModelID,
+				Status:                constants.AIMStatusReady,
+				PersistentVolumeClaim: fixture.artifact.Status.PersistentVolumeClaim,
+			},
+		},
+	}
+
+	result := runPlanWithObjects(t, append(fixture.objects(), existing)...)
+	unit := result.Document.Units[0]
+	if hasManualCode(&unit, "TargetCacheConflict") ||
+		findKindOperation(unit, resourceKindProfileCache, OperationReuse) == nil {
+		t.Fatalf("Shared cache with the deprecated requiresAdapterDisk was not reused: %#v", unit)
+	}
+}

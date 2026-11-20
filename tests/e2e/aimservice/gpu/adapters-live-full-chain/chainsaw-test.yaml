@@ -14,7 +14,7 @@
 #
 # Flow:
 # 1. Pre-create the base-model AIMArtifact WITH an adapter disk (RWX/longhorn).
-#    The profile cache adopts it (disk-bearing), giving adapters a parent disk.
+#    The profile cache adopts it, giving adapters a parent disk.
 # 2. Pre-create the adapter AIMArtifact (parent = base).
 # 3. Create the AIMProfile (features: [adapters], MI300X, LoRA-capable image).
 # 4. Create the AIMService (spec.adapters). It drives the cache (model download),

@@ -1,0 +1,16 @@
+# Serves no adapters, so it creates the Shared profile cache without an adapter
+# disk. caching.env puts the download Job into simulation mode.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: adapters-upgrade-plain
+spec:
+  profile:
+    name: adapters-upgrade-profile
+  replicas: 1
+  caching:
+    env:
+      - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+        value: "true"
+      - name: AIM_DEBUG_SIMULATE_HF_DURATION
+        value: "2"
