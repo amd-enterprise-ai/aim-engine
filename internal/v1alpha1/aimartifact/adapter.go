@@ -46,6 +46,12 @@ import (
 // disk launches a reaper Job to reclaim subtrees of deleted services.
 const AdapterReclaimInterval = 15 * time.Minute
 
+// adapterReaperJobActiveDeadlineSeconds bounds a reaper run, including time
+// spent Pending. The reaper Job has a fixed name and is only created when
+// absent, so a run that never finishes would block every later reclaim; on
+// expiry the Job fails, its TTL removes it, and a later cycle starts a new one.
+const adapterReaperJobActiveDeadlineSeconds = int64(60 * 60)
+
 // isAdapter reports whether an artifact is a LoRA adapter definition.
 func isAdapter(mc *aimv1alpha1.AIMArtifact) bool {
 	return mc.Spec.Type == aimv1alpha1.ArtifactTypeAdapter
@@ -276,6 +282,7 @@ func buildAdapterReaperJob(
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            ptr.To(int32(1)),
 			TTLSecondsAfterFinished: ptr.To(int32(60 * 5)),
+			ActiveDeadlineSeconds:   ptr.To(adapterReaperJobActiveDeadlineSeconds),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{

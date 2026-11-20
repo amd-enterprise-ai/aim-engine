@@ -211,7 +211,9 @@ Before a service can serve adapters:
    support `ReadWriteMany`, so set `adapterDiskStorageClassName` on the
    `AIMClusterRuntimeConfig` when the default class does not. The PVC is 50Gi by
    default, including for a `dynamic` service with no adapters, so budget for it
-   on any `AIMArtifact` an adapter-enabled service may share. While the disk
+   on any `AIMArtifact` an adapter-enabled service may share. AIM's
+   [artifact storage quotas](../admin/storage-configuration.md#storage-quotas) do
+   not count it; a Kubernetes `ResourceQuota` on storage does. While the disk
    exists, the `AIMArtifact` runs a short [reaper Job](#reclaim) every 15
    minutes.
 

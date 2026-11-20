@@ -75,6 +75,8 @@ kubectl get aimartifact -n <namespace>
 
 AIM Engine can enforce storage limits on artifact PVCs to prevent unbounded growth. Quotas are evaluated before creating PVCs -- when a new artifact would exceed the limit, it is either blocked or existing artifacts are evicted to make room.
 
+These quotas count each artifact's model cache PVC only. The [LoRA adapter disk](../guides/lora-adapters.md#storage-layout) a model artifact gets from `spec.adapterDisk` is not counted; to cap it, use a Kubernetes `ResourceQuota` on `requests.storage`, which counts every PVC in the namespace.
+
 ### Namespace Quota
 
 Set a per-namespace limit via annotation:
