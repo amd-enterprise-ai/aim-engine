@@ -1,0 +1,239 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+#
+# AIMService Frozen Test: a LoRA service moves to another adapter disk only once
+# its adapters are staged there (v1alpha2, static mode)
+#
+# 1. A static-mode service stages its adapter onto the adapter disk of the base
+#    artifact its (frozen) profile cache resolves, and mounts that disk.
+# 2. Deleting the finished staging Job, as its TTL does, does not stage the
+#    adapter again: the service keeps the recorded Downloaded state.
+# 3. Pointing the frozen cache at a second base artifact, as a download-filter
+#    replacement does, makes the service stage onto that artifact's adapter disk.
+#    While staging runs, the InferenceService keeps mounting the first disk, the
+#    service keeps it recorded, and AdaptersReady names both PVCs.
+# 4. Once the adapter is staged on the second disk, the InferenceService mounts
+#    it and the service records it.
+#
+# Test type: Frozen dependency test (AIMClusterProfile + AIMProfileCache frozen).
+#
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: adapters-disk-move
+spec:
+  timeouts:
+    assert: 120s
+  steps:
+    - name: Create two base model artifacts with adapter disks and the adapter
+      try:
+        - apply:
+            file: base-artifacts.yaml
+        - apply:
+            file: adapter-artifact.yaml
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: adapters-move-base-a
+              status:
+                status: Ready
+                (adapterPersistentVolumeClaim != ""): true
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: adapters-move-base-b
+              status:
+                status: Ready
+                (adapterPersistentVolumeClaim != ""): true
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMArtifact
+              metadata:
+                name: adapters-move-lora
+              status:
+                status: Ready
+
+    - name: Create the frozen cluster profile and the service
+      try:
+        - apply:
+            file: cluster-profile.yaml
+        - script:
+            content: |
+              apply-with-status.sh cluster-profile.yaml --status-only
+        - apply:
+            file: service.yaml
+        - assert:
+            timeout: 60s
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha2
+              kind: AIMProfileCache
+              metadata:
+                labels:
+                  aim.eai.amd.com/service: adapters-move-service
+
+    - name: Freeze the profile cache on the first base artifact
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+              - name: ARTIFACT
+                value: adapters-move-base-a
+            content: &point-cache |
+              set -eu
+              PC=$(kubectl get aimprofilecache -n "$NAMESPACE" \
+                -l aim.eai.amd.com/service=adapters-move-service -o jsonpath='{.items[0].metadata.name}')
+              for i in $(seq 1 30); do
+                [ -n "$(kubectl get aimprofilecache -n "$NAMESPACE" "$PC" -o jsonpath='{.status.status}')" ] && break
+                sleep 1
+              done
+              MODEL_PVC=$(kubectl get aimartifact -n "$NAMESPACE" "$ARTIFACT" -o jsonpath='{.status.persistentVolumeClaim}')
+              UID_=$(kubectl get aimartifact -n "$NAMESPACE" "$ARTIFACT" -o jsonpath='{.metadata.uid}')
+              kubectl annotate aimprofilecache "$PC" -n "$NAMESPACE" \
+                aim.eai.amd.com/reconciliation-paused=true --overwrite
+              # A JSON patch replaces status.artifacts as a whole, so the cache
+              # lists only $ARTIFACT, as after a replacement switch.
+              kubectl patch aimprofilecache "$PC" -n "$NAMESPACE" --type=json --subresource=status -p "[
+                {\"op\": \"add\", \"path\": \"/status/status\", \"value\": \"Ready\"},
+                {\"op\": \"add\", \"path\": \"/status/conditions\", \"value\": [
+                  {\"type\": \"ProfileFound\", \"status\": \"True\", \"reason\": \"ProfileResolved\", \"message\": \"resolved\", \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"},
+                  {\"type\": \"ArtifactsReady\", \"status\": \"True\", \"reason\": \"AllCachesReady\", \"message\": \"ready\", \"lastTransitionTime\": \"2025-01-01T00:00:00Z\"}
+                ]},
+                {\"op\": \"add\", \"path\": \"/status/artifacts\", \"value\": {
+                  \"$ARTIFACT\": {
+                    \"name\": \"$ARTIFACT\",
+                    \"uid\": \"$UID_\",
+                    \"model\": \"test-org/move-weights\",
+                    \"status\": \"Ready\",
+                    \"persistentVolumeClaim\": \"$MODEL_PVC\",
+                    \"mountPoint\": \"/workspace/cache/test-org/move-weights\"
+                  }
+                }}
+              ]"
+              echo "profile cache $PC now resolves $ARTIFACT"
+
+    - name: Assert the adapter is staged and the first disk is mounted and recorded
+      try:
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: adapters-move-service
+              status:
+                (adapters[?name == 'adapters-move-lora']):
+                  - state: Downloaded
+                (adapterDiskPersistentVolumeClaim != ''): true
+        - script:
+            timeout: 90s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              PVC_A=$(kubectl get aimartifact -n "$NAMESPACE" adapters-move-base-a -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+              for i in $(seq 1 30); do
+                RECORDED=$(kubectl get aimservice.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" adapters-move-service \
+                  -o jsonpath='{.status.adapterDiskPersistentVolumeClaim}')
+                MOUNTED=$(kubectl get inferenceservice -n "$NAMESPACE" -l aim.eai.amd.com/service=adapters-move-service \
+                  -o jsonpath='{.items[0].spec.predictor.volumes[?(@.name=="adapter-disk")].persistentVolumeClaim.claimName}')
+                [ "$RECORDED" = "$PVC_A" ] && [ "$MOUNTED" = "$PVC_A" ] && { echo "recorded and mounted $PVC_A"; exit 0; }
+                sleep 2
+              done
+              echo "recorded=$RECORDED mounted=$MOUNTED, want $PVC_A"
+              exit 1
+
+    - name: Deleting the finished staging Job does not stage the adapter again
+      try:
+        - script:
+            timeout: 60s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              SELECTOR=aim.eai.amd.com/service=adapters-move-service,aim.eai.amd.com/component=adapter-stage
+              kubectl delete job -n "$NAMESPACE" -l "$SELECTOR" --wait=true
+              sleep 20
+              JOBS=$(kubectl get job -n "$NAMESPACE" -l "$SELECTOR" -o name)
+              [ -z "$JOBS" ] || { echo "staging Job recreated: $JOBS"; exit 1; }
+              STATE=$(kubectl get aimservice.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" adapters-move-service \
+                -o jsonpath='{.status.adapters[0].state}')
+              [ "$STATE" = Downloaded ] || { echo "adapter state is $STATE, want Downloaded"; exit 1; }
+              echo "no staging Job recreated; adapter still Downloaded"
+
+    - name: Point the frozen profile cache at the second base artifact
+      try:
+        - script:
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+              - name: ARTIFACT
+                value: adapters-move-base-b
+            content: *point-cache
+
+    - name: While the adapter stages onto the second disk, the first stays mounted
+      try:
+        - script:
+            timeout: 90s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              PVC_A=$(kubectl get aimartifact -n "$NAMESPACE" adapters-move-base-a -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+              PVC_B=$(kubectl get aimartifact -n "$NAMESPACE" adapters-move-base-b -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+              SELECTOR=aim.eai.amd.com/service=adapters-move-service,aim.eai.amd.com/component=adapter-stage
+              for i in $(seq 1 40); do
+                ACTIVE=$(kubectl get job -n "$NAMESPACE" -l "$SELECTOR" -o jsonpath='{.items[0].status.active}' 2>/dev/null || true)
+                [ "${ACTIVE:-0}" -ge 1 ] && break
+                sleep 1
+              done
+              [ "${ACTIVE:-0}" -ge 1 ] || { echo "no staging Job running for $PVC_B"; kubectl get job -n "$NAMESPACE"; exit 1; }
+              MOUNTED=$(kubectl get inferenceservice -n "$NAMESPACE" -l aim.eai.amd.com/service=adapters-move-service \
+                -o jsonpath='{.items[0].spec.predictor.volumes[?(@.name=="adapter-disk")].persistentVolumeClaim.claimName}')
+              RECORDED=$(kubectl get aimservice.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" adapters-move-service \
+                -o jsonpath='{.status.adapterDiskPersistentVolumeClaim}')
+              MESSAGE=$(kubectl get aimservice.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" adapters-move-service \
+                -o jsonpath='{.status.conditions[?(@.type=="AdaptersReady")].message}')
+              echo "mounted=$MOUNTED recorded=$RECORDED message=$MESSAGE"
+              [ "$MOUNTED" = "$PVC_A" ] || { echo "ISVC mounts $MOUNTED, want $PVC_A while staging"; exit 1; }
+              [ "$RECORDED" = "$PVC_A" ] || { echo "service records $RECORDED, want $PVC_A while staging"; exit 1; }
+              case "$MESSAGE" in
+                *"$PVC_B"*"$PVC_A"*) ;;
+                *) echo "AdaptersReady message does not name $PVC_B and $PVC_A"; exit 1 ;;
+              esac
+
+    - name: Once staged on the second disk, the service mounts and records it
+      try:
+        - script:
+            timeout: 120s
+            env:
+              - name: NAMESPACE
+                value: ($namespace)
+            content: |
+              set -eu
+              PVC_B=$(kubectl get aimartifact -n "$NAMESPACE" adapters-move-base-b -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+              for i in $(seq 1 50); do
+                RECORDED=$(kubectl get aimservice.v1alpha2.aim.eai.amd.com -n "$NAMESPACE" adapters-move-service \
+                  -o jsonpath='{.status.adapterDiskPersistentVolumeClaim}')
+                MOUNTED=$(kubectl get inferenceservice -n "$NAMESPACE" -l aim.eai.amd.com/service=adapters-move-service \
+                  -o jsonpath='{.items[0].spec.predictor.volumes[?(@.name=="adapter-disk")].persistentVolumeClaim.claimName}')
+                [ "$RECORDED" = "$PVC_B" ] && [ "$MOUNTED" = "$PVC_B" ] && { echo "recorded and mounted $PVC_B"; exit 0; }
+                sleep 2
+              done
+              echo "recorded=$RECORDED mounted=$MOUNTED, want $PVC_B"
+              exit 1
+        - assert:
+            resource:
+              apiVersion: aim.eai.amd.com/v1alpha1
+              kind: AIMService
+              metadata:
+                name: adapters-move-service
+              status:
+                (adapters[?name == 'adapters-move-lora']):
+                  - state: Downloaded

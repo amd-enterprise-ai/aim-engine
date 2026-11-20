@@ -1582,7 +1582,7 @@ func (r *ServiceReconciler) PlanResources(
 					aimadapter.AddVolumeMount(
 						isvcObj,
 						service,
-						obs.adapterState.AdapterDiskPVC,
+						obs.adapterState.MountedAdapterDiskPVC(),
 						obs.adapterState.MaxRank,
 					)
 				}

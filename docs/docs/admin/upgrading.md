@@ -304,7 +304,17 @@ The old artifact and its PVC stay behind after the switch. A shared artifact has
        | (.status.artifacts // {})[] | select(.name == "<old-artifact-name>") | $cache'
    ```
 
-3. Delete the old artifact:
+3. If the old artifact has an adapter disk, confirm that no LoRA `AIMService` still mounts it. A service moves to the new artifact's adapter disk only once its adapters are staged there. This should print nothing:
+
+   ```bash
+   OLD_PVC=$(kubectl get aimartifact -n <namespace> <old-artifact-name> \
+     -o jsonpath='{.status.adapterPersistentVolumeClaim}')
+   kubectl get aimservices -n <namespace> -o json | \
+     jq -r --arg pvc "$OLD_PVC" '.items[]
+       | select($pvc != "" and .status.adapterDiskPersistentVolumeClaim == $pvc) | .metadata.name'
+   ```
+
+4. Delete the old artifact:
 
    ```bash
    kubectl delete aimartifact -n <namespace> <old-artifact-name>

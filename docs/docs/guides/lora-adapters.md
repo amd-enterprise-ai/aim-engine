@@ -183,8 +183,13 @@ declared set and resolved adapter-disk PVC, and
 `status.adapterSubtreeSyncKey` records the last synced binding. Editing
 `spec.adapters` re-runs the sync to prune removed adapters; replacing a base
 artifact with a new UID-derived adapter PVC re-runs the sync and staging on the
-new disk. Staging Jobs run asynchronously and the runtime hot-loads each
-adapter as it lands. The controller sets `AIM_ADAPTER_SOURCE` to the mount path
+new disk. The InferenceService keeps mounting the previous disk until every
+adapter whose `AIMArtifact` is `Ready` is staged on the new one, unless the
+previous PVC is gone; until then the `AdaptersReady` message names both PVCs and
+`status.adapters` describes the new disk. Staging Jobs run asynchronously and
+the runtime hot-loads each adapter as it lands. A staged adapter stays
+`Downloaded` after its finished staging Job is cleaned up, so it is not staged
+again. The controller sets `AIM_ADAPTER_SOURCE` to the mount path
 so the image finds the subtree.
 
 ## Storage and compatibility contract
@@ -211,7 +216,9 @@ Before a service can serve adapters:
    support `ReadWriteMany`, so set `adapterDiskStorageClassName` on the
    `AIMClusterRuntimeConfig` when the default class does not. The PVC is 50Gi by
    default, including for a `dynamic` service with no adapters, so budget for it
-   on any `AIMArtifact` an adapter-enabled service may share. While the disk
+   on any `AIMArtifact` an adapter-enabled service may share. AIM's
+   [artifact storage quotas](../admin/storage-configuration.md#storage-quotas) do
+   not count it; a Kubernetes `ResourceQuota` on storage does. While the disk
    exists, the `AIMArtifact` runs a short [reaper Job](#reclaim) every 15
    minutes.
 
