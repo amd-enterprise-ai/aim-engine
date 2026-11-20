@@ -419,6 +419,8 @@ func (s *AIMArtifactStatus) GetAIMStatus() constants.AIMStatus {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:storageversion
+// +kubebuilder:deprecatedversion:warning="AIMArtifact v1alpha1 is deprecated; use aim.eai.amd.com/v1alpha2"
 // +kubebuilder:resource:shortName=aimart,categories=aim;all
 // +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.type`,priority=1
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.status`

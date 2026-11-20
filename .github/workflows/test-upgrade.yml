@@ -236,7 +236,6 @@ jobs:
             --set manager.artifactDownloaderImage="${ARTIFACT_DOWNLOADER_IMAGE}" \
             --set manager.runtimeProjectionMode=Both \
             --set acceleratorDetector.enable=false \
-            --set clusterRuntimeConfig.enable=false \
             --set clusterModelSource.enable=false \
             --set scaleFromZero.gatewayProvider=none \
             "${baseline_values[@]}"
@@ -560,9 +559,19 @@ jobs:
             --set manager.artifactDownloaderImage="${ARTIFACT_DOWNLOADER_IMAGE}" \
             --set manager.runtimeProjectionMode=Both \
             --set acceleratorDetector.enable=false \
-            --set clusterRuntimeConfig.enable=false \
             --set clusterModelSource.enable=false \
             --set scaleFromZero.gatewayProvider=none
+
+      - name: Check the release manifest names AIMClusterRuntimeConfig at v1alpha2
+        run: |
+          set -euo pipefail
+          manifest="$(helm get manifest aim-engine --namespace aim-system)"
+          runtime_config_versions="$(yq ea '[select(.kind == "AIMClusterRuntimeConfig") | .apiVersion] | join(" ")' <<<"${manifest}")"
+          v1alpha1_objects="$(yq ea '[select(.apiVersion == "aim.eai.amd.com/v1alpha1")] | length' <<<"${manifest}")"
+          if [[ "${runtime_config_versions}" != "aim.eai.amd.com/v1alpha2" || "${v1alpha1_objects}" != "0" ]]; then
+            echo "release manifest has AIMClusterRuntimeConfig at '${runtime_config_versions}' and ${v1alpha1_objects} v1alpha1 AIM object(s); want one at v1alpha2 and none at v1alpha1" >&2
+            exit 1
+          fi
 
       - name: Wait for candidate operator
         run: kubectl rollout status deployment/aim-engine-controller-manager -n aim-system --timeout=180s
@@ -693,16 +702,17 @@ jobs:
         run: |
           set -euo pipefail
           # The commands of docs/docs/admin/upgrading.md#rollback, for the kubectl CRD install this lane uses.
+          helm rollback aim-engine -n aim-system
           kubectl apply --server-side -f "${BASELINE_DIR}/dist/crds.yaml"
           kubectl wait --for=condition=Established --timeout=60s \
             crd/aimservicetemplates.aim.eai.amd.com \
             crd/aimclusterservicetemplates.aim.eai.amd.com \
             crd/aimtemplatecaches.aim.eai.amd.com
-          helm rollback aim-engine -n aim-system --wait --timeout 5m
+          kubectl rollout restart deployment/aim-engine-controller-manager -n aim-system
 
       - name: Wait for the rolled-back operator
         if: matrix.scenario == 'v0.2.7'
-        run: kubectl rollout status deployment/aim-engine-controller-manager -n aim-system --timeout=180s
+        run: kubectl rollout status deployment/aim-engine-controller-manager -n aim-system --timeout=5m
 
       - name: Verify the rollback with Chainsaw
         if: matrix.scenario == 'v0.2.7'

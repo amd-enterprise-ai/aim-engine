@@ -219,7 +219,7 @@ spec:
 ### Direct `AIMArtifact` (kserve downloader, XET disabled)
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMArtifact
 metadata:
   name: kserve-smollm2-135m
@@ -261,7 +261,7 @@ Overrides apply at three layers (highest precedence first):
 #### Example: override per artifact
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMArtifact
 metadata:
   name: my-model
@@ -275,7 +275,7 @@ spec:
 #### Example: cluster-wide default
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default

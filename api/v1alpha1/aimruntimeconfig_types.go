@@ -29,6 +29,8 @@ import (
 // AIMRuntimeConfig is the Schema for namespace-scoped AIM runtime configurations.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:storageversion
+// +kubebuilder:deprecatedversion:warning="AIMRuntimeConfig v1alpha1 is deprecated; use aim.eai.amd.com/v1alpha2"
 // +kubebuilder:resource:shortName=aimrc,categories=aim;all
 type AIMRuntimeConfig struct {
 	metav1.TypeMeta   `json:",inline"`

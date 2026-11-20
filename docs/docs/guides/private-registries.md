@@ -24,11 +24,6 @@ Consequently, `additionalCABundleRef` cannot affect container image pulls; it
 configures outbound TLS only after the workload has started.
 :::
 
-:::{admonition} v1alpha2
-:class: note
-
-`AIMService` examples use `aim.eai.amd.com/v1alpha2`. `AIMRuntimeConfig` / `AIMClusterRuntimeConfig` remain `aim.eai.amd.com/v1alpha1` resources.
-:::
 ## Container Image Pull Secrets
 
 ### Artifact-downloader image
@@ -57,7 +52,7 @@ configures the operator pod and is not a cluster-wide registry credential.
 An administrator can instead select a downloader image through RuntimeConfig:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterRuntimeConfig
 metadata:
   name: default
@@ -114,7 +109,7 @@ For `AIMClusterModelSource` pulling from private container registries, the same
 operator-namespace rule applies:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMClusterModelSource
 metadata:
   name: private-models
@@ -131,7 +126,7 @@ spec:
 For models sourced from private HuggingFace repositories (`hf://` URLs), provide a token via environment variables in the runtime configuration:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMRuntimeConfig
 metadata:
   name: default
@@ -219,7 +214,7 @@ kubectl create configmap company-ca \
 Select the bundle once on the namespace RuntimeConfig:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMRuntimeConfig
 metadata:
   name: default
@@ -240,7 +235,7 @@ model images and aim-base side by side needs no configuration. When aim-base
 lives in a different registry, set `baseImageRegistry`:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMRuntimeConfig
 metadata:
   name: default
@@ -355,7 +350,7 @@ variables, mounts custom trust roots consistently into size-check and download
 Jobs, and applies the connection only to `s3://` artifacts:
 
 ```yaml
-apiVersion: aim.eai.amd.com/v1alpha1
+apiVersion: aim.eai.amd.com/v1alpha2
 kind: AIMRuntimeConfig
 metadata:
   name: default
