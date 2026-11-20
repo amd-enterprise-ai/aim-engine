@@ -205,7 +205,9 @@ Before a service can serve adapters:
    `spec.storage.adapterDiskStorageClassName` of the runtime config the
    `AIMArtifact` uses (its `spec.runtimeConfigName`, merged with the
    `AIMClusterRuntimeConfig`), not of the service that added the disk. Without an
-   adapter disk storage class, the model's storage class is used. The class must
+   adapter disk storage class, the runtime config's
+   `spec.storage.defaultStorageClassName` is used, then the cluster's default
+   storage class; the model's own storage class is not considered. The class must
    support `ReadWriteMany`, so set `adapterDiskStorageClassName` on the
    `AIMClusterRuntimeConfig` when the default class does not. The PVC is 50Gi by
    default, including for a `dynamic` service with no adapters, so budget for it
@@ -348,6 +350,8 @@ status:
 Follow the chain from the service to the adapter disk PVC:
 
 ```bash
+# The AIMProfileCache the service uses (set once that cache is Ready).
+kubectl get aimservice <service-name> -n <namespace> -o jsonpath='{.status.cache.profileCacheRef.name}'
 # The base model AIMArtifact the service's AIMProfileCache resolved (v1alpha2).
 kubectl get aimprofilecache <cache-name> -n <namespace> -o jsonpath='{.status.artifacts}'
 # Its adapter disk, the PVC it created, and why it could not apply resources.

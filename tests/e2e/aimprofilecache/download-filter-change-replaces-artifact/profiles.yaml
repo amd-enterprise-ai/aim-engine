@@ -5,8 +5,8 @@
 # artifacts before the test starts.
 #
 # filter-change-base opts into caching, so its profile reconciler materialises a
-# Shared cache that does not serve adapters. filter-change-lora is consumed by the
-# hand-made adapter-serving cache in lora-cache.yaml instead.
+# Shared cache. filter-change-lora is consumed by the hand-made cache in
+# lora-cache.yaml instead.
 #
 # No accelerator requirements, so both profiles reach Ready anywhere and their caches
 # are left waiting only on artifacts.

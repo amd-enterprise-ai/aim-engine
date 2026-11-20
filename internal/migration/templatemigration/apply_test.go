@@ -1762,11 +1762,11 @@ func assertSharedCommitReusesPinnedReadyProfileCache(t *testing.T, requiresAdapt
 }
 
 // A Shared artifact that an adapter-enabled service gave an adapter disk still
-// serves a target cache for a service without adapters.
+// serves a target cache for a service without adapters, also before the disk's
+// PVC exists.
 func TestApply_SharedArtifactWithAdapterDiskServesPlainTarget(t *testing.T) {
 	fixture := newSharedApplyFixture(t, nil)
 	fixture.artifact.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
-	fixture.artifact.Status.AdapterPersistentVolumeClaim = "adapter-pvc"
 	refreshFixturePin(t, fixture, fixture.artifact, "source-artifact")
 
 	kubernetesClient := newApplyFakeClient(t, fixture.objects...)
@@ -1849,14 +1849,6 @@ func TestApply_SharedSemanticMismatchMatrixFailsBeforeWrites(t *testing.T) {
 				refreshFixturePin(t, f, f.artifact, "source-artifact")
 			},
 			want: "download images",
-		},
-		{
-			name: "adapter disk without its PVC",
-			mutate: func(f *applyFixture) {
-				f.artifact.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
-				refreshFixturePin(t, f, f.artifact, "source-artifact")
-			},
-			want: "adapter disk is not Ready",
 		},
 		{
 			name: "scope",

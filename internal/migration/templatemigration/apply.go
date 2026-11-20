@@ -2120,11 +2120,8 @@ func validateSharedArtifactSemantics(
 	}
 	// The adapter disk does not decide whether the artifact serves the target
 	// cache: an adapter-enabled AIMService may have added it to a Shared artifact
-	// that services without adapters also use.
-	hasAdapterDisk := artifact.Spec.AdapterDisk != nil
-	if hasAdapterDisk && artifact.Status.AdapterPersistentVolumeClaim == "" {
-		return fmt.Errorf("shared source artifact adapter disk is not Ready")
-	}
+	// that services without adapters also use, and migration refuses
+	// adapter-enabled services.
 	if len(artifact.Spec.ImagePullSecrets) != 0 {
 		return fmt.Errorf("shared source artifact image pull secrets do not match the target cache")
 	}
@@ -2164,9 +2161,6 @@ func validateSharedArtifactSemantics(
 			ModelDownloadImage: "",
 			DownloadFilter:     modelSource.DownloadFilter,
 		},
-	}
-	if hasAdapterDisk {
-		hypothetical.Spec.AdapterDisk = &aimv1alpha1.AIMAdapterDisk{}
 	}
 	if effectiveDownloadImage(artifact, runtimeConfig.Value) !=
 		effectiveDownloadImage(hypothetical, runtimeConfig.Value) {
