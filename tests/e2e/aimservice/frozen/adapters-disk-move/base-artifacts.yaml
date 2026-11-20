@@ -1,0 +1,41 @@
+# Two base model artifacts of the same weights, each with its own adapter disk.
+# The frozen profile cache first resolves the first one, then the test points it
+# at the second, the way a download-filter replacement moves a Shared cache.
+# Downloads are simulated, so no real network is required.
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: adapters-move-base-a
+spec:
+  type: model
+  modelId: test-org/move-weights
+  sourceUri: hf://test-org/move-weights
+  size: 10Mi
+  adapterDisk:
+    size: 1Gi
+  env:
+    - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+      value: "true"
+    - name: AIM_DEBUG_SIMULATE_HF_DURATION
+      value: "2"
+    - name: EXPECTED_SIZE_BYTES
+      value: "102400"
+---
+apiVersion: aim.eai.amd.com/v1alpha1
+kind: AIMArtifact
+metadata:
+  name: adapters-move-base-b
+spec:
+  type: model
+  modelId: test-org/move-weights
+  sourceUri: hf://test-org/move-weights
+  size: 10Mi
+  adapterDisk:
+    size: 1Gi
+  env:
+    - name: AIM_DEBUG_SIMULATE_HF_DOWNLOAD
+      value: "true"
+    - name: AIM_DEBUG_SIMULATE_HF_DURATION
+      value: "2"
+    - name: EXPECTED_SIZE_BYTES
+      value: "102400"

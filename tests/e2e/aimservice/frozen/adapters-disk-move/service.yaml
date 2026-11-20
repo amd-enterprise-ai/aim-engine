@@ -1,0 +1,13 @@
+# Static-mode v1alpha2 AIMService serving one LoRA adapter. Static mode lists
+# adapters once at startup, so it must never start on a disk without them.
+apiVersion: aim.eai.amd.com/v1alpha2
+kind: AIMService
+metadata:
+  name: adapters-move-service
+spec:
+  profile:
+    name: adapters-move-profile
+  adapters:
+    - name: adapters-move-lora
+      kind: AIMArtifact
+  replicas: 1
