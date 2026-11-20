@@ -983,3 +983,67 @@ func TestFindServicesForRuntimeConfig_BothScopes(t *testing.T) {
 			"alpha/names-it", "alpha/names-none", "beta/other-namespace")
 	})
 }
+
+func TestProfileCacheRelevantChangePredicate(t *testing.T) {
+	failing := metav1.Condition{
+		Type:               "DependenciesReachable",
+		Status:             metav1.ConditionFalse,
+		Reason:             "ApplyFailed",
+		Message:            "forbidden",
+		LastTransitionTime: metav1.Unix(100, 0),
+	}
+	base := &aimv1alpha2.AIMProfileCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "ns", Generation: 1},
+		Status: aimv1alpha2.AIMProfileCacheStatus{
+			Status:             constants.AIMStatusDegraded,
+			ObservedGeneration: 1,
+			Conditions:         []metav1.Condition{failing},
+		},
+	}
+	for _, tt := range []struct {
+		name   string
+		mutate func(*aimv1alpha2.AIMProfileCache)
+		want   bool
+	}{
+		{
+			name: "error condition message changes", want: true,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Status.Conditions[0].Message = "quota exceeded" },
+		},
+		{
+			name: "error condition recovers", want: true,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Status.Conditions[0].Status = metav1.ConditionTrue },
+		},
+		{
+			name: "error condition appears", want: true,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) {
+				c.Status.Conditions = append(c.Status.Conditions, metav1.Condition{Type: "ConfigValid", Status: metav1.ConditionFalse})
+			},
+		},
+		{
+			name: "reconciliation paused", want: true,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) {
+				c.Annotations = map[string]string{constants.AnnotationReconciliationPaused: "true"}
+			},
+		},
+		{
+			name: "spec generation bumped", want: true,
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Generation = 2 },
+		},
+		{
+			name:   "only lastTransitionTime changes",
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Status.Conditions[0].LastTransitionTime = metav1.Unix(200, 0) },
+		},
+		{
+			name:   "unrelated annotation changes",
+			mutate: func(c *aimv1alpha2.AIMProfileCache) { c.Annotations = map[string]string{"example.com/note": "x"} },
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			updated := base.DeepCopy()
+			tt.mutate(updated)
+			if got := profileCacheRelevantChangePredicate().Update(event.UpdateEvent{ObjectOld: base, ObjectNew: updated}); got != tt.want {
+				t.Errorf("predicate fired = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
